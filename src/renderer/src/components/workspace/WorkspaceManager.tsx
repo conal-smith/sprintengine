@@ -195,6 +195,7 @@ import {
 } from './globalSurface/extensions/extensionsSurfaceHost'
 import { isWorkspacePaneFocused } from './pane/paneFocus'
 import { closePaneTabAndItsTerminal } from './pane/paneTerminals'
+import { reopenLastClosedTab } from './manager/reopenClosedTab'
 import { terminateWorkspaceTerminals } from './workspaceTerminalTermination'
 import { clientSupports } from '../../clientCapabilities'
 import { WindowControls, paneStripOwnsCaptionCorner, windowCaptionReserve } from './WindowControls'
@@ -4221,6 +4222,10 @@ export default function WorkspaceManager() {
           return true
         }
         return closeActiveLayoutTab(windowActiveWorkspaceId, terminalSessions)
+      }
+      if (commandId === 'layout.tab.reopen') {
+        if (!windowActiveWorkspaceId) return false
+        return reopenLastClosedTab(windowActiveWorkspaceId)
       }
       if (commandId === 'pane.toggle' && windowActiveWorkspaceId) {
         const open =

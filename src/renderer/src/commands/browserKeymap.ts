@@ -12,6 +12,8 @@ import { clientSupports } from '../clientCapabilities'
 const SWAPS: Readonly<Record<string, string | null>> = {
   'Primary+W': 'Alt+W',
   'Primary+Shift+W': 'Alt+Shift+W',
+  // The browser's own reopen-closed-tab.
+  'Primary+Shift+T': 'Alt+Shift+T',
   'Primary+N': 'Alt+N',
   'Primary+,': 'Alt+,',
   'Ctrl+Tab': 'Alt+]',

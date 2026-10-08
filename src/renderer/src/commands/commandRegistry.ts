@@ -438,6 +438,23 @@ export const COMMAND_REGISTRY = [
       action: 'closeActiveLayoutTab(windowActiveWorkspaceId, terminalSessions)',
     },
   }),
+  // Reopen the tab closed last in this workspace, as the reopen chord does in
+  // every tabbed app people already use. What comes back is a fresh tab of the
+  // same kind (utils/recentlyClosedTabs.ts): a page at its URL, a new shell, the
+  // file again; never an agent, whose close ended a conversation.
+  command({
+    id: 'layout.tab.reopen',
+    title: 'Reopen closed tab',
+    category: 'workspace',
+    scopes: ['workspace'],
+    defaultKeybindings: ['Primary+Shift+T'],
+    availability: ['activeWorkspace'],
+    handlerPath: {
+      kind: 'context-bound',
+      owner: 'WorkspaceManager',
+      action: 'reopenLastClosedTab(windowActiveWorkspaceId)',
+    },
+  }),
   // Reveal-in-file-manager for the active checkout, and the keyboard half of
   // the workspace bar's open-in-editor split button (item 1990). The reveal
   // target is the workspace's mounted worktree when it has one, so this and the
