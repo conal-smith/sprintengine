@@ -1,10 +1,22 @@
 import { isAbsolute } from 'node:path'
 import { BrowserWindow, screen, shell, type IpcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
-import { offerDockDiff, type DockDiffRequest } from './dock-diff'
+import {
+  offerDockDiff,
+  offerToFirstTaker,
+  readDiffToChatInput,
+  type DiffToChatRequest,
+  type DockDiffRequest,
+} from './dock-diff'
 import { isCanvasWorkerWindow } from '../canvas/canvas-worker-window'
 import { safeExternalUrl } from './external-url'
 import { powerActivity } from '../power-activity'
-import type { AuxWindowKind, DockDiffToWorkspaceResult, OpenAuxWindowResult } from '../../shared/electron-api'
+import type {
+  AuxWindowKind,
+  DiffToChatResult,
+  DockDiffToWorkspaceResult,
+  OpenAuxWindowResult,
+} from '../../shared/electron-api'
+import { DIFF_TO_CHAT_MAX_CHARS } from '../../shared/ipc/window'
 
 // The kinds a renderer may open by name. `pane` is not one: a popped-out pane
 // belongs to the window it came from, and only `pane-popout:open` records that
@@ -234,6 +246,41 @@ export function registerWindowIpc(ipcMain: IpcMain, options: RegisterWindowIpcOp
       return { accepted }
     },
   )
+
+  // The diff window's "Add to chat": the selected lines, already worded as a
+  // quote, for the composer of the workspace's chat. Offered the way the
+  // dock is, one window at a time, to the window that holds that chat; the
+  // one that sets it into the draft acks, and is brought forward so the
+  // person lands where the quote went.
+  ipcMain.handle('window:diff-to-chat', async (event, input: unknown): Promise<DiffToChatResult> => {
+    const payload = readDiffToChatInput(input, DIFF_TO_CHAT_MAX_CHARS)
+    if (!payload) return { accepted: false }
+    const sender = BrowserWindow.fromWebContents(event.sender)
+    if (!sender || !options.isAuxWindow(sender)) return { accepted: false }
+    const windows = dockDiffCandidates(sender, options.isAuxWindow)
+    if (windows.length === 0) return { accepted: false }
+    const taker = await offerToFirstTaker<DiffToChatRequest>({
+      targets: windows.map((win) => ({
+        id: win,
+        isDestroyed: () => win.isDestroyed(),
+        send: (request) => win.webContents.send('workspace:diff-to-chat', request),
+      })),
+      payload,
+      subscribe: (listener) => {
+        const onAck = (ackEvent: IpcMainEvent, id: unknown): void => {
+          listener(BrowserWindow.fromWebContents(ackEvent.sender), id)
+        }
+        ipcMain.on('window:diff-to-chat-ack', onAck)
+        return () => ipcMain.removeListener('window:diff-to-chat-ack', onAck)
+      },
+    })
+    const took = taker?.id
+    if (took instanceof BrowserWindow && !took.isDestroyed()) {
+      if (took.isMinimized()) took.restore()
+      took.focus()
+    }
+    return { accepted: taker !== null }
+  })
 
   ipcMain.handle(
     'window:open-aux-window',

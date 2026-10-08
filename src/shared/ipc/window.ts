@@ -105,6 +105,17 @@ export type DockDiffToWorkspacePayload = DockDiffToWorkspaceInput & { requestId:
  *  own window up and says so, rather than closing into nothing. */
 export type DockDiffToWorkspaceResult = { accepted: boolean }
 
+// The diff viewer's "Add to chat": a passage of the diff, already worded as
+// the quote it lands as, for the composer of the workspace's chat. The window
+// holding that chat sets it into the draft and acks; the same one-at-a-time
+// offer as the dock above, so two windows never both take it.
+export type DiffToChatInput = { workspaceId: string; text: string }
+export type DiffToChatPayload = DiffToChatInput & { requestId: string }
+/** `accepted: false`: no open window holds a chat for that workspace. */
+export type DiffToChatResult = { accepted: boolean }
+/** The longest quote the hand-off carries: the composer's own quote ceiling, a note, and the reference. */
+export const DIFF_TO_CHAT_MAX_CHARS = 12_000
+
 export type OpenExternalResult = { ok: true } | { ok: false; message: string }
 
 /** `installing` runs from "Restart to update" until the app hands over to the installer. */

@@ -491,6 +491,9 @@ import type {
   AuxWindowRetargetPayload,
   CreateWorkspaceWindowInput,
   CreateWorkspaceWindowResult,
+  DiffToChatInput,
+  DiffToChatPayload,
+  DiffToChatResult,
   DockDiffToWorkspaceInput,
   DockDiffToWorkspacePayload,
   DockDiffToWorkspaceResult,
@@ -599,6 +602,11 @@ export type ElectronApi = {
   onDockDiffToWorkspace: (cb: (input: DockDiffToWorkspacePayload) => void) => () => void
   /** The receiving window's half of the hand-off: "I opened the tab." */
   ackDockDiffToWorkspace: (requestId: string) => void
+  /** The diff window's "Add to chat": a quote for the composer of the workspace's chat. */
+  sendDiffToChat: (input: DiffToChatInput) => Promise<DiffToChatResult>
+  onDiffToChat: (cb: (input: DiffToChatPayload) => void) => () => void
+  /** The receiving window's half: "it is in the chat's composer." */
+  ackDiffToChat: (requestId: string) => void
   confirmWindowClose: () => Promise<void>
   openExternal: (url: string) => Promise<OpenExternalResult>
   onWindowStateChanged: (cb: (state: WindowState) => void) => () => void

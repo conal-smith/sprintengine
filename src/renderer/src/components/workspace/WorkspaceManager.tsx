@@ -130,6 +130,7 @@ import { isHiddenFromRail } from '../../utils/workspaceVisibility'
 import { revealAgentTerminalTab } from '../../utils/agentTabReveal'
 import { setWorkspaceChatOpener } from '../../modules/chat-opener'
 import { composerDraftStore } from '../panels/agentChat/draftStore'
+import { answerDiffToChat } from '../panels/agentChat/composerHandoff'
 import { setBuildExtensionOpener } from '../extensions/buildExtensionHost'
 import { extensionBriefMarkdown } from '../../../../shared/extension-scaffold'
 import { createWorkspaceChatOpener } from './manager/workspaceChatOpener'
@@ -466,6 +467,17 @@ export default function WorkspaceManager() {
         // return above has to leave it unsaid.
         window.api.ackDockDiffToWorkspace?.(requestId)
       },
+    )
+  }, [workspaceWindowId])
+  // The diff window's "Add to chat": the selected lines, worded as a quote,
+  // for the composer of the workspace's chat. The window that holds the
+  // workspace sets it there, brings the chat forward so the person lands on
+  // it, and acks; one that does not, or whose workspace has no chat, stays
+  // silent and main asks the next.
+  useEffect(() => {
+    if (typeof window.api.onDiffToChat !== 'function') return
+    return window.api.onDiffToChat((request) =>
+      answerDiffToChat(request, workspaceWindowId, (requestId) => window.api.ackDiffToChat?.(requestId)),
     )
   }, [workspaceWindowId])
   // Background mode is read by main at last-window-close, so it is mirrored

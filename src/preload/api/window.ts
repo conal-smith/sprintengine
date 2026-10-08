@@ -6,6 +6,9 @@ import type {
   AuxWindowRetargetPayload,
   CreateWorkspaceWindowInput,
   CreateWorkspaceWindowResult,
+  DiffToChatInput,
+  DiffToChatPayload,
+  DiffToChatResult,
   DockDiffToWorkspaceInput,
   DockDiffToWorkspacePayload,
   DockDiffToWorkspaceResult,
@@ -62,6 +65,17 @@ export const windowApi = {
   // timeout, so there is nothing for the acking window to await.
   ackDockDiffToWorkspace: (requestId: string): void => {
     ipcRenderer.send('window:dock-diff-ack', requestId)
+  },
+  sendDiffToChat: (input: DiffToChatInput): Promise<DiffToChatResult> =>
+    ipcRenderer.invoke('window:diff-to-chat', input),
+  onDiffToChat: (cb: (input: DiffToChatPayload) => void): (() => void) => {
+    const ch = 'workspace:diff-to-chat'
+    const handler = (_: IpcRendererEvent, input: DiffToChatPayload) => cb(input)
+    ipcRenderer.on(ch, handler)
+    return () => ipcRenderer.removeListener(ch, handler)
+  },
+  ackDiffToChat: (requestId: string): void => {
+    ipcRenderer.send('window:diff-to-chat-ack', requestId)
   },
   confirmWindowClose: (): Promise<void> => ipcRenderer.invoke('window:confirm-close'),
   openExternal: (url: string): Promise<OpenExternalResult> => ipcRenderer.invoke('window:open-external', url),
@@ -139,6 +153,9 @@ export const windowApi = {
   | 'dockDiffToWorkspace'
   | 'onDockDiffToWorkspace'
   | 'ackDockDiffToWorkspace'
+  | 'sendDiffToChat'
+  | 'onDiffToChat'
+  | 'ackDiffToChat'
   | 'confirmWindowClose'
   | 'openExternal'
   | 'onWindowStateChanged'

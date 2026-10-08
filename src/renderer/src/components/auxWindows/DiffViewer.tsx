@@ -61,6 +61,9 @@ import { FOCUS_RING_INSET_CLASS } from '../ui/tokens'
 import { TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET } from '../workspace/AppTitleBar'
 import { WindowCloseButton } from '../workspace/WindowControls'
 import { openDiffWindow } from './openDiffWindow'
+import { DiffChatToolbar } from './DiffChatToolbar'
+import { diffSelectionQuote, type DiffChatSelection } from './diffToChat'
+import { deliverQuoteToWorkspaceChat } from '../panels/agentChat/composerHandoff'
 import { openExternalFileWindow } from './openFileWindow'
 import { openFileSurface } from '../../utils/openFileSurface'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
@@ -1041,6 +1044,16 @@ export function DiffViewer({
       // supersedes nothing Monaco itself binds: F7 is unbound in a read-only
       // diff, and ⌘↑ / ⌘↓ are only its "cursor to top / bottom", which the
       // ⌘Home / ⌘End of the same editor still gives.
+      // "Add to chat" as an action of both sides' editors, so the editor's
+      // own command list and ⌘⇧A reach the toolbar's field (DiffChatToolbar).
+      for (const side of [editor.getModifiedEditor(), original]) {
+        side.addAction({
+          id: 'sprintengine.diff.addSelectionToChat',
+          label: 'Add selection to chat',
+          keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA],
+          run: () => askChatRef.current(),
+        })
+      }
       editor.addCommand(monaco.KeyCode.F7, () => navigateRef.current('next'))
       editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F7, () => navigateRef.current('prev'))
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.DownArrow, () => navigateWholeFileRef.current('next'))
@@ -1235,6 +1248,29 @@ export function DiffViewer({
   // had just made, and nothing cleared any of them when the file changed, so a
   // complaint about one file was still on screen over another.
   const [bandError, setBandError] = useState<string | null>(null)
+  // "Add to chat": the selected lines, as a quote, into the composer of the
+  // workspace's chat (diffToChat.ts). In the pane the chat is in this window;
+  // the window asks main to find the window that holds it.
+  const [chatAsk, setChatAsk] = useState(0)
+  const askChatRef = useRef(() => setChatAsk((count) => count + 1))
+  const sendSelectionToChat = useCallback(
+    async (selection: DiffChatSelection, note: string): Promise<boolean> => {
+      if (!workspaceId) return false
+      setBandError(null)
+      const quote = diffSelectionQuote(selection, note)
+      if (quote.kind === 'too-long') {
+        setBandError('Those lines are too long to add to the chat. Select fewer.')
+        return false
+      }
+      const accepted =
+        variant === 'pane'
+          ? deliverQuoteToWorkspaceChat(workspaceId, quote.text) !== null
+          : (await window.api.sendDiffToChat({ workspaceId, text: quote.text }).catch(() => null))?.accepted === true
+      if (!accepted) setBandError('No open chat to add these lines to')
+      return accepted
+    },
+    [variant, workspaceId],
+  )
   const showInApp = useCallback(() => {
     if (!workspaceId) return
     const target = currentItem ?? items[0]
@@ -1974,6 +2010,16 @@ export function DiffViewer({
               lane={gutterHost?.lane ?? GLYPH_MARGIN_LANE_CENTER}
               boxes={gutterBoxes}
               onToggle={fileHunks.toggle}
+            />
+          ) : null}
+          {/* "Add to chat" over a selection: only with a workspace to send it
+            to, which a window opened before it carried one does not have. */}
+          {content.state === 'ready' && workspaceId ? (
+            <DiffChatToolbar
+              diffEditor={mountedEditor?.editor ?? null}
+              path={currentItem?.relativePath ?? null}
+              onSend={sendSelectionToChat}
+              focusRequest={chatAsk}
             />
           ) : null}
           {/* The tour's callout portals into a view zone of the editor above; the
