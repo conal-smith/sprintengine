@@ -45,6 +45,14 @@ export type NewChatConfirmHost = {
    * words it starts with — or null after saying why it could not be made.
    */
   makeProjectlessFolder: (startupPrompt: string | undefined) => Promise<string | null>
+  /**
+   * The worktree made for this chat while New chat was open, when it is
+   * already made (utils/newChatWorktree.ts's reservation), or null.
+   */
+  takeReadyWorktree?: (
+    scopedFolder: string,
+    requestedName: string,
+  ) => Extract<NewChatWorktreeResult, { ok: true }> | null
   startTerminal: (folderPath: string | null, background?: boolean) => WorkspaceId | null
   startGeneral: (
     confirm: Extract<AgentComposerConfirm, { kind: 'general' }>,
@@ -94,13 +102,18 @@ export async function confirmNewChatWith(
     if (!background) host.closePanel()
     return created
   }
+  // Made while the person typed: the chat starts in it like any other, below.
+  const readyWorktree =
+    !extension && confirm.kind !== 'terminal' && confirm.worktree && scopedFolder
+      ? (host.takeReadyWorktree?.(scopedFolder, confirm.worktree.name) ?? null)
+      : null
   // A chat agent asked for a worktree opens at once, before the worktree
   // exists: the seconds the worktree takes are spent in the chat, which shows
   // its prompt waiting and says what it is waiting on, not on New chat with
   // nothing moving. It has no folder until the worktree lands, so nothing in it
   // can start in the checkout the person asked to keep clean
   // (utils/newChatWorktree.ts).
-  if (!extension && confirm.kind === 'conversation' && confirm.worktree && scopedFolder) {
+  if (!extension && confirm.kind === 'conversation' && confirm.worktree && scopedFolder && !readyWorktree) {
     const projectFolder = workspaceProjectRootOf({ folderPath: scopedFolder }) ?? scopedFolder
     const created = host.startConversation(
       confirm,
@@ -138,7 +151,7 @@ export async function confirmNewChatWith(
     if (!made) return null
     folderPath = made
   } else if ((confirm.kind === 'general' || confirm.kind === 'conversation') && confirm.worktree) {
-    const made = await host.makeWorktree(scopedFolder, confirm.worktree.name)
+    const made = readyWorktree ?? (await host.makeWorktree(scopedFolder, confirm.worktree.name))
     if (!made.ok) return null
     folderPath = made.folderPath
     worktree = made.worktree

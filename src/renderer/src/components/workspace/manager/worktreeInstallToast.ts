@@ -33,6 +33,9 @@ const announced = new Set<string>()
  * not succeed; one window reports it, every window shows the toast.
  */
 export function showWorktreeInstallToast(view: WorktreeDependencyInstallView, options: { report: boolean }): void {
+  // One its caller shows (New chat's, in its chat's working line) is told
+  // here only if it did not succeed: that outlives the chat's setup.
+  if (view.quiet && (view.state === 'running' || view.state === 'succeeded' || view.state === 'cancelled')) return
   const id = `worktree-install:${view.id}`
   const where = `${view.command} in ${worktreeName(view.path)}`
   if (view.state === 'running') {

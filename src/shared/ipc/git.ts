@@ -299,6 +299,12 @@ export type GitWorktreeCreateInput = {
   fromPool?: boolean
   /** The machine whose git makes it (a WSL machine's); absent resolves from the folder. */
   hostId?: string
+  /**
+   * The caller shows the dependency install itself: New chat's worktree,
+   * whose install is folded into its chat's working line. The install is
+   * marked `quiet`, and no window toasts it unless it fails.
+   */
+  quietInstall?: boolean
 }
 
 /** A created worktree, and what it was forked from. */

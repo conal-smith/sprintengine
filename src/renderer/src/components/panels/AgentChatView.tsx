@@ -194,6 +194,7 @@ import { editFromHereDraft, type EditFromHereDraft } from './agentChat/editFromH
 import { forkChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
 import { EmptyChatState, ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
 import { PendingFirstMessage } from './agentChat/pendingFirstMessage'
+import { withRequestedTurn, type RequestedTurnRowCache } from './agentChat/requestedTurnRow'
 import { ComposerActionButton, ComposerContextMenu, type ComposerMenuState } from './agentChat/composerControls'
 export { ComposerContextMenu, editingShortcut } from './agentChat/composerControls'
 export type { ComposerMenuState } from './agentChat/composerControls'
@@ -421,6 +422,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // machine's provider check, which says nothing about a provider over there.
   const hostReadiness = binding.readiness
   const readiness = hostReadiness ?? localReadiness
+  // A New chat whose worktree is being made has no folder yet, but its
+  // provider does not need one: it is checked meanwhile, so the chat is ready
+  // to start the moment the folder lands rather than checking only then.
+  const awaitingWorktree = hostReadiness?.kind === 'preparing-worktree'
+  const overridingReadiness = awaitingWorktree ? null : hostReadiness
+  const hasRoot = Boolean(workspaceRoot) || awaitingWorktree
   const [providers, setProviders] = useState<ConversationProviderListEntry[]>([])
   // Live model catalogs keyed by providerId, fetched lazily as the user opens
   // the picker or filters to a provider — never a blanket prefetch. A non-empty
@@ -504,6 +511,20 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const [composerCaret, setComposerCaret] = useState(draft.length)
   const [pickedSkills, setPickedSkills] = useState<Record<string, WorkspaceSkill>>({})
   const [pending, setPending] = useState<PendingAction>(null)
+  // When the turn the person is waiting on was asked for: from then until it
+  // ends, the transcript's working line counts from here, and stands under
+  // the message before the agent has said anything (`withRequestedTurn`).
+  const [turnRequestedAt, setTurnRequestedAt] = useState<number | null>(null)
+  const sending = pending === 'starting' || pending === 'sending'
+  // New chat's first message, still waiting to go, and when this view opened
+  // on it: its working line counts from then, through the setup and the turn.
+  const startupPending = Boolean(
+    agent?.chatStartupPrompt || agent?.chatStartupImages?.length || agent?.chatStartupFiles?.length,
+  )
+  const [startupSince] = useState(() => Date.now())
+  const startupHolding =
+    startupPending &&
+    (readiness.kind === 'ready' || readiness.kind === 'loading' || readiness.kind === 'preparing-worktree')
   const sendInFlightRef = useRef(false)
   // The ref's value as state, so what waits on a send (the queue's flush) runs
   // again once it settles; the ref stays the synchronous re-entry guard.
@@ -572,8 +593,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // Resolve provider/model/key readiness from the conversation IPC.
   useEffect(() => {
     let cancelled = false
-    if (!conversation || hostReadiness) return
-    if (!workspaceRoot) {
+    if (!conversation || overridingReadiness) return
+    if (!hasRoot) {
       setReadiness({ kind: 'no-workspace-folder' })
       return
     }
@@ -634,7 +655,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     return () => {
       cancelled = true
     }
-  }, [conversation, workspaceRoot, cliRuntimes, hostReadiness, transport])
+  }, [conversation, hasRoot, cliRuntimes, overridingReadiness, transport])
 
   // Fetch one provider's live catalog and key status on demand, caching both.
   // Called for the active provider on mount and for whichever provider the user
@@ -720,11 +741,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [structureRevision, userTurns, transport])
   const previousRowsRef = useRef<ReturnType<typeof deriveConversationTimelineRows>>([])
+  const requestedTurnRowRef = useRef<RequestedTurnRowCache>(null)
   const timelineRows = useMemo(() => {
     const rows = deriveConversationTimelineRows(projection.entries, projection.activeTurn, previousRowsRef.current)
     previousRowsRef.current = rows
-    return rows
-  }, [projection.entries, projection.activeTurn])
+    return withRequestedTurn(rows, turnRequestedAt, sending, requestedTurnRowRef)
+  }, [projection.entries, projection.activeTurn, turnRequestedAt, sending])
+  // The send has settled and no turn runs: the turn asked for has ended (or
+  // never began), and its working line with it.
+  useEffect(() => {
+    if (turnRequestedAt !== null && pending === null && !projection.activeTurn) setTurnRequestedAt(null)
+  }, [projection.activeTurn, turnRequestedAt, pending])
   // The "New" divider: where the replies the reader has not seen begin, as
   // they stood when the chat was opened (`unreadDivider.ts`). A chat followed
   // from another machine keeps its visit clock there, so only one here has a
@@ -1286,6 +1313,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       // A "from the next turn" notice is spent once that turn leaves.
       setPermissionNotice(null)
       setPending('starting')
+      // The first message waited out the chat's setup under a working line
+      // that began when the chat opened; the turn's carries on from there.
+      setTurnRequestedAt(inPlace ? startupSince : Date.now())
       const localTurnId = `user-${userTurns.length}-${Date.now()}`
       // An optimistic bubble only where the runtime echoes its id back on the
       // `user_message` that replaces it. A remote send has no such id, so its
@@ -1313,6 +1343,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       if (!activeSession) {
         // The turn never left: its bubble comes down with the text going back.
         setUserTurns((current) => current.filter((turn) => turn.id !== localTurnId))
+        setTurnRequestedAt(null)
         if (pendingUserScrollIdRef.current === `user:${localTurnId}`) pendingUserScrollIdRef.current = null
         // The session's own failure is already on the line; it is this send's.
         setActionError((current) => {
@@ -1368,6 +1399,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         if (!result.ok) {
           setActionError({ message: result.message, retry: thisSend })
           setUserTurns((current) => current.filter((turn) => turn.id !== localTurnId))
+          setTurnRequestedAt(null)
           if (turnAttachments.length) setAttachments((current) => (current.length ? current : turnAttachments))
           if (!fromDraft) {
             setDraft(putBack)
@@ -1381,6 +1413,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       } catch (err) {
         finishDraftSend(draftSend, false)
         setUserTurns((current) => current.filter((turn) => turn.id !== localTurnId))
+        setTurnRequestedAt(null)
         if (!fromDraft) {
           setDraft(putBack)
           setDraftMetadata((current) => ({
@@ -1405,6 +1438,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       startSession,
       pending,
       recordUserMessage,
+      startupSince,
       userTurns.length,
       transport,
       conversationMode,
@@ -1484,10 +1518,19 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // running turn never took in, with nothing left in the queue to show for
   // them, so the queue is the default and a steer is always a choice.
   const submitComposer = useCallback((): boolean => {
-    // Typed into while the chat cannot send yet (a New chat still waiting on
-    // its worktree): the words stay where they are until it can.
-    if (readiness.kind !== 'ready') return false
     const text = draft.trim()
+    // Typed while a New chat is still setting up, before its first message
+    // has gone: queued behind it, as a reply typed while a turn runs is. Any
+    // other chat that cannot send yet keeps the words where they are.
+    if (readiness.kind !== 'ready') {
+      if (!startupHolding || (!text && attachments.length === 0 && !draftMetadata.files.length)) return false
+      const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
+      setQueuedTurn(turn)
+      clearDraft()
+      setAttachments([])
+      setActionError(queuedDropNotice(dropped))
+      return true
+    }
     if (
       !text &&
       attachments.length === 0 &&
@@ -1525,6 +1568,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     return true
   }, [
     readiness.kind,
+    startupHolding,
     attachments,
     draft,
     draftMetadata,
@@ -1585,6 +1629,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // sendTurn's own `pending` guard prevents a re-entrant double send.
   useEffect(() => {
     if (queuedTurn === null || readiness.kind !== 'ready') return
+    // New chat's first message goes first; what was queued behind it waits for its turn.
+    if (startupPending) return
     if (isConversationBusy(projection.activeTurn, projection.awaitingApproval, pending)) return
     // A steer still on its way counts as the turn: the send that it closed
     // settles before the turn it opened is on screen.
@@ -1598,6 +1644,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   }, [
     queuedTurn,
     readiness.kind,
+    startupPending,
     projection.activeTurn,
     projection.awaitingApproval,
     pending,
@@ -1704,6 +1751,21 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     setDraftMetadata,
     updateBinding,
   ])
+
+  // A reply queued behind a New chat's first message, whose worktree then
+  // could not be made: the first message is back in the composer, and the
+  // reply follows it there rather than going ahead of it on the next send.
+  useEffect(() => {
+    if (readiness.kind !== 'worktree-failed' || !queuedTurn) return
+    setQueuedTurn(null)
+    setDraft((current) => [current, queuedTurn.text].filter(Boolean).join('\n'))
+    setDraftMetadata((current) => ({
+      skillIds: [...new Set([...current.skillIds, ...queuedTurn.metadata.skillIds])],
+      mentions: [...current.mentions, ...queuedTurn.metadata.mentions],
+      files: [...new Set([...current.files, ...queuedTurn.metadata.files])],
+    }))
+    setAttachments((current) => [...current, ...queuedTurn.attachments].slice(0, MAX_ATTACHMENTS_PER_TURN))
+  }, [readiness.kind, queuedTurn, setDraft, setDraftMetadata])
 
   // Stage images for the next turn. Each file is read and resampled on its own
   // so one unreadable file never drops the rest of a multi-image paste; the
@@ -2161,9 +2223,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const ready = readiness.kind === 'ready'
   // The launcher's message, not sent yet but on its way: drawn as the bubble
   // it will be, with what it waits on, until the send puts up its own.
-  const startupWaiting =
-    Boolean(startupPrompt || startupImages?.length || startupFiles?.length) &&
-    (ready || readiness.kind === 'loading' || readiness.kind === 'preparing-worktree')
+  const startupWaiting = startupHolding
   // The session cannot take a live turn right now (streaming, awaiting approval,
   // or an in-flight send). A submit made while busy queues instead of erroring.
   const composerBusy =
@@ -2175,14 +2235,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // on its worktree takes type-ahead too, and one whose worktree failed holds
   // the message it gave back: neither can send (Send and Enter wait on ready).
   const composerInputDisabled =
-    !ready && readiness.kind !== 'preparing-worktree' && readiness.kind !== 'worktree-failed'
+    !ready && !startupHolding && readiness.kind !== 'preparing-worktree' && readiness.kind !== 'worktree-failed'
   // One rule for both send affordances — the footer button and the right-click
   // menu's Send item (1793) — so they can never label or gate a commit
   // differently from each other or from Enter.
+  // A New chat setting up reads as a chat at work: a message queues behind its first.
   const sendAction = composerSendAction({
-    ready,
-    busy: composerBusy,
-    sending: pending === 'starting' || pending === 'sending',
+    ready: ready || startupHolding,
+    busy: composerBusy || startupHolding,
+    sending,
     hasText: draft.trim().length > 0 || draftMetadata.mentions.length > 0 || draftMetadata.skillIds.length > 0,
     attachmentCount: attachments.length + draftMetadata.files.length,
   })
@@ -2761,9 +2822,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     ? pendingApprovalEntry.requestKind === 'plan'
       ? 'Respond to the plan above to continue'
       : 'Respond to the request above to continue'
-    : !ready
+    : !ready && !startupHolding
       ? readinessLabel(readiness)
-      : projection.activeTurn
+      : projection.activeTurn || startupHolding
         ? 'Reply — sends when the turn finishes'
         : 'Send a message…'
 
@@ -3241,7 +3302,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                 <PendingFirstMessage
                   text={startupPrompt ?? ''}
                   files={[...(startupImages ?? []), ...(startupFiles ?? [])]}
-                  label={ready ? 'Sending…' : readinessLabel(readiness)}
+                  since={startupSince}
+                  workspaceId={workspaceId}
+                  preparingWorktree={readiness.kind === 'preparing-worktree'}
+                  agentName={assistantName}
                 />
               ) : !ready ? (
                 <ReadinessState

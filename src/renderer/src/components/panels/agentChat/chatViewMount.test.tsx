@@ -501,7 +501,7 @@ function sessionStartSpy() {
   }))
 }
 
-test('a chat waiting on its worktree shows the prompt as its bubble and starts nothing until the folder is set', async () => {
+test('a chat waiting on its worktree shows the prompt as its bubble, working, and starts nothing until the folder is set', async () => {
   const sendTurn = vi.fn<SendTurn>(async () => ({ ok: true }))
   const conversationSessionStart = sessionStartSpy()
   const worktree = deferredWorktree()
@@ -515,7 +515,13 @@ test('a chat waiting on its worktree shows the prompt as its bubble and starts n
     await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     const pending = chat.host.querySelector('[data-pending-first-message]')
     expect(pending?.textContent, 'the message shows at once, as the bubble it will be').toContain('fix the login')
-    expect(pending?.textContent).toContain('Preparing worktree…')
+    expect(pending?.textContent, 'under the line every turn shows').toContain('Thinking…')
+    expect(pending?.textContent, 'the setup is not put in front of the person').not.toContain('worktree')
+    // Folded under the line, for whoever asks.
+    await chat.act(async () =>
+      chat.host.querySelector<HTMLButtonElement>('button[aria-label="Show what it is doing"]')!.click(),
+    )
+    expect(chat.host.querySelector('[data-setup-step="worktree"]')?.textContent).toMatch(/^Worktree on agent\//u)
     expect(conversationSessionStart, 'no session before the folder is set').not.toHaveBeenCalled()
     expect(sendTurn).not.toHaveBeenCalled()
     expect(chat.agent().chatStartupPrompt, 'the message is held, not spent').toBe('fix the login')
@@ -578,7 +584,7 @@ test('a worktree that could not be made says why in the chat and gives the promp
   }
 })
 
-test('a chat waiting on its worktree takes type-ahead that Enter does not send, and it outlasts the folder change', async () => {
+test('a chat waiting on its worktree queues what Enter sends behind its first message', async () => {
   const sendTurn = vi.fn<SendTurn>(async () => ({ ok: true }))
   const conversationSessionStart = sessionStartSpy()
   const worktree = deferredWorktree()
@@ -593,9 +599,9 @@ test('a chat waiting on its worktree takes type-ahead that Enter does not send, 
     expect(chat.field().getAttribute('contenteditable'), 'the composer takes input while it waits').toBe('true')
     await chat.act(async () => chat.type('and the signup page'))
     await chat.act(async () => void chat.enter())
-    expect(sendTurn, 'Enter sends nothing before the chat can').not.toHaveBeenCalled()
-    expect(chat.draft()).toBe('and the signup page')
-    expect(chat.host.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.disabled).toBe(true)
+    expect(sendTurn, 'nothing goes before the chat can send').not.toHaveBeenCalled()
+    expect(chat.draft(), 'queued, as a reply typed while a turn runs is').toBe('')
+    expect(chat.host.textContent).toContain('and the signup page')
 
     await chat.act(async () => worktree.settle('ok'))
     await chat.act(async () => {
@@ -603,11 +609,11 @@ test('a chat waiting on its worktree takes type-ahead that Enter does not send, 
       chat.emit({ type: 'synchronized', seq: 0 })
     })
     await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    expect(sendTurn).toHaveBeenCalledOnce()
-    expect(sendTurn.mock.calls[0][0], 'the first message is the launcher’s alone').toMatchObject({
+    expect(sendTurn.mock.calls[0][0], 'the launcher’s message goes first').toMatchObject({
       message: 'fix the login',
     })
-    expect(chat.draft(), 'what was typed meanwhile is still in the composer').toBe('and the signup page')
+    // This mock's turn ends as soon as it is sent: the queued one follows it.
+    expect(sendTurn.mock.calls.map(([input]) => input.message)).toEqual(['fix the login', 'and the signup page'])
   } finally {
     await chat.unmount()
   }
@@ -657,6 +663,7 @@ test('a chat still waiting on its worktree when the app went away comes back fai
     await chat.act(async () => chat.button('Retry')!.click())
     await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
     expect(worktree.createGitWorktree).toHaveBeenCalledOnce()
+    // Its message is the composer's again, so there is no first bubble to work under.
     expect(chat.host.textContent).toContain('Preparing worktree…')
     expect(conversationSessionStart).not.toHaveBeenCalled()
     await chat.act(async () => worktree.settle('ok'))
@@ -2673,6 +2680,50 @@ test('Restart agent session in a chat with no agent running ends nothing, and sa
     const titles = useToastStore.getState().toasts.map((toast) => toast.title)
     expect(titles).toContain('No agent session to restart')
     expect(titles).not.toContain('Agent session restarted')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a sent message has the working line under it before its turn starts, and not after the turn', async () => {
+  let resolveSend!: (value: { ok: true }) => void
+  const sendTurn = vi.fn<SendTurn>(() => new Promise((resolve) => (resolveSend = resolve)))
+  const chat = await mountChat({ sendTurn })
+  try {
+    await chat.act(async () => chat.type('Hello'))
+    await chat.act(async () => chat.enter())
+    expect(sendTurn).toHaveBeenCalledOnce()
+    expect(chat.host.textContent, 'heard at once, while the agent starts').toContain('Thinking…')
+    await chat.act(async () => resolveSend({ ok: true }))
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('user_message', { turnId: 'hello', text: 'Hello' }) })
+      chat.emit({ type: 'event', event: event('turn_started', { turnId: 'hello' }) })
+      chat.emit({ type: 'event', event: event('turn_completed', { turnId: 'hello' }) })
+    })
+    expect(chat.host.textContent).not.toContain('Thinking…')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a reply queued behind a New chat’s first message comes back after it when the worktree fails', async () => {
+  const sendTurn = vi.fn<SendTurn>(async () => ({ ok: true }))
+  const worktree = deferredWorktree()
+  const chat = await mountPendingChat({
+    createGitWorktree: worktree.createGitWorktree,
+    startAttempt: true,
+    sendTurn,
+    conversationSessionStart: sessionStartSpy(),
+  })
+  try {
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    await chat.act(async () => chat.type('and the signup page'))
+    await chat.act(async () => void chat.enter())
+    expect(chat.draft()).toBe('')
+    await chat.act(async () => worktree.settle({ ok: false, message: 'Could not fetch origin.' }))
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.draft(), 'the first message, then the reply').toBe('fix the login\nand the signup page')
+    expect(sendTurn).not.toHaveBeenCalled()
   } finally {
     await chat.unmount()
   }

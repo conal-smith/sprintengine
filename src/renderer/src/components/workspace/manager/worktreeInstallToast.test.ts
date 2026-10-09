@@ -62,3 +62,14 @@ test('a failed install says so in the toast, and one window files what it printe
   assert.equal(published.diagnostics[0].details, 'npm ERR! code E401')
   assert.deepEqual(published.diagnostics[0].navigationTarget, { kind: 'settings', ref: 'worktrees' })
 })
+
+test('an install its chat shows is not toasted while it runs or once it succeeds, only if it fails', () => {
+  const quiet = { ...RUNNING, quiet: true }
+  showWorktreeInstallToast(quiet, { report: true })
+  assert.equal(toast(), undefined)
+  showWorktreeInstallToast({ ...quiet, state: 'succeeded', endedAt: 4_000, exitCode: 0 }, { report: true })
+  assert.equal(toast(), undefined)
+  showWorktreeInstallToast({ ...quiet, state: 'failed', endedAt: 4_000, exitCode: 1 }, { report: true })
+  assert.equal(toast()?.title, 'Dependencies did not install')
+  assert.equal(published.diagnostics.length, 1)
+})
