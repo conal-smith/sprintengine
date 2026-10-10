@@ -1,30 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useWorkspaceStore } from '../../../store/workspaceStore'
-import {
-  FLOAT_DEFAULT_HEIGHT,
-  FLOAT_DEFAULT_WIDTH,
-  FLOAT_MAX_HEIGHT,
-  FLOAT_MAX_WIDTH,
-  FLOAT_MIN_HEIGHT,
-  FLOAT_MIN_WIDTH,
-} from '../../../store/slices/workspacePaneSlice'
+import { FLOAT_DEFAULT_HEIGHT, FLOAT_DEFAULT_WIDTH } from '../../../store/slices/workspacePaneSlice'
 import type { WorkspaceId, WorkspacePaneTab } from '../../../types/workspace'
-import { Badge, CloseIconButton, IconButton, Tooltip } from '../../ui'
+import { CloseIconButton, FloatingButton, Tooltip } from '../../ui'
 import { agentBrowserTracker } from './browser/agentBrowserFloat'
-import { BrowserRecordingIndicator } from './browser/BrowserRecordingIndicator'
-import { useBrowserLiveState } from './browser/useAgentBrowserAutoFloat'
 
-// The floating browser player (browser-pane epic, `floating-preview`): the
-// pane's browser tab kept in view over the workspace while the pane is closed,
-// so a person can read the transcript and watch the page at once. The person
-// floats a tab from its View menu; an agent taking a page in a closed pane
-// floats it by itself (useAgentBrowserAutoFloat).
+// The floating browser player (browser-pane epic, `floating-preview`): a
+// miniature of the pane's browser tab kept in view over the workspace while
+// the pane is closed, so a person reading the transcript can see that an agent
+// is looking at a page, and which. The person floats a tab from its View menu;
+// an agent taking a page in a closed pane floats it by itself
+// (useAgentBrowserAutoFloat).
 //
 // The player is NOT a new surface. It is the same panel element the pane
 // renders, restyled to `position: fixed` — see the comment at the restyle in
-// `WorkspacePaneBody`. Everything here is chrome laid over that element plus
-// the arithmetic that keeps its rectangle on screen.
+// `WorkspacePaneBody` — and the page inside it scaled down to fit (BrowserTab).
+// Everything here is the overlay laid over that element plus the arithmetic
+// that keeps its rectangle on screen.
 
 /**
  * What the player keeps clear of the window's edges, so it never sits flush
@@ -40,27 +33,21 @@ function edgeGap(): number {
   edgeGapCache = Number.isFinite(token) && token > 0 ? token : FLOAT_EDGE_GAP_FALLBACK
   return edgeGapCache
 }
-/** The drag bar's height; the page starts below it. */
-const BAR_HEIGHT = 28
 
 export type FloatRect = { left: number; top: number; width: number; height: number }
 
+/**
+ * The rectangle drawn for a stored or dragged position. The size is always the
+ * miniature's own: a size saved by an older, resizable player is ignored, so
+ * every player reads as the same small thumbnail.
+ */
 function clampRect(
   rect: { x: number; y: number; width: number; height: number },
   viewport: { width: number; height: number },
 ): FloatRect {
   const EDGE_GAP = edgeGap()
-  // Size first: a rect saved on a wide monitor and read on a laptop must shrink
-  // to fit before its position is judged, or it would be pinned to the top-left
-  // and still overflow.
-  const width = Math.min(
-    Math.max(rect.width, FLOAT_MIN_WIDTH),
-    Math.min(FLOAT_MAX_WIDTH, viewport.width - EDGE_GAP * 2),
-  )
-  const height = Math.min(
-    Math.max(rect.height, FLOAT_MIN_HEIGHT),
-    Math.min(FLOAT_MAX_HEIGHT, viewport.height - EDGE_GAP * 2),
-  )
+  const width = FLOAT_DEFAULT_WIDTH
+  const height = FLOAT_DEFAULT_HEIGHT
   const maxLeft = Math.max(EDGE_GAP, viewport.width - width - EDGE_GAP)
   const maxTop = Math.max(EDGE_GAP, viewport.height - height - EDGE_GAP)
   return {
@@ -155,118 +142,32 @@ export function useFloatRect(workspaceId: WorkspaceId, tab: WorkspacePaneTab | n
   return clampRect(stored ?? fallback, viewport)
 }
 
-/** Which edges a resize gesture moves; the opposite edges stay where they are. */
-export type ResizeEdges = { n?: boolean; s?: boolean; e?: boolean; w?: boolean }
-
-/**
- * The rectangle a resize from `edges` lands on after the pointer moved by
- * `dx`/`dy`. The edges NOT being dragged are anchored: pulling the left edge
- * past the minimum stops the left edge, it does not push the right one. Each
- * dragged edge stops at the window's gap and at the size limits.
- */
-export function resizeFloatRect(
-  start: FloatRect,
-  edges: ResizeEdges,
-  dx: number,
-  dy: number,
-  viewport: { width: number; height: number },
-): FloatRect {
-  const EDGE_GAP = edgeGap()
-  const maxWidth = Math.min(FLOAT_MAX_WIDTH, viewport.width - EDGE_GAP * 2)
-  const maxHeight = Math.min(FLOAT_MAX_HEIGHT, viewport.height - EDGE_GAP * 2)
-  const between = (value: number, low: number, high: number) => Math.max(low, Math.min(value, high))
-  let { left, top, width, height } = start
-  const right = left + width
-  const bottom = top + height
-  if (edges.e) width = between(width + dx, FLOAT_MIN_WIDTH, Math.min(maxWidth, viewport.width - EDGE_GAP - left))
-  if (edges.w) {
-    left = between(left + dx, Math.max(EDGE_GAP, right - maxWidth), right - FLOAT_MIN_WIDTH)
-    width = right - left
-  }
-  if (edges.s) {
-    height = between(height + dy, FLOAT_MIN_HEIGHT, Math.min(maxHeight, viewport.height - EDGE_GAP - top))
-  }
-  if (edges.n) {
-    top = between(top + dy, Math.max(EDGE_GAP, bottom - maxHeight), bottom - FLOAT_MIN_HEIGHT)
-    height = bottom - top
-  }
-  // A window smaller than the floor leaves nothing to anchor against; the
-  // ordinary clamp keeps the player on screen.
-  return clampRect({ x: left, y: top, width, height }, viewport)
-}
-
-// The eight grips. Edges are thin strips along the border and corners small
-// squares over them, so most of a grip sits on the frame rather than the page;
-// the page keeps its own pointer everywhere else.
-const RESIZE_HANDLES: ReadonlyArray<{ id: string; edges: ResizeEdges; label: string; className: string }> = [
-  { id: 'n', edges: { n: true }, label: 'top edge', className: 'inset-x-3 -top-1 h-2 cursor-ns-resize' },
-  { id: 's', edges: { s: true }, label: 'bottom edge', className: 'inset-x-3 -bottom-1 h-2 cursor-ns-resize' },
-  { id: 'e', edges: { e: true }, label: 'right edge', className: 'inset-y-3 -right-1 w-2 cursor-ew-resize' },
-  { id: 'w', edges: { w: true }, label: 'left edge', className: 'inset-y-3 -left-1 w-2 cursor-ew-resize' },
-  {
-    id: 'nw',
-    edges: { n: true, w: true },
-    label: 'top left corner',
-    className: '-left-1 -top-1 size-icon-sm cursor-nwse-resize',
-  },
-  {
-    id: 'ne',
-    edges: { n: true, e: true },
-    label: 'top right corner',
-    className: '-right-1 -top-1 size-icon-sm cursor-nesw-resize',
-  },
-  {
-    id: 'sw',
-    edges: { s: true, w: true },
-    label: 'bottom left corner',
-    className: '-bottom-1 -left-1 size-icon-sm cursor-nesw-resize',
-  },
-  // The corner the player grows from by habit keeps the visible grip it always
-  // had, so the other seven are found by the cursor rather than by looking.
-  {
-    id: 'se',
-    edges: { s: true, e: true },
-    label: 'bottom right corner',
-    className: 'bottom-0 right-0 size-icon-md cursor-nwse-resize',
-  },
-]
-
 type ChromeProps = {
   workspaceId: WorkspaceId
   tab: WorkspacePaneTab
   rect: FloatRect
 }
 
-type Gesture = { kind: 'move' } | { kind: 'resize'; edges: ResizeEdges }
-
 /**
- * The player's own chrome: a drag bar with the page title, who is driving it,
- * and the dock and close buttons, and a resize grip on every edge and corner.
+ * Laid over the miniature: the whole player is the handle that drags it, and a
+ * hover (or keyboard focus) shows Open in its middle, which takes the page to
+ * the browser pane, and a Close in its corner that puts the miniature away.
  *
- * The pane's full toolbar stays under it — this is deliberately a reduced
- * chrome, as the spec asks. The bar is `absolute` inside the floating panel,
- * and the page is pushed below it by the padding the panel carries.
+ * Nothing shows at rest (owner ruling 2026-10-10). The miniature is there to
+ * say an agent is looking at something, and a title bar, an address field and
+ * a row of page controls over a 320px picture of a page drowned out the page.
+ * Everything those controls did is one click away in the pane.
  */
 export function FloatingPlayerChrome({ workspaceId, tab, rect }: ChromeProps) {
   const updatePaneTab = useWorkspaceStore((s) => s.updatePaneTab)
   const setPaneTabFloating = useWorkspaceStore((s) => s.setPaneTabFloating)
   const dismissPaneTabFloat = useWorkspaceStore((s) => s.dismissPaneTabFloat)
-  const live = useBrowserLiveState(tab.id)
-  // The live rect during a gesture. Written straight to the store on pointer-up
-  // so no frame pays for a persisted-registry re-serialization; the same idiom
-  // the aside column's resize uses.
-  const gesture = useRef<(Gesture & { startX: number; startY: number; rect: FloatRect }) | null>(null)
+  // The live position during a drag. Written straight to the store on
+  // pointer-up so no frame pays for a persisted-registry re-serialization; the
+  // same idiom the aside column's resize uses.
+  const drag = useRef<{ startX: number; startY: number; rect: FloatRect } | null>(null)
 
-  const commit = useCallback(
-    (next: FloatRect) => {
-      updatePaneTab(workspaceId, tab.id, {
-        float: { x: next.left, y: next.top, width: next.width, height: next.height },
-      })
-    },
-    [updatePaneTab, workspaceId, tab.id],
-  )
-
-  const dock = useCallback(
+  const open = useCallback(
     () => setPaneTabFloating(workspaceId, tab.id, false),
     [setPaneTabFloating, workspaceId, tab.id],
   )
@@ -278,153 +179,106 @@ export function FloatingPlayerChrome({ workspaceId, tab, rect }: ChromeProps) {
   }, [dismissPaneTabFloat, workspaceId, tab.id])
 
   const onPointerDown = useCallback(
-    (next: Gesture) => (event: React.PointerEvent<HTMLElement>) => {
-      // Left button only: a right-click on the bar is a context menu, not a drag.
+    (event: React.PointerEvent<HTMLElement>) => {
+      // Left button only: a right-click is a context menu, not a drag.
       if (event.button !== 0) return
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)
-      gesture.current = { ...next, startX: event.clientX, startY: event.clientY, rect }
+      drag.current = { startX: event.clientX, startY: event.clientY, rect }
     },
     [rect],
   )
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    const current = gesture.current
+    const current = drag.current
     if (!current) return
-    const dx = event.clientX - current.startX
-    const dy = event.clientY - current.startY
-    const viewport = { width: window.innerWidth, height: window.innerHeight }
-    const next =
-      current.kind === 'move'
-        ? clampRect(
-            {
-              x: current.rect.left + dx,
-              y: current.rect.top + dy,
-              width: current.rect.width,
-              height: current.rect.height,
-            },
-            viewport,
-          )
-        : resizeFloatRect(current.rect, current.edges, dx, dy, viewport)
+    const next = clampRect(
+      {
+        x: current.rect.left + event.clientX - current.startX,
+        y: current.rect.top + event.clientY - current.startY,
+        width: current.rect.width,
+        height: current.rect.height,
+      },
+      { width: window.innerWidth, height: window.innerHeight },
+    )
     // The panel is the element being moved; writing straight to its style keeps
     // the drag at pointer speed instead of one store write per frame.
     const panel = event.currentTarget.closest('[role="tabpanel"]') as HTMLElement | null
     if (panel) {
       panel.style.left = `${next.left}px`
       panel.style.top = `${next.top}px`
-      panel.style.width = `${next.width}px`
-      panel.style.height = `${next.height}px`
     }
   }, [])
 
   const onPointerUp = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
-      const current = gesture.current
+      const current = drag.current
       if (!current) return
-      gesture.current = null
+      drag.current = null
       event.currentTarget.releasePointerCapture(event.pointerId)
       const panel = event.currentTarget.closest('[role="tabpanel"]') as HTMLElement | null
       if (!panel) return
       // `getBoundingClientRect`, not `offsetLeft`: a fixed element has no
-      // offsetParent, and the border box is what `left`/`top`/`width`/`height`
-      // were written as, so this round-trips exactly.
+      // offsetParent, and the border box is what `left`/`top` were written as,
+      // so this round-trips exactly.
       const box = panel.getBoundingClientRect()
-      commit({
-        left: Math.round(box.left),
-        top: Math.round(box.top),
-        width: Math.round(box.width),
-        height: Math.round(box.height),
+      updatePaneTab(workspaceId, tab.id, {
+        float: { x: Math.round(box.left), y: Math.round(box.top), width: rect.width, height: rect.height },
       })
     },
-    [commit],
+    [rect.height, rect.width, tab.id, updatePaneTab, workspaceId],
   )
 
-  // The bar's buttons own their own presses; without this a press on one
-  // starts a drag, and a double-click on one docks the player.
-  const stopBar = (event: React.SyntheticEvent) => event.stopPropagation()
+  // The buttons own their own presses; without this a press on one starts a
+  // drag, and a double-click on one opens the pane twice over.
+  const stopDrag = (event: React.SyntheticEvent) => event.stopPropagation()
 
   return (
-    <>
-      <div
-        // `cursor-grab` and the title make the bar read as the handle; the page
-        // below it is the guest and must keep its own pointer behaviour.
-        // Double-clicking it docks the player, the way double-clicking a
-        // window's title bar makes it the size it is meant to be.
-        className="absolute inset-x-0 top-0 z-[var(--z-float)] flex cursor-grab items-center gap-1 border-b border-[color:var(--border-subtle)] bg-[color:var(--bg-surface)] px-2 active:cursor-grabbing"
-        style={{ height: BAR_HEIGHT }}
-        onPointerDown={onPointerDown({ kind: 'move' })}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onDoubleClick={dock}
-      >
-        <span className="min-w-0 flex-1 truncate text-micro text-[color:var(--text-muted)]">
-          {tab.title || tab.url || 'Browser'}
-        </span>
-        {/* Who has the page, said the way the pane's toolbar says it. */}
-        {live?.controller === 'agent' ? (
-          <Badge tone="accent" ariaLabel="An agent is driving this page">
-            Agent
-          </Badge>
-        ) : null}
-        {live?.recording ? (
-          <span className="flex items-center gap-1" onPointerDown={stopBar} onDoubleClick={stopBar}>
-            <BrowserRecordingIndicator
-              recording={live.recording}
-              onStop={() => void window.api.browserStopRecording(tab.id)}
-            />
-          </span>
-        ) : null}
-        <Tooltip content="Dock in pane" placement="bottom">
-          <IconButton
-            size="3xs"
-            aria-label="Dock this page back in the pane"
-            onPointerDown={stopBar}
-            onDoubleClick={stopBar}
-            onClick={dock}
-          >
-            <svg viewBox="0 0 16 16" fill="none" className="icon-sm" aria-hidden="true">
-              <path
-                d="M3 3h10v10H3V3Zm7 0v10"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </IconButton>
-        </Tooltip>
-        <Tooltip content="Close" placement="bottom">
-          <CloseIconButton
-            size="3xs"
-            aria-label="Close the floating browser"
-            onPointerDown={stopBar}
-            onDoubleClick={stopBar}
-            onClick={close}
-          />
-        </Tooltip>
-      </div>
-      {RESIZE_HANDLES.map((handle) => (
-        <div
-          key={handle.id}
-          role="separator"
-          aria-label={`Resize the floating browser from its ${handle.label}`}
-          className={`absolute z-[var(--z-float)] ${handle.className}`}
-          onPointerDown={onPointerDown({ kind: 'resize', edges: handle.edges })}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+    <div
+      // Above the page, which is a picture here: it takes no pointer of its own
+      // (BrowserTab), so a press anywhere on the miniature is a drag.
+      // Double-clicking it opens the page, the way double-clicking a thumbnail
+      // opens what it shows.
+      className="group absolute inset-0 z-[var(--z-float)] cursor-grab active:cursor-grabbing"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onDoubleClick={open}
+    >
+      {/* No scrim: the page stays as bright under the pointer as at rest, and
+          the one action rides on top of it, as on a video thumbnail. */}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+        <FloatingButton
+          size="xs"
+          className="pointer-events-auto"
+          onPointerDown={stopDrag}
+          onDoubleClick={stopDrag}
+          onClick={open}
         >
-          {handle.id === 'se' ? (
-            <svg viewBox="0 0 16 16" fill="none" className="icon-sm text-[color:var(--text-subtle)]" aria-hidden="true">
-              <path d="M11 15L15 11M6 15L15 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          ) : null}
-        </div>
-      ))}
-    </>
+          <svg viewBox="0 0 16 16" fill="none" className="icon-xs shrink-0" aria-hidden="true">
+            <path
+              d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Open
+        </FloatingButton>
+        <span className="pointer-events-auto absolute right-1.5 top-1.5 rounded-[var(--radius-sm)] bg-[color:var(--composer-surface)]">
+          <Tooltip content="Close" placement="bottom">
+            <CloseIconButton
+              size="3xs"
+              aria-label="Close the floating browser"
+              onPointerDown={stopDrag}
+              onDoubleClick={stopDrag}
+              onClick={close}
+            />
+          </Tooltip>
+        </span>
+      </div>
+    </div>
   )
 }
-
-/** The padding the floating panel owes its chrome, so the page clears the bar. */
-export const FLOATING_PAGE_INSET = BAR_HEIGHT
