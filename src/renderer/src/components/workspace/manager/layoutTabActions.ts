@@ -5,6 +5,7 @@ import { convertNewAgentTabToAgent, addAgentTabAfter, addAgentTabTiled, getModel
 import type { Workspace } from '../../../types/workspace'
 import { TabNode, Actions, type Model, TabSetNode } from 'flexlayout-react'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
+import { rememberClosedLayoutTab } from '../../../utils/recentlyClosedTabs'
 
 // Where a spawn should land, and what it should start with. From the tab
 // strip's "+", `tabId` names that tab's node and `prompt` is what was typed on
@@ -163,6 +164,11 @@ export function closeActiveLayoutTab(workspaceId: string, terminalSessions: Term
   if (!(selectedNode instanceof TabNode) || !selectedNode.isEnableClose()) return false
 
   killTerminalForLayoutTab(workspaceId, selectedNode, terminalSessions)
+  rememberClosedLayoutTab(workspaceId, {
+    component: selectedNode.getComponent(),
+    config: selectedNode.getConfig(),
+    name: selectedNode.getName(),
+  })
   model.doAction(Actions.deleteTab(selectedNode.getId()))
   return true
 }
