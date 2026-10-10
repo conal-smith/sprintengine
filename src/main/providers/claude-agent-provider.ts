@@ -49,6 +49,7 @@ import {
   type ClaudeSpawnRequest,
   type WslClaudeTarget,
 } from './claude-wsl-child'
+import { raiseChildOomScore } from '../agent-oom-score'
 import { localLaunchToken } from './cli-host-child'
 import { launchIdentityOfEnv } from '../../server/core/gateway-launch-tokens'
 import { processIsRunning } from '../../server/platform/process-alive'
@@ -2029,6 +2030,8 @@ function spawnLocalChild(spawnInput: SpawnOptions): ChildProcess {
       if (child.pid === undefined) launch.revoke()
     })
   }
+  // On Linux the kernel's out-of-memory killer takes the agent before the app.
+  void raiseChildOomScore(child.pid)
   return child
 }
 

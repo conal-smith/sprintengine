@@ -54,6 +54,7 @@ import {
   revokeGatewayLaunchToken,
   type GatewayLaunchIdentity,
 } from '../../server/core/gateway-launch-tokens'
+import { RAISE_OOM_SCORE_SHELL_LINE, raiseChildOomScore } from '../agent-oom-score'
 import { argvToPosixShellCommand } from '../agent-launch-render'
 import { wslDistroArgs } from '../hosts/wsl-distro'
 import { cliSpawnTarget } from './cli-child-process'
@@ -150,6 +151,10 @@ export function wslCliLaunchArgs(input: {
   // of. The exported values pass through the profile into the CLI.
   const outer = [
     ...reads,
+    // The kernel's out-of-memory killer takes the agent before the app's
+    // server in the distribution; the `exec`s below keep this pid, so the CLI
+    // and everything it starts inherit the score (agent-oom-score.ts).
+    RAISE_OOM_SCORE_SHELL_LINE,
     'exec 57>&1 1>&2 58<&0 0</dev/null',
     `exec ${argvToPosixShellCommand(['bash', '-lic', inner, 'bash'])}`,
   ].join('\n')
@@ -321,6 +326,11 @@ export function spawnCliHostChild(
       if (child.pid === undefined) revoke()
     })
   }
+  // On Linux (This PC, or the Studio server on a WSL or SSH machine) the
+  // kernel's out-of-memory killer takes the agent before the app. A child in
+  // WSL started from Windows is `wsl.exe`, whose launch line raises it there
+  // (`wslCliLaunchArgs`). A stand-in spawn's pid names no process of ours.
+  if (!input.wsl && (deps.spawn ?? spawn) === spawn) void raiseChildOomScore(child.pid)
   if (plan.stdin) child.stdin.write(plan.stdin)
   return child
 }
