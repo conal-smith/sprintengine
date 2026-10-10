@@ -148,3 +148,48 @@ test('window-ipc', async () => {
 
   await suiteRun
 })
+
+// The diff window's "Add to chat" (`window:diff-to-chat`): the same walk as
+// the dock, and the input main refuses before any window is asked.
+
+test('Add to chat is offered one window at a time, and answers the window that took it', async () => {
+  const { offerToFirstTaker } = await import('./dock-diff')
+  type Request = { requestId: string; workspaceId: string; text: string }
+  const listeners = new Set<(from: unknown, requestId: unknown) => void>()
+  const asked: string[] = []
+  const target = (id: string, takes: boolean) => ({
+    id,
+    isDestroyed: () => false,
+    send: (request: Request) => {
+      asked.push(`${id}:${request.text}`)
+      // A window that holds no chat for the workspace stays silent.
+      if (takes) queueMicrotask(() => [...listeners].forEach((listener) => listener(id, request.requestId)))
+    },
+  })
+  const taker = await offerToFirstTaker<Request>({
+    targets: [target('front', false), target('back', true), target('third', true)],
+    payload: { workspaceId: 'ws-1', text: '> `src/a.ts:L3`' },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    waitMs: 20,
+    totalMs: 200,
+  })
+  assert.equal(taker?.id, 'back', 'the window that set it into its chat, which main brings forward')
+  assert.deepEqual(asked, ['front:> `src/a.ts:L3`', 'back:> `src/a.ts:L3`'], 'and nobody after it')
+})
+
+test('Add to chat takes a workspace and bounded text, and nothing else', async () => {
+  const { readDiffToChatInput } = await import('./dock-diff')
+  assert.deepEqual(readDiffToChatInput({ workspaceId: 'ws-1', text: 'quote' }, 100), {
+    workspaceId: 'ws-1',
+    text: 'quote',
+  })
+  assert.equal(readDiffToChatInput({ workspaceId: 'ws-1', text: 'x'.repeat(101) }, 100), null, 'past the ceiling')
+  assert.equal(readDiffToChatInput({ workspaceId: 'ws-1', text: '   ' }, 100), null, 'nothing to say')
+  assert.equal(readDiffToChatInput({ workspaceId: '', text: 'quote' }, 100), null)
+  assert.equal(readDiffToChatInput({ workspaceId: 7, text: 'quote' }, 100), null)
+  assert.equal(readDiffToChatInput({ workspaceId: 'ws-1', text: { evil: true } }, 100), null)
+  assert.equal(readDiffToChatInput(null, 100), null)
+})

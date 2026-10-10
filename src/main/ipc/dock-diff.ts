@@ -34,12 +34,12 @@ export type DockDiffRequest = {
 }
 
 /** One window that might hold the workspace, as this protocol needs it. */
-export type DockDiffTarget = {
+export type DockDiffTarget<Request = DockDiffRequest> = {
   /** Identity, compared with the ack's sender. Opaque here — a BrowserWindow
    *  in the app, a string in a test. */
   id: unknown
   isDestroyed(): boolean
-  send(request: DockDiffRequest): void
+  send(request: Request): void
 }
 
 /** Called with the window an ack came FROM and the id it echoed. Returns the
@@ -57,10 +57,10 @@ export const DOCK_DIFF_ACK_WAIT_MS = 700
  *  diff window is told nobody took it and stays up saying so. */
 export const DOCK_DIFF_ACK_TOTAL_MS = 2100
 
-export type DockDiffOffer = {
+export type DockDiffOffer<Request extends { requestId: string } = DockDiffRequest> = {
   /** In the order they should be asked: most likely holder first. */
-  targets: DockDiffTarget[]
-  payload: Omit<DockDiffRequest, 'requestId'>
+  targets: DockDiffTarget<Request>[]
+  payload: Omit<Request, 'requestId'>
   subscribe: DockDiffAckSubscribe
   /** Overridable so a test does not have to wait out a real second. */
   waitMs?: number
@@ -77,6 +77,18 @@ export type DockDiffOffer = {
  * windows would have opened their tab before either answer came back.
  */
 export async function offerDockDiff(offer: DockDiffOffer): Promise<boolean> {
+  return (await offerToFirstTaker(offer)) !== null
+}
+
+/**
+ * The same walk for any hand-off a window acks (the diff window's "Add to
+ * chat" is the other): each window in turn, until one says it took it.
+ * Answers the target that did, so the caller can bring that window forward,
+ * or null when none did.
+ */
+export async function offerToFirstTaker<Request extends { requestId: string }>(
+  offer: DockDiffOffer<Request>,
+): Promise<DockDiffTarget<Request> | null> {
   const newRequestId = offer.newRequestId ?? randomUUID
   const now = offer.now ?? Date.now
   const perWindow = offer.waitMs ?? DOCK_DIFF_ACK_WAIT_MS
@@ -87,16 +99,16 @@ export async function offerDockDiff(offer: DockDiffOffer): Promise<boolean> {
     if (target.isDestroyed()) continue
     const remaining = deadline - now()
     if (remaining <= 0) break
-    const request: DockDiffRequest = { ...offer.payload, requestId: newRequestId() }
+    const request = { ...offer.payload, requestId: newRequestId() } as Request
     const took = await askOneWindow(target, request, offer.subscribe, Math.min(perWindow, remaining))
-    if (took) return true
+    if (took) return target
   }
-  return false
+  return null
 }
 
-function askOneWindow(
-  target: DockDiffTarget,
-  request: DockDiffRequest,
+function askOneWindow<Request extends { requestId: string }>(
+  target: DockDiffTarget<Request>,
+  request: Request,
   subscribe: DockDiffAckSubscribe,
   waitMs: number,
 ): Promise<boolean> {
@@ -128,4 +140,21 @@ function askOneWindow(
     timer = setTimeout(() => settle(false), waitMs)
     target.send(request)
   })
+}
+
+/** What the receiving renderer is sent for the diff window's "Add to chat". */
+export type DiffToChatRequest = { requestId: string; workspaceId: string; text: string }
+
+/**
+ * The "Add to chat" input as main takes it from a renderer: a workspace id and
+ * some text, both strings, the text within the hand-off's ceiling. Anything
+ * else is refused before a window is asked: the receiving window sets this
+ * text into a person's draft, so it has to be text, and a bounded amount.
+ */
+export function readDiffToChatInput(input: unknown, maxChars: number): Omit<DiffToChatRequest, 'requestId'> | null {
+  if (!input || typeof input !== 'object') return null
+  const { workspaceId, text } = input as { workspaceId?: unknown; text?: unknown }
+  if (typeof workspaceId !== 'string' || !workspaceId.trim() || workspaceId.length > 200) return null
+  if (typeof text !== 'string' || !text.trim() || text.length > maxChars) return null
+  return { workspaceId, text }
 }

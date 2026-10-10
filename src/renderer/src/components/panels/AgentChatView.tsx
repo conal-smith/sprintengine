@@ -2352,6 +2352,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // composer's caret was, as a block of its own, and the caret waits on a fresh
   // line under it. The field keeps its caret while focus is in the transcript.
   const transcriptRef = useRef<HTMLDivElement | null>(null)
+  // Declared below; read through a ref by the window's hand-offs (mountedChatViews).
+  const quoteIntoComposerRef = useRef<(markdown: string) => void>(() => undefined)
   const quoteIntoComposer = useCallback(
     (markdown: string) => {
       const field = composerRef.current
@@ -2363,6 +2365,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     },
     [setDraft],
   )
+  quoteIntoComposerRef.current = quoteIntoComposer
   // Replay: the conversation played back from its first message, drawn over
   // this view (agentChat/conversationReplayView). It reads the whole log, so
   // the turns this view has not paged in yet are fetched first; leaving, or
@@ -2522,6 +2525,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     () =>
       registerMountedChatView({
         workspaceId,
+        agentId,
         isFocused: () => Boolean(shellRef.current?.contains(document.activeElement)),
         toggleModelPicker: () => toggleModelPickerRef.current(),
         cycleEffort: () => cycleEffortRef.current(),
@@ -2529,10 +2533,14 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         stepTurn,
         startReplay: () => startReplayRef.current(),
         quoteSelection: () => quoteSelectionRef.current(),
+        insertQuote: (text) => {
+          quoteIntoComposerRef.current(text)
+          composerRef.current?.focus()
+        },
         restartSession: () => void restartSessionRef.current(),
         openFind: openChatFind,
       }),
-    [workspaceId, stepTurn, openChatFind],
+    [workspaceId, agentId, stepTurn, openChatFind],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]
