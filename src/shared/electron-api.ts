@@ -267,6 +267,7 @@ import type { CliModelDiscoveryInput, CliModelDiscoveryResult } from './ipc/cli-
 import type { ConversationCommandsRequest } from './ipc/conversation-commands'
 import type { ConversationCommandCatalog } from './conversation/commands'
 import type { UsageLimitsState } from './usage-limits'
+import type { UsageReportRequest, UsageReportResult } from './usage-report'
 import type { UsageLimitResumeState, UsageLimitResumeUpdate } from './usage-limit-resume'
 import type { ScheduledMessagesState, ScheduledMessageUpdate } from './scheduled-messages'
 import type {
@@ -1634,6 +1635,9 @@ export type ElectronApi = {
   // The chats a usage limit stopped, with the resume each has scheduled, and
   // the setting that schedules one for every such chat (usage-limits/resume.ts).
   usageLimitResumes: () => Promise<UsageLimitResumeState>
+  // The usage dashboard's priced report of every agent's token use on this
+  // machine over a window (src/main/usage).
+  usageReport: (request: UsageReportRequest) => Promise<UsageReportResult>
   updateUsageLimitResume: (update: UsageLimitResumeUpdate) => Promise<UsageLimitResumeState>
   onUsageLimitResumesChanged: (listener: (state: UsageLimitResumeState) => void) => () => void
   // The messages a person scheduled into a chat from its composer's "+", sent

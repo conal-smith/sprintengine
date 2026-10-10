@@ -1810,9 +1810,13 @@ export function createRendererHost(): RendererKernel {
           // Core Settings never registers here (it must not be module-gated —
           // its own enablement toggles live inside it), so without this
           // reservation a module could claim the id, put a second glyph in the
-          // cluster, and have it open core Settings.
+          // cluster, and have it open core Settings. The usage dashboard opens
+          // from the same cluster and is reserved for the same reason.
           if (definition.id === 'settings') {
             throw new Error('Modal surface id "settings" is reserved for the app\'s own Settings.')
+          }
+          if (definition.id === 'usage') {
+            throw new Error('Modal surface id "usage" is reserved for the app\'s own usage dashboard.')
           }
           if (definition.label.trim().length === 0) {
             throw new Error(`Modal surface "${definition.id}" must have a non-empty label.`)

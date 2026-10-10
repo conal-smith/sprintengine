@@ -38,7 +38,7 @@ export type UsageRow = {
 }
 
 export type UsageSource = {
-  id: 'studio' | 'claude-code' | 'codex'
+  id: 'studio' | 'claude-code' | 'codex' | 'opencode' | 'gemini' | 'grok'
   found: number
   error: string | null
 }

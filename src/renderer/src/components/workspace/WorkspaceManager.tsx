@@ -312,6 +312,16 @@ const CORE_SETTINGS_MODAL_SURFACE = {
   label: 'Settings',
   Component: SettingsModalSurface,
 } as const
+// The usage dashboard (owner ruling 2026-10-10): the app's own like Settings,
+// opened from the chart glyph above the account at the foot of the rail, and
+// never module-gated. Its id is reserved in the registry the same way.
+const UsageDashboard = React.lazy(() => import('../usage/UsageDashboard'))
+const CORE_USAGE_MODAL_SURFACE = {
+  id: 'usage',
+  moduleId: 'core',
+  label: 'Usage',
+  Component: UsageDashboard,
+} as const
 // The Diff popout — the pane's Diff tab floated in a workbench modal — was a
 // third host for one viewer and is gone (git-commit-window T3, 2026-09-09). A
 // diff opens in its own OS window or in the pane's tab; the `diff` modal
@@ -520,6 +530,8 @@ export default function WorkspaceManager() {
   // it which workspace it is acting on.
   const activeModalSurfaceWorkspaceId = useWorkspaceStore((s) => s.activeModalSurfaceWorkspaceId)
   const closeModalSurface = useWorkspaceStore((s) => s.closeModalSurface)
+  const openModalSurface = useWorkspaceStore((s) => s.openModalSurface)
+  const usageOpen = activeModalSurface === 'usage'
   // The door-routed full-page surface for this window (global-surfaces epic 1704):
   // its registered id, or null when a workspace owns the card region.
   const activeGlobalSurface = useWorkspaceStore((s) => s.activeGlobalSurface)
@@ -954,6 +966,7 @@ export default function WorkspaceManager() {
   const activeModalSurfaceEntry = useMemo(() => {
     if (!activeModalSurface) return null
     if (activeModalSurface === 'settings') return CORE_SETTINGS_MODAL_SURFACE
+    if (activeModalSurface === 'usage') return CORE_USAGE_MODAL_SURFACE
     return resolveActiveModalSurface(
       activeModalSurface,
       (id) => getRendererHost().getModalSurface(id),
@@ -3989,6 +4002,10 @@ export default function WorkspaceManager() {
         setDiagnosticsOpen(true)
         return true
       }
+      if (commandId === 'usage.show') {
+        openModalSurface('usage')
+        return true
+      }
       if (commandId === 'usage.limits.show') {
         setUsageLimitsOpen(true)
         return true
@@ -4312,6 +4329,7 @@ export default function WorkspaceManager() {
       windowActiveWorkspaceId,
       activeGlobalSurface,
       openGlobalSurface,
+      openModalSurface,
       closeWorkspaceById,
       railWorkspaces,
       visibleWorkspaceIdSet,
@@ -4908,6 +4926,8 @@ export default function WorkspaceManager() {
                 openSettings={openSettings}
                 settingsOpen={settingsOpen}
                 settingsBadge={settingsUpdateBadges.rail}
+                usageOpen={usageOpen}
+                openUsage={() => (usageOpen ? closeModalSurface() : openModalSurface('usage'))}
               />
             }
           />

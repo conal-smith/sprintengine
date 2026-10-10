@@ -30,6 +30,7 @@ import { registerUsageLimitResumeIpc } from '../../main/ipc/usage-limit-resume-i
 import { registerScheduledMessagesIpc } from '../../main/ipc/scheduled-messages-ipc'
 import { registerTextGenerationSettingsIpc } from '../../main/ipc/text-generation-settings-ipc'
 import { registerUsageLimitsIpc } from '../../main/ipc/usage-limits-ipc'
+import { registerUsageIpc } from '../../main/ipc/usage-ipc'
 import { registerWorkspaceBackupIpc } from '../../main/ipc/workspace-backup-ipc'
 import { registerWorkspaceSyncIpc } from '../../main/ipc/workspace-sync-ipc'
 import type { AgentLaunchSettingsStore } from '../../main/launch-settings-store'
@@ -49,9 +50,10 @@ import type { StudioGateway } from '../core/studio-gateway'
 // What is here: the workspace bus and registry hydration, launch settings and
 // machines, the gateway's settings and the tailnet and mesh, the paired local
 // apps, workspace backups, model discovery, the composer's command lists,
-// the subscription usage limits and the resumes after them, backlog files,
-// provider credentials and the GitHub token, and the chats, with the copy of
-// the model-written titles setting the server titles them by.
+// the subscription usage limits and the resumes after them, the usage
+// dashboard's report, backlog files, provider credentials and the GitHub
+// token, and the chats, with the copy of the model-written titles setting the
+// server titles them by.
 // What is not: anything that acts on a window, a terminal or the shell's own
 // caches (the git panel, the file explorer, skills and the marketplace,
 // modules' enablement and trust), which stays with the shell until phase 10.
@@ -110,6 +112,11 @@ export function registerServerDomainIpc(registry: IpcRegistryLike, deps: ServerD
   registerUsageLimitsIpc(ipc, { userDataDir: dataDir() })
   // The chats a usage limit stopped, and the resume each can have when it resets.
   registerUsageLimitResumeIpc(ipc, core.usageLimitResumes)
+  // Every agent's token use on this machine, priced, for the usage dashboard.
+  registerUsageIpc(ipc, {
+    dataDir,
+    getWorkspaces: () => core.workspaceSyncService.getSnapshot().state.workspaces,
+  })
   // The messages a person scheduled into a chat, sent when their time comes.
   registerScheduledMessagesIpc(ipc, core.scheduledMessages)
   registerLaunchSettingsIpc(ipc, { launchSettings: core.agentLaunchSettings })

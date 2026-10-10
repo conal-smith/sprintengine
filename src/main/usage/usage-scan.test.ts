@@ -252,8 +252,185 @@ test('a missing source is empty, not an error', async () => {
       ['studio', 0, null],
       ['claude-code', 0, null],
       ['codex', 0, null],
+      ['opencode', 0, null],
+      ['gemini', 0, null],
+      ['grok', 0, null],
     ],
   )
+})
+
+const sum = (entry: UsageCacheEntry, index: 3 | 4 | 5 | 6 | 7 | 8): number =>
+  entry.buckets.reduce((total, bucket) => total + (bucket[index] as number), 0)
+
+test("OpenCode's database is read a session at a time, with its own price kept", async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  roots.opencodeData = join(home, 'opencode')
+  await mkdir(roots.opencodeData, { recursive: true })
+  const db = new DatabaseSync(join(roots.opencodeData, 'opencode.db'))
+  db.exec(`CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`)
+  db.prepare('INSERT INTO session VALUES (?, ?, ?)').run('ses_1', 'Fix the parser', join(home, 'repo'))
+  const message = (id: string, data: Record<string, unknown>, minutes: number) =>
+    db
+      .prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)')
+      .run(id, 'ses_1', T0 + minutes * 60_000, T0 + minutes * 60_000, JSON.stringify(data))
+  message('msg_u', { role: 'user', time: { created: T0 } }, 0)
+  message(
+    'msg_a',
+    {
+      role: 'assistant',
+      modelID: 'claude-sonnet-4-5',
+      providerID: 'anthropic',
+      cost: 0.42,
+      tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 1000, write: 50 } },
+      time: { created: T0 + 60_000 },
+    },
+    1,
+  )
+  message(
+    'msg_b',
+    {
+      role: 'assistant',
+      modelID: 'big-pickle',
+      cost: 0,
+      tokens: { input: 7, output: 3, cache: { read: 0, write: 0 } },
+    },
+    2,
+  )
+  db.close()
+
+  const first = await scan()
+  const entry = first.entries.find((candidate) => candidate.src === 'opencode')!
+  assert.equal(entry.key, 'opencode:opencode.db/ses_1')
+  assert.equal(entry.providerId, 'opencode-agent')
+  assert.equal(entry.sessionId, 'ses_1')
+  assert.equal(entry.title, 'Fix the parser')
+  assert.equal(entry.cwd, join(home, 'repo'))
+  assert.deepEqual(
+    entry.buckets.map((bucket) => bucket.slice(1)).sort(),
+    [
+      // Reasoning is billed as output; the price OpenCode wrote is kept.
+      ['big-pickle', '', 7, 3, 0, 0, 1, 0],
+      ['claude-sonnet-4-5', '', 100, 25, 1000, 50, 1, 0.42],
+    ].sort(),
+  )
+
+  // Unchanged, the session is not read again.
+  const previous = Object.fromEntries(first.entries.map((candidate) => [candidate.key, candidate.fp]))
+  const second = await scan(previous)
+  assert.equal(second.result.changed, 0)
+})
+
+test("an older OpenCode's per-message files are read by session folder", async () => {
+  roots.opencodeData = join(home, 'opencode')
+  const dir = join(roots.opencodeData, 'storage', 'message', 'ses_old')
+  await mkdir(dir, { recursive: true })
+  await mkdir(join(roots.opencodeData, 'storage', 'session', 'proj'), { recursive: true })
+  await writeFile(
+    join(roots.opencodeData, 'storage', 'session', 'proj', 'ses_old.json'),
+    JSON.stringify({ id: 'ses_old', title: 'Old session', directory: join(home, 'repo') }),
+  )
+  await writeFile(
+    join(dir, 'msg_1.json'),
+    JSON.stringify({
+      role: 'assistant',
+      modelID: 'gpt-5',
+      tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 4, write: 0 } },
+      time: { created: T0 },
+    }),
+  )
+  const { entries } = await scan()
+  const entry = entries.find((candidate) => candidate.src === 'opencode')!
+  assert.equal(entry.sessionId, 'ses_old')
+  assert.equal(entry.title, 'Old session')
+  assert.deepEqual(entry.buckets[0]!.slice(1), ['gpt-5', '', 10, 2, 4, 0, 1, 0])
+})
+
+test('a Gemini CLI recording counts each reply once, cached input apart from fresh', async () => {
+  roots.geminiHome = join(home, '.gemini')
+  const chats = join(roots.geminiHome, 'tmp', 'abc123', 'chats')
+  await mkdir(chats, { recursive: true })
+  await writeFile(
+    join(chats, 'session-2026-10-08T09-15-aaaa.json'),
+    JSON.stringify({
+      sessionId: 'gem-1',
+      messages: [
+        { id: 'u1', type: 'user', timestamp: at(0), content: 'Explain the build\nplease' },
+        {
+          id: 'g1',
+          type: 'gemini',
+          model: 'gemini-2.5-pro',
+          timestamp: at(1),
+          tokens: { input: 1200, output: 80, cached: 1000, thoughts: 20, tool: 0, total: 1300 },
+        },
+      ],
+    }),
+  )
+  const { entries, result } = await scan()
+  assert.equal(result.sources.find((source) => source.id === 'gemini')?.found, 1)
+  const entry = entries.find((candidate) => candidate.src === 'gemini')!
+  assert.equal(entry.sessionId, 'gem-1')
+  assert.equal(entry.title, 'Explain the build')
+  assert.equal(entry.providerId, 'gemini')
+  assert.deepEqual(entry.buckets[0]!.slice(1), ['gemini-2.5-pro', '', 200, 100, 1000, 0, 1, 0])
+})
+
+test("a Grok session's completed turns are counted per model, at Grok's own price", async () => {
+  roots.grokHome = join(home, '.grok')
+  const cwd = join(home, 'repo')
+  const dir = join(roots.grokHome, 'sessions', encodeURIComponent(cwd), '01a0-session')
+  await mkdir(dir, { recursive: true })
+  await writeFile(
+    join(dir, 'summary.json'),
+    JSON.stringify({ session_summary: 'Tidy the tests', current_model_id: 'grok-4.6' }),
+  )
+  const turn = (promptId: string, usage: Record<string, unknown>) => ({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: '01a0-session',
+      update: { sessionUpdate: 'turn_completed', promptId, usage },
+      _meta: { agentTimestampMs: T0 },
+    },
+  })
+  await writeFile(
+    join(dir, 'updates.jsonl'),
+    jsonl([
+      { params: { update: { sessionUpdate: 'agent_message_chunk' } } },
+      turn('p1', {
+        inputTokens: 500,
+        cachedReadTokens: 400,
+        cacheCreationTokens: 0,
+        outputTokens: 30,
+        costUsdTicks: 5e8,
+      }),
+      // A turn reported twice is counted once.
+      turn('p1', {
+        inputTokens: 500,
+        cachedReadTokens: 400,
+        cacheCreationTokens: 0,
+        outputTokens: 30,
+        costUsdTicks: 5e8,
+      }),
+      turn('p2', {
+        modelUsage: {
+          'grok-4.6': { inputTokens: 100, cachedReadTokens: 0, outputTokens: 10, costUsdTicks: 1e8 },
+          'grok-code-fast': { inputTokens: 50, cachedReadTokens: 20, outputTokens: 5, costUsdTicks: 0 },
+        },
+      }),
+    ]),
+  )
+  const { entries } = await scan()
+  const entry = entries.find((candidate) => candidate.src === 'grok')!
+  assert.equal(entry.providerId, 'grok-agent')
+  assert.equal(entry.sessionId, '01a0-session')
+  assert.equal(entry.cwd, cwd)
+  assert.equal(entry.title, 'Tidy the tests')
+  assert.equal(sum(entry, 3), 100 + 100 + 30)
+  assert.equal(sum(entry, 5), 400 + 20)
+  assert.equal(sum(entry, 7), 3)
+  assert.ok(Math.abs(sum(entry, 8) - 0.06) < 1e-9)
+  assert.deepEqual(entry.buckets.map((bucket) => bucket[1]).sort(), ['grok-4.6', 'grok-code-fast'])
 })
 
 test('repositoryRoot follows a linked worktree back to its repository', async () => {
