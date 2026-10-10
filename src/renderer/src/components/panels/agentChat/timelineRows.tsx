@@ -1146,8 +1146,21 @@ export function ResolvedDecisionRow({ entry }: { entry: Extract<TranscriptEntry,
 
 // Live status line while a turn streams: the latest step verb shimmers quietly
 // (plain muted text under prefers-reduced-motion).
-export function WorkingTimelineRow({ row }: { row: Extract<ConversationTimelineRow, { kind: 'working' }> }) {
+export function WorkingTimelineRow({
+  row,
+  details,
+}: {
+  row: Extract<ConversationTimelineRow, { kind: 'working' }>
+  /**
+   * What the line is waiting on, folded under it: a New chat's setup (its
+   * worktree, the install, the agent starting), there for whoever asks and
+   * out of the way of everyone else.
+   */
+  details?: React.ReactNode
+}) {
   const ref = useRef<HTMLDivElement>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsId = useId()
   useLiveRowMotion(ref, true)
   const openAgents = useOpenAgentsPane()
   const context = useConversationLinkContext()
@@ -1171,6 +1184,21 @@ export function WorkingTimelineRow({ row }: { row: Extract<ConversationTimelineR
           </span>
         </span>
         {row.startedAt !== undefined ? <LiveElapsed startedAt={row.startedAt} /> : null}
+        {details ? (
+          <GhostButton
+            size="inline"
+            tone="subtle"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            aria-label={detailsOpen ? 'Hide what it is doing' : 'Show what it is doing'}
+            onClick={() => setDetailsOpen((open) => !open)}
+            className="group/fold self-center"
+          >
+            <ChevronRightGlyph
+              className={`icon-xs shrink-0 text-[color:var(--text-disabled)] transition-transform group-hover/fold:text-[color:var(--text-subtle)] ${detailsOpen ? 'rotate-90' : ''}`}
+            />
+          </GhostButton>
+        ) : null}
         {row.agents && openAgents ? (
           <LinkButton ink="quiet" onClick={() => openAgents(null)}>
             See agents
@@ -1189,6 +1217,11 @@ export function WorkingTimelineRow({ row }: { row: Extract<ConversationTimelineR
             <ThoughtGlyph />
           </span>
           <span className="min-w-0 truncate">{thought}</span>
+        </div>
+      ) : null}
+      {details ? (
+        <div id={detailsId} hidden={!detailsOpen} className="mt-1" data-working-details="">
+          {detailsOpen ? details : null}
         </div>
       ) : null}
     </div>

@@ -289,3 +289,45 @@ test('an extension starts in its own folder, needs no project, and counts that f
   assert.deepEqual(picked.started, [{ kind: 'conversation', folderPath: '/Users/dev/code/weekly-summary' }])
   assert.deepEqual(picked.projectUses(), ['/Users/dev/code/weekly-summary'], 'not the project the door was on')
 })
+
+test('a chat whose worktree was made while New chat was open starts in it at once, with nothing pending', async () => {
+  const { host, started, opened, prepared, closed, worktreesMade } = harness()
+  const ready: NewChatWorktreeResult = {
+    ok: true,
+    folderPath: '/pool/pool-01',
+    worktree: { branch: 'agent/quiet-otter-ab12', baseRef: 'origin/main', repoRoot: PROJECT },
+  }
+  const asked: Array<[string, string]> = []
+  host.takeReadyWorktree = (folder, name) => {
+    asked.push([folder, name])
+    return ready.ok ? ready : null
+  }
+  const created = await confirmNewChatWith(host, {
+    confirm: { ...CHAT_CONFIRM, worktree: { name: '' } },
+    scopedFolder: PROJECT,
+    startupPrompt: 'fix the login',
+  })
+  assert.equal(created, 'ws-conversation')
+  assert.deepEqual(asked, [[PROJECT, '']])
+  assert.equal(worktreesMade(), 0)
+  assert.deepEqual(started, [{ kind: 'conversation', folderPath: '/pool/pool-01' }], 'in the worktree from the start')
+  assert.deepEqual(opened, [{ worktree: ready.ok ? ready.worktree : null, pending: undefined }])
+  assert.deepEqual(prepared, [], 'nothing left to make')
+  assert.equal(closed(), 1)
+})
+
+test('a terminal agent takes the worktree made while New chat was open instead of waiting on a new one', async () => {
+  const { host, started, worktreesMade } = harness()
+  host.takeReadyWorktree = () => ({
+    ok: true,
+    folderPath: '/pool/pool-02',
+    worktree: { branch: 'agent/x', baseRef: 'origin/main', repoRoot: PROJECT },
+  })
+  await confirmNewChatWith(host, {
+    confirm: { kind: 'general', cli: 'claude', worktree: { name: '' } } as never,
+    scopedFolder: PROJECT,
+    startupPrompt: 'fix the login',
+  })
+  assert.equal(worktreesMade(), 0)
+  assert.deepEqual(started, [{ kind: 'general', folderPath: '/pool/pool-02' }])
+})

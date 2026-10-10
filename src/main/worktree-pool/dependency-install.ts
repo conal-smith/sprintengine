@@ -408,6 +408,8 @@ export type DependencyInstallInput = {
   path: string
   branch: string
   setting: WorktreeDependencyInstallSetting | null
+  /** Shown by its caller rather than toasted (`WorktreeDependencyInstallView.quiet`). */
+  quiet?: boolean
 }
 
 export type DependencyInstaller = ReturnType<typeof createDependencyInstaller>
@@ -493,6 +495,7 @@ export function createDependencyInstaller(deps: DependencyInstallerDeps) {
       lastLine: null,
       output: null,
       exitCode: null,
+      ...(input.quiet ? { quiet: true } : {}),
     }
     const abort = new AbortController()
     const emit = () => deps.onChange?.({ ...view })

@@ -160,6 +160,15 @@ were settled:
 - **No idle cost.** No timers refresh or warm anything. A slot is reset to the
   base when it is leased, not when it is returned. The only timer is the
   instance lock's heartbeat, which touches one file.
+- **Prepared on intent (2026-10-09).** New chat with Worktree on and no name
+  typed leases a slot for the chat it is about to start (and installs, when
+  the project opted in) a moment after it settles on a project, so Enter
+  finds it made; that settles question 2. Turning Worktree off, moving to
+  another project or closing New chat gives it back, clean, and its empty
+  branch goes at the next sweep. Still no idle cost: nothing is prepared
+  unless New chat is open on a project. A slot kept past 15 minutes is given
+  back on Enter rather than hand out a stale base
+  (`renderer/src/utils/newChatWorktree.ts`).
 - **One way in.** `createGitWorktree({ fromPool: true })` leases a slot when
   the process keeps a pool (the desktop's main), and otherwise creates a fresh
   worktree from the same base (the out-of-process server, a WSL machine, the

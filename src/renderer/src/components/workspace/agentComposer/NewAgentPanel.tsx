@@ -89,6 +89,7 @@ import { showToast } from '../../../store/toastStore'
 import { launchCommandLineKey, launchPreviewRequest, type LaunchCommandLineState } from './launchCommandLine'
 import { drawSuggestions, newSuggestionSeed } from './suggestionBank'
 import { WorktreeChip } from './WorktreeChip'
+import { useNewChatWorktreeReservation } from './useNewChatWorktreeReservation'
 import { ScheduleFailureTray, ScheduleTag } from './schedule/SchedulePicker'
 import { StartAsGlyph, startAsLabel, type StartAs } from './ComposerOptionsMenu'
 import { ComposerPlusMenu } from './ComposerPlusMenu'
@@ -1335,6 +1336,15 @@ export default function NewAgentPanel({
     setRemoteWorktreePick({ connectionId: remoteConnectionId, workspaceId: remotePickedId, path })
     setWorktreeName(null)
   }
+  // The worktree a chat started here will run in is made while the person
+  // types, so Enter finds it ready: Worktree on with no name typed (a name is
+  // its own branch, made on Enter), for a chat that starts now. A paired
+  // machine cuts its own, so only a chat on this machine reserves one.
+  useNewChatWorktreeReservation({
+    enabled: worktreeOffered && !remoteTarget && composer.worktreeName === '' && !scheduled && !editing,
+    folderPath: workspaceRoot,
+    hostId: hostChoosable ? hostId : null,
+  })
   // The chip starts on at the door, so a launch it is not offered for drops
   // the worktree rather than carrying one nobody could see: a folder that is
   // not a git repository would fail to make it and keep the chat from

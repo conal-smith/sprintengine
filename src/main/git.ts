@@ -229,6 +229,8 @@ export type GitWorktreeCreateInput = {
    * long before an install ends. A window's own launch always waits.
    */
   dependencyInstall?: 'wait' | 'start'
+  /** Its caller shows the install (New chat's chat): marked `quiet`, so no window toasts it unless it fails. */
+  quietInstall?: boolean
 }
 
 /** A created worktree, and what it was forked from. */
@@ -602,7 +604,7 @@ async function createAgentWorktreeFromPool(
 async function withDependencyInstall(
   created: GitWorktreeCreated,
   repoRoot: string,
-  input: Pick<GitWorktreeCreateInput, 'branchName' | 'dependencyInstall'>,
+  input: Pick<GitWorktreeCreateInput, 'branchName' | 'dependencyInstall' | 'quietInstall'>,
 ): Promise<GitWorktreeCreated> {
   const installer = activeDependencyInstaller()
   const pool = activeWorktreePool()
@@ -612,6 +614,7 @@ async function withDependencyInstall(
     path: created.path,
     branch: created.branch ?? input.branchName,
     setting: dependencyInstallSettingFor(await pool.getSettings(), repoRoot),
+    ...(input.quietInstall ? { quiet: true } : {}),
   }
   const dependencyInstall =
     input.dependencyInstall === 'start'

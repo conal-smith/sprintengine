@@ -134,6 +134,22 @@ test('a first lease installs and records; the next one with the same lockfile sk
   assert.equal(calls.length, 1, 'unchanged lockfile: no install')
 })
 
+test('an install its caller shows is marked quiet in every view the windows hear', async () => {
+  const { run } = fakeRunner()
+  const views: WorktreeDependencyInstallView[] = []
+  const ended = await installer(run, views).prepare({ ...lease(), quiet: true })
+  assert.equal(ended?.quiet, true)
+  assert.deepEqual(
+    views.map((view) => view.quiet),
+    [true, true],
+  )
+  const { run: again } = fakeRunner()
+  const loud: WorktreeDependencyInstallView[] = []
+  await rm(join(adminDir, DEPENDENCY_INSTALL_RECORD), { force: true })
+  await installer(again, loud).prepare(lease())
+  assert.equal(loud[0]?.quiet, undefined, 'any other install is toasted as before')
+})
+
 test('a changed lockfile installs again and records the new one', async () => {
   const { run, calls } = fakeRunner()
   const deps = installer(run)
