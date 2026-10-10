@@ -9,6 +9,7 @@
  * re-exports these, so every existing import site keeps working unchanged.
  */
 import { basename, parentPath, pathJoin, pathSeparatorFor, trimPath } from './paths'
+import { projectlessChatsRootOf } from './projectless-chats'
 
 /**
  * Directory name every worktree container is nested under. Named so the
@@ -93,6 +94,12 @@ export function workspaceProjectRootOf(record: {
   const folderPath = record.folderPath?.trim() || null
   const recorded = record.worktree?.repoRoot?.trim() || null
   if (!folderPath) return recorded ? peelToRepoRoot(recorded) : null
+  // A chat started without a project files under the one "No project" root
+  // its folder was made in, not under a header of its own per chat.
+  if (!recorded) {
+    const projectless = projectlessChatsRootOf(folderPath)
+    if (projectless) return projectless
+  }
   return peelToRepoRoot(recorded || folderPath)
 }
 

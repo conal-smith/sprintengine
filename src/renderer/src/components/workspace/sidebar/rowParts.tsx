@@ -8,7 +8,8 @@ import { useMachineIdentity } from '../../../hooks/useMachineIdentity'
 import { useChangePulse } from '../../../hooks/useChangePulse'
 import React, { createContext, useContext, useState } from 'react'
 import { shortMachineName } from '../../remote/machineRowModel'
-import { FolderTypeIcon, GitBranchGlyph, ScheduleGlyph } from '../../AppIcons'
+import { FolderTypeIcon, GitBranchGlyph, NoProjectGlyph, ScheduleGlyph } from '../../AppIcons'
+import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { type ProjectColor } from '../../../utils/projectColor'
 import { formatElapsedMs } from '../../../utils/relativeTime'
 import { useRelativeNow } from '../../../hooks/useRelativeNow'
@@ -274,7 +275,11 @@ export function ProjectLine({
           (one-colour-per-project, 2026-09-09). The name beside it stays
           in the row's own ink: the hue identifies the project, and a
           coloured word would be a second, louder saying of it. */}
-      <FolderTypeIcon className="icon-xs shrink-0" color={project.color} unfiled={project.unfiled} />
+      {isProjectlessChatsRoot(project.folderPath) ? (
+        <NoProjectGlyph className="icon-xs shrink-0" />
+      ) : (
+        <FolderTypeIcon className="icon-xs shrink-0" color={project.color} unfiled={project.unfiled} />
+      )}
       <span className="min-w-0 truncate">{project.name}</span>
       <MachineRowGlyph machine={machine} />
       {/* No pull request count here (owner, 2026-10-02). This line repeats

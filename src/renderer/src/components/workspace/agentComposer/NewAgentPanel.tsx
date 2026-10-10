@@ -23,6 +23,7 @@ import { FolderIdentityIcon } from '../FolderIdentityIcon'
 import { useProjectColor } from '../../../hooks/useProjectColors'
 import { projectColorKey } from '../../../utils/projectColor'
 import { resolveSkillMentionPrefix } from '../../../../../shared/skill-invocation'
+import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
 import { composerTokenAt } from '../../../../../shared/conversation/composerTrigger'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import {
@@ -244,6 +245,11 @@ export type NewAgentPanelProps = {
   folderPath?: string | null
   projectOptions?: NewAgentProjectOption[]
   onSelectProject?: (path: string) => void
+  /**
+   * Scope the door to "No project": the chat runs in a folder of its own
+   * (shared/projectless-chats.ts). Absent, nothing offers it.
+   */
+  onStartWithoutProject?: () => void
   /** Browse for a folder; `hostId` is the machine the dropdown stands on, so a WSL one opens in its home. */
   onBrowseProject?: (hostId?: ExecutionHostId) => void
   initialSelection: AgentComposerSelection
@@ -422,6 +428,7 @@ export default function NewAgentPanel({
   folderPath,
   projectOptions,
   onSelectProject,
+  onStartWithoutProject,
   onBrowseProject,
   initialSelection,
   permissionPreset,
@@ -628,9 +635,11 @@ export default function NewAgentPanel({
   // "new chat panel", which says nothing about where the agent will run. The
   // folder it opens in is the fact worth showing, so a wrong-project spawn is
   // visible before it happens.
+  const projectless = isProjectlessChatsRoot(workspaceRoot)
   const projectLabel = React.useMemo(() => {
     const folder = workspaceRoot?.trim()
     if (!folder) return null
+    if (isProjectlessChatsRoot(folder)) return PROJECTLESS_CHATS_LABEL
     return projectOptions?.find((option) => option.path === folder)?.label ?? basename(folder) ?? folder
   }, [projectOptions, workspaceRoot])
   // Can this surface change where the agent runs? True when the host gave us
@@ -1305,9 +1314,11 @@ export default function NewAgentPanel({
   // one there that said it cuts worktrees for a chat started from here. An
   // SSH machine's chat has no checkout here to fork, and an extension's
   // folder is new.
+  // "No project" is a folder the app made, not a checkout, even where the
+  // home folder above it happens to be a repository.
   const worktreeOffered = remoteTarget
     ? remoteWorktreeOffered
-    : !extensionMode && selection.kind !== 'terminal' && !pickedSsh && workspaceIsGitRepo
+    : !extensionMode && selection.kind !== 'terminal' && !pickedSsh && !projectless && workspaceIsGitRepo
   // The Worktree chip and an existing remote worktree are two answers to one
   // question, where the chat runs: turning the chip on puts the picked
   // worktree back, and picking one turns the chip off.
@@ -1840,6 +1851,7 @@ export default function NewAgentPanel({
   const keybindingSettings = useWorkspaceStore((s) => s.appSettings.keybindings)
   const keyPlatform = platformKeybindingsFromApiPlatform(window.api.platform)
   const launchInBackgroundKeys = getEffectiveKeybindings(LAUNCH_IN_BACKGROUND_COMMAND, keybindingSettings)
+  const withoutProjectKeys = getEffectiveKeybindings('chat.newWithoutProject', keybindingSettings)
   const onPromptKeyDown = (event: ComposerKeyEvent) => {
     // A key in the real field is the person carrying on: an Enter held from
     // the static box no longer speaks for what the field now says.
@@ -2122,24 +2134,44 @@ export default function NewAgentPanel({
       }}
     />
   ) : canChooseProject ? (
-    <ProjectScopePicker
-      label={projectLabel ?? 'Choose a project'}
-      // The branch has its own place on the strip.
-      branch={null}
-      options={projectOptions ?? []}
-      selectedPath={workspaceRoot}
-      onSelect={(path) => onSelectProject?.(path)}
-      onBrowse={onBrowseProject ? () => onBrowseProject(hostId) : undefined}
-      onClone={onCloneProject}
-      // The hue, resolved here because only this component holds the
-      // repository identity behind the folder; the identity map goes with it
-      // so the rows IN the list wear their own colours too, read from the map
-      // this panel already asked main for rather than a second round of the
-      // same IPC.
-      color={scopeProjectColor}
-      unfiled={!workspaceRoot?.trim()}
-      identities={localIdentities}
-    />
+    <>
+      <ProjectScopePicker
+        label={projectLabel ?? 'Choose a project'}
+        // The branch has its own place on the strip.
+        branch={null}
+        options={projectOptions ?? []}
+        selectedPath={workspaceRoot}
+        onSelect={(path) => onSelectProject?.(path)}
+        onStartWithoutProject={onStartWithoutProject}
+        onBrowse={onBrowseProject ? () => onBrowseProject(hostId) : undefined}
+        onClone={onCloneProject}
+        // The hue, resolved here because only this component holds the
+        // repository identity behind the folder; the identity map goes with it
+        // so the rows IN the list wear their own colours too, read from the map
+        // this panel already asked main for rather than a second round of the
+        // same IPC.
+        color={scopeProjectColor}
+        unfiled={!workspaceRoot?.trim()}
+        identities={localIdentities}
+      />
+      {/* Nothing chosen yet: the other answer, one click away beside the
+        question, for a chat that is about no codebase at all. Once a
+        project is chosen it moves into the chip's list. */}
+      {onStartWithoutProject && !workspaceRoot?.trim() ? (
+        <Tooltip
+          content={
+            withoutProjectKeys[0]
+              ? `Runs in a folder of its own · ${renderKeybinding(withoutProjectKeys[0], keyPlatform)}`
+              : 'Runs in a folder of its own'
+          }
+          placement="top"
+        >
+          <LinkButton ink="quiet" className="shrink-0 px-1 text-meta" onClick={onStartWithoutProject}>
+            or start without a project
+          </LinkButton>
+        </Tooltip>
+      ) : null}
+    </>
   ) : projectLabel ? (
     // The tab strip's "+": the project is a fact rather than a choice, so this
     // is a line and not a control — but it is the same line, and it wears the

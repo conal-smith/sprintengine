@@ -2,7 +2,8 @@ import React from 'react'
 
 import type { GitHubRepoSummary } from '../../../../../shared/electron-api'
 import { Input, LinkButton, MenuItem, MENU_DIVIDER_CLASS, MENU_LIST_CLASS, MenuOption, PrimaryButton } from '../../ui'
-import { FolderTypeIcon } from '../../AppIcons'
+import { FolderTypeIcon, NoProjectGlyph } from '../../AppIcons'
+import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
 import type { ProjectColor } from '../../../utils/projectColor'
 import { GitHubRepoPicker, toRepoListState, type GitHubRepoListState } from '../newWorkspace/GitHubRepoPicker'
 import { resolveCloneSource } from '../newWorkspace/githubClone'
@@ -49,6 +50,7 @@ export function ProjectSourceMenu({
   defaultParent,
   onSelect,
   colorOf,
+  onStartWithoutProject,
   onBrowse,
   onClone,
   onClose,
@@ -73,6 +75,12 @@ export function ProjectSourceMenu({
    * "this project has no colour".
    */
   colorOf?: (path: string) => ProjectColor | null
+  /**
+   * Scope to "No project": the chat runs in a folder the app makes for it
+   * (shared/projectless-chats.ts). Absent hides the row — the Design door's
+   * question is which system on disk, and "none" is not an answer to it.
+   */
+  onStartWithoutProject?: () => void
   /** Absent hides the Browse… source (a host with no folder dialog). */
   onBrowse?: () => void
   /**
@@ -322,6 +330,24 @@ export function ProjectSourceMenu({
           <span className="block text-body font-medium">Import from Git</span>
           <span className="block text-meta text-[color:var(--text-subtle)]">Clone a repository and open it here.</span>
         </MenuItem>
+      ) : null}
+      {/* The third way in, after the two that find a project: none at all.
+          With the sources rather than among the projects, because it is not
+          one — and so it never scrolls away under a long list. */}
+      {onStartWithoutProject ? (
+        <MenuOption
+          role="menuitemradio"
+          selected={isProjectlessChatsRoot(selectedPath)}
+          stacked
+          onClick={() => {
+            onStartWithoutProject()
+            onClose()
+          }}
+          icon={<NoProjectGlyph className="mt-0.5 icon-xs shrink-0" />}
+        >
+          <span className="block text-body font-medium">{PROJECTLESS_CHATS_LABEL}</span>
+          <span className="block text-meta text-[color:var(--text-subtle)]">Chat in a folder of its own.</span>
+        </MenuOption>
       ) : null}
       <div className={MENU_DIVIDER_CLASS} role="separator" />
       {visible.map(projectRow)}

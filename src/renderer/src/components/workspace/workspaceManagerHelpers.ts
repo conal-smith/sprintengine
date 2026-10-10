@@ -4,6 +4,7 @@
 // every function takes its data via arguments.
 
 import { cliForConversationProvider } from '../../../../shared/conversation-harness'
+import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
 import { isStarred } from '../../utils/highlight'
 import { findAgentSessionWorkspace, findAgentWorkspaceFollowingMoves } from '../../utils/agentLocation'
 import { sortWorkspacesByUserMessage, workspaceLastUserMessageAt } from '../../utils/workspaceRecency'
@@ -456,6 +457,8 @@ export function showsNoWorkspaceState(input: {
  * A chat in a worktree (a pool slot, `chat-…`) offers the project it was cut
  * from, never its worktree folder (owner, 2026-10-08): the folder is where the
  * chat runs, and offering it listed every pool slot as a project of its own.
+ * The chats started without a project are not a project either: the picker
+ * offers them as its own "No project" row.
  */
 export function newChatProjectOptionsOf(
   workspaces: readonly Workspace[],
@@ -463,7 +466,7 @@ export function newChatProjectOptionsOf(
   const byKey = new Map<string, { path: string; label: string; lastUsedAt: number }>()
   for (const workspace of workspaces) {
     const path = workspaceProjectRoot(workspace)?.trim()
-    if (!path) continue
+    if (!path || isProjectlessChatsRoot(path)) continue
     const key = path.replace(/\\/g, '/').replace(/\/+$/u, '').toLowerCase()
     const usedAt = workspaceLastUserMessageAt(workspace)
     const known = byKey.get(key)

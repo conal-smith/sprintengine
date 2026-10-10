@@ -1396,6 +1396,10 @@ export type ElectronApi = {
   /** Creates `~/.sprintengine/skills` if needed and returns its absolute path. */
   ensureDefaultUserSkillsDir: () => Promise<string>
   defaultWorkspaceParentDir: () => Promise<string | null>
+  /** Creates `~/.sprintengine/chats` if needed and returns it: New chat's "No project" scope. */
+  projectlessChatsRoot: () => Promise<string>
+  /** Makes a new folder in that root for one chat started without a project, named after its first words. */
+  createProjectlessChatFolder: (prompt?: string) => Promise<string>
   showMenubarMenu: (label: string, position?: { x?: number; y?: number }) => Promise<boolean>
   clipboardReadText: () => Promise<string>
   clipboardWriteText: (text: string) => Promise<void>

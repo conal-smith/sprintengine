@@ -17,6 +17,7 @@ import { isRetiredWorkspaceMode } from '../../../../shared/workspace-mode'
 import { hostIdToRecord } from '../../../../shared/execution-host'
 import { instantiateTemplateAgentIds } from '../../../../shared/agent-ids'
 import { workspaceProjectRoot, workspaceProjectRootOf } from '../../utils/workspaceWorktree'
+import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
 import { normalizeProjectRootKey } from '../../utils/projectKnowledge'
 import { normalizeRecentWorkspaceFolders } from './settingsSlice'
 import { releaseWorktreeEntriesOwnedBy } from './worktreesSlice'
@@ -1408,9 +1409,10 @@ export function createWorkspacesSlice(
         }
         // Recents feed New chat's project picker, so a worktree chat contributes
         // the PROJECT it was cut from — its own folder would show up there as a
-        // project named after the worktree slug.
+        // project named after the worktree slug. A chat started without a
+        // project adds nothing: "No project" is a row of the picker's own.
         const recentFolder = workspaceProjectRoot(newWorkspace) ?? folderPath
-        if (recentFolder) {
+        if (recentFolder && !isProjectlessChatsRoot(recentFolder)) {
           state.appSettings.recentWorkspaceFolders = normalizeRecentWorkspaceFolders(
             [recentFolder],
             state.appSettings.recentWorkspaceFolders,

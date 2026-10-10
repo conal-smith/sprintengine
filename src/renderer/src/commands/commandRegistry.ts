@@ -78,6 +78,19 @@ export const COMMAND_REGISTRY = [
     defaultKeybindings: ['Primary+N'],
     handlerPath: { kind: 'workspace-manager', handler: 'openNewChatPanel()' },
   }),
+  // New chat, scoped to "No project": the chat runs in a folder of its own
+  // that the app makes for it (shared/projectless-chats.ts), for a question or
+  // a one-off task that belongs to no codebase. ⌘N with Option held, because
+  // it is New chat with one thing changed; bound nowhere else in the app or
+  // its modules.
+  command({
+    id: 'chat.newWithoutProject',
+    title: 'New chat without a project',
+    category: 'workspace',
+    scopes: ['global'],
+    defaultKeybindings: ['Primary+Alt+N'],
+    handlerPath: { kind: 'workspace-manager', handler: 'openNewChatWithoutProject()' },
+  }),
   // Start the chat typed in New chat and stay there, on a fresh empty box with
   // the same project and engine, to fire off the next task at once. ⌘⏎
   // because it is ⏎ held a little harder: the same send, kept in place. Plain ⏎

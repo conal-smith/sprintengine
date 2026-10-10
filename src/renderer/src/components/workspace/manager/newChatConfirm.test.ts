@@ -9,6 +9,8 @@ import type { NewChatWorktreeResult } from '../../../utils/newChatWorktree'
 import { confirmNewChatWith, type NewChatConfirmHost } from './newChatConfirm'
 
 const PROJECT = '/Users/dev/app'
+const NO_PROJECT = '/Users/dev/.sprintengine/chats'
+const CHAT_FOLDER = `${NO_PROJECT}/2026-10-10-hello-ab12cd34`
 const WORKTREE = '/Users/dev/.sprintengine-worktrees/app/chat-ab12'
 
 afterEach(() => {
@@ -17,7 +19,10 @@ afterEach(() => {
 
 // A host whose starts each create a chat, and whose project use is the store's
 // own, so the assertion is on what reaches main: the `projectUse` patch.
-function harness(worktree: NewChatWorktreeResult = { ok: false, message: 'unused' }) {
+function harness(
+  worktree: NewChatWorktreeResult = { ok: false, message: 'unused' },
+  projectlessFolder: string | null = CHAT_FOLDER,
+) {
   const updates: unknown[] = []
   vi.spyOn(launchSettingsClient, 'update').mockImplementation(async (patch) => {
     updates.push(patch)
@@ -28,12 +33,17 @@ function harness(worktree: NewChatWorktreeResult = { ok: false, message: 'unused
   const prepared: string[] = []
   const titled: Array<[string, string]> = []
   let worktreesMade = 0
+  const projectlessPrompts: Array<string | undefined> = []
   let closed = 0
   const host: NewChatConfirmHost = {
     makeExtension: async ({ id, folder }) => folder ?? `/Users/dev/Documents/SprintEngine/Extensions/${id}`,
     makeWorktree: async () => {
       worktreesMade += 1
       return worktree
+    },
+    makeProjectlessFolder: async (prompt) => {
+      projectlessPrompts.push(prompt)
+      return projectlessFolder
     },
     prepareWorktree: (workspaceId) => {
       prepared.push(workspaceId)
@@ -72,6 +82,7 @@ function harness(worktree: NewChatWorktreeResult = { ok: false, message: 'unused
     projectUses,
     closed: () => closed,
     worktreesMade: () => worktreesMade,
+    projectlessPrompts,
   }
 }
 
@@ -225,6 +236,36 @@ test('a chat with no project counts as no project use', async () => {
   const { host, projectUses } = harness()
   await confirmNewChatWith(host, { confirm: { kind: 'terminal' }, scopedFolder: null })
   assert.deepEqual(projectUses(), [])
+})
+
+test('a chat with no project chosen starts in a folder of its own, never with no folder', async () => {
+  const { host, started, projectlessPrompts } = harness()
+  await confirmNewChatWith(host, { confirm: { kind: 'terminal' }, scopedFolder: null, startupPrompt: 'hello' })
+  assert.deepEqual(started, [{ kind: 'terminal', folderPath: CHAT_FOLDER }])
+  assert.deepEqual(projectlessPrompts, ['hello'])
+})
+
+test('No project starts the chat in a new folder of its own, with no worktree and no project use', async () => {
+  const { host, started, opened, projectUses, worktreesMade, closed } = harness()
+  const created = await confirmNewChatWith(host, {
+    confirm: { ...CHAT_CONFIRM, worktree: { name: '' } },
+    scopedFolder: NO_PROJECT,
+    startupPrompt: 'hello',
+  })
+  assert.equal(created, 'ws-conversation')
+  assert.deepEqual(started, [{ kind: 'conversation', folderPath: CHAT_FOLDER }])
+  assert.deepEqual(opened, [{ worktree: undefined, pending: undefined }], 'never a worktree of the chats folder')
+  assert.equal(worktreesMade(), 0)
+  assert.deepEqual(projectUses(), [])
+  assert.equal(closed(), 1)
+})
+
+test('a chat whose own folder could not be made is not started, and the door stays open', async () => {
+  const { host, started, closed } = harness(undefined, null)
+  const created = await confirmNewChatWith(host, { confirm: CHAT_CONFIRM, scopedFolder: NO_PROJECT })
+  assert.equal(created, null)
+  assert.deepEqual(started, [])
+  assert.equal(closed(), 0)
 })
 
 test('an extension starts in its own folder, needs no project, and counts that folder as used', async () => {

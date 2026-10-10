@@ -537,3 +537,16 @@ test('New chat offers each project once, never a chat worktree folder, with its 
     { path: '/Users/dev/site', label: 'site', lastUsedAt: 1 },
   ])
 })
+
+test('New chat never offers the chats started without a project as a project', () => {
+  const chat = (id: string, folderPath: string): Workspace =>
+    ({ id, name: id, folderPath, createdAt: 1 }) as unknown as Workspace
+  const options = newChatProjectOptionsOf([
+    chat('loose', '/Users/dev/.sprintengine/chats/2026-10-10-hello-ab12cd34'),
+    chat('plain', '/Users/dev/app'),
+  ])
+  assert.deepEqual(
+    options.map((option) => option.path),
+    ['/Users/dev/app'],
+  )
+})

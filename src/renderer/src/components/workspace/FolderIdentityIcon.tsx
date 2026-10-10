@@ -1,4 +1,5 @@
-import { FolderTypeIcon } from '../AppIcons'
+import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
+import { FolderTypeIcon, NoProjectGlyph } from '../AppIcons'
 import { useProjectLogo } from '../../hooks/useProjectLogo'
 import type { ProjectColor } from '../../utils/projectColor'
 
@@ -33,6 +34,10 @@ export function FolderIdentityIcon({
   /** No folder is not a project: the dashed grey outline, never a hue. */
   unfiled?: boolean
 }) {
-  const logoSrc = useProjectLogo(folderPath)
+  // The "No project" root is not a project: no logo to look for, no hue, its
+  // own mark wherever a project's folder would be.
+  const projectless = isProjectlessChatsRoot(folderPath)
+  const logoSrc = useProjectLogo(projectless ? null : folderPath)
+  if (projectless) return <NoProjectGlyph className={className} />
   return <FolderTypeIcon className={className} logoSrc={logoSrc} color={color} unfiled={unfiled} />
 }

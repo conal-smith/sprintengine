@@ -8,6 +8,7 @@ import { type FolderIdentityMap, folderIdentityKey } from '../useFolderRepositor
 import { workspaceProjectRoot } from '../../../utils/workspaceWorktree'
 import { shortMachineName } from '../../remote/machineRowModel'
 import { isMeshConversationPane } from '../../../../../shared/tailnet-mesh'
+import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
 
 export type FolderGroup = {
   key: string
@@ -130,6 +131,8 @@ export function folderKey(value: string | null): string {
 
 export function folderDisplayName(value: string | null): string {
   if (!value?.trim()) return 'No folder'
+  // The root every chat started without a project files under.
+  if (isProjectlessChatsRoot(value)) return PROJECTLESS_CHATS_LABEL
   const normalized = normalizeFolder(value)
   const lastSlash = normalized.lastIndexOf('/')
   if (lastSlash === -1) return normalized

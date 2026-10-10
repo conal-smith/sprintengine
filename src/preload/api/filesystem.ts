@@ -133,6 +133,8 @@ export const filesystemApi = {
   openDir: (options?: { defaultPath?: string }) => ipcRenderer.invoke('fs:dialog:opendir', options),
   ensureDefaultUserSkillsDir: () => ipcRenderer.invoke('skills:ensure-default-user-dir'),
   defaultWorkspaceParentDir: () => ipcRenderer.invoke('app:default-workspace-parent'),
+  projectlessChatsRoot: () => ipcRenderer.invoke('chats:projectless-root'),
+  createProjectlessChatFolder: (prompt?: string) => ipcRenderer.invoke('chats:projectless-folder:create', prompt),
   showMenubarMenu: (label: string, position?: { x?: number; y?: number }) =>
     ipcRenderer.invoke('app:show-menubar-menu', label, position),
 } satisfies Pick<
@@ -181,5 +183,7 @@ export const filesystemApi = {
   | 'openDir'
   | 'ensureDefaultUserSkillsDir'
   | 'defaultWorkspaceParentDir'
+  | 'projectlessChatsRoot'
+  | 'createProjectlessChatFolder'
   | 'showMenubarMenu'
 >

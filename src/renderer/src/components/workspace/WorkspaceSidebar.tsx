@@ -6,6 +6,7 @@ import type { ConversationSessionSummary } from '../../../../shared/conversation
 import type { BranchPullRequest } from '../../../../shared/git/pull-request'
 import { conversationSummaryPhase } from '../../../../shared/conversation/phase'
 import { chatLinkFor } from '../../../../shared/deep-link'
+import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
 import { copyToClipboardWithToast } from '../../utils/copyToClipboardWithToast'
 import {
   conversationFinishedAt,
@@ -1583,7 +1584,8 @@ function WorkspaceSidebar({
           settled: true,
         }
       }
-      if (!group.fullPath) return { key: null, settled: true }
+      // "No project" is not a project either, so it has no hue to key.
+      if (!group.fullPath || isProjectlessChatsRoot(group.fullPath)) return { key: null, settled: true }
       const identityKey = folderIdentityKey(group.fullPath)
       return {
         key: projectColorKey({

@@ -1,5 +1,6 @@
 import type { ExecutionHostId } from '../../../../../shared/execution-host'
 import { workspaceProjectRootOf } from '../../../../../shared/worktree-paths'
+import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import type { WorkspaceId, WorkspaceWorktree } from '../../../types/workspace'
 import type { NewChatWorktreeResult, PendingNewChatWorktree } from '../../../utils/newChatWorktree'
 import type { AgentComposerConfirm } from '../agentComposer/useAgentComposer'
@@ -39,6 +40,11 @@ export type NewChatConfirmHost = {
   /** The extension's own folder, made or found, or null after saying why. */
   makeExtension: (extension: NewChatExtension, startupPrompt: string) => Promise<string | null>
   makeWorktree: (scopedFolder: string | null, requestedName: string) => Promise<NewChatWorktreeResult>
+  /**
+   * A new folder for one chat started without a project, named after the
+   * words it starts with — or null after saying why it could not be made.
+   */
+  makeProjectlessFolder: (startupPrompt: string | undefined) => Promise<string | null>
   startTerminal: (folderPath: string | null, background?: boolean) => WorkspaceId | null
   startGeneral: (
     confirm: Extract<AgentComposerConfirm, { kind: 'general' }>,
@@ -77,6 +83,17 @@ export async function confirmNewChatWith(
   request: NewChatConfirmRequest,
 ): Promise<WorkspaceId | null> {
   const { confirm, scopedFolder, startupPrompt, extension, startupImages, startupFiles, background } = request
+  // No project — picked, or none chosen at all — is still somewhere: a folder
+  // of the chat's own, made now, so an agent never starts in whatever
+  // directory the app itself happens to run from. There is no repository
+  // there, so no worktree either; the door does not offer one.
+  if (!extension && (!scopedFolder?.trim() || isProjectlessChatsRoot(scopedFolder))) {
+    const folderPath = await host.makeProjectlessFolder(startupPrompt)
+    if (!folderPath) return null
+    const created = startProjectless(host, request, folderPath)
+    if (!background) host.closePanel()
+    return created
+  }
   // A chat agent asked for a worktree opens at once, before the worktree
   // exists: the seconds the worktree takes are spent in the chat, which shows
   // its prompt waiting and says what it is waiting on, not on New chat with
@@ -158,4 +175,29 @@ export async function confirmNewChatWith(
   // ⌘⏎ stays on New chat; the panel empties itself for the next one.
   if (!background) host.closePanel()
   return created
+}
+
+// Not a use of any project, so the pickers' ordering is left alone.
+function startProjectless(
+  host: NewChatConfirmHost,
+  request: NewChatConfirmRequest,
+  folderPath: string,
+): WorkspaceId | null {
+  const { confirm, startupPrompt, startupImages, startupFiles, background } = request
+  switch (confirm.kind) {
+    case 'terminal':
+      return host.startTerminal(folderPath, background)
+    case 'general':
+      return host.startGeneral(confirm, folderPath, startupPrompt, undefined, background)
+    case 'conversation':
+      return host.startConversation(
+        confirm,
+        folderPath,
+        startupPrompt,
+        undefined,
+        startupImages,
+        startupFiles,
+        background,
+      )
+  }
 }

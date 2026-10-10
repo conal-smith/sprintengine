@@ -23,6 +23,29 @@ export function ChatGlyph({ className }: IconProps) {
   )
 }
 
+// "No project": the chats started without one (shared/projectless-chats.ts).
+// A speech bubble, because what lives there is chats rather than a codebase,
+// and dashed in the disabled ink for the reason the unfiled folder is: it
+// is not a project, so it never wears a project's hue.
+export function NoProjectGlyph({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className={`${className ?? ''} text-[color:var(--text-disabled)]`.trim()}
+    >
+      <path
+        d="M3.25 3.5h9.5c.7 0 1.25.55 1.25 1.25v5.5c0 .7-.55 1.25-1.25 1.25H7.5L4.75 13.5v-2H3.25C2.55 11.5 2 10.95 2 10.25v-5.5c0-.7.55-1.25 1.25-1.25Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+        strokeDasharray="2 1.6"
+      />
+    </svg>
+  )
+}
+
 // Resolve a workspace mode to its registered type definition, but only when the
 // owning module is enabled. Disabled or unknown modes (and shell-owned
 // 'standard') resolve to undefined so callers degrade to the generic/standard

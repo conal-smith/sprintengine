@@ -2,6 +2,7 @@ import React from 'react'
 
 import { sortByLastUse } from '../../../../../shared/project-frecency'
 import { workspaceProjectRootOf } from '../../../../../shared/worktree-paths'
+import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { basename } from '../../../utils/paths'
 import { showToast } from '../../../store/toastStore'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
@@ -56,6 +57,7 @@ export function ProjectScopePicker({
   options,
   selectedPath,
   onSelect,
+  onStartWithoutProject,
   onBrowse,
   onClone,
   importFromGit = true,
@@ -70,6 +72,8 @@ export function ProjectScopePicker({
   options: ProjectScopeOption[]
   selectedPath: string | null
   onSelect: (path: string) => void
+  /** Absent hides the "No project" source (a host whose question needs a folder). */
+  onStartWithoutProject?: () => void
   /** Absent hides the Browse… source (a host with no folder dialog). */
   onBrowse?: () => void
   /**
@@ -131,7 +135,7 @@ export function ProjectScopePicker({
     const recents: ProjectScopeOption[] = []
     for (const path of storedRecentFolders) {
       const project = workspaceProjectRootOf({ folderPath: path })
-      if (!project) continue
+      if (!project || isProjectlessChatsRoot(project)) continue
       const key = folderPathKey(project)
       if (open.has(key) || seen.has(key)) continue
       seen.add(key)
@@ -286,6 +290,7 @@ export function ProjectScopePicker({
         defaultParent={defaultParent}
         onSelect={(path) => onSelect(path)}
         colorOf={colorOf}
+        onStartWithoutProject={onStartWithoutProject}
         onBrowse={onBrowse}
         onClone={importFromGit ? runClone : undefined}
         onClose={() => setOpen(false)}

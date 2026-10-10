@@ -24,6 +24,7 @@ import {
 } from '../../ui'
 import { type ProjectColorSetting, type ProjectColor } from '../../../utils/projectColor'
 import { chatLinkFor } from '../../../../../shared/deep-link'
+import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { clientSupports } from '../../../clientCapabilities'
 
 export function sidebarWorkspaceOf(workspace: Workspace): {
@@ -116,7 +117,8 @@ export function WorkspaceContextMenu({
   // chat is about the project the row files under, which a pruned worktree
   // does not touch — hence the two predicates rather than one.
   const folderPathExists = Boolean(workspace.folderPath) && !workspace.folderMissing
-  const canNewChatInProject = newChatProjectTarget(workspace) !== null
+  const newChatTarget = newChatProjectTarget(workspace)
+  const canNewChatInProject = newChatTarget !== null
   // A `sprintengine://` link opens the desktop app, so a browser tab does not
   // offer one; nor does a row whose id a link cannot carry.
   const canCopyLink = clientSupports('deep-links') && chatLinkFor(workspace.id) !== null
@@ -140,7 +142,11 @@ export function WorkspaceContextMenu({
       <MenuItem onClick={() => onSelect('rename')} shortcut="F2">
         Rename
       </MenuItem>
-      {canNewChatInProject ? <MenuItem onClick={() => onSelect('new-chat')}>New chat in project</MenuItem> : null}
+      {canNewChatInProject ? (
+        <MenuItem onClick={() => onSelect('new-chat')}>
+          {isProjectlessChatsRoot(newChatTarget) ? 'New chat without a project' : 'New chat in project'}
+        </MenuItem>
+      ) : null}
       {folderPathExists ? <MenuItem onClick={() => onSelect('reveal')}>Reveal folder</MenuItem> : null}
       {canCopyLink ? <MenuItem onClick={() => onSelect('copy-link')}>Copy link to chat</MenuItem> : null}
       {isDetachedWindow ? (
@@ -335,7 +341,13 @@ export function FolderContextMenu({
       onClose={onClose}
       surfaceClassName="min-w-[220px]"
     >
-      {canCreateWorkspace ? <MenuItem onClick={() => onSelect('new-chat')}>New chat in project</MenuItem> : null}
+      {canCreateWorkspace ? (
+        <MenuItem onClick={() => onSelect('new-chat')}>
+          {/* The "No project" header starts another chat of its kind, in a
+              folder of its own, never one inside the root itself. */}
+          {isProjectlessChatsRoot(group.fullPath) ? 'New chat without a project' : 'New chat in project'}
+        </MenuItem>
+      ) : null}
       {canReveal ? <MenuItem onClick={() => onSelect('reveal')}>Reveal folder</MenuItem> : null}
       {/* The same swatch control the row menu spends on "Highlight color", one
           menu up: a highlight is a tint a person puts ON a chat, a project

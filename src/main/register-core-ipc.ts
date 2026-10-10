@@ -42,6 +42,7 @@ import { registerMcpIpc } from './ipc/mcp-ipc'
 import { registerMemoryActivityIpc } from './ipc/memory-activity-ipc'
 import { registerMemoryIpc } from './ipc/memory-ipc'
 import { registerMenuDialogIpc } from './ipc/menu-dialog-ipc'
+import { registerProjectlessChatsIpc } from './ipc/projectless-chats-ipc'
 import { registerMarketplacePluginIpc } from './ipc/marketplace-plugin-ipc'
 import { registerMarketplaceRegistryIpc } from './ipc/marketplace-registry-ipc'
 import { registerHostedSourcesFeedIpc } from './ipc/hosted-feed-ipc'
@@ -240,6 +241,7 @@ export function registerCoreIpc(
   })
   registerVersionControlIpc(machineIpc)
   registerMenuDialogIpc(ipcMain)
+  registerProjectlessChatsIpc(ipcMain)
   registerModuleEnablementIpc(ipcMain, { applyLive: options.applyModuleEnablementLive })
   // Module app state (Settings section values), mirrored for `entry.main`.
   registerModuleAppStateIpc(ipcMain)

@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioServerBanner } from '../studioServer/StudioServerBanner'
 import { hostIdForFolder, isWslHostId, LOCAL_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  isProjectlessChatsRoot,
+  projectlessScopeOf,
+  PROJECTLESS_CHATS_LABEL,
+} from '../../../../shared/projectless-chats'
 import { nanoid } from 'nanoid'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -364,6 +369,7 @@ const BOOT_COMPOSER_WAIT_MS = 10_000
 
 // Display name for a New Chat project scope: the folder's last path segment.
 function newChatFolderLabel(path: string): string {
+  if (isProjectlessChatsRoot(path)) return PROJECTLESS_CHATS_LABEL
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
@@ -2951,8 +2957,11 @@ export default function WorkspaceManager() {
         clearNewChatDraft(workspaceWindowId)
         parked = null
       }
-      const resolved =
+      const inherited =
         folderPath === undefined ? (parked?.folderPath ?? activeWorkspace?.folderPath ?? null) : folderPath
+      // A chat started without a project hands New chat "No project", never
+      // its own folder: the next chat gets a folder of its own too.
+      const resolved = projectlessScopeOf(inherited) ?? inherited
       rescopeNewChatDraft(workspaceWindowId, resolved)
       setNewChatPanelState({
         folderPath: resolved,
@@ -3503,6 +3512,30 @@ export default function WorkspaceManager() {
   const selectNewChatProject = (path: string) => {
     setNewChatPanelState((prev) => (prev ? { ...prev, folderPath: path, folderLabel: newChatFolderLabel(path) } : prev))
   }
+  // "No project": main makes the root the chats without one live under, and
+  // the door scopes to it. Each chat started there gets its own folder in it
+  // when it starts (`makeProjectlessFolder` below), not now — a door left
+  // without sending makes nothing.
+  const projectlessChatsRoot = async (): Promise<string | null> => {
+    try {
+      return await window.api.projectlessChatsRoot()
+    } catch (caught) {
+      showToast({
+        tone: 'error',
+        title: 'Could not start without a project',
+        description: caught instanceof Error ? caught.message : String(caught),
+      })
+      return null
+    }
+  }
+  const selectNewChatWithoutProject = async () => {
+    const root = await projectlessChatsRoot()
+    if (root) selectNewChatProject(root)
+  }
+  const openNewChatWithoutProject = useStableCallback(async () => {
+    const root = await projectlessChatsRoot()
+    if (root) openNewChatPanel(root)
+  })
   // The folder picker opens where the machine the door stands on keeps its
   // files: a WSL machine's Linux home (`\\wsl.localhost\<distro>\home\…`),
   // this machine's usual place otherwise.
@@ -3668,6 +3701,18 @@ export default function WorkspaceManager() {
           return null
         },
         makeWorktree: (folder, name) => createNewChatWorktree(folder, name, newChatHostRef.current),
+        makeProjectlessFolder: async (prompt) => {
+          try {
+            return await window.api.createProjectlessChatFolder(prompt)
+          } catch (caught) {
+            showToast({
+              tone: 'error',
+              title: 'The chat was not started',
+              description: caught instanceof Error ? caught.message : 'Its folder could not be made.',
+            })
+            return null
+          }
+        },
         startTerminal: pickNewChatTerminal,
         startGeneral: (general, folderPath, prompt, worktree, inBackground) =>
           pickNewChatGeneral(
@@ -3958,6 +4003,10 @@ export default function WorkspaceManager() {
               ? { kind: 'general' }
               : null,
         )
+        return true
+      }
+      if (commandId === 'chat.newWithoutProject') {
+        void openNewChatWithoutProject()
         return true
       }
       if (commandId === 'workspace.sidebar.toggle') {
@@ -4256,6 +4305,7 @@ export default function WorkspaceManager() {
     [
       openSettings,
       openNewChatPanel,
+      openNewChatWithoutProject,
       newChatPanelOpen,
       sidebarCollapsed,
       setSidebarCollapsed,
@@ -5087,6 +5137,7 @@ export default function WorkspaceManager() {
                               folderPath={newChatPanelState.folderPath}
                               projectOptions={newChatProjectOptions}
                               onSelectProject={selectNewChatProject}
+                              onStartWithoutProject={() => void selectNewChatWithoutProject()}
                               onBrowseProject={(hostId) => void browseNewChatProject(hostId)}
                               initialSelection={newChatPanelState.forcedSelection ?? lastNewChatAgent}
                               forceSelection={newChatPanelState.forcedSelection}
