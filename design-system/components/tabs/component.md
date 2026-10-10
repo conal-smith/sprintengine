@@ -13,16 +13,17 @@ when they are destinations.
 
 ## Anatomy
 
-| Part | Class | Required |
-|---|---|---|
-| Scroller | `.ds-tabs-scroller` | no — the overflow wrapper: scrolls sideways, never draws a scrollbar, fades each overflowing edge |
-| Tab list | `.ds-tabs` | yes — `role="tablist"` with an `aria-label`, one bottom hairline |
-| Tab | `.ds-tab` | yes — `role="tab"` buttons, `font.size.meta` |
-| Icon | `.ds-tab-icon` | no — a leading glyph, `aria-hidden` |
-| Count | `.ds-tab-count` | no — canonical count, tabular, `font.size.micro` |
-| Badge | `.ds-tab-badge` | no — the `badge` corner count: what is WAITING in this tab. Needs `.ds-tab--badged` on the tab for its room |
-| Underline | `.ds-tab-underline` | yes — the 1px active marker, `aria-hidden` |
-| Panel | `.ds-tab-panel` | yes — `role="tabpanel"`, a focusable scroll region |
+| Part        | Class                 | Required                                                                                                                     |
+| ----------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Scroller    | `.ds-tabs-scroller`   | no — the overflow wrapper: scrolls sideways, never draws a scrollbar, fades each overflowing edge                            |
+| Tab list    | `.ds-tabs`            | yes — `role="tablist"` with an `aria-label`, one bottom hairline                                                             |
+| Tab         | `.ds-tab`             | yes — `role="tab"` buttons, `font.size.meta`                                                                                 |
+| Icon        | `.ds-tab-icon`        | no — a leading glyph, `aria-hidden`                                                                                          |
+| Count       | `.ds-tab-count`       | no — canonical count, tabular, `font.size.micro`                                                                             |
+| Badge       | `.ds-tab-badge`       | no — the `badge` corner count: what is WAITING in this tab. Needs `.ds-tab--badged` on the tab for its room                  |
+| Underline   | `.ds-tab-underline`   | yes — the 1px active marker, `aria-hidden`                                                                                   |
+| Drop marker | `.ds-tab-drop-marker` | no — on a `--reorderable` strip mid-drag: a 2px accent bar, upright, at the slot the dragged tab will land in, `aria-hidden` |
+| Panel       | `.ds-tab-panel`       | yes — `role="tabpanel"`, a focusable scroll region                                                                           |
 
 Tabs sit `size.control.sm` (30px) tall at `space.lg` inline padding, spaced
 by `space.3xs`. Each tab overlaps the row's hairline by 1px so the active
@@ -45,21 +46,26 @@ label, not the hit area.
   "A count on a tab is not a badge on a tab" below. Never on `--icon-only`, and
   never on a closable tab — that tab's trailing padding is already spoken for by
   its close glyph, and two things docked in one corner is neither of them.
+- **`--reorderable`** — the person's order, not the product's (the workspace
+  pane's strip). A tab dragged sideways lands in the slot it is dropped in,
+  and the focused tab moves one place with Alt+Shift+Left/Right. The strip is
+  `--dragging` while a drag is in flight. See "A reorderable strip" below.
 - **`--icon-only`** — each tab renders its glyph alone on a
   `size.control.sm` square, the glyph steps up to `icon.size.sm`, and the
-  label becomes the tab's accessible name *and* its tooltip. For a strip on a
+  label becomes the tab's accessible name _and_ its tooltip. For a strip on a
   band that cannot spend width on words — a panel's own chrome row, shared
   with that panel's actions. Every item must carry an icon.
 
 ## States
 
-| State | Treatment |
-|---|---|
-| Rest | `text.muted`, transparent underline |
-| Hover | Ink lifts to `text.primary`. No background — the underline idiom marks tabs, not a fill |
-| Active | `text.primary` + the accent hairline underline. Never an accent fill or a pill |
-| Focus-visible | `focus.ring` |
-| Disabled | `opacity: 0.5`, `cursor: not-allowed` |
+| State                  | Treatment                                                                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rest                   | `text.muted`, transparent underline                                                                                                                                                                       |
+| Hover                  | Ink lifts to `text.primary`. No background — the underline idiom marks tabs, not a fill                                                                                                                   |
+| Active                 | `text.primary` + the accent hairline underline. Never an accent fill or a pill                                                                                                                            |
+| Focus-visible          | `focus.ring`                                                                                                                                                                                              |
+| Disabled               | `opacity: 0.5`, `cursor: not-allowed`                                                                                                                                                                     |
+| Dragging (reorderable) | The strip's cursor is `grabbing`; the carried tab fades to `opacity: 0.5` (`.ds-tab--dragged`); the drop marker stands at the target slot. No marker over the tab's own place, where a drop moves nothing |
 
 ## Usage
 
@@ -67,7 +73,7 @@ label, not the hit area.
 1px accent line. A filled tab, a tinted pill, or a raised card is a second
 accent idiom and a reject-on-sight.
 
-**Selection follows focus.** Arrow keys move focus *and* activate: Left/Right
+**Selection follows focus.** Arrow keys move focus _and_ activate: Left/Right
 step through enabled tabs with wraparound, Home/End jump to the ends. This is
 the correct model when switching panels is cheap; if a panel is expensive to
 mount, keep roving focus but activate on Enter/Space instead — pick one model
@@ -82,9 +88,9 @@ repeat it inside the panel where the two could disagree.
 **A count on a tab is not a badge on a tab** (2026-09-10). They are two
 different questions and they get two different places:
 
-- the **count** is *how many things are in here*. It rides beside the label, in
+- the **count** is _how many things are in here_. It rides beside the label, in
   the reading line, because it is part of what the tab says.
-- the **badge** is *how many of them want you* — updates waiting, work blocked
+- the **badge** is _how many of them want you_ — updates waiting, work blocked
   on an answer. It sits above the words, top-right, because it is not part of
   them. It is the same pip the app rail's squares wear, so "there is news here"
   is one drawing wherever the product says it.
@@ -133,6 +139,18 @@ after the control. Once the tabs overflow, the scroller is squeezed to what is
 left and the control stays in view at its end, never scrolled away with the
 tabs. The band's other actions (maximise, close) stay at the far end.
 
+**A reorderable strip still clicks** (2026-10-10). A press becomes a drag
+only once it has travelled 4px sideways; short of that it is the click it
+always was. The release that ends a drag does not also select the tab it
+started on — it ended a move, it did not choose a view. A drop counts a tab
+as "after" once the pointer is past its middle, so a drag never has to reach
+the far edge of a wide tab. Escape mid-drag puts the tab back. The marker is
+the active underline's hairline stood on end, never a filled slot or a ghost
+tab: one accent idiom. Reordering is a separate gesture from dragging a tab
+out of its strip (to another workspace or window), which uses the platform's
+drag and drop and is untouched by this one. Opening a tab adds it at the end
+and leaves the order the person made alone.
+
 **The panel is a tab stop.** It is usually a scroll container, so it takes
 `tabindex="0"` — otherwise keyboard users cannot scroll it. Only the active
 panel is rendered; inactive panels are unmounted, not hidden.
@@ -155,6 +173,10 @@ panel is rendered; inactive panels are unmounted, not hidden.
   and it opens on focus as well as hover.
 - An icon-only tab's count lives in its tooltip and its `aria-label`, not in a
   badge, so the number is announced once and read once.
+- On a reorderable strip, Alt+Shift+Left/Right moves the focused tab one
+  place, without wrapping (a tab moved past the end jumping to the front reads
+  as lost), and focus stays on it so the chord can be pressed again. It does
+  not change which tab is selected.
 - Disabled tabs keep their label readable (`opacity`, not an ink swap to
   `text.disabled` alone) and are skipped by arrow navigation.
 
@@ -174,7 +196,8 @@ All in `src/renderer/src/components/ui/Tabs.tsx`:
 ## Shipped implementation
 
 `src/renderer/src/components/ui/Tabs.tsx`, exporting `Tabs` (the strip, with
-the `iconOnly` prop and the per-item `tooltip`), `TabPanel` (the panel bound to
+the `iconOnly` prop, the per-item `tooltip`, and `onReorder` for a
+reorderable strip, whose slot arithmetic is in `ui/tabReorder.ts`), `TabPanel` (the panel bound to
 it by `aria-controls` / `aria-labelledby`), and `TabsScroller` (the overflow
 wrapper — it owns the wheel routing and measures which edges actually overflow
 before it fades them).

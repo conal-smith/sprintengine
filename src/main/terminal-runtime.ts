@@ -21,6 +21,7 @@ import type {
 } from '../shared/agent-runtime'
 import { appendLivePeekPrompt, type ConversationPeekSessionState } from './conversation-peek/service'
 import type { AgentPromptStore } from './agent-prompt-store'
+import { raiseChildOomScore } from './agent-oom-score'
 import {
   agentStateSpecReportsPrompts,
   applyBackgroundWork,
@@ -3417,6 +3418,9 @@ async function spawnTerminalFromIpc(
         ...(channelToken && launchTarget.kind !== 'wsl' ? { launchToken: channelToken } : {}),
       }),
     })
+    // On Linux the kernel's out-of-memory killer takes this terminal (and the
+    // agent in it) before the app. Not awaited: it never holds up a launch.
+    void raiseChildOomScore(termProcess.pid)
     const startedAt = Date.now()
     const terminalSession: TerminalSession = {
       sessionId,

@@ -343,6 +343,58 @@ test('a pull request the branch already had is opened, not claimed for this chat
   container.remove()
 })
 
+test('the confirm step says how many uncommitted changes the pull request leaves out, and still creates', async () => {
+  const calls: string[] = []
+  const api = (dom.window as unknown as { api: Record<string, unknown> }).api
+  Object.assign(api, {
+    draftPullRequestText: async () => ({ ok: true, value: { title: 'feat: marks', body: 'Body' }, ms: 1 }),
+    createPullRequestState: async () => ({ branch: 'feature/marks', headSha: 'abc1234def', uncommittedChanges: 3 }),
+    pushForPullRequest: async () => {
+      calls.push('push')
+      return { ok: true, pushed: true }
+    },
+    createPullRequest: async () => {
+      calls.push('create')
+      return { ok: true, kind: 'existing', url: 'https://github.com/acme/app/pull/42' }
+    },
+  })
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  useWorkspaceStore.setState((state) => ({
+    ...state,
+    appSettings: { ...state.appSettings, textGeneration: { enabled: true, engine: { cli: 'claude-code', model: '' } } },
+    pluginCatalogEntries: [{ id: 'claude-code' }] as never,
+  }))
+  const { CreatePullRequestControl } = await import('./createPullRequest')
+  let settled = 0
+  const mounted = await mount(
+    <CreatePullRequestControl
+      cwd="/Users/dev/app"
+      conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+      onSettled={() => (settled += 1)}
+      ready
+    />,
+  )
+  const button = [...mounted.container.querySelectorAll('button')].find((node) =>
+    node.textContent?.includes('Create PR'),
+  )
+  await mounted.act(async () => button?.click())
+  const note = await waitFor(() => dom.window.document.querySelector('[data-create-pull-request-uncommitted]'))
+  expect(note.textContent).toBe('3 uncommitted changes won’t be included: only the branch’s commits are pushed.')
+  const title = await waitFor(() => dom.window.document.querySelector<HTMLInputElement>('input[maxlength="300"]'))
+  await waitFor(() => (title.value === 'feat: marks' ? title : null))
+  const create = [...dom.window.document.querySelectorAll('button')].find((node) => node.textContent === 'Create')
+  expect(create?.disabled).toBe(false)
+  await mounted.act(async () => create?.click())
+  await waitFor(() => (settled > 0 ? true : null))
+  expect(calls).toEqual(['push', 'create'])
+  await mounted.unmount()
+})
+
+test('one uncommitted change is said in the singular', async () => {
+  const { uncommittedNote } = await import('./createPullRequest')
+  expect(uncommittedNote(1)).toBe('1 uncommitted change won’t be included: only the branch’s commits are pushed.')
+})
+
 async function waitFor<T>(read: () => T | null | undefined): Promise<T> {
   const start = Date.now()
   for (;;) {

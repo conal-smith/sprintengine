@@ -127,6 +127,38 @@
   background: var(--sem-color-accent-primary);
 }
 
+/* ── Reorderable ─────────────────────────────────────────────────────────
+ * A strip whose order is the person's (the workspace pane): a tab dragged
+ * sideways is dropped into a slot between two tabs. The slot is marked in the
+ * active underline's own accent stood on end, the one accent the strip is
+ * allowed, so a drop target never reads as a second selection. It is 2px where
+ * the underline is 1px: on end it is a tab's height at most, and a hairline
+ * that short was lost against the gap between two tabs. The marker is
+ * positioned by the host against the list, centred on the edge of the tab it
+ * lands before. The tab being carried is faded to the disabled opacity so the
+ * strip says which one is moving. */
+.ds-tabs--reorderable {
+  position: relative;
+}
+
+.ds-tabs--dragging {
+  cursor: grabbing;
+}
+
+.ds-tab-drop-marker {
+  position: absolute;
+  top: var(--sem-space-2xs);
+  bottom: var(--sem-space-2xs);
+  width: var(--sem-space-3xs);
+  transform: translateX(-50%);
+  background: var(--sem-color-accent-primary);
+  pointer-events: none;
+}
+
+.ds-tab--dragged {
+  opacity: 0.5;
+}
+
 /* ── Icon-only ───────────────────────────────────────────────────────────
  * A strip whose choices have settled glyphs, on a band that cannot spend the
  * width on words — a panel's own chrome row, shared with its actions. The

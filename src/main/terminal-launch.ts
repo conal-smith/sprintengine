@@ -28,6 +28,7 @@ import {
   type PlannedAgentLaunch,
 } from './agent-launch-render'
 import { launchArgBudgetFor, quoteWindowsCommandLineArg } from './launch-arg-budget'
+import { RAISE_OOM_SCORE_SHELL_LINE } from './agent-oom-score'
 import { CLI_EXITED_OSC } from './deferred-prompt-delivery'
 import { buildLaunchStatusLineSetting } from './agent-state'
 import { resolveAgentStateSocketPath } from './agent-state-service'
@@ -1080,7 +1081,10 @@ function requireWslSessionDir(host: WslLaunchTarget): string {
 function wslPidFileLine(scriptPath: string, host: WslLaunchTarget): string {
   const key = wslSessionPidKey(scriptPath)
   const pid = key && host.pidDir ? wslSessionPidFileCommand(host.pidDir, key) : ''
-  return [pid, `rm -f -- ${quotePosix(scriptPath)}`].filter(Boolean).join('; ')
+  // Then the score the kernel's out-of-memory killer reads, raised so this
+  // terminal and its agent go before the app's server in the distribution;
+  // the script ends in an `exec`, so whatever it runs inherits it.
+  return [pid, `rm -f -- ${quotePosix(scriptPath)}`, RAISE_OOM_SCORE_SHELL_LINE].filter(Boolean).join('; ')
 }
 
 /**
