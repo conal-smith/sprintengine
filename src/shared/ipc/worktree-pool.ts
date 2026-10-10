@@ -217,6 +217,8 @@ export type WorktreeDependencyInstallView = {
   /** The end of what it printed, once it did not succeed. */
   output: string | null
   exitCode: number | null
+  /** Its caller shows it (`GitWorktreeCreateInput.quietInstall`): no toast while it runs or once it succeeds. */
+  quiet?: boolean
 }
 
 // ── Settings ▸ Worktrees ────────────────────────────────────────────────────

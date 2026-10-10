@@ -134,7 +134,7 @@ import { setBuildExtensionOpener } from '../extensions/buildExtensionHost'
 import { extensionBriefMarkdown } from '../../../../shared/extension-scaffold'
 import { createWorkspaceChatOpener } from './manager/workspaceChatOpener'
 import { confirmNewChatWith, type NewChatExtension } from './manager/newChatConfirm'
-import { createNewChatWorktree, prepareNewChatWorktree } from '../../utils/newChatWorktree'
+import { obtainNewChatWorktree, prepareNewChatWorktree, takeReadyNewChatWorktree } from '../../utils/newChatWorktree'
 import type { AgentState } from '../../../../shared/agent-state'
 import { openChatLink } from './manager/chatLinkOpener'
 import { setAppCommandRunner } from '../../commands/appCommandRunner'
@@ -3713,7 +3713,9 @@ export default function WorkspaceManager() {
           showToast({ tone: 'error', title: `${id} was not created`, description: made.message })
           return null
         },
-        makeWorktree: (folder, name) => createNewChatWorktree(folder, name, newChatHostRef.current),
+        // The one New chat made while the person typed, when it can be taken.
+        makeWorktree: (folder, name) => obtainNewChatWorktree(folder, name, newChatHostRef.current),
+        takeReadyWorktree: (folder, name) => takeReadyNewChatWorktree(folder, name, newChatHostRef.current),
         makeProjectlessFolder: async (prompt) => {
           try {
             return await window.api.createProjectlessChatFolder(prompt)

@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid'
 
 import type { AgentState } from '../../../shared/agent-state'
-import type { ExecutionHostId } from '../../../shared/execution-host'
+import { LOCAL_HOST_ID, type ExecutionHostId } from '../../../shared/execution-host'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import type { AgentId, WorkspaceId, WorkspaceWorktree } from '../types/workspace'
 import { publishDiagnosticSync } from './diagnostics'
@@ -19,6 +19,15 @@ export type NewChatWorktreeResult =
       made?: { repoRoot: string; leaseId: string | null }
     }
   | { ok: false; message: string }
+
+export type NewChatWorktreeOptions = {
+  /** Fold the dependency install into the chat rather than toast it (`GitWorktreeCreateInput.quietInstall`). */
+  quietInstall?: boolean
+  /** No diagnostic when it cannot be made: a reservation nobody asked for yet, tried again on Enter. */
+  silent?: boolean
+  /** The branch it will be on, once known and before git makes it. */
+  onBranch?: (branch: string) => void
+}
 
 /**
  * The worktree the New chat door asked for under ⋯ (found at the seam of
@@ -52,9 +61,10 @@ export async function createNewChatWorktree(
   folderPath: string | null,
   requestedName: string,
   hostId?: ExecutionHostId | null,
+  options: NewChatWorktreeOptions = {},
 ): Promise<NewChatWorktreeResult> {
   const fail = (title: string, message: string): NewChatWorktreeResult => {
-    publishDiagnosticSync({ level: 'error', source: 'workspace', title, message })
+    if (!options.silent) publishDiagnosticSync({ level: 'error', source: 'workspace', title, message })
     return { ok: false, message }
   }
   if (!folderPath)
@@ -72,6 +82,7 @@ export async function createNewChatWorktree(
     const name = requestedName.trim() || newChatWorktreeName(nanoid(4))
     const paths = agentWorktreePaths(repoRoot, name)
     if (!paths) return fail('Worktree name invalid', `"${name}" does not reduce to a usable worktree name.`)
+    options.onBranch?.(paths.branchName)
     // From the worktree pool, on the default branch (main's git.ts): a
     // reused slot keeps the last agent's installed dependencies. A chat on a
     // WSL machine is declined by the pool and gets a fresh worktree from that
@@ -89,6 +100,7 @@ export async function createNewChatWorktree(
       agentLockOwner: paths.branchName,
       fromPool: true,
       ...(worktreeHostId ? { hostId: worktreeHostId } : {}),
+      ...(options.quietInstall ? { quietInstall: true } : {}),
     })
     if (!result.ok) return fail('Worktree failed', result.message)
     return {
@@ -123,6 +135,9 @@ export async function createNewChatWorktree(
 export type PendingNewChatWorktree = NonNullable<AgentState['chatPendingWorktree']>
 
 const attempts = new Map<WorkspaceId, Promise<boolean>>()
+// The branch each attempt is making, once it is known: the chat's working
+// line finds the attempt's dependency install by it.
+const attemptBranches = new Map<WorkspaceId, string>()
 const listeners = new Set<() => void>()
 
 function notify(): void {
@@ -138,6 +153,11 @@ export function subscribeNewChatWorktreeAttempts(listener: () => void): () => vo
 /** Whether this window is making `workspaceId`'s worktree right now. */
 export function newChatWorktreeAttemptRunning(workspaceId: WorkspaceId): boolean {
   return attempts.has(workspaceId)
+}
+
+/** The branch `workspaceId`'s worktree is being made on, while this window makes it. */
+export function newChatWorktreeBranch(workspaceId: WorkspaceId): string | null {
+  return attemptBranches.get(workspaceId) ?? null
 }
 
 /** Why a pending chat is not being made, or null while its attempt runs. */
@@ -172,7 +192,13 @@ export function prepareNewChatWorktree(workspaceId: WorkspaceId): Promise<boolea
     useWorkspaceStore.getState().updateAgent(workspaceId, found.agentId, { chatPendingWorktree: attempt })
   }
   const run = (async () => {
-    const made = await createNewChatWorktree(attempt.projectFolder, attempt.name, attempt.hostId ?? null)
+    const made = await obtainNewChatWorktree(attempt.projectFolder, attempt.name, attempt.hostId ?? null, {
+      quietInstall: true,
+      onBranch: (branch) => {
+        attemptBranches.set(workspaceId, branch)
+        notify()
+      },
+    })
     // Started in the project, or closed, while the worktree was being made:
     // the chat is no longer this attempt's to finish, and nothing will ever
     // use the worktree, so it goes back now rather than at a sweep an hour on.
@@ -193,6 +219,7 @@ export function prepareNewChatWorktree(workspaceId: WorkspaceId): Promise<boolea
     return true
   })().finally(() => {
     attempts.delete(workspaceId)
+    attemptBranches.delete(workspaceId)
     notify()
   })
   attempts.set(workspaceId, run)
@@ -232,4 +259,209 @@ export function startPendingNewChatInProject(workspaceId: WorkspaceId): boolean 
   store.setWorkspaceChatFolder(workspaceId, found.pending.projectFolder, null)
   store.updateAgent(workspaceId, found.agentId, { chatPendingWorktree: undefined })
   return true
+}
+
+// ── A worktree made while New chat is still open ────────────────────────────
+//
+// Opening New chat with Worktree on says the person is about to start work
+// there, so the worktree is made while they type rather than after Enter: a
+// pool slot is leased and, when the project opted in, its dependencies are
+// installed. Enter then takes it as made (`takeReadyNewChatWorktree`) or still
+// on its way (`obtainNewChatWorktree`), and the chat starts in it with nothing
+// left to wait for, or very little.
+//
+// One reservation per New chat (its `owner`), for one project on this
+// computer, on a branch named at random: a name typed into the chip is a
+// different branch, so it is made on Enter as before. Turning Worktree off,
+// moving to another project or closing New chat gives the slot back to the
+// pool, clean, for the next chat; its empty `agent/` branch goes at the next
+// cleanup sweep, like any other with no work of its own.
+//
+// Kept for a while only: the slot was reset to the base fetched when it was
+// leased, and a chat should not start from a base an hour behind origin.
+
+/** How long a made reservation stays good for a chat. Past it, Enter makes a fresh one. */
+export const NEW_CHAT_RESERVATION_FRESH_MS = 15 * 60_000
+
+type Reservation = {
+  owner: string
+  /** The project, as `workspaceProjectRootOf` reads the folder New chat stands on. */
+  projectFolder: string
+  branch: string | null
+  /** Told the branch when it is known, for a chat that took the reservation before then. */
+  onBranch: ((branch: string) => void) | null
+  made: Promise<NewChatWorktreeResult>
+  settled: NewChatWorktreeResult | null
+  startedAt: number
+  /** The give-back waiting out a closed New chat's grace, or null. */
+  releaseTimer: ReturnType<typeof setTimeout> | null
+}
+
+const reservations = new Map<string, Reservation>()
+// The project each New chat's last reservation could not be made in. It is
+// not asked for again there: Enter makes the worktree, and says why.
+const failedReservations = new Map<string, string>()
+const reservationListeners = new Set<() => void>()
+
+function reservationsChanged(): void {
+  for (const listener of reservationListeners) listener()
+}
+
+/** Hear when a reservation is made, taken or given back. */
+export function subscribeNewChatWorktreeReservations(listener: () => void): () => void {
+  reservationListeners.add(listener)
+  return () => reservationListeners.delete(listener)
+}
+
+/** This computer, however it was named: the only machine a reservation is made for. */
+function localHost(hostId: ExecutionHostId | null | undefined): boolean {
+  return !hostId || hostId === LOCAL_HOST_ID
+}
+
+function projectOf(folderPath: string): string {
+  return workspaceProjectRootOf({ folderPath }) ?? folderPath
+}
+
+/**
+ * Make a worktree for the chat New chat (`owner`) is about to start in
+ * `folderPath`'s project. Asking again for the same project keeps the one on
+ * its way; another project, or another machine, gives that one back first.
+ * Only this computer's: another machine's worktree could not be given back.
+ */
+export function reserveNewChatWorktree(owner: string, folderPath: string, hostId?: ExecutionHostId | null): void {
+  if (!localHost(hostId)) {
+    releaseNewChatWorktreeReservation(owner)
+    return
+  }
+  const projectFolder = projectOf(folderPath)
+  if (failedReservations.get(owner) === projectFolder) return
+  const current = reservations.get(owner)
+  if (current?.projectFolder === projectFolder) {
+    if (current.releaseTimer) clearTimeout(current.releaseTimer)
+    current.releaseTimer = null
+    return
+  }
+  releaseNewChatWorktreeReservation(owner)
+  const reservation: Reservation = {
+    owner,
+    projectFolder,
+    branch: null,
+    onBranch: null,
+    made: Promise.resolve({ ok: false, message: '' }),
+    settled: null,
+    startedAt: Date.now(),
+    releaseTimer: null,
+  }
+  reservation.made = createNewChatWorktree(projectFolder, '', null, {
+    quietInstall: true,
+    silent: true,
+    onBranch: (branch) => {
+      reservation.branch = branch
+      reservation.onBranch?.(branch)
+    },
+  }).then((made) => {
+    reservation.settled = made
+    // A reservation that could not be made is not kept: Enter makes the
+    // worktree itself, and says why if it fails again.
+    if (!made.ok && reservations.get(owner) === reservation) {
+      failedReservations.set(owner, projectFolder)
+      reservations.delete(owner)
+      reservationsChanged()
+    }
+    return made
+  })
+  reservations.set(owner, reservation)
+  reservationsChanged()
+}
+
+/**
+ * Give `owner`'s reservation back to the pool: at once, or after `graceMs`
+ * (a New chat closing, whose Enter may be claiming it a moment later).
+ */
+export function releaseNewChatWorktreeReservation(owner: string, graceMs = 0): void {
+  if (graceMs === 0) failedReservations.delete(owner)
+  const reservation = reservations.get(owner)
+  if (!reservation) return
+  if (graceMs > 0) {
+    if (reservation.releaseTimer) return
+    reservation.releaseTimer = setTimeout(() => {
+      reservation.releaseTimer = null
+      if (reservations.get(owner) === reservation) releaseNewChatWorktreeReservation(owner)
+    }, graceMs)
+    return
+  }
+  if (reservation.releaseTimer) clearTimeout(reservation.releaseTimer)
+  reservations.delete(owner)
+  reservationsChanged()
+  void reservation.made.then((made) => (made.ok ? giveBackUnusedWorktree(made, null) : undefined))
+}
+
+/** Whether `owner` holds a reservation now (made or on its way). */
+export function hasNewChatWorktreeReservation(owner: string): boolean {
+  return reservations.has(owner)
+}
+
+/**
+ * The reservation a chat asking for `requestedName` in `folderPath`'s project
+ * on `hostId` can take, taken out of the list. Only an unnamed worktree's, on
+ * this computer; a stale one is given back instead.
+ */
+function claimReservation(
+  folderPath: string,
+  requestedName: string,
+  hostId: ExecutionHostId | null | undefined,
+  ready: boolean,
+): Reservation | null {
+  if (requestedName.trim() || !localHost(hostId)) return null
+  const projectFolder = projectOf(folderPath)
+  let found: Reservation | null = null
+  for (const reservation of reservations.values()) {
+    if (reservation.projectFolder !== projectFolder) continue
+    if (ready && !reservation.settled?.ok) continue
+    // The one most likely made: settled before one still on its way.
+    if (!found || (reservation.settled?.ok && !found.settled?.ok)) found = reservation
+  }
+  if (!found) return null
+  if (Date.now() - found.startedAt > NEW_CHAT_RESERVATION_FRESH_MS) {
+    releaseNewChatWorktreeReservation(found.owner)
+    return null
+  }
+  if (found.releaseTimer) clearTimeout(found.releaseTimer)
+  reservations.delete(found.owner)
+  reservationsChanged()
+  return found
+}
+
+/**
+ * The worktree reserved for this chat, if it is already made: Enter starts the
+ * chat in it at once, with no pending state at all.
+ */
+export function takeReadyNewChatWorktree(
+  folderPath: string | null,
+  requestedName: string,
+  hostId?: ExecutionHostId | null,
+): Extract<NewChatWorktreeResult, { ok: true }> | null {
+  if (!folderPath) return null
+  const claimed = claimReservation(folderPath, requestedName, hostId, true)
+  return claimed?.settled?.ok ? claimed.settled : null
+}
+
+/**
+ * The worktree a chat asked for: the one reserved for it while New chat was
+ * open, when there is one (made, or waited on while it finishes), or a new one.
+ */
+export async function obtainNewChatWorktree(
+  folderPath: string | null,
+  requestedName: string,
+  hostId?: ExecutionHostId | null,
+  options: NewChatWorktreeOptions = {},
+): Promise<NewChatWorktreeResult> {
+  const claimed = folderPath ? claimReservation(folderPath, requestedName, hostId, false) : null
+  if (claimed) {
+    if (claimed.branch) options.onBranch?.(claimed.branch)
+    else claimed.onBranch = options.onBranch ?? null
+    const made = await claimed.made
+    if (made.ok) return made
+  }
+  return createNewChatWorktree(folderPath, requestedName, hostId, options)
 }
