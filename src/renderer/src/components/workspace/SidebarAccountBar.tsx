@@ -18,14 +18,27 @@ import type { RailBadge } from './AppRail'
 // WorkspaceTopBar. The account menu, its trigger, and
 // the Settings gear keep their original handlers — only the mount point moved.
 //
-// TWO controls, and no more. For four days it also hosted a trigger glyph per
-// registered modal surface (doors→modals, 2026-09-01): Plugins, Automations and
-// Design left the top-nav door band and opened as modals from beside the gear.
-// The Extensions drawer ruling (2026-09-05) sent all three back to being doors
-// — a destination the shell's own chrome offers routes the card region — so the
-// cluster is the account and Settings again, and nothing renders a modal
-// trigger anywhere. Settings stays here because it belongs to the WINDOW rather
-// than to whichever section the sidebar is showing.
+// THREE controls, and no more: Usage, the account and Settings. For four days
+// it also hosted a trigger glyph per registered modal surface (doors→modals,
+// 2026-09-01): Plugins, Automations and Design left the top-nav door band and
+// opened as modals from beside the gear. The Extensions drawer ruling
+// (2026-09-05) sent all three back to being doors — a destination the shell's
+// own chrome offers routes the card region — so nothing renders a module's
+// modal trigger here. Settings stays because it belongs to the WINDOW rather
+// than to whichever section the sidebar is showing, and the usage dashboard
+// joined it above the account (owner ruling 2026-10-10) for the same reason:
+// what every agent on this machine has spent is nobody's section.
+
+// Three bars of different heights, the column chart with no axes (lucide
+// "chart-no-axes-column" geometry): a chart, read at icon size, with nothing
+// in it that could be mistaken for a value.
+function UsageGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
 
 // The account disc's ring and fill. One colour for every account: signing in
 // unlocks nothing (the app is open source, owner ruling 2026-09-27), so the
@@ -173,6 +186,9 @@ export type SidebarAccountBarProps = {
    * ruling 2026-09-25) — worn on the gear as the rail's own corner count.
    */
   settingsBadge?: RailBadge | null
+  /** The usage dashboard's open state, and the toggle the chart glyph calls. */
+  usageOpen?: boolean
+  openUsage?: () => void
 }
 
 // Sidebar-bottom account + Settings row. Expanded: the account avatar opens the
@@ -190,6 +206,8 @@ export default function SidebarAccountBar({
   openSettings,
   settingsOpen,
   settingsBadge,
+  usageOpen = false,
+  openUsage,
 }: SidebarAccountBarProps) {
   const accountName = authState.user?.displayName ?? authState.user?.email ?? 'Your account'
 
@@ -247,6 +265,14 @@ export default function SidebarAccountBar({
       </IconButton>
     </Tooltip>
   )
+
+  const usageButton = openUsage ? (
+    <Tooltip content="Usage" placement={collapsed ? 'right' : 'top'}>
+      <IconButton size={collapsed ? 'lg' : 'md'} pressed={usageOpen} onClick={openUsage} aria-label="Usage">
+        <UsageGlyph className={collapsed ? 'size-icon-lg' : 'size-icon-md'} />
+      </IconButton>
+    </Tooltip>
+  ) : null
 
   // Icon-only in BOTH sidebar states (owner, 2026-09-01): the footer spends no
   // width on the account name — the badge (provider photo when the session
@@ -318,13 +344,19 @@ export default function SidebarAccountBar({
         collapsed ? 'flex flex-col items-center gap-1.5 px-2 py-2' : 'flex items-center gap-1.5 px-2 py-1.5'
       }`}
     >
+      {/* On the rail, Usage stands above the account; in a row it sits with
+          the gear at the right edge, the account holding the left. */}
+      {collapsed ? usageButton : null}
       {accountControl}
       {collapsed ? (
         settingsButton
       ) : (
         // With the account control now icon-only, the settings gear pins to
         // the row's right edge; the account badge holds the left.
-        <div className="ml-auto flex items-center gap-1.5">{settingsButton}</div>
+        <div className="ml-auto flex items-center gap-1.5">
+          {usageButton}
+          {settingsButton}
+        </div>
       )}
     </div>
   )

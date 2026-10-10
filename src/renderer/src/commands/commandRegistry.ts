@@ -715,6 +715,15 @@ export const COMMAND_REGISTRY = [
     availability: ['activeWorkspace', 'terminalActive'],
     handlerPath: { kind: 'workspace-manager', handler: 'stopActiveTerminal()' },
   }),
+  // The usage dashboard (cost and tokens per agent, and the plan limits), the
+  // same modal the chart glyph at the foot of the app rail opens. Unbound.
+  command({
+    id: 'usage.show',
+    title: 'Show usage',
+    category: 'settings',
+    scopes: ['global'],
+    handlerPath: { kind: 'workspace-manager', handler: "openModalSurface('usage')" },
+  }),
   // The performance diagnostics panel is a dev/diagnostics-only engineering
   // tool (process metrics, terminal/replay footprint, retention warnings).
   // The subscription usage limits as a dialog, for a person with no Claude or

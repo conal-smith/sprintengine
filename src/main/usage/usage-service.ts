@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
 import { conversationWorkingRoot, type AgentState } from '../../shared/agent-state'
+import type { UsageReportRequest, UsageReportResult } from '../../shared/usage-report'
 import type {
   ModuleUsageRegistry,
   UsageGroupBy,
@@ -17,6 +18,8 @@ import { codexHomeDir } from '../conversation-import/codex-sessions'
 import { conversationStorageSegment } from '../conversation-index'
 import { workspaceSidecarPath } from '../workspace-sidecar'
 import { aggregateUsage } from './usage-aggregate'
+import { createPricingStore, type PricingStore } from './usage-pricing'
+import { buildUsageReport } from './usage-report'
 import {
   runUsageScan,
   type UsageCacheEntry,
@@ -26,7 +29,8 @@ import {
 } from './usage-scan'
 
 // Token usage of every agent session on this machine, for modules
-// (SDK `getUsageService`, permission `usage:read`).
+// (SDK `getUsageService`, permission `usage:read`) and for the app's own
+// usage dashboard (`report`, priced; usage-report.ts).
 //
 // Reading is lazy and incremental. Nothing happens at startup: the first query
 // loads the cache this service keeps in the app's data folder and scans, and a
@@ -62,6 +66,8 @@ export type UsageServiceDeps = {
   workerPath?: string | null
   /** Overrides how a scan runs (tests). */
   runScan?: UsageScanRunner
+  /** Overrides where prices come from (tests); defaults to the live list kept under `usage/`. */
+  pricing?: PricingStore
   now?: () => number
   staleMs?: number
   pollMs?: number
@@ -69,6 +75,8 @@ export type UsageServiceDeps = {
 
 export type UsageService = {
   registry: ModuleUsageRegistry
+  /** The dashboard's priced report over a window; `refresh` scans now and fetches prices again. */
+  report(request: UsageReportRequest): Promise<UsageReportResult>
   /** Scan now (or join the scan running) and resolve when it is done. */
   refresh(): Promise<void>
   dispose(): Promise<void>
@@ -96,6 +104,8 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
   let activeWorker: Worker | null = null
 
   const cachePath = (): string => join(deps.dataDir(), 'usage', 'scan-cache.json')
+  const pricing =
+    deps.pricing ?? createPricingStore({ cacheFile: () => join(deps.dataDir(), 'usage', 'model-prices.json') })
 
   function load(): Promise<void> {
     loaded ??= (async () => {
@@ -131,6 +141,9 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
     return {
       claudeProjects: join(resolveClaudeConfigDir(home, env), 'projects'),
       codexHome: codexHomeDir(home, env),
+      opencodeData: opencodeDataDir(home, env),
+      geminiHome: join(home, '.gemini'),
+      grokHome: env.GROK_HOME?.trim() || join(home, '.grok'),
       studioDirs: studioDirs(deps.getWorkspaces()),
     }
   }
@@ -217,20 +230,50 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
     const invalid = invalidQuery(input)
     if (invalid) return { ok: false, code: 'invalid_input', message: invalid }
     if (disposed) return { ok: false, code: 'unavailable', message: 'The app is shutting down.' }
-    await load()
-    // The first query of a run waits for a scan, so it never answers from a
-    // cache that may be days old; later ones answer at once.
-    // A query joins a scan already running rather than queueing another.
-    if (!scannedThisRun) await (running ?? scan())
-    else if (!running && (scannedAt === null || now() - scannedAt > staleMs)) void scan()
-    const workspaces = deps
-      .getWorkspaces()
-      .map((workspace) => ({ id: workspace.id, folderPath: workspace.folderPath ?? null }))
+    await ready()
     return {
       ok: true,
-      rows: aggregateUsage(entries.values(), input, { workspaces, chatTitle }),
+      rows: aggregateUsage(entries.values(), input, { workspaces: workspaceRefs(), chatTitle }),
       scannedAt,
       sources: sources.map((source) => ({ ...source })),
+    }
+  }
+
+  /**
+   * The first read of a run waits for a scan, so it never answers from a
+   * cache that may be days old; later ones answer at once and start a scan in
+   * the background when the last is stale. A read joins a scan already running
+   * rather than queueing another; `fresh` waits for one that starts now.
+   */
+  async function ready(fresh = false): Promise<void> {
+    await load()
+    if (fresh) await scan()
+    else if (!scannedThisRun) await (running ?? scan())
+    else if (!running && (scannedAt === null || now() - scannedAt > staleMs)) void scan()
+  }
+
+  const workspaceRefs = () =>
+    deps.getWorkspaces().map((workspace) => ({ id: workspace.id, folderPath: workspace.folderPath ?? null }))
+
+  async function report(request: UsageReportRequest): Promise<UsageReportResult> {
+    const from = request?.from
+    const to = request?.to
+    if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !(to > from)) {
+      return { ok: false, message: 'A usage report needs a window: "from" before "to", in epoch ms.' }
+    }
+    if (disposed) return { ok: false, message: 'The app is shutting down.' }
+    const refresh = request.refresh === true
+    // The price list is fetched while the logs are read, not after.
+    const [prices] = await Promise.all([pricing.get({ force: refresh }), ready(refresh)])
+    // Grouped by the hour (as the day key) so the window buckets into its own days.
+    const rows = aggregateUsage(
+      entries.values(),
+      { from, to, groupBy: ['day', 'provider', 'model', 'session'] },
+      { workspaces: workspaceRefs(), chatTitle, dayOf: String },
+    )
+    return {
+      ok: true,
+      report: buildUsageReport({ rows, from, to, scannedAt, sources, pricing: prices }),
     }
   }
 
@@ -257,6 +300,7 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
 
   return {
     registry: { query, onChanged },
+    report,
     refresh: scan,
     async dispose() {
       disposed = true
@@ -268,6 +312,54 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
       if (worker) await worker.terminate().catch(() => undefined)
     },
   }
+}
+
+const shared = new Map<string, { service: UsageService; permissions: Set<UsageServiceDeps['getModulePermissions']> }>()
+
+/**
+ * The one usage service of this process for a data folder. The module host
+ * (for modules) and the dashboard's IPC each ask for it, and share one scan,
+ * one cache file and one worker rather than reading every log twice. The
+ * first caller's deps build it; each caller adds how it resolves a module's
+ * permissions, and a module holds `usage:read` if any of them says so.
+ */
+export function sharedUsageService(deps: UsageServiceDeps): UsageService {
+  const key = deps.dataDir()
+  const known = shared.get(key)
+  if (known) {
+    known.permissions.add(deps.getModulePermissions)
+    return known.service
+  }
+  const permissions = new Set<UsageServiceDeps['getModulePermissions']>([deps.getModulePermissions])
+  const service = createUsageService({
+    ...deps,
+    getModulePermissions: (moduleId) => {
+      for (const resolve of permissions) {
+        const granted = resolve(moduleId)
+        if (granted) return granted
+      }
+      return undefined
+    },
+  })
+  const dispose = service.dispose
+  const entry = {
+    service: {
+      ...service,
+      dispose: () => {
+        shared.delete(key)
+        return dispose()
+      },
+    },
+    permissions,
+  }
+  shared.set(key, entry)
+  return entry.service
+}
+
+/** OpenCode's data folder: under `$XDG_DATA_HOME` when set, as OpenCode itself resolves it on every platform. */
+export function opencodeDataDir(home: string, env: NodeJS.ProcessEnv): string {
+  const xdg = env.XDG_DATA_HOME?.trim()
+  return xdg ? join(xdg, 'opencode') : join(home, '.local', 'share', 'opencode')
 }
 
 /**

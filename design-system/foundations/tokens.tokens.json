@@ -1532,6 +1532,18 @@
               }
             }
           }
+        },
+        "display": {
+          "$type": "dimension",
+          "$value": "32px",
+          "$description": "The one headline figure of a data view: the total a usage dashboard leads with.",
+          "$extensions": {
+            "com.sprintengine": {
+              "role": "typography",
+              "use": "A single figure that is the answer the view exists to give (a period's cost or token total), at line.tight with proportional figures. Exactly one per view.",
+              "doNotUse": "A heading, a title, a label or prose of any kind, a second figure in the same view, or a row of stat figures. Never in an operational panel's chrome."
+            }
+          }
         }
       },
       "weight": {

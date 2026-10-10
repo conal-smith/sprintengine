@@ -158,6 +158,7 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'usage-limit-resumes:get': { retry: 'once' },
   'usage-limit-resumes:update': {},
   'usage-limits:get': { retry: 'once' },
+  'usage:report': { retry: 'once' },
   'workspace-backup:read': { retry: 'once' },
   'workspace-backup:write': {},
   'workspace-registry:hydrate': {},

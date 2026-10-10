@@ -16,6 +16,8 @@ import type { UsageCacheEntry } from './usage-scan'
 //   those, since the turns priced from the log need no second price.
 // - A CLI session no chat links to (one a person ran in a terminal) is
 //   attributed to the open workspace whose folder holds it, if any.
+// - A CLI that prices its own turns (OpenCode, Grok) keeps that price in its
+//   log, and it is reported as the cost; Claude Code and Codex record none.
 
 export type UsageWorkspaceRef = { id: string; folderPath: string | null }
 
@@ -115,7 +117,7 @@ export function aggregateUsage(
     }
     const chat = chats.get(entry.sessionId)
     const workspaceId = chat?.workspaceId ?? workspaceFor([entry.repoRoot, entry.cwd])
-    for (const [hour, model, , input, output, cacheRead, cacheWrite, requests] of entry.buckets) {
+    for (const [hour, model, , input, output, cacheRead, cacheWrite, requests, costUsd] of entry.buckets) {
       if (!inWindow(hour)) continue
       atoms.push({
         hour,
@@ -130,7 +132,7 @@ export function aggregateUsage(
         cacheRead,
         cacheWrite,
         requests,
-        costUsd: null,
+        costUsd: costUsd > 0 ? costUsd : null,
       })
     }
   }

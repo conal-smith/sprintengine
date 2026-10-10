@@ -25,11 +25,10 @@ import { formatTimeOfDay } from '../../../utils/clockFormat'
 // chat's composer strip, beside the context ring. The ring is the chat's own
 // budget; this is the account's, and the line already reads as "what is spent".
 //
-// The rail's foot holds the account and Settings and no more (two controls,
-// by ruling), and these limits are not the app's account anyway: they are the
-// agent's, and appear on the chats whose agent has them. The same list opens
-// from the command palette ("Show usage limits") for a person with no such
-// chat open.
+// These limits are not the app's account: they are the agent's, and appear
+// on the chats whose agent has them. The same list opens from the command
+// palette ("Show usage limits") for a person with no such chat open, and in
+// the Limits view of the usage dashboard the rail's chart glyph opens.
 //
 // Only what the agents reported is drawn, and only for a subscription: the
 // list is empty rather than a guess before the first report, and a provider

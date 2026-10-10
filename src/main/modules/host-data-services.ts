@@ -9,7 +9,7 @@ import {
   BacklogModuleServiceToken,
   UsageModuleServiceToken,
 } from '../module-host/service-tokens'
-import { createUsageService } from '../usage/usage-service'
+import { sharedUsageService } from '../usage/usage-service'
 
 // The Backlog, usage and activity services modules reach through the SDK
 // (`getBacklogService`, `getUsageService`, `getActivityService`), seeded by the
@@ -35,7 +35,8 @@ export function provideHostDataServices(
       getModulePermissions: options.getModulePermissions,
     }),
   )
-  const usage = createUsageService({
+  // Shared with the usage dashboard's IPC (usage-ipc.ts): one scan for both.
+  const usage = sharedUsageService({
     dataDir: options.dataDir,
     getWorkspaces: workspaces,
     getModulePermissions: options.getModulePermissions,

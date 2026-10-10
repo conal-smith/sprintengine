@@ -556,22 +556,35 @@ export default function CommandPalette({
 
     // Registry- and panel-backed commands are all one source group; stamp it
     // once here rather than on every literal above.
-    // The subscription usage limits, as a dialog: the one place to read them
-    // with no Claude or Codex chat open. Gone with the setting that hides them.
-    const usageCommands: UngroupedCommand[] = usageLimitsShown
-      ? [
-          {
-            id: 'usage.limits.show',
-            label: 'Show usage limits',
-            keywords: 'subscription plan limit five-hour weekly claude codex',
-            shortcut: shortcutFor('usage.limits.show'),
-            run: () => {
-              onRunCommand('usage.limits.show')
-              onClose()
+    // The usage dashboard, always; and the subscription usage limits as a
+    // dialog, the one place to read them with no Claude or Codex chat open,
+    // gone with the setting that hides them.
+    const usageCommands: UngroupedCommand[] = [
+      {
+        id: 'usage.show',
+        label: 'Show usage',
+        keywords: 'cost tokens spend dashboard metrics statistics claude codex opencode gemini grok cursor',
+        shortcut: shortcutFor('usage.show'),
+        run: () => {
+          onRunCommand('usage.show')
+          onClose()
+        },
+      },
+      ...(usageLimitsShown
+        ? [
+            {
+              id: 'usage.limits.show',
+              label: 'Show usage limits',
+              keywords: 'subscription plan limit five-hour weekly claude codex',
+              shortcut: shortcutFor('usage.limits.show'),
+              run: () => {
+                onRunCommand('usage.limits.show')
+                onClose()
+              },
             },
-          },
-        ]
-      : []
+          ]
+        : []),
+    ]
 
     const registryCommands: Command[] = [
       ...panelToggleCommands,

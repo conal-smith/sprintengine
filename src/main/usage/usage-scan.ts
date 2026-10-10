@@ -8,26 +8,33 @@ import { basename, dirname, join, sep } from 'node:path'
 // Nothing here keeps a transcript: a 50 MB session folds to a few hundred
 // bytes.
 //
-// Three sources:
+// Six sources:
 //
 // - Claude Code's logs, `<config>/projects/<folder>/<session>.jsonl` and the
 //   subagent logs in `<folder>/<session>/**`. Studio's own Claude chats run
 //   through the Agent SDK and write here too.
 // - Codex's rollouts, `<home>/sessions/YYYY/MM/DD/rollout-*.jsonl`, Studio's
 //   Codex chats among them.
+// - OpenCode's store: `<data>/opencode.db`, one SQLite file holding every
+//   session's messages, or the JSON files an older OpenCode kept per message
+//   under `<data>/storage/message/<session>/`.
+// - Gemini CLI's chat recordings, `<home>/tmp/<project>/chats/session-*.json`.
+// - Grok's session updates, `<home>/sessions/<cwd>/<session>/updates.jsonl`.
 // - Studio's chat transcripts, `<root>/.sprintengine/conversations/<ws>/<agent>.jsonl`.
 //   Their `turn_completed` events carry the turn's usage when the runtime
 //   reported it, the cost when it reported that, and the agent CLI session the
 //   turn ran (`providerCursor.sessionId`), which is the only link between a
 //   Studio chat and its CLI's log. The aggregation (usage-aggregate.ts) counts
 //   a linked session from the CLI's own log, per request, and the transcript's
-//   usage only for turns whose CLI log this machine does not have.
+//   usage only for turns whose CLI log this machine does not have. Cursor
+//   keeps no token counts on disk, so its Studio chats are counted from the
+//   transcript alone, and a session run in its own terminal is not.
 //
 // It is pure Node and imports nothing of Electron, so it runs in the scan's
 // worker thread (usage-scan-worker.ts), or inline, yielding between chunks,
 // where no worker can start.
 
-export type UsageSourceId = 'studio' | 'claude-code' | 'codex'
+export type UsageSourceId = 'studio' | 'claude-code' | 'codex' | 'opencode' | 'gemini' | 'grok'
 
 /**
  * One hour of one model's usage in one session:
@@ -71,6 +78,12 @@ export type UsageStudioDir = { dir: string; workspaceId: string; root: string }
 export type UsageScanRoots = {
   claudeProjects: string
   codexHome: string
+  /** OpenCode's data folder (`opencode.db`, or the older `storage/`). Absent, OpenCode is not read. */
+  opencodeData?: string
+  /** Gemini CLI's home (`~/.gemini`). Absent, Gemini is not read. */
+  geminiHome?: string
+  /** Grok's home (`~/.grok`). Absent, Grok is not read. */
+  grokHome?: string
   studioDirs: UsageStudioDir[]
 }
 
@@ -83,11 +96,24 @@ export type UsageScanResult = {
   removed: string[]
 }
 
-type Group = { key: string; src: UsageSourceId; files: string[]; main: string; fp: string; newest: number }
+type Group = {
+  key: string
+  src: UsageSourceId
+  files: string[]
+  main: string
+  fp: string
+  newest: number
+  /** A session read out of a store that holds many (OpenCode's database). */
+  sessionId?: string
+}
 
 const HOUR_MS = 3_600_000
 const CLAUDE_PROVIDER = 'claude-agent'
 const CODEX_PROVIDER = 'codex-agent'
+const OPENCODE_PROVIDER = 'opencode-agent'
+// No conversation provider drives Gemini CLI; its sessions report as the CLI.
+const GEMINI_PROVIDER = 'gemini'
+const GROK_PROVIDER = 'grok-agent'
 
 // ── Reading lines ────────────────────────────────────────────────────────────
 
@@ -578,6 +604,374 @@ async function codexTitles(codexHome: string): Promise<Map<string, string>> {
   return titles
 }
 
+// ── OpenCode ─────────────────────────────────────────────────────────────────
+
+type SqliteDatabase = import('node:sqlite').DatabaseSync
+
+/** Every `opencode*.db` in OpenCode's data folder; more than one when a channel keeps its own. */
+async function opencodeDatabases(data: string): Promise<string[]> {
+  try {
+    return (await listDir(data))
+      .filter((entry) => !entry.dir && /^opencode(?:-[\w.-]+)?\.db$/.test(entry.name))
+      .map((entry) => join(data, entry.name))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Open OpenCode's database read only. OpenCode may be writing to it; a reader
+ * waits a moment for its lock rather than failing. Null where this runtime has
+ * no SQLite (`node:sqlite` arrived in Node 22.5) or the file will not open.
+ */
+async function openSqlite(path: string): Promise<SqliteDatabase | null> {
+  try {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(path, { readOnly: true })
+    db.exec('PRAGMA busy_timeout = 250')
+    return db
+  } catch {
+    return null
+  }
+}
+
+/**
+ * OpenCode keeps every session in one database, so a session is a group of
+ * its own, fingerprinted by its messages' count and newest update rather than
+ * by the file, which changes whenever any session does. The legacy JSON store
+ * (one file per message, a folder per session) is grouped by folder.
+ */
+async function discoverOpencode(
+  data: string | undefined,
+  status: UsageSourceStatus,
+  databases: Map<string, SqliteDatabase>,
+): Promise<Group[]> {
+  if (!data) return []
+  const groups: Group[] = []
+  for (const path of await opencodeDatabases(data)) {
+    const db = await openSqlite(path)
+    if (!db) {
+      status.error = `Could not open ${path}.`
+      continue
+    }
+    databases.set(path, db)
+    try {
+      const rows = db
+        .prepare('SELECT session_id AS id, COUNT(*) AS n, MAX(time_updated) AS t FROM message GROUP BY session_id')
+        .all() as Array<{ id: string; n: number; t: number }>
+      for (const row of rows) {
+        groups.push({
+          key: `opencode:${basename(path)}/${row.id}`,
+          src: 'opencode',
+          files: [path],
+          main: path,
+          fp: `db|${row.n}:${row.t}`,
+          newest: Number(row.t) || 0,
+          sessionId: row.id,
+        })
+      }
+    } catch (error) {
+      status.error = `Could not read ${path}: ${(error as Error).message}`
+    }
+  }
+  const legacy = join(data, 'storage', 'message')
+  let sessions: Array<{ name: string; dir: boolean }> = []
+  try {
+    sessions = await listDir(legacy)
+  } catch {
+    // No legacy store: OpenCode has only ever kept its database here.
+  }
+  const inDatabase = new Set(groups.map((group) => group.sessionId))
+  for (const session of sessions) {
+    // A session the database also holds was migrated into it; its rows win.
+    if (!session.dir || inDatabase.has(session.name)) continue
+    const dir = join(legacy, session.name)
+    let files: string[]
+    try {
+      files = (await listDir(dir)).filter((e) => !e.dir && e.name.endsWith('.json')).map((e) => join(dir, e.name))
+    } catch {
+      continue
+    }
+    if (files.length === 0) continue
+    const { fp, newest } = await fingerprint(files)
+    groups.push({
+      key: `opencode:storage/${session.name}`,
+      src: 'opencode',
+      files,
+      main: dir,
+      fp,
+      newest,
+      sessionId: session.name,
+    })
+  }
+  status.found = groups.length
+  return groups
+}
+
+/**
+ * One OpenCode assistant message: `tokens.input` is fresh input (cache reads
+ * and writes are apart from it), reasoning is billed as output, and `cost` is
+ * OpenCode's own price for it, kept when it priced one (it writes 0 for a model
+ * it has no rate for).
+ */
+function addOpencodeMessage(
+  buckets: Map<string, UsageBucket>,
+  entry: UsageCacheEntry,
+  data: Record<string, unknown>,
+  createdFallback: number | null,
+): void {
+  if (data.role !== undefined && data.role !== 'assistant') return
+  const tokens = rec(data.tokens)
+  if (!tokens) return
+  const model = rec(data.model)
+  const name = str(model?.id) ?? str(model?.modelID) ?? str(data.modelID) ?? 'unknown'
+  const at = timeOf(rec(data.time)?.created) ?? createdFallback
+  if (at === null) return
+  const cache = rec(tokens.cache)
+  const counts: [number, number, number, number, number, number] = [
+    num(tokens.input),
+    num(tokens.output) + num(tokens.reasoning),
+    num(cache?.read),
+    num(cache?.write),
+    1,
+    num(data.cost),
+  ]
+  if (counts[0] + counts[1] + counts[2] + counts[3] === 0 && counts[5] === 0) return
+  entry.cwd ??= str(rec(data.path)?.cwd)
+  addUsage(buckets, at, name, '', counts)
+}
+
+export async function foldOpencode(group: Group, databases: Map<string, SqliteDatabase>): Promise<UsageCacheEntry> {
+  const entry = blankEntry(group, OPENCODE_PROVIDER)
+  const sessionId = group.sessionId ?? basename(group.main)
+  const buckets = new Map<string, UsageBucket>()
+  entry.sessionId = sessionId
+  const db = databases.get(group.main)
+  if (db) {
+    const session = db.prepare('SELECT title, directory FROM session WHERE id = ?').get(sessionId) as
+      { title?: string; directory?: string } | undefined
+    entry.title = str(session?.title)
+    entry.cwd = str(session?.directory)
+    const rows = db
+      .prepare('SELECT data, time_created AS created FROM message WHERE session_id = ?')
+      .all(sessionId) as Array<{ data: string; created: number }>
+    for (const row of rows) {
+      const data = parseJson(row.data)
+      if (data) addOpencodeMessage(buckets, entry, data, timeOf(row.created))
+    }
+  } else {
+    for (const file of group.files) {
+      const data = parseJson(await readFile(file, 'utf8'))
+      if (data) addOpencodeMessage(buckets, entry, data, null)
+    }
+    // The legacy store keeps each session's title beside its project.
+    try {
+      // `<data>/storage/message/<session>` → `<data>/storage/session/<project>/<session>.json`
+      const sessions = join(dirname(dirname(group.main)), 'session')
+      for (const project of await listDir(sessions)) {
+        if (!project.dir) continue
+        const info = parseJson(
+          await readFile(join(sessions, project.name, `${sessionId}.json`), 'utf8').catch(() => ''),
+        )
+        if (!info) continue
+        entry.title = str(info.title)
+        entry.cwd = str(info.directory) ?? entry.cwd
+        break
+      }
+    } catch {
+      // No session record: the session goes untitled.
+    }
+  }
+  entry.buckets = [...buckets.values()]
+  return entry
+}
+
+// ── Gemini CLI ───────────────────────────────────────────────────────────────
+
+async function discoverGemini(home: string | undefined, status: UsageSourceStatus): Promise<Group[]> {
+  if (!home) return []
+  const root = join(home, 'tmp')
+  let projects: Array<{ name: string; dir: boolean }>
+  try {
+    projects = await listDir(root)
+  } catch (error) {
+    if (!isMissing(error)) status.error = `Could not read ${root}: ${(error as Error).message}`
+    return []
+  }
+  const groups: Group[] = []
+  for (const project of projects) {
+    if (!project.dir) continue
+    const chats = join(root, project.name, 'chats')
+    let files: Array<{ name: string; dir: boolean }>
+    try {
+      files = await listDir(chats)
+    } catch {
+      continue
+    }
+    for (const file of files) {
+      if (file.dir || !/^session-.*\.jsonl?$/.test(file.name)) continue
+      const path = join(chats, file.name)
+      const { fp, newest } = await fingerprint([path])
+      groups.push({ key: `gemini:${project.name}/${file.name}`, src: 'gemini', files: [path], main: path, fp, newest })
+    }
+  }
+  status.found = groups.length
+  return groups
+}
+
+/**
+ * Fold one Gemini CLI chat recording: a JSON document (`messages`), or the
+ * line-per-record form a newer CLI appends to. A reply is a `gemini` message
+ * whose `tokens` are `input` (cached part included), `cached`, `output`,
+ * `thoughts` (billed as output) and `tool` (prompt tokens a tool's result
+ * added). A message rewritten as it streams is counted once, at its largest.
+ */
+export async function foldGemini(group: Group): Promise<UsageCacheEntry> {
+  const entry = blankEntry(group, GEMINI_PROVIDER)
+  const replies = new Map<string, { at: number; model: string; counts: number[] }>()
+  let anonymous = 0
+  const take = (record: Record<string, unknown>): void => {
+    entry.sessionId ||= str(record.sessionId) ?? ''
+    if (!entry.title && record.type === 'user') {
+      const content = record.content
+      const text = typeof content === 'string' ? content : Array.isArray(content) ? str(rec(content[0])?.text) : null
+      entry.title = text?.split('\n')[0]?.slice(0, 120) || null
+    }
+    if (record.type !== 'gemini') return
+    const tokens = rec(record.tokens)
+    const at = timeOf(record.timestamp)
+    if (!tokens || at === null) return
+    const input = num(tokens.input) + num(tokens.tool)
+    const cached = Math.min(input, num(tokens.cached))
+    const counts = [input - cached, num(tokens.output) + num(tokens.thoughts), cached, 0]
+    const key = str(record.id) ?? `anon:${anonymous++}`
+    const known = replies.get(key)
+    if (known)
+      for (let index = 0; index < 4; index += 1) known.counts[index] = Math.max(known.counts[index]!, counts[index]!)
+    else replies.set(key, { at, model: str(record.model) ?? 'gemini', counts })
+  }
+  if (group.main.endsWith('.jsonl')) {
+    await forEachLine(
+      group.main,
+      () => true,
+      (line) => {
+        const record = parseJson(line)
+        if (record) take(record)
+      },
+    )
+  } else {
+    const document = parseJson(await readFile(group.main, 'utf8'))
+    entry.sessionId = str(document?.sessionId) ?? ''
+    for (const message of Array.isArray(document?.messages) ? document.messages : []) {
+      const record = rec(message)
+      if (record) take(record)
+    }
+  }
+  // Newer CLIs name the project folder and record its root beside the chats.
+  entry.cwd = str(await readFile(join(dirname(dirname(group.main)), '.project_root'), 'utf8').catch(() => null))
+  const buckets = new Map<string, UsageBucket>()
+  for (const { at, model, counts } of replies.values()) {
+    addUsage(buckets, at, model, '', [counts[0]!, counts[1]!, counts[2]!, counts[3]!, 1, 0])
+  }
+  if (!entry.sessionId) entry.sessionId = basename(group.main).replace(/\.jsonl?$/, '')
+  entry.buckets = [...buckets.values()]
+  return entry
+}
+
+// ── Grok ─────────────────────────────────────────────────────────────────────
+
+/** Grok keeps a folder per session under a folder per working directory, `<cwd encoded>/<session>/`. */
+async function discoverGrok(home: string | undefined, status: UsageSourceStatus): Promise<Group[]> {
+  if (!home) return []
+  const root = join(home, 'sessions')
+  let folders: Array<{ name: string; dir: boolean }>
+  try {
+    folders = await listDir(root)
+  } catch (error) {
+    if (!isMissing(error)) status.error = `Could not read ${root}: ${(error as Error).message}`
+    return []
+  }
+  const groups: Group[] = []
+  for (const folder of folders) {
+    if (!folder.dir) continue
+    let sessions: Array<{ name: string; dir: boolean }>
+    try {
+      sessions = await listDir(join(root, folder.name))
+    } catch {
+      continue
+    }
+    for (const session of sessions) {
+      if (!session.dir) continue
+      const path = join(root, folder.name, session.name, 'updates.jsonl')
+      const { fp, newest } = await fingerprint([path])
+      // Only the session summary, no turns: nothing to count.
+      if (fp === '0|') continue
+      groups.push({ key: `grok:${folder.name}/${session.name}`, src: 'grok', files: [path], main: path, fp, newest })
+    }
+  }
+  status.found = groups.length
+  return groups
+}
+
+const GROK_TICKS_PER_USD = 1e10
+
+/**
+ * Fold one Grok session's `updates.jsonl`: each `turn_completed` update's
+ * usage, per model when it breaks the turn down by model (`modelUsage`).
+ * `inputTokens` includes the cached part; `costUsdTicks` is Grok's own price
+ * in ten-billionths of a dollar.
+ */
+export async function foldGrok(group: Group): Promise<UsageCacheEntry> {
+  const entry = blankEntry(group, GROK_PROVIDER)
+  const sessionDir = dirname(group.main)
+  entry.sessionId = basename(sessionDir)
+  entry.cwd = decodeSegment(basename(dirname(sessionDir)))
+  const summary = parseJson(await readFile(join(sessionDir, 'summary.json'), 'utf8').catch(() => ''))
+  entry.title = str(summary?.session_summary)?.split('\n')[0]?.slice(0, 120) ?? null
+  const fallbackModel = str(summary?.current_model_id) ?? 'grok'
+  const buckets = new Map<string, UsageBucket>()
+  const seen = new Set<string>()
+  const add = (at: number, model: string, usage: Record<string, unknown>): void => {
+    const input = num(usage.inputTokens)
+    const cached = Math.min(input, num(usage.cachedReadTokens))
+    const written = Math.min(input - cached, num(usage.cacheCreationTokens))
+    addUsage(buckets, at, model, '', [
+      input - cached - written,
+      num(usage.outputTokens),
+      cached,
+      written,
+      1,
+      num(usage.costUsdTicks) / GROK_TICKS_PER_USD,
+    ])
+  }
+  await forEachLine(
+    group.main,
+    (line) => line.includes('turn_completed'),
+    (line) => {
+      const record = parseJson(line)
+      const params = rec(record?.params)
+      const update = rec(params?.update)
+      const usage = rec(update?.usage)
+      if (!record || !update || !usage || update.sessionUpdate !== 'turn_completed') return
+      const at = timeOf(rec(params?._meta)?.agentTimestampMs) ?? timeOf(record.timestamp)
+      if (at === null) return
+      const turn = str(update.promptId) ?? str(params?.promptId) ?? str(record.prompt_id)
+      if (turn) {
+        if (seen.has(turn)) return
+        seen.add(turn)
+      }
+      const perModel = Object.entries(rec(usage.modelUsage) ?? {})
+      if (perModel.length === 0) return add(at, str(usage.model) ?? fallbackModel, usage)
+      for (const [model, value] of perModel) {
+        const modelUsage = rec(value)
+        if (modelUsage) add(at, model, modelUsage)
+      }
+    },
+  )
+  entry.buckets = [...buckets.values()]
+  return entry
+}
+
 // ── Which repository a folder belongs to ─────────────────────────────────────
 
 /**
@@ -626,10 +1020,38 @@ export async function runUsageScan(
     studio: { id: 'studio', found: 0, error: null },
     'claude-code': { id: 'claude-code', found: 0, error: null },
     codex: { id: 'codex', found: 0, error: null },
+    opencode: { id: 'opencode', found: 0, error: null },
+    gemini: { id: 'gemini', found: 0, error: null },
+    grok: { id: 'grok', found: 0, error: null },
   }
+  // OpenCode's databases stay open for the scan, so each session is one query.
+  const databases = new Map<string, SqliteDatabase>()
+  try {
+    return await scanGroups(roots, previous, hooks, status, databases)
+  } finally {
+    for (const db of databases.values()) {
+      try {
+        db.close()
+      } catch {
+        // Already closed.
+      }
+    }
+  }
+}
+
+async function scanGroups(
+  roots: UsageScanRoots,
+  previous: Readonly<Record<string, string>>,
+  hooks: { onEntry: (entry: UsageCacheEntry) => void; yieldEveryBytes?: number; shouldStop?: () => boolean },
+  status: Record<UsageSourceId, UsageSourceStatus>,
+  databases: Map<string, SqliteDatabase>,
+): Promise<UsageScanResult> {
   const groups = [
     ...(await discoverClaude(roots.claudeProjects, status['claude-code'])),
     ...(await discoverCodex(roots.codexHome, status.codex)),
+    ...(await discoverOpencode(roots.opencodeData, status.opencode, databases)),
+    ...(await discoverGemini(roots.geminiHome, status.gemini)),
+    ...(await discoverGrok(roots.grokHome, status.grok)),
     ...(await discoverStudio(roots.studioDirs, status.studio)),
   ]
   const present = new Set(groups.map((group) => group.key))
@@ -650,7 +1072,10 @@ export async function runUsageScan(
       else if (group.src === 'codex') {
         entry = await foldCodex(group, hooks.yieldEveryBytes)
         entry.title = codexNames.get(entry.sessionId) ?? entry.title
-      } else {
+      } else if (group.src === 'opencode') entry = await foldOpencode(group, databases)
+      else if (group.src === 'gemini') entry = await foldGemini(group)
+      else if (group.src === 'grok') entry = await foldGrok(group)
+      else {
         const dir = dirsByPath.get(dirname(group.main))
         if (!dir) continue
         entry = await foldStudio(group, dir, await studioTitles(dir.dir, titleCache))

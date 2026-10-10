@@ -65,7 +65,7 @@ export type UsageRow = {
 
 /** One place usage is read from, and whether it could be. */
 export type UsageSource = {
-  id: 'studio' | 'claude-code' | 'codex'
+  id: 'studio' | 'claude-code' | 'codex' | 'opencode' | 'gemini' | 'grok'
   /** Session logs (or transcripts) found there. */
   found: number
   error: string | null

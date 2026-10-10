@@ -832,6 +832,18 @@ test('renderer-host', async () => {
     /reserved for the app/,
     'the "settings" id is reserved — core Settings never registers here, so without this a module could claim it',
   )
+  assert.throws(
+    () =>
+      modalHost.hostFor('acme.compass').registerModalSurface({
+        id: 'usage',
+        order: 1,
+        label: 'Usage',
+        Icon: modalIcon,
+        Component: modalComponent,
+      }),
+    /reserved for the app/,
+    'the "usage" id is reserved — the usage dashboard is the app\'s own and opens from the same cluster',
+  )
   // The Diff popout is gone (git-commit-window T3): a diff opens in its own OS
   // window or in the pane's Diff tab, so nothing core answers to `diff` any more
   // and the id is a module's to claim like any other. Asserted on a host of its

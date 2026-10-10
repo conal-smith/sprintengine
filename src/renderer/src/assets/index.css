@@ -53,6 +53,7 @@
   --text-body: var(--text-size-sm);
   --text-heading: var(--text-size-md);
   --text-title: var(--text-size-lg);
+  --text-display: var(--text-size-display);
 
   --spacing-icon-xs: var(--icon-xs);
   --spacing-icon-sm: var(--icon-sm);
@@ -465,6 +466,7 @@
   --text-size-sm: var(--sem-font-size-body);
   --text-size-md: var(--sem-font-size-heading);
   --text-size-lg: var(--sem-font-size-title);
+  --text-size-display: var(--sem-font-size-display);
   --text-line-tight: var(--sem-font-line-tight);
   --text-line-default: var(--sem-font-line-default);
   --text-line-relaxed: var(--sem-font-line-relaxed);
