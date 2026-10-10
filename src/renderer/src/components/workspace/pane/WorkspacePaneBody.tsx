@@ -9,7 +9,7 @@ import { useChangelists } from '../../../hooks/useChangelists'
 import { useWorkspaceTerminalSessions } from '../../../hooks/useTerminalSessions'
 import { defaultDiffChangelistId } from '../../../utils/diffChangelistDefault'
 import { paneKindRetainsPanel } from './paneKinds'
-import { FLOATING_PAGE_INSET, FloatingPlayerChrome, useFloatRect } from './FloatingPlayer'
+import { FloatingPlayerChrome, useFloatRect } from './FloatingPlayer'
 import { clientSupports } from '../../../clientCapabilities'
 import { EmptyState, OpenInWindowGlyph, OutlineButton, PrimaryButton } from '../../ui'
 import { bringBackPaneTab, showPanePopOut } from './popout/panePopOutHost'
@@ -398,14 +398,7 @@ export function WorkspacePaneBody({
             }
             style={
               floating
-                ? {
-                    ...floatRect,
-                    // The page starts below the drag bar. `height: 100%` on the
-                    // child resolves against this content box, so the guest is
-                    // sized correctly without knowing the bar exists.
-                    paddingTop: FLOATING_PAGE_INSET,
-                    pointerEvents: 'auto',
-                  }
+                ? { ...floatRect, pointerEvents: 'auto' }
                 : offscreen
                   ? OFFSCREEN_LAYER_STYLE
                   : { pointerEvents: selected ? 'auto' : 'none' }

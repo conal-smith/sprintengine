@@ -90,11 +90,15 @@ const MAX_DOCUMENT_PATH_LENGTH = 4096
 // one main could have opened a window for.
 const POP_OUT_ID = /^[A-Za-z0-9_-]{1,64}$/
 
-// The floating player's bounds. The default is the spec's 360x240; the floor is
-// small enough to park out of the way and still read a page, the ceiling keeps
-// a "float" from quietly becoming a second full-size pane.
-export const FLOAT_DEFAULT_WIDTH = 360
-export const FLOAT_DEFAULT_HEIGHT = 240
+// The floating player is a miniature of a fixed size (owner ruling 2026-10-10):
+// a 16:10 thumbnail, small enough to sit beside the transcript without taking
+// it over, of a page laid out at `FLOAT_PAGE_WIDTH` and scaled down to fit, so
+// what it shows is the page as a desktop window would draw it rather than the
+// page's narrow-screen layout. The floor and ceiling below only bound a stored
+// rect, which an older, resizable player wrote.
+export const FLOAT_DEFAULT_WIDTH = 320
+export const FLOAT_DEFAULT_HEIGHT = 200
+export const FLOAT_PAGE_WIDTH = 1280
 export const FLOAT_MIN_WIDTH = 240
 export const FLOAT_MIN_HEIGHT = 160
 export const FLOAT_MAX_WIDTH = 1200

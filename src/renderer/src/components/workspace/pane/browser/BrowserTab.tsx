@@ -19,6 +19,11 @@ import {
   type BrowserViewport,
 } from '../../../../../../shared/browser-devices'
 import { useWorkspaceStore } from '../../../../store/workspaceStore'
+import {
+  FLOAT_DEFAULT_HEIGHT,
+  FLOAT_DEFAULT_WIDTH,
+  FLOAT_PAGE_WIDTH,
+} from '../../../../store/slices/workspacePaneSlice'
 import type { WorkspacePaneTab } from '../../../../types/workspace'
 import type { EmbeddedWebviewElement, WebviewIpcMessageEvent } from '../../../../types/webview'
 import { showToast } from '../../../../store/toastStore'
@@ -45,6 +50,11 @@ import { usePaneHost } from '../paneHost'
 // Device emulation is sizing only (epic decision 7): with a viewport set, the
 // guest is laid out at that CSS size and CSS-scaled to fit the tab body on a
 // `bg.app` canvas behind a 1px frame.
+//
+// Floating, the tab is a miniature (FloatingPlayer): no toolbar, and the guest
+// laid out at `FLOAT_PAGE_WIDTH` and CSS-scaled down to the player's width, the
+// same transform the device frame uses. It is a picture of the page, so it
+// takes no pointer; the player's overlay owns every press.
 
 const NO_RECENT_URLS: readonly string[] = []
 const FILL: BrowserViewport = { mode: 'fill' }
@@ -282,22 +292,25 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
     }
   }, [tab.id])
 
-  // The canvas the framed viewport fits into.
+  const miniature = tab.floating === true
+  // The canvas the framed viewport, or the miniature, fits into. The miniature
+  // fills it edge to edge; a device frame keeps an inset around it.
   useLayoutEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || viewport.mode === 'fill') return
+    if (!canvas || (viewport.mode === 'fill' && !miniature)) return
+    const inset = miniature ? 0 : CANVAS_INSET_PX
     const measure = () => {
       const rect = canvas.getBoundingClientRect()
       setCanvasSize({
-        width: Math.max(0, rect.width - CANVAS_INSET_PX * 2),
-        height: Math.max(0, rect.height - CANVAS_INSET_PX * 2),
+        width: Math.max(0, rect.width - inset * 2),
+        height: Math.max(0, rect.height - inset * 2),
       })
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(canvas)
     return () => observer.disconnect()
-  }, [viewport.mode])
+  }, [miniature, viewport.mode])
 
   const navigate = useCallback(
     (url: string) => {
@@ -457,8 +470,11 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
   const showEmpty = state
     ? !state.error && (!state.url || state.url === 'about:blank')
     : initialSrcRef.current === 'about:blank'
-  const framed = viewport.mode !== 'fill'
-  const scale = framed ? fitViewportScale(viewport, canvasSize) : 1
+  // The device frame waits while the tab floats, and comes back when it docks.
+  const framed = !miniature && viewport.mode !== 'fill'
+  // Before the first measure, the player's own width stands in for the canvas.
+  const miniatureScale = (canvasSize.width > 0 ? canvasSize.width : FLOAT_DEFAULT_WIDTH) / FLOAT_PAGE_WIDTH
+  const scale = miniature ? miniatureScale : framed ? fitViewportScale(viewport, canvasSize) : 1
   // The guest sits in ONE frame element in both modes; only the frame's
   // geometry changes. Moving a <webview> to another parent detaches and
   // re-attaches the guest, which reloads it from its initial `src` and gives
@@ -471,18 +487,30 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
         top: CANVAS_INSET_PX + Math.max(0, (canvasSize.height - viewport.height * scale) / 2),
       }
     : { inset: 0 }
-  const guestStyle: React.CSSProperties = framed
+  const guestStyle: React.CSSProperties = miniature
     ? {
         position: 'absolute',
         top: 0,
         left: 0,
-        width: viewport.width,
-        height: viewport.height,
-        transform: `scale(${scale})`,
+        width: FLOAT_PAGE_WIDTH,
+        height: Math.round((canvasSize.height > 0 ? canvasSize.height : FLOAT_DEFAULT_HEIGHT) / miniatureScale),
+        transform: `scale(${miniatureScale})`,
         transformOrigin: 'top left',
         display: 'flex',
+        pointerEvents: 'none',
       }
-    : { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'flex' }
+    : framed
+      ? {
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: viewport.width,
+          height: viewport.height,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          display: 'flex',
+        }
+      : { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'flex' }
 
   return (
     <div
@@ -494,122 +522,116 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
         void window.api.browserZoomStep(tab.id, zoom)
       }}
     >
-      <BrowserToolbar
-        ref={toolbarRef}
-        state={state}
-        onNavigate={navigate}
-        onBack={() => void window.api.browserBack(tab.id)}
-        onForward={() => void window.api.browserForward(tab.id)}
-        onReload={() => void window.api.browserReload(tab.id)}
-        onStop={() => void window.api.browserStop(tab.id)}
-        onAfterSubmit={() => webviewRef.current?.focus()}
-        onOpenExternal={() => {
-          void window.api.browserOpenExternal(tab.id).then((result) => {
-            if (!result.ok) showToast({ tone: 'warn', title: result.message })
-          })
-        }}
-        trailing={
-          <>
-            {/* Floating, the player's own bar says both of these; saying them
-                twice in a 360px player would crowd out the address. */}
-            {state?.controller === 'agent' && !tab.floating ? (
-              <Badge tone="accent" ariaLabel="An agent is driving this page">
-                Agent
-              </Badge>
-            ) : null}
-            {state?.recording && !tab.floating ? (
-              <BrowserRecordingIndicator
-                recording={state.recording}
-                onStop={() => void window.api.browserStopRecording(tab.id)}
-              />
-            ) : null}
-            <Tooltip content={picking ? 'Stop inspecting' : 'Inspect element'} placement="bottom">
-              <IconButton
-                onClick={() => (picking ? stopPicking() : startPicking())}
-                aria-label={picking ? 'Stop inspecting' : 'Inspect element'}
-                pressed={picking}
-                disabled={!canCapture}
-              >
-                <InspectGlyph />
-              </IconButton>
-            </Tooltip>
-            {/* OverflowMenu draws the trigger button itself; a custom trigger is
+      {miniature ? null : (
+        <BrowserToolbar
+          ref={toolbarRef}
+          state={state}
+          onNavigate={navigate}
+          onBack={() => void window.api.browserBack(tab.id)}
+          onForward={() => void window.api.browserForward(tab.id)}
+          onReload={() => void window.api.browserReload(tab.id)}
+          onStop={() => void window.api.browserStop(tab.id)}
+          onAfterSubmit={() => webviewRef.current?.focus()}
+          onOpenExternal={() => {
+            void window.api.browserOpenExternal(tab.id).then((result) => {
+              if (!result.ok) showToast({ tone: 'warn', title: result.message })
+            })
+          }}
+          trailing={
+            <>
+              {state?.controller === 'agent' ? (
+                <Badge tone="accent" ariaLabel="An agent is driving this page">
+                  Agent
+                </Badge>
+              ) : null}
+              {state?.recording ? (
+                <BrowserRecordingIndicator
+                  recording={state.recording}
+                  onStop={() => void window.api.browserStopRecording(tab.id)}
+                />
+              ) : null}
+              <Tooltip content={picking ? 'Stop inspecting' : 'Inspect element'} placement="bottom">
+                <IconButton
+                  onClick={() => (picking ? stopPicking() : startPicking())}
+                  aria-label={picking ? 'Stop inspecting' : 'Inspect element'}
+                  pressed={picking}
+                  disabled={!canCapture}
+                >
+                  <InspectGlyph />
+                </IconButton>
+              </Tooltip>
+              {/* OverflowMenu draws the trigger button itself; a custom trigger is
                 its CONTENT, never a second button inside it. One menu whatever
                 the page state, so a focused trigger is never unmounted under
                 the person; its items disable instead. */}
-            <OverflowMenu
-              ariaLabel="Screenshot"
-              trigger={() => <CameraGlyph />}
-              items={[
-                {
-                  id: 'copy',
-                  label: 'Copy screenshot',
-                  onSelect: () => void capturePage('copy'),
-                  disabled: !canCapture,
-                },
-                {
-                  id: 'save',
-                  label: 'Save to workspace',
-                  onSelect: () => void capturePage('save'),
-                  disabled: !canCapture || !workspaceRoot,
-                },
-                {
-                  id: 'send',
-                  label: 'Send to agent',
-                  onSelect: () => void capturePage('send'),
-                  disabled: !canCapture || !workspaceRoot,
-                },
-              ]}
-            />
-            <BrowserViewMenu
-              state={state}
-              deviceToolbarOn={framed}
-              onHardReload={() => void window.api.browserReload(tab.id, true)}
-              onOpenDevTools={() => void window.api.browserOpenDevTools(tab.id)}
-              onOpenWindow={() => void window.api.browserOpenWindow(tab.id)}
-              onToggleDeviceToolbar={() =>
-                setViewport(viewport.mode === 'fill' ? presetViewport(DEFAULT_BROWSER_DEVICE_PRESET_ID) : FILL)
-              }
-              floating={tab.floating === true}
-              // A pop-out window has no workspace beside it to float over; the
-              // window itself is already what floating was for.
-              onToggleFloating={
-                paneHost === 'pop-out'
-                  ? undefined
-                  : () => {
-                      // The device frame is off while floating: a 360px player
-                      // cannot honour a 390x844 viewport, and showing a cropped
-                      // one would be a lie about what is being previewed.
-                      if (tab.floating !== true && viewport.mode !== 'fill') setViewport(FILL)
-                      setPaneTabFloating(workspaceId, tab.id, tab.floating !== true)
+              <OverflowMenu
+                ariaLabel="Screenshot"
+                trigger={() => <CameraGlyph />}
+                items={[
+                  {
+                    id: 'copy',
+                    label: 'Copy screenshot',
+                    onSelect: () => void capturePage('copy'),
+                    disabled: !canCapture,
+                  },
+                  {
+                    id: 'save',
+                    label: 'Save to workspace',
+                    onSelect: () => void capturePage('save'),
+                    disabled: !canCapture || !workspaceRoot,
+                  },
+                  {
+                    id: 'send',
+                    label: 'Send to agent',
+                    onSelect: () => void capturePage('send'),
+                    disabled: !canCapture || !workspaceRoot,
+                  },
+                ]}
+              />
+              <BrowserViewMenu
+                state={state}
+                deviceToolbarOn={framed}
+                onHardReload={() => void window.api.browserReload(tab.id, true)}
+                onOpenDevTools={() => void window.api.browserOpenDevTools(tab.id)}
+                onOpenWindow={() => void window.api.browserOpenWindow(tab.id)}
+                onToggleDeviceToolbar={() =>
+                  setViewport(viewport.mode === 'fill' ? presetViewport(DEFAULT_BROWSER_DEVICE_PRESET_ID) : FILL)
+                }
+                floating={tab.floating === true}
+                // A pop-out window has no workspace beside it to float over; the
+                // window itself is already what floating was for.
+                onToggleFloating={
+                  paneHost === 'pop-out'
+                    ? undefined
+                    : () => setPaneTabFloating(workspaceId, tab.id, tab.floating !== true)
+                }
+                onColorScheme={(scheme) => void window.api.browserSetColorScheme(tab.id, scheme)}
+                onZoom={(direction) => void window.api.browserZoomStep(tab.id, direction)}
+                onClearCookies={() => {
+                  void window.api.browserClearCookies().then((result) => {
+                    if (!result.ok) {
+                      showToast({ tone: 'error', title: 'Cookies were not cleared', description: result.message })
+                      return
                     }
-              }
-              onColorScheme={(scheme) => void window.api.browserSetColorScheme(tab.id, scheme)}
-              onZoom={(direction) => void window.api.browserZoomStep(tab.id, direction)}
-              onClearCookies={() => {
-                void window.api.browserClearCookies().then((result) => {
-                  if (!result.ok) {
-                    showToast({ tone: 'error', title: 'Cookies were not cleared', description: result.message })
-                    return
-                  }
-                  showToast({ tone: 'good', title: 'Cookies cleared' })
-                  void window.api.browserReload(tab.id)
-                })
-              }}
-              onClearCache={() => {
-                void window.api.browserClearCache().then((result) => {
-                  if (!result.ok) {
-                    showToast({ tone: 'error', title: 'The cache was not cleared', description: result.message })
-                    return
-                  }
-                  showToast({ tone: 'good', title: 'Cache cleared' })
-                  void window.api.browserReload(tab.id, true)
-                })
-              }}
-            />
-          </>
-        }
-      />
+                    showToast({ tone: 'good', title: 'Cookies cleared' })
+                    void window.api.browserReload(tab.id)
+                  })
+                }}
+                onClearCache={() => {
+                  void window.api.browserClearCache().then((result) => {
+                    if (!result.ok) {
+                      showToast({ tone: 'error', title: 'The cache was not cleared', description: result.message })
+                      return
+                    }
+                    showToast({ tone: 'good', title: 'Cache cleared' })
+                    void window.api.browserReload(tab.id, true)
+                  })
+                }}
+              />
+            </>
+          }
+        />
+      )}
       {framed ? (
         <BrowserDeviceToolbar viewport={viewport} onChange={setViewport} onClose={() => setViewport(FILL)} />
       ) : null}
@@ -633,7 +655,7 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
               // guest for good.
               style={guestStyle}
               aria-label={`Web page for ${tab.title ?? 'this tab'}`}
-              tabIndex={active ? 0 : -1}
+              tabIndex={active && !miniature ? 0 : -1}
             />
           ) : null}
           {/* The agent's hand, drawn over the guest in the frame's own space so
@@ -649,12 +671,14 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
             {viewport.width} × {viewport.height}
           </span>
         ) : null}
-        {showEmpty ? (
+        {/* Neither page is drawn in the miniature: each is laid out for a
+            pane, and at a thumbnail's size it would be a crop of its corner. */}
+        {showEmpty && !miniature ? (
           <div className="absolute inset-0">
             <BrowserStartPage workspaceId={workspaceId} active={active} recentUrls={recentUrls} onOpen={navigate} />
           </div>
         ) : null}
-        {state?.error ? (
+        {state?.error && !miniature ? (
           <div className="absolute inset-0">
             <BrowserErrorPage error={state.error} onReload={() => void window.api.browserReload(tab.id)} />
           </div>

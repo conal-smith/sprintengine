@@ -14,7 +14,6 @@ import { afterEach, beforeAll, test, vi } from 'vitest'
 import type { Workspace, WorkspacePaneTab } from '../../../types/workspace'
 
 vi.mock('./FloatingPlayer', () => ({
-  FLOATING_PAGE_INSET: 24,
   FloatingPlayerChrome: () => null,
   useFloatRect: (_workspaceId: string, tab: WorkspacePaneTab | null) =>
     tab ? { left: 10, top: 10, width: 320, height: 200 } : null,
