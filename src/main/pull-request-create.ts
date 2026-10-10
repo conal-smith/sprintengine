@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { classifyPullRequestUrl } from '../shared/git/pr-url'
+import { SIDECAR_DIR_NAME } from '../shared/workspace-sidecar'
 import {
   createPullRequestReadiness,
   forgeOfRemote,
@@ -101,12 +102,12 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     gitRoot: string | null
     remote: ForgeRemote | null
     headSha: string | null
+    uncommittedChanges: number | null
   }> {
     const empty = {
       facts: {
         branch: null,
         defaultBranch: null,
-        dirty: false,
         unmergedCommits: null,
         openPullRequest: null,
         forge: null,
@@ -114,6 +115,7 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       gitRoot: null,
       remote: null,
       headSha: null,
+      uncommittedChanges: null,
     }
     const gitRoot = await out(cwd, ['rev-parse', '--show-toplevel'])
     if (!gitRoot) return empty
@@ -121,7 +123,16 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
       out(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']),
       out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']),
-      git(gitRoot, ['status', '--porcelain=v1', '--untracked-files=normal']),
+      // The app's own sidecar folder is not the person's work, so it is never
+      // counted among the changes the confirm step says stay behind.
+      git(gitRoot, [
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=normal',
+        '--',
+        '.',
+        `:(top,exclude)${SIDECAR_DIR_NAME}`,
+      ]),
       out(gitRoot, ['remote', 'get-url', 'origin']),
     ])
     let defaultBranch = originHead?.startsWith('origin/') ? originHead.slice('origin/'.length) : null
@@ -134,7 +145,8 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       }
     }
     const remote = remoteUrl ? forgeOfRemote(remoteUrl) : null
-    const dirty = !status.ok || status.stdout.trim().length > 0
+    // Counted for the confirm step to say, never to refuse: only a commit is pushed.
+    const uncommittedChanges = status.ok ? status.stdout.split('\n').filter((line) => line.trim()).length : null
     let openPullRequest: boolean | null = null
     let mergedHeads: string[] = []
     if (branch && remote?.forge === 'github' && branch !== defaultBranch) {
@@ -144,10 +156,11 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     }
     const unmergedCommits = branch && defaultBranch ? await countUnmerged(gitRoot, defaultBranch, mergedHeads) : null
     return {
-      facts: { branch, defaultBranch, dirty, unmergedCommits, openPullRequest, forge: remote?.forge ?? null },
+      facts: { branch, defaultBranch, unmergedCommits, openPullRequest, forge: remote?.forge ?? null },
       gitRoot,
       remote,
       headSha: headSha || null,
+      uncommittedChanges,
     }
   }
 
@@ -199,12 +212,13 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
   }
 
   async function state(cwd: string): Promise<CreatePullRequestState> {
-    const { facts, gitRoot, headSha } = await readFacts(cwd)
+    const { facts, gitRoot, headSha, uncommittedChanges } = await readFacts(cwd)
     return {
       readiness: createPullRequestReadiness(facts),
       gitRoot,
       branch: facts.branch,
       headSha,
+      uncommittedChanges,
       base: facts.defaultBranch,
       forge: facts.forge,
     }
@@ -455,8 +469,6 @@ function readinessMessage(readiness: Extract<CreatePullRequestReadiness, { ready
       return 'Check out a branch first: HEAD is detached.'
     case 'default-branch':
       return "This is the repository's default branch. Work on a branch of its own to open a pull request."
-    case 'uncommitted':
-      return 'Commit or stash the changes first: a pull request proposes committed work.'
     case 'nothing-to-propose':
       return 'The branch has no commits that are not already on the default branch.'
     case 'open-pull-request':

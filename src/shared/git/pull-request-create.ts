@@ -14,8 +14,6 @@ export type CreatePullRequestFacts = {
   branch: string | null
   /** The repository's default branch (`origin/HEAD`); null when the clone never recorded one. */
   defaultBranch: string | null
-  /** Anything uncommitted: tracked changes, staged or not, and untracked files git does not ignore. */
-  dirty: boolean
   /**
    * Commits on the branch that are on neither `origin/<default>` nor the head
    * of a pull request from it that merged. Null when git could not count them.
@@ -33,20 +31,13 @@ export type CreatePullRequestReadiness =
   | {
       ready: false
       reason:
-        | 'detached'
-        | 'default-branch'
-        | 'uncommitted'
-        | 'nothing-to-propose'
-        | 'open-pull-request'
-        | 'no-remote'
-        | 'unsupported-forge'
+        'detached' | 'default-branch' | 'nothing-to-propose' | 'open-pull-request' | 'no-remote' | 'unsupported-forge'
     }
 
 /**
  * Whether "Create PR" may show. All of these must hold:
  *
  * - the checkout is on a named branch that is not the repository's default;
- * - nothing is uncommitted (work in progress is not proposed);
  * - the branch has commits the default branch does not, and no merged pull
  *   request already carried them;
  * - no pull request from the branch is open, whoever opened it (a branch
@@ -56,11 +47,18 @@ export type CreatePullRequestReadiness =
  * An open-pull-request check that could not be made does not hide the button:
  * `gh` missing or signed out is the reason a creation would fail, and the
  * person hears it when they press it rather than never seeing the button.
+ *
+ * Uncommitted work does not hide it. The 2026-10-04 ruling said work in
+ * progress is not proposed, and it still never is: the push sends one commit
+ * to `refs/heads/<branch>` and the draft reads only the branch's commits, so
+ * nothing in the working tree can reach the pull request. What that ruling no
+ * longer does is block the button, since one stray untracked file (a log, a
+ * scratch note) hid it on a branch whose commits were ready. The confirm step
+ * says how many changes stay behind instead (`uncommittedChanges`).
  */
 export function createPullRequestReadiness(facts: CreatePullRequestFacts): CreatePullRequestReadiness {
   if (!facts.branch) return { ready: false, reason: 'detached' }
   if (!facts.defaultBranch || facts.branch === facts.defaultBranch) return { ready: false, reason: 'default-branch' }
-  if (facts.dirty) return { ready: false, reason: 'uncommitted' }
   if (!facts.unmergedCommits || facts.unmergedCommits <= 0) return { ready: false, reason: 'nothing-to-propose' }
   if (facts.openPullRequest === true) return { ready: false, reason: 'open-pull-request' }
   if (!facts.forge) return { ready: false, reason: 'no-remote' }
@@ -75,6 +73,12 @@ export type CreatePullRequestState = {
   branch: string | null
   /** The commit the branch is at, which a confirmed Create PR pushes and proposes. */
   headSha: string | null
+  /**
+   * Paths with uncommitted changes (tracked, staged or not, and untracked
+   * files git does not ignore), which the pull request will not include; null
+   * when git could not say.
+   */
+  uncommittedChanges: number | null
   base: string | null
   forge: PullRequestForge | null
 }

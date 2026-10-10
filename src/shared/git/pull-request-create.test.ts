@@ -12,13 +12,12 @@ import {
 const READY: CreatePullRequestFacts = {
   branch: 'feature/marks',
   defaultBranch: 'main',
-  dirty: false,
   unmergedCommits: 2,
   openPullRequest: false,
   forge: 'github',
 }
 
-test('Create PR shows only for committed, unproposed work on a branch of its own', () => {
+test('Create PR shows for committed, unproposed work on a branch of its own, whatever is uncommitted', () => {
   assert.deepEqual(createPullRequestReadiness(READY), { ready: true })
   const reason = (facts: Partial<CreatePullRequestFacts>) => {
     const readiness = createPullRequestReadiness({ ...READY, ...facts })
@@ -27,7 +26,6 @@ test('Create PR shows only for committed, unproposed work on a branch of its own
   assert.equal(reason({ branch: null }), 'detached')
   assert.equal(reason({ branch: 'main' }), 'default-branch')
   assert.equal(reason({ defaultBranch: null }), 'default-branch', 'an unknown default is never guessed')
-  assert.equal(reason({ dirty: true }), 'uncommitted')
   assert.equal(reason({ unmergedCommits: 0 }), 'nothing-to-propose', 'a merged pull request carried every commit')
   assert.equal(reason({ unmergedCommits: null }), 'nothing-to-propose')
   assert.equal(reason({ openPullRequest: true }), 'open-pull-request', 'whoever opened it')

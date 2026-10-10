@@ -700,10 +700,11 @@ These say a conversation opened one, and nothing else does:
   owner-only `pullRequests.link` (capability `pull-request-link`; refused as
   `claimed` when another conversation opened it first). The button shows only
   when the branch is ready to propose: a named branch that is not the default,
-  nothing uncommitted, commits no merged pull request carried, and no open
-  pull request from the branch, whoever opened it. That last check is a
-  branch lookup (`gh pr list --head`): it says whether a pull request exists,
-  never whose it is.
+  commits no merged pull request carried, and no open pull request from the
+  branch, whoever opened it. That last check is a branch lookup
+  (`gh pr list --head`): it says whether a pull request exists, never whose it
+  is. Uncommitted changes do not hide it: only the confirmed commit is pushed,
+  and the confirm step says how many changes stay behind.
 
 A chat's calls are read off its stream (`tool_started`, then the final
 `tool_output`, whose whole output is read from the tool's detail when the

@@ -14,9 +14,10 @@ import { linkPullRequestToConversation } from '../../workspace/useConversationPu
 //
 // - "Open PR #N" while the conversation owns an open (or draft) pull request;
 // - "Create PR" when the checkout is ready to propose (`createPullRequestReadiness`:
-//   a named branch that is not the default, nothing uncommitted, commits no
-//   merged pull request carried, and no open pull request from the branch,
-//   whoever opened it);
+//   a named branch that is not the default, commits no merged pull request
+//   carried, and no open pull request from the branch, whoever opened it).
+//   Uncommitted changes do not hide it: only the branch's commits are pushed,
+//   and the confirm step says how many changes stay behind;
 // - otherwise the conversation's merged pull request, as the sidebar shows it,
 //   or nothing.
 //
@@ -224,6 +225,18 @@ export function CreatePullRequestControl({
   )
 }
 
+/**
+ * What the confirm step says about work left in the checkout. It never blocks:
+ * the push sends the branch's commits and nothing else, so a stray untracked
+ * file is no reason to hide Create PR, but the person should not believe their
+ * unsaved edits are in the pull request.
+ */
+export function uncommittedNote(count: number): string {
+  return count === 1
+    ? '1 uncommitted change won’t be included: only the branch’s commits are pushed.'
+    : `${count} uncommitted changes won’t be included: only the branch’s commits are pushed.`
+}
+
 function failed(error: unknown): { ok: false; message: string } {
   return { ok: false, message: error instanceof Error ? error.message : String(error) }
 }
@@ -253,13 +266,17 @@ function CreatePullRequestDialog({
   // The branch and commit the draft is written from, read as the dialog
   // opens: what "Create" confirms, and so all the push and creation may use.
   const pin = useRef<PullRequestCheckoutPin | null>(null)
+  // Read with the pin: changes in the working tree the pull request leaves out.
+  const [uncommitted, setUncommitted] = useState(0)
   useEffect(() => {
     let alive = true
     if (typeof window.api?.createPullRequestState !== 'function') return
     void window.api
       .createPullRequestState(cwd)
       .then((state) => {
-        if (alive && state?.branch && state.headSha) pin.current = { branch: state.branch, headSha: state.headSha }
+        if (!alive) return
+        if (state?.branch && state.headSha) pin.current = { branch: state.branch, headSha: state.headSha }
+        setUncommitted(state?.uncommittedChanges ?? 0)
       })
       .catch(() => undefined)
     return () => {
@@ -331,6 +348,11 @@ function CreatePullRequestDialog({
           {draftError ? (
             <p role="alert" className="text-body text-[color:var(--tone-error)]">
               {draftError}
+            </p>
+          ) : null}
+          {uncommitted > 0 ? (
+            <p className="text-meta text-[color:var(--text-muted)]" data-create-pull-request-uncommitted="">
+              {uncommittedNote(uncommitted)}
             </p>
           ) : null}
           <Field label="Title" htmlFor={titleFieldId}>

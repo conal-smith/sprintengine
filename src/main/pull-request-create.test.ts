@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -68,7 +68,7 @@ function lookupOf(read: BranchPullRequestsRead) {
 
 const NONE: BranchPullRequestsRead = { settled: true, pullRequests: [] }
 
-test('a branch with committed, unproposed work is ready; uncommitted work and an open pull request are not', async () => {
+test('a branch with committed, unproposed work is ready, uncommitted work or not; an open pull request is not', async () => {
   const { clone } = await checkout()
   const lookup = lookupOf(NONE)
   const creator = createPullRequestCreator({ listBranch: lookup.listBranch })
@@ -77,10 +77,17 @@ test('a branch with committed, unproposed work is ready; uncommitted work and an
   assert.equal(state.branch, 'feature/marks')
   assert.equal(state.base, 'main')
   assert.equal(state.forge, 'github')
+  assert.equal(state.uncommittedChanges, 0)
 
   await writeFile(path.join(clone, 'scratch.txt'), 'wip\n')
-  assert.deepEqual((await creator.state(clone)).readiness, { ready: false, reason: 'uncommitted' }, 'untracked counts')
-  await exec('rm', [path.join(clone, 'scratch.txt')])
+  await writeFile(path.join(clone, 'marks.ts'), 'export const marks = 2\n')
+  await mkdir(path.join(clone, '.sprintengine'), { recursive: true })
+  await writeFile(path.join(clone, '.sprintengine', 'capture.png'), 'png\n')
+  const dirty = await creator.state(clone)
+  assert.deepEqual(dirty.readiness, { ready: true }, 'uncommitted work does not hide the button')
+  assert.equal(dirty.uncommittedChanges, 2, "an edit and an untracked file, never the app's own sidecar")
+  await exec('rm', ['-r', path.join(clone, 'scratch.txt'), path.join(clone, '.sprintengine')])
+  await git(clone, 'checkout', '--', 'marks.ts')
 
   const open = createPullRequestCreator({
     listBranch: lookupOf({
@@ -145,6 +152,24 @@ test('the push sets an upstream the first time, then pushes only what the remote
   assert.equal(await git(origin, 'rev-parse', 'refs/heads/feature/marks'), await git(clone, 'rev-parse', 'HEAD'))
   assert.equal(await git(clone, 'rev-parse', '--abbrev-ref', '@{u}'), 'origin/feature/marks')
   assert.deepEqual(await creator.push(clone), { ok: true, pushed: false })
+})
+
+test('uncommitted work stays in the checkout: only the commit is pushed, and the draft reads only commits', async () => {
+  const { clone, origin } = await checkout()
+  const head = await git(clone, 'rev-parse', 'HEAD')
+  await writeFile(path.join(clone, 'marks.ts'), 'export const marks = 99\n')
+  await writeFile(path.join(clone, 'README.md'), 'staged readme\n')
+  await git(clone, 'add', 'README.md')
+  await writeFile(path.join(clone, 'scratch.txt'), 'untracked work\n')
+  const statusBefore = await git(clone, 'status', '--porcelain')
+  const creator = createPullRequestCreator({ listBranch: lookupOf(NONE).listBranch })
+  const draft = await creator.draftInput(clone)
+  assert.ok(draft.ok)
+  assert.doesNotMatch(draft.input.patch, /marks = 99|staged readme|untracked work/u)
+  assert.deepEqual(await creator.push(clone, { branch: 'feature/marks', headSha: head }), { ok: true, pushed: true })
+  assert.equal(await git(origin, 'rev-parse', 'refs/heads/feature/marks'), head)
+  assert.equal(await git(origin, 'show', 'refs/heads/feature/marks:marks.ts'), 'export const marks = 1')
+  assert.equal(await git(clone, 'status', '--porcelain'), statusBefore, 'the working tree and index are untouched')
 })
 
 test('a push that cannot count what the remote lacks pushes rather than calling it pushed', async () => {
