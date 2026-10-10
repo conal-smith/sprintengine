@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { rememberClosedPaneTab } from '../../utils/recentlyClosedTabs'
 import { BROWSER_MAX_RECENT_URLS } from '../../../../shared/browser'
 import { normalizeBrowserViewport } from '../../../../shared/browser-devices'
 import { canvasBoardKeyPath, canvasBoardName, normalizeCanvasPath } from '../../../../shared/canvas/paths'
@@ -693,6 +694,8 @@ export function createWorkspacePaneSlice(set: PaneSliceSet): WorkspacePaneSliceA
         const pane = paneOf(ws)
         const index = pane.tabs.findIndex((tab) => tab.id === tabId)
         if (index === -1) return
+        // For ⌘⇧T (utils/recentlyClosedTabs.ts): what opens one like it again.
+        rememberClosedPaneTab(id, pane.tabs[index]!)
         pane.tabs.splice(index, 1)
         if (pane.activeTabId === tabId) pane.activeTabId = nextActiveAfterClose(pane.tabs, index)
         ws.paneState = normalizeWorkspacePaneState(pane)

@@ -52,6 +52,7 @@ import {
 } from '../../utils/modelRegistry'
 import { TAB_DRAG_MIME, serializeTabDragPayload } from '../../utils/tabDragPayload'
 import { logPerfEvent } from '../../utils/perfDiagnostics'
+import { rememberClosedLayoutTab } from '../../utils/recentlyClosedTabs'
 import { getHighlightSwatch } from '../../utils/highlight'
 import { resolveWorkspaceWorktree } from '../../utils/workspaceWorktree'
 import { ChatGlyph } from '../AppIcons'
@@ -863,6 +864,12 @@ function WorkspaceLayoutBody({
         } else if (hideTabWithoutCleanupRef.current.has(nodeId)) {
           hideTabWithoutCleanupRef.current.delete(nodeId)
         } else if (node instanceof TabNode) {
+          // The strip's own close; Primary+W remembers in closeActiveLayoutTab.
+          rememberClosedLayoutTab(workspaceId, {
+            component: node.getComponent(),
+            config: node.getConfig(),
+            name: node.getName(),
+          })
           cleanupNode(node)
         }
       }
