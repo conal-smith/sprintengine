@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Badge } from './Badge'
 import { Tooltip } from './Tooltip'
+import { TAB_DROP_MARKER_INSET_PX, TAB_REORDER_THRESHOLD_PX, tabReorderSlot, tabReorderTargetIndex } from './tabReorder'
 import { FOCUS_RING_CLASS, FOCUS_RING_INSET_CLASS } from './tokens'
 
 export type TabItem<T extends string = string> = {
@@ -77,7 +78,16 @@ type TabsProps<T extends string = string> = {
    *  Control-Tab scope. Used where a panel contains nested tab strips but the
    *  outer strip owns panel switching. */
   controlTabItems?: boolean
+  /** Reorderable strips (the workspace pane): a tab dragged sideways past a
+   *  few pixels is moved to the slot it is dropped in, and Alt+Shift+Left/Right
+   *  moves the focused tab one place. `toIndex` is where the tab ends up in
+   *  `items` once it has left its own place. A press that does not travel is
+   *  still a click. Without this the strip does not reorder. */
+  onReorder?: (id: T, toIndex: number) => void
 }
+
+/** A press on a tab that may become a drag; `slot` is set once it has. */
+type TabDrag<T extends string> = { id: T; fromIndex: number; pointerId: number; startX: number; slot: number | null }
 
 export function Tabs<T extends string = string>({
   ariaLabel,
@@ -92,12 +102,33 @@ export function Tabs<T extends string = string>({
   onItemContextMenu,
   iconOnly = false,
   controlTabItems = false,
+  onReorder,
 }: TabsProps<T>) {
   const fallbackPrefix = useId()
   const prefix = idPrefix ?? fallbackPrefix
   const listRef = useRef<HTMLDivElement>(null)
   const valueRef = useRef(value)
   valueRef.current = value
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const onReorderRef = useRef(onReorder)
+  onReorderRef.current = onReorder
+  // The press in flight. A ref, so a pointermove re-renders nothing until the
+  // slot under it changes: the indicator's position is the only state.
+  const dragRef = useRef<TabDrag<T> | null>(null)
+  const endDragRef = useRef<(() => void) | null>(null)
+  // The click a drag's release would fire on the tab it started on: it is the
+  // end of a move, not a choice of tab.
+  const swallowClickRef = useRef(false)
+  const [dropMarkerX, setDropMarkerX] = useState<number | null>(null)
+  // The tab being carried, faded so the strip reads as "this one is moving"
+  // while the marker says where it will land. Set once, when the press turns
+  // into a drag, so the moves after it re-render nothing.
+  const [draggingId, setDraggingId] = useState<T | null>(null)
+  // A tab moved from the keyboard keeps focus: React moving its node can
+  // drop it, and the person is still holding the chord to move it again.
+  const refocusIdRef = useRef<T | null>(null)
+  useEffect(() => () => endDragRef.current?.(), [])
 
   const focusTabAt = useCallback((index: number) => {
     if (!listRef.current) return
@@ -111,6 +142,23 @@ export function Tabs<T extends string = string>({
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement
       if (!target || target.getAttribute('role') !== 'tab') return
+      if (
+        onReorder &&
+        event.altKey &&
+        event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+      ) {
+        event.preventDefault()
+        const from = items.findIndex((item) => item.id === target.dataset.tabId)
+        const to = from + (event.key === 'ArrowLeft' ? -1 : 1)
+        // No wrap: a tab moved past the end jumping to the front reads as lost.
+        if (from === -1 || to < 0 || to >= items.length) return
+        refocusIdRef.current = items[from].id
+        onReorder(items[from].id, to)
+        return
+      }
       const enabled = items.filter((item) => !item.disabled)
       const currentIndex = enabled.findIndex((item) => item.id === target.dataset.tabId)
       if (currentIndex === -1) return
@@ -144,7 +192,132 @@ export function Tabs<T extends string = string>({
         }
       }
     },
-    [items, onChange, focusTabAt],
+    [items, onChange, focusTabAt, onReorder],
+  )
+
+  useEffect(() => {
+    const id = refocusIdRef.current
+    if (id === null) return
+    refocusIdRef.current = null
+    const tab = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []).find(
+      (node) => node.dataset.tabId === id,
+    )
+    if (tab && document.activeElement !== tab) tab.focus()
+  }, [items])
+
+  // Where each tab sits now, read at the moment of use: the strip scrolls and
+  // tabs change width with their titles, so nothing measured earlier holds.
+  const tabRects = useCallback(
+    () =>
+      Array.from(listRef.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []).map((node) =>
+        node.getBoundingClientRect(),
+      ),
+    [],
+  )
+
+  /** The indicator's x within the tablist for a slot, or null where the drop would move nothing. */
+  const markerXFor = useCallback(
+    (slot: number, fromIndex: number): number | null => {
+      const list = listRef.current
+      const rects = tabRects()
+      if (!list || rects.length === 0 || tabReorderTargetIndex(slot, fromIndex) === fromIndex) return null
+      const origin = list.getBoundingClientRect().left
+      const end = rects[rects.length - 1].right - origin
+      const x = slot < rects.length ? rects[slot].left - origin : end
+      // Held its own half-width inside the strip, so the slot after the last
+      // tab is not half lost to the scroller's edge.
+      return Math.min(Math.max(x, TAB_DROP_MARKER_INSET_PX), end - TAB_DROP_MARKER_INSET_PX)
+    },
+    [tabRects],
+  )
+
+  /**
+   * Scrolls a strip that overflows its scroller so a slot is on screen and
+   * clear of the edge fade. A slot past a tab a narrow pane cuts off, or the
+   * strip's end, otherwise sits under the fade or past the clip, and its
+   * marker is drawn where nobody can see it.
+   */
+  const revealSlot = useCallback(
+    (slot: number) => {
+      const list = listRef.current
+      const scroller = list?.parentElement
+      const rects = tabRects()
+      if (!list || !scroller || rects.length === 0 || scroller.scrollWidth <= scroller.clientWidth) return
+      const x = slot < rects.length ? rects[slot].left : rects[rects.length - 1].right
+      const view = scroller.getBoundingClientRect()
+      const past = x - (view.right - STRIP_FADE_PX)
+      const before = view.left + STRIP_FADE_PX - x
+      if (past > 0) scroller.scrollBy({ left: past, behavior: 'instant' })
+      else if (before > 0) scroller.scrollBy({ left: -before, behavior: 'instant' })
+    },
+    [tabRects],
+  )
+
+  const beginDrag = useCallback(
+    (id: T, event: React.PointerEvent<HTMLButtonElement>) => {
+      swallowClickRef.current = false
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || dragRef.current) return
+      const fromIndex = itemsRef.current.findIndex((item) => item.id === id)
+      if (fromIndex === -1) return
+      dragRef.current = { id, fromIndex, pointerId: event.pointerId, startX: event.clientX, slot: null }
+      const finish = (commit: boolean) => {
+        const drag = dragRef.current
+        endDragRef.current?.()
+        if (!drag || drag.slot === null) return
+        swallowClickRef.current = true
+        // A keyboard Enter on the tab later must not be eaten by a flag no
+        // click came to clear (the release landed on another tab).
+        window.setTimeout(() => {
+          swallowClickRef.current = false
+        }, 0)
+        if (!commit) return
+        const toIndex = tabReorderTargetIndex(drag.slot, drag.fromIndex)
+        if (toIndex !== drag.fromIndex) onReorderRef.current?.(drag.id, toIndex)
+      }
+      const onMove = (move: PointerEvent) => {
+        const drag = dragRef.current
+        if (!drag || move.pointerId !== drag.pointerId) return
+        if (drag.slot === null && Math.abs(move.clientX - drag.startX) < TAB_REORDER_THRESHOLD_PX) return
+        const slot = tabReorderSlot(
+          tabRects().map((rect) => rect.left + rect.width / 2),
+          move.clientX,
+        )
+        if (slot === drag.slot) return
+        if (drag.slot === null) setDraggingId(drag.id)
+        drag.slot = slot
+        revealSlot(slot)
+        setDropMarkerX(markerXFor(slot, drag.fromIndex))
+      }
+      const onUp = (up: PointerEvent) => {
+        if (up.pointerId === dragRef.current?.pointerId) finish(true)
+      }
+      const onCancel = (cancel: PointerEvent) => {
+        if (cancel.pointerId === dragRef.current?.pointerId) finish(false)
+      }
+      const onKeyDown = (key: KeyboardEvent) => {
+        // Escape puts the tab back, and is spent on that alone: the pane
+        // around the strip has its own Escape, and a drag is what it meant.
+        if (key.key !== 'Escape' || dragRef.current?.slot == null) return
+        key.preventDefault()
+        key.stopPropagation()
+        finish(false)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+      window.addEventListener('keydown', onKeyDown, true)
+      endDragRef.current = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+        window.removeEventListener('keydown', onKeyDown, true)
+        endDragRef.current = null
+        dragRef.current = null
+        setDropMarkerX(null)
+        setDraggingId(null)
+      }
+    },
+    [markerXFor, revealSlot, tabRects],
   )
 
   useEffect(() => {
@@ -165,6 +338,9 @@ export function Tabs<T extends string = string>({
       onKeyDown={onKey}
       className={[
         'flex items-center gap-0.5',
+        // The drop indicator is placed against the list itself.
+        onReorder ? 'relative' : '',
+        dropMarkerX !== null ? 'cursor-grabbing' : '',
         borderless ? '' : 'border-b border-[color:var(--border-default)]',
         className ?? '',
       ]
@@ -219,8 +395,13 @@ export function Tabs<T extends string = string>({
             disabled={item.disabled}
             tabIndex={selected ? 0 : -1}
             onClick={() => {
+              if (swallowClickRef.current) {
+                swallowClickRef.current = false
+                return
+              }
               if (!item.disabled) onChange(item.id)
             }}
+            onPointerDown={onReorder ? (event) => beginDrag(item.id, event) : undefined}
             onAuxClick={onItemAuxClick ? (event) => onItemAuxClick(item.id, event) : undefined}
             onContextMenu={onItemContextMenu ? (event) => onItemContextMenu(item.id, event) : undefined}
             className={[
@@ -250,6 +431,7 @@ export function Tabs<T extends string = string>({
               // edge cannot be reordered into a bug.
               iconOnly ? 'w-control-sm justify-center px-0' : closable || badged ? 'pl-3' : 'px-3',
               'transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+              draggingId === item.id ? 'opacity-50' : '',
               // The close glyph sits in this reserved trailing padding, so
               // revealing it never reflows the label. A closable tab is a
               // document tab (a page title, a file), so it also caps its
@@ -338,12 +520,27 @@ export function Tabs<T extends string = string>({
           </span>
         )
       })}
+      {dropMarkerX !== null ? (
+        // The slot the tab will land in, in the accent the active underline is
+        // drawn with — the one accent the strip is allowed — stood on end and
+        // centred on the edge of the tab it lands before. Two pixels, not the
+        // underline's one: lying flat a hairline runs the tab's whole width,
+        // but on end it is a tab's height at most and a 1px line that short
+        // was lost against the gap between two tabs.
+        <span
+          aria-hidden="true"
+          data-tab-drop-marker=""
+          className="pointer-events-none absolute bottom-1 top-1 w-0.5 -translate-x-1/2 bg-[color:var(--accent-primary)]"
+          style={{ left: dropMarkerX }}
+        />
+      ) : null}
     </div>
   )
 }
 
 // How far the fade at an overflowing edge reaches. One value, both edges.
-const STRIP_FADE = '28px'
+const STRIP_FADE_PX = 28
+const STRIP_FADE = `${STRIP_FADE_PX}px`
 
 type TabsScrollerProps = {
   children: React.ReactNode

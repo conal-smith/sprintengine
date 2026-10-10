@@ -145,6 +145,25 @@
       <p>The two failed runs.</p>
     </div>
   </div>
+
+  <p class="demo-label">Reorderable, mid-drag — "Files" is being dragged past "Page"; it fades while carried, and the accent bar marks the slot it will land in.</p>
+  <div class="demo-panel">
+    <div class="ds-tabs ds-tabs--reorderable ds-tabs--dragging" role="tablist" aria-label="Pane tabs">
+      <button type="button" class="ds-tab ds-tab--dragged" role="tab" aria-selected="true" tabindex="0">
+        <span>Files</span>
+        <span class="ds-tab-underline" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ds-tab" role="tab" aria-selected="false" tabindex="-1">
+        <span>Terminal</span>
+        <span class="ds-tab-underline" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="ds-tab" role="tab" aria-selected="false" tabindex="-1">
+        <span>Page</span>
+        <span class="ds-tab-underline" aria-hidden="true"></span>
+      </button>
+      <span class="ds-tab-drop-marker" aria-hidden="true" style="left: 100%"></span>
+    </div>
+  </div>
 </div>
 
 <div class="demo-stage" data-mode="dark">

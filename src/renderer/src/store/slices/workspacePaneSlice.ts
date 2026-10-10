@@ -439,6 +439,12 @@ export interface WorkspacePaneSliceActions {
    */
   openPaneTab: (id: WorkspaceId, input: WorkspacePaneOpenInput) => string | null
   closePaneTab: (id: WorkspaceId, tabId: string) => void
+  /**
+   * Move a tab to `toIndex` in the strip (clamped to it), the order the person
+   * dragged it into. It moves nothing else: the tab in front stays in front
+   * and the pane neither opens nor closes.
+   */
+  movePaneTab: (id: WorkspaceId, tabId: string, toIndex: number) => void
   setActivePaneTab: (id: WorkspaceId, tabId: string) => void
   updatePaneTab: (id: WorkspaceId, tabId: string, patch: Partial<Omit<WorkspacePaneTab, 'id' | 'kind'>>) => void
   /**
@@ -685,6 +691,20 @@ export function createWorkspacePaneSlice(set: PaneSliceSet): WorkspacePaneSliceA
         if (index === -1) return
         pane.tabs.splice(index, 1)
         if (pane.activeTabId === tabId) pane.activeTabId = nextActiveAfterClose(pane.tabs, index)
+        ws.paneState = normalizeWorkspacePaneState(pane)
+      }),
+
+    movePaneTab: (id, tabId, toIndex) =>
+      set((state) => {
+        const ws = state.workspaces.find((w) => w.id === id)
+        const pane = ws?.paneState
+        if (!ws || !pane || !Number.isFinite(toIndex)) return
+        const from = pane.tabs.findIndex((tab) => tab.id === tabId)
+        const to = Math.min(Math.max(Math.trunc(toIndex), 0), pane.tabs.length - 1)
+        // A drop back where it started is no write, so nothing wakes.
+        if (from === -1 || from === to) return
+        const [tab] = pane.tabs.splice(from, 1)
+        pane.tabs.splice(to, 0, tab)
         ws.paneState = normalizeWorkspacePaneState(pane)
       }),
 

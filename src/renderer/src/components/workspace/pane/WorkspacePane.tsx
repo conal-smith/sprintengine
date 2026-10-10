@@ -84,6 +84,7 @@ export default function WorkspacePane({ workspaceId, active }: WorkspacePaneProp
   const openPaneTab = useWorkspaceStore((s) => s.openPaneTab)
   const openModalSurface = useWorkspaceStore((s) => s.openModalSurface)
   const setActivePaneTab = useWorkspaceStore((s) => s.setActivePaneTab)
+  const movePaneTab = useWorkspaceStore((s) => s.movePaneTab)
   const setPaneOpen = useWorkspaceStore((s) => s.setPaneOpen)
   const setMaximised = useWorkspaceStore((s) => s.setWorkspacePaneMaximised)
 
@@ -237,6 +238,10 @@ export default function WorkspacePane({ workspaceId, active }: WorkspacePaneProp
               value={activeTabId}
               controlTabItems
               onChange={(tabId) => setActivePaneTab(workspaceId, tabId)}
+              // Dragged into the order the person wants, which is the order
+              // the strip keeps: opening a tab adds it at the end and leaves
+              // the rest where they were put.
+              onReorder={(tabId, toIndex) => movePaneTab(workspaceId, tabId, toIndex)}
               onCloseItem={closeTab}
               onItemAuxClick={(tabId, event) => {
                 if (event.button === 1) {
