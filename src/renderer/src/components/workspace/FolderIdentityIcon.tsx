@@ -4,8 +4,9 @@ import { useProjectLogo } from '../../hooks/useProjectLogo'
 import type { ProjectColor } from '../../utils/projectColor'
 
 // A folder header's identity in its icon slot: the project's own logo when the
-// repo at that path has one at its top level, and the folder glyph when it does
-// not (re-sited by the owner on 2026-09-02).
+// repo at that path has one (at its top level, or as a macOS app icon where
+// such a repo keeps it), and the folder glyph when it does not (re-sited by the
+// owner on 2026-09-02).
 //
 // This exists so the logo lookup lives in ONE place. `FolderTypeIcon` stays a
 // leaf that takes a `logoSrc` string and knows nothing about detection, and the

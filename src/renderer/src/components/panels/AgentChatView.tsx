@@ -161,7 +161,7 @@ import { pasteIntoComposer } from '../../utils/clipboardPasteBridge'
 
 /** ⌘⌥⏎ in the composer: send, then New chat (see the registry). */
 const SEND_AND_NEW_COMMAND = 'chat.sendAndNew'
-import { useStickToBottom } from './agentChat/useStickToBottom'
+import { settleDisclosureResize, useStickToBottom } from './agentChat/useStickToBottom'
 import { ConversationRowFrame } from './agentChat/conversationRowFrame'
 import {
   type ChatOpening,
@@ -990,20 +990,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       flushSync(() => setFollowPaused(true))
       requestAnimationFrame(() => {
         // The disclosure suspends follow for its resize frame, not forever.
-        // A user already reading scrollback remains there.
-        const resume = () => {
-          atBottomRef.current = wasFollowing
-          followPausedRef.current = false
-          setFollowPaused(false)
-        }
+        // A user already reading scrollback remains there; one following the
+        // end whose row opened past it is no longer there, and the pill says so.
         const scroller = listRef.current?.getScrollableNode()
-        if (!row.isConnected || !scroller) return resume()
-        const shift = row.getBoundingClientRect().top - top
-        if (Math.abs(shift) > 0.5) scroller.scrollTop += shift
-        resume()
+        const following =
+          row.isConnected && scroller ? settleDisclosureResize(row, top, scroller, wasFollowing) : wasFollowing
+        atBottomRef.current = following
+        followPausedRef.current = false
+        setFollowPaused(false)
+        if (wasFollowing && !following) setAtBottom(false)
       })
     },
-    [atBottomRef],
+    [atBottomRef, setAtBottom],
   )
   // A chat opened with replies its reader has not seen opens at the divider,
   // with what is new below it to read down into, instead of at the end: from
