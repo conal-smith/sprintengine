@@ -272,3 +272,11 @@ test('an attachment reference is looked for here first, then on the running serv
   const found = (await router.readAttachment('conv/abc.png')) as unknown as { ok: boolean; from?: string }
   assert.deepEqual(found, { ok: true, from: 'wsl' })
 })
+
+test('a stop for one of a chat’s agents goes to the server the chat runs on', async () => {
+  const { router, remote } = setup()
+  const there = await router.startSession(start('ws-linux', '\\\\wsl.localhost\\Ubuntu\\home\\dev\\repo'))
+  assert.ok(there.ok)
+  await router.stopSubagent({ sessionId: there.session.sessionId, toolUseId: 'toolu_agent' })
+  assert.equal(remote.calls.at(-1)?.member, 'stopSubagent')
+})

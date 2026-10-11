@@ -598,7 +598,7 @@ test('conversation-ipc', async () => {
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
-function registerWithRuntimeListeners() {
+function registerWithRuntimeListeners(extra: Partial<ConversationIpcHandlers> = {}) {
   const handlers = new Map<string, Handler>()
   const listeners = new Set<(event: ConversationEvent) => void>()
   const scoped = new Set<(frame: ConversationSessionFrame) => void>()
@@ -628,6 +628,7 @@ function registerWithRuntimeListeners() {
         scoped.add(listener)
         return { dispose: () => scoped.delete(listener), ready: Promise.resolve() }
       },
+      ...extra,
     },
   )
   const sent: Array<{ channel: string; payload: unknown }> = []
@@ -830,4 +831,31 @@ test('each command and machine is looked at again on its own', async () => {
   await check('codex', { codex: { command: '/opt/codex' } })
   await check('codex', { codex: { hostId: 'wsl:Ubuntu' } })
   assert.equal(calls.detect, 3)
+})
+
+test('a stop for one agent reaches the runtime by its lane, and one that names no lane is refused', async () => {
+  const asked: Array<{ sessionId: string; toolUseId: string }> = []
+  const ipc = registerWithRuntimeListeners({
+    stopSubagent: async (input) => {
+      asked.push(input)
+      return { ok: false, message: 'That agent is not running any more.' }
+    },
+  })
+  const stop = ipc.handlers.get('conversation:sessions:stop-subagent')!
+  assert.deepEqual(await stop(null, { sessionId: 'conv_1', toolUseId: ' toolu_agent ' }), {
+    ok: false,
+    message: 'That agent is not running any more.',
+  })
+  assert.deepEqual(asked, [{ sessionId: 'conv_1', toolUseId: 'toolu_agent' }])
+  assert.deepEqual(await stop(null, { sessionId: 'conv_1' }), { ok: false, message: 'toolUseId is required.' })
+  assert.deepEqual(await stop(null, { toolUseId: 'toolu_agent' }), { ok: false, message: 'sessionId is required.' })
+  assert.equal(asked.length, 1)
+})
+
+test('a backend that cannot stop one agent says so', async () => {
+  const ipc = registerWithRuntimeListeners()
+  assert.deepEqual(
+    await ipc.handlers.get('conversation:sessions:stop-subagent')!(null, { sessionId: 'conv_1', toolUseId: 'toolu_a' }),
+    { ok: false, message: 'Stopping one agent is unavailable.' },
+  )
 })

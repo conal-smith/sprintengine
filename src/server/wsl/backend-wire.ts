@@ -46,6 +46,7 @@ export const REMOTE_BACKEND_MEMBERS = [
   'setPermission',
   'setModel',
   'interrupt',
+  'stopSubagent',
   'stopSession',
   'suspendSession',
   'terminalHandoffTarget',

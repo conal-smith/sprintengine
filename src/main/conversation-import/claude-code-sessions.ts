@@ -214,8 +214,12 @@ export async function readClaudeCodeSession(path: string, fallbackAt: number): P
           },
           { saveToolImages: false },
         )
+        // A task tool's result announces its row again, with the task list
+        // it left, ahead of the result itself.
         for (const event of mapped)
-          if (event.type === 'tool_output')
+          if (event.type === 'tool_started')
+            builder.toolStarted(withoutTurn(event.payload) as Omit<ConversationToolStartedPayload, 'turnId'>, at)
+          else if (event.type === 'tool_output')
             builder.toolOutput(withoutTurn(event.payload) as Omit<ConversationToolOutputPayload, 'turnId'>, at)
         continue
       }

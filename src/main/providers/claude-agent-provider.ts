@@ -13,6 +13,7 @@
 // is ESM-only and the main bundle is CJS, so the SDK is loaded via dynamic
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
+import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
@@ -145,6 +146,8 @@ export type ClaudeAgentProviderOptions = {
   // How long a child has to answer a stop or a mode switch before it is taken
   // to be wedged. Tests shorten it.
   childAnswerTimeoutMs?: number
+  // And how long it has to answer the registration of its MCP servers.
+  mcpRegistrationTimeoutMs?: number
   // The app's own MCP gateway on the machine the child runs on, handed to
   // every child. Null or absent leaves it out.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
@@ -155,6 +158,7 @@ export type ClaudeAgentProviderAdapter = ConversationProviderAdapter & {
   // Claude's child is always disposed; `force` changes nothing here.
   disposeChildProcess(sessionId: string, options?: ConversationDisposeOptions): boolean
   stopBackgroundTasks(sessionId: string): Promise<boolean>
+  stopSubagent(sessionId: string, toolUseId: string): Promise<boolean>
   disposeAll(): Promise<void>
   setPermissionPreset(input: MockAdapterPermissionInput): Promise<ConversationProviderPermissionResult>
   setModel(input: MockAdapterModelInput): Promise<ConversationProviderPermissionResult>
@@ -424,6 +428,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   const prepareWslTarget = options.prepareWslTarget ?? prepareWslClaudeTarget
   const spawnWslChild = options.spawnWslChild ?? spawnWslClaude
   const childAnswerTimeoutMs = options.childAnswerTimeoutMs ?? UNRESPONSIVE_CHILD_MS
+  const mcpRegistrationTimeoutMs = options.mcpRegistrationTimeoutMs ?? MCP_REGISTRATION_TIMEOUT_MS
   const sessions = new Map<string, SessionState>()
   // Staged plugin folders still being removed, so shutdown can wait for them.
   const removals = new Set<Promise<void>>()
@@ -816,7 +821,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // session actually recorded. The respawn below resumes the same provider
     // session, so the conversation continues rather than restarting.
     if (state.query && !childHonorsPreset(state)) disposeChild(state)
-    if (state.query) return Promise.resolve()
+    // A child still registering its servers is not ready for a message yet.
+    if (state.query) return state.spawning ?? Promise.resolve()
     // Two callers racing past the check above would each stage a plugin folder
     // and spawn a child, and only one of either would ever be cleaned up.
     state.spawning ??= spawnQuery(state).finally(() => {
@@ -851,12 +857,13 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     assertSpawnWanted(state, generation)
     const instructions = await readWorkspaceInstructions(state.workspaceRoot)
     // A WSL gateway entry names its channel token (`envVarNames`) and never
-    // carries it: the SDK puts `mcpServers` on the child's command line. The
-    // child is issued the token on stdin (spawnWslClaude) and the bridge it
-    // starts inherits it, as a WSL terminal's `claude` hands it on.
+    // carries it: the gateway rides the child's command line. The child is
+    // issued the token on stdin (spawnWslClaude) and the bridge it starts
+    // inherits it, as a WSL terminal's `claude` hands it on.
     const studioGateway = await options.resolveStudioMcpServer?.({ ...(hostId ? { hostId } : {}) }).catch(() => null)
-    const mcpServers = claudeMcpServers(
-      [...(studioGateway ? [withAgentIdentity(studioGateway, env)] : []), ...(state.mcpServers ?? [])],
+    const mcpServers = claudeMcpLaunch(
+      studioGateway ? withAgentIdentity(studioGateway, env) : null,
+      state.mcpServers ?? [],
       { wsl: wslTarget !== null },
     )
     await swept
@@ -906,9 +913,10 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // Which is also why the app's MCP gateway is passed here rather than
       // read from the workspace's `.mcp.json`: a project's MCP servers are
       // project settings, and this child loads none. The session's own servers
-      // (a connector run's) ride the same option; the person's user-scoped
-      // servers still load from their own configuration.
-      ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+      // (a connector run's) are handed over once the child runs, most of them
+      // (claudeMcpLaunch says which); the person's user-scoped servers still
+      // load from their own configuration.
+      ...(Object.keys(mcpServers.commandLine).length > 0 ? { mcpServers: mcpServers.commandLine } : {}),
       // Plain `--plugin-dir`, never `skipMcpDiscovery`: the SDK spells that
       // `--plugin-dir-no-mcp`, which a Claude Code older than the SDK does not
       // know, and the child exits on it. There is nothing to skip anyway: the
@@ -916,7 +924,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // so it can carry skills and nothing else.
       ...(skillPlugin ? { plugins: [{ type: 'local', path: wslTarget ? toWslPath(skillPlugin) : skillPlugin }] } : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
-      env,
+      env: withClaudeTaskTools(env),
       abortController: abort,
       canUseTool: (toolName, toolInput, callbackOptions) =>
         handleCanUseTool(state, toolName, toolInput, callbackOptions?.signal, callbackOptions),
@@ -982,6 +990,33 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     void pump(state, q)
     void reportSupportedAgents(state, q)
     void reportAccount(state, q)
+    if (Object.keys(mcpServers.control).length === 0) return
+    await registerMcpServers(q, mcpServers.control)
+    // Stopped or replaced while the servers connected: the turn that asked
+    // for this child has nothing to send its message to.
+    if (state.query !== q) throw new Error('The conversation was closed before Claude Code started.')
+  }
+
+  // The SDK would put these on the child's command line, one `--mcp-config`
+  // argument that every user of the machine can read (`ps`), and for a WSL
+  // child on `wsl.exe`'s too. A connector's server carries its secrets there:
+  // an API key in its `env`, a token in its `headers` or its `args`. So they
+  // go over the child's stdin, before its first message is sent; the CLI
+  // answers once each has connected or given up, so their tools are there
+  // from the first turn. One that fails is left out, as a failed connect was
+  // under `--mcp-config`, and is named in the log by name alone: the CLI's
+  // error text can repeat what the server was started with.
+  async function registerMcpServers(q: Query, servers: NonNullable<Options['mcpServers']>): Promise<void> {
+    let failed = Object.keys(servers)
+    const answered = await answeredWithin(
+      Promise.resolve()
+        .then(() => q.setMcpServers(servers))
+        .then((result) => {
+          failed = Object.keys(result?.errors ?? {})
+        }),
+      mcpRegistrationTimeoutMs,
+    )
+    if (!answered || failed.length > 0) console.warn('[claude-agent] mcp-servers-unavailable', { servers: failed })
   }
 
   // How the session bills, from the account its initialize answered with: the
@@ -1019,7 +1054,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') return false
     // A tool the session was started pre-approved for stays pre-approved.
     if (state.allowedTools?.includes(toolName)) return false
-    return !LOOKUP_TOOL_KINDS.has(inferConversationToolKind(toolName))
+    return !LOOKUP_TOOL_KINDS.has(claudeToolKind(toolName))
   }
 
   // Move the live child to another chat mode over the control channel rather
@@ -1113,7 +1148,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       requestId,
       action: toolName,
       input: toolInput,
-      toolKind: inferConversationToolKind(toolName),
+      toolKind: claudeToolKind(toolName),
       cwd: state.workspaceRoot,
       ...(permissionContext?.agentID ? { originAgentId: permissionContext.agentID } : {}),
       ...(permissionContext?.defaultToNo ? { defaultToNo: true } : {}),
@@ -1207,6 +1242,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       steer: true,
       rewind: true,
       fork: true,
+      stopSubagent: true,
     },
     sessions: 'stateful',
     acceptsMcpServers: true,
@@ -1674,6 +1710,19 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       return true
     },
 
+    // The agent is stopped as a task, by the id the child reported it under.
+    // The child then reports it `stopped`, which ends its lane as any agent's
+    // end does (mapTaskMessage); a foreground one's call returns, and the turn
+    // that made it carries on without it. A refusal or no answer is no stop.
+    async stopSubagent(sessionId: string, toolUseId: string): Promise<boolean> {
+      const state = sessions.get(sessionId)
+      const q = state?.query
+      const agent = state?.subagents.get(toolUseId)
+      if (!state || !q || !agent) return false
+      state.lastActivityAt = now()
+      return answeredWithin(q.stopTask(agent.taskId), childAnswerTimeoutMs, { rejectAsUnanswered: true })
+    },
+
     disposeChildProcess(sessionId: string, _options?: ConversationDisposeOptions): boolean {
       const state = sessions.get(sessionId)
       if (!state) return false
@@ -1787,6 +1836,11 @@ async function readWorkspaceInstructions(workspaceRoot: string): Promise<string>
 // a stop — before it is taken to be wedged. A live child answers in
 // milliseconds; this only ever fires on one that will not answer at all.
 const UNRESPONSIVE_CHILD_MS = 5_000
+// How long a child has to answer the registration of its MCP servers. It
+// answers once each has connected or given up, which the CLI bounds itself
+// (30 s a server unless MCP_TIMEOUT says otherwise); this only bounds a child
+// that never answers.
+const MCP_REGISTRATION_TIMEOUT_MS = 90_000
 // How long, and how often, a server's state is read again after a sign-in.
 const MCP_SIGN_IN_WATCH_MS = 5 * 60_000
 const MCP_SIGN_IN_POLL_MS = 3_000
@@ -1901,6 +1955,17 @@ function parseAskUserQuestions(toolInput: Record<string, unknown>): Conversation
     })
   }
   return questions.length > 0 ? questions : null
+}
+
+// A tool's kind as the permission modes read it. The task tools keep the
+// agent's own to-do list, as TodoWrite does, so no mode asks about them. And
+// ToolSearch only loads the tools Claude Code holds back until they are
+// wanted (the task tools among them), so Manual does not card it either: a
+// plan's first step would otherwise always wait on a card. The shared
+// classifier knows none of these names.
+function claudeToolKind(toolName: string) {
+  if (isClaudeTaskTool(toolName)) return 'todo'
+  return toolName === 'ToolSearch' ? 'search' : inferConversationToolKind(toolName)
 }
 
 function readPlanText(toolInput: Record<string, unknown>): string {
@@ -2159,6 +2224,16 @@ export async function claudeChatBaseEnv(): Promise<Record<string, string>> {
   return stripAnthropicAuthEnv(getTerminalEnv())
 }
 
+// Claude Code run headless offers no tool to keep a plan with unless asked:
+// with this set it offers its task tools (TaskCreate, TaskUpdate…), which are
+// what a Claude chat's todo strip is read from (claude-task-list.ts). Only a
+// default: a value the person's own environment sets, `0` included, stands.
+const CLAUDE_TODO_TOOLS_ENV = 'CLAUDE_CODE_ENABLE_TODO_TOOLS'
+
+function withClaudeTaskTools(env: Record<string, string>): Record<string, string> {
+  return Object.hasOwn(env, CLAUDE_TODO_TOOLS_ENV) ? env : { ...env, [CLAUDE_TODO_TOOLS_ENV]: '1' }
+}
+
 async function defaultBuildEnv(input: {
   workspaceId: string
   agentId: string
@@ -2234,6 +2309,10 @@ export function mapSdkMessage(
     // Pictures being written for steps this message reported; the caller
     // waits for them before the events go out, so no path names a missing file.
     toolImageWrites?: Promise<void>[]
+    // Claude Code's task list as the main chain's task tools left it, and
+    // those calls still waiting for their results (claude-task-list.ts).
+    claudeTasks?: ClaudeTaskList
+    taskToolCalls?: Map<string, { name: string; input: Record<string, unknown> }>
   },
   message: Record<string, unknown>,
   // exchangeContinues: a `result` that answers only part of what the child was
@@ -2490,19 +2569,26 @@ export function mapSdkMessage(
         if (block.name === 'Read' && typeof block.id === 'string')
           (state.fileReadToolUseIds ??= new Set()).add(block.id)
         const toolInput = asRecord(block.input) ?? {}
+        // A main-chain task tool's row is a todo row carrying the list as it
+        // stands, and is stamped again once its result says what changed.
+        // An agent's task tools are its own bookkeeping, not the chat's plan.
+        const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
+        if (taskTool)
+          (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
         const payload: ConversationToolStartedPayload = {
           turnId,
           toolCallId: typeof block.id === 'string' ? block.id : undefined,
           tool: block.name,
           toolUseId: typeof block.id === 'string' ? block.id : undefined,
           name: block.name,
-          kind: inferConversationToolKind(block.name),
+          kind: taskTool ? 'todo' : inferConversationToolKind(block.name),
           input: JSON.parse(
             JSON.stringify({
               ...toolInput,
               ...(typeof toolInput.file_path === 'string' ? { path: toolInput.file_path } : {}),
               ...(typeof toolInput.old_string === 'string' ? { oldText: toolInput.old_string } : {}),
               ...(typeof toolInput.new_string === 'string' ? { newText: toolInput.new_string } : {}),
+              ...(taskTool ? { todos: claudeTaskTodos(state.claudeTasks ?? new Map()) } : {}),
             }),
           ),
           ...computeEditDiffCounts(block.name, toolInput),
@@ -2519,6 +2605,9 @@ export function mapSdkMessage(
       const parentToolUseId = readParentToolUseId(message)
       const content = asRecord(message.message)?.content
       if (!Array.isArray(content)) break
+      // The structured result describes the message's one tool result; one
+      // that answers several calls at once says nothing a task can be read from.
+      const oneResult = content.filter((block) => asRecord(block)?.type === 'tool_result').length === 1
       for (const rawBlock of content) {
         const block = asRecord(rawBlock)
         if (block?.type !== 'tool_result') continue
@@ -2566,6 +2655,36 @@ export function mapSdkMessage(
           isError: block.is_error === true,
           ...(parentToolUseId ? { parentToolUseId } : {}),
           ...(images.length ? { images } : {}),
+        }
+        const taskCall = toolUseId ? state.taskToolCalls?.get(toolUseId) : undefined
+        if (taskCall) {
+          state.taskToolCalls!.delete(toolUseId!)
+          const tasks = state.claudeTasks ?? new Map()
+          const next =
+            block.is_error === true || declined
+              ? tasks
+              : applyClaudeTaskTool(
+                  tasks,
+                  taskCall.name,
+                  taskCall.input,
+                  oneResult ? message.tool_use_result : undefined,
+                )
+          // The row is announced again with the list the call left, ahead of
+          // its result: a step reported twice keeps its place and its start.
+          if (next !== tasks) {
+            state.claudeTasks = next
+            events.push(
+              eventFor(state, 'tool_started', {
+                turnId,
+                toolCallId: toolUseId,
+                tool: taskCall.name,
+                toolUseId,
+                name: taskCall.name,
+                kind: 'todo',
+                input: JSON.parse(JSON.stringify({ ...taskCall.input, todos: claudeTaskTodos(next) })),
+              } satisfies ConversationToolStartedPayload),
+            )
+          }
         }
         events.push(eventFor(state, 'tool_output', payload))
       }
@@ -3227,6 +3346,32 @@ export function claudeMcpServers(
     }
   }
   return out
+}
+
+/**
+ * Where a child's MCP servers go. The app's own gateway rides the command line:
+ * it carries no secret (its channel token is in the child's environment, or a
+ * `${NAME}` reference), and it is the one server every chat needs from its
+ * first moment, whatever becomes of a request made once the child runs. The
+ * session's own servers go over the control channel (`registerMcpServers`),
+ * except one that names a `${NAME}` reference: the CLI expands those only in
+ * what it reads from its command line, and a reference is not a secret.
+ */
+export function claudeMcpLaunch(
+  gateway: ConversationMcpServer | null,
+  sessionServers: readonly ConversationMcpServer[],
+  options: { wsl?: boolean } = {},
+): { commandLine: NonNullable<Options['mcpServers']>; control: NonNullable<Options['mcpServers']> } {
+  const commandLine = claudeMcpServers(gateway ? [gateway] : [], options)
+  const control: NonNullable<Options['mcpServers']> = {}
+  for (const [id, server] of Object.entries(claudeMcpServers(sessionServers, options))) {
+    // A session server of the gateway's own name stands in its place, as it
+    // always did.
+    delete commandLine[id]
+    if (JSON.stringify(server).includes('${')) commandLine[id] = server
+    else control[id] = server
+  }
+  return { commandLine, control }
 }
 
 // The gateway's bridge says which agent is calling from its environment. A

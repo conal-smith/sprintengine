@@ -1,14 +1,25 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { afterEach, test, vi } from 'vitest'
 
 import type { ConversationEvent, ConversationMcpServer } from '../../shared/conversation-runtime'
 import type { ExecutionHostId } from '../../shared/execution-host'
-import { CLAUDE_AGENT_PROVIDER_ID, claudeMcpServers, createClaudeAgentProvider } from './claude-agent-provider'
+import {
+  CLAUDE_AGENT_PROVIDER_ID,
+  claudeMcpLaunch,
+  claudeMcpServers,
+  createClaudeAgentProvider,
+} from './claude-agent-provider'
 import type { MockAdapterTurnInput } from './conversation-provider-adapter'
 
 // A Claude chat's child loads the person's user settings only, so neither the
 // gateway pinned into a workspace's `.mcp.json` nor a connector written there
-// would reach it. Both are handed to the SDK's `mcpServers` instead.
+// would reach it. The gateway is handed to the SDK's `mcpServers`, which the
+// SDK puts on the child's command line; a connector's servers, which carry
+// its secrets, are registered over the child's stdin before its first message.
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 const GATEWAY: ConversationMcpServer = {
   id: 'sprintengine-studio',
@@ -26,16 +37,27 @@ const RAILWAY: ConversationMcpServer = {
   args: ['-y', '@railway/mcp'],
 }
 
-function harness(gateway: ConversationMcpServer | null | 'throws') {
+function harness(
+  gateway: ConversationMcpServer | null | 'throws',
+  // How the child answers the registration of the session's servers.
+  register: (servers: Record<string, unknown>) => Promise<unknown> = async (servers) => ({
+    added: Object.keys(servers),
+    removed: [],
+    errors: {},
+  }),
+) {
   const options: Record<string, unknown>[] = []
   const gatewayAskedFor: Array<{ hostId?: ExecutionHostId }> = []
+  // What reached the child, in order: each registration and each message.
+  const sent: Array<{ registered: Record<string, unknown> } | { message: unknown } | { reconnected: string }> = []
   const query = (params: { prompt: AsyncIterable<Record<string, unknown>>; options: Record<string, unknown> }) => {
     options.push(params.options)
     const pending: Record<string, unknown>[] = []
     let wake = null as (() => void) | null
     let ended = false
     void (async () => {
-      for await (const _message of params.prompt) {
+      for await (const message of params.prompt) {
+        sent.push({ message: (message.message as { content: unknown }).content })
         pending.push({ type: 'result', subtype: 'success', is_error: false, session_id: 'mcp' })
         wake?.()
       }
@@ -52,9 +74,19 @@ function harness(gateway: ConversationMcpServer | null | 'throws') {
         wake?.()
       },
       setPermissionMode: async () => undefined,
+      setMcpServers: async (servers: Record<string, unknown>) => {
+        const answer = await register(servers)
+        sent.push({ registered: servers })
+        return answer
+      },
+      reconnectMcpServer: async (name: string) => {
+        sent.push({ reconnected: name })
+      },
+      mcpServerStatus: async () => [],
     }
   }
   const adapter = createClaudeAgentProvider({
+    mcpRegistrationTimeoutMs: 50,
     loadQuery: (async () => query) as never,
     resolveExecutable: async () => '/fake/bin/claude',
     buildEnv: (input) => ({
@@ -89,7 +121,31 @@ function harness(gateway: ConversationMcpServer | null | 'throws') {
       events.push(event)
     return options.at(-1)!
   }
-  return { adapter, firstTurn, gatewayAskedFor }
+  return { adapter, firstTurn, gatewayAskedFor, sent }
+}
+
+// A connector's server as it is installed: its key in the environment it
+// starts with, its token in a header.
+const STRIPE: ConversationMcpServer = {
+  id: 'stripe',
+  name: 'Stripe',
+  transport: 'stdio',
+  command: 'npx',
+  args: ['-y', '@stripe/mcp'],
+  env: { STRIPE_SECRET_KEY: 'sk_test_secret' },
+}
+const STRIPE_RENDERED = {
+  type: 'stdio',
+  command: 'npx',
+  args: ['-y', '@stripe/mcp'],
+  env: { STRIPE_SECRET_KEY: 'sk_test_secret' },
+}
+const SENTRY: ConversationMcpServer = {
+  id: 'sentry',
+  name: 'Sentry',
+  transport: 'http',
+  url: 'https://mcp.sentry.dev/mcp',
+  headers: { Authorization: 'Bearer sntrys_secret' },
 }
 
 test('claude-agent-provider mcp servers', async () => {
@@ -116,15 +172,13 @@ test('claude-agent-provider mcp servers', async () => {
     await adapter.disposeAll()
   }
 
-  // A connector run's server rides beside it.
+  // A connector run's server is registered with the running child instead.
   {
-    const { adapter, firstTurn } = harness(GATEWAY)
+    const { adapter, firstTurn, sent } = harness(GATEWAY)
     const options = await firstTurn({ mcpServers: [RAILWAY] })
-    assert.deepEqual(Object.keys(options.mcpServers as object), ['sprintengine-studio', 'railway'])
-    assert.deepEqual((options.mcpServers as Record<string, unknown>).railway, {
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', '@railway/mcp'],
+    assert.deepEqual(Object.keys(options.mcpServers as object), ['sprintengine-studio'])
+    assert.deepEqual(sent[0], {
+      registered: { railway: { type: 'stdio', command: 'npx', args: ['-y', '@railway/mcp'] } },
     })
     await adapter.disposeAll()
   }
@@ -192,4 +246,104 @@ test('claude-agent-provider mcp servers', async () => {
     ).local,
     { type: 'stdio', command: '/mnt/c/tools/mcp.exe', args: ['--x'] },
   )
+})
+
+test('a connector’s secrets never reach the child’s command line, and its tools are there for the first message', async () => {
+  const { adapter, firstTurn, sent } = harness(GATEWAY)
+  const options = await firstTurn({ mcpServers: [STRIPE, SENTRY] })
+  assert.doesNotMatch(JSON.stringify(options), /sk_test_secret|sntrys_secret/u)
+  assert.deepEqual(sent, [
+    {
+      registered: {
+        stripe: STRIPE_RENDERED,
+        sentry: { type: 'http', url: 'https://mcp.sentry.dev/mcp', headers: { Authorization: 'Bearer sntrys_secret' } },
+      },
+    },
+    { message: 'hello' },
+  ])
+  await adapter.disposeAll()
+})
+
+test('a chat without servers of its own registers none', async () => {
+  const { adapter, firstTurn, sent } = harness(GATEWAY)
+  await firstTurn()
+  assert.deepEqual(sent, [{ message: 'hello' }])
+  await adapter.disposeAll()
+})
+
+test('a server the child could not connect is named in the log, without what it was started with', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  const { adapter, firstTurn, sent } = harness(GATEWAY, async () => ({
+    added: ['sentry'],
+    removed: [],
+    errors: { stripe: 'spawn failed with STRIPE_SECRET_KEY=sk_test_secret' },
+  }))
+  await firstTurn({ mcpServers: [STRIPE, SENTRY] })
+  assert.deepEqual(sent.at(-1), { message: 'hello' })
+  assert.deepEqual(warn.mock.calls, [['[claude-agent] mcp-servers-unavailable', { servers: ['stripe'] }]])
+  await adapter.disposeAll()
+})
+
+test('a child that refuses or never answers the registration still gets the message', async () => {
+  for (const register of [
+    async () => {
+      throw new Error('Unsupported control request')
+    },
+    () => new Promise<never>(() => undefined),
+  ]) {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { adapter, firstTurn, sent } = harness(GATEWAY, register)
+    await firstTurn({ mcpServers: [STRIPE] })
+    assert.deepEqual(sent, [{ message: 'hello' }])
+    assert.deepEqual(warn.mock.calls, [['[claude-agent] mcp-servers-unavailable', { servers: ['stripe'] }]])
+    warn.mockRestore()
+    await adapter.disposeAll()
+  }
+})
+
+test('a server that names a reference the CLI expands stays on the command line, and the gateway always does', () => {
+  const linear: ConversationMcpServer = {
+    id: 'linear',
+    name: 'Linear',
+    transport: 'http',
+    url: 'https://mcp.linear.app/mcp',
+    envVarNames: ['LINEAR_TOKEN'],
+  }
+  const launch = claudeMcpLaunch(GATEWAY, [linear, STRIPE])
+  assert.deepEqual(Object.keys(launch.commandLine), ['sprintengine-studio', 'linear'])
+  assert.deepEqual(Object.keys(launch.control), ['stripe'])
+  assert.deepEqual(claudeMcpLaunch(null, []), { commandLine: {}, control: {} })
+})
+
+test('a server action asked while the child registers its servers waits for them', async () => {
+  let answer = (): void => undefined
+  const registering = new Promise<void>((resolve) => (answer = resolve))
+  const { adapter, sent } = harness(GATEWAY, async (servers) => {
+    await registering
+    return { added: Object.keys(servers), removed: [], errors: {} }
+  })
+  const input = {
+    sessionId: 'conv_1',
+    workspaceId: 'ws-1',
+    agentId: 'agent-1',
+    providerId: CLAUDE_AGENT_PROVIDER_ID,
+    modelId: 'sonnet',
+    workspaceRoot: '/Users/dev/app',
+    mcpServers: [STRIPE],
+  }
+  await adapter.startSession(input)
+  const first = adapter.mcpServerAction!({ ...input, serverId: 'stripe', action: 'reconnect' })
+  // The child runs and is registering; a second action finds it there.
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const second = adapter.mcpServerAction!({ ...input, serverId: 'stripe', action: 'reconnect' })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(sent, [])
+  answer()
+  assert.deepEqual(await Promise.all([first, second]), [{ ok: true }, { ok: true }])
+  assert.deepEqual(sent, [
+    { registered: { stripe: STRIPE_RENDERED } },
+    { reconnected: 'stripe' },
+    { reconnected: 'stripe' },
+  ])
+  await adapter.disposeAll()
 })

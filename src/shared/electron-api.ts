@@ -191,6 +191,7 @@ import type {
   ConversationSessionActionResult,
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
+  ConversationStopSubagentInput,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationProvidersListInput,
@@ -1237,6 +1238,8 @@ export type ElectronApi = {
   conversationSessionSetModel: (input: ConversationSetModelInput) => Promise<ConversationSessionActionResult>
   /** Reconnect, switch or sign in to one of a live chat's MCP servers; a sign-in answers the URL to finish it at. */
   conversationSessionMcpAction: (input: ConversationMcpServerActionInput) => Promise<ConversationMcpServerActionResult>
+  /** Stop one agent a live chat spawned, by its lane, leaving the chat and its turn running. */
+  conversationSessionStopSubagent: (input: ConversationStopSubagentInput) => Promise<ConversationSessionActionResult>
   conversationSessionStop: (input: ConversationStopSessionInput) => Promise<ConversationSessionActionResult>
   // Settle and Snooze: end the chat's child process, keeping the session so the
   // next message respawns it.

@@ -7,7 +7,7 @@ import type {
   ConversationSessionFrame,
   ConversationSubscribeInput,
 } from '../../../../../shared/conversation-runtime'
-import { installStudioLoopback } from '../../../../../../tests/studio-chat-loopback'
+import { chatOverStudioUnderTest, installStudioLoopback } from '../../../../../../tests/studio-chat-loopback'
 
 // The virtual list measures a real viewport, which jsdom does not have; this
 // stand-in renders every row so the rows themselves can be driven. Like the
@@ -2005,6 +2005,70 @@ test('a turn’s steps rest folded, the latest one included; its agents are card
     await chat.act(async () => fold()!.click())
     expect(chat.host.textContent, 'opened, the fold shows the steps').toContain('a.ts')
   } finally {
+    await chat.unmount()
+  }
+})
+
+test('a working agent’s card offers to stop that agent alone; an ended agent’s offers nothing', async () => {
+  const turn = runningTurnSend()
+  const stopSubagent = vi.fn(async () => ({ ok: true }))
+  const chat = await mountChat({
+    sendTurn: turn.sendTurn,
+    capabilities: { stopSubagent: true },
+    api: { conversationSessionStopSubagent: stopSubagent },
+  })
+  const agent = (toolUseId: string, description: string) =>
+    event('tool_started', {
+      turnId: 'stop-agents',
+      toolUseId,
+      name: 'Agent',
+      subagentLane: true,
+      subagentType: 'Explore',
+      input: { description },
+    })
+  try {
+    await chat.act(async () => chat.type('Map the suites with two agents'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('turn_started', { turnId: 'stop-agents' }) })
+      chat.emit({ type: 'event', event: agent('stop-working', 'Map the unit suites') })
+      chat.emit({ type: 'event', event: agent('stop-done', 'Map the e2e suites') })
+      chat.emit({
+        type: 'event',
+        event: event('tool_output', { turnId: 'stop-agents', toolUseId: 'stop-done', output: 'Two.', status: 'ok' }),
+      })
+    })
+    const stops = () => chat.host.querySelectorAll<HTMLButtonElement>('button[aria-label="Stop this agent"]')
+    // The Studio protocol has no method for it yet, so a window on it offers none.
+    if (chatOverStudioUnderTest()) {
+      expect(stops()).toHaveLength(0)
+      return
+    }
+    expect(stops()).toHaveLength(1)
+    await chat.act(async () => stops()[0]!.click())
+    expect(stopSubagent).toHaveBeenCalledWith({ sessionId: 'session', toolUseId: 'stop-working' })
+    expect(turn.sendTurn, 'the chat’s turn is not stopped').toHaveBeenCalledOnce()
+    expect(chat.host.querySelector('button[aria-label="Stopping this agent"]')).not.toBeNull()
+    // The agent reports itself stopped: its card has nothing left to stop.
+    await chat.act(async () => {
+      chat.emit({
+        type: 'event',
+        event: event('subagent_status', { toolUseId: 'stop-working', taskId: 'task_1', status: 'stopped' }),
+      })
+      chat.emit({
+        type: 'event',
+        event: event('tool_output', {
+          turnId: 'stop-agents',
+          toolUseId: 'stop-working',
+          output: '[Request interrupted by user for tool use]',
+          status: 'error',
+        }),
+      })
+    })
+    expect(chat.host.querySelector('button[aria-label="Stopping this agent"]')).toBeNull()
+    expect(stops()).toHaveLength(0)
+  } finally {
+    turn.release()
     await chat.unmount()
   }
 })

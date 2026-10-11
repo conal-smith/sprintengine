@@ -19,14 +19,16 @@ import {
 
 /**
  * The variables of the SDK's environment that go into the distribution: the
- * SDK's own marks and the chat's identity. Everything else is this PC's
- * (a Windows PATH, `APPDATA`, a Windows-side Claude setting) and would only
- * mislead a Linux `claude`.
+ * SDK's own marks, the switch that turns on Claude Code's task tools (which
+ * the provider sets for every chat), and the chat's identity. Everything else
+ * is this PC's (a Windows PATH, `APPDATA`, a Windows-side Claude setting) and
+ * would only mislead a Linux `claude`.
  */
 export const WSL_FORWARDED_ENV_KEYS = [
   'CLAUDE_CODE_ENTRYPOINT',
   'CLAUDE_AGENT_SDK_VERSION',
   'CLAUDE_AGENT_SDK_CLIENT_APP',
+  'CLAUDE_CODE_ENABLE_TODO_TOOLS',
   ...CONVERSATION_IDENTITY_ENV_KEYS,
 ] as const
 

@@ -200,3 +200,67 @@ test('the person’s message is unwrapped from the tags the CLI puts around it',
   assert.equal(claudePromptText('[Request interrupted by user]'), null)
   assert.equal(claudePromptText('<system-reminder>note</system-reminder>\nkeep this'), 'keep this')
 })
+
+test('a session that kept its plan with the task tools reads back with the plan on its todo rows', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sprintengine-claude-import-'))
+  roots.add(root)
+  const file = join(root, `${SESSION}.jsonl`)
+  const call = (id: string, name: string, input: Record<string, unknown>, at: string) =>
+    base({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } }, at)
+  const answer = (id: string, text: string, toolUseResult: unknown, at: string) =>
+    base(
+      {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] },
+        toolUseResult,
+      },
+      at,
+    )
+  const records = [
+    base({ type: 'user', message: { role: 'user', content: 'Plan the release' } }, '2026-09-01T10:00:00Z'),
+    call('toolu_1', 'TaskCreate', { subject: 'Write the notes', description: 'Notes' }, '2026-09-01T10:00:01Z'),
+    answer(
+      'toolu_1',
+      'Task #1 created successfully: Write the notes',
+      { task: { id: '1', subject: 'Write the notes' } },
+      '2026-09-01T10:00:02Z',
+    ),
+    call('toolu_2', 'TaskCreate', { subject: 'Tag the build', description: 'Tag' }, '2026-09-01T10:00:03Z'),
+    answer(
+      'toolu_2',
+      'Task #2 created successfully: Tag the build',
+      { task: { id: '2', subject: 'Tag the build' } },
+      '2026-09-01T10:00:04Z',
+    ),
+    call('toolu_3', 'TaskUpdate', { taskId: '1', status: 'completed' }, '2026-09-01T10:00:05Z'),
+    answer(
+      'toolu_3',
+      'Updated task #1 status',
+      { success: true, taskId: '1', updatedFields: ['status'] },
+      '2026-09-01T10:00:06Z',
+    ),
+  ]
+  await writeFile(file, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  const history = await readClaudeCodeSession(file, 0)
+  const rows = history.events.filter((entry) => entry.type === 'tool_started')
+  assert.deepEqual(
+    rows.map((row) => [row.payload.toolUseId, row.payload.kind]),
+    [
+      ['toolu_1', 'todo'],
+      ['toolu_1', 'todo'],
+      ['toolu_2', 'todo'],
+      ['toolu_2', 'todo'],
+      ['toolu_3', 'todo'],
+      ['toolu_3', 'todo'],
+    ],
+  )
+  assert.deepEqual((rows.at(-1)?.payload.input as { todos: unknown }).todos, [
+    { content: 'Write the notes', status: 'completed' },
+    { content: 'Tag the build', status: 'pending' },
+  ])
+  // Each answer closes its row: nothing is left open to be marked stopped.
+  assert.deepEqual(
+    history.events.filter((entry) => entry.type === 'tool_output').map((entry) => entry.payload.status),
+    ['ok', 'ok', 'ok'],
+  )
+})

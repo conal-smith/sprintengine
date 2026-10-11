@@ -32,6 +32,7 @@ import type {
   ConversationStartSessionInput,
   ConversationStartSessionResult,
   ConversationStopSessionInput,
+  ConversationStopSubagentInput,
   ConversationSuspendSessionInput,
   ConversationTranscriptInput,
   ConversationTranscriptResult,
@@ -1686,6 +1687,22 @@ export class ConversationRuntime {
     session.status = 'ready'
     session.updatedAt = this.now()
     this.noteSettled(session)
+    return { ok: true, session: this.toSummary(session) }
+  }
+
+  // Stop one agent the chat spawned, by the call that spawned it, and leave the
+  // chat, its turn and its other agents as they are. Between turns too: a
+  // background agent works on with no turn open. The agent reports its own
+  // end, which is what closes its lane.
+  async stopSubagent(input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult> {
+    const session = this.sessions.get(input.sessionId)
+    if (!session) return sessionNotFound()
+    if (session.status === 'stopped') return { ok: false, message: 'Conversation session is stopped.' }
+    const adapter = this.getAdapterForProviderId(session.providerId)
+    if (!adapter?.stopSubagent || session.capabilities?.stopSubagent !== true)
+      return { ok: false, message: 'This chat cannot stop one agent by itself.' }
+    if (!(await adapter.stopSubagent(session.sessionId, input.toolUseId)))
+      return { ok: false, message: 'That agent is not running any more.' }
     return { ok: true, session: this.toSummary(session) }
   }
 

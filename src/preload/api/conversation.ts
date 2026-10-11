@@ -31,6 +31,7 @@ import type {
   ConversationSessionActionResult,
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
+  ConversationStopSubagentInput,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
@@ -159,6 +160,10 @@ type ConversationIpcRenderer = {
     input: ConversationMcpServerActionInput,
   ): Promise<ConversationMcpServerActionResult>
   invoke(
+    channel: 'conversation:sessions:stop-subagent',
+    input: ConversationStopSubagentInput,
+  ): Promise<ConversationSessionActionResult>
+  invoke(
     channel: 'conversation:sessions:stop',
     input: ConversationStopSessionInput,
   ): Promise<ConversationSessionActionResult>
@@ -259,6 +264,8 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     conversationSessionMcpAction: (
       input: ConversationMcpServerActionInput,
     ): Promise<ConversationMcpServerActionResult> => renderer.invoke('conversation:sessions:mcp-action', input),
+    conversationSessionStopSubagent: (input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult> =>
+      renderer.invoke('conversation:sessions:stop-subagent', input),
     conversationSessionStop: (input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> =>
       renderer.invoke('conversation:sessions:stop', input),
     conversationSessionSuspend: (input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult> =>
@@ -353,6 +360,7 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     | 'conversationSessionSetPermission'
     | 'conversationSessionSetModel'
     | 'conversationSessionMcpAction'
+    | 'conversationSessionStopSubagent'
     | 'conversationSessionStop'
     | 'conversationSessionSuspend'
     | 'conversationSessionTerminalHandoff'
