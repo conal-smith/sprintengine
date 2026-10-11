@@ -1,7 +1,14 @@
 import { expect, test } from 'vitest'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { subagentModel, subagentOutcomeWord, subagentResultPreview } from './subagentResult'
+import {
+  subagentEffort,
+  subagentModel,
+  subagentOutcomeWord,
+  subagentResultPreview,
+  subagentRunsOn,
+} from './subagentResult'
+import { AgentCardContent } from './subagentStatus'
 import { SubagentLane } from './timelineRows'
 import { setConversationDisclosures } from './conversationViewState'
 import type { TranscriptToolEntry } from './conversationProjection'
@@ -78,4 +85,50 @@ test('a running lane has no report yet', () => {
   expect(html).not.toContain('Report:')
   expect(html).toContain('Working · ')
   expect(html).toContain('agent-glyph--working')
+})
+
+test('only an effort the call set is shown, in the effort picker’s words', () => {
+  expect(subagentEffort(lane())).toBeUndefined()
+  expect(subagentEffort(lane({ input: { description: 'x', effort: '  ' } }))).toBeUndefined()
+  expect(subagentEffort(lane({ input: { description: 'x', effort: 'high' } }))).toBe('High')
+  expect(subagentEffort(lane({ input: { description: 'x', effort: 'xhigh' } }))).toBe('Extra high')
+  expect(subagentEffort(lane({ input: { description: 'x', effort: 'max' } }))).toBe('Max')
+  // A level the picker does not name is said as the call said it.
+  expect(subagentEffort(lane({ input: { description: 'x', effort: 'turbo' } }))).toBe('turbo')
+})
+
+test('what an agent ran on reads model · effort, either alone, or nothing', () => {
+  expect(subagentRunsOn(lane())).toBeUndefined()
+  expect(subagentRunsOn(lane({ input: { description: 'x', model: 'haiku' } }))).toBe('haiku')
+  expect(subagentRunsOn(lane({ input: { description: 'x', effort: 'low' } }))).toBe('Low effort')
+  expect(subagentRunsOn(lane({ input: { description: 'x', model: 'opus', effort: 'xhigh' } }))).toBe(
+    'opus · Extra high effort',
+  )
+})
+
+test('a settled lane’s footer says the model and the effort it ran at', () => {
+  const html = renderToStaticMarkup(
+    <SubagentLane tool={lane({ input: { description: 'Find the cache', model: 'opus', effort: 'xhigh' } })} />,
+  )
+  expect(html).toMatch(/Done in 42s<\/span> · opus · Extra high effort<\/span>/)
+  const effortOnly = renderToStaticMarkup(
+    <SubagentLane tool={lane({ input: { description: 'Find the cache', effort: 'low' } })} />,
+  )
+  expect(effortOnly).toMatch(/Done in 42s<\/span> · Low effort<\/span>/)
+})
+
+test('the agent’s hover card says the model and effort, even while it works', () => {
+  const card = renderToStaticMarkup(
+    <AgentCardContent
+      tool={lane({
+        status: 'running',
+        input: { description: 'Find the cache', model: 'opus', effort: 'high' },
+        agent: { state: 'running', usage: { totalTokens: 18_400, toolUses: 6, durationMs: 9_000 } },
+      })}
+      running
+    />,
+  )
+  expect(card).toContain('opus · High effort · 6 steps · 18.4k tokens')
+  const plain = renderToStaticMarkup(<AgentCardContent tool={lane()} running={false} />)
+  expect(plain).not.toContain('effort')
 })

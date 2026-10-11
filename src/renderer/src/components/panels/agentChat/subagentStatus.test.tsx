@@ -129,6 +129,26 @@ test('an agent at a glance says what it has spent, while it works and once it is
   expect(renderToStaticMarkup(<AgentLaneSummary lane={lane({ status: 'running' })} />)).not.toContain('tokens')
 })
 
+test('an agent at a glance says the model and effort its call set, before what it spent', () => {
+  const card = renderToStaticMarkup(
+    <AgentLaneSummary
+      lane={lane({
+        input: { description: 'Find the cache', model: 'opus', effort: 'xhigh' },
+        agent: { state: 'completed', usage: { totalTokens: 640, toolUses: 2, durationMs: 9_000 } },
+      })}
+    />,
+  )
+  expect(card).toContain('opus · Extra high effort · 640 tokens')
+
+  // Effort alone, with nothing spent reported yet, still gets the line.
+  expect(renderToStaticMarkup(<AgentLaneSummary lane={lane({ input: { effort: 'low' } })} />)).toContain('Low effort')
+
+  // A call that left both to the conversation adds nothing.
+  expect(
+    renderToStaticMarkup(<AgentLaneSummary lane={lane({ input: { description: 'Find the cache' } })} />),
+  ).not.toContain('effort')
+})
+
 test('an agent’s task is its call’s summary, else the description the call gave it, else its own', () => {
   expect(laneTask(lane({ summary: 'Agent: map the router' }))).toBe('map the router')
   expect(laneTask(lane({ input: { description: 'Read a.txt and b.txt', subagent_type: 'Explore' } }))).toBe(
