@@ -1,12 +1,14 @@
 import type { ProjectLogo } from '../shared/electron-api'
 import { imageMimeType } from './filesystem-image'
+import { extractIcnsPng } from './project-logo-icns'
 
-// A project's own logo, read off the top level of its repo so a row of projects
-// reads like a row of products. Detection only — there is no
+// A project's own logo, read off the top level of its repo (or a macOS app's
+// icon from where such a repo keeps it) so a row of projects reads like a row
+// of products. Detection only — there is no
 // per-project icon picker, and nothing here writes to the repo.
 //
-// This module is deliberately free of `fs` and `electron` imports (the one
-// import, `imageMimeType`, is pure): it takes its
+// This module is deliberately free of `fs` and `electron` imports (its
+// imports, `imageMimeType` and the `.icns` reader, are pure): it takes its
 // filesystem and raster work as a `ProjectLogoIo`, so the ranking, the size
 // guard, and the SVG sanitizer are testable without a disk or an Electron
 // runtime. `createProjectLogoIo` in `src/main/project-logo-io.ts` is the real
@@ -22,12 +24,29 @@ const PROJECT_LOGO_CANDIDATES = [
   'favicon.svg',
   'favicon.png',
   'favicon.ico',
+  // A macOS app's icon, where a native project keeps its brand rather than in
+  // a `logo.*`. Ranked last, so a repo with both keeps the logo it had.
+  'icon.icns',
+  'appicon.icns',
 ] as const
+
+// Where an app's icon conventionally sits below the top level: the `build/`
+// and `resources/` folders Electron packagers read it from, and a
+// hand-assembled bundle's `Resources/`. Tried in order after every top-level
+// candidate, each by a single existence check on its exact path — still no
+// walk.
+const PROJECT_LOGO_NESTED_CANDIDATES = ['build/icon.icns', 'resources/icon.icns', 'Resources/AppIcon.icns'] as const
 
 // Candidates above this are skipped and the next-ranked one is tried. A
 // sidebar glyph is never worth a megabyte, and the bytes travel to the renderer
 // as a data URI.
 export const PROJECT_LOGO_MAX_BYTES = 1024 * 1024
+
+// An `.icns` holds every size from 16px to a 1024px master, so a real one
+// passes a megabyte easily even though the PNG taken from it is small. It gets
+// its own bound, still low enough that a huge or bogus file is skipped
+// unread; the PNG taken out of it is held to PROJECT_LOGO_MAX_BYTES.
+export const PROJECT_LOGO_ICNS_MAX_BYTES = 8 * 1024 * 1024
 
 // Raster candidates are downscaled to twice the icon slot before caching.
 // The slot is --sem-icon-size-sm (16px), so 2x is 32px — enough for a Retina
@@ -35,6 +54,10 @@ export const PROJECT_LOGO_MAX_BYTES = 1024 * 1024
 export const PROJECT_LOGO_RASTER_MAX_PX = 32
 
 const SVG_MIME_TYPE = 'image/svg+xml'
+const PNG_MIME_TYPE = 'image/png'
+// Internal only: it marks a candidate whose bytes are a container, and is
+// never what a data URI is served as.
+const ICNS_MIME_TYPE = 'image/icns'
 
 type ProjectLogoStat = {
   isFile: boolean
@@ -133,9 +156,9 @@ function toDataUrl(bytes: Buffer, mimeType: string): string {
 }
 
 /**
- * Scan the top level of `folderPath` for the project's logo. Returns null when
- * there is no usable candidate — the caller keeps today's glyph and nothing is
- * written anywhere.
+ * Scan the top level of `folderPath`, then the few known places an app keeps
+ * its icon, for the project's logo. Returns null when there is no usable
+ * candidate — the caller keeps today's glyph and nothing is written anywhere.
  *
  * A candidate that is oversized, unreadable, or (for SVG) rejected by the
  * sanitizer does not end the scan: the next-ranked candidate is tried, exactly
@@ -151,9 +174,11 @@ export async function detectProjectLogo(folderPath: string, io: ProjectLogoIo): 
     return null
   }
 
-  for (const name of rankProjectLogoCandidates(entries)) {
-    const filePath = io.join(folderPath, name)
-
+  const candidatePaths = [
+    ...rankProjectLogoCandidates(entries).map((name) => io.join(folderPath, name)),
+    ...PROJECT_LOGO_NESTED_CANDIDATES.map((relativePath) => io.join(folderPath, relativePath)),
+  ]
+  for (const filePath of candidatePaths) {
     // Only the io calls are caught. A candidate a user's disk will not give us
     // is an ordinary miss and falls through to the next-ranked one; a throw out
     // of the ranking, the sanitizer, or the encoding below is a bug in this
@@ -173,7 +198,10 @@ export async function detectProjectLogo(folderPath: string, io: ProjectLogoIo): 
       }
     }
 
-    const downscaled = await downscaleCandidate(raw, mimeType, io)
+    // Nothing downstream decodes an `.icns`; the PNG inside it is the logo.
+    const raster = mimeType === ICNS_MIME_TYPE ? extractIcnsPng(raw, PROJECT_LOGO_RASTER_MAX_PX) : raw
+    if (!raster || raster.byteLength > PROJECT_LOGO_MAX_BYTES) continue
+    const downscaled = await downscaleCandidate(raster, mimeType === ICNS_MIME_TYPE ? PNG_MIME_TYPE : mimeType, io)
     return {
       path: filePath,
       mtimeMs: stats.mtimeMs,
@@ -193,10 +221,12 @@ async function readCandidate(filePath: string, io: ProjectLogoIo): Promise<ReadC
   try {
     const stats = await io.stat(filePath)
     if (!stats.isFile) return null
-    if (stats.size > PROJECT_LOGO_MAX_BYTES) return null
+    const icns = filePath.toLowerCase().endsWith('.icns')
+    if (stats.size > (icns ? PROJECT_LOGO_ICNS_MAX_BYTES : PROJECT_LOGO_MAX_BYTES)) return null
 
-    // The app's one extension→image-mime answer, shared with image preview.
-    const mimeType = imageMimeType(filePath)
+    // The app's one extension→image-mime answer, shared with image preview,
+    // which has no use for an `.icns`.
+    const mimeType = icns ? ICNS_MIME_TYPE : imageMimeType(filePath)
     if (!mimeType) return null
 
     return { stats, raw: await io.readFile(filePath), mimeType }
