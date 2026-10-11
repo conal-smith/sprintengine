@@ -4,9 +4,10 @@ import assert from 'node:assert/strict'
 //
 // Two rules live here. A new Canvas tab opens docked, like every other kind
 // (owner ruling 2026-09-22): it used to maximise the pane, which read as the
-// pane opening full screen by default. And a maximised pane shows one
-// close-pane control, not two: the strip sits directly under the
-// WorkspaceHeader then, whose pane switch is the same control one row up, and
+// pane opening full screen by default. And there is one close-pane control on
+// screen, not two: docked, it is the strip's, and the WorkspaceHeader's pane
+// switch steps aside (PanelSwitches.test.tsx); maximised, the strip sits
+// directly under the header, whose switch is the same control one row up, and
 // the header keeps the window's caption corner (paneStripOwnsCaptionCorner).
 //
 // The tab bodies are stubbed. What is under test is the strip and the store
