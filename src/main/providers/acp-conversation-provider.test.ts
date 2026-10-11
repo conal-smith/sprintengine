@@ -10,6 +10,7 @@ import {
   acpApprovalInput,
   acpMcpServers,
   acpSubagentLaneFields,
+  acpTodoTool,
   acpToolKind,
   confinedAcpPath,
   createAcpConversationProvider,
@@ -23,6 +24,8 @@ import type {
 } from '../../shared/conversation-runtime'
 import type { ConversationCommandCatalog } from '../../shared/conversation/commands'
 import { conversationCommandsFor, onConversationCommandsChanged } from '../conversation-commands/registry'
+import { projectConversation } from '../../../packages/conversation-timeline/src/conversationProjection'
+import { deriveTodoProgress } from '../../../packages/conversation-timeline/src/todoProgress'
 
 // A separate process speaks JSON-RPC over real stdio, including agent-to-client
 // permission and file requests. No installed CLI or network is needed in CI.
@@ -64,6 +67,9 @@ createInterface({input:process.stdin}).on('line',async line=>{
  if(text==='flood'){process.stdout.write('x'.repeat(17*1024*1024));return}
  // As OpenCode spawns a subagent: a call named for its task tool, then retitled with what it was sent to do.
  if(text==='task'){update({sessionUpdate:'tool_call',toolCallId:'spawn',kind:'other',title:'task',rawInput:{},status:'pending'});update({sessionUpdate:'tool_call_update',toolCallId:'spawn',kind:'other',title:'Map the tests',rawInput:{description:'Map the tests',prompt:'Find every suite',subagent_type:'explore'},status:'in_progress'});update({sessionUpdate:'tool_call_update',toolCallId:'spawn',status:'completed',content:[{type:'content',content:{type:'text',text:'Three suites.'}}]});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // As OpenCode 1.18 keeps a checklist: its todowrite tool, ACP kind other, the list only in the
+ // call's input, retitled with a count once done, and no plan update. 'todowrite plan' also sends one.
+ if(text.startsWith('todowrite')){const todos=[{content:'Read the config',status:'completed',priority:'high'},{content:'Write the test',status:'in_progress',priority:'high'},{content:'Run the suite',status:'pending',priority:'medium'}];update({sessionUpdate:'tool_call',toolCallId:'call_todo',title:'todowrite',kind:'other',status:'pending',locations:[],rawInput:{}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'in_progress',kind:'other',title:'todowrite',locations:[],rawInput:{todos}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'completed',kind:'other',title:'2 todos',rawInput:{todos},rawOutput:{output:JSON.stringify(todos,null,2),metadata:{todos}},content:[{type:'content',content:{type:'text',text:JSON.stringify(todos,null,2)}}]});if(text==='todowrite plan')update({sessionUpdate:'plan',entries:todos.map(({content,status,priority})=>({content,status:status==='in_progress'?'completed':status,priority}))});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Planned'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  update({sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'Thinking'}});
  if(text==='hang'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'waiting'}});return}
  update({sessionUpdate:'tool_call',toolCallId:'tool',kind:'edit',title:'Write',rawInput:{path:'result.txt'},status:'pending'});
@@ -647,6 +653,61 @@ test('ACP reads a subagent spawn off its tool call and keeps it an agent after t
   } finally {
     await f.cleanup()
   }
+})
+// What the strip above the composer reads off a turn's events, the person's
+// message first as the runtime records it.
+function todoProgressOf(events: ConversationEvent[], live = true) {
+  const shown = [
+    { ...events[0]!, type: 'user_message' as const, payload: { turnId: 'turn', text: 'plan it' } },
+    ...events,
+  ]
+  return deriveTodoProgress(
+    projectConversation(shown.map((event, index) => ({ ...event, id: `evt_${index}`, seq: index + 1 }))).entries,
+    live,
+  )
+}
+test("OpenCode's todowrite checklist is a todo call, kept one after the call is retitled, and reaches the todo strip", async () => {
+  const f = await fixture()
+  try {
+    const events = await turn(f, 'todowrite')
+    const started = events.filter((event) => event.type === 'tool_started')
+    expect(started.length).toBeGreaterThan(0)
+    for (const event of started) expect(event.payload).toMatchObject({ toolUseId: 'call_todo', kind: 'todo' })
+    expect(started.at(-1)?.payload?.input).toMatchObject({
+      todos: [{ content: 'Read the config', status: 'completed' }, {}, {}],
+    })
+    expect(todoProgressOf(events)).toMatchObject({
+      steps: [
+        { label: 'Read the config', status: 'completed' },
+        { label: 'Write the test', status: 'in_progress' },
+        { label: 'Run the suite', status: 'pending' },
+      ],
+      completed: 1,
+      total: 3,
+      current: 'Write the test',
+    })
+  } finally {
+    await f.cleanup()
+  }
+})
+test('an agent that sends a plan update beside its todowrite call shows one list, the latest', async () => {
+  const f = await fixture()
+  try {
+    const events = await turn(f, 'todowrite plan')
+    expect(events.filter((event) => event.type === 'tool_started' && event.payload?.kind === 'todo')).not.toHaveLength(
+      0,
+    )
+    // The plan came last, with the second step ticked: the strip counts its
+    // three steps, not the six of both lists.
+    expect(todoProgressOf(events)).toMatchObject({ completed: 2, total: 3, current: 'Run the suite' })
+  } finally {
+    await f.cleanup()
+  }
+})
+test('an ACP tool call is a todo by its tool name, in either spelling', () => {
+  for (const name of ['todowrite', 'TodoWrite', 'todoread', 'update_todo', ' todowrite '])
+    expect(acpTodoTool(name)).toBe(true)
+  for (const name of ['task', '2 todos', 'Write', '', undefined, null]) expect(acpTodoTool(name)).toBe(false)
 })
 test('an ACP tool call is a subagent by its spawn tool name or the agent type its input names', () => {
   expect(acpSubagentLaneFields('task', {})).toEqual({ subagentLane: true })

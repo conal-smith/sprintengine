@@ -27,6 +27,13 @@ import { isWindowsPath, toWslPath } from '../../shared/host-paths'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV } from '../../shared/studio-env'
 import { inferConversationToolKind } from '../../shared/conversation/toolKind'
+import {
+  CLAUDE_WORKTREE_LEASE_TOOLS,
+  isInGitCheckout,
+  runsGitWorktreeAdd,
+  worktreeLeaseInstruction,
+  worktreeLeaseRedirect,
+} from './worktree-lease-guidance'
 import { summarizeToolInput } from '../../shared/conversation/approvalSummary'
 import { normalizeApiKeySource } from '../../shared/conversation/apiKeySource'
 import { usageLimitsStore } from '../usage-limits/store'
@@ -304,6 +311,9 @@ type SessionState = {
   // Tool calls this app refused, so their results read as declined rather
   // than as tools that failed on their own.
   declinedToolUseIds: Set<string>
+  // The chat's first `git worktree add` was pointed at the worktree pool's
+  // tool; the next one goes through (worktree-lease-guidance.ts).
+  worktreeLeaseRedirected?: boolean
   // Agents the child has running, by spawning tool call.
   subagents: Map<string, TrackedSubagent>
   // The tool call that first spawned each agent this chat has seen, by task.
@@ -866,6 +876,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.mcpServers ?? [],
       { wsl: wslTarget !== null },
     )
+    // Only a chat that has the gateway has the pool's tools, and only one in a
+    // git checkout has a repository to lease a worktree of.
+    const leasesWorktrees = Boolean(studioGateway) && (await isInGitCheckout(state.workspaceRoot))
+    // Studio's own line first, so a project's instructions after it have the
+    // last word on how that project wants its worktrees made.
+    const systemAppend = [leasesWorktrees ? worktreeLeaseInstruction(CLAUDE_WORKTREE_LEASE_TOOLS) : '', instructions]
+      .filter(Boolean)
+      .join('\n\n')
     await swept
     assertSpawnWanted(state, generation)
     const skillPlugin = state.skillIds?.length
@@ -900,7 +918,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // settings stand under `none`, which is that CLI's own default.
       allowDangerouslySkipPermissions: true,
       ...(state.allowedTools?.length ? { allowedTools: state.allowedTools } : {}),
-      systemPrompt: { type: 'preset', preset: 'claude_code', ...(instructions ? { append: instructions } : {}) },
+      systemPrompt: { type: 'preset', preset: 'claude_code', ...(systemAppend ? { append: systemAppend } : {}) },
       // Never the repository's own settings. `.claude/settings.json` and
       // `settings.local.json` can carry allow rules, which would answer tool
       // permissions before canUseTool is asked and so skip the approvals a
@@ -944,6 +962,16 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
                         hookEventName: 'PreToolUse' as const,
                         permissionDecision: 'deny' as const,
                         permissionDecisionReason: 'Ask mode permits read-only tools only.',
+                      },
+                    }
+                  }
+                  if (leasesWorktrees && redirectsToWorktreeLease(state, input.tool_name, input.tool_input)) {
+                    state.declinedToolUseIds.add(input.tool_use_id)
+                    return {
+                      hookSpecificOutput: {
+                        hookEventName: 'PreToolUse' as const,
+                        permissionDecision: 'deny' as const,
+                        permissionDecisionReason: worktreeLeaseRedirect(CLAUDE_WORKTREE_LEASE_TOOLS),
                       },
                     }
                   }
@@ -1037,6 +1065,19 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   // with a hook that reads `state.mode` for every tool call.
   function nativePermissionMode(state: SessionState, mode: SessionState['mode']) {
     return mode === 'plan' || mode === 'ask' ? 'plan' : sdkPermissionMode(state)
+  }
+
+  // Whether this call is the chat's first `git worktree add`, which is turned
+  // back once with a pointer to the pool's tool. Here in the hook rather than
+  // in canUseTool, which the CLI never asks under bypass or for a command the
+  // person's own allow rules cover, and under every preset, bypass included:
+  // it is guidance, not a permission, and the same command again goes on to
+  // whatever the preset does with it (runs it, or asks).
+  function redirectsToWorktreeLease(state: SessionState, toolName: string, toolInput: unknown): boolean {
+    if (state.worktreeLeaseRedirected || toolName !== 'Bash') return false
+    if (!runsGitWorktreeAdd(asRecord(toolInput)?.command)) return false
+    state.worktreeLeaseRedirected = true
+    return true
   }
 
   // Whether Manual sends this call to a card even where the CLI would run it

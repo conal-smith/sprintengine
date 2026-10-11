@@ -47,6 +47,7 @@ import {
   type WslCliTarget,
 } from './cli-host-child'
 import { studioGatewayForChat, withStudioGateway, type StudioMcpServerResolver } from './studio-gateway-entry'
+import { GATEWAY_WORKTREE_LEASE_TOOLS, isInGitCheckout, worktreeLeaseInstruction } from './worktree-lease-guidance'
 import { studioPlatform } from '../../server/platform/platform'
 import { usageLimitsStore } from '../usage-limits/store'
 import { codexBillingOf, codexRateLimitUpdates, isCodexUsageLimitError } from '../usage-limits/sources'
@@ -968,6 +969,9 @@ export function createCodexConversationProvider(
       const env = await (options.buildEnv ?? buildEnv)(state.input)
       const hostId = state.input.cliRuntimes?.codex?.hostId
       const gateway = await options.resolveStudioMcpServer?.({ ...(hostId ? { hostId } : {}) }).catch(() => null)
+      // Only a chat that has the gateway has the worktree pool's tools, and
+      // only one in a git checkout has a repository to lease a worktree of.
+      const leasesWorktrees = Boolean(gateway) && (await isInGitCheckout(state.input.workspaceRoot))
       if (state.closed) throw new Error('Codex conversation was closed.')
       state.wsl = wsl
       // The app's gateway beside the session's own servers. The app-server is
@@ -1028,6 +1032,12 @@ export function createCodexConversationProvider(
                 approvalsReviewer: policy.approvalsReviewer,
                 sandbox: policy.sandbox,
               }
+            : {}),
+          ...(leasesWorktrees
+            ? await codexDeveloperInstructions(
+                transport,
+                state.input.workspaceRoot === undefined ? undefined : hostCwd(state.input.workspaceRoot, wsl),
+              )
             : {}),
         }
         let resumeLost = false
@@ -1569,6 +1579,28 @@ export async function probeCodexConversationCommands(
     return commands
   } finally {
     transport.close()
+  }
+}
+
+/**
+ * Studio's worktree line, as the thread's developer instructions (taken by
+ * `thread/start`, `thread/resume` and `thread/fork` alike). A thread's own
+ * replace the `developer_instructions` the person set in their config rather
+ * than adding to them, so theirs are read first and kept ahead of Studio's.
+ * A Codex that cannot say what they are is given nothing, rather than having
+ * them overwritten.
+ */
+async function codexDeveloperInstructions(
+  transport: Pick<CodexRpcTransport, 'request'>,
+  cwd: string | undefined,
+): Promise<{ developerInstructions?: string }> {
+  const line = worktreeLeaseInstruction(GATEWAY_WORKTREE_LEASE_TOOLS)
+  try {
+    const answer = record(await transport.request('config/read', { ...(cwd ? { cwd } : {}) }))
+    const own = text(record(answer.config).developer_instructions).trim()
+    return { developerInstructions: own ? `${own}\n\n${line}` : line }
+  } catch {
+    return {}
   }
 }
 
