@@ -367,6 +367,12 @@ export type ConversationMcpServerActionInput = {
  */
 export type ConversationMcpServerActionResult = { ok: true; authUrl?: string } | { ok: false; message: string }
 
+/** One agent a chat spawned, named by the call that spawned it (its lane), to stop on its own. */
+export type ConversationStopSubagentInput = {
+  sessionId: string
+  toolUseId: string
+}
+
 export type ConversationStopSessionInput = {
   // What the command was, hashed by whoever named its id: a receipt keeps it,
   // and the same id coming back for a different command is refused rather
@@ -504,6 +510,9 @@ export type ConversationCapabilities = {
   // A fork at the newest reply branches the session the chat is running
   // (an ACP agent's `session/fork`), so the chat's session is started first.
   forkFromLiveSession?: boolean
+  // One agent the chat spawned can be stopped by itself, leaving the chat,
+  // its turn and its other agents running. Without it a lane offers no Stop.
+  stopSubagent?: boolean
 }
 export type ConversationCheckpointFile = {
   path: string

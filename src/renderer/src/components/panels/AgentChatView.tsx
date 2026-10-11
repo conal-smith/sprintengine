@@ -108,7 +108,8 @@ import {
   syncConversationProjection,
 } from './agentChat/incrementalConversationProjection'
 import { ConversationLinkProvider } from './agentChat/conversationLinks'
-import { SubagentTypesProvider } from './agentChat/subagentStatus'
+import { SubagentStopProvider, SubagentTypesProvider } from './agentChat/subagentStatus'
+import { StopGlyph } from './agentChat/stopGlyph'
 import { recalledConversationScroll, rememberConversationScroll } from './agentChat/conversationViewState'
 import { chatResumesInTerminal, resumeChatInTerminal } from './agentChat/resumeInTerminal'
 import { useConversationSession } from './agentChat/useConversationSession'
@@ -1918,6 +1919,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     }
   }, [sessionId, pending, transport, forgetLostSession])
 
+  // One agent stopped from its lane, leaving the chat and its turn running.
+  // The lane ends when the agent reports it stopped; a refusal is said where
+  // every other action's is.
+  const stopSubagentEnabled =
+    operate && capabilities?.stopSubagent === true && typeof transport.stopSubagent === 'function'
+  const stopSubagent = useMemo(
+    () =>
+      stopSubagentEnabled && sessionId
+        ? async (toolUseId: string): Promise<boolean> => {
+            try {
+              const result = await transport.stopSubagent!({ sessionId, toolUseId })
+              if (!result.ok && !forgetLostSession(result)) setActionError(result.message)
+              return result.ok
+            } catch (err) {
+              setActionError(err instanceof Error ? err.message : 'Could not stop the agent.')
+              return false
+            }
+          }
+        : null,
+    [stopSubagentEnabled, sessionId, transport, forgetLostSession],
+  )
+
   // Send a queued message into the running turn (a steer). It skips sendTurn's
   // `pending` latch on purpose: that latch belongs to the send whose turn is
   // running, which settles only when this one takes the turn over. The bubble
@@ -3363,7 +3386,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                       flash={flashRowId === item.id}
                       onFlashEnd={clearFlash}
                     >
-                      <TimelineRow key={item.id} row={item} chrome={chrome} />
+                      <SubagentStopProvider value={stopSubagent}>
+                        <TimelineRow key={item.id} row={item} chrome={chrome} />
+                      </SubagentStopProvider>
                     </ConversationRowFrame>
                   </>
                 )}
@@ -4115,12 +4140,4 @@ async function writeClipboardText(text: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-function StopGlyph({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <rect x="6" y="6" width="8" height="8" rx="1.6" fill="currentColor" />
-    </svg>
-  )
 }

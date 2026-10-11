@@ -36,6 +36,7 @@ import type {
   ConversationSessionActionResult,
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
+  ConversationStopSubagentInput,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
@@ -75,6 +76,7 @@ import {
   parseSessionIdInput,
   parseSetModelInput,
   parseMcpServerActionInput,
+  parseStopSubagentInput,
   parseSetPermissionInput,
   parseStartSessionInput,
   parseTranscriptInput,
@@ -116,6 +118,7 @@ export type ConversationIpcHandlers = {
   setPermission(input: ConversationSetPermissionInput): Promise<ConversationSessionActionResult>
   setModel?(input: ConversationSetModelInput): Promise<ConversationSessionActionResult>
   mcpServerAction?(input: ConversationMcpServerActionInput): Promise<ConversationMcpServerActionResult>
+  stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult>
   stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult>
   suspendSession?(input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult>
   terminalHandoff?(input: ConversationTerminalHandoffInput): Promise<ConversationTerminalHandoffResult>
@@ -365,6 +368,9 @@ export function createConversationIpcHandlers(
     },
     mcpServerAction(input: ConversationMcpServerActionInput): Promise<ConversationMcpServerActionResult> {
       return runtime.mcpServerAction(input)
+    },
+    stopSubagent(input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult> {
+      return runtime.stopSubagent(input)
     },
     stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
       return runtime.stopSession(input)
@@ -796,6 +802,20 @@ export function registerConversationIpc(
       if (!handlers.mcpServerAction) return { ok: false, message: 'MCP server actions are unavailable.' }
       try {
         return await handlers.mcpServerAction(parsed.input)
+      } catch (err) {
+        return { ok: false, message: formatError(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'conversation:sessions:stop-subagent',
+    async (_, input: unknown): Promise<ConversationSessionActionResult> => {
+      const parsed = parseStopSubagentInput(input)
+      if (!parsed.ok) return parsed
+      if (!handlers.stopSubagent) return { ok: false, message: 'Stopping one agent is unavailable.' }
+      try {
+        return await handlers.stopSubagent(parsed.input)
       } catch (err) {
         return { ok: false, message: formatError(err) }
       }

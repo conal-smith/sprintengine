@@ -63,7 +63,9 @@ import {
   laneOutcomeWords,
   laneTask,
   useOpenAgentsPane,
+  useStopSubagent,
 } from './subagentStatus'
+import { StopGlyph } from './stopGlyph'
 import React, { memo, useId, useMemo, useState, useRef } from 'react'
 import { STUDIO_PRODUCT_NAME } from '../../../../../shared/product-identity'
 import { withoutStudioNoticePrefix } from '../../../../../shared/studio-notice'
@@ -733,18 +735,42 @@ export const WorkTimelineStep = memo(function WorkTimelineStep({ tool }: { tool:
 // opens in place.
 const AgentLaneCards = memo(function AgentLaneCards({ lanes }: { lanes: TranscriptToolEntry[] }) {
   const openAgents = useOpenAgentsPane()
+  const stopAgent = useStopSubagent()
   return (
     <ul aria-label="Agents" data-copy-exclude="" className="mb-3 flex flex-col gap-1.5">
-      {lanes.map((lane) => (
-        <li key={lane.id}>
-          {openAgents ? <AgentLaneCard lane={lane} onOpen={() => openAgents(lane.id)} /> : <SubagentLane tool={lane} />}
-        </li>
-      ))}
+      {lanes.map((lane) => {
+        // A working agent's card carries its Stop over its right edge, beside
+        // the card rather than in it: the card is itself a button.
+        const stop = openAgents && stopAgent && lane.status === 'running' ? stopAgent : null
+        return (
+          <li key={lane.id} className="relative">
+            {openAgents ? (
+              <AgentLaneCard lane={lane} onOpen={() => openAgents(lane.id)} stoppable={stop !== null} />
+            ) : (
+              <SubagentLane tool={lane} />
+            )}
+            {stop ? (
+              <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                <StopAgentButton laneId={lane.id} stop={stop} />
+              </div>
+            ) : null}
+          </li>
+        )
+      })}
     </ul>
   )
 })
 
-const AgentLaneCard = memo(function AgentLaneCard({ lane, onOpen }: { lane: TranscriptToolEntry; onOpen: () => void }) {
+const AgentLaneCard = memo(function AgentLaneCard({
+  lane,
+  onOpen,
+  stoppable,
+}: {
+  lane: TranscriptToolEntry
+  onOpen: () => void
+  // Its Stop sits over the card's right edge, so the card keeps that clear.
+  stoppable: boolean
+}) {
   // A working agent's character loops only while its card is on screen.
   const cardRef = useRef<HTMLButtonElement>(null)
   useLiveRowMotion(cardRef, lane.status === 'running')
@@ -754,7 +780,7 @@ const AgentLaneCard = memo(function AgentLaneCard({ lane, onOpen }: { lane: Tran
       variant="bordered"
       onClick={onOpen}
       aria-label={`${subagentLaneLabel(lane)}: ${laneTask(lane) || 'agent'}. Open in Agents`}
-      className="w-full px-3 py-2"
+      className={`w-full py-2 pl-3 ${stoppable ? 'pr-8' : 'pr-3'}`}
     >
       <AgentLaneSummary lane={lane} />
     </CardButton>
@@ -855,6 +881,7 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
   // kind of helper it is (design-system/components/agent-glyph).
   const card = <AgentCardContent tool={tool} running={running} />
   const openAgents = useOpenAgentsPane()
+  const stopAgent = useStopSubagent()
   return (
     <div ref={laneRef}>
       <div className="group/lane flex min-w-0 items-center">
@@ -871,6 +898,7 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
             </div>
           </Tooltip>
         )}
+        {running && stopAgent ? <StopAgentButton laneId={tool.id} stop={stopAgent} /> : null}
         {/* This agent's own thread, in the Agents tab beside the chat. */}
         {openAgents ? (
           <Tooltip content="Open in Agents">
@@ -1251,6 +1279,34 @@ function MessageTimestamp({ at }: { at?: number }) {
         <span aria-hidden="true">{formatMessageTime(at)}</span>
         <span className="sr-only">{full}</span>
       </time>
+    </Tooltip>
+  )
+}
+
+// Stops this agent alone; the chat and its turn go on. Shown beside a lane or
+// on an agent's card while the agent runs, and held as stopping once asked.
+// It goes with the agent's end, which is how a stop shows that it worked: the
+// agent reports itself stopped. A stop the chat refused (said where the chat
+// says any refusal) offers it again.
+function StopAgentButton({ laneId, stop }: { laneId: string; stop: (laneId: string) => Promise<boolean> }) {
+  const [stopping, setStopping] = useState(false)
+  return (
+    <Tooltip content={stopping ? 'Stopping this agent…' : 'Stop this agent'}>
+      <IconButton
+        size="xs"
+        aria-label={stopping ? 'Stopping this agent' : 'Stop this agent'}
+        busy={stopping}
+        disabled={stopping}
+        className="shrink-0"
+        onClick={() => {
+          setStopping(true)
+          void stop(laneId).then((asked) => {
+            if (!asked) setStopping(false)
+          })
+        }}
+      >
+        <StopGlyph className="icon-xs" />
+      </IconButton>
     </Tooltip>
   )
 }

@@ -100,6 +100,17 @@ export function LaneMark({
 const SubagentTypesContext = createContext<Record<string, string>>({})
 export const SubagentTypesProvider = SubagentTypesContext.Provider
 
+// Stops one running agent of this chat by its lane, answering whether the chat
+// took the stop (the lane itself ends when the agent reports it stopped). Null
+// where a lane offers no Stop: a chat on another machine, a read-only view, a
+// provider that can only stop the whole turn.
+const SubagentStopContext = createContext<((laneId: string) => Promise<boolean>) | null>(null)
+export const SubagentStopProvider = SubagentStopContext.Provider
+
+export function useStopSubagent(): ((laneId: string) => Promise<boolean>) | null {
+  return useContext(SubagentStopContext)
+}
+
 // Said for the agents every Claude session has, when the session has not (yet)
 // described them itself.
 const BUILT_IN_AGENT_TYPES: Record<string, string> = {

@@ -8,6 +8,7 @@ import type {
   ConversationSetModelInput,
   ConversationMcpServerAction,
   ConversationMcpServerActionInput,
+  ConversationStopSubagentInput,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
   ConversationTranscriptInput,
@@ -280,6 +281,16 @@ export function parseMcpServerActionInput(
     ok: true,
     input: { sessionId: session.input.sessionId, serverId, action: action as ConversationMcpServerAction },
   }
+}
+
+export function parseStopSubagentInput(
+  input: unknown,
+): { ok: true; input: ConversationStopSubagentInput } | { ok: false; message: string } {
+  const session = parseSessionIdInput(input)
+  if (!session.ok) return session
+  const toolUseId = isRecord(input) && typeof input.toolUseId === 'string' ? input.toolUseId.trim() : ''
+  if (!toolUseId || toolUseId.length > 200) return { ok: false, message: 'toolUseId is required.' }
+  return { ok: true, input: { sessionId: session.input.sessionId, toolUseId } }
 }
 
 export function parseRespondToRequestInput(

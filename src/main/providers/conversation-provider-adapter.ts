@@ -116,6 +116,12 @@ export type ConversationProviderAdapter = {
   // as Stop between turns asks. Each reports its own end as it stops; the
   // child and the session stay. False when nothing runs that can be stopped.
   stopBackgroundTasks?(sessionId: string): Promise<boolean>
+  // Stop one running agent the session spawned, named by the tool call that
+  // spawned it (its lane), and nothing else: the turn, the child and the
+  // session's other agents go on. The agent reports its own end, as one that
+  // finished does. False when no such agent is running. An adapter that
+  // implements this declares `capabilities.stopSubagent`.
+  stopSubagent?(sessionId: string, toolUseId: string): Promise<boolean>
   disposeAll?(): void | Promise<void>
 }
 

@@ -33,6 +33,7 @@ export type ConversationBackendMember =
   | 'setModel'
   | 'mcpServerAction'
   | 'interrupt'
+  | 'stopSubagent'
   | 'stopSession'
   | 'suspendSession'
   | 'terminalHandoffTarget'

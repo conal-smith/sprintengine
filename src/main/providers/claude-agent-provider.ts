@@ -158,6 +158,7 @@ export type ClaudeAgentProviderAdapter = ConversationProviderAdapter & {
   // Claude's child is always disposed; `force` changes nothing here.
   disposeChildProcess(sessionId: string, options?: ConversationDisposeOptions): boolean
   stopBackgroundTasks(sessionId: string): Promise<boolean>
+  stopSubagent(sessionId: string, toolUseId: string): Promise<boolean>
   disposeAll(): Promise<void>
   setPermissionPreset(input: MockAdapterPermissionInput): Promise<ConversationProviderPermissionResult>
   setModel(input: MockAdapterModelInput): Promise<ConversationProviderPermissionResult>
@@ -1241,6 +1242,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       steer: true,
       rewind: true,
       fork: true,
+      stopSubagent: true,
     },
     sessions: 'stateful',
     acceptsMcpServers: true,
@@ -1706,6 +1708,19 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.lastActivityAt = now()
       await Promise.all(listed.map((task) => answeredWithin(q.stopTask(task.taskId), childAnswerTimeoutMs)))
       return true
+    },
+
+    // The agent is stopped as a task, by the id the child reported it under.
+    // The child then reports it `stopped`, which ends its lane as any agent's
+    // end does (mapTaskMessage); a foreground one's call returns, and the turn
+    // that made it carries on without it. A refusal or no answer is no stop.
+    async stopSubagent(sessionId: string, toolUseId: string): Promise<boolean> {
+      const state = sessions.get(sessionId)
+      const q = state?.query
+      const agent = state?.subagents.get(toolUseId)
+      if (!state || !q || !agent) return false
+      state.lastActivityAt = now()
+      return answeredWithin(q.stopTask(agent.taskId), childAnswerTimeoutMs, { rejectAsUnanswered: true })
     },
 
     disposeChildProcess(sessionId: string, _options?: ConversationDisposeOptions): boolean {

@@ -20,6 +20,7 @@ import type {
   ConversationSessionFrame,
   ConversationSessionSummary,
   ConversationSetModelInput,
+  ConversationStopSubagentInput,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
   ConversationStartSessionResult,
@@ -178,6 +179,13 @@ export type ConversationTransport = {
   /** Revert a turn's files from its checkpoint, or preview that. Present where `capabilities.checkpointRevert` is. */
   revert?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   /**
+   * Stop one running agent the chat spawned, by its lane, leaving the chat and
+   * its turn running. Absent where the transport cannot: a paired machine's
+   * chat, and a window on the Studio protocol, which has no method for it yet.
+   * Offered only where the provider declares `stopSubagent` as well.
+   */
+  stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
+  /**
    * The Studio this window belongs to: providers, files, plans and command
    * lists. The same for every chat in the window, whichever machine it runs on.
    */
@@ -230,6 +238,7 @@ const ipcConversationParts: Required<
   fork: (input) => window.api.conversationForkAtTurn(input),
   startSession: (input) => window.api.conversationSessionStart(input),
   revert: (input) => window.api.conversationRevertToTurn(input),
+  stopSubagent: (input) => window.api.conversationSessionStopSubagent(input),
 }
 
 // One Studio implementation per window object, so its client and the
@@ -307,6 +316,11 @@ export const localConversationTransport: ConversationTransport = {
   fork: (input) => localParts().fork(input),
   startSession: (input) => localParts().startSession(input),
   revert: (input) => localParts().revert(input),
+  // Read off the implementation the window chose, so it is absent where that
+  // one has no way to do it.
+  get stopSubagent() {
+    return localParts().stopSubagent
+  },
   services: windowServices,
 }
 
