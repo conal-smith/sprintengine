@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { FOCUS_RING_CLASS } from './tokens'
+import { formatDiffCount } from '../../utils/diffCount'
 
 // DiffStatPill — how much a checkout has changed, as one small split pill: the
 // added half in the diff green on its wash, the removed half in the diff red on
@@ -44,10 +45,14 @@ export function DiffStatPill({
   const halves = (
     <>
       {added > 0 ? (
-        <span className={`${HALF} bg-[color:var(--tone-good-soft)] text-[color:var(--diff-added)]`}>+{added}</span>
+        <span className={`${HALF} bg-[color:var(--tone-good-soft)] text-[color:var(--diff-added)]`}>
+          +{formatDiffCount(added)}
+        </span>
       ) : null}
       {removed > 0 ? (
-        <span className={`${HALF} bg-[color:var(--tone-error-soft)] text-[color:var(--diff-removed)]`}>−{removed}</span>
+        <span className={`${HALF} bg-[color:var(--tone-error-soft)] text-[color:var(--diff-removed)]`}>
+          −{formatDiffCount(removed)}
+        </span>
       ) : null}
     </>
   )

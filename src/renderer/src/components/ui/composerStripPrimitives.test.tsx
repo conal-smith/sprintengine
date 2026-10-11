@@ -97,6 +97,21 @@ test('the diff pill draws only the halves that have something to say', async () 
   expect(await halves(0, 0)).toBeNull()
 })
 
+test('the diff pill groups the digits of a big count, in tabular figures', async () => {
+  const { DiffStatPill } = await import('./DiffStatPill')
+  const view = await mount(<DiffStatPill added={83_065} removed={1_204} ariaLabel="changes" />)
+  try {
+    const pill = view.container.querySelector('[data-diff-stat-pill]')!
+    expect(Array.from(pill.querySelectorAll('span')).map((span) => span.textContent)).toEqual([
+      `+${(83_065).toLocaleString()}`,
+      `−${(1_204).toLocaleString()}`,
+    ])
+    expect(pill.className).toContain('tabular-nums')
+  } finally {
+    await view.unmount()
+  }
+})
+
 test('the clickable diff pill is one named button, its halves the diff channel’s inks on their washes', async () => {
   const { DiffStatPill } = await import('./DiffStatPill')
   let opened = 0

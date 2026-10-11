@@ -23,6 +23,7 @@ import { openFileSurface } from '../../../utils/openFileSurface'
 import { openGitDiff } from '../../../utils/openGitDiff'
 import type { ChatFileSource } from './chatServices'
 import { useConversationTransport } from './conversationTransport'
+import { formatDiffCount } from '../../../utils/diffCount'
 
 export type TurnChangeSummary = { files: number; addedLines: number; removedLines: number }
 export function hasTurnChanges(available: boolean | undefined, summary: TurnChangeSummary | undefined): boolean {
@@ -97,7 +98,7 @@ function RevertTurnButton({
               <ul className="max-h-60 overflow-auto">
                 {shown.map((file) => (
                   <li key={file.path}>
-                    {file.path} · +{file.addedLines} −{file.removedLines}
+                    {file.path} · +{formatDiffCount(file.addedLines)} −{formatDiffCount(file.removedLines)}
                   </li>
                 ))}
               </ul>
@@ -237,8 +238,10 @@ function DiffStat({
 }) {
   return (
     <span className="inline-flex shrink-0 gap-1 font-mono tabular-nums" aria-hidden="true">
-      <span className={muted ? '' : 'text-[color:var(--sem-color-diff-added)]'}>+{addedLines}</span>
-      <span className={muted ? '' : 'text-[color:var(--sem-color-diff-removed)]'}>−{removedLines}</span>
+      <span className={muted ? '' : 'text-[color:var(--sem-color-diff-added)]'}>+{formatDiffCount(addedLines)}</span>
+      <span className={muted ? '' : 'text-[color:var(--sem-color-diff-removed)]'}>
+        −{formatDiffCount(removedLines)}
+      </span>
     </span>
   )
 }

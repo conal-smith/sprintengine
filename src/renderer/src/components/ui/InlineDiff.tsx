@@ -8,6 +8,7 @@ import {
 } from '../../../../shared/conversation/editHunks'
 import { loadCodeLanguage, normalizeCodeLanguage } from '../../lib/highlight/codeHighlight'
 import { GhostButton } from './Buttons'
+import { formatDiffCount } from '../../utils/diffCount'
 import '../../../../../design-system/components/inline-diff/component.css'
 
 export function InlineDiff({ edit, onOpen }: { edit: ConversationEdit; onOpen?: () => void }) {
@@ -59,7 +60,7 @@ export function InlineDiff({ edit, onOpen }: { edit: ConversationEdit; onOpen?: 
     <section aria-label={`Changes in ${edit.path}`}>
       <div className="flex items-center gap-2 text-meta">
         <span>
-          +{edit.added} −{edit.removed}
+          +{formatDiffCount(edit.added)} −{formatDiffCount(edit.removed)}
         </span>
         {onOpen ? (
           <GhostButton size="inline" onClick={onOpen}>

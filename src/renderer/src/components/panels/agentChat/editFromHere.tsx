@@ -19,6 +19,7 @@ import { showToast } from '../../../store/toastStore'
 import type { TranscriptEntry } from './conversationProjection'
 import { useConversationLinkContext } from './conversationLinks'
 import { useConversationTransport, type ConversationTransport } from './conversationTransport'
+import { formatDiffCount } from '../../../utils/diffCount'
 
 type UserEntry = Extract<TranscriptEntry, { kind: 'user' }>
 
@@ -176,7 +177,7 @@ function EditFromHereBody({
             <ul className="mt-2 max-h-60 overflow-auto text-meta text-[color:var(--text-muted)]">
               {files.map((file) => (
                 <li key={file.path}>
-                  {file.path} · +{file.addedLines} −{file.removedLines}
+                  {file.path} · +{formatDiffCount(file.addedLines)} −{formatDiffCount(file.removedLines)}
                 </li>
               ))}
             </ul>
