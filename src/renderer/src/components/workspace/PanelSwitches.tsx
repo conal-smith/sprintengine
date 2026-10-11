@@ -17,6 +17,10 @@
 //
 // Two clusters, one column: the Backlog switch toggles the pane's Backlog tab
 // (open it, bring it forward, or close it), the pane switch the pane itself.
+// The pane switch steps aside while the pane is docked open: the pane's own
+// strip ends in a Close-pane control with the same glyph, and two of them in
+// one band read as a duplicated control. Closed, it is the way back in;
+// maximised, the strip drops its own close and this one is the only one.
 
 import type { JSX } from 'react'
 import { IconButton, Tooltip } from '../ui'
@@ -113,6 +117,7 @@ export function PanelSwitches({ activeWorkspaceId, leadingDivider = true, cluste
     const pane = state.workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.paneState
     return pane?.tabs.find((tab) => tab.id === pane.activeTabId)?.kind ?? null
   })
+  const paneMaximised = useWorkspaceStore((state) => state.workspacePaneMaximised)
   const setPaneOpen = useWorkspaceStore((state) => state.setPaneOpen)
   const togglePaneKind = useWorkspaceStore((state) => state.togglePaneKind)
 
@@ -122,7 +127,10 @@ export function PanelSwitches({ activeWorkspaceId, leadingDivider = true, cluste
   const keybindingSettings = useWorkspaceStore((state) => state.appSettings.keybindings)
   const keybindingPlatform = platformKeybindingsFromApiPlatform(window.api.platform)
   const panels = PANELS.filter(
-    (panel) => panel.cluster === cluster && (!panel.moduleId || selectModuleEnabled(moduleOverrides, panel.moduleId)),
+    (panel) =>
+      panel.cluster === cluster &&
+      (!panel.moduleId || selectModuleEnabled(moduleOverrides, panel.moduleId)) &&
+      !(panel.target.kind === 'pane' && paneOpen && !paneMaximised),
   )
   const shortcutFor = (commandId: string): string | null =>
     getEffectiveKeybindingLabel(commandId, keybindingSettings, keybindingPlatform)

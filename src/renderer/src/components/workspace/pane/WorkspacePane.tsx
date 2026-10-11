@@ -144,7 +144,8 @@ export default function WorkspacePane({ workspaceId, active }: WorkspacePaneProp
   )
 
   // Closing the column with focus inside it would strand the keyboard in
-  // hidden chrome; the header's pane switch is where the gesture came from.
+  // hidden chrome; the header's pane switch, back once the pane is closed, is
+  // where reopening it lives.
   const closePane = useCallback(() => {
     setPaneOpen(workspaceId, false)
     window.requestAnimationFrame(() => {
@@ -286,11 +287,10 @@ export default function WorkspacePane({ workspaceId, active }: WorkspacePaneProp
               {maximised ? <RestoreGlyph className="icon-sm" /> : <MaximiseGlyph className="icon-sm" />}
             </IconButton>
           </Tooltip>
-          {/* Maximised, this strip sits directly under the WorkspaceHeader,
-              whose pane switch draws the same glyph and does the same thing
-              one row up; two of them stacked in one corner read as a
-              duplicated control. Docked, the two are a column apart and both
-              stay. */}
+          {/* One close-pane control on screen at a time. Docked, it is this
+              one, and the WorkspaceHeader's pane switch steps aside
+              (PanelSwitches). Maximised, this strip sits directly under the
+              header, so the header's switch takes it back and this one goes. */}
           {maximised ? null : (
             <Tooltip content="Close pane" placement="bottom">
               <IconButton onClick={closePane} aria-label="Close pane">
