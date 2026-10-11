@@ -146,6 +146,8 @@ export type ClaudeAgentProviderOptions = {
   // How long a child has to answer a stop or a mode switch before it is taken
   // to be wedged. Tests shorten it.
   childAnswerTimeoutMs?: number
+  // And how long it has to answer the registration of its MCP servers.
+  mcpRegistrationTimeoutMs?: number
   // The app's own MCP gateway on the machine the child runs on, handed to
   // every child. Null or absent leaves it out.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
@@ -425,6 +427,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   const prepareWslTarget = options.prepareWslTarget ?? prepareWslClaudeTarget
   const spawnWslChild = options.spawnWslChild ?? spawnWslClaude
   const childAnswerTimeoutMs = options.childAnswerTimeoutMs ?? UNRESPONSIVE_CHILD_MS
+  const mcpRegistrationTimeoutMs = options.mcpRegistrationTimeoutMs ?? MCP_REGISTRATION_TIMEOUT_MS
   const sessions = new Map<string, SessionState>()
   // Staged plugin folders still being removed, so shutdown can wait for them.
   const removals = new Set<Promise<void>>()
@@ -817,7 +820,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // session actually recorded. The respawn below resumes the same provider
     // session, so the conversation continues rather than restarting.
     if (state.query && !childHonorsPreset(state)) disposeChild(state)
-    if (state.query) return Promise.resolve()
+    // A child still registering its servers is not ready for a message yet.
+    if (state.query) return state.spawning ?? Promise.resolve()
     // Two callers racing past the check above would each stage a plugin folder
     // and spawn a child, and only one of either would ever be cleaned up.
     state.spawning ??= spawnQuery(state).finally(() => {
@@ -852,12 +856,13 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     assertSpawnWanted(state, generation)
     const instructions = await readWorkspaceInstructions(state.workspaceRoot)
     // A WSL gateway entry names its channel token (`envVarNames`) and never
-    // carries it: the SDK puts `mcpServers` on the child's command line. The
-    // child is issued the token on stdin (spawnWslClaude) and the bridge it
-    // starts inherits it, as a WSL terminal's `claude` hands it on.
+    // carries it: the gateway rides the child's command line. The child is
+    // issued the token on stdin (spawnWslClaude) and the bridge it starts
+    // inherits it, as a WSL terminal's `claude` hands it on.
     const studioGateway = await options.resolveStudioMcpServer?.({ ...(hostId ? { hostId } : {}) }).catch(() => null)
-    const mcpServers = claudeMcpServers(
-      [...(studioGateway ? [withAgentIdentity(studioGateway, env)] : []), ...(state.mcpServers ?? [])],
+    const mcpServers = claudeMcpLaunch(
+      studioGateway ? withAgentIdentity(studioGateway, env) : null,
+      state.mcpServers ?? [],
       { wsl: wslTarget !== null },
     )
     await swept
@@ -907,9 +912,10 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // Which is also why the app's MCP gateway is passed here rather than
       // read from the workspace's `.mcp.json`: a project's MCP servers are
       // project settings, and this child loads none. The session's own servers
-      // (a connector run's) ride the same option; the person's user-scoped
-      // servers still load from their own configuration.
-      ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+      // (a connector run's) are handed over once the child runs, most of them
+      // (claudeMcpLaunch says which); the person's user-scoped servers still
+      // load from their own configuration.
+      ...(Object.keys(mcpServers.commandLine).length > 0 ? { mcpServers: mcpServers.commandLine } : {}),
       // Plain `--plugin-dir`, never `skipMcpDiscovery`: the SDK spells that
       // `--plugin-dir-no-mcp`, which a Claude Code older than the SDK does not
       // know, and the child exits on it. There is nothing to skip anyway: the
@@ -983,6 +989,33 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     void pump(state, q)
     void reportSupportedAgents(state, q)
     void reportAccount(state, q)
+    if (Object.keys(mcpServers.control).length === 0) return
+    await registerMcpServers(q, mcpServers.control)
+    // Stopped or replaced while the servers connected: the turn that asked
+    // for this child has nothing to send its message to.
+    if (state.query !== q) throw new Error('The conversation was closed before Claude Code started.')
+  }
+
+  // The SDK would put these on the child's command line, one `--mcp-config`
+  // argument that every user of the machine can read (`ps`), and for a WSL
+  // child on `wsl.exe`'s too. A connector's server carries its secrets there:
+  // an API key in its `env`, a token in its `headers` or its `args`. So they
+  // go over the child's stdin, before its first message is sent; the CLI
+  // answers once each has connected or given up, so their tools are there
+  // from the first turn. One that fails is left out, as a failed connect was
+  // under `--mcp-config`, and is named in the log by name alone: the CLI's
+  // error text can repeat what the server was started with.
+  async function registerMcpServers(q: Query, servers: NonNullable<Options['mcpServers']>): Promise<void> {
+    let failed = Object.keys(servers)
+    const answered = await answeredWithin(
+      Promise.resolve()
+        .then(() => q.setMcpServers(servers))
+        .then((result) => {
+          failed = Object.keys(result?.errors ?? {})
+        }),
+      mcpRegistrationTimeoutMs,
+    )
+    if (!answered || failed.length > 0) console.warn('[claude-agent] mcp-servers-unavailable', { servers: failed })
   }
 
   // How the session bills, from the account its initialize answered with: the
@@ -1788,6 +1821,11 @@ async function readWorkspaceInstructions(workspaceRoot: string): Promise<string>
 // a stop — before it is taken to be wedged. A live child answers in
 // milliseconds; this only ever fires on one that will not answer at all.
 const UNRESPONSIVE_CHILD_MS = 5_000
+// How long a child has to answer the registration of its MCP servers. It
+// answers once each has connected or given up, which the CLI bounds itself
+// (30 s a server unless MCP_TIMEOUT says otherwise); this only bounds a child
+// that never answers.
+const MCP_REGISTRATION_TIMEOUT_MS = 90_000
 // How long, and how often, a server's state is read again after a sign-in.
 const MCP_SIGN_IN_WATCH_MS = 5 * 60_000
 const MCP_SIGN_IN_POLL_MS = 3_000
@@ -3293,6 +3331,32 @@ export function claudeMcpServers(
     }
   }
   return out
+}
+
+/**
+ * Where a child's MCP servers go. The app's own gateway rides the command line:
+ * it carries no secret (its channel token is in the child's environment, or a
+ * `${NAME}` reference), and it is the one server every chat needs from its
+ * first moment, whatever becomes of a request made once the child runs. The
+ * session's own servers go over the control channel (`registerMcpServers`),
+ * except one that names a `${NAME}` reference: the CLI expands those only in
+ * what it reads from its command line, and a reference is not a secret.
+ */
+export function claudeMcpLaunch(
+  gateway: ConversationMcpServer | null,
+  sessionServers: readonly ConversationMcpServer[],
+  options: { wsl?: boolean } = {},
+): { commandLine: NonNullable<Options['mcpServers']>; control: NonNullable<Options['mcpServers']> } {
+  const commandLine = claudeMcpServers(gateway ? [gateway] : [], options)
+  const control: NonNullable<Options['mcpServers']> = {}
+  for (const [id, server] of Object.entries(claudeMcpServers(sessionServers, options))) {
+    // A session server of the gateway's own name stands in its place, as it
+    // always did.
+    delete commandLine[id]
+    if (JSON.stringify(server).includes('${')) commandLine[id] = server
+    else control[id] = server
+  }
+  return { commandLine, control }
 }
 
 // The gateway's bridge says which agent is calling from its environment. A
