@@ -11,7 +11,7 @@ import type { TranscriptToolEntry } from './conversationProjection'
 import { flattenToolEntries, subagentLaneLabel, toolObject } from './conversationTimeline'
 import { LiveElapsed } from './liveElapsed'
 import { formatStepDuration } from './stepDuration'
-import { subagentResultPreview } from './subagentResult'
+import { subagentResultPreview, subagentRunsOn } from './subagentResult'
 import { ToolKindGlyph } from './toolRows/ToolKindGlyph'
 import { formatTokenCount } from '../../../utils/tokenFormat'
 
@@ -136,7 +136,13 @@ export function AgentCardContent({ tool, running }: { tool: TranscriptToolEntry;
   const now = tool.agent?.progressSummary ?? (tool.agent?.lastToolName ? `Using ${tool.agent.lastToolName}` : undefined)
   const steps = tool.agent?.usage?.toolUses ?? flattenToolEntries(tool.children ?? []).length
   const tokens = tool.agent?.usage?.totalTokens
-  const footer = [steps ? `${steps} ${steps === 1 ? 'step' : 'steps'}` : null, tokens ? formatTokens(tokens) : null]
+  // What it was asked to run on leads, when the call set it: the lane's own
+  // line says it only once the agent has finished.
+  const footer = [
+    subagentRunsOn(tool),
+    steps ? `${steps} ${steps === 1 ? 'step' : 'steps'}` : null,
+    tokens ? formatTokens(tokens) : null,
+  ]
     .filter(Boolean)
     .join(' · ')
   return (
@@ -183,8 +189,10 @@ export function AgentLaneSummary({ lane }: { lane: TranscriptToolEntry }): JSX.E
   const now = lane.agent?.progressSummary ?? (lane.agent?.lastToolName ? `Using ${lane.agent.lastToolName}` : '')
   const detail = running ? now : lane.agent?.error || subagentResultPreview(lane.output)
   // What the agent has spent so far, live while it works, under its status so
-  // agents can be compared down the list.
+  // agents can be compared down the list, after the model and effort the call
+  // set it to run on, which explain most of the difference.
   const tokens = lane.agent?.usage?.totalTokens
+  const spend = [subagentRunsOn(lane), tokens ? formatTokens(tokens) : null].filter(Boolean).join(' · ')
   return (
     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
       <span className="flex min-w-0 items-center gap-2 text-meta">
@@ -197,7 +205,7 @@ export function AgentLaneSummary({ lane }: { lane: TranscriptToolEntry }): JSX.E
           <LaneStatus lane={lane} />
         </span>
       </span>
-      {detail || tokens ? (
+      {detail || spend ? (
         <span className="flex min-w-0 items-center gap-2 pl-6 text-micro">
           {detail ? (
             <TruncatedText
@@ -206,10 +214,8 @@ export function AgentLaneSummary({ lane }: { lane: TranscriptToolEntry }): JSX.E
               className={`min-w-0 ${lane.agent?.error && !running ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'}`}
             />
           ) : null}
-          {tokens ? (
-            <span className="ml-auto shrink-0 pl-2 tabular-nums text-[color:var(--text-subtle)]">
-              {formatTokens(tokens)}
-            </span>
+          {spend ? (
+            <span className="ml-auto shrink-0 pl-2 tabular-nums text-[color:var(--text-subtle)]">{spend}</span>
           ) : null}
         </span>
       ) : null}

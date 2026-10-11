@@ -4,6 +4,7 @@ import type { ChangedFileCounts, WorkspaceChangeSummary } from '../../../../shar
 import type { BranchPullRequest } from '../../../../shared/git/pull-request'
 import { changedFileMarks, lineDiffOf } from './terminalLines'
 import { useSidebarGitSummaries } from './useSidebarGitSummaries'
+import { formatDiffCount } from '../../utils/diffCount'
 
 // How many files a checkout carries, as "+N −M": the reading the title bar's
 // branch chip used to be the only one to show, and which an open conversation's
@@ -82,8 +83,8 @@ export function ChangeCountBadge({
       aria-hidden="true"
       className={`shrink-0 whitespace-nowrap font-mono text-micro font-semibold leading-none tabular-nums ${className}`}
     >
-      <span className="text-[color:var(--tone-good)]">+{marks.plus}</span>
-      <span className="ml-1 text-[color:var(--tone-error)]">−{marks.minus}</span>
+      <span className="text-[color:var(--tone-good)]">+{formatDiffCount(marks.plus)}</span>
+      <span className="ml-1 text-[color:var(--tone-error)]">−{formatDiffCount(marks.minus)}</span>
     </span>
   )
 }

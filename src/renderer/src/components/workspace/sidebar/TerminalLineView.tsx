@@ -11,6 +11,7 @@ import CliIcon from '../../CliIcon'
 import { RemoteMachineGlyph } from '../../AppIcons'
 import { BranchChip, RowTooltip, WorkingElapsed } from './rowParts'
 import { PromptCacheMark } from '../PromptCacheMark'
+import { formatDiffCount } from '../../../utils/diffCount'
 
 /**
  * One terminal's line under a row's title (sidebar-lists-every-terminal):
@@ -202,13 +203,13 @@ export function TerminalLineView({
                 onOpenDiff()
               }}
             >
-              <span className="text-[color:var(--tone-good)]">+{marks?.plus ?? 0}</span>
-              <span className="ml-1 text-[color:var(--tone-error)]">−{marks?.minus ?? 0}</span>
+              <span className="text-[color:var(--tone-good)]">+{formatDiffCount(marks?.plus ?? 0)}</span>
+              <span className="ml-1 text-[color:var(--tone-error)]">−{formatDiffCount(marks?.minus ?? 0)}</span>
             </LinkButton>
           ) : (
             <span className={`shrink-0 font-mono text-micro tabular-nums ${diffCopy.dim ? 'opacity-60' : ''}`}>
-              <span className="text-[color:var(--tone-good)]">+{marks?.plus ?? 0}</span>
-              <span className="ml-1 text-[color:var(--tone-error)]">−{marks?.minus ?? 0}</span>
+              <span className="text-[color:var(--tone-good)]">+{formatDiffCount(marks?.plus ?? 0)}</span>
+              <span className="ml-1 text-[color:var(--tone-error)]">−{formatDiffCount(marks?.minus ?? 0)}</span>
               <span className="sr-only">{diffCopy.srText}</span>
             </span>
           )}

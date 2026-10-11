@@ -29,18 +29,21 @@ export function isLegacyCompositionKey(key: string): boolean {
   return at >= 0 && key.length > at + ROLE_MARKER.length
 }
 
-function read(): string[] {
+/** The stored list; null when localStorage itself cannot be read. */
+function readStored(): string[] | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     return parsed.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-  } catch {
-    // localStorage can throw in restricted contexts, and a hand-corrupted value
-    // must not take the picker down with it. No stars is the honest fallback:
-    // every model is still reachable through its provider.
-    return []
+  } catch (error) {
+    // A hand-corrupted value must not take the picker down with it. No stars
+    // is the honest fallback: every model is still reachable through its
+    // provider.
+    if (error instanceof SyntaxError) return []
+    // localStorage can throw in restricted contexts.
+    return null
   }
 }
 
@@ -48,7 +51,7 @@ let cache: string[] | null = null
 const listeners = new Set<() => void>()
 
 function snapshot(): string[] {
-  if (cache === null) cache = read()
+  if (cache === null) cache = readStored() ?? []
   return cache
 }
 
@@ -64,7 +67,26 @@ function publish(next: string[]): void {
   for (const listener of listeners) listener()
 }
 
+// Every Studio window keeps its own copy of the list, and the browser tells
+// every OTHER window when one of them writes it — exactly the set of windows
+// whose copy just went stale. Without this a second window never saw a star set
+// in the first. Installed once, on the first subscriber, and kept: a picker
+// that mounts later must not start from a copy that missed a write.
+let followingOtherWindows = false
+
+function followOtherWindows(): void {
+  if (followingOtherWindows || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+  followingOtherWindows = true
+  window.addEventListener('storage', (event) => {
+    // A null key is the whole of localStorage being cleared.
+    if (event.key !== STORAGE_KEY && event.key !== null) return
+    cache = null
+    for (const listener of listeners) listener()
+  })
+}
+
 function subscribe(listener: () => void): () => void {
+  followOtherWindows()
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
@@ -72,7 +94,11 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function toggleModelFavourite(key: string): void {
-  const current = snapshot()
+  // The write replaces the whole list, so it starts from what is stored now:
+  // another window may have starred something since this one last looked, and
+  // toggling from the copy here would erase that star. The copy stands in only
+  // when localStorage cannot be read at all.
+  const current = readStored() ?? snapshot()
   publish(current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])
 }
 

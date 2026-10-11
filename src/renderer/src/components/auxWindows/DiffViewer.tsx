@@ -94,6 +94,7 @@ import {
   type DiffEditorPrefs,
   type IncludeBoxState,
 } from './diffToolbarModel'
+import { formatDiffCount } from '../../utils/diffCount'
 
 // The diff viewer: the changed-file list, a read-only Monaco DiffEditor, and
 // hunk navigation that flows across files. Two hosts render it — the
@@ -1886,9 +1887,11 @@ export function DiffViewer({
                    the same tokens the body's ink and the gutter use, not the
                    status tones they used to borrow. */
                 <span className="ml-1 font-mono tabular-nums">
-                  <span className="text-[color:var(--diff-added)]">+{(currentItem as BranchDiffItem).additions}</span>
+                  <span className="text-[color:var(--diff-added)]">
+                    +{formatDiffCount((currentItem as BranchDiffItem).additions)}
+                  </span>
                   <span className="ml-1 text-[color:var(--diff-removed)]">
-                    −{(currentItem as BranchDiffItem).deletions}
+                    −{formatDiffCount((currentItem as BranchDiffItem).deletions)}
                   </span>
                 </span>
               ) : null}
