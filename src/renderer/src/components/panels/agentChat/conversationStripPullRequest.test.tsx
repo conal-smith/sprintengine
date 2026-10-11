@@ -407,3 +407,63 @@ async function waitFor<T>(read: () => T | null | undefined): Promise<T> {
     })
   }
 }
+
+test('a watched pull request says what it waits on, in words, and offers Stop watching behind the chevron', async () => {
+  const { stripPullRequestCopy } = await import('../../workspace/PullRequestMark')
+  const watched = (watch: NonNullable<BranchPullRequest['watch']>) =>
+    stripPullRequestCopy([pr({ number: 12, watch })], NOW)?.text ?? null
+  expect(watched({ since: NOW, waitingOn: 'first-read' })).toBe('PR #12 · Watching')
+  expect(watched({ since: NOW, waitingOn: 'checks' })).toBe('PR #12 · Watching · checks running')
+  expect(watched({ since: NOW, waitingOn: 'checks-failed', failedChecks: 2 })).toBe('PR #12 · 2 checks failed')
+  expect(watched({ since: NOW, waitingOn: 'behind', base: 'main' })).toBe('PR #12 · Behind main')
+  expect(watched({ since: NOW, waitingOn: 'review' })).toBe('PR #12 · Waiting for review')
+  expect(watched({ since: NOW, waitingOn: 'checks', approved: true, autoMerge: true })).toBe(
+    'PR #12 · Approved · merging when green',
+  )
+  // A merged one is merged, whatever its watch last said.
+  expect(
+    stripPullRequestCopy([pr({ number: 12, state: 'merged', watch: { since: NOW, waitingOn: 'merge' } })], NOW)?.text,
+  ).toBe('Merged PR #12')
+
+  const { ConversationComposerStrip } = await import('./conversationStrip')
+  const stopped: string[] = []
+  const strip = await mount(
+    <ConversationComposerStrip
+      machine={null}
+      branch={null}
+      changes={null}
+      context={null}
+      pullRequests={[pr({ number: 12, watch: { since: NOW, waitingOn: 'checks-failed', failedChecks: 1 } })]}
+      onStopWatchingPullRequest={(url) => stopped.push(url)}
+      now={NOW}
+    />,
+  )
+  const button = strip.container.querySelector<HTMLButtonElement>('[data-strip-pull-request]')
+  expect(button?.textContent).toContain('PR #12 · Check failed')
+  expect(button?.getAttribute('aria-label')).toMatch(/Check failed\. Studio is watching it: a check failed/)
+  const chevron = strip.container.querySelector<HTMLButtonElement>('button[aria-label$="and Stop watching"]')
+  expect(chevron).not.toBe(null)
+  await strip.act(async () => chevron?.click())
+  const stop = [...dom.window.document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (item) => item.textContent === 'Stop watching #12',
+  )
+  expect(stop).toBeDefined()
+  await strip.act(async () => stop?.click())
+  expect(stopped).toEqual(['https://github.com/acme/app/pull/12'])
+  await strip.unmount()
+
+  // Where the window cannot stop it (a paired machine's chat), it says the words and offers nothing.
+  const elsewhere = await mount(
+    <ConversationComposerStrip
+      machine={null}
+      branch={null}
+      changes={null}
+      context={null}
+      pullRequests={[pr({ number: 12, watch: { since: NOW, waitingOn: 'review' } })]}
+      now={NOW}
+    />,
+  )
+  expect(elsewhere.container.querySelector('button[aria-label$="and Stop watching"]')).toBe(null)
+  expect(elsewhere.container.textContent).toContain('PR #12 · Waiting for review')
+  await elsewhere.unmount()
+})

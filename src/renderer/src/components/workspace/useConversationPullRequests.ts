@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { StudioClient } from '../../../../../packages/agent-sdk/src/index'
 import {
   STUDIO_PULL_REQUEST_LINK_CAPABILITY,
+  STUDIO_PULL_REQUEST_WATCH_CAPABILITY,
   STUDIO_PULL_REQUESTS_CAPABILITY,
   STUDIO_PULL_REQUESTS_MAX_IDS,
   type StudioPullRequest,
@@ -268,6 +269,28 @@ export async function linkPullRequestToConversation(
 }
 
 /**
+ * Stop Studio watching a pull request for the conversation: the person's
+ * "Stop watching". The list moves through `pullRequests.changed`, as for any
+ * other change; `watched` says whether this conversation was the one watching
+ * it. Never throws.
+ */
+export async function unwatchPullRequest(
+  conversation: { workspaceId: string; agentId: string },
+  url: string,
+): Promise<{ ok: true; watched: boolean } | { ok: false; message: string }> {
+  const client = await pullRequestClient()
+  if (!client?.supports(STUDIO_PULL_REQUEST_WATCH_CAPABILITY)) {
+    return { ok: false, message: 'This Studio cannot stop the watch.' }
+  }
+  try {
+    const answer = await client.request('pullRequests.unwatch', { conversation, url })
+    return { ok: true, watched: answer.watched }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
  * Ask again whenever the server says pull requests moved, when the window's
  * Studio connection comes back, and ask the server to re-read stale states
  * when the window comes to the front (decision 9).
@@ -335,8 +358,23 @@ function sameList(a: readonly BranchPullRequest[], b: readonly BranchPullRequest
         entry.state === b[i].state &&
         entry.isDraft === b[i].isDraft &&
         entry.title === b[i].title &&
-        entry.forge === b[i].forge,
+        entry.forge === b[i].forge &&
+        sameWatch(entry, b[i]),
     )
+  )
+}
+
+/** Whether two readings of a pull request's watch say the same words. */
+function sameWatch(a: BranchPullRequest, b: BranchPullRequest): boolean {
+  const left = a.watch
+  const right = b.watch
+  if (!left || !right) return left === right
+  return (
+    left.waitingOn === right.waitingOn &&
+    left.approved === right.approved &&
+    left.autoMerge === right.autoMerge &&
+    left.base === right.base &&
+    left.failedChecks === right.failedChecks
   )
 }
 
@@ -356,6 +394,8 @@ function sameLists(a: ConversationPullRequests, b: ConversationPullRequests): bo
       if (left[i].isDraft !== right[i].isDraft) return false
       // When it ended is what Settle on merge reads.
       if (left[i].endedAt !== right[i].endedAt) return false
+      // A watch's words are on the row, and whether there is one decides its seat.
+      if (!sameWatch(left[i], right[i])) return false
     }
   }
   return true

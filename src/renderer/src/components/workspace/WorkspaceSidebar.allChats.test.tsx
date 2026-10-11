@@ -427,6 +427,23 @@ test('WorkspaceSidebar.allChats', async () => {
         ['https://github.com/acme/apples/pull/144', 'https://github.com/acme/apples/pull/90'],
         'each drawn once: the chat’s on its line, the earlier agent’s on the row’s own',
       )
+
+      // A chat babysitting its pull request: between turns its line says what
+      // the pull request waits on, in words, and the row reads as working.
+      const watched = { ...opened(144, 'Agent tokens'), watch: { since: now, waitingOn: 'checks-failed' as const } }
+      pullRequestAnswers.w1 = [watched, opened(90, 'An earlier agent’s')]
+      conversationPullRequestAnswers['w1\0conversation-agent'] = [watched]
+      for (const listener of pullRequestListeners) listener({ workspaceIds: ['w1'], conversations: [] })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      })
+      await settle()
+      const watchedLine = rowFor('Alpha').querySelector('[data-peek-session="conversation-1"]')
+      const words = watchedLine?.querySelector('[data-pull-request-watch]')
+      assert.equal(words?.textContent, 'Check failed', 'the words, not a dot')
+      assert.equal(words?.getAttribute('data-pull-request-watch'), 'checks-failed')
+      const seat = rowFor('Alpha').querySelector('[role="img"][aria-label^="Watching pull request"]')
+      assert.match(seat?.getAttribute('aria-label') ?? '', /144$/, 'the working mark, named for the watch')
     } finally {
       act(() => {
         root.unmount()

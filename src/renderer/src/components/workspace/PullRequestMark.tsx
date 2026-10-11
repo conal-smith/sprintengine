@@ -12,6 +12,11 @@ import {
   PULL_REQUEST_TONE_VAR,
   type BranchPullRequest,
 } from '../../../../shared/git/pull-request'
+import {
+  pullRequestWatchIsTrouble,
+  pullRequestWatchSentence,
+  pullRequestWatchWords,
+} from '../../../../shared/git/pull-request-watch'
 
 // The pull request mark a conversation wears, in the two places it is drawn:
 // the sidebar's agent line and the conversation peek's head line (epic
@@ -79,6 +84,21 @@ function spokenNumber(pr: BranchPullRequest, spans: boolean): string {
 }
 
 /**
+ * The pull request Studio is watching for this list's conversation, if any:
+ * an open one on GitHub its agent asked to have watched. What makes a chat
+ * read as working between its turns, and what its words are about.
+ */
+export function watchedPullRequest(list: readonly BranchPullRequest[]): BranchPullRequest | null {
+  return list.find((pr) => pr.watch && pr.state === 'open' && !pr.forge) ?? null
+}
+
+/** A watched pull request's tooltip line: the short words, then what they mean. */
+function watchLines(pr: BranchPullRequest): string[] {
+  if (!pr.watch || pr.state !== 'open') return []
+  return [`${pullRequestWatchWords(pr.watch)}. ${pullRequestWatchSentence(pr.watch)}`]
+}
+
+/**
  * The sidebar line's mark (mockup frame 4): the number and the state, then what
  * clicking does, then one line per earlier pull request — newest first, never
  * dropped, because the line has no chevron and this tooltip is the only place
@@ -98,6 +118,7 @@ export function sidebarMarkCopy(list: readonly BranchPullRequest[]): PullRequest
       ? `${writtenNumber(primary, spans)} · ${stateOf(primary)}`
       : `Pull request ${writtenNumber(primary, spans)} ${stateOf(primary)}`,
     lines: [
+      ...watchLines(primary),
       pullRequestOpenLabel(primary),
       ...earlier.map((pr) =>
         spans
@@ -110,6 +131,7 @@ export function sidebarMarkCopy(list: readonly BranchPullRequest[]): PullRequest
     // nothing (design-system/components/tooltip → Accessibility).
     ariaLabel: [
       `${spokenNumber(primary, spans)}, ${stateOf(primary)}.`,
+      ...watchLines(primary),
       ...earlier.map((pr) => `Earlier: ${spokenNumber(pr, spans).toLowerCase()}, ${stateOf(pr)}.`),
       pullRequestOpenLabel(primary),
     ].join(' '),
@@ -143,11 +165,16 @@ export function peekMarkCopy(list: readonly BranchPullRequest[], now: number): P
       // Identity only ONCE: it is the title line above when there is no title,
       // and this line then carries what is left to say about it.
       (titled ? [identity, state, opened] : [state, opened]).filter((part) => part.length > 0).join(' · '),
+      ...watchLines(primary),
       pullRequestOpenLabel(primary),
     ],
-    ariaLabel: titled
-      ? `${spokenNumber(primary, spans)}, ${state}: ${primary.title}. ${pullRequestOpenLabel(primary)}`
-      : `${spokenNumber(primary, spans)}, ${state}. ${pullRequestOpenLabel(primary)}`,
+    ariaLabel: [
+      titled
+        ? `${spokenNumber(primary, spans)}, ${state}: ${primary.title}.`
+        : `${spokenNumber(primary, spans)}, ${state}.`,
+      ...watchLines(primary),
+      pullRequestOpenLabel(primary),
+    ].join(' '),
   }
 }
 
@@ -386,6 +413,39 @@ export function PullRequestMark({
 }
 
 /**
+ * What a watched pull request waits on, in words, beside its mark on a
+ * sidebar line: "Watching · checks running", "Check failed", "Behind main".
+ * Words and not a dot (owner ruling 2026-09-28); the danger ink only agrees
+ * with words that already say something went wrong. Nothing is drawn while
+ * nothing is watched.
+ */
+export function PullRequestWatchWords({
+  pullRequests,
+  dim = false,
+}: {
+  pullRequests: readonly BranchPullRequest[]
+  dim?: boolean
+}): JSX.Element | null {
+  const watched = watchedPullRequest(pullRequests)
+  if (!watched?.watch) return null
+  const trouble = pullRequestWatchIsTrouble(watched.watch)
+  return (
+    <span
+      data-pull-request-watch={watched.watch.waitingOn}
+      className={`min-w-0 flex-1 truncate ${
+        dim
+          ? 'text-[color:var(--text-disabled)]'
+          : trouble
+            ? 'text-[color:var(--tone-error)]'
+            : 'text-[color:var(--text-subtle)]'
+      }`}
+    >
+      {pullRequestWatchWords(watched.watch)}
+    </span>
+  )
+}
+
+/**
  * The PROJECT's mark: how many pull requests are open across a project's
  * conversations (owner, 2026-09-10).
  *
@@ -578,6 +638,8 @@ function pullRequestMenuItems(pullRequests: readonly BranchPullRequest[], now: n
  * still lists it. The state is in the words, not only the colour:
  *
  * - open: "Open PR #123"; a draft: "Open draft PR #123";
+ * - watched (its agent asked Studio to babysit it): what it waits on,
+ *   "PR #123 · Checks failed", "PR #123 · Approved · merging when green";
  * - merged: "Merged PR #123";
  * - on a forge whose state is not read: "Opened PR #5".
  */
@@ -594,9 +656,11 @@ export function stripPullRequestCopy(
     ? `Opened PR ${number}`
     : pr.state === 'merged'
       ? `Merged PR ${number}`
-      : pr.isDraft
-        ? `Open draft PR ${number}`
-        : `Open PR ${number}`
+      : pr.watch
+        ? `PR ${number} · ${pullRequestWatchWords(pr.watch)}`
+        : pr.isDraft
+          ? `Open draft PR ${number}`
+          : `Open PR ${number}`
   return { pr, text, tooltip }
 }
 
@@ -613,13 +677,33 @@ export function stripPullRequestCopy(
 export function PullRequestStripButton({
   pullRequests,
   now,
+  onStopWatching,
 }: {
   pullRequests: readonly BranchPullRequest[]
   now: number
+  /**
+   * Stop Studio watching a pull request for this conversation. Absent where
+   * the window cannot (a chat on a paired machine): no Stop watching is offered.
+   */
+  onStopWatching?: (url: string) => void
 }): JSX.Element | null {
   const copy = stripPullRequestCopy(pullRequests, now)
   if (!copy) return null
   const { pr, text, tooltip } = copy
+  const watching = pr.watch && pr.state === 'open' && onStopWatching ? pr : null
+  const trouble = watching?.watch ? pullRequestWatchIsTrouble(watching.watch) : false
+  const items = pullRequestMenuItems(pullRequests, now)
+  // Stopping the watch sits behind the same chevron as the record, under its
+  // own heading, so the button keeps opening the pull request: the thing a
+  // person most often wants from it.
+  if (watching)
+    items.push({
+      id: 'stop-watching',
+      group: 'Studio is watching',
+      label: `Stop watching #${watching.number}`,
+      ariaLabel: `Stop watching pull request ${watching.number}`,
+      onSelect: () => onStopWatching?.(watching.url),
+    })
   return (
     <Tooltip content={<MarkTooltip copy={tooltip} />} multiline placement="top" wrapperClassName="flex shrink-0">
       {/* A plain wrapper: `SplitButton` takes a closed set of props, so the
@@ -632,13 +716,17 @@ export function PullRequestStripButton({
               <span className="inline-flex" style={{ color: PULL_REQUEST_TONE_VAR[pullRequestTone(pr.state)] }}>
                 <PullRequestGlyph state={pr.state} className="icon-xs" />
               </span>
-              {text}
+              <span className={trouble ? 'text-[color:var(--tone-error)]' : undefined}>{text}</span>
             </span>
           }
           primaryAriaLabel={`${text}. ${tooltip.ariaLabel}`}
           primaryData={{ name: 'data-strip-pull-request', value: pr.url }}
-          menuAriaLabel={`All pull requests from this conversation, ${pullRequests.length}`}
-          items={pullRequestMenuItems(pullRequests, now)}
+          menuAriaLabel={
+            watching
+              ? `All pull requests from this conversation, ${pullRequests.length}, and Stop watching`
+              : `All pull requests from this conversation, ${pullRequests.length}`
+          }
+          items={items}
           onPrimary={() => openPullRequest(pr.url)}
         />
       </span>
