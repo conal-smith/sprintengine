@@ -33,7 +33,9 @@
  * the front probes each watched key once, shortly (spread over
  * {@link PR_WATCH_FOCUS_SPREAD_MS}), and the two-minute schedule resumes. A
  * headless owner, which no window ever focuses, still self-heals, on the
- * longer delay.
+ * longer delay. A key its consumer says keeps its pace (`keepsPace`) does not
+ * stretch: an agent waiting to be woken about its pull request is looking
+ * whether a person is or not.
  *
  * JITTER. Arming a whole scan's worth of keys in one pass would fire their
  * probes in lockstep — a burst of `gh` subprocesses on one tick. Each delay is
@@ -102,6 +104,8 @@ export type PullRequestWatchPollerDeps = {
   isWatchable(key: string): boolean | Promise<boolean>
   /** One probe. Failures are swallowed: a transient `gh` error just retries on the next step. */
   probe(key: string): Promise<unknown>
+  /** Whether this key holds the base schedule with no window focused. Absent, none does. */
+  keepsPace?(key: string): boolean
   backoff?: ExponentialBackoffOptions
   jitterRatio?: number
   changeCoalesceMs?: number
@@ -179,7 +183,8 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
       entry.handle = null
       return
     }
-    const delay = soon ?? jittered(focused() ? stepped : Math.max(stepped, unfocusedDelayMs))
+    const paced = focused() || deps.keepsPace?.(key) === true
+    const delay = soon ?? jittered(paced ? stepped : Math.max(stepped, unfocusedDelayMs))
     entry.handle = timers.setTimeout(() => {
       const armed = entries.get(key)
       if (!armed || armed !== entry || disposed) return

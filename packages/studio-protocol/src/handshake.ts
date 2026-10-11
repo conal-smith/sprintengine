@@ -67,6 +67,12 @@ export const STUDIO_PULL_REQUEST_TOOL_CALLS_CAPABILITY = 'pull-request-tool-call
  */
 export const STUDIO_PULL_REQUEST_LINK_CAPABILITY = 'pull-request-link' as const
 /**
+ * `pullRequests.unwatch`: an owner stops a conversation's agent watching one
+ * of its pull requests. A Studio that advertises it may also send `watch` on a
+ * listed pull request, which says what a watched one waits on. Owners only.
+ */
+export const STUDIO_PULL_REQUEST_WATCH_CAPABILITY = 'pull-request-watch' as const
+/**
  * The local servers a Studio's conversations started: `localServers.list`,
  * `run`, `stop` and `remove`, and the `localServers.changed` stream. Owners
  * only.
@@ -104,6 +110,7 @@ export const STUDIO_CAPABILITIES = [
   STUDIO_PULL_REQUEST_LINK_CAPABILITY,
   STUDIO_LOCAL_SERVERS_CAPABILITY,
   STUDIO_SESSION_FILES_CAPABILITY,
+  STUDIO_PULL_REQUEST_WATCH_CAPABILITY,
 ] as const
 
 /**

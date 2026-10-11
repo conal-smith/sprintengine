@@ -10,6 +10,7 @@
 // another forge has no state the app can read: it is shown as opened.
 
 import { classifyPullRequestUrl, type PullRequestForge } from './pr-url'
+import type { PullRequestWatchView } from './pull-request-watch'
 import { canonicalRepositoryKey } from '../repository-identity'
 
 export type PullRequestState = 'open' | 'merged' | 'closed'
@@ -72,6 +73,12 @@ export type BranchPullRequest = {
    * on any other entry and on a fixture-built snapshot.
    */
   onSessionBranch?: boolean
+  /**
+   * Present while the conversation's agent has Studio watching it
+   * (`pull_request.watch`): what it waits on, as the last read left it. Set
+   * by the record on what it answers, never stored on the entry itself.
+   */
+  watch?: PullRequestWatchView
 }
 
 /**

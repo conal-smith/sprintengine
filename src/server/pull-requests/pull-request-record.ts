@@ -39,6 +39,16 @@
 // pull request still open, and opened inside `PR_WATCH_BOOT_SCAN_MAX_AGE_MS` —
 // a 30-day window — holds a timer.
 //
+// AN AGENT CAN ASK FOR MORE (`pull_request.watch`). A pull request its
+// conversation's agent asked Studio to babysit holds a timer however old it
+// is, keeps the two-minute pace with no window in front, and is read with
+// everything the agent may need to hear about (`readPullRequestWatch`: its
+// checks, reviews, comments and merge state) in the same one probe. What is
+// news is decided by `pull-request-watch.ts`, and the news is handed to
+// `onWatchNews` to be said in the chat. The watch is stored with the pull
+// request, so it outlives a restart, and ends when the pull request merges or
+// closes, or when it is stopped.
+//
 // ONE FILE. Every pull request on the record is in `pull-requests/opened.json`
 // in the server's data directory. The files written before this rule — one per
 // repository, holding every branch lookup's rows, and the conversations'
@@ -60,12 +70,21 @@ import {
 import { isRecord } from '../../shared/records'
 import { writeFileAtomically } from '../../main/config-file-write'
 import { readPullRequestState as readPullRequestStateDefault } from '../../main/github/branch-pull-request'
+import { readPullRequestWatch as readPullRequestWatchDefault } from '../../main/github/pull-request-watch-read'
 import {
   createPullRequestWatchPoller,
   PR_WATCH_BOOT_SCAN_MAX_AGE_MS,
   type WatchPollerFocus,
   type WatchPollerTimers,
 } from '../../main/github/pull-request-watch-poller'
+import {
+  evaluatePullRequestWatch,
+  notePullRequestWatchReadFailed,
+  parsePullRequestWatchState,
+  startPullRequestWatch,
+  type PullRequestWake,
+  type PullRequestWatchState,
+} from './pull-request-watch'
 
 const STORE_DIR = 'pull-requests'
 const STORE_FILE = 'opened.json'
@@ -129,10 +148,15 @@ export type PullRequestRecordChange = {
 
 export type PullRequestRecordOptions = {
   userDataDir: string
-  /** The GitHub read, injected so tests never spawn `gh`. */
-  reads?: { readPullRequestState?: typeof readPullRequestStateDefault }
+  /** The GitHub reads, injected so tests never spawn `gh`. */
+  reads?: {
+    readPullRequestState?: typeof readPullRequestStateDefault
+    readPullRequestWatch?: typeof readPullRequestWatchDefault
+  }
   /** A list changed; see `PullRequestRecordChange`. */
   onRecordChanged?: (change: PullRequestRecordChange) => void
+  /** A watched pull request has news for the conversation watching it, or its watch stopped on its own. */
+  onWatchNews?: (news: PullRequestWatchNewsEvent) => void
   /** Read what is stored at start rather than on first use. */
   loadStoredOnStart?: boolean
   now?: () => number
@@ -142,6 +166,18 @@ export type PullRequestRecordOptions = {
   random?: () => number
   logWarning?: (message: string, error: unknown) => void
 }
+
+/** A watch's news, for the conversation whose agent asked for it. */
+export type PullRequestWatchNewsEvent = { conversation: PullRequestConversationKey; wake: PullRequestWake }
+
+/** What asking for a watch came to. */
+export type WatchOutcome =
+  | { ok: true; pullRequest: BranchPullRequest; alreadyWatching: boolean }
+  | {
+      ok: false
+      code: 'not_a_pull_request' | 'opened_by_another_conversation' | 'not_github' | 'not_open'
+      message: string
+    }
 
 /** What recording an opened pull request came to. */
 export type NoteOpenedOutcome =
@@ -187,6 +223,17 @@ export type PullRequestRecord = {
   conversationsActiveSince(since: number): PullRequestConversationKey[]
   /** Resolves once what was stored has been read: a list asked for before then would be empty. */
   whenLoaded(): Promise<void>
+  /**
+   * Have Studio babysit this pull request for the conversation: it is linked
+   * as the conversation's first if it is not yet (refused when another
+   * conversation opened it), and read on the watch until it lands or the watch
+   * is stopped. Only a GitHub pull request that is still open is watched.
+   */
+  watch(key: PullRequestConversationKey, input: { url: string }): Promise<WatchOutcome>
+  /** Stop watching it for the conversation. False when it was not watched, or is not the conversation's. */
+  unwatch(key: PullRequestConversationKey, url: string): boolean
+  /** Every watch on the record: the conversation that asked, and the pull request. */
+  watches(): Array<{ conversation: PullRequestConversationKey; url: string }>
   /** URLs holding a live watch timer. Introspection for diagnostics and tests. */
   watchedUrls(): string[]
   /** Settle every load, write and read in flight. The tests' synchronisation point, and the quit's. */
@@ -204,6 +251,7 @@ type Home = { checkout: PullRequestCheckout; at: number }
 export function createPullRequestRecord(options: PullRequestRecordOptions): PullRequestRecord {
   const now = options.now ?? (() => Date.now())
   const readState = options.reads?.readPullRequestState ?? readPullRequestStateDefault
+  const readWatch = options.reads?.readPullRequestWatch ?? readPullRequestWatchDefault
   const timers: WatchPollerTimers = options.timers ?? {
     setTimeout: (handler, ms) => {
       const handle = setTimeout(handler, ms)
@@ -217,6 +265,8 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
 
   /** Every pull request on the record, by canonical URL. */
   const entries = new Map<string, BranchPullRequest>()
+  /** URL → what its watching agent has been told, for the pull requests an agent asked to have watched. */
+  const watches = new Map<string, PullRequestWatchState>()
   /** Conversation → the URLs it opened. */
   const byConversation = new Map<string, Set<string>>()
   /** Workspace → every URL opened in it, by any conversation, and by a capture that named no agent. */
@@ -228,6 +278,8 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   /** Per-URL hold on a state read, so an unsettled one is not re-spawned on every focus. */
   const refreshHolds = new Map<string, { at: number; settled: boolean }>()
   const refreshesInFlight = new Map<string, Promise<void>>()
+  /** A watch's first read, waiting on a state read already out; settled by `flush`. */
+  const firstReads = new Set<Promise<void>>()
   let ghMissingUntil = 0
   let load: Promise<void> | null = null
   let writes: Promise<unknown> = Promise.resolve()
@@ -267,6 +319,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       return entry ? isWatchable(entry) : false
     },
     probe: (url) => refresh(url),
+    keepsPace: (url) => watches.has(url),
     timers,
     ...(options.focus ? { focus: options.focus } : {}),
     ...(options.now ? { now: options.now } : {}),
@@ -276,6 +329,8 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
 
   function isWatchable(entry: BranchPullRequest): boolean {
     if (entry.forge || entry.state !== 'open') return false
+    // An agent is waiting on this one: its age is no reason to stop reading it.
+    if (watches.has(entry.url)) return true
     // An old capture recorded no moment of opening; its first read says when.
     if (!(entry.openedAt > 0)) return true
     return now() - entry.openedAt <= WATCH_MAX_AGE_MS
@@ -308,6 +363,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     for (const entry of oldest.slice(0, entries.size - MAX_PULL_REQUESTS)) {
       unindex(entry)
       entries.delete(entry.url)
+      watches.delete(entry.url)
       watch.disarm(entry.url)
     }
   }
@@ -351,12 +407,12 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
           warn('could not read the pull request record; keeping what is recorded this run in memory only', error)
         }
       }
-      let stored: BranchPullRequest[] | null
+      let stored: StoredRow[] | null
       let migrated: string[] = []
       if (unreadable) stored = []
       else if (raw === null) {
         const legacy = await readLegacyStores(options.userDataDir, warn)
-        stored = legacy.entries
+        stored = legacy.entries.map((entry) => ({ entry, watch: null }))
         migrated = legacy.files
       } else {
         stored = parseStoreFile(raw)
@@ -372,7 +428,13 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       }
       if (disposed) return
       // Anything recorded while the file was being read is newer.
-      for (const entry of stored) if (!entries.has(entry.url)) put(entry)
+      for (const { entry, watch: stillWatched } of stored) {
+        if (entries.has(entry.url)) continue
+        put(entry)
+        // A watch on a pull request that has since landed, or that nobody owns, has nobody to wake.
+        if (stillWatched && entry.state === 'open' && !entry.forge && ownerOf(entry))
+          watches.set(entry.url, stillWatched)
+      }
       trim()
       for (const entry of entries.values()) if (isWatchable(entry)) watch.arm(entry.url)
       if (migrated.length > 0) {
@@ -392,7 +454,15 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       async () => {
         if (!dirty || disposed || unreadable) return
         dirty = false
-        const snapshot = { version: STORE_VERSION, pullRequests: [...entries.values()] }
+        // A watch rides on its pull request's row, an optional member an older
+        // build reads past (it drops it on its next write, and watches nothing).
+        const snapshot = {
+          version: STORE_VERSION,
+          pullRequests: [...entries.values()].map((entry) => {
+            const watched = watches.get(entry.url)
+            return watched ? { ...entry, watch: watched } : entry
+          }),
+        }
         try {
           await mkdir(join(options.userDataDir, STORE_DIR), { recursive: true })
           await writeFileAtomically(pullRequestStorePath(options.userDataDir), `${JSON.stringify(snapshot, null, 2)}\n`)
@@ -532,18 +602,28 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     const hold = refreshHolds.get(url)
     if (hold && !hold.settled && now() - hold.at < READ_RETRY_AFTER_FAILURE_MS) return
     if (!mayAsk()) return
+    // A watched pull request is read with everything its agent may need to
+    // hear, and that one read answers its state too.
+    const watched = watches.has(url)
     const read = (async () => {
       const outcome = await withReadSlot(() =>
-        mayAsk() ? readState(url, { now }) : Promise.resolve({ settled: false, reason: 'bad-request' } as const),
+        !mayAsk()
+          ? Promise.resolve({ settled: false, reason: 'bad-request' } as const)
+          : watched
+            ? readWatch(url, { now })
+            : readState(url, { now }),
       )
       if (disposed) return
       if (!outcome.settled) {
         if (outcome.reason === 'gh-missing') ghMissingUntil = now() + GH_MISSING_HOLD_MS
         refreshHolds.set(url, { at: now(), settled: false })
+        if (watched) noteWatchReadFailed(url, outcome.reason)
         return
       }
       refreshHolds.delete(url)
       applyState(url, outcome)
+      // `watched` chose the watch's read above, so this is its answer.
+      if (watched) applyWatchRead(url, outcome as SettledWatchRead)
     })().catch((error) => {
       warn('could not refresh a pull request state', error)
     })
@@ -553,6 +633,132 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     } finally {
       if (refreshesInFlight.get(url) === read) refreshesInFlight.delete(url)
     }
+  }
+
+  // ── Watching ──────────────────────────────────────────────────────────────
+
+  type SettledWatchRead = Extract<Awaited<ReturnType<typeof readWatch>>, { settled: true }>
+
+  function applyWatchRead(url: string, read: SettledWatchRead): void {
+    const previous = watches.get(url)
+    const entry = entries.get(url)
+    const owner = entry ? ownerOf(entry) : null
+    // Unwatched while the read was out: what it found is nobody's news.
+    if (!previous || !entry || !owner) return
+    const outcome = evaluatePullRequestWatch(previous, read)
+    if (outcome.stop) watches.delete(url)
+    else watches.set(url, outcome.state)
+    if (outcome.stop || JSON.stringify(outcome.state) !== JSON.stringify(previous)) persist()
+    if (outcome.stop || JSON.stringify(outcome.state.view) !== JSON.stringify(previous.view)) emitFor(entry)
+    if (!isWatchable(entry)) watch.disarm(url)
+    if (outcome.news.length === 0 && !outcome.stop) return
+    tellWatcher(owner, {
+      url,
+      number: entry.number,
+      repo: ghRepoOf(entry.repoKey),
+      base: read.baseRefName,
+      headSha: read.headSha,
+      autoMerge: read.autoMerge,
+      checksGreen: outcome.checksGreen,
+      news: outcome.news,
+      stop: outcome.stop,
+    })
+  }
+
+  function noteWatchReadFailed(url: string, reason: Parameters<typeof notePullRequestWatchReadFailed>[1]): void {
+    const previous = watches.get(url)
+    const entry = entries.get(url)
+    const owner = entry ? ownerOf(entry) : null
+    if (!previous || !entry || !owner) return
+    const failed = notePullRequestWatchReadFailed(previous, reason)
+    if (failed.state === previous && !failed.stop) return
+    if (failed.stop) watches.delete(url)
+    else watches.set(url, failed.state)
+    persist()
+    if (!failed.stop) return
+    emitFor(entry)
+    if (!isWatchable(entry)) watch.disarm(url)
+    tellWatcher(owner, {
+      url,
+      number: entry.number,
+      repo: ghRepoOf(entry.repoKey),
+      base: previous.view.base ?? null,
+      headSha: previous.headSha,
+      autoMerge: previous.view.autoMerge === true,
+      checksGreen: false,
+      news: [],
+      stop: failed.stop,
+    })
+  }
+
+  function tellWatcher(conversation: PullRequestConversationKey, wake: PullRequestWake): void {
+    if (!options.onWatchNews || disposed) return
+    try {
+      options.onWatchNews({ conversation, wake })
+    } catch (error) {
+      warn('a pull request watch listener failed', error)
+    }
+  }
+
+  /** Whether the conversation may speak for this entry: it opened it, or a capture named its workspace alone. */
+  function isTheirs(entry: BranchPullRequest, key: PullRequestConversationKey): boolean {
+    const owner = ownerOf(entry)
+    return owner ? conversationId(owner) === conversationId(key) : entry.openedByWorkspaceId === key.workspaceId
+  }
+
+  async function startWatch(key: PullRequestConversationKey, input: { url: string }): Promise<WatchOutcome> {
+    const linked = await noteOpened(key, { url: input.url })
+    if (!linked.ok) return linked
+    const entry = entries.get(linked.pullRequest.url) ?? linked.pullRequest
+    if (entry.forge) {
+      return {
+        ok: false,
+        code: 'not_github',
+        message: 'Studio reads pull requests on GitHub only, so it cannot watch one on another forge.',
+      }
+    }
+    // A state read once already (`stateAt`) that says it landed: nothing is left to watch.
+    if (entry.stateAt > 0 && entry.state !== 'open') {
+      return {
+        ok: false,
+        code: 'not_open',
+        message: `Pull request #${entry.number} is ${entry.state}, so there is nothing to watch.`,
+      }
+    }
+    const alreadyWatching = watches.has(entry.url)
+    if (!alreadyWatching) {
+      watches.set(entry.url, startPullRequestWatch(now()))
+      persist()
+      emitFor(entry)
+    }
+    watch.arm(entry.url)
+    // The first read learns where it stands; waiting a whole step for it would
+    // leave the surfaces saying "Watching" and nothing more. A plain state read
+    // still out (linking just asked for one) is let land first, or this one
+    // would coalesce into it and learn nothing about the checks.
+    const url = entry.url
+    const first = Promise.resolve(refreshesInFlight.get(url))
+      .then(() => refresh(url))
+      .finally(() => firstReads.delete(first))
+    firstReads.add(first)
+    return { ok: true, pullRequest: decorate(entry), alreadyWatching }
+  }
+
+  function stopWatch(key: PullRequestConversationKey, url: string): boolean {
+    const canonical = canonicalPullRequestUrlOf(url?.trim() ?? '')
+    const entry = canonical ? entries.get(canonical) : undefined
+    if (!entry || !watches.has(entry.url) || !isTheirs(entry, key)) return false
+    watches.delete(entry.url)
+    persist()
+    emitFor(entry)
+    if (!isWatchable(entry)) watch.disarm(entry.url)
+    return true
+  }
+
+  /** An entry as a reader sees it: with what its watch waits on, while it is watched. */
+  function decorate(entry: BranchPullRequest): BranchPullRequest {
+    const watched = watches.get(entry.url)
+    return watched ? { ...entry, watch: watched.view } : entry
   }
 
   /** The stale open readings in a list, re-read. Each URL's refresh coalesces itself. */
@@ -583,11 +789,12 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     const home = homes.get(conversationId(key))?.checkout.branch
     return [...own, ...unclaimed]
       .sort(newestFirst)
+      .map(decorate)
       .map((entry) => (home && entry.headRefName === home ? { ...entry, onSessionBranch: true } : entry))
   }
 
   function forWorkspace(workspaceId: string): BranchPullRequest[] {
-    return entriesAt(byWorkspace.get(workspaceId)).sort(newestFirst)
+    return entriesAt(byWorkspace.get(workspaceId)).sort(newestFirst).map(decorate)
   }
 
   function noteCheckout(key: PullRequestConversationKey, input: PullRequestCheckout): void {
@@ -660,13 +867,24 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
         .map(([id]) => keyOfId(id))
     },
     whenLoaded,
+    watch: startWatch,
+    unwatch: stopWatch,
+    watches() {
+      const list: Array<{ conversation: PullRequestConversationKey; url: string }> = []
+      for (const url of watches.keys()) {
+        const entry = entries.get(url)
+        const owner = entry ? ownerOf(entry) : null
+        if (owner) list.push({ conversation: owner, url })
+      }
+      return list
+    },
     watchedUrls() {
       return watch.watchedKeys()
     },
     async flush() {
       for (let pass = 0; pass < 8; pass += 1) {
-        await Promise.allSettled([load ?? Promise.resolve(), writes, ...refreshesInFlight.values()])
-        if (refreshesInFlight.size === 0) {
+        await Promise.allSettled([load ?? Promise.resolve(), writes, ...refreshesInFlight.values(), ...firstReads])
+        if (refreshesInFlight.size === 0 && firstReads.size === 0) {
           // One more pass over the write chain, which the last read extended.
           await writes
           return
@@ -735,8 +953,11 @@ function sameReading(a: BranchPullRequest, b: BranchPullRequest): boolean {
   )
 }
 
+/** A stored row: the pull request, and the watch an agent asked for on it, if any. */
+type StoredRow = { entry: BranchPullRequest; watch: PullRequestWatchState | null }
+
 /** The record's file, or null when this build cannot read it. Malformed rows are dropped. */
-function parseStoreFile(raw: string): BranchPullRequest[] | null {
+function parseStoreFile(raw: string): StoredRow[] | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -744,7 +965,20 @@ function parseStoreFile(raw: string): BranchPullRequest[] | null {
     return null
   }
   if (!isRecord(parsed) || parsed.version !== STORE_VERSION || !Array.isArray(parsed.pullRequests)) return null
-  return parsed.pullRequests.map((row) => parseEntry(row, null)).filter((entry) => entry !== null)
+  const rows: StoredRow[] = []
+  for (const row of parsed.pullRequests) {
+    const entry = parseEntry(row, null)
+    if (entry) rows.push({ entry, watch: isRecord(row) ? parsePullRequestWatchState(row.watch) : null })
+  }
+  return rows
+}
+
+/**
+ * What `gh --repo` takes for a repository key: `owner/name` on github.com,
+ * `host/owner/name` on a GitHub Enterprise Server.
+ */
+function ghRepoOf(repoKey: string): string {
+  return repoKey.startsWith('github.com/') ? repoKey.slice('github.com/'.length) : repoKey
 }
 
 /**

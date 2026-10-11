@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Pull request watches** (`pull-request-watch`, owners): `pullRequests.unwatch`
+  stops a conversation's watch on one of its pull requests, and a listed
+  `StudioPullRequest` may carry `watch` (`StudioPullRequestWatch`: when it
+  began, what it waits on, whether it is approved and set to merge on its
+  own, its base and how many checks failed) while the conversation's agent has
+  the Studio watching it.
+
 - **`conversation.cancelQueued`** (operate, an owner's only), the
   conversation lane's `cancelQueued` command as a method: it takes back a
   message the desktop holds for a chat's turn to end, by its `queuedId`. The

@@ -63,6 +63,12 @@ export type StudioPullRequests = {
     | { ok: true; recorded: boolean; pullRequest: StudioPullRequest }
     | { ok: false; code: 'not_a_pull_request' | 'opened_by_another_conversation'; message: string }
   >
+  /**
+   * An owner stops a conversation's watch on one of its pull requests (the
+   * desktop's "Stop watching"). Absent, the Studio does not advertise
+   * `pull-request-watch`.
+   */
+  unwatch?(input: StudioPullRequestsMethodMap['pullRequests.unwatch']['params']): Promise<{ watched: boolean }>
   onChanged(listener: (change: PullRequestsChanged) => void): () => void
 }
 
