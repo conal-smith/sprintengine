@@ -220,7 +220,13 @@ export function WorkspaceHeader<MenuItem extends string>({
                 visibly does nothing. */}
             {globalSurfaceActive ? null : <PanelSwitches activeWorkspaceId={activeWorkspaceId} cluster="right" />}
           </div>
-        ) : null}
+        ) : (
+          // Without that toolbar the actions run to the window's edge, and the
+          // bell's corner badge, which sits past its button, was clipped by
+          // the window's rounded corner (the New chat door on a release build).
+          // The gutter keeps the badge inside the corner's curve.
+          <span aria-hidden="true" className="w-3 shrink-0" />
+        )}
         {/* Win/linux: the caption buttons float over this corner, so the
             toolbar stops short of them rather than sitting under Close. */}
         <WindowCaptionReserve width={captionReserve} />
