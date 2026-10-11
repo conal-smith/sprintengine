@@ -90,6 +90,7 @@ export function ConversationComposerStrip({
   changes,
   context,
   pullRequests = NO_PULL_REQUESTS,
+  onStopWatchingPullRequest,
   createPullRequest = null,
   localServers = null,
   usageLimits = null,
@@ -102,6 +103,8 @@ export function ConversationComposerStrip({
   context: { used: number; total: number } | null
   /** The pull requests this conversation opened; none draws no button. */
   pullRequests?: readonly BranchPullRequest[]
+  /** Stop Studio watching one of them; absent where this window cannot, and then none is offered. */
+  onStopWatchingPullRequest?: (url: string) => void
   /** The checkout is ready to propose: "Create PR" may take the slot. Null when it is not, or not on this computer. */
   createPullRequest?: {
     cwd: string
@@ -399,7 +402,11 @@ export function ConversationComposerStrip({
               ready={createPullRequest.ready}
             />
           ) : (
-            <PullRequestStripButton pullRequests={pullRequests} now={now} />
+            <PullRequestStripButton
+              pullRequests={pullRequests}
+              now={now}
+              {...(onStopWatchingPullRequest ? { onStopWatching: onStopWatchingPullRequest } : {})}
+            />
           )}
         </span>
       ) : null}

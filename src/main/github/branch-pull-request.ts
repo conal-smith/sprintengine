@@ -45,6 +45,12 @@ export type PullRequestReadFailure =
   | 'bad-request'
   /** `gh` did not answer inside {@link GH_READ_TIMEOUT_MS}. */
   | 'timeout'
+  /**
+   * GitHub said to slow down: the API rate limit (or its secondary limit) is
+   * spent. A wait, not a fault, so a watch that counts its failed reads does
+   * not count this one.
+   */
+  | 'rate-limited'
 
 export type BranchPullRequestsRead =
   { settled: true; pullRequests: BranchPullRequest[] } | { settled: false; reason: PullRequestReadFailure }
@@ -174,9 +180,21 @@ export async function readPullRequestState(
   }
 }
 
-type GhOutcome = { ok: true; stdout: string } | { ok: false; reason: PullRequestReadFailure }
+export type GhOutcome = { ok: true; stdout: string } | { ok: false; reason: PullRequestReadFailure; stderr?: string }
 
-async function runGh(args: string[], options: { cwd?: string }, deps: BranchPullRequestDeps): Promise<GhOutcome> {
+/** What `gh` prints on stderr when GitHub's API rate limit, or its secondary limit, refused a call. */
+const RATE_LIMITED = /\brate limit|\bAPI rate\b|abuse detection/i
+
+/**
+ * One `gh` call, bounded, answered as "here is what it printed" or "it could
+ * not be asked, and why". Shared with the watch's read
+ * (`pull-request-watch-read.ts`), so both say the same about the same failure.
+ */
+export async function runGh(
+  args: string[],
+  options: { cwd?: string },
+  deps: BranchPullRequestDeps,
+): Promise<GhOutcome> {
   const gh = deps.gh ?? sharedGhRunner()
   const timeoutMs = deps.timeoutMs ?? GH_READ_TIMEOUT_MS
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -198,7 +216,8 @@ async function runGh(args: string[], options: { cwd?: string }, deps: BranchPull
     if (raced.timedOut) return { ok: false, reason: 'timeout' }
     // `gh pr list` exits 0 with `[]` for a branch with no pull requests, so a
     // non-zero exit is always a failure to ask — never "there are none".
-    if (raced.code !== 0) return { ok: false, reason: 'gh-failed' }
+    if (raced.code !== 0)
+      return { ok: false, reason: RATE_LIMITED.test(raced.stderr) ? 'rate-limited' : 'gh-failed', stderr: raced.stderr }
     return { ok: true, stdout: raced.stdout }
   } catch {
     // The runner does not throw, but a caller-supplied one might: an exception
@@ -223,7 +242,7 @@ async function runGh(args: string[], options: { cwd?: string }, deps: BranchPull
  * its own. Only an array or an object is ever returned — a banner line that
  * happens to be a bare number is not the answer we asked for.
  */
-function parseJsonDocument(stdout: string): unknown {
+export function parseJsonDocument(stdout: string): unknown {
   const whole = parseJsonValue(stdout)
   if (whole !== undefined) return whole
   for (let index = 0; index < stdout.length; index += 1) {
@@ -318,7 +337,7 @@ function toBranchPullRequest(row: unknown, now: number): BranchPullRequest | nul
 }
 
 /** When a pull request that is no longer open ended: its merge, else its close. */
-function readEndedAt(row: Record<string, unknown>, state: PullRequestState): number | null {
+export function readEndedAt(row: Record<string, unknown>, state: PullRequestState): number | null {
   if (state === 'open') return null
   return (state === 'merged' ? parseTimestamp(row.mergedAt) : null) ?? parseTimestamp(row.closedAt)
 }
@@ -327,7 +346,7 @@ function optionalEndedAt(endedAt: number | null): { endedAt?: number } {
   return endedAt === null ? {} : { endedAt }
 }
 
-function readState(row: Record<string, unknown>): PullRequestState | null {
+export function readState(row: Record<string, unknown>): PullRequestState | null {
   if (parseTimestamp(row.mergedAt) !== null) return 'merged'
   const raw = typeof row.state === 'string' ? row.state.toUpperCase() : ''
   if (raw === 'MERGED') return 'merged'
@@ -337,7 +356,7 @@ function readState(row: Record<string, unknown>): PullRequestState | null {
   return null
 }
 
-function parseTimestamp(value: unknown): number | null {
+export function parseTimestamp(value: unknown): number | null {
   if (typeof value !== 'string' || value.length === 0) return null
   const parsed = Date.parse(value)
   return Number.isNaN(parsed) ? null : parsed

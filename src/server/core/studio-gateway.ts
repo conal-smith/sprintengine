@@ -99,7 +99,17 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
       lifecycle: core.conversationLifecycle,
       ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
     }),
-    ...createPullRequestTools({ link: (key, input) => core.pullRequests.linkForAgent(key, input) }),
+    ...createPullRequestTools({
+      link: (key, input) => core.pullRequests.linkForAgent(key, input),
+      watch: (key, input) => core.pullRequests.watchForAgent(key, input),
+      unwatch: (key, input) => core.pullRequests.unwatchForAgent(key, input),
+      pullRequestsOf: (key) => core.pullRequests.record.forConversation(key),
+      // A chat has sessions in the runtime; the agent calling is in one now.
+      isChat: (key) => {
+        const listed = conversations.listSessions({ workspaceId: key.workspaceId, agentId: key.agentId })
+        return listed.ok && listed.sessions.length > 0
+      },
+    }),
     ...createLocalServerTools({ link: (key, input) => core.localServers.linkForAgent(key, input) }),
   ]
 

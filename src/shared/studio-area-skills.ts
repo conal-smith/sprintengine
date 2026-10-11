@@ -12,6 +12,14 @@
 // time it is opened, and a yes installs it into every workspace, now and later.
 // The bridge and the hook stay built in — agents need them to reach the app at
 // all, and neither tells an agent what to do.
+//
+// One skill is on until the person turns it off: `studio-ship` (2026-10-11).
+// It steers nothing in ordinary work; it is read only when the person says
+// "ship it", and then it is the difference between an agent that pushes and
+// sleeps in a loop and one that has Studio watch the pull request and wake it.
+// Every chat can watch a pull request (the gateway's `pull_request.watch`),
+// so every chat gets the steps by default. Off is still a switch in Settings,
+// and turning it off is remembered like any other answer.
 
 export type StudioAreaSkillId =
   | 'studio-backlog'
@@ -21,6 +29,7 @@ export type StudioAreaSkillId =
   | 'studio-diff-tours'
   | 'studio-workspaces'
   | 'sprintengine-extension-builder'
+  | 'studio-ship'
 
 /**
  * Where the skill is offered. `settings` is the one with no surface of its own:
@@ -35,6 +44,8 @@ export type StudioAreaSkill = {
   /** What an agent gets, in a sentence — the suggestion's and the Settings row's help. */
   gives: string
   surface: StudioAreaSkillSurface
+  /** On for a person who never answered, until they turn it off (see the header). */
+  onByDefault?: true
 }
 
 /** In the order Settings lists them: the surfaces first, then the app-wide one. */
@@ -85,6 +96,14 @@ export const STUDIO_AREA_SKILLS: readonly StudioAreaSkill[] = [
     gives: 'Teaches agents to drive workspaces, terminals, the editor and the in-app browser.',
     surface: 'settings',
   },
+  {
+    id: 'studio-ship',
+    name: 'Ship it',
+    gives:
+      'When you say “ship it”, agents push, open the pull request, set it to merge, and have Studio watch it until it lands.',
+    surface: 'settings',
+    onByDefault: true,
+  },
 ]
 
 const IDS = new Set<string>(STUDIO_AREA_SKILLS.map((skill) => skill.id))
@@ -108,15 +127,20 @@ export type StudioAreaSkillChoices = {
 /**
  * Read a choices record from anywhere it may have come from — a file on disk,
  * an IPC reply — keeping only known ids, once each, in list order. Anything
- * else reads as "never asked", which installs nothing.
+ * else reads as "never asked", which installs only the skills that are on by
+ * default; one of those the person turned off is in `dismissed`, and stays off.
  */
 export function normaliseStudioAreaSkillChoices(value: unknown): StudioAreaSkillChoices {
   const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-  const pick = (list: unknown): StudioAreaSkillId[] => {
-    const wanted = new Set(Array.isArray(list) ? list.filter(isStudioAreaSkillId) : [])
+  const pick = (list: unknown, defaults: StudioAreaSkillId[] = []): StudioAreaSkillId[] => {
+    const wanted = new Set([...(Array.isArray(list) ? list.filter(isStudioAreaSkillId) : []), ...defaults])
     return STUDIO_AREA_SKILLS.map((skill) => skill.id).filter((id) => wanted.has(id))
   }
-  return { enabled: pick(record.enabled), dismissed: pick(record.dismissed) }
+  const dismissed = pick(record.dismissed)
+  const onByDefault = STUDIO_AREA_SKILLS.filter((skill) => skill.onByDefault && !dismissed.includes(skill.id)).map(
+    (skill) => skill.id,
+  )
+  return { enabled: pick(record.enabled, onByDefault), dismissed }
 }
 
 /** Whether a surface should offer its skill: not installed, and not turned down. */

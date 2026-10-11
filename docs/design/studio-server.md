@@ -736,11 +736,33 @@ with `gh`'s own sign-in. A server with no `gh`, or not signed in, shows what it
 has as last read, and says nothing: a missing `gh` holds every read for five
 minutes, and nothing is reported as an error.
 
+**Watching ("ship it").** A chat's agent can ask Studio to babysit one of its
+GitHub pull requests with the gateway's `pull_request.watch`, and stop with
+`pull_request.unwatch` (the conversation is the calling agent's own, from the
+connection). A watched pull request is read on the same two-minute probe,
+however old it is and whether or not a window is in front, with
+`gh pr view --json` asking for its checks, reviews, comments and merge state
+as well as its state, and `gh pr checks --required` for which checks gate it
+(`src/main/github/pull-request-watch-read.ts`): one probe per pull request.
+`pull-request-watch.ts` decides what is news against what the agent was last
+told: a check that newly failed, all required checks passed on the head, the
+branch behind or conflicting with its base, a review or comment from anyone
+but the pull request's author (approval and changes requested said as such),
+merged or closed. The news wakes the chat through the same send a resume after
+a usage limit takes, as one Studio message per wake (`origin` reason
+`pull-request-watch`), never into a running turn, a usage limit, or a settled
+or deleted chat (`pull-request-wakes.ts`). The watch is stored on its pull
+request's row and ends when it merges or closes, when it is stopped, when its
+chat is settled or deleted, after ten wakes in a row that bring only comments,
+or after eight failed reads in a row; a rate limit only waits. A listed pull
+request carries `watch` (what it waits on) while it is watched.
+
 **The protocol** (`pull-requests` capability, owners only, `workspaces:read`):
 `pullRequests.list` by workspace or by conversation, `pullRequests.refresh`,
-`pullRequests.noteWork`, `pullRequests.noteToolCall`, `pullRequests.link`, and
-the `pullRequests.changed` stream, which names what moved and never carries the
-lists. The desktop's sidebar reads rows through the window's Studio client;
+`pullRequests.noteWork`, `pullRequests.noteToolCall`, `pullRequests.link`,
+`pullRequests.unwatch` (capability `pull-request-watch`: the person's "Stop
+watching"), and the `pullRequests.changed` stream, which names what moved and
+never carries the lists. The desktop's sidebar reads rows through the window's Studio client;
 the shell's own client forwards its terminal agents' calls and checkouts, and
 puts the lists the server answers on the terminal snapshot, which carries them
 to the peek and the tooltips as before.

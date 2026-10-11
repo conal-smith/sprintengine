@@ -53,6 +53,7 @@ export function workspaceTypeRowActions(
 export type ContextMenuAction =
   | 'open'
   | 'mark-unread'
+  | 'stop-watching'
   | 'rename'
   | 'new-chat'
   | 'reveal'
@@ -84,6 +85,7 @@ export function WorkspaceContextMenu({
   working,
   remoteSettle = false,
   canMarkUnread = false,
+  watchedPullRequestNumber = null,
   onClose,
   onSelect,
   onPickColor,
@@ -107,6 +109,8 @@ export function WorkspaceContextMenu({
    * and its row is not already marked: Mark unread has something to mark.
    */
   canMarkUnread?: boolean
+  /** The pull request Studio is watching for the chat, by number: Stop watching stops it. Null offers nothing. */
+  watchedPullRequestNumber?: number | null
   onClose: () => void
   onSelect: (action: ContextMenuAction) => void
   onPickColor: (color: HighlightColor) => void
@@ -168,6 +172,12 @@ export function WorkspaceContextMenu({
       >
         {starred ? 'Unstar' : 'Star'}
       </MenuItem>
+      {/* A chat whose agent has Studio babysitting its pull request reads as
+          working until it is woken; this ends the watch and leaves the chat
+          as it is. Settle ends the watch too, with the chat. */}
+      {watchedPullRequestNumber !== null ? (
+        <MenuItem onClick={() => onSelect('stop-watching')}>Stop watching #{watchedPullRequestNumber}</MenuItem>
+      ) : null}
       {/* Rest by hand (settled-chats, 2026-09-07). Un-settle also holds the
           row out of the sweep until it sees new activity. A row born on a
           paired machine is settled by that machine, which owns the chat, so

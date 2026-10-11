@@ -606,6 +606,9 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
           return refuse(linked.code === 'not_a_pull_request' ? 'invalid_params' : 'claimed', linked.message)
         return { ok: true, result: { recorded: linked.recorded, pullRequest: linked.pullRequest } }
       }
+      case 'pullRequests.unwatch':
+        if (!pullRequests.unwatch) return refuse('unavailable', `This Studio does not serve ${method}.`)
+        return { ok: true, result: await pullRequests.unwatch(params as StudioMethodParams<'pullRequests.unwatch'>) }
       case 'pullRequests.noteToolCall':
         // Answered at once, like a note: what it records reports through
         // `pullRequests.changed`.

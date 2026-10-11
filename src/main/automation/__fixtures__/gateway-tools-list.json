@@ -165,6 +165,14 @@
       "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
     },
     {
+      "name": "pull_request.watch",
+      "sha256": "858c8cb3272653b7efa014735171c38b1d2e20b63a9d0eb47435f709a068c093"
+    },
+    {
+      "name": "pull_request.unwatch",
+      "sha256": "fc346fb56a951a0b216493355e456b298fa02ee1e57fc27d773773dbddc7ab43"
+    },
+    {
       "name": "local_server.link",
       "sha256": "22c97db66798e939a9996a1cd7701da3b7b335019f256af6f847fb106fe16e5b"
     },
@@ -473,6 +481,14 @@
     {
       "name": "pull_request.link",
       "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
+    },
+    {
+      "name": "pull_request.watch",
+      "sha256": "858c8cb3272653b7efa014735171c38b1d2e20b63a9d0eb47435f709a068c093"
+    },
+    {
+      "name": "pull_request.unwatch",
+      "sha256": "fc346fb56a951a0b216493355e456b298fa02ee1e57fc27d773773dbddc7ab43"
     },
     {
       "name": "local_server.link",

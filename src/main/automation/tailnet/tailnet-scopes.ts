@@ -36,7 +36,8 @@ const TERMINAL_LAUNCH_TOOLS: ReadonlySet<string> = new Set(['terminal.create', '
  * outside it are named.
  *
  * The `pull_request.*` family records a pull request as the calling agent's
- * conversation's, and a paired device has no conversation to record it under.
+ * conversation's, or watches one for it and wakes its chat, and a paired
+ * device has no conversation to record it under or chat to wake.
  * The `local_server.*` family is the same, for a server the agent started.
  */
 export function localOnlyGatewayToolReason(toolName: string): string | null {
@@ -47,7 +48,7 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
     return `"${toolName}" starts an agent in a terminal on this machine, and terminals are not served over the tailnet. Start a chat agent with conversation.create instead, or run it from an agent on that machine.`
   }
   if (toolName.startsWith('pull_request.')) {
-    return `"${toolName}" records a pull request as the calling agent's conversation's, and a paired device is not an agent. Run it from an agent on that machine.`
+    return `"${toolName}" acts on a pull request as the calling agent's conversation's, and a paired device is not an agent. Run it from an agent on that machine.`
   }
   if (toolName.startsWith('local_server.')) {
     return `"${toolName}" records a local server as the calling agent's conversation's, and a paired device is not an agent. Run it from an agent on that machine.`

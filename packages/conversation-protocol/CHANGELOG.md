@@ -4,6 +4,13 @@
 
 ### Added
 
+- **A wake about a watched pull request is Studio's.** `pull-request-watch`
+  joins `ConversationStudioMessageReason`: the desktop sent the chat news
+  about a pull request its agent asked it to watch (a check failed, a review,
+  a merge). `readConversationMessageOrigin` keeps it; a reader from before it
+  reads the message as Studio's with no reason, as it reads any reason it does
+  not know. The pinned files are unchanged.
+
 - **Background work has a type.** `ConversationBackgroundTask` (`taskId`,
   `kind`, optional `description` and `persistent`) is one shell, monitor or
   other task a session's process runs after its turn ended, and

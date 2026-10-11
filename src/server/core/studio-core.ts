@@ -67,6 +67,7 @@ import type { WslServers } from '../wsl/desktop-wsl-servers'
 import type { StudioRole } from './data-dir'
 import { takeDataDir } from './take-data-dir'
 import { createStudioUsageLimitResumes } from './studio-usage-limit-resumes'
+import { studioPullRequestWakes } from './studio-pull-request-wakes'
 import { createStudioScheduledMessages, studioHeldMessages } from './studio-scheduled-messages'
 
 // The Studio core: the services the server owns (studio-server design, section
@@ -404,10 +405,21 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
   // from a chat's create calls, from a client's forwarded terminal tool calls,
   // and from the gateway's `pull_request.link`. Every client reads it through
   // `pullRequests.*`. With no `gh` on this machine it shows what it has, as
-  // last read.
+  // last read. A pull request an agent asked to have watched
+  // (`pull_request.watch`) wakes its chat through the same send a resume
+  // after a usage limit takes, marked as Studio's (studio-pull-request-wakes.ts).
   const pullRequests = createPullRequestDomain({
     dataDir,
     conversations,
+    wakes: studioPullRequestWakes({
+      conversations,
+      workspaceRecord: (workspaceId) => workspaceRegistry.getRecord(workspaceId),
+      // Called only once a wake goes, long after the core is composed.
+      createHost: (hostOptions) => createConversationHost(hostOptions),
+      log: (message) => {
+        void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Pull request watch', message })
+      },
+    }),
     // An open pull request is probed every couple of minutes while a window
     // is in front, and far less often while none is.
     recordOptions: { focus: powerActivity },
@@ -457,6 +469,12 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
   })
   // A removed workspace's servers go with it, whichever door removed it.
   const stopPruningLocalServers = workspaceRegistry.subscribe(() => void localServers.prune())
+  // A settled or deleted chat's pull request watches stop with it: there is
+  // nobody to wake. Waking from sleep looks again at news a timer held.
+  const stopFollowingWatchedChats = [
+    workspaceRegistry.subscribe(() => pullRequests.pruneWatches()),
+    powerActivity.onResume(() => pullRequests.wakeWatches()),
+  ]
 
   // What an agent of this app is running on now, for the gateway's launch cap:
   // an agent may start agents only at its own preset or stricter.
@@ -740,7 +758,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       stopScheduledMessages,
       () => chatTitler.dispose(),
       () => conversationOwner.shutdown(),
-      () => pullRequests.dispose(),
+      () => {
+        for (const stop of stopFollowingWatchedChats.splice(0)) stop()
+        pullRequests.dispose()
+      },
       // The servers the Studio itself started stop with it: nothing would be
       // left to stop them from.
       () => {

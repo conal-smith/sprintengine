@@ -23,11 +23,18 @@ import { checkoutPathsOf, lineOfRemoteRow, terminalLinesOf } from './terminalLin
 import { suspendWorkspaceTerminals, terminateSettledWorkspaceTerminals } from './workspaceTerminalTermination'
 import { ConversationPeekPopover } from './ConversationPeekPopover'
 import { hostPlatform } from '../../clientCapabilities'
-import { openPullRequestCount, ProjectPullRequestMark, PullRequestMark } from './PullRequestMark'
+import {
+  openPullRequestCount,
+  ProjectPullRequestMark,
+  PullRequestMark,
+  PullRequestWatchWords,
+  watchedPullRequest,
+} from './PullRequestMark'
 import { LocalServersRowMark } from './LocalServerMarks'
 import { useWorkspaceLocalServers, type WorkspaceLocalServers } from './useLocalServers'
 import {
   pullRequestsForRow,
+  unwatchPullRequest,
   useConversationPullRequests,
   usePullRequestsByConversation,
   type ConversationPullRequests,
@@ -775,6 +782,27 @@ function WorkspaceSidebar({
     [conversationSessions],
   )
   const conversationLinePullRequests = usePullRequestsByConversation(conversationLineKeys)
+  // The chats whose agent has Studio watching a pull request. Such a chat is
+  // waiting to be woken, not done: the rest sweep leaves it out (settling it
+  // would stop the watch), as it leaves out a chat that is working.
+  const watchedWorkspaceIds = useMemo(() => {
+    const ids = new Set<WorkspaceId>()
+    for (const [id, list] of Object.entries(conversationPullRequests)) if (watchedPullRequest(list)) ids.add(id)
+    return ids
+  }, [conversationPullRequests])
+  // The pull request a row's chat has watched, and the agents whose watch it
+  // may be: what the row menu's Stop watching stops. A chat line's own list
+  // names its agent; a row with no live chat line knows only its workspace,
+  // whose agents are asked in turn (a chat has one, nearly always).
+  const watchedPullRequestOfRow = (workspaceId: string) => {
+    for (const [agentId, list] of Object.entries(conversationLinePullRequests[workspaceId] ?? {})) {
+      const pr = watchedPullRequest(list)
+      if (pr) return { agentIds: [agentId], pr }
+    }
+    const pr = watchedPullRequest(conversationPullRequests[workspaceId] ?? [])
+    const agents = Object.keys(workspaceById.get(workspaceId)?.agents ?? {})
+    return pr && agents.length > 0 ? { agentIds: agents, pr } : null
+  }
   // The local servers each chat's agents started, so the list says what is
   // running right now without opening every chat. Asked of the same ids, and
   // pushed by the Studio when one starts or stops.
@@ -803,7 +831,7 @@ function WorkspaceSidebar({
   useEffect(() => {
     if (!sessionsListed) return
     const busyIds = new Set<WorkspaceId>()
-    const heldIds = new Set<WorkspaceId>(unseenDoneIds)
+    const heldIds = new Set<WorkspaceId>([...unseenDoneIds, ...watchedWorkspaceIds])
     for (const [id, activity] of Object.entries(activityByWorkspaceId)) {
       if (rowIsWorking(id)) busyIds.add(id)
       else if (activity === 'needs-input') heldIds.add(id)
@@ -820,6 +848,7 @@ function WorkspaceSidebar({
     activityByWorkspaceId,
     conversationSessions,
     unseenDoneIds,
+    watchedWorkspaceIds,
     sessionsListed,
     rowIsWorking,
     quietSettledWorkspace,
@@ -3193,6 +3222,7 @@ function WorkspaceSidebar({
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? canMarkWorkspaceUnread(workspace) : false
           })()}
+          watchedPullRequestNumber={watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ?? null}
           onClose={() => setContextMenu(null)}
           onSelect={(action) => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
@@ -3227,6 +3257,18 @@ function WorkspaceSidebar({
             }
             if (action === 'rename') {
               startRename(workspace)
+              setContextMenu(null)
+              return
+            }
+            if (action === 'stop-watching') {
+              const watched = watchedPullRequestOfRow(workspace.id)
+              if (watched)
+                void (async () => {
+                  for (const agentId of watched.agentIds) {
+                    const stopped = await unwatchPullRequest({ workspaceId: workspace.id, agentId }, watched.pr.url)
+                    if (!stopped.ok || stopped.watched) return
+                  }
+                })()
               setContextMenu(null)
               return
             }
@@ -3710,7 +3752,21 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
       : workspace.hostId && isWslHostId(workspace.hostId)
         ? { ref: workspaceMachineRef, name: `WSL: ${distroOfHostId(workspace.hostId) ?? workspace.hostId}` }
         : null
-  const tone = activityTone(activity)
+  // A chat whose agent has Studio watching a pull request reads as working
+  // between its turns, the way a chat with a monitor running does: it is
+  // waiting to be woken, not done. Its seat wears the working mark, and Settle
+  // stays open (`settleBlocked` reads the agents, not this): settling it is
+  // how a person stops the watch along with the chat.
+  const rowWatchedPullRequest = useMemo(
+    () =>
+      watchedPullRequest([
+        ...Object.values(chatLinePullRequestsByAgent ?? {}).flat(),
+        ...(rowConversationPullRequests ?? []),
+      ]),
+    [chatLinePullRequestsByAgent, rowConversationPullRequests],
+  )
+  const seatActivity: Activity = activity === 'idle' && rowWatchedPullRequest ? 'working' : activity
+  const tone = activityTone(seatActivity)
   // A row whose module ships a run-glyph provider carries that lifecycle
   // glyph in the status slot instead of the dot + recency idiom: the run
   // state (spinner / needs input / paused / failed / done) is the signal such
@@ -3750,7 +3806,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   }, [settleFlourish])
   const showRecencyText =
     !runGlyph &&
-    activity === 'idle' &&
+    seatActivity === 'idle' &&
     !!recency &&
     !recency.hasRunning &&
     !!idleRecencyText &&
@@ -3767,7 +3823,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   // person has just declined to give it; a chat whose terminals are suspended
   // is not finishing anything anyway. The wash is waiting for them when the
   // row wakes, which is when it is news again.
-  const unseenDone = !needsAttention && !options?.snoozed && unseenDoneMark
+  const unseenDone = !needsAttention && !options?.snoozed && unseenDoneMark && !rowWatchedPullRequest
   // A chat whose worktree the cleanup gave back (`worktree.reclaimedAt`) has
   // no folder on disk, and that is expected, not broken: opening it checks the
   // worktree out again (chatWorktreeRestore.ts). So it never wears the
@@ -3789,7 +3845,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   const emphasis = workspaceRowEmphasis({
     resident,
     selected: active,
-    working: activity === 'working',
+    working: seatActivity === 'working',
     wantsYou: needsAttention || unseenDone,
   })
   const highlighted = hasHighlightOverride(workspace.highlight)
@@ -3884,6 +3940,13 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   // (an agent that is gone, a terminal agent's) keeps a line of its own.
   const chatLinePullRequestsOf = (agentId: string): readonly BranchPullRequest[] =>
     chatLinePullRequestsByAgent?.[agentId] ?? EMPTY_PULL_REQUESTS
+  const chatLineWatches = (session: ConversationSessionSummary): boolean => {
+    const phase = conversationSummaryPhase(session)
+    return (
+      (phase === 'completed' || phase === 'idle') &&
+      watchedPullRequest(chatLinePullRequestsOf(session.agentId)) !== null
+    )
+  }
   const onChatLines = new Set(
     visibleConversations.flatMap((session) => chatLinePullRequestsOf(session.agentId).map((pr) => pr.url)),
   )
@@ -4085,9 +4148,16 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             saying the same thing a reject-on-sight. Working and failed keep
             their marks — neither tints the row. */}
         {!runGlyph && tone && !needsAttention ? (
-          activity === 'working' ? (
+          seatActivity === 'working' ? (
             <>
-              <WorkingMark label={activityLabel(activity)} seed={workspace.id} />
+              <WorkingMark
+                label={
+                  activity === 'working' || !rowWatchedPullRequest
+                    ? activityLabel(seatActivity)
+                    : `Watching pull request #${rowWatchedPullRequest.number}`
+                }
+                seed={workspace.id}
+              />
               {/* How long the turn has been running. The workspace-level
                   activity above decides WHETHER work is in flight (hooks are
                   the authority on that); the terminal snapshot only supplies
@@ -4096,7 +4166,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
               {typeof recency?.workingSince === 'number' ? <WorkingElapsed since={recency.workingSince} /> : null}
             </>
           ) : (
-            <StatusDot tone={tone.tone} pulse={tone.pulse} label={activityLabel(activity)} />
+            <StatusDot tone={tone.tone} pulse={tone.pulse} label={activityLabel(seatActivity)} />
           )
         ) : null}
         {/* A sleeping row says when it comes back — the one thing it is for.
@@ -4156,7 +4226,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
     workspace,
     sessions: peekSessions,
     conversations: conversationSessions,
-    status: peekStatusOf(activity, idleRecencyText),
+    status: peekStatusOf(seatActivity, idleRecencyText),
     now,
     platform: hostPlatform(),
   })
@@ -4458,6 +4528,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
               (the-diff-an-agent-made, decision 9) — the pull request is the
               one fact that is still this conversation's. */}
           <PullRequestMark pullRequests={rowOnlyPullRequests} dim={emphasis === 'quiet'} />
+          <PullRequestWatchWords pullRequests={rowOnlyPullRequests} dim={emphasis === 'quiet'} />
           {flatProject ? null : statusSeat}
         </div>
       ) : null}
@@ -4523,7 +4594,17 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
               </span>
             </Tooltip>
             <PullRequestMark pullRequests={chatLinePullRequestsOf(session.agentId)} dim={emphasis === 'quiet'} />
-            <span className="min-w-0 flex-1 truncate">{conversationLineText(session)}</span>
+            {/* Between its turns, a chat babysitting its pull request says
+                what the pull request waits on; while its agent works, the
+                line says what the agent is doing, as any chat line does. */}
+            {chatLineWatches(session) ? (
+              <PullRequestWatchWords
+                pullRequests={chatLinePullRequestsOf(session.agentId)}
+                dim={emphasis === 'quiet'}
+              />
+            ) : (
+              <span className="min-w-0 flex-1 truncate">{conversationLineText(session)}</span>
+            )}
             {index === 0 && rowLines.lines.length === 0 && !flatProject ? (
               <>
                 {/* A chat with no finished turn to rest on (running, waiting on
@@ -4536,7 +4617,11 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
                 {statusSeat}
               </>
             ) : !flatProject ? (
-              <ConversationLineSeat session={session} now={now} />
+              <ConversationLineSeat
+                session={session}
+                now={now}
+                watching={watchedPullRequest(chatLinePullRequestsOf(session.agentId))?.number ?? null}
+              />
             ) : (
               // The flat list's row says when; the line says only the cache
               // about to go cold.
@@ -4573,12 +4658,23 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
  * chat can tell you when each one stopped. A chat waiting on a person says so
  * in its text; the row's gold surface is the mark.
  */
-function ConversationLineSeat({ session, now }: { session: ConversationSessionSummary; now: number }) {
+function ConversationLineSeat({
+  session,
+  now,
+  watching = null,
+}: {
+  session: ConversationSessionSummary
+  now: number
+  /** The number of the pull request Studio is watching for this chat, if any: it reads as working until woken. */
+  watching?: number | null
+}) {
   const phase = conversationSummaryPhase(session)
   const finishedAt = conversationFinishedAt(session)
   let content: React.ReactNode = null
   if (phase === 'running' || phase === 'starting')
     content = <WorkingMark label="Agent working" seed={session.agentId} />
+  else if (watching !== null && (phase === 'completed' || phase === 'idle'))
+    content = <WorkingMark label={`Watching pull request #${watching}`} seed={session.agentId} />
   else if (finishedAt !== null && formatRelativeMs(finishedAt, now)) {
     content = (
       <>

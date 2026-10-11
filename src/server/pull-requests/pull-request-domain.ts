@@ -19,7 +19,9 @@ import {
   type PullRequestConversationKey,
   type PullRequestRecord,
   type PullRequestRecordOptions,
+  type WatchOutcome,
 } from './pull-request-record'
+import { createPullRequestWakes, type PullRequestWakes, type PullRequestWakesDeps } from './pull-request-wakes'
 
 // The pull request record as a server domain (owner ruling 2026-10-03):
 // features that react to chats live in the server, and every client displays
@@ -44,6 +46,13 @@ import {
 // client says where one of its agents is (`pullRequests.noteWork`). That only
 // decides which of its pull requests are from the branch it is on; it never
 // adds one.
+//
+// An agent can also ask Studio to babysit one of its pull requests (the
+// gateway's `pull_request.watch`): the record reads it on its watch and
+// decides what is news, and the news wakes the chat here
+// (`pull-request-wakes.ts`). The watch stops when the pull request lands, when
+// the agent or the person stops it (`pull_request.unwatch`,
+// `pullRequests.unwatch`), and when its chat is settled or deleted.
 
 /** The most create calls waiting on their output at once; a call whose output never comes (a stopped turn) goes first. */
 const MAX_PENDING_CALLS = 200
@@ -63,6 +72,12 @@ export type StudioPullRequests = {
     | { ok: true; recorded: boolean; pullRequest: StudioPullRequest }
     | { ok: false; code: 'not_a_pull_request' | 'opened_by_another_conversation'; message: string }
   >
+  /**
+   * An owner stops a conversation's watch on one of its pull requests (the
+   * desktop's "Stop watching"). Absent, the Studio does not advertise
+   * `pull-request-watch`.
+   */
+  unwatch?(input: StudioPullRequestsMethodMap['pullRequests.unwatch']['params']): Promise<{ watched: boolean }>
   onChanged(listener: (change: PullRequestsChanged) => void): () => void
 }
 
@@ -70,6 +85,14 @@ export type PullRequestDomain = StudioPullRequests & {
   readonly record: PullRequestRecord
   /** An agent says it opened this pull request: the gateway's `pull_request.link`. */
   linkForAgent(key: PullRequestConversationKey, input: { url: string; title?: string }): Promise<NoteOpenedOutcome>
+  /** An agent asks Studio to watch its pull request: the gateway's `pull_request.watch`. */
+  watchForAgent(key: PullRequestConversationKey, input: { url: string }): Promise<WatchOutcome>
+  /** An agent stops a watch it asked for: the gateway's `pull_request.unwatch`. */
+  unwatchForAgent(key: PullRequestConversationKey, input: { url: string }): boolean
+  /** Stop every watch whose chat is no longer one to wake (settled, deleted); asked when the chats' records move. */
+  pruneWatches(): void
+  /** The computer woke or was unlocked: news waiting on a timer looks again. */
+  wakeWatches(): void
   /** Settle what is in flight: a quit's leg. */
   flush(): Promise<void>
   dispose(): void
@@ -91,6 +114,12 @@ export type PullRequestDomainOptions = {
   recordOptions?: Omit<PullRequestRecordOptions, 'userDataDir' | 'onRecordChanged'>
   /** The checkout a folder is in and the branch it is on; null when it is not a checkout on a branch. */
   resolveCheckout?(path: string): Promise<PullRequestCheckout | null>
+  /**
+   * How a watch's news reaches its chat (`pull-request-wakes.ts`). Absent,
+   * watches are read and shown but wake nobody: a test, or a server with no
+   * chats to send into.
+   */
+  wakes?: Omit<PullRequestWakesDeps, 'onChatGone' | 'onConversationEvent'>
   log?(message: string, error?: unknown): void
 }
 
@@ -103,6 +132,20 @@ export function createPullRequestDomain(options: PullRequestDomainOptions): Pull
     })
   let disposed = false
 
+  // A chat deleted or put away has nobody to wake: its watches stop.
+  const stopWatchesOf = (key: PullRequestConversationKey) => {
+    for (const watched of record.watches())
+      if (watched.conversation.workspaceId === key.workspaceId && watched.conversation.agentId === key.agentId)
+        record.unwatch(key, watched.url)
+  }
+  const wakes: PullRequestWakes | null = options.wakes
+    ? createPullRequestWakes({
+        ...options.wakes,
+        onConversationEvent: (listener) => options.conversations.onEvent(listener),
+        onChatGone: stopWatchesOf,
+      })
+    : null
+
   const record =
     options.record ??
     createPullRequestRecord({
@@ -110,6 +153,7 @@ export function createPullRequestDomain(options: PullRequestDomainOptions): Pull
       ...options.recordOptions,
       userDataDir: options.dataDir,
       onRecordChanged: (change) => publish(change),
+      onWatchNews: (news) => wakes?.deliver(news),
       logWarning: options.recordOptions?.logWarning ?? ((message, error) => log(message, error)),
     })
 
@@ -254,6 +298,27 @@ export function createPullRequestDomain(options: PullRequestDomainOptions): Pull
     linkForAgent(key, input) {
       return record.noteOpened(key, input)
     },
+    watchForAgent(key, input) {
+      return record.watch(key, input)
+    },
+    unwatchForAgent(key, input) {
+      return record.unwatch(key, input.url)
+    },
+    async unwatch(input) {
+      await record.whenLoaded()
+      return { watched: record.unwatch(input.conversation, input.url) }
+    },
+    pruneWatches() {
+      const chat = options.wakes?.chat
+      if (!chat || disposed) return
+      for (const watched of record.watches()) {
+        const found = chat(watched.conversation)
+        if (!found || found.settled) record.unwatch(watched.conversation, watched.url)
+      }
+    },
+    wakeWatches() {
+      wakes?.wake()
+    },
     async link(input) {
       const outcome = await record.noteOpened(input.conversation, {
         url: input.url,
@@ -273,6 +338,7 @@ export function createPullRequestDomain(options: PullRequestDomainOptions): Pull
     },
     dispose() {
       disposed = true
+      wakes?.dispose()
       stopEvents()
       pending.clear()
       listeners.clear()
@@ -296,6 +362,7 @@ function toWire(entry: BranchPullRequest): StudioPullRequest {
     ...(typeof entry.endedAt === 'number' ? { endedAt: entry.endedAt } : {}),
     ...(entry.forge ? { forge: entry.forge } : {}),
     ...(entry.onSessionBranch ? { onConversationBranch: true as const } : {}),
+    ...(entry.watch ? { watch: entry.watch } : {}),
   }
 }
 

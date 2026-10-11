@@ -124,7 +124,7 @@ import { useComposerRecall } from './agentChat/composerRecall'
 import { ComposerField, type ComposerFieldHandle, type ComposerKeyEvent } from './agentChat/ComposerField'
 import { ComposerContextChips, SkillContextChip, useComposerContextPicker } from './agentChat/composerContextPicker'
 import { ComposerPlusMenu } from '../workspace/agentComposer/ComposerPlusMenu'
-import { usePullRequestsOfConversation } from '../workspace/useConversationPullRequests'
+import { unwatchPullRequest, usePullRequestsOfConversation } from '../workspace/useConversationPullRequests'
 import { useLocalServersOfConversation } from '../workspace/useLocalServers'
 import { useCreatePullRequestState } from './agentChat/createPullRequest'
 import { conversationContextReading } from './agentChat/contextReading'
@@ -3216,6 +3216,16 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const conversationPullRequests = usePullRequestsOfConversation(
     transport.kind === 'remote' ? null : { workspaceId, agentId },
   )
+  // The person's "Stop watching" on the strip's pull request: the record's
+  // change comes back through the list above, so nothing is held here.
+  const stopWatchingPullRequest = useCallback(
+    (url: string) => {
+      void unwatchPullRequest({ workspaceId, agentId }, url).then((stopped) => {
+        if (!stopped.ok) setActionError(`Could not stop watching the pull request: ${stopped.message}`)
+      })
+    },
+    [workspaceId, agentId],
+  )
   // The local servers this conversation's agents started, from the same
   // Studio record the sidebar's marks read; a paired machine's are its own.
   const conversationLocalServers = useLocalServersOfConversation(
@@ -4011,6 +4021,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               changes={stripFacts.changes}
               context={contextReading}
               pullRequests={conversationPullRequests}
+              {...(transport.kind === 'remote' ? {} : { onStopWatchingPullRequest: stopWatchingPullRequest })}
               createPullRequest={createPullRequest}
               localServers={stripLocalServers}
               usageLimits={stripUsageLimits}

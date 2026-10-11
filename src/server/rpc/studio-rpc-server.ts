@@ -12,6 +12,7 @@ import {
   STUDIO_PULL_REQUESTS_CAPABILITY,
   STUDIO_PULL_REQUEST_TOOL_CALLS_CAPABILITY,
   STUDIO_PULL_REQUEST_LINK_CAPABILITY,
+  STUDIO_PULL_REQUEST_WATCH_CAPABILITY,
   STUDIO_LOCAL_SERVERS_CAPABILITY,
   STUDIO_PROTOCOL_MIN_SUPPORTED,
   STUDIO_PROTOCOL_VERSION,
@@ -125,6 +126,7 @@ export function createStudioRpcServer(options: StudioRpcServerOptions): StudioRp
           capability !== STUDIO_PULL_REQUEST_TOOL_CALLS_CAPABILITY &&
           capability !== STUDIO_PULL_REQUEST_LINK_CAPABILITY) ||
           options.pullRequests !== undefined) &&
+        (capability !== STUDIO_PULL_REQUEST_WATCH_CAPABILITY || options.pullRequests?.unwatch !== undefined) &&
         (capability !== STUDIO_LOCAL_SERVERS_CAPABILITY || options.localServers !== undefined) &&
         (chat() !== null || !(STUDIO_CHAT_CAPABILITIES as readonly string[]).includes(capability)),
     ),

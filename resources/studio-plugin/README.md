@@ -140,6 +140,11 @@ person's choice (`src/shared/studio-area-skills.ts`):
 - **Off by default.** A fresh machine installs the bridge and the hook and no
   area skill, in every copy: the workspace copy, the app-owned `--plugin-dir`
   copy, each WSL distribution's copy, and the per-harness skill directories.
+  One exception (2026-10-11): `studio-ship` is on until the person switches it
+  off in Settings. It steers no ordinary work — it is read only when the person
+  says "ship it" — and every chat can watch a pull request
+  (`pull_request_watch`), so every chat gets the steps. Switched off, it is
+  remembered as an answer and stays off.
 - **Offered where it applies.** Backlog, Design, Canvas, scheduled agents and
   the Diff viewer each show one muted line offering their skill until the
   person answers it (Install, or Not now). `studio-workspaces` has no surface of its
@@ -159,8 +164,10 @@ person's choice (`src/shared/studio-area-skills.ts`):
   that the app opens and the pass carries on in the background.
 
 One per area: `studio-backlog`, `studio-scheduled-agents`, `studio-canvas`,
-`studio-diff-tours`, `studio-workspaces`, and `studio-design-system` — six. (`studio-review` left
-with the Reviews module, which ships it itself.) A seventh, offered by the
+`studio-diff-tours`, `studio-workspaces`, `studio-ship` (push, open the pull
+request, set it to merge, and have Studio watch it) and `studio-design-system`
+— seven. (`studio-review` left
+with the Reviews module, which ships it itself.) An eighth, offered by the
 Extensions home, is not the plugin's own: `sprintengine-extension-builder` is
 the module SDK's skill (`packages/module-sdk/skills/`), copied here byte for byte
 so an agent in any workspace can build an extension —

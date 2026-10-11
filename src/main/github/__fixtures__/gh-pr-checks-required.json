@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Build (macos-latest)",
+    "workflow": "CI"
+  },
+  {
+    "name": "Build (ubuntu-latest)",
+    "workflow": "CI"
+  },
+  {
+    "name": "JS tests (ubuntu-latest)",
+    "workflow": "CI"
+  },
+  {
+    "name": "Build (windows-latest)",
+    "workflow": "CI"
+  },
+  {
+    "name": "Conventional PR title",
+    "workflow": "Conventional Commits"
+  }
+]

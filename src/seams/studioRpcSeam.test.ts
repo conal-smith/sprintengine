@@ -342,6 +342,7 @@ test('every method the server serves has its call in the SDK, under the same sco
     'pullRequests.noteWork': 'request',
     'pullRequests.noteToolCall': 'request',
     'pullRequests.link': 'request',
+    'pullRequests.unwatch': 'request',
     // So are its local servers.
     'localServers.list': 'request',
     'localServers.run': 'request',

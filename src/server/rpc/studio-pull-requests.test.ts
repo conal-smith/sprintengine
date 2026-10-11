@@ -224,3 +224,34 @@ test('an owner links a pull request it opened; one another conversation claimed 
   assert.equal(malformed.t === 'res' && !malformed.ok && malformed.error.code, 'invalid_params')
   assert.equal(linked.length, 2)
 })
+
+test('an owner stops a conversation’s watch; a Studio that cannot advertises no watch capability', async () => {
+  const { stub } = stubPullRequests()
+  const without = await ownerOver(stub)
+  assert.equal(without.welcome.t === 'welcome' && without.welcome.capabilities.includes('pull-request-watch'), false)
+  const unserved = await without.request('pullRequests.unwatch', {
+    conversation: { workspaceId: 'ws-1', agentId: 'agent-1' },
+    url: 'https://github.com/acme/app/pull/4',
+  })
+  assert.equal(unserved.t === 'res' && !unserved.ok && unserved.error.code, 'unavailable')
+
+  const stopped: unknown[] = []
+  const watching = stubPullRequests().stub
+  watching.unwatch = async (input) => {
+    stopped.push(input)
+    return { watched: input.url.endsWith('/4') }
+  }
+  const { request, welcome } = await ownerOver(watching)
+  assert.equal(welcome.t === 'welcome' && welcome.capabilities.includes('pull-request-watch'), true)
+  const conversation = { workspaceId: 'ws-1', agentId: 'agent-1' }
+  const ok = await request('pullRequests.unwatch', { conversation, url: 'https://github.com/acme/app/pull/4' })
+  assert.deepEqual(ok.t === 'res' && ok.ok && ok.result, { watched: true })
+  const notWatched = await request('pullRequests.unwatch', { conversation, url: 'https://github.com/acme/app/pull/5' })
+  assert.deepEqual(notWatched.t === 'res' && notWatched.ok && notWatched.result, { watched: false })
+  const malformed = await request('pullRequests.unwatch', { conversation: { workspaceId: 'ws-1' }, url: 'x' })
+  assert.equal(malformed.t === 'res' && !malformed.ok && malformed.error.code, 'invalid_params')
+  assert.deepEqual(stopped, [
+    { conversation, url: 'https://github.com/acme/app/pull/4' },
+    { conversation, url: 'https://github.com/acme/app/pull/5' },
+  ])
+})

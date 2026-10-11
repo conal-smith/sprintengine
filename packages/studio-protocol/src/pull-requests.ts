@@ -2,6 +2,7 @@ import type { StudioErrorCode } from './envelope.js'
 import {
   STUDIO_PULL_REQUEST_LINK_CAPABILITY,
   STUDIO_PULL_REQUEST_TOOL_CALLS_CAPABILITY,
+  STUDIO_PULL_REQUEST_WATCH_CAPABILITY,
   STUDIO_PULL_REQUESTS_CAPABILITY,
 } from './handshake.js'
 import type { StudioScope } from './scopes.js'
@@ -26,9 +27,10 @@ import type { StudioScope } from './scopes.js'
 // in, which decides which of its pull requests are from the branch it is on.
 //
 // Owners only in this version, behind the `pull-requests` capability,
-// `pullRequests.noteToolCall` behind `pull-request-tool-calls`, and
+// `pullRequests.noteToolCall` behind `pull-request-tool-calls`,
 // `pullRequests.link` (an owner that opened a pull request for a conversation)
-// behind `pull-request-link`.
+// behind `pull-request-link`, and `pullRequests.unwatch` (an owner stopping an
+// agent's watch on one) behind `pull-request-watch`.
 
 export type StudioPullRequestState = 'open' | 'merged' | 'closed'
 
@@ -64,6 +66,41 @@ export type StudioPullRequest = {
    * landed. Absent for one found in another repository the agent worked in.
    */
   onConversationBranch?: true
+  /**
+   * Present while the conversation's agent has the Studio watching it. Sent
+   * only by a Studio that advertises `pull-request-watch`; a client that does
+   * not read it shows the pull request as it always did.
+   */
+  watch?: StudioPullRequestWatch
+}
+
+/**
+ * What a watched pull request waits on, as the Studio's last read of it left
+ * it, most pressing first: its checks to finish, a failed check, its branch
+ * behind or conflicting with the base, the changes a reviewer asked for, a
+ * review, or only the merge. `first-read` is a watch the Studio has not read
+ * yet. A client reads a word it does not know as plain watching.
+ */
+export type StudioPullRequestWatchWaitingOn =
+  'first-read' | 'checks' | 'checks-failed' | 'behind' | 'conflicts' | 'changes-requested' | 'review' | 'merge'
+
+/**
+ * A pull request the conversation's agent asked the Studio to watch: the
+ * Studio reads it every couple of minutes and wakes the conversation when it
+ * needs a look, until it merges or closes, or the watch is stopped.
+ */
+export type StudioPullRequestWatch = {
+  /** When the watch began, ms epoch. */
+  since: number
+  waitingOn: StudioPullRequestWatchWaitingOn
+  /** A reviewer approved it. */
+  approved?: true
+  /** GitHub merges it on its own once it may (auto-merge is on). */
+  autoMerge?: true
+  /** The branch it merges into, once read. */
+  base?: string
+  /** How many checks failed on its head, while some did. */
+  failedChecks?: number
 }
 
 /** A conversation by its workspace and agent. */
@@ -143,6 +180,16 @@ export type StudioPullRequestsMethodMap = {
     params: { conversation: StudioPullRequestOwner; url: string; title?: string }
     result: { recorded: boolean; pullRequest: StudioPullRequest }
   }
+  /**
+   * Stop the Studio watching this pull request for the conversation: it is
+   * no longer read for the agent, and the conversation is not woken about it
+   * again. The pull request stays the conversation's. `watched` is false when
+   * it was not being watched.
+   */
+  'pullRequests.unwatch': {
+    params: { conversation: StudioPullRequestOwner; url: string }
+    result: { watched: boolean }
+  }
 }
 
 export type StudioPullRequestsMethod = keyof StudioPullRequestsMethodMap
@@ -159,6 +206,7 @@ type MethodSpec = {
     | typeof STUDIO_PULL_REQUESTS_CAPABILITY
     | typeof STUDIO_PULL_REQUEST_TOOL_CALLS_CAPABILITY
     | typeof STUDIO_PULL_REQUEST_LINK_CAPABILITY
+    | typeof STUDIO_PULL_REQUEST_WATCH_CAPABILITY
   owner: true
 }
 
@@ -177,6 +225,7 @@ export const STUDIO_PULL_REQUESTS_METHODS: { readonly [M in StudioPullRequestsMe
   // forwards a call, and a Studio from before it has none to offer.
   'pullRequests.noteToolCall': { ...owned, capability: STUDIO_PULL_REQUEST_TOOL_CALLS_CAPABILITY },
   'pullRequests.link': { ...owned, capability: STUDIO_PULL_REQUEST_LINK_CAPABILITY },
+  'pullRequests.unwatch': { ...owned, capability: STUDIO_PULL_REQUEST_WATCH_CAPABILITY },
 }
 
 export const STUDIO_PULL_REQUESTS_TOPICS: {
@@ -286,6 +335,13 @@ export function parseStudioPullRequestsParams<M extends StudioPullRequestsMethod
     if (value.title !== undefined && (typeof value.title !== 'string' || value.title.length > 300))
       return refuse('"title" is a string of at most 300 characters.')
     return ok({ conversation, url: value.url, ...(typeof value.title === 'string' ? { title: value.title } : {}) })
+  }
+  if (method === 'pullRequests.unwatch') {
+    const conversation = parseStudioPullRequestOwner(value.conversation)
+    if (!conversation) return refuse('"conversation" is { workspaceId, agentId }.')
+    if (typeof value.url !== 'string' || value.url.length === 0 || value.url.length > 2048)
+      return refuse('"url" is the pull request\'s web URL.')
+    return ok({ conversation, url: value.url })
   }
   if (method !== 'pullRequests.noteWork') return refuse(`${method} is not a pullRequests method.`)
   const conversation = parseStudioPullRequestOwner(value.conversation)

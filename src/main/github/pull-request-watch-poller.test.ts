@@ -110,3 +110,24 @@ test('a disposed poller stops hearing focus', async () => {
   await vi.advanceTimersByTimeAsync(PR_WATCH_UNFOCUSED_MS * 2)
   assert.deepEqual(probes, [])
 })
+
+test('a key that keeps its pace is probed every two minutes with no window in front', async () => {
+  const probes: string[] = []
+  const watch = createPullRequestWatchPoller({
+    isWatchable: () => true,
+    probe: async (key) => {
+      probes.push(key)
+    },
+    keepsPace: (key) => key === URL,
+    focus: focus(false),
+    jitterRatio: 0,
+    random: () => 0.5,
+  })
+  watch.begin()
+  const other = 'https://github.com/acme/app/pull/13'
+  watch.arm(URL)
+  watch.arm(other)
+  await vi.advanceTimersByTimeAsync(5 * MINUTE)
+  assert.deepEqual(probes, [URL, URL, URL], 'an agent waiting on it is looking; nobody is looking at the other')
+  watch.dispose()
+})
