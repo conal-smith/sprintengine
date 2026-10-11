@@ -36,6 +36,15 @@ import {
   type ExtensionSourceRow,
 } from '../palette/extensionsProvider'
 import { createConversationHistoryProvider } from '../palette/conversationHistoryProvider'
+import {
+  chatBranch,
+  chatPullRequestBadge,
+  chatSearchKeywords,
+  mergeChatPullRequests,
+  sameChatPullRequests,
+} from '../palette/chatSearchTerms'
+import { useConversationPullRequests } from '../workspace/useConversationPullRequests'
+import type { BranchPullRequest } from '../../../../shared/git/pull-request'
 import { createBuildExtensionPaletteProvider } from '../extensions/buildExtensionPaletteProvider'
 import {
   decidePaletteTarget,
@@ -390,6 +399,42 @@ export default function CommandPalette({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const terminalSessions = useTerminalSessions()
+  // The pull requests each chat holds, from where the sidebar reads them: the
+  // conversation's record, asked once as the palette opens and again only when
+  // the server says one moved, and the marks its sessions carry. They are
+  // what a chat is found by when someone types `#482` or pastes the URL
+  // (`chatSearchTerms.ts`). A chat keeps its previous list while it searches
+  // the same, so a session snapshot that moved nothing here rebuilds no row.
+  const workspaceIds = useMemo(() => workspaces.map((workspace) => workspace.id), [workspaces])
+  const recordedPullRequests = useConversationPullRequests(workspaceIds)
+  const chatPullRequestsRef = useRef<ReadonlyMap<string, readonly BranchPullRequest[]>>(new Map())
+  const chatPullRequests = useMemo(() => {
+    const live = new Map<string, (readonly BranchPullRequest[] | undefined)[]>()
+    for (const session of terminalSessions) {
+      if (!session.workspaceId || !session.pullRequests?.length) continue
+      const lists = live.get(session.workspaceId)
+      if (lists) lists.push(session.pullRequests)
+      else live.set(session.workspaceId, [session.pullRequests])
+    }
+    const previous = chatPullRequestsRef.current
+    const next = new Map<string, readonly BranchPullRequest[]>()
+    let changed = false
+    for (const workspace of workspaces) {
+      const merged = mergeChatPullRequests(recordedPullRequests[workspace.id], live.get(workspace.id) ?? [])
+      if (merged.length === 0) continue
+      const before = previous.get(workspace.id)
+      if (before && sameChatPullRequests(before, merged)) next.set(workspace.id, before)
+      else {
+        next.set(workspace.id, merged)
+        changed = true
+      }
+    }
+    if (!changed && next.size === previous.size) return previous
+    chatPullRequestsRef.current = next
+    return next
+  }, [workspaces, recordedPullRequests, terminalSessions])
+
   const commands = useMemo((): Command[] => {
     // A panel command is offered only when its scope is active and its runtime
     // preconditions are met — the exact predicate the keyboard dispatcher
@@ -617,7 +662,12 @@ export default function CommandPalette({
           // "switch" still finds them, through the keywords.
           label: workspace.name,
           description: workspace.folderPath ?? (workspace.id === activeWorkspaceId ? 'active workspace' : undefined),
-          keywords: `switch to ${workspaceSearchKeywords(workspace.mode)}`,
+          // Its pull requests and branch ride the keywords: found by `#482`
+          // or the branch name, never printed under the title.
+          keywords: `switch to ${workspaceSearchKeywords(workspace.mode)} ${chatSearchKeywords(
+            chatPullRequests.get(workspace.id) ?? [],
+            chatBranch(workspace),
+          )}`.trimEnd(),
           mark: { kind: 'chat', workspaceId: workspace.id, mode: workspace.mode },
           group: 'agents',
           run: () => {
@@ -737,6 +787,7 @@ export default function CommandPalette({
     moduleCommandContext,
     moduleEnablement,
     usageLimitsShown,
+    chatPullRequests,
   ])
 
   // ── Handing a result to an agent ────────────────────────────────────────
@@ -1173,10 +1224,6 @@ export default function CommandPalette({
   // then the live chats most recently spoken in, in the sidebar's own order.
   // What a person opens ⌘K for without a query is to start something or to
   // get back to something; the other groups are one keystroke or one tab away.
-  // The agent a chat's mark shows: the CLI of its most recent session, the way
-  // the sidebar's rows wear the provider mark. A chat nothing has run in yet
-  // falls back to its workspace type's icon.
-  const terminalSessions = useTerminalSessions()
   // The chats with a living process — the ones the resting page lists (owner
   // ruling 2026-09-11: "the recent threads that are still alive"). A parked
   // chat is still found by typing, and still sits in the sidebar.
@@ -1187,6 +1234,9 @@ export default function CommandPalette({
     }
     return workspaces.filter((workspace) => alive.has(workspace.id))
   }, [terminalSessions, workspaces])
+  // The agent a chat's mark shows: the CLI of its most recent session, the way
+  // the sidebar's rows wear the provider mark. A chat nothing has run in yet
+  // falls back to its workspace type's icon.
   const cliByWorkspaceId = useMemo(() => {
     const map = new Map<string, { cli: string; at: number; alive: boolean }>()
     for (const session of terminalSessions) {
@@ -1529,6 +1579,13 @@ export default function CommandPalette({
                           </React.Fragment>
                         )
                       }
+                      // A chat with a pull request wears its number — the one
+                      // the query names when it names one — so a search for
+                      // `#482` shows which chat holds it.
+                      const badge =
+                        command.mark?.kind === 'chat'
+                          ? chatPullRequestBadge(chatPullRequests.get(command.mark.workspaceId) ?? [], query)
+                          : command.badge
                       return (
                         <div
                           key={command.id}
@@ -1578,9 +1635,9 @@ export default function CommandPalette({
                                 the one fact a cross-source list cannot leave
                                 out, because the same skill name appears in
                                 several marketplaces. */}
-                              {command.badge ? (
+                              {badge ? (
                                 <span className="shrink-0 rounded-[var(--radius-xs)] bg-[color:var(--bg-surface-raised)] px-1.5 py-0.5 text-micro text-[color:var(--text-subtle)]">
-                                  {command.badge}
+                                  {badge}
                                 </span>
                               ) : null}
                             </div>
