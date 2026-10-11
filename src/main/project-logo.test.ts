@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 
+import { icnsFile, pngOfWidth } from '../../tests/icns'
 import {
+  PROJECT_LOGO_ICNS_MAX_BYTES,
   PROJECT_LOGO_MAX_BYTES,
   PROJECT_LOGO_RASTER_MAX_PX,
   createProjectLogoResolver,
@@ -9,50 +11,51 @@ import {
   sanitizeProjectLogoSvg,
   type ProjectLogoIo,
 } from './project-logo'
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
+
+// The io seam, faked over a repo shape stated in the test rather than one
+// built on disk.
+type FakeFile = { bytes: Buffer; size?: number; mtimeMs?: number; isFile?: boolean }
+
+function createIo(files: Record<string, FakeFile>, options: { onDownscale?: () => void } = {}) {
+  const reads: string[] = []
+  const io: ProjectLogoIo = {
+    async readdir(dirPath: string) {
+      const prefix = `${dirPath}/`
+      const names = Object.keys(files)
+        .filter((path) => path.startsWith(prefix))
+        .map((path) => path.slice(prefix.length))
+      if (names.length === 0 && dirPath === '/gone') throw new Error('ENOENT')
+      return names
+    },
+    async stat(filePath: string) {
+      const file = files[filePath]
+      if (!file) throw new Error(`ENOENT: ${filePath}`)
+      return {
+        isFile: file.isFile ?? true,
+        size: file.size ?? file.bytes.byteLength,
+        mtimeMs: file.mtimeMs ?? 1000,
+      }
+    },
+    async readFile(filePath: string) {
+      const file = files[filePath]
+      if (!file) throw new Error(`ENOENT: ${filePath}`)
+      reads.push(filePath)
+      return file.bytes
+    },
+    async downscaleRaster(bytes, mimeType) {
+      options.onDownscale?.()
+      // Stand in for nativeImage: the real one re-encodes to PNG.
+      return { bytes: Buffer.concat([Buffer.from('resized:'), bytes]), mimeType }
+    },
+    join: (dirPath, name) => `${dirPath}/${name}`,
+  }
+  return { io, reads }
+}
 
 test('project-logo', async () => {
-  // The detection half of project logos. The io seam is faked here so the ranking, the
-  // size guard, the SVG sanitizer, and the mtime cache are all exercised against
-  // a repo shape stated in the test rather than one built on disk.
-
-  type FakeFile = { bytes: Buffer; size?: number; mtimeMs?: number; isFile?: boolean }
-
-  function createIo(files: Record<string, FakeFile>, options: { onDownscale?: () => void } = {}) {
-    const reads: string[] = []
-    const io: ProjectLogoIo = {
-      async readdir(dirPath: string) {
-        const prefix = `${dirPath}/`
-        const names = Object.keys(files)
-          .filter((path) => path.startsWith(prefix))
-          .map((path) => path.slice(prefix.length))
-        if (names.length === 0 && dirPath === '/gone') throw new Error('ENOENT')
-        return names
-      },
-      async stat(filePath: string) {
-        const file = files[filePath]
-        if (!file) throw new Error(`ENOENT: ${filePath}`)
-        return {
-          isFile: file.isFile ?? true,
-          size: file.size ?? file.bytes.byteLength,
-          mtimeMs: file.mtimeMs ?? 1000,
-        }
-      },
-      async readFile(filePath: string) {
-        const file = files[filePath]
-        if (!file) throw new Error(`ENOENT: ${filePath}`)
-        reads.push(filePath)
-        return file.bytes
-      },
-      async downscaleRaster(bytes, mimeType) {
-        options.onDownscale?.()
-        // Stand in for nativeImage: the real one re-encodes to PNG.
-        return { bytes: Buffer.concat([Buffer.from('resized:'), bytes]), mimeType }
-      },
-      join: (dirPath, name) => `${dirPath}/${name}`,
-    }
-    return { io, reads }
-  }
+  // The detection half of project logos: the ranking, the size guard, the SVG
+  // sanitizer, and the mtime cache, all exercised against the faked io.
 
   const CLEAN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" /></svg>'
 
@@ -243,4 +246,79 @@ test('project-logo', async () => {
     })
 
   await suiteRun
+})
+
+// What a detected logo serves, as the fake downscaler marked it.
+function served(dataUrl: string | undefined): Buffer {
+  return Buffer.from((dataUrl ?? '').slice((dataUrl ?? '').indexOf(',') + 1), 'base64')
+}
+
+const APP_ICON = icnsFile(['ic10', pngOfWidth(1024)], ['icp5', pngOfWidth(32)], ['it32', Buffer.alloc(64)])
+
+test('an app icon under build/ is the logo, served as the PNG it carries', async () => {
+  const { io } = createIo({ '/repo/build/icon.icns': { bytes: APP_ICON, mtimeMs: 9 } })
+  const logo = await detectProjectLogo('/repo', io)
+  expect(logo?.path).toBe('/repo/build/icon.icns')
+  expect(logo?.mtimeMs).toBe(9)
+  expect(logo?.dataUrl.startsWith('data:image/png;base64,')).toBe(true)
+  expect(served(logo?.dataUrl)).toEqual(Buffer.concat([Buffer.from('resized:'), pngOfWidth(32)]))
+})
+
+test('a top-level app icon matches whatever its case', async () => {
+  const { io } = createIo({ '/repo/AppIcon.icns': { bytes: APP_ICON } })
+  expect((await detectProjectLogo('/repo', io))?.path).toBe('/repo/AppIcon.icns')
+})
+
+test('every existing candidate outranks an app icon', async () => {
+  const { io } = createIo({
+    '/repo/favicon.ico': { bytes: Buffer.from('ico') },
+    '/repo/AppIcon.icns': { bytes: APP_ICON },
+    '/repo/build/icon.icns': { bytes: APP_ICON },
+  })
+  expect((await detectProjectLogo('/repo', io))?.path).toBe('/repo/favicon.ico')
+})
+
+test('a top-level app icon outranks one in a folder, and the folders keep their order', async () => {
+  const files: Record<string, FakeFile> = {
+    '/repo/icon.icns': { bytes: APP_ICON },
+    '/repo/build/icon.icns': { bytes: APP_ICON },
+    '/repo/resources/icon.icns': { bytes: APP_ICON },
+    '/repo/Resources/AppIcon.icns': { bytes: APP_ICON },
+  }
+  const { io } = createIo(files)
+  const order: string[] = []
+  for (const path of Object.keys(files)) {
+    order.push((await detectProjectLogo('/repo', io))?.path ?? '')
+    delete files[path]
+  }
+  expect(order).toEqual([
+    '/repo/icon.icns',
+    '/repo/build/icon.icns',
+    '/repo/resources/icon.icns',
+    '/repo/Resources/AppIcon.icns',
+  ])
+})
+
+test('an app icon with no PNG in it falls through to the next candidate', async () => {
+  const { io } = createIo({
+    '/repo/build/icon.icns': { bytes: icnsFile(['it32', Buffer.alloc(64)]) },
+    '/repo/resources/icon.icns': { bytes: Buffer.from('not an icon at all') },
+    '/repo/Resources/AppIcon.icns': { bytes: APP_ICON },
+  })
+  expect((await detectProjectLogo('/repo', io))?.path).toBe('/repo/Resources/AppIcon.icns')
+})
+
+test('an app icon past a megabyte is read, and one past its own bound is skipped unread', async () => {
+  const { io, reads } = createIo({
+    '/repo/build/icon.icns': { bytes: APP_ICON, size: PROJECT_LOGO_ICNS_MAX_BYTES + 1 },
+    '/repo/resources/icon.icns': { bytes: APP_ICON, size: PROJECT_LOGO_MAX_BYTES * 2 },
+  })
+  expect((await detectProjectLogo('/repo', io))?.path).toBe('/repo/resources/icon.icns')
+  expect(reads).toEqual(['/repo/resources/icon.icns'])
+})
+
+test('a PNG too big to serve is not taken out of an app icon', async () => {
+  const huge = Buffer.concat([pngOfWidth(1024), Buffer.alloc(PROJECT_LOGO_MAX_BYTES)])
+  const { io } = createIo({ '/repo/build/icon.icns': { bytes: icnsFile(['ic10', huge]) } })
+  expect(await detectProjectLogo('/repo', io)).toBeNull()
 })
