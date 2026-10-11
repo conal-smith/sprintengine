@@ -55,7 +55,7 @@ import { ChangedFilesCard, hasTurnChanges, RevertTurnAction } from './changedFil
 import { EditFromHereAction, type EditFromHereDraft } from './editFromHere'
 import { ForkMessageAction, ForkReplyAction, type ForkFromHereTarget } from './forkFromHere'
 import { ResolvedPlanCard } from './planCard'
-import { SubagentLaneResult, subagentModel } from './subagentResult'
+import { SubagentLaneResult, subagentRunsOn } from './subagentResult'
 import {
   AgentCardContent,
   AgentLaneSummary,
@@ -832,8 +832,8 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
             {tool.startedAt !== undefined ? <LiveElapsed startedAt={tool.startedAt} /> : null}
           </span>
         ) : (
-          // How it ended and how long it took, then the model it was asked to
-          // run on when it named one.
+          // How it ended and how long it took, then the model and the effort
+          // it was asked to run on when the call set them.
           [
             outcome ? (
               <span
@@ -843,7 +843,7 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
                 {outcome}
               </span>
             ) : null,
-            subagentModel(tool),
+            subagentRunsOn(tool),
           ]
             .filter(Boolean)
             .flatMap((part, index) => (index ? [' · ', part] : [part]))

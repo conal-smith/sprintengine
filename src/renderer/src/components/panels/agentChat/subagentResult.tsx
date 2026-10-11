@@ -41,6 +41,35 @@ export function subagentModel(tool: TranscriptToolEntry): string | undefined {
   return typeof model === 'string' && model.trim() ? model.trim() : undefined
 }
 
+// The level names the effort picker shows for Claude Code
+// (resources/plugins/claude-code/plugin.json), so a lane says "Extra high"
+// where the composer does rather than the flag's `xhigh`.
+const EFFORT_LABELS: Record<string, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+}
+
+// The reasoning effort the call asked the agent to run at, when it set one, in
+// the picker's words; otherwise the agent ran at the conversation's own, and
+// there is nothing to add — the same rule the model follows.
+export function subagentEffort(tool: TranscriptToolEntry): string | undefined {
+  const input = tool.input
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const effort = input.effort
+  if (typeof effort !== 'string' || !effort.trim()) return undefined
+  const level = effort.trim()
+  return EFFORT_LABELS[level.toLowerCase()] ?? level
+}
+
+/** What the agent was asked to run on — "haiku · High effort", either alone, or nothing. */
+export function subagentRunsOn(tool: TranscriptToolEntry): string | undefined {
+  const effort = subagentEffort(tool)
+  return [subagentModel(tool), effort ? `${effort} effort` : undefined].filter(Boolean).join(' · ') || undefined
+}
+
 function text(value: ConversationJsonValue | undefined): string {
   return typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2)
 }
