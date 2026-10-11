@@ -27,6 +27,7 @@ import {
   withStudioGateway,
   type StudioMcpServerResolver,
 } from './studio-gateway-entry'
+import { inferConversationToolKind } from '../../shared/conversation/toolKind'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV } from '../../shared/studio-env'
 import { toWslPath, wslPathInRootSpelling } from '../../shared/host-paths'
@@ -291,6 +292,15 @@ export const acpToolKind = (kind?: ToolKind | null): ConversationToolKind =>
     switch_mode: 'other',
     other: 'other',
   })[kind ?? 'other'] as ConversationToolKind
+
+// ACP has no tool kind for a checklist. OpenCode keeps its plan with its
+// `todowrite` tool and sends no `plan` update for it: the list arrives only as
+// a call of ACP kind `other`, its `todos` in the input. Grok's agent carries
+// the same tool and a `TodoWrite`. The tool's name says what the kind cannot,
+// so the call is drawn as a checklist and the strip above the composer reads
+// it as it reads Claude Code's.
+export const acpTodoTool = (name: string | null | undefined): boolean =>
+  inferConversationToolKind(name?.trim() ?? '') === 'todo'
 
 // ACP has no notion of a subagent: an agent that spawns one reports the spawn
 // as an ordinary tool call. It is read off the call instead, by the spawn
@@ -722,7 +732,10 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         ...(prior?.lane as AcpSubagentLane | undefined),
         ...acpSubagentLaneFields(value.title, value.rawInput),
       }
-      const tool = { ...prior, ...value, ...(lane.subagentLane ? { lane } : {}) }
+      // Kept from the first update too: OpenCode retitles a finished
+      // `todowrite` with a count ("3 todos"), which names no todo tool.
+      const todo = prior?.todo === true || acpTodoTool(value.title)
+      const tool = { ...prior, ...value, ...(lane.subagentLane ? { lane } : {}), ...(todo ? { todo } : {}) }
       state.toolCalls.set(value.toolCallId, tool)
       const content = value.content ?? []
       const diff = content.find((entry) => entry.type === 'diff')
@@ -730,7 +743,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         emit(state, 'tool_started', {
           toolUseId: value.toolCallId,
           toolCallId: value.toolCallId,
-          kind: lane.subagentLane ? 'subagent' : acpToolKind(tool.kind as ToolKind | undefined),
+          kind: lane.subagentLane ? 'subagent' : todo ? 'todo' : acpToolKind(tool.kind as ToolKind | undefined),
           ...lane,
           name: tool.name ?? tool.title ?? tool.kind ?? 'Tool',
           input: diff

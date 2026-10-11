@@ -119,3 +119,31 @@ test('a plan reported as free text, or items without words, has no steps to coun
     ),
   ).toBeNull()
 })
+
+test("OpenCode's todowrite list, priorities and all, is read like any other, and a plan written after it replaces it", () => {
+  const todos = [
+    { content: 'Read the config', status: 'completed', priority: 'high' },
+    { content: 'Write the test', status: 'in_progress', priority: 'high' },
+    { content: 'Run the suite', status: 'pending', priority: 'medium' },
+  ]
+  // The call keeps the name the agent last gave it, which for a finished
+  // todowrite is a count; its kind is what marks it a list.
+  const opencode: TranscriptEntry = { ...todoWrite('c', 't1', todos), name: '2 todos' }
+  expect(deriveTodoProgress([user('u1'), assistant('t1'), opencode], true)).toMatchObject({
+    completed: 1,
+    total: 3,
+    current: 'Write the test',
+  })
+  const plan: TranscriptEntry = {
+    ...todoWrite('plan_t1', 't1', [
+      { content: 'Read the config', status: 'completed' },
+      { content: 'Write the test', status: 'completed' },
+      { content: 'Run the suite', status: 'pending' },
+    ]),
+    name: 'Plan',
+  }
+  expect(deriveTodoProgress([user('u1'), assistant('t1'), opencode, plan], true)).toMatchObject({
+    completed: 2,
+    total: 3,
+  })
+})
