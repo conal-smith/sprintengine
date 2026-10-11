@@ -13,6 +13,7 @@
 // is ESM-only and the main bundle is CJS, so the SDK is loaded via dynamic
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
+import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
@@ -916,7 +917,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // so it can carry skills and nothing else.
       ...(skillPlugin ? { plugins: [{ type: 'local', path: wslTarget ? toWslPath(skillPlugin) : skillPlugin }] } : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
-      env,
+      env: withClaudeTaskTools(env),
       abortController: abort,
       canUseTool: (toolName, toolInput, callbackOptions) =>
         handleCanUseTool(state, toolName, toolInput, callbackOptions?.signal, callbackOptions),
@@ -1019,7 +1020,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') return false
     // A tool the session was started pre-approved for stays pre-approved.
     if (state.allowedTools?.includes(toolName)) return false
-    return !LOOKUP_TOOL_KINDS.has(inferConversationToolKind(toolName))
+    return !LOOKUP_TOOL_KINDS.has(claudeToolKind(toolName))
   }
 
   // Move the live child to another chat mode over the control channel rather
@@ -1113,7 +1114,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       requestId,
       action: toolName,
       input: toolInput,
-      toolKind: inferConversationToolKind(toolName),
+      toolKind: claudeToolKind(toolName),
       cwd: state.workspaceRoot,
       ...(permissionContext?.agentID ? { originAgentId: permissionContext.agentID } : {}),
       ...(permissionContext?.defaultToNo ? { defaultToNo: true } : {}),
@@ -1903,6 +1904,17 @@ function parseAskUserQuestions(toolInput: Record<string, unknown>): Conversation
   return questions.length > 0 ? questions : null
 }
 
+// A tool's kind as the permission modes read it. The task tools keep the
+// agent's own to-do list, as TodoWrite does, so no mode asks about them. And
+// ToolSearch only loads the tools Claude Code holds back until they are
+// wanted (the task tools among them), so Manual does not card it either: a
+// plan's first step would otherwise always wait on a card. The shared
+// classifier knows none of these names.
+function claudeToolKind(toolName: string) {
+  if (isClaudeTaskTool(toolName)) return 'todo'
+  return toolName === 'ToolSearch' ? 'search' : inferConversationToolKind(toolName)
+}
+
 function readPlanText(toolInput: Record<string, unknown>): string {
   return typeof toolInput.plan === 'string' ? toolInput.plan : ''
 }
@@ -2159,6 +2171,16 @@ export async function claudeChatBaseEnv(): Promise<Record<string, string>> {
   return stripAnthropicAuthEnv(getTerminalEnv())
 }
 
+// Claude Code run headless offers no tool to keep a plan with unless asked:
+// with this set it offers its task tools (TaskCreate, TaskUpdate…), which are
+// what a Claude chat's todo strip is read from (claude-task-list.ts). Only a
+// default: a value the person's own environment sets, `0` included, stands.
+const CLAUDE_TODO_TOOLS_ENV = 'CLAUDE_CODE_ENABLE_TODO_TOOLS'
+
+function withClaudeTaskTools(env: Record<string, string>): Record<string, string> {
+  return Object.hasOwn(env, CLAUDE_TODO_TOOLS_ENV) ? env : { ...env, [CLAUDE_TODO_TOOLS_ENV]: '1' }
+}
+
 async function defaultBuildEnv(input: {
   workspaceId: string
   agentId: string
@@ -2234,6 +2256,10 @@ export function mapSdkMessage(
     // Pictures being written for steps this message reported; the caller
     // waits for them before the events go out, so no path names a missing file.
     toolImageWrites?: Promise<void>[]
+    // Claude Code's task list as the main chain's task tools left it, and
+    // those calls still waiting for their results (claude-task-list.ts).
+    claudeTasks?: ClaudeTaskList
+    taskToolCalls?: Map<string, { name: string; input: Record<string, unknown> }>
   },
   message: Record<string, unknown>,
   // exchangeContinues: a `result` that answers only part of what the child was
@@ -2490,19 +2516,26 @@ export function mapSdkMessage(
         if (block.name === 'Read' && typeof block.id === 'string')
           (state.fileReadToolUseIds ??= new Set()).add(block.id)
         const toolInput = asRecord(block.input) ?? {}
+        // A main-chain task tool's row is a todo row carrying the list as it
+        // stands, and is stamped again once its result says what changed.
+        // An agent's task tools are its own bookkeeping, not the chat's plan.
+        const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
+        if (taskTool)
+          (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
         const payload: ConversationToolStartedPayload = {
           turnId,
           toolCallId: typeof block.id === 'string' ? block.id : undefined,
           tool: block.name,
           toolUseId: typeof block.id === 'string' ? block.id : undefined,
           name: block.name,
-          kind: inferConversationToolKind(block.name),
+          kind: taskTool ? 'todo' : inferConversationToolKind(block.name),
           input: JSON.parse(
             JSON.stringify({
               ...toolInput,
               ...(typeof toolInput.file_path === 'string' ? { path: toolInput.file_path } : {}),
               ...(typeof toolInput.old_string === 'string' ? { oldText: toolInput.old_string } : {}),
               ...(typeof toolInput.new_string === 'string' ? { newText: toolInput.new_string } : {}),
+              ...(taskTool ? { todos: claudeTaskTodos(state.claudeTasks ?? new Map()) } : {}),
             }),
           ),
           ...computeEditDiffCounts(block.name, toolInput),
@@ -2519,6 +2552,9 @@ export function mapSdkMessage(
       const parentToolUseId = readParentToolUseId(message)
       const content = asRecord(message.message)?.content
       if (!Array.isArray(content)) break
+      // The structured result describes the message's one tool result; one
+      // that answers several calls at once says nothing a task can be read from.
+      const oneResult = content.filter((block) => asRecord(block)?.type === 'tool_result').length === 1
       for (const rawBlock of content) {
         const block = asRecord(rawBlock)
         if (block?.type !== 'tool_result') continue
@@ -2566,6 +2602,36 @@ export function mapSdkMessage(
           isError: block.is_error === true,
           ...(parentToolUseId ? { parentToolUseId } : {}),
           ...(images.length ? { images } : {}),
+        }
+        const taskCall = toolUseId ? state.taskToolCalls?.get(toolUseId) : undefined
+        if (taskCall) {
+          state.taskToolCalls!.delete(toolUseId!)
+          const tasks = state.claudeTasks ?? new Map()
+          const next =
+            block.is_error === true || declined
+              ? tasks
+              : applyClaudeTaskTool(
+                  tasks,
+                  taskCall.name,
+                  taskCall.input,
+                  oneResult ? message.tool_use_result : undefined,
+                )
+          // The row is announced again with the list the call left, ahead of
+          // its result: a step reported twice keeps its place and its start.
+          if (next !== tasks) {
+            state.claudeTasks = next
+            events.push(
+              eventFor(state, 'tool_started', {
+                turnId,
+                toolCallId: toolUseId,
+                tool: taskCall.name,
+                toolUseId,
+                name: taskCall.name,
+                kind: 'todo',
+                input: JSON.parse(JSON.stringify({ ...taskCall.input, todos: claudeTaskTodos(next) })),
+              } satisfies ConversationToolStartedPayload),
+            )
+          }
         }
         events.push(eventFor(state, 'tool_output', payload))
       }
