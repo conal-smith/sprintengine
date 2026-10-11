@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { expect, test, vi } from 'vitest'
 import {
@@ -39,6 +42,8 @@ function fixture(
     readCodexLogBytes?: CodexConversationProviderOptions['readCodexLogBytes']
     // The answer to `account/rateLimits/read`.
     rateLimits?: () => unknown
+    // The answer to `config/read`.
+    configRead?: () => unknown
   } = {},
 ) {
   let connection!: CodexRpcOptions
@@ -75,6 +80,7 @@ function fixture(
           }
           if (method === 'skills/list') return setup.skills ?? { data: [] }
           if (method === 'account/rateLimits/read' && setup.rateLimits) return setup.rateLimits()
+          if (method === 'config/read' && setup.configRead) return setup.configRead()
           if (method === 'thread/compact/start') {
             resolveStarted()
             return {}
@@ -1653,6 +1659,85 @@ test('a Codex chat whose gateway cannot be resolved still starts, with only its 
   })
   await runTurn(f, [])
   expect(f.connection.args).toEqual([])
+})
+
+// A chat with the gateway is told to lease a worktree from the pool rather than
+// run `git worktree add`, as the thread's developer instructions.
+async function gitCheckout() {
+  const root = await mkdtemp(join(tmpdir(), 'codex-lease-'))
+  await mkdir(join(root, '.git'))
+  return root
+}
+const LEASE_LINE =
+  'To work in a separate git worktree, call the SprintEngine Studio tool `worktree.lease` from its ' +
+  '`sprintengine-studio` MCP server (and `worktree.release` when done) instead of running `git worktree add`: it ' +
+  'gives you a pooled worktree on a fresh branch off the default branch, with dependencies installed when the ' +
+  'project has turned that on.'
+
+test('a Codex chat with the gateway in a git checkout starts its thread told to lease worktrees', async () => {
+  const root = await gitCheckout()
+  try {
+    const f = fixture({ resolveStudioMcpServer: async () => GATEWAY })
+    f.input.workspaceRoot = root
+    await runTurn(f, [])
+    expect(f.calls.find((call) => call.method === 'config/read')?.params).toEqual({ cwd: root })
+    expect(f.calls.find((call) => call.method === 'thread/start')?.params).toMatchObject({
+      developerInstructions: LEASE_LINE,
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a Codex chat keeps the person's own developer instructions ahead of Studio's line", async () => {
+  const root = await gitCheckout()
+  try {
+    const f = fixture({
+      resolveStudioMcpServer: async () => GATEWAY,
+      configRead: () => ({ config: { developer_instructions: 'Answer in British English.' } }),
+    })
+    f.input.workspaceRoot = root
+    await runTurn(f, [])
+    expect(f.calls.find((call) => call.method === 'thread/start')?.params).toMatchObject({
+      developerInstructions: `Answer in British English.\n\n${LEASE_LINE}`,
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a Codex that cannot read its config is told nothing, rather than having its instructions overwritten', async () => {
+  const root = await gitCheckout()
+  try {
+    const f = fixture({
+      resolveStudioMcpServer: async () => GATEWAY,
+      configRead: () => {
+        throw new CodexRpcError('Method not found')
+      },
+    })
+    f.input.workspaceRoot = root
+    await runTurn(f, [])
+    expect(f.calls.find((call) => call.method === 'thread/start')?.params).not.toHaveProperty('developerInstructions')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a Codex chat without the gateway, or outside a git checkout, is told nothing about worktrees', async () => {
+  const root = await gitCheckout()
+  try {
+    const withoutGateway = fixture()
+    withoutGateway.input.workspaceRoot = root
+    await runTurn(withoutGateway, [])
+    const outside = fixture({ resolveStudioMcpServer: async () => GATEWAY })
+    await runTurn(outside, [])
+    for (const f of [withoutGateway, outside]) {
+      expect(f.calls.map((call) => call.method)).not.toContain('config/read')
+      expect(f.calls.find((call) => call.method === 'thread/start')?.params).not.toHaveProperty('developerInstructions')
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('each Codex app-server holds its own gateway token for its chat, off its command line, until it ends', async () => {
