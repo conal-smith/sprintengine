@@ -99,10 +99,11 @@ export type ConversationEvent = {
 
 /**
  * Why the desktop sent a chat a message of its own: an agent the chat started
- * finished or stopped (`agent-notice`), or a usage limit that stopped the chat
- * has reset (`usage-resume`).
+ * finished or stopped (`agent-notice`), a usage limit that stopped the chat
+ * has reset (`usage-resume`), or a pull request the chat's agent asked the
+ * desktop to watch needs a look (`pull-request-watch`).
  */
-export type ConversationStudioMessageReason = 'agent-notice' | 'usage-resume'
+export type ConversationStudioMessageReason = 'agent-notice' | 'usage-resume' | 'pull-request-watch'
 
 /**
  * Who a `user_message` came from when it was not the person: the payload's
@@ -117,6 +118,7 @@ export type ConversationMessageOrigin = { kind: 'studio'; reason?: ConversationS
 const STUDIO_MESSAGE_REASONS: readonly string[] = [
   'agent-notice',
   'usage-resume',
+  'pull-request-watch',
 ] satisfies ConversationStudioMessageReason[]
 
 /**

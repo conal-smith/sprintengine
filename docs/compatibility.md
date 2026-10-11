@@ -268,7 +268,10 @@ step's picture by the step's input and not by this list. So is `origin` on a `us
 payload (`ConversationMessageOrigin`, 2026-10-07), which marks a message the
 desktop sent a chat itself — a launched agent's notice, a resume after a usage limit —
 as Studio's: a reader that does not know it shows the message as the person's,
-as every reader did before, and a message without one is the person's.
+as every reader did before, and a message without one is the person's. Its
+`reason` gained `pull-request-watch` (2026-10-11), a wake about a pull request
+the chat's agent asked the desktop to watch; a reader that does not know a
+reason still reads the message as Studio's, without one.
 A chat's rest and read state are the `conversation-lifecycle` capability: a
 desktop that advertises it leaves the chats it has settled out of the list, sends it in its sidebar's order, names
 each chat's `chatTitle`, `lastUserMessageAt`, `lastTurnEndedAt` and
@@ -361,7 +364,13 @@ methods and stream, and `pull-request-tool-calls` the one method a client that
 runs its own agents forwards their tool calls with, `pullRequests.noteToolCall`,
 and `pull-request-link` `pullRequests.link`, which records a pull request an
 owner opened for a conversation (refused as `claimed` when another
-conversation opened it first). `local-servers` adds the owner-only
+conversation opened it first). `pull-request-watch` (2026-10-11) adds
+`pullRequests.unwatch`, an owner stopping an agent's watch on one of its pull
+requests, and says a listed pull request may carry `watch` (what a watched one
+waits on, an optional member): a client that does not read it shows the pull
+request as before, and a client offers Stop watching only to a Studio that
+advertises the capability. A `waitingOn` word a client does not know reads as
+plain watching. `local-servers` adds the owner-only
 `localServers.*` methods and stream: the local servers a Studio's agents
 linked, as the Studio checks them, and running one's command again, stopping
 that run, or forgetting the link (`run` and `stop` refused as `conflict` when
