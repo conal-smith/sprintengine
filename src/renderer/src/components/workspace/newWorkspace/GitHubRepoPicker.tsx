@@ -14,50 +14,44 @@ export function toRepoListState(result: GitHubRepoListResult): GitHubRepoListSta
 }
 
 /**
- * The workspace step's repository picker for the Clone-from-GitHub source:
- * a filter over the account's repositories (via the token saved in Settings →
- * Version control), with a paste-a-URL lane underneath that works with no
- * token at all. Selection is exclusive with the URL draft — the panel clears
- * one when the other is used.
+ * The Import from Git step's list of the account's GitHub repositories (via
+ * the token saved in Settings → Version control). Picking one fills the URL
+ * field above it with the repository's clone URL, so the field stays the one
+ * source of what is cloned; `isSelected` asks the field which row it names.
  */
 export function GitHubRepoPicker({
   listState,
   filter,
   onChangeFilter,
-  selectedFullName,
+  isSelected,
   onSelectRepo,
-  urlDraft,
-  onChangeUrlDraft,
-  urlError,
   onRetry,
 }: {
   listState: GitHubRepoListState
   filter: string
   onChangeFilter: (value: string) => void
-  selectedFullName: string | null
+  isSelected: (repo: GitHubRepoSummary) => boolean
   onSelectRepo: (repo: GitHubRepoSummary) => void
-  urlDraft: string
-  onChangeUrlDraft: (value: string) => void
-  urlError: string | null
   onRetry: () => void
 }) {
   const visibleRepos = listState.status === 'ready' ? filterGitHubRepos(listState.repos, filter) : []
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <Field.Label>Repository</Field.Label>
+      <Field.Label>Your GitHub repositories</Field.Label>
 
       {listState.status === 'loading' ? (
         <p className="px-0.5 text-micro text-[color:var(--text-subtle)]">Loading repositories…</p>
       ) : null}
 
       {listState.status === 'error' && listState.reason === 'no_token' ? (
-        // Not a failure — nothing was tried yet. A quiet pointer, and the URL
-        // lane below still clones public repositories without any token.
-        <p className="rounded-md border border-[color:var(--border-default)] bg-[color:var(--bg-surface-raised)] px-3 py-2.5 text-meta leading-5 text-[color:var(--text-muted)]">
-          To browse your repositories, add a GitHub token in{' '}
-          <span className="font-medium text-[color:var(--text-default)]">Settings → Version control</span>. Public
-          repositories clone from a URL without one.
+        // Not a failure — nothing was tried yet. One quiet line: the URL field
+        // above clones from any host without a token, so this is an extra, not
+        // a gate, and a boxed notice made it read like one.
+        <p className="px-0.5 text-meta leading-5 text-[color:var(--text-subtle)]">
+          Add a GitHub token in{' '}
+          <span className="font-medium text-[color:var(--text-muted)]">Settings → Version control</span> to pick from
+          your repositories here.
         </p>
       ) : null}
 
@@ -92,12 +86,12 @@ export function GitHubRepoPicker({
             </p>
           ) : (
             <div
-              className="flex min-h-[88px] flex-1 flex-col gap-0.5 overflow-y-auto pr-1"
+              className="flex max-h-[168px] min-h-[64px] flex-col gap-0.5 overflow-y-auto pr-1"
               role="listbox"
               aria-label="GitHub repositories"
             >
               {visibleRepos.map((repo) => {
-                const selected = repo.fullName === selectedFullName
+                const selected = isSelected(repo)
                 return (
                   // The kit's inset row. `selected` paints the neutral
                   // selection canon; `aria-current` is withheld because a
@@ -133,27 +127,6 @@ export function GitHubRepoPicker({
           )}
         </>
       ) : null}
-
-      <div className="flex items-center gap-2.5" aria-hidden>
-        <span className="h-px flex-1 bg-[color:var(--border-subtle)]" />
-        <span className="text-micro font-medium text-[color:var(--text-subtle)]">or paste a URL</span>
-        <span className="h-px flex-1 bg-[color:var(--border-subtle)]" />
-      </div>
-      {/* The error edge rides `aria-invalid` inside the primitive, so the
-          conditional border class this carried is gone: an attribute variant
-          out-specifies both the resting border and the hover lift, which a
-          plain conditional class does not. */}
-      <Input
-        value={urlDraft}
-        onChange={(event) => onChangeUrlDraft(event.target.value)}
-        placeholder="https://github.com/owner/repo"
-        spellCheck={false}
-        autoComplete="off"
-        aria-label="Repository URL"
-        aria-invalid={urlError ? true : undefined}
-        className="font-mono"
-      />
-      {urlError ? <p className="px-0.5 text-micro leading-4 text-[color:var(--tone-error)]">{urlError}</p> : null}
     </div>
   )
 }
