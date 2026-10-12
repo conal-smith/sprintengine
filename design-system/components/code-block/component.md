@@ -62,7 +62,13 @@ there is nothing else to exclude.
   source and back; Wrap lines is offered only while the source shows, and the
   fold never applies to a drawing. The source stays in the DOM, hidden, so Copy
   code and a selection across the block both take the source. A drawing is
-  never shown while the block streams.
+  never shown while the block streams. Its surface action is Open diagram
+  (`EnlargeGlyph`): the same drawing in a `workbench` dialog, fitted to it
+  (enlarged at most twice its size), with Zoom out (`ZoomOutGlyph`), a
+  readout that fits it again, and Zoom in (`ZoomInGlyph`) stepping through
+  25–400%, and the bare keys `-`, `0` and `+` (⌘ chords stay the app's own
+  zoom). It shows the SVG the block already holds, under ids of its own, so
+  opening it draws nothing again.
 - **Unknown language**: the same card with plain source.
 
 ## States

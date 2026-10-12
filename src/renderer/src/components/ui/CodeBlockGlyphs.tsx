@@ -1,10 +1,11 @@
 import React from 'react'
 
-// The code block's three header marks that the vocabulary did not have yet. All
-// sit on the 16-grid at the ui/ primitives' stroke (1.4), in `currentColor`, so
-// they ink and size exactly like the copy glyph beside them
-// (design-system/glyphs/wrap-lines.svg, terminal-prompt.svg and view-source.svg
-// are the framework-neutral samples).
+// The code block's header marks that the vocabulary did not have yet, and the
+// zoom marks of the diagram viewer a drawn block opens. All sit on the 16-grid
+// at the ui/ primitives' stroke (1.4), in `currentColor`, so they ink and size
+// exactly like the copy glyph beside them (design-system/glyphs/wrap-lines.svg,
+// terminal-prompt.svg, view-source.svg, enlarge.svg, plus.svg and minus.svg are
+// the framework-neutral samples).
 
 type GlyphProps = { className?: string }
 
@@ -63,6 +64,42 @@ export function ViewSourceGlyph({ className }: GlyphProps): React.JSX.Element {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+/**
+ * Open the drawing larger: two arrows pushing out to opposite corners. It
+ * opens a view of the same drawing, so it says "bigger", not "new window".
+ */
+export function EnlargeGlyph({ className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** Zoom in: the plus, drawn as `glyphs/plus.svg` is. */
+export function ZoomInGlyph({ className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Zoom out: the plus without its upright. */
+export function ZoomOutGlyph({ className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M3.2 8h9.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }
