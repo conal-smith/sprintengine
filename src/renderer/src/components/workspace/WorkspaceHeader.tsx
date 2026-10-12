@@ -38,6 +38,10 @@ type WorkspaceHeaderProps<MenuItem extends string> = {
   isMac: boolean
   isFullScreen: boolean
   sidebarCollapsed: boolean
+  // Whether the app rail stands to this strip's left. It does on a desktop
+  // window; the narrow layout hides it with the sidebar, and the strip then
+  // starts at the window's edge, under the traffic lights.
+  besideRail?: boolean
   // Width (px) the strip leaves empty at its right end for the win/linux caption
   // buttons, which float over the window's top-right corner. Non-zero only when
   // THIS strip owns that corner — the host passes 0 on macOS and whenever the
@@ -128,11 +132,33 @@ function NewChatButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+/**
+ * The room the header's left end leaves for the macOS traffic lights: what
+ * they run past the rail's edge while the rail stands beside the strip, and
+ * all of their reserve when the narrow layout has hidden the rail (a window
+ * at its narrowest, zoomed in) and the strip starts at the window's edge.
+ */
+export function headerTrafficLightInset({
+  isMac,
+  isFullScreen,
+  sidebarCollapsed,
+  besideRail,
+}: {
+  isMac: boolean
+  isFullScreen: boolean
+  sidebarCollapsed: boolean
+  besideRail: boolean
+}): number {
+  if (!isMac || isFullScreen || !sidebarCollapsed) return 0
+  return besideRail ? TRAFFIC_LIGHT_RESERVE - APP_RAIL_WIDTH : TRAFFIC_LIGHT_RESERVE
+}
+
 export function WorkspaceHeader<MenuItem extends string>({
   activeWorkspaceId,
   isMac,
   isFullScreen,
   sidebarCollapsed,
+  besideRail = true,
   captionReserve,
   onToggleSidebar,
   onOpenSearch,
@@ -155,7 +181,7 @@ export function WorkspaceHeader<MenuItem extends string>({
   // (SidebarChrome); when it is hidden this strip is, and takes the same inset
   // — without it the launcher's first glyph sat under the green light. In
   // fullscreen the lights are hidden and the inset collapses.
-  const trafficLightInset = isMac && !isFullScreen && sidebarCollapsed ? TRAFFIC_LIGHT_RESERVE - APP_RAIL_WIDTH : 0
+  const trafficLightInset = headerTrafficLightInset({ isMac, isFullScreen, sidebarCollapsed, besideRail })
   // How much room the left block actually has, so the identity cluster knows how
   // much of itself to fold into its overflow menu. Measured off THIS block
   // rather than the window: it is what narrows when the sidebar opens, and the
