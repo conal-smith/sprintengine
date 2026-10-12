@@ -151,7 +151,7 @@ export type RemoteMachineGroup = {
 }
 
 /**
- * A CONVERSATION on a paired machine: one chat, and the agent in it.
+ * A CONVERSATION on a paired machine: one chat, and the agents in it.
  *
  * This is the unit the sidebar draws (owner, 2026-09-11): titled with its own
  * name, filed under its project like every other chat, and drawn with a line
@@ -168,9 +168,9 @@ export type RemoteConversation = {
   /** The folder it stands in, on that machine's disk. */
   workspaceRoot: string | null
   repository: RepositoryIdentity | null
-  /** Its agent, as the one line the row draws. Never empty. */
+  /** Its agents, a line each, the one a window here follows first. Never empty. */
   agents: RemoteSessionRow[]
-  /** What its agent is doing — what the row's marks report. */
+  /** What its agents are doing — what the row's marks report. */
   activity: RemoteRowActivity
   /** When that began, for the row's clock; null when the remote did not say. */
   since: number | null
@@ -490,24 +490,50 @@ export function buildRemoteBand(input: {
 
 /**
  * A machine's chats as conversation rows (owner, 2026-09-11): one entry per
- * chat, carrying its agent, in the order the rows sort in.
+ * chat, carrying a line per agent in it, in the order the rows sort in.
+ *
+ * The machine lists agents, and a chat over there is its workspace: its title,
+ * its message clock and its visits are the workspace's. Two agents in one chat
+ * are one row, as that machine's own sidebar draws them; a row per agent drew
+ * the chat twice, and the agent a window here was not following stood beside
+ * that window as a second copy of it.
  */
 export function conversationsOf(group: RemoteMachineGroup): RemoteConversation[] {
-  return group.rows.map((row) => ({
-    key: `${group.machineName}:chat:${row.sessionId}`,
-    connectionId: row.connectionId,
-    machineName: group.machineName,
-    title: row.chatTitle,
-    workspaceId: row.workspaceId,
-    workspaceRoot: row.workspaceRoot,
-    repository: row.repository,
-    agents: [row],
-    activity: row.activity,
-    since: row.since,
-    attachedWorkspaceId: row.attachedWorkspaceId,
-    stale: group.stale,
-    recencyAt: row.recencyAt,
-  }))
+  const byChat = new Map<string, RemoteSessionRow[]>()
+  for (const row of group.rows) {
+    const agents = byChat.get(row.workspaceId)
+    if (agents) agents.push(row)
+    else byChat.set(row.workspaceId, [row])
+  }
+  return [...byChat.values()].map((listed) => {
+    // The agent a window here follows leads, so opening the chat focuses that
+    // window rather than opening a second one onto the same chat.
+    const agents = [
+      ...listed.filter((row) => row.attachedWorkspaceId !== null),
+      ...listed.filter((row) => row.attachedWorkspaceId === null),
+    ]
+    const lead = agents[0]!
+    return {
+      key: `${group.machineName}:chat:${lead.workspaceId}`,
+      connectionId: lead.connectionId,
+      machineName: group.machineName,
+      title: lead.chatTitle,
+      workspaceId: lead.workspaceId,
+      workspaceRoot: lead.workspaceRoot,
+      repository: lead.repository,
+      agents,
+      // The chat's marks say what any of its agents is doing, a wait first.
+      activity: agents.some((row) => row.activity === 'needs-input')
+        ? 'needs-input'
+        : agents.some((row) => row.activity === 'working')
+          ? 'working'
+          : 'idle',
+      since: lead.since,
+      attachedWorkspaceId: lead.attachedWorkspaceId,
+      stale: group.stale,
+      recencyAt: Math.max(...agents.map((row) => row.recencyAt)),
+    }
+  })
 }
 
 /**
@@ -555,7 +581,10 @@ export type ChatListEntry =
  */
 export function chatRecencyOf(attached: ReadonlyMap<string, RemoteConversation>): (workspace: Workspace) => number {
   return (workspace) =>
-    Math.max(workspaceLastUserMessageAt(workspace), attached.get(workspace.id)?.agents[0]?.lastUserMessageAt ?? 0)
+    Math.max(
+      workspaceLastUserMessageAt(workspace),
+      ...(attached.get(workspace.id)?.agents ?? []).map((agent) => agent.lastUserMessageAt ?? 0),
+    )
 }
 
 /** Rows here, most recently written to first by `recencyOf`; ties keep the order they came in. */

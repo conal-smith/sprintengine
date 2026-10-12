@@ -189,7 +189,14 @@ test('remoteSessionsModel', async () => {
     error: null,
     at: 1,
     conversations: [
-      chat('bea', { title: 'Bea', chatTitle: 'Ship the docs', phase: 'completed', updatedAt: 2_000 }),
+      // A chat of its own over there, so a workspace of its own.
+      chat('bea', {
+        workspaceId: 'rw2',
+        title: 'Bea',
+        chatTitle: 'Ship the docs',
+        phase: 'completed',
+        updatedAt: 2_000,
+      }),
       chat('ada', {
         title: 'Ada',
         chatTitle: 'Fix the relay',
@@ -213,7 +220,7 @@ test('remoteSessionsModel', async () => {
   const airGroup = band[0]!
   assert.deepEqual(
     airGroup.rows.map((row) => row.sessionId),
-    [adaSession, beaSession],
+    [adaSession, meshConversationSessionId('rw2', 'bea')],
     'chats, the one last written to first',
   )
   const ada = airGroup.rows[0]!
@@ -314,8 +321,8 @@ test('remoteSessionsModel', async () => {
 
   // ── conversationsOf ──────────────────────────────────────────────────────
   // A row is a CONVERSATION (owner, 2026-09-11): each chat is one row titled
-  // with its own name, carrying its agent as the one line it draws — two chats
-  // in one remote workspace are two rows.
+  // with its own name, carrying a line per agent in it. A chat over there is
+  // its workspace, so two workspaces are two rows.
   const chats = conversationsOf(airGroup)
   assert.deepEqual(
     chats.map((entry) => entry.title),
@@ -333,7 +340,55 @@ test('remoteSessionsModel', async () => {
   assert.equal(relay.workspaceRoot, '/Users/air/relay', 'and carries the folder it files under')
   assert.equal(relay.repository?.canonicalKey, 'github.com/acme/relay')
   assert.equal(relay.attachedWorkspaceId, 'w1')
-  assert.notEqual(chats[0]!.key, chats[1]!.key, 'each chat is keyed on its own session')
+  assert.notEqual(chats[0]!.key, chats[1]!.key, 'each chat is keyed on its own workspace')
+
+  // Two agents in one chat are one row with two lines, as that machine's own
+  // sidebar draws them. A window here following one of them is the chat's
+  // window: the other agent is not a second copy of the chat beside it.
+  {
+    const twoAgents = buildRemoteBand({
+      connections: [air],
+      browses: new Map([
+        [
+          'c1',
+          {
+            ...answered,
+            conversations: [
+              chat('cal', { title: 'Cal', chatTitle: 'Fix the relay', phase: 'running', lastUserMessageAt: 5_000 }),
+              chat('ada', { title: 'Ada', chatTitle: 'Fix the relay', phase: 'completed', lastUserMessageAt: 3_000 }),
+            ],
+          },
+        ],
+      ]),
+      reachability,
+      workspaces: [local, stamped],
+    })
+    const [one, ...more] = conversationsOf(twoAgents[0]!)
+    assert.equal(more.length, 0, 'one chat, one row')
+    assert.equal(one!.title, 'Fix the relay')
+    assert.deepEqual(
+      one!.agents.map((agent) => agent.title),
+      ['Ada', 'Cal'],
+      'a line per agent, the one w1 follows first',
+    )
+    assert.equal(one!.attachedWorkspaceId, 'w1', 'the chat is the window one of its agents is open in')
+    assert.equal(openSpecOfConversation(one!).attachedWorkspaceId, 'w1', 'so opening it focuses that window')
+    assert.equal(one!.activity, 'working', 'its marks say what any agent in it is doing')
+    assert.equal(one!.recencyAt, 5_000, 'and it sits by the agent last written to')
+    assert.deepEqual(unattachedConversations(twoAgents, true, [local, stamped]), [], 'no second row beside w1')
+    assert.deepEqual(
+      attachedConversations(twoAgents, [local, stamped])
+        .get('w1')!
+        .agents.map((agent) => agent.title),
+      ['Ada', 'Cal'],
+      'w1 draws both agents’ lines instead',
+    )
+    assert.equal(
+      chatRecencyOf(attachedConversations(twoAgents, [local, stamped]))({ ...stamped, createdAt: 0 }),
+      5_000,
+      'the window here sorts by it too',
+    )
+  }
 
   // ── unattachedConversations ──────────────────────────────────────────────
   // A chat a window here is already showing is NOT a row of its own: that window
@@ -452,8 +507,13 @@ test('chats on a paired machine are rows of their own, with the presence their p
     lastConnectedAt: null,
     pairedVia: 'request',
   }
-  const chat = (agentId: string, phase: MeshConversation['phase'], title: string): MeshConversation => ({
-    workspaceId: 'rw1',
+  const chat = (
+    agentId: string,
+    phase: MeshConversation['phase'],
+    title: string,
+    workspaceId = 'rw1',
+  ): MeshConversation => ({
+    workspaceId,
     agentId,
     title,
     phase,
@@ -471,8 +531,8 @@ test('chats on a paired machine are rows of their own, with the presence their p
     at: 1,
     conversations: [
       chat('a-running', 'running', 'Profile the importer'),
-      chat('a-waiting', 'waiting_for_approval', 'Rename the store'),
-      chat('a-done', 'completed', 'Write the changelog'),
+      chat('a-waiting', 'waiting_for_approval', 'Rename the store', 'rw2'),
+      chat('a-done', 'completed', 'Write the changelog', 'rw3'),
     ],
   }
   const opened = {
@@ -491,7 +551,7 @@ test('chats on a paired machine are rows of their own, with the presence their p
           {
             type: 'tab',
             component: 'mesh-conversation',
-            config: { connectionId: 'c-mini', remoteSessionId: meshConversationSessionId('rw1', 'a-done') },
+            config: { connectionId: 'c-mini', remoteSessionId: meshConversationSessionId('rw3', 'a-done') },
           },
         ],
       },
@@ -513,14 +573,13 @@ test('chats on a paired machine are rows of their own, with the presence their p
   )
   // A pane already following a chat here is the window a click focuses.
   assert.equal(group.rows[2].attachedWorkspaceId, 'local-1')
-  // Each chat is a conversation of its own, titled with its own name, even
-  // when they stand in one workspace over there.
+  // Each chat is a conversation of its own, titled with its own name.
   const conversations = conversationsOf(group)
   assert.deepEqual(
     conversations.map((conversation) => conversation.title),
     ['Profile the importer', 'Rename the store', 'Write the changelog'],
   )
-  assert.deepEqual(openSpecOfConversation(conversations[1]).conversation, { workspaceId: 'rw1', agentId: 'a-waiting' })
+  assert.deepEqual(openSpecOfConversation(conversations[1]).conversation, { workspaceId: 'rw2', agentId: 'a-waiting' })
   assert.equal(meshConversationPresence('waiting_for_input'), 'needs-input')
   assert.equal(meshConversationPresence('starting'), 'running')
   assert.equal(meshConversationPresence('failed'), 'idle')
