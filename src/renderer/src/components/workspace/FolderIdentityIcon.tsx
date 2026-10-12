@@ -27,6 +27,7 @@ export function FolderIdentityIcon({
   className,
   color,
   unfiled,
+  projectless: projectlessHeader,
 }: {
   folderPath: string | null | undefined
   className?: string
@@ -34,10 +35,12 @@ export function FolderIdentityIcon({
   color?: ProjectColor | null
   /** No folder is not a project: the dashed grey outline, never a hue. */
   unfiled?: boolean
+  /** The "No project" header of chats on other machines, which has no folder here. */
+  projectless?: boolean
 }) {
   // The "No project" root is not a project: no logo to look for, no hue, its
   // own mark wherever a project's folder would be.
-  const projectless = isProjectlessChatsRoot(folderPath)
+  const projectless = projectlessHeader || isProjectlessChatsRoot(folderPath)
   const logoSrc = useProjectLogo(projectless ? null : folderPath)
   if (projectless) return <NoProjectGlyph className={className} />
   return <FolderTypeIcon className={className} logoSrc={logoSrc} color={color} unfiled={unfiled} />

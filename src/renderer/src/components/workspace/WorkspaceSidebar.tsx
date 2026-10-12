@@ -6,7 +6,7 @@ import type { ConversationSessionSummary } from '../../../../shared/conversation
 import type { BranchPullRequest } from '../../../../shared/git/pull-request'
 import { conversationSummaryPhase } from '../../../../shared/conversation/phase'
 import { chatLinkFor } from '../../../../shared/deep-link'
-import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
+import { isProjectlessChatsRoot, projectlessScopeOf } from '../../../../shared/projectless-chats'
 import { copyToClipboardWithToast } from '../../utils/copyToClipboardWithToast'
 import {
   conversationFinishedAt,
@@ -134,6 +134,7 @@ import {
   remoteProjectName,
   reorderFolders,
   reorderWithinFolder,
+  PROJECTLESS_GROUP_KEY,
   resolveGroups,
   type FolderGroup,
 } from './sidebar/folderGroups'
@@ -1468,11 +1469,12 @@ function WorkspaceSidebar({
   // repository, else one per folder on that machine.
   const remoteGroupKeyOf = useCallback(
     (conversation: RemoteConversation): string => {
+      if (projectlessScopeOf(conversation.workspaceRoot)) return resolvedGroups.projectlessKey ?? PROJECTLESS_GROUP_KEY
       const canonicalKey = conversation.repository?.canonicalKey
       if (canonicalKey) return groupKeyByRepository.get(canonicalKey) ?? `remote-repo:${canonicalKey}`
       return `remote:${conversation.connectionId}:${folderKey(conversation.workspaceRoot)}`
     },
-    [groupKeyByRepository],
+    [groupKeyByRepository, resolvedGroups],
   )
   // The projects, with the remote conversations filed into them. A project
   // nothing here has open — every chat in it running on another machine — is a
@@ -2831,6 +2833,7 @@ function WorkspaceSidebar({
                   all, so it gets the dashed outline instead of a hue. */}
                 <FolderIdentityIcon
                   folderPath={group.remote ? null : group.fullPath}
+                  projectless={group.key === PROJECTLESS_GROUP_KEY}
                   className="icon-sm shrink-0 transition-opacity group-hover/folder:opacity-0"
                   color={projectColorOf(group.key)}
                   unfiled={!group.remote && !group.fullPath}
