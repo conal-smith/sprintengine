@@ -152,6 +152,9 @@ export type TranscriptEntry =
       // The provider's last call failed and it is waiting to try again. Cleared
       // by whatever the turn reports next, so it is only ever the latest word.
       retry?: TurnRetry
+      // The provider is summarising the conversation. Cleared by the summary
+      // landing or by whatever else the turn reports next.
+      compacting?: true
       costUsd?: number
       durationMs?: number
       numTurns?: number
@@ -518,6 +521,7 @@ export type TurnAccumulator = {
   reasoningOpenedAt?: number
   reasoningMs?: number
   retry?: TurnRetry
+  compacting?: true
   costUsd?: number
   durationMs?: number
   numTurns?: number
@@ -694,7 +698,16 @@ export function projectConversation(
       const turn = turns.get(turnId)
       if (turn?.retry) turn.retry = undefined
     }
+    // So does a compaction notice, but a usage report can land mid-summary.
+    if (turnId && event.type !== 'context_compacting' && event.type !== 'usage_updated') {
+      const turn = turns.get(turnId)
+      if (turn?.compacting) turn.compacting = undefined
+    }
     switch (event.type) {
+      case 'context_compacting': {
+        if (turnId) ensureTurn(turnId).compacting = true
+        break
+      }
       case 'turn_retrying': {
         const attempt = readNumber(event.payload, 'attempt')
         const maxAttempts = readNumber(event.payload, 'maxAttempts')
@@ -1081,6 +1094,7 @@ export function projectConversation(
           closeReasoning(turn, event.createdAt)
           turn.status = interrupted ? 'interrupted' : 'failed'
           turn.retry = undefined
+          turn.compacting = undefined
           turn.failureReason = reason
           turn.failureDetail = readString(event.payload, 'message') ?? turn.failureDetail
           turn.completedAt = event.createdAt
@@ -1184,6 +1198,7 @@ export function projectConversation(
       reasoningDurationMs: turn.reasoningMs,
       reasoningLive: turn.reasoningOpenedAt !== undefined ? true : undefined,
       ...(turn.retry ? { retry: turn.retry } : {}),
+      ...(turn.compacting ? { compacting: true as const } : {}),
       costUsd: turn.costUsd,
       durationMs: turn.durationMs,
       numTurns: turn.numTurns,

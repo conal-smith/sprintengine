@@ -1066,6 +1066,7 @@ test('/compact at the start of a message compacts the thread natively instead of
   await compacting
   expect(f.events.map((event) => [event.type, event.payload?.turnId, event.payload?.trigger])).toEqual([
     ['turn_started', 'turn', undefined],
+    ['context_compacting', 'turn', undefined],
     ['context_compacted', 'turn', 'manual'],
     ['turn_completed', 'turn', undefined],
   ])

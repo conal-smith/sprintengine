@@ -164,6 +164,7 @@ const BROADCAST_EVENT_TYPES: ReadonlySet<ConversationEventType> = new Set<Conver
   'approval_resolved',
   'usage_updated',
   'context_compacted',
+  'context_compacting',
   'command_output',
   'turn_completed',
   'turn_failed',
