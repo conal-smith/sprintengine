@@ -6,8 +6,9 @@ import type { GitFileHunksResult, GitHunkRef, GitHunkScope } from '../../shared/
 import type { Changelist } from '../../shared/git/changelists'
 import type {
   ElectronApi,
-  GitHubCloneInput,
-  GitHubCloneResult,
+  CloneProgress,
+  RepositoryCloneInput,
+  RepositoryCloneResult,
   GitHubRepoListResult,
   GitHubTokenStatus,
   GitBranchSnapshot,
@@ -225,7 +226,17 @@ export const gitApi = {
   setGitHubToken: (token: string): Promise<GitHubTokenStatus> => ipcRenderer.invoke('github:set-token', token),
   clearGitHubToken: (): Promise<GitHubTokenStatus> => ipcRenderer.invoke('github:clear-token'),
   listGitHubRepos: (): Promise<GitHubRepoListResult> => ipcRenderer.invoke('github:list-repos'),
-  cloneGitHubRepo: (input: GitHubCloneInput): Promise<GitHubCloneResult> => ipcRenderer.invoke('github:clone', input),
+  cloneRepository: (input: RepositoryCloneInput): Promise<RepositoryCloneResult> =>
+    ipcRenderer.invoke('github:clone', input),
+  cancelRepositoryClone: (cloneId: string): Promise<void> => ipcRenderer.invoke('github:clone-cancel', cloneId),
+  // One channel for every clone, filtered on the id by the caller, as
+  // `git:changelists-changed` is one channel for every repository.
+  onRepositoryCloneProgress: (cb: (progress: CloneProgress) => void): (() => void) => {
+    const ch = 'github:clone-progress'
+    const handler = (_: IpcRendererEvent, progress: CloneProgress) => cb(progress)
+    ipcRenderer.on(ch, handler)
+    return () => ipcRenderer.removeListener(ch, handler)
+  },
 } satisfies Pick<
   ElectronApi,
   | 'watchGitCheckout'
@@ -291,5 +302,7 @@ export const gitApi = {
   | 'setGitHubToken'
   | 'clearGitHubToken'
   | 'listGitHubRepos'
-  | 'cloneGitHubRepo'
+  | 'cloneRepository'
+  | 'cancelRepositoryClone'
+  | 'onRepositoryCloneProgress'
 >

@@ -35,7 +35,7 @@ import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
 import { parseCardAction, type CardAction } from '../../shared/hosted-card-feed'
 import { normalizeMcpServerConfig } from '../../shared/mcp/normalize-server'
 import { detectCli } from '../cli-runtime-install'
-import { cloneGitHubRepo } from '../git-clone'
+import { cloneRepository } from '../git-clone'
 import { githubRepoFromRemote } from '../git-github'
 import { runGit } from '../git-utils'
 import { isAppSender } from './ipc-sender'
@@ -89,7 +89,7 @@ export function registerCardsIpc(
     },
     // The token never crosses IPC: it is resolved on this side, exactly as
     // `github-repos-ipc.ts` does for the clone picker.
-    cloneRepo: async (input) => cloneGitHubRepo({ ...input, token: await services.githubTokenStore.resolveToken() }),
+    cloneRepo: async (input) => cloneRepository(input, { token: await services.githubTokenStore.resolveToken() }),
     pathExists: (path) => existsSync(path),
     // Strictly `origin`, and strictly GitHub. `getGitHubRepoRef` would answer
     // from any remote it can parse, which is the wrong question here: a

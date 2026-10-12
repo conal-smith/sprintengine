@@ -84,7 +84,12 @@ import { cliPermissionModeLaunch, cliPermissionModePatch, resolveCliPermissionPr
 import { BACKLOG_SKILL_ID, backlogHandoffPrompt } from '../../utils/backlogHandoff'
 import { recordBacklogAgentHandoff } from '../../utils/backlogAgentHandoff'
 import { setBacklogHandoffHost, type BacklogHandoffRequest } from '../backlog/backlogHandoffHost'
-import type { CardRunResult, WorkspaceSkill } from '../../../../shared/electron-api'
+import type {
+  CardRunResult,
+  RepositoryCloneInput,
+  RepositoryCloneResult,
+  WorkspaceSkill,
+} from '../../../../shared/electron-api'
 import type { HostedCard } from '../../../../shared/hosted-card-feed'
 import type { ConversationSessionSummary } from '../../../../shared/conversation-runtime'
 import type { CardLaunchChoice } from './globalSurface/extensions/home/CardGoPicker'
@@ -3581,38 +3586,29 @@ export default function WorkspaceManager() {
   // unmounted panel and the project was never adopted. The host outlives the
   // popover, so success always lands — the panel is reopened on that project
   // if it was closed meanwhile — and the toast names what arrived.
-  const cloneNewChatProject = useCallback(
-    async (input: {
-      url: string
-      parentDir: string
-      folderName: string
-    }): Promise<{ ok: true; path: string } | { ok: false; message: string }> => {
-      const cloned = await window.api
-        .cloneGitHubRepo(input)
-        .catch((caught: unknown): { ok: false; message: string } => ({
-          ok: false,
-          message: caught instanceof Error ? caught.message : 'Could not clone the repository.',
-        }))
-      if (!cloned.ok) return cloned
-      setNewChatPanelState((prev) =>
-        prev
-          ? { ...prev, folderPath: cloned.path, folderLabel: newChatFolderLabel(cloned.path) }
-          : {
-              folderPath: cloned.path,
-              folderLabel: newChatFolderLabel(cloned.path),
-              connector: null,
-              forcedSelection: null,
-            },
-      )
-      showToast({
-        tone: 'good',
-        title: `Cloned ${newChatFolderLabel(cloned.path)}`,
-        description: `${cloned.path} — selected in New chat.`,
-      })
-      return { ok: true, path: cloned.path }
-    },
-    [],
-  )
+  const cloneNewChatProject = useCallback(async (input: RepositoryCloneInput): Promise<RepositoryCloneResult> => {
+    const cloned = await window.api.cloneRepository(input).catch((caught: unknown): RepositoryCloneResult => ({
+      ok: false,
+      message: caught instanceof Error ? caught.message : 'Could not clone the repository.',
+    }))
+    if (!cloned.ok) return cloned
+    setNewChatPanelState((prev) =>
+      prev
+        ? { ...prev, folderPath: cloned.path, folderLabel: newChatFolderLabel(cloned.path) }
+        : {
+            folderPath: cloned.path,
+            folderLabel: newChatFolderLabel(cloned.path),
+            connector: null,
+            forcedSelection: null,
+          },
+    )
+    showToast({
+      tone: 'good',
+      title: `Cloned ${newChatFolderLabel(cloned.path)}`,
+      description: `${cloned.path} — selected in New chat.`,
+    })
+    return { ok: true, path: cloned.path }
+  }, [])
   // Switching workspaces parks the pre-creation panel: the user has moved on,
   // and the panel would otherwise sit over the newly revealed workspace. The
   // draft stays parked — Forward, or the next New chat, resumes it. A window
