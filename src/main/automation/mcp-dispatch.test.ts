@@ -240,3 +240,82 @@ test('a call queued behind a slow one does not run once its socket has closed', 
     rmSync(dirname(socketPath), { recursive: true, force: true })
   }
 })
+
+function toolDispatcher(handler: McpToolRegistration['handler'], inputSchema: Record<string, unknown>) {
+  const tool: McpToolRegistration = { name: 'backlog.list', description: 'List the backlog.', inputSchema, handler }
+  return createMcpDispatcher({ serverName: 'test', serverVersion: '0.0.0-test', resolveTools: () => [tool] })
+}
+
+const STRICT_SCHEMA = {
+  type: 'object',
+  properties: { projectRoot: { type: 'string' }, limit: { type: 'number' } },
+  additionalProperties: false,
+}
+
+test('a misspelled argument is refused by name, not dropped while the call runs on its default', async () => {
+  const calls: Record<string, unknown>[] = []
+  const outcome = await toolDispatcher(async (args) => {
+    calls.push(args)
+    return { content: [{ type: 'text', text: 'listed' }] }
+  }, STRICT_SCHEMA).dispatch(
+    'tools/call',
+    { name: 'backlog.list', arguments: { projectroot: '/Users/dev/app' } },
+    freshContext(),
+  )
+  assert.equal(calls.length, 0, 'the handler never ran')
+  assert.deepEqual(outcome, {
+    kind: 'result',
+    value: {
+      content: [
+        {
+          type: 'text',
+          text: 'backlog.list was not run: it does not take the argument "projectroot". It takes "projectRoot", "limit".',
+        },
+      ],
+      isError: true,
+    },
+  })
+})
+
+test('a call with only declared arguments runs as before', async () => {
+  const calls: Record<string, unknown>[] = []
+  const outcome = await toolDispatcher(async (args) => {
+    calls.push(args)
+    return { content: [{ type: 'text', text: 'listed' }] }
+  }, STRICT_SCHEMA).dispatch(
+    'tools/call',
+    { name: 'backlog.list', arguments: { projectRoot: '/Users/dev/app' } },
+    freshContext(),
+  )
+  assert.deepEqual(calls, [{ projectRoot: '/Users/dev/app' }])
+  assert.deepEqual(outcome, { kind: 'result', value: { content: [{ type: 'text', text: 'listed' }] } })
+})
+
+test('a tool whose schema leaves extra arguments open still takes them', async () => {
+  for (const schema of [
+    { type: 'object', properties: { projectRoot: { type: 'string' } } },
+    { type: 'object', properties: { projectRoot: { type: 'string' } }, additionalProperties: true },
+  ]) {
+    const calls: Record<string, unknown>[] = []
+    await toolDispatcher(async (args) => {
+      calls.push(args)
+      return { content: [] }
+    }, schema).dispatch('tools/call', { name: 'backlog.list', arguments: { extra: 1 } }, freshContext())
+    assert.deepEqual(calls, [{ extra: 1 }])
+  }
+})
+
+test("every tool of the desktop's own that takes no other arguments names the ones it does take", async () => {
+  const { desktopToolParts } = await import('./gateway-tools-parity.test-helper')
+  const parts = desktopToolParts()
+  const tools = [...parts.core, ...parts.browser, ...parts.canvas, ...parts.editor, ...parts.tour, ...parts.automation]
+  assert.ok(tools.length > 40)
+  for (const tool of tools) {
+    if (tool.inputSchema.additionalProperties !== false) continue
+    const properties = tool.inputSchema.properties
+    assert.ok(
+      properties === undefined || (typeof properties === 'object' && properties !== null),
+      `${tool.name} declares its properties as an object`,
+    )
+  }
+})
