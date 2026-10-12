@@ -16,6 +16,7 @@ const navigation = (count: number, current: number): TurnNavigation => ({
   jump: vi.fn(),
   step: vi.fn(),
   reply: (index) => `Reply ${index}`,
+  wheel: vi.fn(),
 })
 
 test('ticks spread evenly over the strip and the pointer picks the nearest', () => {

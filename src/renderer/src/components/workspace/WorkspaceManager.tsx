@@ -5001,6 +5001,7 @@ export default function WorkspaceManager() {
               captionReserve={paneOwnsCaptionCorner || !captionButtons ? 0 : windowCaptionReserve(nativeMacChrome)}
               isFullScreen={windowState.isFullScreen}
               sidebarCollapsed={narrowViewport || sidebarCollapsed}
+              besideRail={!narrowViewport}
               onToggleSidebar={() => runCommand('workspace.sidebar.toggle')}
               onOpenSearch={() => runCommand('commandPalette.open')}
               onNewChat={() => openNewChatPanel()}

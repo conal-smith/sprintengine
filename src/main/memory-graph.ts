@@ -85,7 +85,6 @@ const TEXT_EXTENSIONS = new Set([
   '.yaml',
   '.yml',
 ])
-const MARKDOWN_LINK_RE = /!?\[[^\]]*]\(([^)]+)\)/g
 // [[note]] | [[note|alias]] | [[note#section]] | [[brand/logo-assets]]
 // Negative lookbehind on `!` so image embeds (`![[…]]`) are still skipped.
 const WIKILINK_RE = /(?<!!)\[\[([^\]\n]+?)\]\]/g
@@ -213,10 +212,33 @@ export async function resolveMemoryRoot(
   return { ok: true, rootPath, relativeRoot }
 }
 
-function parseMarkdownLinks(content: string): string[] {
+/**
+ * The destinations of `[label](href)` and `![alt](src)` links, as
+ * `/!?\[[^\]]*]\(([^)]+)\)/g` would find them, in one forward pass.
+ *
+ * The regex is quadratic on text it cannot match: from every `[` it reads on
+ * to the next `]`, and from every `](` on to the next `)`, so a file with many
+ * of one and none of the other (a pasted terminal log is all `\x1b[32m`) is
+ * read once per bracket. An 850 KB note took 15 s, in the main process. Here
+ * a label that fails skips past its `]`, since any `[` nested in it closes on
+ * the same `]` and fails the same way, and the scan stops once no `]` or `)`
+ * is left for a later link to close on.
+ */
+export function parseMarkdownLinks(content: string): string[] {
   const links: string[] = []
-  for (const match of content.matchAll(MARKDOWN_LINK_RE)) {
-    const raw = match[1]?.trim()
+  let cursor = 0
+  while (cursor < content.length) {
+    const labelStart = content.indexOf('[', cursor)
+    if (labelStart === -1) break
+    const labelEnd = content.indexOf(']', labelStart + 1)
+    if (labelEnd === -1) break
+    cursor = labelEnd + 1
+    if (content[labelEnd + 1] !== '(') continue
+    const close = content.indexOf(')', labelEnd + 2)
+    if (close === -1) break
+    if (close === labelEnd + 2) continue
+    cursor = close + 1
+    const raw = content.slice(labelEnd + 2, close).trim()
     if (!raw) continue
     const href = raw.split(/\s+["'][^"']*["']\s*$/u)[0]?.trim() ?? raw
     links.push(href)

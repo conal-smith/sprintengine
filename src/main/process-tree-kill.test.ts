@@ -81,3 +81,26 @@ test('a detached POSIX child is ended with its whole process group', () => {
   })
   assert.deepEqual(fallback.signals, ['SIGKILL'], 'a group that is already gone falls back to the child')
 })
+
+test('on Windows a child Node has already seen exit is not taskkilled, since its pid may be reused', () => {
+  for (const ended of [
+    { exitCode: 0, signalCode: null },
+    { exitCode: null, signalCode: 'SIGTERM' as const },
+  ]) {
+    const { child, signals } = fakeChild(4242)
+    const killed: number[] = []
+    killProcessTree({ ...child, ...ended }, { platform: 'win32', runTaskkill: (pid) => killed.push(pid) })
+    assert.deepEqual(killed, [], 'no taskkill on a pid that may now be another process')
+    assert.deepEqual(signals, [], 'nothing left to kill')
+  }
+})
+
+test('on Windows a child still running is taskkilled as before', () => {
+  const { child } = fakeChild(4242)
+  const killed: number[] = []
+  killProcessTree(
+    { ...child, exitCode: null, signalCode: null },
+    { platform: 'win32', runTaskkill: (pid) => killed.push(pid) },
+  )
+  assert.deepEqual(killed, [4242])
+})

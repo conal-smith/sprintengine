@@ -179,3 +179,18 @@ test('a row that has not changed is not read again', () => {
   const row = user('u1', 'cached text')
   expect(chatFindSegments(row)).toBe(chatFindSegments(row))
 })
+
+test('a link is read as its innermost bracket, as the page draws it', () => {
+  expect(markdownSearchText('[a [b](https://example.com/b) c')).toBe('[a b c')
+  expect(markdownSearchText('[ref][1] and [a [ref][2]')).toBe('ref and [a ref')
+})
+
+test('a long line of brackets that never close is read in one pass', () => {
+  // A pasted test log: every colour code opens a bracket and none closes.
+  const log = '\x1b[32m PASS \x1b[39m src/a.test.ts '.repeat(12_000)
+  const unclosed = '[x](https://example.com/'.repeat(12_000)
+  const started = performance.now()
+  expect(markdownSearchText(log)).toBe(log)
+  expect(markdownSearchText(unclosed)).toBe(unclosed)
+  expect(performance.now() - started).toBeLessThan(1_000)
+})
