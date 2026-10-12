@@ -2418,8 +2418,11 @@ export class ConversationRuntime {
         input: event.payload?.input as ConversationJsonValue | undefined,
         status: 'running',
       }).title
+    // Summarising the conversation is the step, until the summary lands.
+    else if (event.type === 'context_compacting') session.currentToolTitle = 'Compacting'
     // Streamed output (`partial`) arrives while the tool is still running.
     else if (
+      event.type === 'context_compacted' ||
       (ownStep && event.type === 'tool_output' && event.payload?.partial !== true) ||
       (event.type === 'turn_completed' && event.payload?.steered !== true) ||
       event.type === 'turn_failed'

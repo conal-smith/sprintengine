@@ -375,15 +375,18 @@ export function deriveConversationTimelineRows(
           ? `${subagentLaneLabel(runningLanes[0])} working…`
           : undefined
     const retry = latestAssistant?.status === 'streaming' ? latestAssistant.retry : undefined
+    const compacting = latestAssistant?.status === 'streaming' && latestAssistant.compacting === true
     const label = retry
       ? retryLabel(retry)
-      : stage === 'tool' && laneLabel
-        ? laneLabel
-        : stage === 'tool' && runningTool
-          ? `${toolVerb(runningTool.name, true)}${toolObject(runningTool) ? ` ${toolObject(runningTool)}` : ''}…`
-          : stage === 'responding'
-            ? 'Replying…'
-            : 'Thinking…'
+      : compacting
+        ? 'Compacting…'
+        : stage === 'tool' && laneLabel
+          ? laneLabel
+          : stage === 'tool' && runningTool
+            ? `${toolVerb(runningTool.name, true)}${toolObject(runningTool) ? ` ${toolObject(runningTool)}` : ''}…`
+            : stage === 'responding'
+              ? 'Replying…'
+              : 'Thinking…'
     const turnTools =
       latestAssistant && stage !== 'responding' && !retry
         ? entries.filter(

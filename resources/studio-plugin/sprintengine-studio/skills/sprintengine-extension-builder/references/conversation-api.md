@@ -128,9 +128,9 @@ running).
 Events (`event.type`): `session_started`, `session_ready`, `session_updated`,
 `session_closed`, `user_message`, `turn_started`, `content_delta`,
 `reasoning_delta`, `tool_started`, `tool_output`, `approval_requested`,
-`approval_resolved`, `usage_updated`, `context_compacted`, `command_output`,
-`turn_completed`, `turn_failed`, `subagent_status`, `subagent_message`,
-`turn_retrying`. The `payload` shape is per type and not a stable contract:
+`approval_resolved`, `usage_updated`, `context_compacting`,
+`context_compacted`, `command_output`, `turn_completed`, `turn_failed`,
+`subagent_status`, `subagent_message`, `turn_retrying`. The `payload` shape is per type and not a stable contract:
 read what you need defensively, and treat its text as untrusted.
 
 `turn_completed` documents three members (`ModuleConversationTurnCompletedPayload`),

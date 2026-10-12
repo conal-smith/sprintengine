@@ -24,6 +24,7 @@ export type ModuleConversationEventType =
   | 'approval_resolved'
   | 'usage_updated'
   | 'context_compacted'
+  | 'context_compacting'
   | 'command_output'
   // The turn ended. Its payload carries `ModuleConversationTurnCompletedPayload`:
   // `text` (the agent's last message) and `usage` (what the turn spent) where

@@ -407,6 +407,47 @@ test('a retry notice is the working line until the turn says anything else, in b
   assert.equal(assistant?.kind === 'assistant' ? assistant.retry : 'missing', undefined)
 })
 
+test('a compaction is the working line until the summary lands or the turn goes on, in both folds', () => {
+  const working = (entries: ReturnType<typeof projectConversation>['entries']) =>
+    deriveConversationTimelineRows(entries, true).find((row) => row.kind === 'working')
+  const events = [
+    event('user_message', 1, { turnId: 'a', text: '/compact' }),
+    event('turn_started', 2, { turnId: 'a' }),
+    event('context_compacting', 3, { turnId: 'a' }),
+    // A usage report can land mid-summary; the summary is still the step.
+    event('usage_updated', 4, { turnId: 'a', contextUsed: 180_000 }),
+    event('context_compacted', 5, { turnId: 'a', trigger: 'manual', postTokens: 12_000 }),
+    // On its own when the window filled, then the reply carries on.
+    event('context_compacting', 6, { turnId: 'a' }),
+    event('content_delta', 7, { turnId: 'a', text: 'Hello' }),
+  ]
+  const labels: (string | undefined)[] = []
+  let state = createConversationProjectionState()
+  const prefix: ConversationEvent[] = []
+  for (const item of events) {
+    state = applyEvent(state, item)
+    prefix.push(item)
+    assert.deepEqual(state.projection, projectConversation(prefix))
+    const row = working(state.projection.entries)
+    labels.push(row?.kind === 'working' ? row.label : undefined)
+  }
+  assert.deepEqual(labels.slice(1), [
+    'Thinking…',
+    'Compacting…',
+    'Compacting…',
+    'Thinking…',
+    'Compacting…',
+    'Replying…',
+  ])
+  const failed = projectConversation([
+    event('turn_started', 1, { turnId: 'a' }),
+    event('context_compacting', 2, { turnId: 'a' }),
+    event('turn_failed', 3, { reason: 'interrupted' }),
+  ])
+  const assistant = failed.entries.find((entry) => entry.kind === 'assistant')
+  assert.equal(assistant?.kind === 'assistant' ? assistant.compacting : 'missing', undefined)
+})
+
 test('a turn that gives up after retrying shows the failure, not the retry', () => {
   const events = [
     event('turn_started', 1, { turnId: 'a' }),

@@ -2224,6 +2224,22 @@ test('a Claude compact boundary marks the transcript with what triggered it and 
   assert.deepEqual(mapSdkMessage(state, { type: 'system', subtype: 'status', session_id: 'native' }), [])
 })
 
+test('a Claude compacting status says so once per compaction, however often the CLI repeats it', () => {
+  const state = mapperState()
+  const status = (value: string | null) =>
+    mapSdkMessage(state, { type: 'system', subtype: 'status', status: value, session_id: 'native' })
+  const [compacting] = status('compacting')
+  assert.equal(compacting?.type, 'context_compacting')
+  assert.deepEqual(compacting?.payload, { turnId: 'turn_1' })
+  // The CLI sends it again every half minute while it summarises.
+  assert.deepEqual(status('compacting'), [])
+  mapSdkMessage(state, { type: 'system', subtype: 'compact_boundary', session_id: 'native' })
+  // The next compaction is its own.
+  assert.equal(status('compacting')[0]?.type, 'context_compacting')
+  assert.deepEqual(status(null), [])
+  assert.equal(status('compacting')[0]?.type, 'context_compacting')
+})
+
 test('a /compact reports the window as the summary left it, not as full as the last request was', () => {
   const state = mapperState()
   mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
