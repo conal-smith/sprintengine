@@ -13,6 +13,7 @@ import { loadThirdPartyRendererModules } from './modules'
 import { launchSettingsReady } from './store/workspaceStore'
 import { reportBuildStamp } from './utils/buildStamp'
 import { isBenignRendererError } from './utils/rendererErrors'
+import { bindAltClickLinks } from './utils/altClickLinks'
 import { bindElectronClipboardPasteBridge } from './utils/clipboardPasteBridge'
 import { bindFocusSourceAttribute } from './utils/focusSource'
 import { logPerfEvent, perfDiagnosticsEnabled } from './utils/perfDiagnostics'
@@ -41,6 +42,11 @@ reportBuildStamp()
 
 // An Electron paste quirk's workaround; in a browser it would stop a paste and then fail.
 if (import.meta.env.STUDIO_CLIENT !== 'web') bindElectronClipboardPasteBridge()
+
+// Chromium saves an Option-clicked link instead of opening it; the desktop app
+// opens it in the browser like any other click. A browser tab keeps its own
+// convention for the chord.
+if (import.meta.env.STUDIO_CLIENT !== 'web') bindAltClickLinks()
 
 // The modal repaint pause reports through `logPerfEvent` like everything else,
 // but the store itself imports nothing: it is pulled into the xterm output
