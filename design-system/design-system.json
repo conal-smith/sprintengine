@@ -138,6 +138,8 @@
       "glyphs/tour.svg",
       "glyphs/unified.svg",
       "glyphs/view-source.svg",
+      "glyphs/enlarge.svg",
+      "glyphs/minus.svg",
       "glyphs/worktree.svg",
       "glyphs/wrap-lines.svg",
       "glyphs/write-commit-message.svg",

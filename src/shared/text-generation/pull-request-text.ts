@@ -6,14 +6,21 @@
  * shown, editable, before anything is sent: a pull request is outward-facing.
  *
  * The input is the branch's commits and its diff against the base, cut to
- * size, the repository's own pull request template when it has one, and
- * whether its commits follow Conventional Commits, so the title follows the
- * convention the repository already keeps.
+ * size, the repository's own pull request template when it has one, whether
+ * its commits follow Conventional Commits, and the writing style the person
+ * chose (`writing-style.ts`): by default the title follows the convention the
+ * repository already keeps.
  *
  * Pure: no I/O. The main process gathers the inputs; tests drive the rest.
  */
 
 import { limitSection, namesSomething } from './chat-title'
+import {
+  DEFAULT_WRITING_STYLE,
+  writingStyleGuideSection,
+  writingStyleRule,
+  type TextGenerationWritingStyle,
+} from './writing-style'
 
 /** How much of each input the model sees. The commits and the summary say what changed; the patch says how. */
 export const MAX_PULL_REQUEST_COMMITS_CHARS = 12_000
@@ -45,45 +52,38 @@ export type PullRequestTextInput = {
   patch: string
   /** The repository's pull request template, when it has one. */
   template: string | null
-  /** The repository's commits follow Conventional Commits, so the title must too. */
+  /** The repository's commits follow Conventional Commits, so a title matching the repository must too. */
   conventionalCommits: boolean
+  /** The person's writing style. Absent is the default: match the repository. */
+  style?: TextGenerationWritingStyle
 }
 
 export type PullRequestText = { title: string; body: string }
 
-const CONVENTIONAL_SUBJECT = /^(?:feat|fix|perf|refactor|docs|style|test|build|ci|chore|revert)(?:\([^)]+\))?!?: \S/
-
 /**
- * Whether a repository's history follows Conventional Commits: most of its
- * recent subjects do (merge commits aside). Ten subjects at least, so a young
- * repository is not held to a convention two commits happen to match.
+ * The full prompt. Instructions first, so a commit message carrying
+ * instructions reads as quoted material; the person's style guide, when they
+ * wrote one, straight after them and fenced off from them.
  */
-export function followsConventionalCommits(subjects: readonly string[]): boolean {
-  const own = subjects.map((subject) => subject.trim()).filter((subject) => subject && !/^Merge\b/.test(subject))
-  if (own.length < 10) return false
-  const matching = own.filter((subject) => CONVENTIONAL_SUBJECT.test(subject)).length
-  return matching / own.length >= 0.7
-}
-
-/** The full prompt. Instructions first, so a commit message carrying instructions reads as quoted material. */
 export function buildPullRequestTextPrompt(input: PullRequestTextInput): string {
+  const style = input.style ?? DEFAULT_WRITING_STYLE
   const rules = [
     `Write the title and description of a pull request that proposes merging the branch "${input.head}" into "${input.base}".`,
     'Return JSON with exactly two keys: title and body.',
     '',
     'Rules:',
     `- The title is one line, under ${MAX_PULL_REQUEST_TITLE_LENGTH} characters, and says what the change does.`,
-    input.conventionalCommits
-      ? '- This repository uses Conventional Commits: the title must be one, `type(scope): description`, with a type from feat, fix, perf, refactor, docs, style, test, build, ci, chore or revert, and no trailing full stop.'
-      : '- Write the title in the style of the commit subjects below.',
+    writingStyleRule(style, input.conventionalCommits, { line: 'title', examples: 'commit subjects below' }),
     input.template
       ? '- The body follows the repository template below: keep its headings and their order, fill each one in, and leave out its HTML comments and any checkbox you cannot honestly tick.'
       : '- The body says what changed and why, in short paragraphs or a list, then how it was tested if the commits say.',
     '- Describe only what the commits and the diff show. Do not invent tests, issues or results.',
     '- Write in plain markdown. No preamble, and no sign-off.',
   ]
+  const guide = writingStyleGuideSection(style)
   const sections = [
     rules.join('\n'),
+    ...(guide ? [guide] : []),
     `Commits:\n${limitSection(input.commits.trim() || '(none)', MAX_PULL_REQUEST_COMMITS_CHARS)}`,
     `Files changed:\n${limitSection(input.diffStat.trim() || '(none)', MAX_PULL_REQUEST_DIFF_STAT_CHARS)}`,
     `Diff:\n${limitSection(input.patch.trim() || '(none)', MAX_PULL_REQUEST_PATCH_CHARS)}`,

@@ -104,7 +104,7 @@ const PATH_EXEMPTIONS = [
     // their vendors publish, for the open-in-editor control.
     path: 'src/renderer/src/components/brand/EditorMarks.tsx',
     rules: ['no-inline-hex'],
-    max: { 'no-inline-hex': 14 },
+    max: { 'no-inline-hex': 33 },
   },
 ]
 

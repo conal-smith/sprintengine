@@ -74,17 +74,29 @@ export type FolderOpenIpcDependencies = {
 // The bundle names cover every spelling the vendors ship: the Community
 // editions install as "IntelliJ IDEA CE.app" / "PyCharm CE.app", and JetBrains
 // Toolbox writes "IntelliJ IDEA Ultimate.app". The bundle ids are what Launch
-// Services indexes the same app under whatever it was renamed to on disk. The
+// Services indexes the same app under whatever it was renamed to on disk; an
+// editor whose id we cannot vouch for lists none and is found by name alone. The
 // CLI names are the shims each editor installs (or JetBrains Toolbox writes to
-// its scripts folder, `wellKnownCliDirs`).
+// its scripts folder, `wellKnownCliDirs`). `cliArgs` go before the folder for a
+// shim that needs a subcommand to open the editor rather than its other tool.
 const EDITOR_LAUNCHERS: Record<
   Exclude<FolderOpenTargetId, 'finder'>,
-  { cliNames: string[]; macAppNames: string[]; macBundleIds: string[] }
+  { cliNames: string[]; cliArgs?: string[]; macAppNames: string[]; macBundleIds: string[] }
 > = {
   vscode: {
     cliNames: ['code'],
     macAppNames: ['Visual Studio Code.app'],
     macBundleIds: ['com.microsoft.VSCode'],
+  },
+  'vscode-insiders': {
+    cliNames: ['code-insiders'],
+    macAppNames: ['Visual Studio Code - Insiders.app'],
+    macBundleIds: ['com.microsoft.VSCodeInsiders'],
+  },
+  vscodium: {
+    cliNames: ['codium'],
+    macAppNames: ['VSCodium.app'],
+    macBundleIds: ['com.vscodium'],
   },
   cursor: {
     cliNames: ['cursor'],
@@ -100,6 +112,27 @@ const EDITOR_LAUNCHERS: Record<
     cliNames: ['zed'],
     macAppNames: ['Zed.app', 'Zed Preview.app'],
     macBundleIds: ['dev.zed.Zed', 'dev.zed.Zed-Preview'],
+  },
+  trae: {
+    cliNames: ['trae'],
+    macAppNames: ['Trae.app'],
+    macBundleIds: [],
+  },
+  // Kiro's `kiro` command fronts more than the editor, so the editor is asked
+  // for by name.
+  kiro: {
+    cliNames: ['kiro'],
+    cliArgs: ['ide'],
+    macAppNames: ['Kiro.app'],
+    macBundleIds: [],
+  },
+  // The IDE, not its siblings: `agy` is the separate command-line agent, and
+  // "Antigravity.app" is the hub that launches agents, so neither one means
+  // the editor is installed.
+  antigravity: {
+    cliNames: ['antigravity-ide', 'agy-ide'],
+    macAppNames: ['Antigravity IDE.app'],
+    macBundleIds: [],
   },
   sublime: {
     cliNames: ['subl'],
@@ -131,18 +164,59 @@ const EDITOR_LAUNCHERS: Record<
     macAppNames: ['GoLand.app'],
     macBundleIds: ['com.jetbrains.goland'],
   },
+  clion: {
+    cliNames: ['clion'],
+    macAppNames: ['CLion.app'],
+    macBundleIds: ['com.jetbrains.CLion'],
+  },
+  phpstorm: {
+    cliNames: ['phpstorm'],
+    macAppNames: ['PhpStorm.app'],
+    macBundleIds: ['com.jetbrains.PhpStorm'],
+  },
+  rider: {
+    cliNames: ['rider'],
+    macAppNames: ['Rider.app', 'JetBrains Rider.app'],
+    macBundleIds: ['com.jetbrains.rider'],
+  },
+  rubymine: {
+    cliNames: ['rubymine'],
+    macAppNames: ['RubyMine.app'],
+    macBundleIds: ['com.jetbrains.rubymine'],
+  },
+  rustrover: {
+    cliNames: ['rustrover'],
+    macAppNames: ['RustRover.app'],
+    macBundleIds: ['com.jetbrains.rustrover'],
+  },
+  datagrip: {
+    cliNames: ['datagrip'],
+    macAppNames: ['DataGrip.app'],
+    macBundleIds: ['com.jetbrains.datagrip'],
+  },
 }
 
 const TARGET_NAMES: Record<FolderOpenTargetId, string> = {
   vscode: 'VS Code',
+  'vscode-insiders': 'VS Code Insiders',
+  vscodium: 'VSCodium',
   cursor: 'Cursor',
   windsurf: 'Windsurf',
+  trae: 'Trae',
+  kiro: 'Kiro',
+  antigravity: 'Antigravity',
   zed: 'Zed',
   sublime: 'Sublime Text',
   intellij: 'IntelliJ IDEA',
   webstorm: 'WebStorm',
   pycharm: 'PyCharm',
   goland: 'GoLand',
+  clion: 'CLion',
+  phpstorm: 'PhpStorm',
+  rider: 'Rider',
+  rubymine: 'RubyMine',
+  rustrover: 'RustRover',
+  datagrip: 'DataGrip',
   finder: 'the file manager',
 }
 
@@ -347,7 +421,7 @@ export function resolveFolderOpenLauncher(target: FolderOpenTargetId, probe: Lau
   const spec = EDITOR_LAUNCHERS[target]
   for (const cliName of spec.cliNames) {
     const resolved = findOnPath(cliName, probe)
-    if (resolved) return commandLauncher(resolved, [], probe)
+    if (resolved) return commandLauncher(resolved, spec.cliArgs ?? [], probe)
   }
 
   const appBundle = findMacApp(spec.macAppNames, probe)

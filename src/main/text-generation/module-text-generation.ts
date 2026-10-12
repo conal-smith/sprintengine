@@ -27,7 +27,7 @@ import {
   supportsTextGeneration,
   textGenerationEngineWithDefaults,
   type TextGenerationEngine,
-  type TextGenerationSettings,
+  type TextGenerationEngineSettings,
 } from '../../shared/text-generation/contract'
 import { extractJson } from '../companion-agent-service'
 import type { HeadlessTextRequest, HeadlessTextResult } from './text-generation-service'
@@ -40,7 +40,9 @@ export const MODULE_TEXT_DEFAULT_CLI = 'claude-code'
  * Studio's text generation, when it is one with a headless backend, else
  * Claude Code; each with its backend's cheap defaults filled in.
  */
-export function moduleTextGenerationEngine(settings: TextGenerationSettings | null | undefined): TextGenerationEngine {
+export function moduleTextGenerationEngine(
+  settings: TextGenerationEngineSettings | null | undefined,
+): TextGenerationEngine {
   const chosen = settings?.engine
   return textGenerationEngineWithDefaults(
     chosen && supportsTextGeneration(chosen.cli) ? chosen : { cli: MODULE_TEXT_DEFAULT_CLI, model: '' },
@@ -73,7 +75,7 @@ export type ModuleTextGenerationDeps = {
   /** The person's CLI command overrides, read per call. */
   getCliRuntimes?: () => Record<string, { command?: string; hostId?: ExecutionHostId } | undefined> | undefined
   /** The person's text-generation setting (Settings), read per call; absent, none chosen. */
-  getTextGenerationSettings?: () => TextGenerationSettings | null | undefined
+  getTextGenerationSettings?: () => TextGenerationEngineSettings | null | undefined
   now?: () => number
 }
 

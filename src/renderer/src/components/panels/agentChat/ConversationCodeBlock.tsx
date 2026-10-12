@@ -157,5 +157,15 @@ export function ConversationCodeBlock(props: CodeBlockProps) {
 // its diagram once the block is complete (`conversationDiagram.tsx`).
 export function ConversationReplyCodeBlock(props: CodeBlockProps) {
   const diagram = useDiagramDrawing(props.code, props.language, props.streaming)
-  return <CodeBlock {...props} {...diagram} onPasteInTerminal={usePasteInTerminal()} />
+  // The diagram's action joins the caller's rather than replacing them.
+  const actions =
+    props.actions && diagram.actions ? (
+      <>
+        {props.actions}
+        {diagram.actions}
+      </>
+    ) : (
+      (props.actions ?? diagram.actions)
+    )
+  return <CodeBlock {...props} {...diagram} actions={actions} onPasteInTerminal={usePasteInTerminal()} />
 }

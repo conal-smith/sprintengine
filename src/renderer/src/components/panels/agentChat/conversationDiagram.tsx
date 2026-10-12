@@ -8,6 +8,7 @@ import {
   type DiagramResult,
 } from '../../../lib/diagram/mermaidDiagram'
 import type { CodeBlockNoteAction } from '../../ui/CodeBlock'
+import { OpenDiagramButton } from './diagramViewer'
 
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd'])
 
@@ -33,13 +34,14 @@ function diagramNote(error: string): string {
  *
  * Drawn for the window's current appearance; after a switch the previous
  * drawing stays up until the new one is ready, so the block never drops back
- * to its source in between.
+ * to its source in between. A drawn diagram also gets an Open diagram action,
+ * which shows the same drawing larger (`diagramViewer.tsx`).
  */
 export function useDiagramDrawing(
   code: string,
   language: string | undefined,
   streaming: boolean | undefined,
-): { drawing?: ReactNode; note?: string; noteAction?: CodeBlockNoteAction } {
+): { drawing?: ReactNode; actions?: ReactNode; note?: string; noteAction?: CodeBlockNoteAction } {
   const wanted = !streaming && isDiagramLanguage(language)
   // Only a diagram listens for the appearance: every other block in a reply
   // goes through this hook too.
@@ -69,7 +71,7 @@ export function useDiagramDrawing(
     const note = diagramNote(result.error)
     return result.retry ? { note, noteAction: { label: 'Retry', onClick: () => setAttempt((n) => n + 1) } } : { note }
   }
-  return { drawing: <DiagramSvg svg={result.svg} /> }
+  return { drawing: <DiagramSvg svg={result.svg} />, actions: <OpenDiagramButton svg={result.svg} /> }
 }
 
 // Each copy on screen gets ids of its own (`scopeDiagramIds`); a count rather

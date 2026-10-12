@@ -39,7 +39,7 @@ import {
   resolveTextGenerationEngine,
   type ChatTitleRequest,
   type TextGenerationResult,
-  type TextGenerationSettings,
+  type TextGenerationEngineSettings,
 } from '../../shared/text-generation/contract'
 import { deriveWorkspaceTitle } from '../../shared/workspace-title'
 
@@ -54,7 +54,7 @@ export type ChatTitlerDeps = {
   /** Name the workspace and lock the name, through the workspace bus. Whether it landed. */
   rename: (workspaceId: string, name: string) => boolean
   /** The person's model-written titles setting, as main's mirror holds it. */
-  settings: () => TextGenerationSettings
+  settings: () => TextGenerationEngineSettings
   /** The agent CLIs this Studio knows, in the order its pickers list them. */
   candidateClis: () => readonly string[]
   /**

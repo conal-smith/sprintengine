@@ -64,11 +64,22 @@ import { shortMachineName } from '../remote/machineRowModel'
 import { remoteProjectName } from './sidebar/folderGroups'
 import { MachineRowGlyph } from './sidebar/rowParts'
 import {
+  AntigravityMark,
+  CLionMark,
   CursorMark,
+  DataGripMark,
   GoLandMark,
   IntelliJMark,
+  KiroMark,
+  PhpStormMark,
   PyCharmMark,
+  RiderMark,
+  RubyMineMark,
+  RustRoverMark,
   SublimeTextMark,
+  TraeMark,
+  VSCodiumMark,
+  VsCodeInsidersMark,
   VsCodeMark,
   WebStormMark,
   WindsurfMark,
@@ -100,14 +111,25 @@ function FolderGlyph({ className }: { className?: string }) {
 // list fails to compile here instead of silently drawing the wrong mark.
 const TARGET_MARK: Record<FolderOpenTargetId, React.ReactNode> = {
   vscode: <VsCodeMark className="size-icon-sm" />,
+  'vscode-insiders': <VsCodeInsidersMark className="size-icon-sm" />,
+  vscodium: <VSCodiumMark className="size-icon-sm" />,
   cursor: <CursorMark className="size-icon-sm" />,
   windsurf: <WindsurfMark className="size-icon-sm" />,
+  trae: <TraeMark className="size-icon-sm" />,
+  kiro: <KiroMark className="size-icon-sm" />,
+  antigravity: <AntigravityMark className="size-icon-sm" />,
   zed: <ZedMark className="size-icon-sm" />,
   sublime: <SublimeTextMark className="size-icon-sm" />,
   intellij: <IntelliJMark className="size-icon-sm" />,
   webstorm: <WebStormMark className="size-icon-sm" />,
   pycharm: <PyCharmMark className="size-icon-sm" />,
   goland: <GoLandMark className="size-icon-sm" />,
+  clion: <CLionMark className="size-icon-sm" />,
+  phpstorm: <PhpStormMark className="size-icon-sm" />,
+  rider: <RiderMark className="size-icon-sm" />,
+  rubymine: <RubyMineMark className="size-icon-sm" />,
+  rustrover: <RustRoverMark className="size-icon-sm" />,
+  datagrip: <DataGripMark className="size-icon-sm" />,
   finder: <FolderGlyph className="size-icon-sm" />,
 }
 

@@ -54,14 +54,25 @@ export function offersFolderOpenMenu(available: readonly FolderOpenTargetId[]): 
 
 const EDITOR_LABELS: Record<Exclude<FolderOpenTargetId, 'finder'>, string> = {
   vscode: 'VS Code',
+  'vscode-insiders': 'VS Code Insiders',
+  vscodium: 'VSCodium',
   cursor: 'Cursor',
   windsurf: 'Windsurf',
+  trae: 'Trae',
+  kiro: 'Kiro',
+  antigravity: 'Antigravity',
   zed: 'Zed',
   sublime: 'Sublime Text',
   intellij: 'IntelliJ IDEA',
   webstorm: 'WebStorm',
   pycharm: 'PyCharm',
   goland: 'GoLand',
+  clion: 'CLion',
+  phpstorm: 'PhpStorm',
+  rider: 'Rider',
+  rubymine: 'RubyMine',
+  rustrover: 'RustRover',
+  datagrip: 'DataGrip',
 }
 
 /**

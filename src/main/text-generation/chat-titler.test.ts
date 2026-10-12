@@ -5,7 +5,7 @@ import type { ConversationEvent } from '../../shared/conversation-runtime'
 import type {
   ChatTitleRequest,
   TextGenerationResult,
-  TextGenerationSettings,
+  TextGenerationEngineSettings,
 } from '../../shared/text-generation/contract'
 import { deriveWorkspaceTitle } from '../../shared/workspace-title'
 import { createChatTitler } from './chat-titler'
@@ -23,7 +23,7 @@ type Workspace = { name: string; titleLocked?: boolean }
 function harness(
   options: {
     workspaces?: Record<string, Workspace>
-    settings?: TextGenerationSettings
+    settings?: TextGenerationEngineSettings
     installed?: Record<string, boolean>
     answer?: (request: ChatTitleRequest, call: number) => TextGenerationResult
   } = {},

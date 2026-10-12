@@ -321,3 +321,69 @@ test('a pull request draft is the same headless call, asking for a title and a b
   assert.match(runs[0].stdin ?? '', /Conventional Commits/)
   assert.match(runs[0].stdin ?? '', /Template:\n### What changed and why/)
 })
+
+function claudeAnswering(structured: unknown, runs: CommandRunInput[]): TextGenerationServiceDeps {
+  return {
+    detect: async (cli) => ({
+      cli,
+      binary: 'claude',
+      installed: true,
+      version: '1.0.0',
+      resolvedPath: '/bin/claude',
+      hostId: 'local',
+      error: null,
+    }),
+    env: () => ({ PATH: '/bin' }),
+    run: async (input) => {
+      runs.push(input)
+      return {
+        code: 0,
+        stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: structured }),
+        stderr: '',
+        timedOut: false,
+        spawnError: null,
+      }
+    },
+  }
+}
+
+const COMMIT_INPUT = {
+  branch: 'feature/marks',
+  diffStat: ' src/sidebar.ts | 2 +-',
+  patch: '-old\n+new',
+  recentSubjects: ['fix(sidebar): show the marks'],
+  conventionalCommits: false,
+  style: { mode: 'conventional' as const, instructions: '' },
+}
+
+test('a commit message is the same headless call, asking for a subject and a body', async () => {
+  const { generateCommitMessage } = await import('./text-generation-service')
+  const runs: CommandRunInput[] = []
+  const result = await generateCommitMessage(
+    { input: COMMIT_INPUT, engine: { cli: 'claude-code', model: 'claude-haiku-4-5' } },
+    claudeAnswering({ subject: 'Fix(sidebar): keep the marks.', body: 'They vanished on a switch.' }, runs),
+  )
+  assert.deepEqual(result.ok && result.value, {
+    subject: 'fix(sidebar): keep the marks',
+    body: 'They vanished on a switch.',
+    message: 'fix(sidebar): keep the marks\n\nThey vanished on a switch.',
+  })
+  const schema = runs[0].args[runs[0].args.indexOf('--json-schema') + 1]
+  assert.deepEqual(JSON.parse(schema).required, ['subject', 'body'])
+  assert.match(runs[0].stdin ?? '', /The subject must be a Conventional Commit/)
+  assert.match(runs[0].stdin ?? '', /Diff:\n-old\n\+new/)
+  assert.match(runs[0].cwd, /sprintengine-text-/, 'the CLI runs in a scratch directory, never the checkout')
+})
+
+test('a commit message that breaks the convention it was asked for is a guardrail failure', async () => {
+  const { generateCommitMessage } = await import('./text-generation-service')
+  const result = await generateCommitMessage(
+    { input: COMMIT_INPUT, engine: { cli: 'claude-code', model: 'claude-haiku-4-5' } },
+    claudeAnswering({ subject: 'Keep the marks', body: '' }, []),
+  )
+  assert.deepEqual(result, {
+    ok: false,
+    code: 'guardrail',
+    message: 'claude-code returned no usable Conventional Commits message.',
+  })
+})

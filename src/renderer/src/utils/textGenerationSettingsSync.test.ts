@@ -10,6 +10,7 @@ import type { TextGenerationSettings } from '../../../shared/text-generation/con
 import { useWorkspaceStore } from '../store/workspaceStore'
 import { initTextGenerationSettingsSync } from './textGenerationSettingsSync'
 
+const MATCH_REPOSITORY = { mode: 'repository', instructions: '' }
 const pushes: TextGenerationSettings[] = []
 ;(globalThis as { window?: unknown }).window = {
   api: {
@@ -23,13 +24,25 @@ const pushes: TextGenerationSettings[] = []
 test('the mount push goes even at the default, and every change after it reaches main', () => {
   const dispose = initTextGenerationSettingsSync()
   try {
-    assert.deepEqual(pushes, [{ enabled: true, engine: null }], 'the default is pushed, not skipped')
+    assert.deepEqual(
+      pushes,
+      [{ enabled: true, engine: null, writingStyle: MATCH_REPOSITORY }],
+      'the default is pushed, not skipped',
+    )
 
     useWorkspaceStore.getState().setTextGenerationEnabled(false)
-    assert.deepEqual(pushes.at(-1), { enabled: false, engine: null }, 'turning it off reaches main')
+    assert.deepEqual(
+      pushes.at(-1),
+      { enabled: false, engine: null, writingStyle: MATCH_REPOSITORY },
+      'turning it off reaches main',
+    )
 
     useWorkspaceStore.getState().setTextGenerationEngine({ cli: 'codex', model: 'gpt-5.6-luna' })
-    assert.deepEqual(pushes.at(-1), { enabled: false, engine: { cli: 'codex', model: 'gpt-5.6-luna' } })
+    assert.deepEqual(pushes.at(-1), {
+      enabled: false,
+      engine: { cli: 'codex', model: 'gpt-5.6-luna' },
+      writingStyle: MATCH_REPOSITORY,
+    })
 
     // The store notifies on every change; only a change to this setting pushes.
     const before = pushes.length

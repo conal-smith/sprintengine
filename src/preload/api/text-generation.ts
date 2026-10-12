@@ -2,12 +2,14 @@ import { ipc as ipcRenderer } from '../ipc-router'
 import type { ElectronApi } from '../../shared/electron-api'
 import type {
   ChatTitleRequest,
+  CommitMessageResult,
   PullRequestTextResult,
   TextGenerationCliRuntimeOverrides,
   TextGenerationEngine,
   TextGenerationResult,
   TextGenerationSettings,
 } from '../../shared/text-generation/contract'
+import type { TextGenerationWritingStyle } from '../../shared/text-generation/writing-style'
 import type {
   CreatePullRequestOutcome,
   CreatePullRequestState,
@@ -29,9 +31,19 @@ export const textGenerationApi = {
     engine: TextGenerationEngine
     cliRuntimes?: TextGenerationCliRuntimeOverrides
     draftId?: string
+    writingStyle?: TextGenerationWritingStyle
   }): Promise<PullRequestTextResult> => ipcRenderer.invoke('pull-request-create:draft', request),
   cancelPullRequestDraft: (draftId: string): Promise<void> =>
     ipcRenderer.invoke('pull-request-create:draft-cancel', draftId),
+  draftCommitMessage: (request: {
+    repoRoot: string
+    engine: TextGenerationEngine
+    cliRuntimes?: TextGenerationCliRuntimeOverrides
+    draftId?: string
+    writingStyle?: TextGenerationWritingStyle
+  }): Promise<CommitMessageResult> => ipcRenderer.invoke('commit-message:draft', request),
+  cancelCommitMessageDraft: (draftId: string): Promise<void> =>
+    ipcRenderer.invoke('commit-message:draft-cancel', draftId),
   pushForPullRequest: (cwd: string, pin?: PullRequestCheckoutPin): Promise<PushForPullRequestOutcome> =>
     ipcRenderer.invoke('pull-request-create:push', cwd, pin),
   createPullRequest: (input: {
@@ -47,6 +59,8 @@ export const textGenerationApi = {
   | 'createPullRequestState'
   | 'draftPullRequestText'
   | 'cancelPullRequestDraft'
+  | 'draftCommitMessage'
+  | 'cancelCommitMessageDraft'
   | 'pushForPullRequest'
   | 'createPullRequest'
 >

@@ -4,18 +4,20 @@ import { test } from 'vitest'
 
 import {
   buildPullRequestTextPrompt,
-  followsConventionalCommits,
   MAX_PULL_REQUEST_PATCH_CHARS,
   readPullRequestTextOutput,
+  type PullRequestTextInput,
 } from './pull-request-text'
 
-test('a repository follows Conventional Commits when most of its recent subjects do', () => {
-  const conventional = Array.from({ length: 12 }, (_, i) => `fix(scope${i}): do thing ${i}`)
-  assert.equal(followsConventionalCommits(conventional), true)
-  assert.equal(followsConventionalCommits([...conventional, 'Merge branch main']), true, 'merges aside')
-  assert.equal(followsConventionalCommits(conventional.slice(0, 5)), false, 'too few to say')
-  assert.equal(followsConventionalCommits(conventional.map((subject, i) => (i % 2 ? 'Update stuff' : subject))), false)
-})
+const PLAIN: PullRequestTextInput = {
+  base: 'main',
+  head: 'feature/marks',
+  commits: 'Show the marks',
+  diffStat: ' a.ts | 1 +',
+  patch: '+marks',
+  template: null,
+  conventionalCommits: false,
+}
 
 test('the prompt carries the convention, the template and the diff, each cut to size', () => {
   const prompt = buildPullRequestTextPrompt({
@@ -60,4 +62,31 @@ test('a draft is read from structured output or text, and a title is one bounded
   assert.equal(readPullRequestTextOutput({ title: '修正', body: '' })?.title, '修正', 'two characters that are words')
   assert.equal(readPullRequestTextOutput({ title: 'ok', body: '' }), null, 'two Latin letters are not')
   assert.equal(readPullRequestTextOutput({ title: 'x'.repeat(500), body: '' })?.title.length, 120)
+})
+
+test('with no style given, the title matches the repository as it did before the setting', () => {
+  assert.equal(
+    buildPullRequestTextPrompt(PLAIN),
+    buildPullRequestTextPrompt({ ...PLAIN, style: { mode: 'repository', instructions: '' } }),
+  )
+})
+
+test('the conventional style asks for a Conventional Commits title even when the history keeps none', () => {
+  const prompt = buildPullRequestTextPrompt({ ...PLAIN, style: { mode: 'conventional', instructions: '' } })
+  assert.match(prompt, /The title must be a Conventional Commit/)
+  assert.doesNotMatch(prompt, /in the style of the commit subjects/)
+})
+
+test("a custom style puts the person's guide after the rules and before the quoted material", () => {
+  const prompt = buildPullRequestTextPrompt({
+    ...PLAIN,
+    conventionalCommits: true,
+    style: { mode: 'custom', instructions: 'Name the area first, then a colon.' },
+  })
+  assert.match(prompt, /Write the title as the person's style guide below asks/)
+  assert.doesNotMatch(prompt, /This repository uses Conventional Commits/, 'the guide decides, not the history')
+  const rules = prompt.indexOf('Rules:')
+  const guide = prompt.indexOf('Name the area first')
+  const commits = prompt.indexOf('Commits:\n')
+  assert.ok(rules < guide && guide < commits)
 })

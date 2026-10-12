@@ -19,7 +19,9 @@ const mermaid = vi.hoisted(() => {
       mermaidAPI: { getDiagramFromText: async () => ({ db: {} }) },
       render: async (id: string, source: string) => {
         drawn.push(source)
-        return { svg: `<svg id="${id}" data-diagram=""><text>${source.split('\n')[1]?.trim()}</text></svg>` }
+        return {
+          svg: `<svg id="${id}" data-diagram="" viewBox="0 0 400 200"><text>${source.split('\n')[1]?.trim()}</text></svg>`,
+        }
       },
     },
   }
@@ -163,4 +165,70 @@ test('a renderer that did not load says so, and Retry asks for it again', async 
   expect(container.querySelector('.ds-code-block__drawing [data-diagram]')?.textContent).toBe('Offline --> B')
   expect(container.querySelector('.ds-code-block__note')).toBeNull()
   vi.doUnmock('mermaid')
+})
+
+test('Open diagram shows the same drawing larger, zooms by button and key, and closes', async () => {
+  // jsdom lays nothing out; the viewer only needs to be told its size changed.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  try {
+    act(() => root.render(<ConversationMarkdown text={diagram('Enlarged')} />))
+    await settle()
+    const inline = container.querySelector('.ds-code-block__drawing [data-diagram]')
+    const open = container.querySelector<HTMLButtonElement>('button[aria-label="Open diagram"]')
+    expect(open).not.toBeNull()
+    expect(document.querySelector('[data-diagram-viewer]')).toBeNull()
+
+    act(() => open?.click())
+    const viewer = document.querySelector('[data-diagram-viewer]')
+    // Over the window, not inside the transcript: a row's transform would
+    // otherwise hold the fixed scrim inside the chat column.
+    expect(viewer).not.toBeNull()
+    expect(container.contains(viewer)).toBe(false)
+    const copy = viewer?.querySelector('[data-diagram]')
+    expect(copy?.textContent).toBe('Enlarged --> B')
+    // A copy of its own, not the inline drawing moved or redrawn.
+    expect(copy?.id).not.toBe(inline?.id)
+    expect(mermaid.drawn.filter((source) => source.includes('Enlarged'))).toHaveLength(1)
+
+    const zoom = () => viewer?.querySelector<HTMLElement>('[data-zoom]')
+    const fit = () =>
+      document.querySelector<HTMLButtonElement>('[role="toolbar"][aria-label="Zoom"] button[aria-pressed]')
+    // Unmeasured, fitting leaves the drawing at its own size.
+    expect(zoom()?.dataset.zoom).toBe('100%')
+    expect(zoom()?.style.width).toBe('400px')
+    expect(fit()?.getAttribute('aria-pressed')).toBe('true')
+
+    act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')?.click())
+    expect(zoom()?.dataset.zoom).toBe('125%')
+    expect(zoom()?.style.width).toBe('500px')
+    expect(fit()?.getAttribute('aria-pressed')).toBe('false')
+
+    act(() => void document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '-', bubbles: true })))
+    expect(zoom()?.dataset.zoom).toBe('100%')
+    // The app's own zoom chord is left to the app.
+    act(
+      () => void document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true, bubbles: true })),
+    )
+    expect(zoom()?.dataset.zoom).toBe('100%')
+    act(() => void document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true })))
+    act(() => void document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '0', bubbles: true })))
+    expect(fit()?.getAttribute('aria-pressed')).toBe('true')
+
+    act(() => document.querySelector<HTMLButtonElement>('[role="dialog"] button[aria-label="Close"]')?.click())
+    expect(document.querySelector('[data-diagram-viewer]')).toBeNull()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a diagram still shown as source has nothing to open', async () => {
+  act(() => root.render(<ConversationMarkdown text={'```mermaid\ngraph TD\n  A -->>> B\n```'} />))
+  await settle()
+  expect(container.querySelector('button[aria-label="Open diagram"]')).toBeNull()
 })

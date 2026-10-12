@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 
 import type { CliDetectResult } from '../../shared/electron-api'
 import type { ModuleTextGenerationResult } from '../../shared/modules/conversation-service'
-import type { TextGenerationSettings } from '../../shared/text-generation/contract'
+import type { TextGenerationEngineSettings } from '../../shared/text-generation/contract'
 import {
   claudeTextInvocation,
   codexTextInvocation,
@@ -35,7 +35,7 @@ function registry(
   generate: (request: HeadlessTextRequest) => Promise<HeadlessTextResult>,
   permissions: Record<string, string[]> = { insights: ['agents:generate'] },
   now: () => number = Date.now,
-  settings: () => TextGenerationSettings | null = () => null,
+  settings: () => TextGenerationEngineSettings | null = () => null,
 ) {
   return createModuleTextGenerationRegistry({
     getModulePermissions: (moduleId) => permissions[moduleId],
@@ -285,7 +285,7 @@ test('a module needs agents:generate, and a call it cannot make is refused befor
 
 test('a call runs on the person’s chosen engine unless it names a runtime or model of its own', async () => {
   const calls: HeadlessTextRequest[] = []
-  let settings: TextGenerationSettings | null = {
+  let settings: TextGenerationEngineSettings | null = {
     enabled: true,
     engine: { cli: 'codex', model: 'gpt-6-sol', reasoning: 'medium' },
   }

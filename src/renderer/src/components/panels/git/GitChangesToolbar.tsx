@@ -14,15 +14,17 @@
 // T5 shipped two of the nine disabled, with tooltips saying they arrive with
 // changelists. T6 is that arrival: "move to another changelist" now opens the
 // list of lists, and "group by" opens Changelist / Directory / None as a radio
-// group. The one still unavailable is "write commit message", which waits on
-// the composer — kept in the band because which actions EXIST is information,
-// and a control that appears later moves everything beside it.
+// group. "Write commit message" drafts a message for the checked files with
+// the person's own agent CLI (`commitMessageDraft.ts`); while it writes, the
+// same square shows the working spinner and stops the draft when pressed, so
+// the way out is where the person's pointer already is.
 //
-// It is `ariaDisabled`, not `disabled`. In a glyph-only band the tooltip IS the
-// explanation, and a `disabled` button receives no pointer events — so the one
-// sentence saying why the square does nothing could never be read. Soft-disabled
-// it stays walkable, focusable and hoverable, and the reason rides its
-// accessible name as well as the tooltip.
+// When it cannot draft — nothing checked, text generation off, no supported
+// CLI — it is `ariaDisabled`, not `disabled`. In a glyph-only band the tooltip
+// IS the explanation, and a `disabled` button receives no pointer events — so
+// the one sentence saying why the square does nothing could never be read.
+// Soft-disabled it stays walkable, focusable and hoverable, and the reason
+// rides its accessible name as well as the tooltip.
 
 import React, { type JSX } from 'react'
 
@@ -38,6 +40,7 @@ import {
   RefreshIcon,
   RollbackGlyph,
   ShowDiffGlyph,
+  Spinner,
   StashGlyph,
   Toolbar,
   ToolbarButton,
@@ -74,6 +77,10 @@ export type GitChangesToolbarProps = {
    *  to report as a success. */
   untrackedOnly: boolean
   grouping: GitChangesGrouping
+  /** "Write commit message": a draft in flight, or why it cannot draft (null when it can). */
+  commitMessageDraft: { drafting: boolean; unavailableReason: string | null }
+  onWriteCommitMessage: () => void
+  onStopCommitMessage: () => void
   onRefresh: () => void
   onDiscard: () => void
   onStash: () => void
@@ -92,6 +99,9 @@ export function GitChangesToolbar({
   currentChangelistId,
   untrackedOnly,
   grouping,
+  commitMessageDraft,
+  onWriteCommitMessage,
+  onStopCommitMessage,
   onRefresh,
   onDiscard,
   onStash,
@@ -156,16 +166,40 @@ export function GitChangesToolbar({
           <StashGlyph />
         </ToolbarButton>
       </Tooltip>
-      {/* SOFT-disabled, and that is the whole point: this tooltip is the only
-          place the person is told why the button does nothing, and a `disabled`
-          button receives no pointer events, so the tooltip never opened. It
-          stays in the band's walk, takes focus, and carries the reason in its
-          accessible name for a reader who never sees a tooltip at all. */}
-      <Tooltip content="Write commit message — coming with the composer" placement="bottom">
-        <ToolbarButton ariaLabel="Write commit message" ariaDisabled disabledReason="coming with the composer">
-          <WriteCommitMessageGlyph />
-        </ToolbarButton>
-      </Tooltip>
+      {/* SOFT-disabled when it cannot draft, and that is the whole point: this
+          tooltip is the only place the person is told why the button does
+          nothing, and a `disabled` button receives no pointer events, so the
+          tooltip never opened. It stays in the band's walk, takes focus, and
+          carries the reason in its accessible name for a reader who never sees
+          a tooltip at all. Hard-disabled only while another git action runs,
+          like its neighbours — but never mid-draft, when it is the stop. */}
+      {commitMessageDraft.drafting ? (
+        <Tooltip content="Writing a commit message… Press to stop" placement="bottom">
+          <ToolbarButton ariaLabel="Stop writing the commit message" onClick={onStopCommitMessage}>
+            {/* The default size is the band glyphs' own `icon-sm`, so the square does not jump. */}
+            <Spinner />
+          </ToolbarButton>
+        </Tooltip>
+      ) : (
+        <Tooltip
+          content={
+            commitMessageDraft.unavailableReason
+              ? `Write commit message — ${commitMessageDraft.unavailableReason}`
+              : 'Write commit message from the checked files'
+          }
+          placement="bottom"
+        >
+          <ToolbarButton
+            ariaLabel="Write commit message"
+            disabled={busy}
+            ariaDisabled={Boolean(commitMessageDraft.unavailableReason)}
+            disabledReason={commitMessageDraft.unavailableReason ?? undefined}
+            onClick={onWriteCommitMessage}
+          >
+            <WriteCommitMessageGlyph />
+          </ToolbarButton>
+        </Tooltip>
+      )}
       <Tooltip content="Show diff" placement="bottom">
         <ToolbarButton
           ariaLabel="Show diff"

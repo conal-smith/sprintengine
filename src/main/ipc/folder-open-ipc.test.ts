@@ -444,6 +444,16 @@ test('the newer editors resolve through the CLI shim each one installs', () => {
     webstorm: 'webstorm',
     pycharm: 'pycharm',
     goland: 'goland',
+    'vscode-insiders': 'code-insiders',
+    vscodium: 'codium',
+    trae: 'trae',
+    antigravity: 'antigravity-ide',
+    clion: 'clion',
+    phpstorm: 'phpstorm',
+    rider: 'rider',
+    rubymine: 'rubymine',
+    rustrover: 'rustrover',
+    datagrip: 'datagrip',
   } as const
   for (const [target, cli] of Object.entries(shims) as [keyof typeof shims, string][]) {
     const onPath = editorProbe('linux', [`/usr/local/bin/${cli}`])
@@ -464,6 +474,17 @@ test('without a CLI, the newer editors open through their macOS app bundle', () 
     webstorm: '/Users/dev/Applications/JetBrains Toolbox/WebStorm.app',
     pycharm: '/Applications/PyCharm CE.app',
     goland: '/Users/dev/Applications/GoLand.app',
+    'vscode-insiders': '/Applications/Visual Studio Code - Insiders.app',
+    vscodium: '/Applications/VSCodium.app',
+    trae: '/Applications/Trae.app',
+    kiro: '/Applications/Kiro.app',
+    antigravity: '/Applications/Antigravity IDE.app',
+    clion: '/Applications/CLion.app',
+    phpstorm: '/Users/dev/Applications/JetBrains Toolbox/PhpStorm.app',
+    rider: '/Applications/Rider.app',
+    rubymine: '/Applications/RubyMine.app',
+    rustrover: '/Applications/RustRover.app',
+    datagrip: '/Applications/DataGrip.app',
   } as const
   for (const [target, bundle] of Object.entries(bundles) as [keyof typeof bundles, string][]) {
     assert.deepEqual(resolveFolderOpenLauncher(target, editorProbe('darwin', [bundle])), {
@@ -472,6 +493,44 @@ test('without a CLI, the newer editors open through their macOS app bundle', () 
       args: ['-a', bundle],
     })
   }
+})
+
+test('Kiro is asked for its editor by name, ahead of the folder', () => {
+  assert.deepEqual(resolveFolderOpenLauncher('kiro', editorProbe('linux', ['/usr/local/bin/kiro'])), {
+    kind: 'command',
+    command: '/usr/local/bin/kiro',
+    args: ['ide'],
+  })
+})
+
+test('a Windows Kiro shim keeps its subcommand ahead of the folder through cmd.exe', () => {
+  const windows: LauncherProbe = {
+    platform: 'win32',
+    env: { Path: 'C:\\Users\\dev\\AppData\\Local\\Programs\\Kiro\\bin', ComSpec: 'C:\\Windows\\system32\\cmd.exe' },
+    exists: (candidate) => candidate === 'C:\\Users\\dev\\AppData\\Local\\Programs\\Kiro\\bin\\kiro.cmd',
+  }
+  assert.deepEqual(resolveFolderOpenLauncher('kiro', windows), {
+    kind: 'command',
+    command: 'C:\\Windows\\system32\\cmd.exe',
+    args: ['/d', '/s', '/c', 'C:\\Users\\dev\\AppData\\Local\\Programs\\Kiro\\bin\\kiro.cmd', 'ide'],
+    viaCommandProcessor: true,
+  })
+})
+
+test('the Antigravity agent and its hub do not make the Antigravity IDE look installed', () => {
+  const agentAndHub = editorProbe('darwin', ['/usr/local/bin/agy', '/Applications/Antigravity.app'])
+  assert.equal(resolveFolderOpenLauncher('antigravity', agentAndHub), null)
+  assert.deepEqual(resolveFolderOpenLauncher('antigravity', editorProbe('linux', ['/usr/local/bin/agy-ide'])), {
+    kind: 'command',
+    command: '/usr/local/bin/agy-ide',
+    args: [],
+  })
+})
+
+test('VS Code and its Insiders build are separate targets', () => {
+  const insidersOnly = editorProbe('darwin', ['/Applications/Visual Studio Code - Insiders.app'])
+  assert.equal(resolveFolderOpenLauncher('vscode', insidersOnly), null)
+  assert.notEqual(resolveFolderOpenLauncher('vscode-insiders', insidersOnly), null)
 })
 
 test('a JetBrains IDE installed by Toolbox is found by its scripts-folder shim', () => {

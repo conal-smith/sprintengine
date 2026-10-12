@@ -8,6 +8,11 @@ import {
 import { normalizeMachineMarkSettings, type MachineMarkSetting } from '../../../../shared/machine-identity'
 import { normalizeProjectUsageMap } from '../../../../shared/project-frecency'
 import { normalizeTextGenerationSettings } from '../../../../shared/text-generation/contract'
+import {
+  DEFAULT_WRITING_STYLE,
+  normalizeWritingStyle,
+  type TextGenerationWritingStyle,
+} from '../../../../shared/text-generation/writing-style'
 import { normalizeMcpSourceRef } from '../../../../shared/mcp/normalize-server'
 import type { FolderOpenTargetId } from '../../../../shared/folder-open-targets'
 import { normalizeProjectKnowledgeRoots } from './memorySlice'
@@ -652,7 +657,7 @@ export const defaultAppSettings = (): AppSettings => ({
   mcp: defaultMcpSettings(),
   lastSelectedCli: DEFAULT_AGENT_LAUNCH_CLI,
   lastSelectedConversationModel: null,
-  textGeneration: { enabled: true, engine: null },
+  textGeneration: { enabled: true, engine: null, writingStyle: { ...DEFAULT_WRITING_STYLE } },
   lastNewChatAgent: { ...FIRST_RUN_NEW_CHAT_AGENT },
   // No default editor: the control resolves the first target the machine
   // actually has. Naming one here would claim an install we have not probed.
@@ -975,6 +980,12 @@ export interface SettingsSliceActions {
    * and is dropped when the CLI changes.
    */
   setTextGenerationEngine: (selection: AgentCliModelSelection | null) => void
+  /**
+   * How drafted commit messages and pull requests are written: the mode, the
+   * person's own instructions, or both. The instructions are kept when another
+   * mode is chosen, so switching back finds them.
+   */
+  setTextGenerationWritingStyle: (style: Partial<TextGenerationWritingStyle>) => void
   setLastNewChatAgent: (choice: NewChatAgentChoice) => void
   /** Remember the open-in-editor target the user just used (app-wide). */
   setLastFolderOpenTarget: (target: FolderOpenTargetId) => void
@@ -1432,6 +1443,15 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.textGeneration = {
           ...current,
           engine: { cli: selection.cli, model: selection.model.trim(), ...(reasoning ? { reasoning } : {}) },
+        }
+      }),
+
+    setTextGenerationWritingStyle: (style) =>
+      set((state) => {
+        const current = normalizeTextGenerationSettings(state.appSettings.textGeneration)
+        state.appSettings.textGeneration = {
+          ...current,
+          writingStyle: normalizeWritingStyle({ ...current.writingStyle, ...style }),
         }
       }),
 

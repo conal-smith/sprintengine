@@ -29,7 +29,8 @@ import {
   type PullRequestCheckoutPin,
   type PushForPullRequestOutcome,
 } from '../shared/git/pull-request-create'
-import { followsConventionalCommits, type PullRequestTextInput } from '../shared/text-generation/pull-request-text'
+import type { PullRequestTextInput } from '../shared/text-generation/pull-request-text'
+import { followsConventionalCommits } from '../shared/text-generation/writing-style'
 import { listBranchPullRequests } from './github/branch-pull-request'
 import { sharedGhRunner, type GhRunner } from './github/gh'
 import { runGitCommand } from './git-utils'

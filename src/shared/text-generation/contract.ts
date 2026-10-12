@@ -10,7 +10,9 @@
  * bridge) and the renderer (the settings row and the title requester).
  */
 
+import type { CommitMessageInput, CommitMessageText } from './commit-message'
 import type { PullRequestText, PullRequestTextInput } from './pull-request-text'
+import { normalizeWritingStyle, type TextGenerationWritingStyle } from './writing-style'
 
 /** Which CLI runs the job, on which model, at which effort. */
 export type TextGenerationEngine = {
@@ -68,6 +70,19 @@ export type PullRequestTextRequest = {
 export type PullRequestTextResult =
   { ok: true; value: PullRequestText; ms: number } | Extract<TextGenerationResult, { ok: false }>
 
+/** A commit message for what is staged, drafted into the Git panel's box for the person to edit before committing. */
+export type CommitMessageRequest = {
+  input: CommitMessageInput
+  engine: TextGenerationEngine
+  cliRuntimes?: TextGenerationCliRuntimeOverrides
+  timeoutMs?: number
+  /** The person stopped the draft: the CLI is stopped. Main-side only; it does not cross IPC. */
+  signal?: AbortSignal
+}
+
+export type CommitMessageResult =
+  { ok: true; value: CommitMessageText; ms: number } | Extract<TextGenerationResult, { ok: false }>
+
 /**
  * A title is a background job with nothing waiting on it, so the budget is
  * generous: a cold `codex exec` takes 5-15 s, `claude -p` with thinking off
@@ -103,12 +118,17 @@ export function supportsTextGeneration(cli: string | null | undefined): boolean 
 /**
  * The person's setting, as persisted. `engine` null means "whichever supported
  * CLI is installed, at its default"; a stored engine with an empty model means
- * that CLI at its default model.
+ * that CLI at its default model. `writingStyle` is how a drafted commit
+ * message or pull request is written (`writing-style.ts`).
  */
 export type TextGenerationSettings = {
   enabled: boolean
   engine: TextGenerationEngine | null
+  writingStyle: TextGenerationWritingStyle
 }
+
+/** The part of the setting that decides whether a call is made, and on which engine. */
+export type TextGenerationEngineSettings = Pick<TextGenerationSettings, 'enabled' | 'engine'>
 
 /**
  * The text-generation setting as persisted. Enabled by default: the owner's
@@ -127,13 +147,20 @@ export function normalizeTextGenerationSettings(
   input: Partial<TextGenerationSettings> | null | undefined,
 ): TextGenerationSettings {
   const enabled = typeof input?.enabled === 'boolean' ? input.enabled : true
-  const raw = input?.engine
-  if (!raw || typeof raw !== 'object') return { enabled, engine: null }
-  const cli = typeof raw.cli === 'string' ? raw.cli.trim() : ''
-  const model = typeof raw.model === 'string' ? raw.model.trim() : ''
-  const reasoning = typeof raw.reasoning === 'string' ? raw.reasoning.trim() : ''
-  if (!cli) return { enabled, engine: null }
-  return { enabled, engine: { cli, model, ...(reasoning ? { reasoning } : {}) } }
+  // A profile from before the writing style existed reads as the default:
+  // match the repository, which is what the drafts did then.
+  const writingStyle = normalizeWritingStyle(input?.writingStyle)
+  return { enabled, engine: normalizeEngine(input?.engine), writingStyle }
+}
+
+function normalizeEngine(raw: unknown): TextGenerationEngine | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { cli: rawCli, model: rawModel, reasoning: rawReasoning } = raw as Record<string, unknown>
+  const cli = typeof rawCli === 'string' ? rawCli.trim() : ''
+  const model = typeof rawModel === 'string' ? rawModel.trim() : ''
+  const reasoning = typeof rawReasoning === 'string' ? rawReasoning.trim() : ''
+  if (!cli) return null
+  return { cli, model, ...(reasoning ? { reasoning } : {}) }
 }
 
 /**
@@ -148,7 +175,7 @@ export function normalizeTextGenerationSettings(
  * setting pointing at nothing.
  */
 export function resolveTextGenerationEngine(
-  settings: TextGenerationSettings | null | undefined,
+  settings: TextGenerationEngineSettings | null | undefined,
   candidates: ReadonlyArray<string>,
   installed: (cli: string) => boolean | undefined,
 ): TextGenerationEngine | null {
