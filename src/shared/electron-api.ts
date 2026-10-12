@@ -366,8 +366,9 @@ import type {
   GitFileStageResult,
   GitGraphOptions,
   GitGraphSnapshot,
-  GitHubCloneInput,
-  GitHubCloneResult,
+  CloneProgress,
+  RepositoryCloneInput,
+  RepositoryCloneResult,
   GitHubRepoListResult,
   GitHubTokenStatus,
   GitHunkRef,
@@ -1585,7 +1586,12 @@ export type ElectronApi = {
   setGitHubToken: (token: string) => Promise<GitHubTokenStatus>
   clearGitHubToken: () => Promise<GitHubTokenStatus>
   listGitHubRepos: () => Promise<GitHubRepoListResult>
-  cloneGitHubRepo: (input: GitHubCloneInput) => Promise<GitHubCloneResult>
+  /** Clone any git repository (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, a self-hosted server). */
+  cloneRepository: (input: RepositoryCloneInput) => Promise<RepositoryCloneResult>
+  /** Stop the clone started with this `cloneId`; it answers `{ ok: false, reason: 'cancelled' }`. */
+  cancelRepositoryClone: (cloneId: string) => Promise<void>
+  /** Every running clone's progress, for the caller to filter on its `cloneId`. */
+  onRepositoryCloneProgress: (cb: (progress: CloneProgress) => void) => () => void
   detectExistingAgentConfig: (input?: AgentConfigDetectInput) => Promise<AgentConfigDetectResult>
   adoptAgentConfig: (input: AgentConfigAdoptInput) => Promise<AgentConfigAdoptResult>
   scanImportableConversations: () => Promise<ConversationImportScanResult>

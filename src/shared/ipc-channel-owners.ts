@@ -94,6 +94,7 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'credential:secrets:status': { retry: 'once' },
   'github:clear-token': {},
   'github:clone': {},
+  'github:clone-cancel': {},
   'github:list-repos': { retry: 'once' },
   'github:set-token': {},
   'github:token-status': { retry: 'once' },

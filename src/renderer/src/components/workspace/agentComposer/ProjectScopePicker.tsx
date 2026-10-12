@@ -222,12 +222,10 @@ export function ProjectScopePicker({
   const runClone = React.useCallback(
     async (request: ProjectCloneRequest): Promise<ProjectCloneResult> => {
       if (onClone) return onClone(request)
-      const cloned = await window.api
-        .cloneGitHubRepo(request)
-        .catch((caught: unknown): { ok: false; message: string } => ({
-          ok: false,
-          message: caught instanceof Error ? caught.message : 'Could not clone the repository.',
-        }))
+      const cloned = await window.api.cloneRepository(request).catch((caught: unknown): ProjectCloneResult => ({
+        ok: false,
+        message: caught instanceof Error ? caught.message : 'Could not clone the repository.',
+      }))
       if (!cloned.ok) return cloned
       showToast({ tone: 'good', title: `Cloned ${basename(cloned.path) || cloned.path}`, description: cloned.path })
       onSelect(cloned.path)

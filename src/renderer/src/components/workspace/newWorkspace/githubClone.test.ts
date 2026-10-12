@@ -1,101 +1,72 @@
 import assert from 'node:assert/strict'
-
-import { filterGitHubRepos, resolveCloneSource } from './githubClone'
-import { validateCloneUrl } from '../../../../../shared/git-clone-url'
-import type { GitHubRepoSummary } from '../../../../../shared/electron-api'
 import { test } from 'vitest'
 
-test('githubClone', async () => {
-  // --- validateCloneUrl -------------------------------------------------------
-  {
-    const https = validateCloneUrl('https://github.com/octocat/sprintengine')
-    assert.ok(https.ok, 'a github web URL is a valid clone source')
-    assert.equal(https.ok && https.url, 'https://github.com/octocat/sprintengine', 'kept verbatim minus nothing')
-    assert.equal(https.ok && https.repoName, 'sprintengine', 'repo name from the last path segment')
-    assert.equal(https.ok && https.httpsHost, 'github.com', 'host surfaces for token routing')
-  }
-  {
-    const suffixed = validateCloneUrl('https://github.com/octocat/sprintengine.git/')
-    assert.ok(suffixed.ok, '.git suffix and trailing slash are accepted')
-    assert.equal(suffixed.ok && suffixed.repoName, 'sprintengine', '.git is stripped from the name')
-  }
-  {
-    const scp = validateCloneUrl('git@github.com:octocat/sprintengine.git')
-    assert.ok(scp.ok, 'scp-style ssh is a valid clone source')
-    assert.equal(scp.ok && scp.httpsHost, null, 'no https host — the token must never ride ssh')
-    assert.equal(scp.ok && scp.repoName, 'sprintengine')
-  }
-  {
-    const sshUrl = validateCloneUrl('ssh://git@github.com/octocat/sprintengine.git')
-    assert.ok(sshUrl.ok, 'ssh:// URLs are accepted')
-  }
-  {
-    const pageUrl = validateCloneUrl('https://github.com/octocat/sprintengine/tree/main/src')
-    assert.ok(pageUrl.ok, 'a github.com page URL with a sub-path is accepted')
-    assert.equal(pageUrl.ok && pageUrl.url, 'https://github.com/octocat/sprintengine', 'normalized to the repo root')
-    assert.equal(pageUrl.ok && pageUrl.repoName, 'sprintengine')
-  }
-  {
-    const otherHost = validateCloneUrl('https://gitlab.example.com/group/sub/repo.git')
-    assert.ok(otherHost.ok, 'non-github https hosts keep their full path')
-    assert.equal(
-      otherHost.ok && otherHost.url,
-      'https://gitlab.example.com/group/sub/repo.git',
-      'no truncation off github.com',
-    )
-    assert.equal(otherHost.ok && otherHost.repoName, 'repo')
-  }
-  assert.equal(validateCloneUrl('').ok, false, 'blank is rejected')
-  assert.equal(validateCloneUrl('-oProxyCommand=evil').ok, false, 'a leading dash never reaches git argv')
-  assert.equal(validateCloneUrl('ext::sh -c whoami').ok, false, 'exotic transports are rejected')
-  assert.equal(validateCloneUrl('file:///etc').ok, false, 'file transport is rejected')
-  assert.equal(validateCloneUrl('http://github.com/a/b').ok, false, 'plain http is rejected')
-  assert.equal(validateCloneUrl('https://user:pass@github.com/a/b').ok, false, 'embedded credentials are rejected')
-  assert.equal(validateCloneUrl('https://github.com/').ok, false, 'a URL with no repo path is rejected')
-  assert.equal(validateCloneUrl('not a url').ok, false, 'whitespace is rejected')
+import {
+  cloneParentFor,
+  describeCloneProgress,
+  draftNamesRepo,
+  filterGitHubRepos,
+  resolveCloneSource,
+} from './githubClone'
+import type { GitHubRepoSummary } from '../../../../../shared/electron-api'
 
-  // --- resolveCloneSource -----------------------------------------------------
-  const repo: GitHubRepoSummary = {
-    fullName: 'octocat/weather-api',
-    name: 'weather-api',
-    owner: 'octocat',
-    isPrivate: true,
-    description: 'Standalone service',
-    cloneUrl: 'https://github.com/octocat/weather-api.git',
-    defaultBranch: 'main',
-    pushedAt: '2026-08-30T00:00:00Z',
-  }
+const repo: GitHubRepoSummary = {
+  fullName: 'octocat/weather-api',
+  name: 'weather-api',
+  owner: 'octocat',
+  isPrivate: true,
+  description: 'Standalone service',
+  cloneUrl: 'https://github.com/octocat/weather-api.git',
+  defaultBranch: 'main',
+  pushedAt: '2026-08-30T00:00:00Z',
+}
 
-  {
-    const picked = resolveCloneSource(repo, '')
-    assert.ok(picked.source, 'a picked repo resolves')
-    assert.equal(picked.source?.url, repo.cloneUrl, 'the API clone_url is used verbatim')
-    assert.equal(picked.source?.repoName, 'weather-api', 'folder leaf comes from the repo name')
-  }
-  {
-    const blank = resolveCloneSource(null, '   ')
-    assert.equal(blank.source, null, 'nothing chosen resolves to nothing')
-    assert.equal(blank.error, null, 'a blank draft is not an error')
-  }
-  {
-    const pasted = resolveCloneSource(null, 'https://github.com/foo/bar')
-    assert.equal(pasted.source?.repoName, 'bar', 'a pasted URL resolves its repo name')
-  }
-  {
-    const invalid = resolveCloneSource(null, 'ftp://nope')
-    assert.equal(invalid.source, null)
-    assert.ok(invalid.error, 'an unparseable non-blank draft carries its error inline')
-  }
+test('a blank draft is nothing chosen yet, not an error', () => {
+  const blank = resolveCloneSource('   ')
+  assert.equal(blank.source, null)
+  assert.equal(blank.error, null)
+})
 
-  // --- filterGitHubRepos ------------------------------------------------------
-  const repos: GitHubRepoSummary[] = [
-    repo,
-    { ...repo, fullName: 'octocat/sprintengine', name: 'sprintengine', description: 'SprintEngine Studio desktop app' },
-  ]
-  assert.equal(filterGitHubRepos(repos, '').length, 2, 'no filter returns everything')
-  assert.equal(filterGitHubRepos(repos, 'WEATHER').length, 1, 'full-name match, case-insensitive')
-  assert.equal(filterGitHubRepos(repos, 'desktop app').length, 1, 'description matches too')
-  assert.equal(filterGitHubRepos(repos, 'zzz').length, 0, 'no match filters all')
+test('a pasted URL resolves to what the preview shows', () => {
+  const pasted = resolveCloneSource('https://gitlab.acme.dev/platform/api/-/tree/develop')
+  assert.equal(pasted.source?.repoName, 'api')
+  assert.equal(pasted.source?.providerName, 'GitLab')
+  assert.equal(pasted.source?.location, 'gitlab.acme.dev/platform/api')
+  assert.equal(pasted.source?.branch, 'develop')
+})
 
-  console.log('githubClone tests passed')
+test('a draft that does not parse carries its error inline', () => {
+  const invalid = resolveCloneSource('ftp://nope')
+  assert.equal(invalid.source, null)
+  assert.ok(invalid.error)
+})
+
+test('a listed repository is picked however the draft spells it', () => {
+  assert.equal(draftNamesRepo(repo.cloneUrl, repo), true)
+  assert.equal(draftNamesRepo('octocat/weather-api', repo), true, 'shorthand')
+  assert.equal(draftNamesRepo('https://github.com/OctoCat/Weather-API/tree/main', repo), true, 'a page, any case')
+  assert.equal(draftNamesRepo('octocat/other', repo), false)
+  assert.equal(draftNamesRepo('', repo), false)
+})
+
+test('the repository filter matches full name and description, case-insensitively', () => {
+  const repos = [repo, { ...repo, fullName: 'octocat/sprintengine', name: 'sprintengine', description: 'Desktop app' }]
+  assert.equal(filterGitHubRepos(repos, '').length, 2)
+  assert.equal(filterGitHubRepos(repos, 'WEATHER').length, 1)
+  assert.equal(filterGitHubRepos(repos, 'desktop app').length, 1)
+  assert.equal(filterGitHubRepos(repos, 'zzz').length, 0)
+})
+
+test('progress reads as one line of words', () => {
+  assert.equal(describeCloneProgress(null), 'Starting…')
+  assert.equal(describeCloneProgress({ stage: 'connecting', percent: null, detail: null }), 'Connecting')
+  assert.equal(
+    describeCloneProgress({ stage: 'receiving', percent: 45, detail: '12.30 MiB | 5.00 MiB/s' }),
+    'Receiving objects · 45% · 12.30 MiB | 5.00 MiB/s',
+  )
+})
+
+test('picking a folder already named for the clone clones into it, not into a folder inside it', () => {
+  assert.equal(cloneParentFor('/Users/dev/code', 'widget'), '/Users/dev/code')
+  assert.equal(cloneParentFor('/Users/dev/code/widget', 'widget'), '/Users/dev/code')
 })

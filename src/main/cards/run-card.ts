@@ -100,7 +100,7 @@ import type {
   CardRunInput,
   CardRunResult,
   CardSurfaceHandoff,
-  GitHubCloneResult,
+  RepositoryCloneResult,
   MarketplacePluginRegistryInstallResult,
   MarketplaceRegistryReadResult,
   McpServerConfig,
@@ -159,8 +159,8 @@ export type CardRunDeps = {
   listAgentCliIds: () => string[] | Promise<string[]>
   /** The CLI availability probe (`cli-availability.ts`). */
   detectCli: (cli: string) => Promise<{ installed: boolean }>
-  /** `git-clone.ts` `cloneGitHubRepo()`, with the token already resolved on the main side. */
-  cloneRepo: (input: { url: string; parentDir: string; folderName: string }) => Promise<GitHubCloneResult>
+  /** `git-clone.ts` `cloneRepository()`, with the token already resolved on the main side. */
+  cloneRepo: (input: { url: string; parentDir: string; folderName: string }) => Promise<RepositoryCloneResult>
   /** Whether a path is already there. Only used to make a repeated clone a no-op. */
   pathExists: (path: string) => boolean | Promise<boolean>
   /**
@@ -625,7 +625,7 @@ export async function runCard(input: CardRunInput, deps: CardRunDeps): Promise<C
     // projects and the folder name defaults to the repository's leaf, so until
     // 2026-09-06 a card naming `x/my-other-project` adopted the project sitting
     // beside the open one: it installed into it, scoped the chat to it, and
-    // overrode `cloneGitHubRepo`'s own refusal on an occupied path. The schema
+    // overrode `cloneRepository`'s own refusal on an occupied path. The schema
     // says a card cannot reach into a project the person was not looking at;
     // this is what makes that sentence true.
     if (await deps.pathExists(target)) {
