@@ -309,9 +309,18 @@ export function Popover({
     reposition()
     window.addEventListener('resize', reposition)
     window.addEventListener('scroll', onScroll, true)
+    // A surface whose content grows after it opened — a menu that steps into
+    // a taller view, an error line appearing — is measured again, so it flips
+    // or clamps exactly as it would have had it opened at that size, instead
+    // of running off the bottom of the window with its buttons. Placing it
+    // moves it without resizing it, so this never feeds itself.
+    const resizes =
+      typeof ResizeObserver === 'undefined' || !surfaceRef.current ? null : new ResizeObserver(() => reposition())
+    if (resizes && surfaceRef.current) resizes.observe(surfaceRef.current)
     return () => {
       window.removeEventListener('resize', reposition)
       window.removeEventListener('scroll', onScroll, true)
+      resizes?.disconnect()
     }
   }, [open, placement])
 
