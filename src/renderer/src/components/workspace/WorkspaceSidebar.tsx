@@ -4344,7 +4344,12 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
       }}
       onDragEnd={handleDragEnd}
       onClick={() => {
-        if (anyRenaming) return
+        // A rename keeps the click while its field is on screen. A field that
+        // went with its row (a folded project, a list that moved) never blurs,
+        // so the rename ends here as a blur would have ended it; held, it left
+        // every chat in the list unclickable.
+        if (anyRenaming && renameInputRef.current) return
+        if (anyRenaming) commitRename()
         onSelectWorkspace(workspace.id)
       }}
       onDoubleClick={(event) => {
