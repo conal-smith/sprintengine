@@ -57,3 +57,41 @@ test('cancelling a draft by its id aborts the drafting run', async () => {
   assert.equal(seen?.aborted, true)
   assert.deepEqual(await running, { ok: false, code: 'cancelled', message: 'claude-code was stopped.' })
 })
+
+test("the draft is written in the person's writing style, and in the default one when none is sent", async () => {
+  const handlers = new Map<string, (event: unknown, input: unknown) => unknown>()
+  const ipcMain = {
+    handle: (channel: string, fn: (event: unknown, input: unknown) => unknown) => handlers.set(channel, fn),
+  }
+  const styles: unknown[] = []
+  const creator = {
+    draftInput: async () => ({
+      ok: true,
+      input: {
+        base: 'main',
+        head: 'feature/marks',
+        commits: '',
+        diffStat: '',
+        patch: '',
+        template: null,
+        conventionalCommits: true,
+      },
+    }),
+  } as unknown as PullRequestCreator
+  registerPullRequestCreateIpc(ipcMain as unknown as Parameters<typeof registerPullRequestCreateIpc>[0], {
+    creator,
+    generate: async (request: PullRequestTextRequest) => {
+      styles.push(request.input.style)
+      return { ok: true, value: { title: 'feat: marks', body: '' }, ms: 1 }
+    },
+  })
+  const draft = handlers.get('pull-request-create:draft')
+  assert.ok(draft)
+  const engine = { cli: 'claude-code', model: 'claude-haiku-4-5' }
+  await draft({}, { cwd: '/Users/dev/app', engine, writingStyle: { mode: 'conventional', instructions: '' } })
+  await draft({}, { cwd: '/Users/dev/app', engine })
+  assert.deepEqual(styles, [
+    { mode: 'conventional', instructions: '' },
+    { mode: 'repository', instructions: '' },
+  ])
+})

@@ -28,10 +28,12 @@ import type {
 import type { ConversationPeek } from './conversation-peek'
 import type {
   ChatTitleRequest,
+  CommitMessageResult,
   PullRequestTextResult,
   TextGenerationResult,
   TextGenerationSettings,
 } from './text-generation/contract'
+import type { TextGenerationWritingStyle } from './text-generation/writing-style'
 import type {
   CreatePullRequestOutcome,
   CreatePullRequestState,
@@ -1674,9 +1676,24 @@ export type ElectronApi = {
     cliRuntimes?: ChatTitleRequest['cliRuntimes']
     /** Names the draft, so `cancelPullRequestDraft` can stop its CLI. */
     draftId?: string
+    /** Settings → Agents → Text generation's writing style. Absent matches the repository. */
+    writingStyle?: TextGenerationWritingStyle
   }) => Promise<PullRequestTextResult>
   /** The dialog closed while its draft was being written: the drafting CLI is stopped. */
   cancelPullRequestDraft: (draftId: string) => Promise<void>
+  // The Git panel's "Write commit message" (src/main/commit-message-draft.ts):
+  // a message for what is staged in `repoRoot`, drafted for the person to edit.
+  // This computer's checkouts only. Never rejects.
+  draftCommitMessage: (request: {
+    repoRoot: string
+    engine: ChatTitleRequest['engine']
+    cliRuntimes?: ChatTitleRequest['cliRuntimes']
+    /** Names the draft, so `cancelCommitMessageDraft` can stop its CLI. */
+    draftId?: string
+    writingStyle?: TextGenerationWritingStyle
+  }) => Promise<CommitMessageResult>
+  /** The person stopped the draft: the drafting CLI is stopped. */
+  cancelCommitMessageDraft: (draftId: string) => Promise<void>
   /** `pin`: the branch and commit the person confirmed; refused when the checkout has moved off it. */
   pushForPullRequest: (cwd: string, pin?: PullRequestCheckoutPin) => Promise<PushForPullRequestOutcome>
   createPullRequest: (input: {

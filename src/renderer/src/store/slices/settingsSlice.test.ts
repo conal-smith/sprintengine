@@ -32,6 +32,9 @@ import { EXTENSIONS_BROWSE_DEEPLINK } from '../../components/settings/extensions
 import { consumePendingExtensionsSurfaceTarget } from '../../components/workspace/globalSurface/extensions/extensionsSurfaceTarget'
 import { test } from 'vitest'
 
+/** The writing style a profile from before the setting reads as. */
+const MATCH_REPOSITORY = { mode: 'repository', instructions: '' }
+
 test('settingsSlice', async () => {
   const workspaceWithMemoryRoot = {
     folderPath: '/Users/example/project',
@@ -1041,12 +1044,24 @@ test('settingsSlice', async () => {
   // supported CLI installed, so nothing is lost by starting it on — and the
   // engine choice is a separate axis that survives an off.
   {
-    assert.deepEqual(normalizeTextGenerationSettings(undefined), { enabled: true, engine: null })
-    assert.deepEqual(normalizeTextGenerationSettings(null), { enabled: true, engine: null })
-    assert.deepEqual(normalizeTextGenerationSettings({}), { enabled: true, engine: null })
+    assert.deepEqual(normalizeTextGenerationSettings(undefined), {
+      enabled: true,
+      engine: null,
+      writingStyle: MATCH_REPOSITORY,
+    })
+    assert.deepEqual(normalizeTextGenerationSettings(null), {
+      enabled: true,
+      engine: null,
+      writingStyle: MATCH_REPOSITORY,
+    })
+    assert.deepEqual(normalizeTextGenerationSettings({}), {
+      enabled: true,
+      engine: null,
+      writingStyle: MATCH_REPOSITORY,
+    })
     assert.deepEqual(
       normalizeTextGenerationSettings({ enabled: false }),
-      { enabled: false, engine: null },
+      { enabled: false, engine: null, writingStyle: MATCH_REPOSITORY },
       'an explicit off is kept — only a missing value defaults to on',
     )
     assert.equal(
@@ -1089,13 +1104,25 @@ test('settingsSlice', async () => {
 
     // And the key is always present after the whole-settings normalizer, so a
     // profile persisted before this shipped reads as "on, nothing chosen".
-    assert.deepEqual(defaultAppSettings().textGeneration, { enabled: true, engine: null })
-    assert.deepEqual(normalizeAppSettings(undefined, []).textGeneration, { enabled: true, engine: null })
-    assert.deepEqual(normalizeAppSettings({}, []).textGeneration, { enabled: true, engine: null })
+    assert.deepEqual(defaultAppSettings().textGeneration, {
+      enabled: true,
+      engine: null,
+      writingStyle: MATCH_REPOSITORY,
+    })
+    assert.deepEqual(normalizeAppSettings(undefined, []).textGeneration, {
+      enabled: true,
+      engine: null,
+      writingStyle: MATCH_REPOSITORY,
+    })
+    assert.deepEqual(normalizeAppSettings({}, []).textGeneration, {
+      enabled: true,
+      engine: null,
+      writingStyle: MATCH_REPOSITORY,
+    })
     assert.deepEqual(
       normalizeAppSettings({ textGeneration: { enabled: false, engine: { cli: 'codex', model: '' } } } as never, [])
         .textGeneration,
-      { enabled: false, engine: { cli: 'codex', model: '' } },
+      { enabled: false, engine: { cli: 'codex', model: '' }, writingStyle: MATCH_REPOSITORY },
     )
 
     // --- the two writers -----------------------------------------------------
@@ -1140,10 +1167,14 @@ test('settingsSlice', async () => {
 
     // null is "whichever supported CLI is installed, at its default" — not off.
     useWorkspaceStore.getState().setTextGenerationEngine(null)
-    assert.deepEqual(textGeneration(), { enabled: true, engine: null })
+    assert.deepEqual(textGeneration(), { enabled: true, engine: null, writingStyle: MATCH_REPOSITORY })
     useWorkspaceStore.getState().setTextGenerationEnabled(false)
     useWorkspaceStore.getState().setTextGenerationEngine(null)
-    assert.deepEqual(textGeneration(), { enabled: false, engine: null }, 'clearing the engine leaves enabled alone')
+    assert.deepEqual(
+      textGeneration(),
+      { enabled: false, engine: null, writingStyle: MATCH_REPOSITORY },
+      'clearing the engine leaves enabled alone',
+    )
     useWorkspaceStore.getState().setTextGenerationEnabled(true)
   }
 
@@ -1409,4 +1440,32 @@ test('the chat appearance setters store normalised values', () => {
   assert.equal(useWorkspaceStore.getState().appSettings.appearance.chatWidth, 'comfortable')
   store.setAppearanceChatContrast(100)
   store.setAppearanceChatWidth('full')
+})
+
+test('the writing style for drafted commits and pull requests is set one part at a time', () => {
+  const store = useWorkspaceStore.getState()
+  const style = () => useWorkspaceStore.getState().appSettings.textGeneration.writingStyle
+  store.setTextGenerationWritingStyle({ mode: 'custom', instructions: 'Past tense.' })
+  assert.deepEqual(style(), { mode: 'custom', instructions: 'Past tense.' })
+  // Switching away keeps the guide, so switching back finds it.
+  store.setTextGenerationWritingStyle({ mode: 'conventional' })
+  assert.deepEqual(style(), { mode: 'conventional', instructions: 'Past tense.' })
+  store.setTextGenerationWritingStyle({ mode: 'nonsense' as never, instructions: 'x'.repeat(2_100) })
+  assert.equal(style().mode, 'repository', 'an unknown mode is the default')
+  assert.equal(style().instructions.length, 2_000, 'an oversized guide is cut to its bound')
+  store.setTextGenerationWritingStyle({ instructions: '' })
+  assert.deepEqual(style(), MATCH_REPOSITORY)
+})
+
+test('a persisted style is read back, and an unreadable one is the default', () => {
+  assert.deepEqual(
+    normalizeAppSettings({ textGeneration: { writingStyle: { mode: 'custom', instructions: 'Short.' } } } as never, [])
+      .textGeneration.writingStyle,
+    { mode: 'custom', instructions: 'Short.' },
+  )
+  assert.deepEqual(
+    normalizeAppSettings({ textGeneration: { writingStyle: { mode: 'yaml' } } } as never, []).textGeneration
+      .writingStyle,
+    MATCH_REPOSITORY,
+  )
 })

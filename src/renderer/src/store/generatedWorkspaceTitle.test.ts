@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 
-import type {
-  ChatTitleRequest,
-  TextGenerationEngine,
-  TextGenerationResult,
-  TextGenerationSettings,
+import {
+  normalizeTextGenerationSettings,
+  type ChatTitleRequest,
+  type TextGenerationEngine,
+  type TextGenerationEngineSettings,
+  type TextGenerationResult,
 } from '../../../shared/text-generation/contract'
 import type { AgentCliAvailabilityMap } from '../../../shared/electron-api'
 import type { PluginCatalogEntry, WorkspaceId } from '../types/workspace'
@@ -254,12 +255,15 @@ test('generatedWorkspaceTitle', async () => {
     }
 
     const prime = (
-      textGeneration: TextGenerationSettings,
+      textGeneration: TextGenerationEngineSettings,
       catalog: string[],
       availability: Record<string, boolean>,
     ): void => {
       useWorkspaceStore.setState({
-        appSettings: { ...useWorkspaceStore.getState().appSettings, textGeneration },
+        appSettings: {
+          ...useWorkspaceStore.getState().appSettings,
+          textGeneration: normalizeTextGenerationSettings(textGeneration),
+        },
         pluginCatalogEntries: catalog.map(catalogEntry),
         cliAvailability: availabilityOf(availability),
       } as never)

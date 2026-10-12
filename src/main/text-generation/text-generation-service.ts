@@ -1,7 +1,8 @@
 // Text generation in the main process: the person's own agent CLI, headless,
-// one shot, under the login it already holds. Three jobs run on it: the chat
-// title, the title and description the chat's "Create PR" button drafts, and
-// a module's free-text prompt (module-text-generation.ts).
+// one shot, under the login it already holds. Four jobs run on it: the chat
+// title, the title and description the chat's "Create PR" button drafts, the
+// commit message the Git panel drafts, and a module's free-text prompt
+// (module-text-generation.ts).
 //
 // What every call guarantees:
 //   - no API key is read or forwarded — the Anthropic key/base-URL variables
@@ -26,8 +27,16 @@ import {
   sanitizeGeneratedChatTitle,
 } from '../../shared/text-generation/chat-title'
 import {
+  COMMIT_MESSAGE_OUTPUT_SCHEMA,
+  buildCommitMessagePrompt,
+  commitMessageIsConventional,
+  readCommitMessageOutput,
+} from '../../shared/text-generation/commit-message'
+import {
   DEFAULT_TEXT_GENERATION_TIMEOUT_MS,
   type ChatTitleRequest,
+  type CommitMessageRequest,
+  type CommitMessageResult,
   type PullRequestTextRequest,
   type PullRequestTextResult,
   type TextGenerationCliRuntimeOverrides,
@@ -102,6 +111,32 @@ export async function generatePullRequestText(
       schema: PULL_REQUEST_TEXT_OUTPUT_SCHEMA,
       read: readPullRequestTextOutput,
       nothing: 'pull request text',
+    },
+    deps,
+  )
+}
+
+/**
+ * A commit message for what is staged, drafted from the staged diff, the
+ * repository's recent subjects and the person's writing style. Under
+ * Conventional Commits a subject that is not one is a guardrail failure, so
+ * the box keeps what the person had (`sanitizeCommitMessage` says why).
+ */
+export async function generateCommitMessage(
+  request: CommitMessageRequest,
+  deps: TextGenerationServiceDeps = {},
+): Promise<CommitMessageResult> {
+  const conventional = commitMessageIsConventional(request.input)
+  return runStructuredJob(
+    {
+      engine: request.engine,
+      cliRuntimes: request.cliRuntimes,
+      timeoutMs: request.timeoutMs,
+      signal: request.signal,
+      prompt: buildCommitMessagePrompt(request.input),
+      schema: COMMIT_MESSAGE_OUTPUT_SCHEMA,
+      read: (answer) => readCommitMessageOutput(answer, { conventional }),
+      nothing: conventional ? 'Conventional Commits message' : 'commit message',
     },
     deps,
   )

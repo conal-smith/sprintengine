@@ -301,8 +301,11 @@ function CreatePullRequestDialog({
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`
     let pending = true
+    // The style the title is written in (Settings → Agents → Text generation),
+    // read as the draft starts, like the engine.
+    const writingStyle = useWorkspaceStore.getState().appSettings.textGeneration.writingStyle
     void window.api
-      .draftPullRequestText({ cwd, engine, draftId, ...(cliRuntimes ? { cliRuntimes } : {}) })
+      .draftPullRequestText({ cwd, engine, draftId, writingStyle, ...(cliRuntimes ? { cliRuntimes } : {}) })
       .then((result) => {
         pending = false
         if (!alive) return

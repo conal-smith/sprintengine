@@ -23,6 +23,7 @@ import { registerStudioAreaSkillsIpc } from './ipc/studio-area-skills-ipc'
 import { registerCliRuntimeIpc } from './ipc/cli-runtime-ipc'
 import { registerTextGenerationIpc } from './ipc/text-generation-ipc'
 import { registerPullRequestCreateIpc } from './ipc/pull-request-create-ipc'
+import { registerCommitMessageIpc } from './ipc/commit-message-ipc'
 import { registerClipboardIpc } from './ipc/clipboard-ipc'
 import { registerConversationPeekIpc } from './ipc/conversation-peek-ipc'
 import { registerAgentCompactIpc } from './ipc/agent-compact-ipc'
@@ -162,6 +163,8 @@ export function registerCoreIpc(
   registerTextGenerationIpc(ipcMain)
   // The chat's "Create PR": git, gh and the drafting CLI all run on this computer.
   registerPullRequestCreateIpc(ipcMain)
+  // The Git panel's "Write commit message": the same drafting CLI, on the staged changes.
+  registerCommitMessageIpc(ipcMain)
   registerAuthIpc(ipcMain, services.sprintengineAuth)
   registerBuiltinSkillsIpc(ipcMain, services.builtinSkillManager)
   registerStudioPluginIpc(ipcMain, services.studioPluginService)

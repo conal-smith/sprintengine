@@ -50,6 +50,7 @@ import { applyChangelistHunks, changelistHunkTargets } from './git/changelistHun
 import { ChangelistDialog, type ChangelistDialogValue } from './git/ChangelistDialog'
 import { GitChangesList } from './git/GitChangesList'
 import { GitChangesToolbar, type ShowDiffPlacement } from './git/GitChangesToolbar'
+import { useCommitMessageDraft } from './git/commitMessageDraft'
 import {
   buildGitChangeGroups,
   commitCounts,
@@ -736,6 +737,31 @@ export default function GitPanel({ workspaceId }: { workspaceId: string }) {
   }, [branchOptions])
   const activeScopeLabel = activeScope?.label ?? 'Current checkout'
   const activeScopePath = repoRoot ?? activeRootPath ?? ''
+  // "Write commit message" in the band: a draft for what Commit would commit,
+  // the checked files, into this scope's box (see `git/commitMessageDraft.ts`).
+  const commitMessageDraft = useCommitMessageDraft({
+    repoRoot,
+    scopeKey: activeScopeId,
+    hasStaged: changeCounts.checked > 0,
+    readMessage: commitMessage.get,
+    writeMessage: handleCommitMessageChange,
+    confirmReplace: () =>
+      dialog.confirm({
+        title: 'Replace your commit message?',
+        body: 'Your agent writes a new message from the checked files, in place of the one in the box. You can edit it before you commit.',
+        confirmLabel: 'Replace message',
+      }),
+    report: setMessage,
+    // A draft is read from its subject down. The caret goes to the start, so a
+    // long body does not leave the box scrolled past the line that matters.
+    focusMessage: () => {
+      const box = composerRef.current
+      if (!box) return
+      box.focus()
+      box.setSelectionRange(0, 0)
+      box.scrollTop = 0
+    },
+  })
   const activeScopeAppearance = getGitScopeStatusAppearance(activeScope)
   const scopeHealth = scopeHealthGlyph(activeScopeAppearance.label)
   const currentBranchInfo = branchOptions.find((branch) => branch.current) ?? null
@@ -2437,6 +2463,9 @@ export default function GitPanel({ workspaceId }: { workspaceId: string }) {
             currentChangelistId={toolbarTargetRow ? changelistIdForRows(changeActionRows(toolbarTargetRow)) : null}
             untrackedOnly={toolbarTargetUntrackedOnly}
             grouping={grouping}
+            commitMessageDraft={commitMessageDraft}
+            onWriteCommitMessage={commitMessageDraft.start}
+            onStopCommitMessage={commitMessageDraft.stop}
             onRefresh={() => void refreshAll()}
             onDiscard={() => void handleChangeRowsRevert(changeActionRows(toolbarTargetRow ?? undefined))}
             onStash={() => void handleStashPush()}
@@ -2549,6 +2578,7 @@ export default function GitPanel({ workspaceId }: { workspaceId: string }) {
 
           <CommitComposer
             busy={busy}
+            drafting={commitMessageDraft.drafting}
             commitMessage={commitMessage}
             hasChecked={changeCounts.checked > 0}
             countsLabel={formatCommitCounts(changeCounts)}
@@ -2904,6 +2934,7 @@ function createCommitMessageStore(initial: string): CommitMessageStore {
 
 function CommitComposer({
   busy,
+  drafting,
   commitMessage: commitMessageStore,
   hasChecked,
   countsLabel,
@@ -2916,6 +2947,8 @@ function CommitComposer({
   placeholder,
 }: {
   busy: string | null
+  /** A drafted message is being written into the box: it is read-only until it lands, and nothing commits. */
+  drafting: boolean
   commitMessage: CommitMessageStore
   /** Whether the index holds anything; with a message, that is a commit. */
   hasChecked: boolean
@@ -2935,7 +2968,7 @@ function CommitComposer({
   const commitMessage = useSyncExternalStore(commitMessageStore.subscribe, commitMessageStore.get)
   // "Checked" is exactly "in the index", and commit is index-only — so the
   // button is live when the line above it reads more than zero.
-  const readyToCommit = hasChecked && Boolean(commitMessage.trim())
+  const readyToCommit = hasChecked && Boolean(commitMessage.trim()) && !drafting
   return (
     // No band ground of its own: the box below brings the composer's material,
     // and a raised band behind a raised box flattens the step between them.
@@ -2974,6 +3007,11 @@ function CommitComposer({
           resize="none"
           value={commitMessage}
           onChange={(event) => onCommitMessageChange(event.target.value)}
+          // Read-only rather than disabled while a draft is written: the
+          // message stays readable at full contrast, and it can only be
+          // replaced by what the person agreed to replace.
+          readOnly={drafting}
+          aria-busy={drafting || undefined}
           placeholder={placeholder ?? 'Commit message'}
           aria-label="Commit message"
           // Grows with the message between three lines and a body's worth, as
