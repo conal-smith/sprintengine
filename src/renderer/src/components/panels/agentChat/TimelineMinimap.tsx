@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type JSX, type TransitionEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX, type TransitionEvent } from 'react'
 import { IconButton } from '../../ui'
 import { OVERLAY_SURFACE_CLASS } from '../../ui/tokens'
 import {
@@ -103,9 +103,20 @@ function MinimapPreview({
  * through the same turns.
  */
 export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }): JSX.Element | null {
-  const { marks, jump, step, reply } = navigation
+  const { marks, jump, step, reply, wheel } = navigation
   const { current, hasPrevious, hasNext } = useTurnPosition(navigation)
   const [hovered, setHovered] = useState<number | null>(null)
+  // A wheel over the strip or its buttons scrolls the transcript beneath. The
+  // listener is the DOM's own, not React's: React's wheel listener is passive,
+  // and the forwarded wheel has to stop the browser scrolling anything else.
+  const navRef = useRef<HTMLElement | null>(null)
+  const shown = marks.length >= TURN_MINIMAP_MIN_TURNS
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    nav.addEventListener('wheel', wheel, { passive: false })
+    return () => nav.removeEventListener('wheel', wheel)
+  }, [wheel, shown])
   // The strip opens out from under a still pointer, so the turn it rests on
   // is read again once the strip has finished growing.
   const pointerYRef = useRef<number | null>(null)
@@ -124,7 +135,7 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
       )),
     [marks, current, hovered],
   )
-  if (marks.length < TURN_MINIMAP_MIN_TURNS) return null
+  if (!shown) return null
   const count = marks.length
   const hoveredMark = hovered !== null ? (marks[hovered] ?? null) : null
   const expanded = hovered !== null
@@ -137,6 +148,7 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
     'pointer-events-auto opacity-0 transition-opacity duration-150 group-hover/minimap:opacity-100 group-focus-within/minimap:opacity-100'
   return (
     <nav
+      ref={navRef}
       aria-label="Conversation turns"
       data-testid="timeline-minimap"
       className="group/minimap pointer-events-none absolute inset-y-0 right-3 z-[var(--z-float)] flex flex-col items-end justify-center gap-2"

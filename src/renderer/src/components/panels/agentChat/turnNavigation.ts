@@ -256,7 +256,55 @@ export function useTurnNavigation(input: {
     },
     [jump, store],
   )
-  return useMemo(() => ({ marks, jump, step, reply, position: store }), [marks, jump, step, reply, store])
+  const wheel = useCallback(
+    (event: WheelEvent) => {
+      const scroller = listRef.current?.getScrollableNode() as HTMLElement | null | undefined
+      if (scroller) forwardWheel(event, scroller)
+    },
+    [listRef],
+  )
+  return useMemo(() => ({ marks, jump, step, reply, wheel, position: store }), [marks, jump, step, reply, wheel, store])
+}
+
+// A line of wheel travel, in pixels, for a mouse that reports lines.
+const WHEEL_LINE_PX = 16
+
+/**
+ * Scrolls the transcript by a wheel turned over something laid over it, the
+ * minimap, which is a sibling of the scroller rather than inside it: the
+ * browser scrolls the target's nearest scrolling ancestor, and the minimap has
+ * none, so a wheel over it moved nothing. The event is dispatched on the
+ * scroller first, so what listens there for the reader's own input (releasing
+ * a jump's anchor, ending a scroll restore) hears it; a dispatched event never
+ * scrolls by itself, so the distance is then applied. A pinch (`ctrlKey`) is
+ * left to the app's zoom.
+ */
+export function forwardWheel(event: WheelEvent, scroller: HTMLElement): void {
+  if (event.defaultPrevented || event.ctrlKey || event.deltaY === 0) return
+  event.preventDefault()
+  const forwarded = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    deltaX: event.deltaX,
+    deltaY: event.deltaY,
+    deltaZ: event.deltaZ,
+    deltaMode: event.deltaMode,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    screenX: event.screenX,
+    screenY: event.screenY,
+    altKey: event.altKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+  })
+  if (!scroller.dispatchEvent(forwarded)) return
+  const unit =
+    event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? WHEEL_LINE_PX
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? scroller.clientHeight
+        : 1
+  scroller.scrollBy({ top: event.deltaY * unit })
 }
 
 export type TurnNavigation = {
@@ -264,5 +312,7 @@ export type TurnNavigation = {
   jump: (markIndex: number) => void
   step: (direction: TurnDirection) => void
   reply: (markIndex: number) => string | null
+  /** Scrolls the transcript by a wheel turned over the minimap. */
+  wheel: (event: WheelEvent) => void
   position: TurnPositionSource
 }
