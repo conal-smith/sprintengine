@@ -5,7 +5,7 @@ import {
   offersFolderOpenMenu,
   resolveFolderOpenPrimary,
 } from './openInEditorTargets'
-import type { FolderOpenTargetAvailability } from '../../../../shared/folder-open-targets'
+import { FOLDER_OPEN_TARGET_IDS, type FolderOpenTargetAvailability } from '../../../../shared/folder-open-targets'
 import { test } from 'vitest'
 
 test('openInEditorTargets', async () => {
@@ -113,4 +113,34 @@ test('openInEditorTargets', async () => {
     process.exit(1)
   }
   console.log('openInEditorTargets.test.ts: ok')
+})
+
+test('every target is called by a name no other target shares', () => {
+  const labels = FOLDER_OPEN_TARGET_IDS.map((id) => folderOpenTargetLabel(id, true))
+  assert.equal(new Set(labels).size, labels.length)
+  assert.equal(folderOpenTargetLabel('vscode-insiders', true), 'VS Code Insiders')
+  assert.equal(folderOpenTargetLabel('vscodium', true), 'VSCodium')
+  assert.equal(folderOpenTargetLabel('antigravity', true), 'Antigravity')
+  assert.equal(folderOpenTargetLabel('rustrover', true), 'RustRover')
+})
+
+test('a newer editor is offered beside its family, not at the end of the menu', () => {
+  const available = availableFolderOpenTargets([
+    { id: 'finder', available: true },
+    { id: 'datagrip', available: true },
+    { id: 'intellij', available: true },
+    { id: 'kiro', available: true },
+    { id: 'vscode-insiders', available: true },
+    { id: 'vscode', available: true },
+  ])
+  assert.deepEqual(available, ['vscode', 'vscode-insiders', 'kiro', 'intellij', 'datagrip', 'finder'])
+})
+
+test('with only the Insiders build installed, it is the primary target', () => {
+  const available = availableFolderOpenTargets([
+    { id: 'vscode', available: false },
+    { id: 'vscode-insiders', available: true },
+    { id: 'finder', available: true },
+  ])
+  assert.equal(resolveFolderOpenPrimary(available, null), 'vscode-insiders')
 })

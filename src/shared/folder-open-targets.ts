@@ -4,17 +4,32 @@
 //
 // The order is the menu's, and the preference order the primary half falls
 // back on: VS Code and the editors built on it, the other standalone editors,
-// the JetBrains IDEs together, the file manager last.
+// the JetBrains IDEs together, the file manager last. Only the installed ones
+// are ever shown, so a long list costs a menu nothing.
+//
+// The ids are persisted (the remembered target), so one is never renamed or
+// reused: a build that does not know an id reads it as no remembered target.
 export const FOLDER_OPEN_TARGET_IDS = [
   'vscode',
+  'vscode-insiders',
+  'vscodium',
   'cursor',
   'windsurf',
+  'trae',
+  'kiro',
+  'antigravity',
   'zed',
   'sublime',
   'intellij',
   'webstorm',
   'pycharm',
   'goland',
+  'clion',
+  'phpstorm',
+  'rider',
+  'rubymine',
+  'rustrover',
+  'datagrip',
   'finder',
 ] as const
 

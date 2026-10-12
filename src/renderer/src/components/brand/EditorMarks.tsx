@@ -27,6 +27,16 @@ export function VsCodeMark({ className }: { className?: string }) {
   )
 }
 
+// vscode-insiders target: the same mark in the green the Insiders build wears,
+// which is how the two installs are told apart everywhere else on the machine.
+export function VsCodeInsidersMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="#24BFA5">
+      <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z" />
+    </svg>
+  )
+}
+
 // intellij target: the vendor's square, in its three-stop brand sweep, carrying
 // the white "IJ" and the white bar. The gradient id is scoped per mount so two
 // marks on one page (the split button and its open menu) do not share a def.
@@ -86,6 +96,12 @@ function JetBrainsMark({
 const WEBSTORM_STOPS = ['#07C3F2', '#087CFA', '#FCF84A'] as const
 const PYCHARM_STOPS = ['#21D789', '#FCF84A', '#07C3F2'] as const
 const GOLAND_STOPS = ['#0D7BF7', '#B74AF7', '#3BEA62'] as const
+const CLION_STOPS = ['#21D789', '#009AE5', '#ED358C'] as const
+const PHPSTORM_STOPS = ['#FF318C', '#765AF8', '#B345F1'] as const
+const RIDER_STOPS = ['#C90F5E', '#077CFB', '#FDB60D'] as const
+const RUBYMINE_STOPS = ['#FE2857', '#FC801D', '#FE5BC0'] as const
+const RUSTROVER_STOPS = ['#FF8100', '#FE2857', '#8C47FF'] as const
+const DATAGRIP_STOPS = ['#22D88F', '#9775F8', '#FF59E6'] as const
 
 export function WebStormMark({ className }: { className?: string }) {
   return <JetBrainsMark letters="WS" stops={WEBSTORM_STOPS} className={className} />
@@ -99,13 +115,38 @@ export function GoLandMark({ className }: { className?: string }) {
   return <JetBrainsMark letters="GO" stops={GOLAND_STOPS} className={className} />
 }
 
+export function CLionMark({ className }: { className?: string }) {
+  return <JetBrainsMark letters="CL" stops={CLION_STOPS} className={className} />
+}
+
+export function PhpStormMark({ className }: { className?: string }) {
+  return <JetBrainsMark letters="PS" stops={PHPSTORM_STOPS} className={className} />
+}
+
+export function RiderMark({ className }: { className?: string }) {
+  return <JetBrainsMark letters="RD" stops={RIDER_STOPS} className={className} />
+}
+
+export function RubyMineMark({ className }: { className?: string }) {
+  return <JetBrainsMark letters="RM" stops={RUBYMINE_STOPS} className={className} />
+}
+
+export function RustRoverMark({ className }: { className?: string }) {
+  return <JetBrainsMark letters="RR" stops={RUSTROVER_STOPS} className={className} />
+}
+
+export function DataGripMark({ className }: { className?: string }) {
+  return <JetBrainsMark letters="DG" stops={DATAGRIP_STOPS} className={className} />
+}
+
 // cursor target: the mark the agent pickers already draw for the Cursor CLI
 // (CliIcon). It is the same product, so it is the same picture.
 export function CursorMark({ className }: { className?: string }) {
   return <CliIcon cli="cursor" className={className} />
 }
 
-// zed, windsurf and sublime targets: no vendor SVG is bundled for these, so
+// zed, windsurf, sublime, vscodium, trae, kiro and antigravity targets: no
+// vendor SVG is bundled for these, so
 // each draws a simple, original tile in the Cursor mark's idiom — an outlined
 // square in the surrounding ink holding the product's initial. Swap a tile for
 // the vendor's own mark, in its colour, if one is bundled.
@@ -130,4 +171,20 @@ export function WindsurfMark({ className }: { className?: string }) {
 
 export function SublimeTextMark({ className }: { className?: string }) {
   return <InitialTileMark initial="S" className={className} />
+}
+
+export function VSCodiumMark({ className }: { className?: string }) {
+  return <InitialTileMark initial="V" className={className} />
+}
+
+export function TraeMark({ className }: { className?: string }) {
+  return <InitialTileMark initial="T" className={className} />
+}
+
+export function KiroMark({ className }: { className?: string }) {
+  return <InitialTileMark initial="K" className={className} />
+}
+
+export function AntigravityMark({ className }: { className?: string }) {
+  return <InitialTileMark initial="A" className={className} />
 }
