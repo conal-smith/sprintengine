@@ -46,6 +46,10 @@ export const CONVERSATION_EVENT_TYPES = [
   // The provider summarised the conversation to free context (payload:
   // `trigger` 'manual' | 'auto', `preTokens`, `postTokens`).
   'context_compacted',
+  // The provider started summarising the conversation, on `/compact` or on its
+  // own when the window filled (payload: `turnId`). Says what the turn is doing
+  // until `context_compacted`, or the next thing the turn says, supersedes it.
+  'context_compacting',
   // What a command the CLI ran without the model printed (`/context`,
   // `/usage`; payload: `output`, `command` without its slash). `adapterNote:
   // true` marks a line the adapter wrote about the command instead, such as a

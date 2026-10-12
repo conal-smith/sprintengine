@@ -165,6 +165,7 @@ when stateful and needs nothing when stateless.
 | `stream_event: content_block_delta thinking_delta` | `reasoning_delta`                                        |
 | `assistant` message `tool_use` blocks              | `tool_started` (name + input summary)                    |
 | `user` message `tool_result` blocks                | `tool_output`                                            |
+| `system/status` status `compacting`                | `context_compacting` (once per compaction)               |
 | `system/compact_boundary`                          | `context_compacted` payload `{ trigger, preTokens }`     |
 | `stream_event: message_start` (main chain)         | `usage_updated` payload `{ promptCache, contextUsed }`   |
 | `result success`                                   | `usage_updated` (+ `contextWindow` from `modelUsage`) + `turn_completed` |

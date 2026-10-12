@@ -2317,6 +2317,9 @@ export function mapSdkMessage(
     promptCacheTtl?: PromptCacheTtl | null
     commandOutputShown?: boolean
     compactedInExchange?: boolean
+    // A compaction is under way: the CLI repeats its `compacting` status every
+    // half minute while it summarises, and the transcript hears it once.
+    compacting?: boolean
     // The context window's reading, carried between the messages that make
     // it up: the model the init named (whose `modelUsage` row is the main
     // chain's), and the size of the main chain's latest request — what it sent
@@ -2485,6 +2488,15 @@ export function mapSdkMessage(
         )
         break
       }
+      // The CLI is summarising the conversation, on /compact or on its own
+      // when the window filled. A summary takes a minute or more, and a turn
+      // that said "Thinking…" through it read as the model working.
+      if (message.subtype === 'status') {
+        const compacting = message.status === 'compacting'
+        if (compacting && !state.compacting) events.push(eventFor(state, 'context_compacting', { turnId }))
+        state.compacting = compacting
+        break
+      }
       // The CLI summarised the conversation to free context, on /compact or
       // on its own when the window filled. The transcript marks the seam, since
       // the model no longer sees what came before it verbatim.
@@ -2496,6 +2508,7 @@ export function mapSdkMessage(
         break
       }
       state.compactedInExchange = true
+      state.compacting = false
       const metadata = asRecord(message.compact_metadata)
       const trigger = metadata?.trigger === 'manual' || metadata?.trigger === 'auto' ? metadata.trigger : undefined
       const preTokens = finiteNumber(metadata?.pre_tokens)
@@ -2738,6 +2751,7 @@ export function mapSdkMessage(
         commandOutput(message.result, message.local_command)
       state.commandOutputShown = false
       state.compactedInExchange = false
+      state.compacting = false
       const refusals = [...(state.usageRefusals?.values() ?? [])]
       const heardRefusal = refusals.length > 0 || state.assistantRateLimited === true
       const authFailed = state.assistantAuthFailed === true

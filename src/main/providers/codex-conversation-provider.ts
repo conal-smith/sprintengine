@@ -589,7 +589,11 @@ export function createCodexConversationProvider(
       // window filled mid-turn. The transcript marks the seam the same way it
       // does for Claude Code.
       if (item.type === 'contextCompaction') {
-        if (complete) emit(state, 'context_compacted', { trigger: turn.compact ? 'manual' : 'auto' })
+        emit(
+          state,
+          complete ? 'context_compacted' : 'context_compacting',
+          complete ? { trigger: turn.compact ? 'manual' : 'auto' } : {},
+        )
         return
       }
       if (item.type === 'agentMessage' && complete && !turn.textItems.has(id)) {
