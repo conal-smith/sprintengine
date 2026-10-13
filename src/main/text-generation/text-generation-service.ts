@@ -57,10 +57,12 @@ import {
   claudeChatTitleInvocation,
   claudeTextInvocation,
   codexChatTitleInvocation,
+  codexMcpListInvocation,
   codexTextInvocation,
   codexTextPrompt,
   readClaudeStructuredStdout,
   readClaudeTextStdout,
+  readCodexEnabledMcpServers,
   readCodexTextUsage,
   type ChatTitleInvocation,
   type ClaudeTextAnswer,
@@ -77,6 +79,9 @@ export type TextGenerationServiceDeps = {
 }
 
 const SCRATCH_PREFIX = 'sprintengine-text-'
+// `codex mcp list` only reads the config, and answers in about a second with
+// servers configured; a listing slower than this is not worth the call's wait.
+const CODEX_MCP_LIST_TIMEOUT_MS = 10_000
 
 export async function generateChatTitle(
   request: ChatTitleRequest,
@@ -197,12 +202,14 @@ export async function generateHeadlessText(
     if (cli === 'codex') {
       const outputPath = path.join(scratch, 'last-message.txt')
       await writeFile(outputPath, '', 'utf8')
+      const mcpServersOff = await listCodexMcpServers(binaryPath.path, run, common)
       const outcome = await run({
         ...codexTextInvocation({
           binaryPath: binaryPath.path,
           model,
           reasoning: request.engine.reasoning,
           outputPath,
+          mcpServersOff,
         }),
         ...common,
         stdin: request.system ? codexTextPrompt(request.system, request.prompt) : request.prompt,
@@ -279,6 +286,12 @@ async function runStructuredJob<T>(
       reasoning: engine.reasoning,
       schemaJson: JSON.stringify(job.schema),
       scratch,
+      listMcpServers: () =>
+        listCodexMcpServers(binaryPath.path, run, {
+          cwd: scratch,
+          env,
+          ...(job.signal ? { signal: job.signal } : {}),
+        }),
     })
     const outcome = await run({
       ...backend.invocation,
@@ -313,21 +326,54 @@ type PreparedBackend = {
 // together, and the run itself is one line above.
 async function prepareBackend(
   cli: string,
-  input: { binaryPath: string; model: string; reasoning: string | undefined; schemaJson: string; scratch: string },
+  input: {
+    binaryPath: string
+    model: string
+    reasoning: string | undefined
+    schemaJson: string
+    scratch: string
+    listMcpServers: () => Promise<string[]>
+  },
 ): Promise<PreparedBackend> {
   if (cli === 'codex') {
     const schemaPath = path.join(input.scratch, 'schema.json')
     const outputPath = path.join(input.scratch, 'last-message.txt')
     await writeFile(schemaPath, input.schemaJson, 'utf8')
     await writeFile(outputPath, '', 'utf8')
+    const mcpServersOff = await input.listMcpServers()
     return {
-      invocation: codexChatTitleInvocation({ ...input, schemaPath, outputPath }),
+      invocation: codexChatTitleInvocation({ ...input, schemaPath, outputPath, mcpServersOff }),
       readAnswer: async () => await readFile(outputPath, 'utf8'),
     }
   }
   return {
     invocation: claudeChatTitleInvocation(input),
     readAnswer: async (stdout) => readClaudeStructuredStdout(stdout),
+  }
+}
+
+// The MCP servers the person's Codex config would start, so the call can turn
+// each off by name. Listed afresh every call: a server added a minute ago is
+// one a cached list would let start. Any failure (an older CLI without
+// `mcp list --json`, a timeout, output that is not the list) is no names, and
+// the call runs with plugins and apps off but the servers as configured,
+// never a text generation that fails over a listing.
+async function listCodexMcpServers(
+  binaryPath: string,
+  run: RunCommand,
+  context: { cwd: string; env: Record<string, string>; signal?: AbortSignal },
+): Promise<string[]> {
+  try {
+    const outcome = await run({
+      ...codexMcpListInvocation(binaryPath),
+      ...context,
+      stdin: '',
+      timeoutMs: CODEX_MCP_LIST_TIMEOUT_MS,
+    })
+    if (outcome.code !== 0 || outcome.timedOut || outcome.spawnError) return []
+    return readCodexEnabledMcpServers(outcome.stdout)
+  } catch {
+    return []
   }
 }
 

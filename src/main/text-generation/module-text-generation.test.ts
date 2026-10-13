@@ -100,6 +100,10 @@ test('the Codex call writes its last message to a file and reports its usage as 
     'gpt-5.6-luna',
     '-c',
     'model_reasoning_effort="low"',
+    '-c',
+    'features.plugins=false',
+    '-c',
+    'features.apps=false',
     '--json',
     '--output-last-message',
     '/tmp/out.txt',
@@ -213,6 +217,9 @@ test('generateHeadlessText runs Codex with the instructions ahead of the prompt 
       }),
       env: () => ({ PATH: '/bin' }),
       run: async (input) => {
+        if (input.args.includes('mcp')) {
+          return { code: 0, stdout: '[{"name":"docs","enabled":true}]', stderr: '', timedOut: false, spawnError: null }
+        }
         runs.push(input)
         const outputPath = input.args[input.args.indexOf('--output-last-message') + 1]!
         const { writeFile } = await import('node:fs/promises')
@@ -239,6 +246,7 @@ test('generateHeadlessText runs Codex with the instructions ahead of the prompt 
   // unknown one is passed that would look like a cap and do nothing.
   expect(runs[0]!.args.join(' ')).not.toMatch(/max_output|output_tokens/)
   expect(runs[0]!.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined()
+  expect(runs[0]!.args).toContain('mcp_servers={"docs"={enabled=false}}')
 })
 
 test('a Codex call that writes no message has no usable answer', async () => {

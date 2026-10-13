@@ -99,3 +99,31 @@ test('a wait and a generated picture say what they did rather than their tool na
     'Generated image',
   )
 })
+
+test('a Codex JavaScript tool reads as the title the model gave the call', () => {
+  expect(
+    presentToolItem({
+      name: 'cua_repl.js',
+      kind: 'other',
+      input: { title: '  Open Settings  ', code: '' },
+      status: 'ok',
+    }).title,
+  ).toBe('Open Settings')
+  expect(presentToolItem({ name: 'js', kind: 'other', input: { title: 'x'.repeat(200) } }).title.length).toBe(72)
+})
+
+test('an untitled Codex JavaScript tool says whether it used the computer or ran a script', () => {
+  expect(presentToolItem({ name: 'cua_repl.js', kind: 'other', input: {}, status: 'running' }).title).toBe(
+    'Using the computer',
+  )
+  expect(
+    presentToolItem({ name: 'js', kind: 'other', input: { code: 'await sky.click(10, 20)' }, status: 'ok' }).title,
+  ).toBe('Used the computer')
+  expect(
+    presentToolItem({ name: 'node_repl.js', kind: 'other', input: { code: 'import "@oai/sky"' }, status: 'ok' }).title,
+  ).toBe('Used the computer')
+  expect(presentToolItem({ name: 'js', kind: 'other', input: { code: '1 + 1' }, status: 'running' }).title).toBe(
+    'Running JavaScript',
+  )
+  expect(presentToolItem({ name: 'node_repl.js', kind: 'other', input: {}, status: 'ok' }).title).toBe('Ran JavaScript')
+})

@@ -171,6 +171,8 @@ export type CodexTextInvocationInput = {
   reasoning?: string | undefined
   /** Where Codex is told to write its last message: the answer. */
   outputPath: string
+  /** The MCP servers the person's Codex config would start, turned off by name. */
+  mcpServersOff?: readonly string[]
 }
 
 // `codex exec` for free text: the title recipe without an output schema, plus
@@ -190,6 +192,7 @@ export function codexTextInvocation(input: CodexTextInvocationInput): ChatTitleI
       '--model',
       input.model,
       ...(input.reasoning ? ['-c', `model_reasoning_effort="${input.reasoning}"`] : []),
+      ...codexNoMcpArgs(input.mcpServersOff),
       '--json',
       '--output-last-message',
       input.outputPath,
@@ -247,6 +250,8 @@ export type CodexInvocationInput = {
   schemaPath: string
   /** Where Codex is told to write its last message. */
   outputPath: string
+  /** The MCP servers the person's Codex config would start, turned off by name. */
+  mcpServersOff?: readonly string[]
 }
 
 // `codex exec` has no JSON envelope on stdout, so the recipe asks it to write
@@ -254,7 +259,9 @@ export type CodexInvocationInput = {
 // file. `--ephemeral` keeps the call out of the person's session history,
 // `-s read-only` keeps the model's hands off the checkout, and
 // `--skip-git-repo-check` lets it run from the scratch directory the service
-// hands it. The trailing `-` reads the prompt from stdin.
+// hands it. The trailing `-` reads the prompt from stdin. The person's MCP
+// servers, plugins and apps stay off, as `--strict-mcp-config` keeps them off
+// Claude (`codexNoMcpArgs`).
 export function codexChatTitleInvocation(input: CodexInvocationInput): ChatTitleInvocation {
   return {
     file: input.binaryPath,
@@ -267,6 +274,7 @@ export function codexChatTitleInvocation(input: CodexInvocationInput): ChatTitle
       '--model',
       input.model,
       ...(input.reasoning ? ['-c', `model_reasoning_effort="${input.reasoning}"`] : []),
+      ...codexNoMcpArgs(input.mcpServersOff),
       '--output-schema',
       input.schemaPath,
       '--output-last-message',
@@ -280,4 +288,56 @@ export function codexChatTitleInvocation(input: CodexInvocationInput): ChatTitle
 // the schema was not honoured, whatever it said last.
 export function readCodexChatTitleOutput(lastMessage: string): string | null {
   return readChatTitleOutput(lastMessage)
+}
+
+// Plugins and apps bring MCP servers of their own, so both features are
+// switched off outright. Codex has no flag that drops the configured servers:
+// `mcp_servers={}` merges into the person's table rather than replacing it, so
+// each server `codex mcp list` reported is turned off by name. Without this
+// every server in ~/.codex/config.toml starts for a one-shot prompt, which is
+// slow, can stall on a server waiting for a login, and hands a text prompt
+// live tools.
+const CODEX_NO_PLUGIN_ARGS = ['-c', 'features.plugins=false', '-c', 'features.apps=false']
+
+function codexNoMcpArgs(mcpServersOff: readonly string[] = []): string[] {
+  if (mcpServersOff.length === 0) return [...CODEX_NO_PLUGIN_ARGS]
+  const table = mcpServersOff.map((name) => `${tomlKey(name)}={enabled=false}`).join(',')
+  return [...CODEX_NO_PLUGIN_ARGS, '-c', `mcp_servers={${table}}`]
+}
+
+// One inline table rather than a `-c mcp_servers.<name>.enabled=false` per
+// server: Codex splits a `-c` key on every dot, quoted or not, so a server
+// named `my.server` would become a nested key, and a key it cannot read fails
+// the whole call. A JSON string is a TOML basic string except for DEL, which
+// TOML wants escaped (checked against codex-cli 0.161.0).
+function tomlKey(name: string): string {
+  return JSON.stringify(name).replaceAll('\u007f', '\\u007f')
+}
+
+/**
+ * `codex mcp list --json` under the same plugin and app switches the call
+ * itself runs with, so a server only a plugin brings is not listed.
+ */
+export function codexMcpListInvocation(binaryPath: string): ChatTitleInvocation {
+  return { file: binaryPath, args: [...CODEX_NO_PLUGIN_ARGS, 'mcp', 'list', '--json'] }
+}
+
+/**
+ * The names of the servers `codex mcp list --json` says are enabled. Empty for
+ * stdout that is not the list it prints, so a CLI that cannot list leaves the
+ * call to run as it did before rather than failing it.
+ */
+export function readCodexEnabledMcpServers(stdout: string): string[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  return parsed.flatMap((server: unknown) => {
+    if (!server || typeof server !== 'object') return []
+    const { name, enabled } = server as { name?: unknown; enabled?: unknown }
+    return typeof name === 'string' && name && enabled === true ? [name] : []
+  })
 }
