@@ -29,6 +29,7 @@
     vellum: '#e8e0d0',
     herbarium: '#d4dcc0',
     paper: '#f4f1e8',
+    'catppuccin-latte': '#dce0e8',
   }
   // The design-system bundle imported by index.css keys its dark values
   // off data-mode; its bare :root is the LIGHT tier, the inverse of this

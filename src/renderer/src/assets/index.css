@@ -894,6 +894,418 @@
   --terminal-fg: #e0d4dc;
 }
 
+/* The four community palettes below — Nord, Dracula and Catppuccin's Mocha and
+   Latte — are each someone else's published colour scheme, so each block maps
+   the palette's own roles onto ours rather than inventing a look: the
+   palette's base is the conversation's paper, its darker shades are the cards
+   and the canvas behind them, its surface tones are the hover / active /
+   selected rungs, and its accents become the accent, the status tones, the
+   code highlighting and the terminal's sixteen ANSI colours.
+
+   Two rules bend the published values, and only by as much as they demand.
+   The anti-dither baseline snaps every channel to the nearest multiple of 4;
+   where a value sits exactly between two, it rounds the way that keeps the
+   palette's hue lean (a cool shade stays as blue as it was). And every ink
+   has to clear the floors the rest of the catalogue clears: body and secondary
+   text 4.5:1 on all three surfaces (and 4.5:1 for body text at the chat's
+   85% contrast floor), disabled 3:1, code tokens 4.5:1 on the conversation.
+   Where a published colour misses a floor it is moved along its own oklab
+   lightness, hue and chroma held, to the first step that clears; each block
+   names the ones it moved.
+
+   Unlike the rest of the catalogue these blocks also restate the code
+   highlighting (`--sem-syntax-*`, read by the shiki theme in
+   lib/highlight/codeHighlight.ts) and the terminal ANSI palette
+   (`--terminal-ansi-*`, read by utils/terminalTheme.ts): for these palettes
+   the code colours ARE the identity, and a Dracula whose strings were not
+   yellow would not be Dracula. */
+
+/* Nord — the arctic, north-bluish palette (nordtheme.com): Polar Night for the
+   surfaces, Snow Storm for the ink, Frost for the accent (nord8) and the code,
+   Aurora for the status tones. nord0 is the conversation's paper, as it is
+   Nord's editor background; the cards and canvas step under it on the same
+   blue-grey line, and nord1–nord3 are the hover / active / selected rungs.
+   Moved to clear a floor: nord11 (#bf616a) is lifted to #cc7078 so the
+   danger button's Polar Night label clears 4.5:1 on it; the comment ink is
+   nord3's brightened comment shade (#616e88) lifted to #8c9cb8, since the
+   published one is 2.5:1 on nord0. */
+:root[data-theme="nord"] {
+  --bg-app: #242c38;
+  --bg-surface: #283040;
+  --bg-surface-raised: #2c3440;
+  --bg-hover: #3c4454;
+  --bg-active: #444c60;
+  --bg-selected: #4c586c;
+  --bg-selected-resting: var(--bg-active);
+  --surface-overlay-backdrop: rgba(20, 24, 32, 0.72);
+
+  /* Snow Storm: nord6 → nord4, then three rungs down toward nord3. */
+  --text-strong: #ecf0f4;
+  --text-default: #d8e0e8;
+  --text-muted: #b4bccc;
+  --text-subtle: #9ca8bc;
+  --text-disabled: #8c98ac;
+  --text-on-accent: #242c38;
+
+  --border-subtle: rgba(236, 240, 244, 0.07);
+  --border-default: rgba(236, 240, 244, 0.11);
+  --border-strong: rgba(236, 240, 244, 0.18);
+  --border-focus: #88c0d0;
+
+  /* nord8, the Frost cyan Nord itself calls its primary accent. */
+  --accent-primary: #88c0d0;
+  --accent-primary-hover: #9cccd8;
+  --accent-primary-soft: rgba(136, 192, 208, 0.14);
+  --accent-primary-soft-strong: rgba(136, 192, 208, 0.22);
+
+  /* Aurora: nord14 good, nord13 warn, nord11 (lifted, see above) error. */
+  --tone-neutral: #8c98ac;
+  --tone-accent: #88c0d0;
+  --tone-good: #a4c08c;
+  --tone-warn: #eccc8c;
+  --tone-error: #cc7078;
+  --tone-error-ink: #1c2430;
+  --tone-neutral-soft: rgba(140, 152, 172, 0.16);
+  --tone-accent-soft: rgba(136, 192, 208, 0.16);
+  --tone-good-soft: rgba(164, 192, 140, 0.18);
+  --tone-warn-soft: rgba(236, 204, 140, 0.18);
+  --tone-error-soft: rgba(204, 112, 120, 0.18);
+
+  /* Diff ink follows this theme's own good/error, so it agrees with the
+     --tone-*-soft washes drawn behind it. */
+  --sem-color-diff-added: #a4c08c;
+  --sem-color-diff-removed: #cc7078;
+
+  /* Nord's own syntax roles: nord9 keywords, nord14 strings, nord15 numbers,
+     nord8 functions, nord7 types. */
+  --sem-syntax-foreground: #d8e0e8;
+  --sem-syntax-comment: #8c9cb8;
+  --sem-syntax-keyword: #80a0c0;
+  --sem-syntax-string: #a4c08c;
+  --sem-syntax-number: #b490ac;
+  --sem-syntax-function: #88c0d0;
+  --sem-syntax-type: #90bcbc;
+
+  --scrollbar-thumb: #3c4454;
+  --scrollbar-thumb-hover: #4c586c;
+  --skeleton-shimmer-low: rgba(236, 240, 244, 0.03);
+  --skeleton-shimmer-high: rgba(236, 240, 244, 0.07);
+
+  /* One step under the canvas on the same Polar Night line; ANSI as Nord's
+     own terminal ports assign it (nord1 black, nord5 white, the brightened
+     nord3 for bright black, nord7 for bright cyan). */
+  --terminal-bg: #1c2430;
+  --terminal-fg: #d8e0e8;
+  --terminal-ansi-black: #3c4454;
+  --terminal-ansi-red: #c0606c;
+  --terminal-ansi-green: #a4c08c;
+  --terminal-ansi-yellow: #eccc8c;
+  --terminal-ansi-blue: #80a0c0;
+  --terminal-ansi-magenta: #b490ac;
+  --terminal-ansi-cyan: #88c0d0;
+  --terminal-ansi-white: #e4e8f0;
+  --terminal-ansi-bright-black: #606c88;
+  --terminal-ansi-bright-red: #c0606c;
+  --terminal-ansi-bright-green: #a4c08c;
+  --terminal-ansi-bright-yellow: #eccc8c;
+  --terminal-ansi-bright-blue: #80a0c0;
+  --terminal-ansi-bright-magenta: #b490ac;
+  --terminal-ansi-bright-cyan: #90bcbc;
+  --terminal-ansi-bright-white: #ecf0f4;
+
+  --memory-graph-atmosphere: radial-gradient(circle at 50% 45%, rgba(136, 192, 208, 0.06), transparent 50%);
+}
+
+/* Dracula — the dark violet palette with neon accents (draculatheme.com).
+   Background (#282a36) is the conversation's paper; the cards and canvas take
+   the two darker shades Dracula's editor themes use for their side panels
+   (#21222c, #191a21), and the hover / active rungs are its lighter panel shade
+   and Current Line (#343746, #44475a). Pink is the accent — the colour
+   Dracula spends on keywords and its own highlights, and the one that tells it
+   apart from Catppuccin's mauve beside it in the picker. The ink ramp runs
+   from Foreground down toward Comment. Moved to clear a floor: Comment
+   (#6272a4) is 3.0:1 on Background, so code comments are lifted to #7c90c4;
+   it stays as published for the terminal's bright black. */
+:root[data-theme="dracula"] {
+  --bg-app: #181820;
+  --bg-surface: #20202c;
+  --bg-surface-raised: #282838;
+  --bg-hover: #343848;
+  --bg-active: #44485c;
+  --bg-selected: #505470;
+  --bg-selected-resting: var(--bg-active);
+  --surface-overlay-backdrop: rgba(12, 12, 16, 0.72);
+
+  --text-strong: #f8f8f0;
+  --text-default: #e0e0e8;
+  --text-muted: #b8bcd4;
+  --text-subtle: #9ca4cc;
+  --text-disabled: #8490c0;
+  --text-on-accent: #20202c;
+
+  --border-subtle: rgba(248, 248, 240, 0.07);
+  --border-default: rgba(248, 248, 240, 0.11);
+  --border-strong: rgba(248, 248, 240, 0.18);
+  --border-focus: #fc78c4;
+
+  --accent-primary: #fc78c4;
+  --accent-primary-hover: #fc90d0;
+  --accent-primary-soft: rgba(252, 120, 196, 0.14);
+  --accent-primary-soft-strong: rgba(252, 120, 196, 0.22);
+
+  /* Green good, Orange warn, Red error, as Dracula's own diagnostics use them. */
+  --tone-neutral: #8490c0;
+  --tone-accent: #fc78c4;
+  --tone-good: #50f87c;
+  --tone-warn: #fcb86c;
+  --tone-error: #fc5454;
+  --tone-error-ink: #181820;
+  --tone-neutral-soft: rgba(132, 144, 192, 0.16);
+  --tone-accent-soft: rgba(252, 120, 196, 0.16);
+  --tone-good-soft: rgba(80, 248, 124, 0.16);
+  --tone-warn-soft: rgba(252, 184, 108, 0.18);
+  --tone-error-soft: rgba(252, 84, 84, 0.18);
+
+  /* Diff ink follows this theme's own good/error, so it agrees with the
+     --tone-*-soft washes drawn behind it. */
+  --sem-color-diff-added: #50f87c;
+  --sem-color-diff-removed: #fc5454;
+
+  /* Dracula's syntax roles: pink keywords, yellow strings, purple numbers,
+     green functions, cyan types. */
+  --sem-syntax-foreground: #f8f8f0;
+  --sem-syntax-comment: #7c90c4;
+  --sem-syntax-keyword: #fc78c4;
+  --sem-syntax-string: #f0f88c;
+  --sem-syntax-number: #bc94f8;
+  --sem-syntax-function: #50f87c;
+  --sem-syntax-type: #8ce8fc;
+
+  --scrollbar-thumb: #343848;
+  --scrollbar-thumb-hover: #44485c;
+  --skeleton-shimmer-low: rgba(248, 248, 240, 0.03);
+  --skeleton-shimmer-high: rgba(248, 248, 240, 0.07);
+
+  /* One step under the canvas; ANSI is Dracula's own terminal specification. */
+  --terminal-bg: #101018;
+  --terminal-fg: #f8f8f0;
+  --terminal-ansi-black: #20202c;
+  --terminal-ansi-red: #fc5454;
+  --terminal-ansi-green: #50f87c;
+  --terminal-ansi-yellow: #f0f88c;
+  --terminal-ansi-blue: #bc94f8;
+  --terminal-ansi-magenta: #fc78c4;
+  --terminal-ansi-cyan: #8ce8fc;
+  --terminal-ansi-white: #f8f8f0;
+  --terminal-ansi-bright-black: #6474a4;
+  --terminal-ansi-bright-red: #fc6c6c;
+  --terminal-ansi-bright-green: #68fc94;
+  --terminal-ansi-bright-yellow: #fcfca4;
+  --terminal-ansi-bright-blue: #d4acfc;
+  --terminal-ansi-bright-magenta: #fc90e0;
+  --terminal-ansi-bright-cyan: #a4fcfc;
+  --terminal-ansi-bright-white: #ffffff;
+
+  --memory-graph-atmosphere: radial-gradient(circle at 50% 45%, rgba(188, 148, 248, 0.07), transparent 50%);
+}
+
+/* Catppuccin Mocha — the darkest flavour of Catppuccin's pastel palette
+   (catppuccin.com/palette), laid out the way its own style guide stacks it:
+   Base is the conversation's paper, Mantle the cards, Crust the canvas;
+   Surface 0 is the hover rung and Surface 1 the selection, with the active
+   rung halfway between them; Text, Subtext 1 and 0, then
+   Overlay 2 and 1 are the ink ramp, as published. Mauve is the accent — the
+   default accent of Catppuccin's own ports. Nothing here needed moving past
+   the anti-dither snap. */
+:root[data-theme="catppuccin-mocha"] {
+  --bg-app: #10101c;
+  --bg-surface: #181824;
+  --bg-surface-raised: #1c1c2c;
+  --bg-hover: #303044;
+  --bg-active: #3c3c50;
+  --bg-selected: #444858;
+  --bg-selected-resting: var(--bg-active);
+  --surface-overlay-backdrop: rgba(8, 8, 16, 0.72);
+
+  --text-strong: #ccd4f4;
+  --text-default: #b8c0dc;
+  --text-muted: #a8acc8;
+  --text-subtle: #9498b4;
+  --text-disabled: #80849c;
+  --text-on-accent: #1c1c2c;
+
+  --border-subtle: rgba(204, 212, 244, 0.07);
+  --border-default: rgba(204, 212, 244, 0.11);
+  --border-strong: rgba(204, 212, 244, 0.18);
+  --border-focus: #cca8f8;
+
+  --accent-primary: #cca8f8;
+  --accent-primary-hover: #d8bcfc;
+  --accent-primary-soft: rgba(204, 168, 248, 0.14);
+  --accent-primary-soft-strong: rgba(204, 168, 248, 0.22);
+
+  /* Green, Yellow and Red, as the style guide assigns success, warning and
+     error. */
+  --tone-neutral: #9498b4;
+  --tone-accent: #cca8f8;
+  --tone-good: #a8e4a0;
+  --tone-warn: #f8e0b0;
+  --tone-error: #f48ca8;
+  --tone-error-ink: #10101c;
+  --tone-neutral-soft: rgba(148, 152, 180, 0.16);
+  --tone-accent-soft: rgba(204, 168, 248, 0.16);
+  --tone-good-soft: rgba(168, 228, 160, 0.16);
+  --tone-warn-soft: rgba(248, 224, 176, 0.16);
+  --tone-error-soft: rgba(244, 140, 168, 0.18);
+
+  /* Diff ink follows this theme's own good/error, so it agrees with the
+     --tone-*-soft washes drawn behind it. */
+  --sem-color-diff-added: #a8e4a0;
+  --sem-color-diff-removed: #f48ca8;
+
+  /* The style guide's syntax roles: Mauve keywords, Green strings, Peach
+     numbers, Blue functions, Yellow types, Overlay 2 comments. */
+  --sem-syntax-foreground: #ccd4f4;
+  --sem-syntax-comment: #9498b4;
+  --sem-syntax-keyword: #cca8f8;
+  --sem-syntax-string: #a8e4a0;
+  --sem-syntax-number: #fcb488;
+  --sem-syntax-function: #88b4f8;
+  --sem-syntax-type: #f8e0b0;
+
+  --scrollbar-thumb: #303044;
+  --scrollbar-thumb-hover: #444858;
+  --skeleton-shimmer-low: rgba(204, 212, 244, 0.03);
+  --skeleton-shimmer-high: rgba(204, 212, 244, 0.07);
+
+  /* One step under Crust; ANSI as Catppuccin's terminal ports assign it
+     (Surface 1 / 2 for black, Subtext 1 / 0 for white, Pink magenta, Teal
+     cyan). */
+  --terminal-bg: #0c0c14;
+  --terminal-fg: #ccd4f4;
+  --terminal-ansi-black: #444858;
+  --terminal-ansi-red: #f48ca8;
+  --terminal-ansi-green: #a8e4a0;
+  --terminal-ansi-yellow: #f8e0b0;
+  --terminal-ansi-blue: #88b4f8;
+  --terminal-ansi-magenta: #f4c4e8;
+  --terminal-ansi-cyan: #94e0d4;
+  --terminal-ansi-white: #b8c0dc;
+  --terminal-ansi-bright-black: #585c70;
+  --terminal-ansi-bright-red: #f48ca8;
+  --terminal-ansi-bright-green: #a8e4a0;
+  --terminal-ansi-bright-yellow: #f8e0b0;
+  --terminal-ansi-bright-blue: #88b4f8;
+  --terminal-ansi-bright-magenta: #f4c4e8;
+  --terminal-ansi-bright-cyan: #94e0d4;
+  --terminal-ansi-bright-white: #a8acc8;
+
+  --memory-graph-atmosphere: radial-gradient(circle at 50% 45%, rgba(204, 168, 248, 0.06), transparent 50%);
+}
+
+/* Catppuccin Latte — the light flavour, stacked as Mocha is: Base is the
+   conversation's paper, Mantle the cards, Crust the canvas, Surface 0 the
+   selection. Latte is a soft palette and several of its published values
+   sit under the floors on its own paper, so this block moves more than the
+   others, each along its own lightness line:
+     - Text (#4c4f69) one step deeper, to #484c64, with the next rung between
+       it and Subtext 1 at #505470, so body text keeps 4.5:1 at the chat's 85%
+       contrast floor; Subtext 1 (#5c5f77) is then the secondary ink, subtle
+       sits a step under Subtext 0 and disabled between Subtext 0 and Overlay
+       2, so disabled clears 3:1 on Crust.
+     - Green, Yellow, Peach, Teal, Pink, Blue and Overlay 2 are tuned to read
+       as accents on Base, not as text: each is deepened to the first step
+       that clears 4.5:1 there (green #40a02b → #147c00, yellow #df8e1d →
+       #a85800, Overlay 2 → #6c6c80 for comments), for the status tones, the
+       code and the terminal alike. Mauve and Red clear as published. */
+:root[data-theme="catppuccin-latte"] {
+  --bg-app: #dce0e8;
+  --bg-surface: #e4e8f0;
+  --bg-surface-raised: #f0f0f4;
+  --bg-hover: #e0e4ec;
+  --bg-active: #d4d8e0;
+  --bg-selected: #ccd0dc;
+  --bg-selected-resting: var(--bg-active);
+  --surface-overlay-backdrop: rgba(32, 36, 52, 0.4);
+
+  --text-strong: #484c64;
+  --text-default: #505470;
+  --text-muted: #5c6078;
+  --text-subtle: #686c84;
+  --text-disabled: #747890;
+  /* Base on Mauve, as Catppuccin's own buttons draw it. */
+  --text-on-accent: #f0f0f4;
+
+  --border-subtle: rgba(72, 76, 100, 0.12);
+  --border-default: rgba(72, 76, 100, 0.2);
+  --border-strong: rgba(72, 76, 100, 0.3);
+  --border-focus: #8838f0;
+
+  --accent-primary: #8838f0;
+  --accent-primary-hover: #7428e0;
+  --accent-primary-soft: rgba(136, 56, 240, 0.12);
+  --accent-primary-soft-strong: rgba(136, 56, 240, 0.2);
+
+  --tone-neutral: #747890;
+  --tone-accent: #8838f0;
+  --tone-good: #147c00;
+  --tone-warn: #a85800;
+  --tone-error: #d01038;
+  /* Red flips its ink to white, as every light theme's deep red does. */
+  --tone-error-ink: #ffffff;
+  --tone-neutral-soft: rgba(116, 120, 144, 0.16);
+  --tone-accent-soft: rgba(136, 56, 240, 0.14);
+  --tone-good-soft: rgba(20, 124, 0, 0.16);
+  --tone-warn-soft: rgba(168, 88, 0, 0.16);
+  --tone-error-soft: rgba(208, 16, 56, 0.12);
+
+  /* Diff ink follows this theme's own good/error, so it agrees with the
+     --tone-*-soft washes drawn behind it. */
+  --sem-color-diff-added: #147c00;
+  --sem-color-diff-removed: #d01038;
+
+  /* Mocha's syntax roles in Latte's (deepened) colours. */
+  --sem-syntax-foreground: #505470;
+  --sem-syntax-comment: #6c6c80;
+  --sem-syntax-keyword: #8838f0;
+  --sem-syntax-string: #147c00;
+  --sem-syntax-number: #cc3400;
+  --sem-syntax-function: #1860f0;
+  --sem-syntax-type: #a85800;
+
+  --scrollbar-thumb: #bcc0cc;
+  --scrollbar-thumb-hover: #acb0bc;
+  --skeleton-shimmer-low: rgba(72, 76, 100, 0.04);
+  --skeleton-shimmer-high: rgba(72, 76, 100, 0.09);
+
+  --shadow-drawer: 0 1px 3px rgba(32, 36, 52, 0.07), 0 8px 24px -6px rgba(32, 36, 52, 0.12);
+
+  /* Base: the terminal is a working card, as on Herbarium. ANSI as Mocha's,
+     in the deepened colours, with Subtext 1 black, Subtext 0 white, and the
+     strongest ink for bright white — which agents use for bold text and must
+     not vanish on a light screen. */
+  --terminal-bg: #f0f0f4;
+  --terminal-fg: #484c64;
+  --terminal-ansi-black: #5c6078;
+  --terminal-ansi-red: #d01038;
+  --terminal-ansi-green: #147c00;
+  --terminal-ansi-yellow: #a85800;
+  --terminal-ansi-blue: #1860f0;
+  --terminal-ansi-magenta: #b04098;
+  --terminal-ansi-cyan: #007880;
+  --terminal-ansi-white: #6c7084;
+  --terminal-ansi-bright-black: #747890;
+  --terminal-ansi-bright-red: #d01038;
+  --terminal-ansi-bright-green: #147c00;
+  --terminal-ansi-bright-yellow: #a85800;
+  --terminal-ansi-bright-blue: #1860f0;
+  --terminal-ansi-bright-magenta: #b04098;
+  --terminal-ansi-bright-cyan: #007880;
+  --terminal-ansi-bright-white: #484c64;
+
+  --memory-graph-atmosphere: radial-gradient(circle at 50% 45%, rgba(136, 56, 240, 0.05), transparent 52%);
+}
+
 /* Vellum — warm vintage-parchment light theme, drawn from an antique
    natural-history butterfly plate: aged cream paper carrying jewel specimens.
    The surface ramp is warm parchment (not the cool near-white of the Light
@@ -1347,6 +1759,7 @@ samp,
  * the inverted glyph above.) */
 :root[data-theme="light"] .time-control::-webkit-calendar-picker-indicator,
 :root[data-theme="vellum"] .time-control::-webkit-calendar-picker-indicator,
+:root[data-theme="catppuccin-latte"] .time-control::-webkit-calendar-picker-indicator,
 :root[data-theme="herbarium"] .time-control::-webkit-calendar-picker-indicator,
 :root[data-theme="paper"] .time-control::-webkit-calendar-picker-indicator {
   filter: none;
@@ -1601,6 +2014,7 @@ samp,
  * surface theme (Light, Vellum). */
 :root[data-theme="light"],
 :root[data-theme="vellum"],
+:root[data-theme="catppuccin-latte"],
 :root[data-theme="herbarium"],
 :root[data-theme="paper"] {
   /* The composer's one step above the conversation's raised paper (see
@@ -1624,49 +2038,57 @@ samp,
 :root[data-theme="light"] .git-ref-pill-0,
 :root[data-theme="herbarium"] .git-ref-pill-0,
 :root[data-theme="paper"] .git-ref-pill-0,
-:root[data-theme="vellum"] .git-ref-pill-0 {
+:root[data-theme="vellum"] .git-ref-pill-0,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-0 {
   color: color-mix(in oklab, var(--text-strong) 52%, #5c7cff);
 }
 :root[data-theme="light"] .git-ref-pill-1,
 :root[data-theme="herbarium"] .git-ref-pill-1,
 :root[data-theme="paper"] .git-ref-pill-1,
-:root[data-theme="vellum"] .git-ref-pill-1 {
+:root[data-theme="vellum"] .git-ref-pill-1,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-1 {
   color: color-mix(in oklab, var(--text-strong) 52%, #a78bfa);
 }
 :root[data-theme="light"] .git-ref-pill-2,
 :root[data-theme="herbarium"] .git-ref-pill-2,
 :root[data-theme="paper"] .git-ref-pill-2,
-:root[data-theme="vellum"] .git-ref-pill-2 {
+:root[data-theme="vellum"] .git-ref-pill-2,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-2 {
   color: color-mix(in oklab, var(--text-strong) 55%, #30d158);
 }
 :root[data-theme="light"] .git-ref-pill-3,
 :root[data-theme="herbarium"] .git-ref-pill-3,
 :root[data-theme="paper"] .git-ref-pill-3,
-:root[data-theme="vellum"] .git-ref-pill-3 {
+:root[data-theme="vellum"] .git-ref-pill-3,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-3 {
   color: color-mix(in oklab, var(--text-strong) 55%, #ff8c42);
 }
 :root[data-theme="light"] .git-ref-pill-4,
 :root[data-theme="herbarium"] .git-ref-pill-4,
 :root[data-theme="paper"] .git-ref-pill-4,
-:root[data-theme="vellum"] .git-ref-pill-4 {
+:root[data-theme="vellum"] .git-ref-pill-4,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-4 {
   color: color-mix(in oklab, var(--text-strong) 55%, #ff7eb3);
 }
 :root[data-theme="light"] .git-ref-pill-5,
 :root[data-theme="herbarium"] .git-ref-pill-5,
 :root[data-theme="paper"] .git-ref-pill-5,
-:root[data-theme="vellum"] .git-ref-pill-5 {
+:root[data-theme="vellum"] .git-ref-pill-5,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-5 {
   color: color-mix(in oklab, var(--text-strong) 55%, #2dd4bf);
 }
 :root[data-theme="light"] .git-ref-pill-6,
 :root[data-theme="herbarium"] .git-ref-pill-6,
 :root[data-theme="paper"] .git-ref-pill-6,
-:root[data-theme="vellum"] .git-ref-pill-6 {
+:root[data-theme="vellum"] .git-ref-pill-6,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-6 {
   color: color-mix(in oklab, var(--text-strong) 58%, #ffbf2f);
 }
 :root[data-theme="light"] .git-ref-pill-7,
 :root[data-theme="herbarium"] .git-ref-pill-7,
 :root[data-theme="paper"] .git-ref-pill-7,
-:root[data-theme="vellum"] .git-ref-pill-7 {
+:root[data-theme="vellum"] .git-ref-pill-7,
+:root[data-theme="catppuccin-latte"] .git-ref-pill-7 {
   color: color-mix(in oklab, var(--text-strong) 55%, #ff5a5f);
 }
 /* design-tokens-allow-end */
@@ -1685,9 +2107,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-red,
 :root[data-theme="paper"] .highlight-text-red,
 :root[data-theme="vellum"] .highlight-text-red,
+:root[data-theme="catppuccin-latte"] .highlight-text-red,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-red,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-red,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-red {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-red,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-red {
   color: color-mix(in oklab, var(--text-strong) 55%, #ff5a5f);
 }
 :root[data-theme="light"] .highlight-text-orange,
@@ -1695,9 +2119,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-orange,
 :root[data-theme="paper"] .highlight-text-orange,
 :root[data-theme="vellum"] .highlight-text-orange,
+:root[data-theme="catppuccin-latte"] .highlight-text-orange,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-orange,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-orange,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-orange {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-orange,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-orange {
   color: color-mix(in oklab, var(--text-strong) 55%, #ff8c42);
 }
 :root[data-theme="light"] .highlight-text-amber,
@@ -1705,9 +2131,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-amber,
 :root[data-theme="paper"] .highlight-text-amber,
 :root[data-theme="vellum"] .highlight-text-amber,
+:root[data-theme="catppuccin-latte"] .highlight-text-amber,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-amber,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-amber,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-amber {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-amber,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-amber {
   color: color-mix(in oklab, var(--text-strong) 55%, #ffbf2f);
 }
 :root[data-theme="light"] .highlight-text-green,
@@ -1715,9 +2143,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-green,
 :root[data-theme="paper"] .highlight-text-green,
 :root[data-theme="vellum"] .highlight-text-green,
+:root[data-theme="catppuccin-latte"] .highlight-text-green,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-green,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-green,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-green {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-green,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-green {
   color: color-mix(in oklab, var(--text-strong) 55%, #30d158);
 }
 :root[data-theme="light"] .highlight-text-blue,
@@ -1725,9 +2155,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-blue,
 :root[data-theme="paper"] .highlight-text-blue,
 :root[data-theme="vellum"] .highlight-text-blue,
+:root[data-theme="catppuccin-latte"] .highlight-text-blue,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-blue,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-blue,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-blue {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-blue,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-blue {
   color: color-mix(in oklab, var(--text-strong) 52%, #5c7cff);
 }
 :root[data-theme="light"] .highlight-text-purple,
@@ -1735,9 +2167,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-purple,
 :root[data-theme="paper"] .highlight-text-purple,
 :root[data-theme="vellum"] .highlight-text-purple,
+:root[data-theme="catppuccin-latte"] .highlight-text-purple,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-purple,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-purple,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-purple {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-purple,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-purple {
   color: color-mix(in oklab, var(--text-strong) 52%, #a78bfa);
 }
 :root[data-theme="light"] .highlight-text-pink,
@@ -1745,9 +2179,11 @@ samp,
 :root[data-theme="herbarium"] .highlight-text-pink,
 :root[data-theme="paper"] .highlight-text-pink,
 :root[data-theme="vellum"] .highlight-text-pink,
+:root[data-theme="catppuccin-latte"] .highlight-text-pink,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-pink,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-pink,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-pink {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-pink,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-pink {
   color: color-mix(in oklab, var(--text-strong) 55%, #ff7eb3);
 }
 
@@ -1755,92 +2191,106 @@ samp,
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-red,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-red,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-red,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-red {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-red,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-red {
   background: rgba(255, 90, 95, 0.16);
   border-color: rgba(255, 90, 95, 0.52);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-red.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-red.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-red.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-red.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-red.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-red.flexlayout__tab_button--selected {
   background: rgba(255, 90, 95, 0.28);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-orange,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-orange,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-orange,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-orange {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-orange,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-orange {
   background: rgba(255, 140, 66, 0.16);
   border-color: rgba(255, 140, 66, 0.52);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-orange.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-orange.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-orange.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-orange.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-orange.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-orange.flexlayout__tab_button--selected {
   background: rgba(255, 140, 66, 0.28);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-amber,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-amber,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-amber,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-amber {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-amber,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-amber {
   background: rgba(255, 191, 47, 0.18);
   border-color: rgba(255, 191, 47, 0.52);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-amber.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-amber.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-amber.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-amber.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-amber.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-amber.flexlayout__tab_button--selected {
   background: rgba(255, 191, 47, 0.3);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-green,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-green,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-green,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-green {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-green,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-green {
   background: rgba(48, 209, 88, 0.16);
   border-color: rgba(48, 209, 88, 0.52);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-green.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-green.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-green.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-green.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-green.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-green.flexlayout__tab_button--selected {
   background: rgba(48, 209, 88, 0.28);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-blue,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-blue,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-blue,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-blue {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-blue,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-blue {
   background: rgba(92, 124, 255, 0.16);
   border-color: rgba(92, 124, 255, 0.55);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-blue.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-blue.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-blue.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-blue.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-blue.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-blue.flexlayout__tab_button--selected {
   background: rgba(92, 124, 255, 0.28);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-purple,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-purple,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-purple,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-purple {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-purple,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-purple {
   background: rgba(167, 139, 250, 0.16);
   border-color: rgba(167, 139, 250, 0.55);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-purple.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-purple.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-purple.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-purple.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-purple.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-purple.flexlayout__tab_button--selected {
   background: rgba(167, 139, 250, 0.28);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-pink,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-pink,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-pink,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-pink {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-pink,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-pink {
   background: rgba(255, 126, 179, 0.16);
   border-color: rgba(255, 126, 179, 0.55);
 }
 :root[data-theme="light"] .flexlayout__tab_button.tab-highlight-pink.flexlayout__tab_button--selected,
 :root[data-theme="herbarium"] .flexlayout__tab_button.tab-highlight-pink.flexlayout__tab_button--selected,
 :root[data-theme="paper"] .flexlayout__tab_button.tab-highlight-pink.flexlayout__tab_button--selected,
-:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-pink.flexlayout__tab_button--selected {
+:root[data-theme="vellum"] .flexlayout__tab_button.tab-highlight-pink.flexlayout__tab_button--selected,
+:root[data-theme="catppuccin-latte"] .flexlayout__tab_button.tab-highlight-pink.flexlayout__tab_button--selected {
   background: rgba(255, 126, 179, 0.28);
 }
 /* design-tokens-allow-end */
