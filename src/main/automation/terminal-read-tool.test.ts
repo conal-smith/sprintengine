@@ -36,7 +36,7 @@ function harness(options: { listed?: TerminalSessionSnapshot[]; held?: Record<st
   const reads: string[] = []
   const backends = {
     listTerminalSessions: () => options.listed ?? [],
-    readTerminalOutputTail: (sessionId: string, read: { maxBytes: number; since?: number }) => {
+    readTerminalOutputTail: (sessionId: string, read: { maxBytes: number; since?: string }) => {
       reads.push(sessionId)
       const session = held.get(sessionId)
       return session ? readTerminalOutputTail(session, read) : undefined
@@ -50,6 +50,11 @@ function harness(options: { listed?: TerminalSessionSnapshot[]; held?: Record<st
     reads,
     held,
   }
+}
+
+/** The cursor a read of `output` hands out at `units`. */
+function cursorOf(output: TerminalReplayBuffer, units: number): string {
+  return `${output.generation}:${units}`
 }
 
 function bufferOf(...chunks: string[]): TerminalReplayBuffer {
@@ -69,10 +74,8 @@ function errorCode(result: McpToolResult): string {
 }
 
 test('a dev server terminal reads back as plain text with its status', async () => {
-  const { read } = harness({
-    listed: [snapshot('term-1', { agentName: undefined })],
-    held: { 'term-1': { output: bufferOf('> vite\r\n', '\x1b[32mready\x1b[39m in 300 ms\r\n') } },
-  })
+  const output = bufferOf('> vite\r\n', '\x1b[32mready\x1b[39m in 300 ms\r\n')
+  const { read } = harness({ listed: [snapshot('term-1', { agentName: undefined })], held: { 'term-1': { output } } })
   const result = answer(await read({ sessionId: 'term-1' }))
   assert.deepEqual(result, {
     sessionId: 'term-1',
@@ -84,7 +87,7 @@ test('a dev server terminal reads back as plain text with its status', async () 
     text: '> vite\nready in 300 ms',
     lineCount: 2,
     truncated: false,
-    cursor: '> vite\r\n\x1b[32mready\x1b[39m in 300 ms\r\n'.length,
+    cursor: cursorOf(output, '> vite\r\n\x1b[32mready\x1b[39m in 300 ms\r\n'.length),
   })
 })
 
@@ -149,7 +152,21 @@ test('the cursor makes the next read only what the terminal printed since', asyn
   const next = answer(await read({ sessionId: 'term-1', since: first.cursor }))
   assert.equal(next.text, 'error TS2304: Cannot find name "foo"')
   assert.equal(next.truncated, false)
-  assert.ok((next.cursor as number) > (first.cursor as number))
+  assert.equal(next.cursor, cursorOf(output, output.appendedUnits))
+})
+
+test('a cursor from before the session was resumed reads the new stream from its start, marked truncated', async () => {
+  const { read, held } = harness({
+    listed: [snapshot('agent-1', { kind: 'agent' })],
+    held: { 'agent-1': { output: bufferOf('before the pause\n') } },
+  })
+  const before = answer(await read({ sessionId: 'agent-1' }))
+  // Resumed under the same id: a fresh buffer, its count started again.
+  held.set('agent-1', { output: bufferOf('after\n', 'the resume\n') })
+  const after = answer(await read({ sessionId: 'agent-1', since: before.cursor }))
+  assert.equal(after.text, 'after\nthe resume')
+  assert.equal(after.truncated, true)
+  assert.notEqual(after.cursor, before.cursor)
 })
 
 test('an exited terminal still reads, and says how it ended', async () => {
@@ -210,8 +227,8 @@ test('bad arguments are refused before anything is read', async () => {
   assert.equal(errorCode(await read({ sessionId: 'term-1', lines: 0 })), 'invalid_arguments')
   assert.equal(errorCode(await read({ sessionId: 'term-1', lines: 2_001 })), 'invalid_arguments')
   assert.equal(errorCode(await read({ sessionId: 'term-1', lines: 2.5 })), 'invalid_arguments')
-  assert.equal(errorCode(await read({ sessionId: 'term-1', since: -1 })), 'invalid_arguments')
-  assert.equal(errorCode(await read({ sessionId: 'term-1', since: '10' })), 'invalid_arguments')
+  assert.equal(errorCode(await read({ sessionId: 'term-1', since: 10 })), 'invalid_arguments')
+  assert.equal(errorCode(await read({ sessionId: 'term-1', since: '' })), 'invalid_arguments')
   assert.deepEqual(reads, [])
 })
 

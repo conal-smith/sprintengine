@@ -312,7 +312,7 @@ type TerminalRuntime = {
   // a read must be what it returns. `undefined` for no such session.
   readTerminalOutputTail(
     sessionId: string,
-    options: { maxBytes: number; since?: number },
+    options: { maxBytes: number; since?: string },
   ): TerminalOutputTail | undefined
   // Fires once per coalesced sessions broadcast — the same beat the windows
   // hear — so a main-process consumer (the launched-agent reconcile) never
@@ -3550,7 +3550,7 @@ function readTerminalOutputSince(sessionId: string, cursor: number): { text: str
 
 function readSessionOutputTail(
   sessionId: string,
-  options: { maxBytes: number; since?: number },
+  options: { maxBytes: number; since?: string },
 ): TerminalOutputTail | undefined {
   const session = terminals.get(sessionId)
   if (!session || session.isDisposed) return undefined

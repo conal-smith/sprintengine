@@ -20,10 +20,18 @@
  * can ask for exactly what it missed, and learns it has fallen off the head
  * when {@link TerminalReplayBuffer.readFrom} returns null.
  */
+import { randomBytes } from 'node:crypto'
+
 export const REPLAY_BLOCK_BYTES = 64 * 1024
 
 /** The most bytes one UTF-16 code unit can encode to. */
 const MAX_UTF8_BYTES_PER_UNIT = 3
+
+// A buffer's generation is this run's tag and a count, so no two buffers in
+// one run share one and a tag from an earlier run of the app is not mistaken
+// for this run's.
+const RUN_TAG = randomBytes(4).toString('hex')
+let buffersMade = 0
 
 export class TerminalReplayBuffer {
   private blocks: Buffer[] = []
@@ -35,6 +43,16 @@ export class TerminalReplayBuffer {
   // Bytes (and UTF-16 units) of blocks[0] already cut from the head.
   private headSkip = 0
   private headSkipUnits = 0
+
+  /**
+   * Which stream this buffer holds. A session can be given a fresh buffer
+   * under the same id (a parked agent resumed, a terminal respawned), whose
+   * counts start again from zero, so a position remembered from the old
+   * stream says nothing about the new one; a reader that keeps a position
+   * keeps the generation beside it and drops the position when they differ.
+   * Letters and digits only.
+   */
+  readonly generation = `${RUN_TAG}${(++buffersMade).toString(36)}`
 
   retainedBytes = 0
   retainedUnits = 0

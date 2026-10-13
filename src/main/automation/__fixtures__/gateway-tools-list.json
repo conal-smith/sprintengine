@@ -222,7 +222,7 @@
     },
     {
       "name": "terminal.read",
-      "sha256": "52c90453cfc7f5b69b40b7b2e7ad2f9e04eab8eec26def7bfd9ae6b6ff7f4bcc"
+      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
     },
     {
       "name": "terminal.create",
@@ -544,7 +544,7 @@
     },
     {
       "name": "terminal.read",
-      "sha256": "52c90453cfc7f5b69b40b7b2e7ad2f9e04eab8eec26def7bfd9ae6b6ff7f4bcc"
+      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
     },
     {
       "name": "terminal.create",

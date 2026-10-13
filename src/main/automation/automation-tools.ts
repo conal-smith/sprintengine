@@ -144,7 +144,7 @@ export type AutomationBackends = {
    */
   readTerminalOutputTail?(
     sessionId: string,
-    options: { maxBytes: number; since?: number },
+    options: { maxBytes: number; since?: string },
   ): TerminalOutputTail | undefined
   /** Compose and spawn an agent in main. */
   launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult>
@@ -1501,7 +1501,9 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       `"lines" lines (default ${TERMINAL_READ_DEFAULT_LINES}, at most ${TERMINAL_READ_MAX_LINES}) and at most ` +
       `${TERMINAL_READ_MAX_CHARS} characters, with "truncated" true when older output was left out. Every answer ` +
       'carries a "cursor"; pass it back as "since" to read only what the terminal printed after that read, which ' +
-      'is how to follow a dev server or a test run without reading its log again. A paused or exited session ' +
+      'is how to follow a dev server or a test run without reading its log again. A cursor from before the ' +
+      'session was resumed or respawned reads the newest output instead, with "truncated" true. A paused or ' +
+      'exited session ' +
       'still reads the output it left, and "state" and "exitCode" say how it ended. A full-screen program (an ' +
       'agent CLI, an editor) reads as the stream that drew it, so its redraws can repeat lines. Session ids come from ' +
       'terminal.list or terminal.create. Reads the terminal runtime; never types into the terminal. Served on ' +
@@ -1517,11 +1519,10 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           description: `How many of the newest lines to return; default ${TERMINAL_READ_DEFAULT_LINES}.`,
         },
         since: {
-          type: 'integer',
-          minimum: 0,
+          type: 'string',
           description:
-            'The "cursor" an earlier terminal.read of this session answered with: only output printed after it is ' +
-            'read. Omit for the newest output.',
+            'The "cursor" an earlier terminal.read of this session answered with, passed back as it was: only ' +
+            'output printed after it is read. Omit for the newest output.',
         },
       },
       required: ['sessionId'],
@@ -1532,8 +1533,12 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       if (typeof sessionId !== 'string') return sessionId
       const lines = optionalBoundedInteger(args, 'lines', 1, TERMINAL_READ_MAX_LINES)
       if (typeof lines === 'object') return lines
-      const since = optionalBoundedInteger(args, 'since', 0, Number.MAX_SAFE_INTEGER)
-      if (typeof since === 'object') return since
+      // Opaque: the tail reader parses it and reads one this session's stream
+      // did not hand out as no cursor, so only its type is checked here.
+      const since = args.since
+      if (since !== undefined && (typeof since !== 'string' || since.length === 0)) {
+        return failure('invalid_arguments', '"since" must be a cursor an earlier terminal.read answered with.')
+      }
       if (!backends.readTerminalOutputTail) {
         return failure('unavailable', 'This machine does not serve terminal output.')
       }
@@ -2973,8 +2978,7 @@ function optionalBoundedInteger(
   const value = args[key]
   if (value === undefined) return undefined
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
-    const range = max === Number.MAX_SAFE_INTEGER ? `of at least ${min}` : `from ${min} to ${max}`
-    return failure('invalid_arguments', `"${key}" must be a whole number ${range} when provided.`)
+    return failure('invalid_arguments', `"${key}" must be a whole number from ${min} to ${max} when provided.`)
   }
   return value
 }

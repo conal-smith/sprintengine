@@ -66,9 +66,11 @@ never writes.
 server's error, a watcher's rebuild, a test run's failure — as plain text with
 the escapes stripped: the newest 200 lines by default (`lines`, at most 2000),
 with `truncated: true` when older output was left out. Every answer carries a
-`cursor`; pass it back as `since` and the next read returns only what the
-terminal printed after it, so follow a running server by polling with the last
-cursor rather than reading its whole log each time. A paused or exited session
+`cursor`, an opaque string; pass it back as `since`, unchanged, and the next
+read returns only what the terminal printed after it, so follow a running
+server by polling with the last cursor rather than reading its whole log each
+time. A cursor from before the session was resumed or respawned reads the
+newest output instead, with `truncated: true`. A paused or exited session
 still reads the output it left, and `state` (`running`, `paused`, `exited`,
 `failed`) and `exitCode` say how it ended. A full-screen program such as an
 agent CLI reads as the stream that drew it, so for an agent's progress prefer

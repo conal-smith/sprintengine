@@ -6,13 +6,18 @@ import { resyncTerminalReplayHead, type TerminalSession } from './terminal-sessi
  * an agent polls to follow a dev server's log.
  *
  * `text` is raw — escapes intact — and starts at a whole line when anything
- * older was left out. `cursor` is the stream position it ends at (UTF-16 units,
- * `output.appendedUnits`, the same count `readTerminalOutputSince` uses), to be
- * passed back as `since` so the next read returns only what came after.
- * `truncated` says that output older than `text`, or part of the gap since
- * `since`, is not in it: cut by `maxBytes`, or already evicted from the buffer.
+ * older was left out. `cursor` is where it ends, to be passed back as `since`
+ * so the next read returns only what came after. It is opaque to the reader:
+ * `<generation>:<units>`, the replay buffer's generation and the stream
+ * position in UTF-16 units (`output.appendedUnits`, the count
+ * `readTerminalOutputSince` uses). The generation is there because a session
+ * can be handed a fresh buffer under the same id, whose count starts again at
+ * zero, and a bare position from the old stream would land somewhere in the
+ * new one. `truncated` says that output older than `text`, or part of the gap
+ * since `since`, is not in it: cut by `maxBytes`, already evicted from the
+ * buffer, or written before a cursor this stream cannot place.
  */
-export type TerminalOutputTail = { text: string; cursor: number; truncated: boolean }
+export type TerminalOutputTail = { text: string; cursor: string; truncated: boolean }
 
 /**
  * How far into a cut read to look for a line start. Past it the head is kept
@@ -28,10 +33,13 @@ const LINE_START_WINDOW = 8 * 1024
  * returns and never the multi-megabyte scrollback behind it.
  *
  * With `since`, only what was appended after that cursor, still bounded by
- * `maxBytes` (the newest part wins). A cursor past the end of the stream is not
- * one this session handed out — a respawn under the same id starts its count
- * again — so it is read as no cursor at all rather than as "nothing new"
- * forever.
+ * `maxBytes` (the newest part wins). A cursor this stream did not hand out —
+ * another generation's (a parked agent resumed or a terminal respawned under
+ * the same id), one past the end, or one that does not parse — is read as no
+ * cursor at all, and the answer says `truncated`: the reader cannot tell what
+ * it missed between its last read and the new stream's start, and treating
+ * the position as this stream's would silently skip the new stream's head, or
+ * answer "nothing new" forever.
  *
  * A session whose raw stream was let go once its screen was rendered (a paused
  * or settled agent, `replaySnapshot`) answers from that rendered screen, as
@@ -41,12 +49,35 @@ const LINE_START_WINDOW = 8 * 1024
  */
 export function readTerminalOutputTail(
   session: Pick<TerminalSession, 'output' | 'replaySnapshot'>,
-  options: { maxBytes: number; since?: number },
+  options: { maxBytes: number; since?: string },
 ): TerminalOutputTail {
   const output = session.output
+  const placed = options.since === undefined ? undefined : cursorPosition(options.since, output.generation)
+  const since = placed !== undefined && placed <= output.appendedUnits ? placed : undefined
+  const read = readTail(session, Math.max(1, Math.floor(options.maxBytes)), since)
+  const stale = options.since !== undefined && since === undefined
+  return {
+    text: read.text,
+    cursor: `${output.generation}:${read.cursor}`,
+    truncated: read.truncated || stale,
+  }
+}
+
+/** The stream position a cursor names, when it is this generation's; undefined when it is not, or does not parse. */
+function cursorPosition(cursor: string, generation: string): number | undefined {
+  const match = /^([0-9a-z]+):(\d+)$/u.exec(cursor)
+  if (!match || match[1] !== generation) return undefined
+  const units = Number(match[2])
+  return Number.isSafeInteger(units) ? units : undefined
+}
+
+function readTail(
+  session: Pick<TerminalSession, 'output' | 'replaySnapshot'>,
+  maxBytes: number,
+  since: number | undefined,
+): { text: string; cursor: number; truncated: boolean } {
+  const output = session.output
   const end = output.appendedUnits
-  const since = options.since !== undefined && options.since <= end ? options.since : undefined
-  const maxBytes = Math.max(1, Math.floor(options.maxBytes))
 
   if (output.retainedBytes === 0 && session.replaySnapshot) {
     if (since !== undefined && since >= end) return { text: '', cursor: end, truncated: false }
@@ -86,7 +117,11 @@ export function readTerminalOutputTail(
  * stray `2m` that no stripping can recognise. Held back, the next read starts
  * at the ESC and sees the sequence whole.
  */
-function withoutUnfinishedEscape(text: string, cursor: number, truncated: boolean): TerminalOutputTail {
+function withoutUnfinishedEscape(
+  text: string,
+  cursor: number,
+  truncated: boolean,
+): { text: string; cursor: number; truncated: boolean } {
   const held = unfinishedEscapeLength(text)
   if (held === 0) return { text, cursor, truncated }
   return { text: text.slice(0, text.length - held), cursor: cursor - held, truncated }

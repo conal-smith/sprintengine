@@ -6,6 +6,11 @@ import { TerminalReplayBuffer } from './terminal-replay-buffer'
 
 const BUDGET = 1024 * 1024
 
+/** The cursor a read of `output` hands out at `units`. */
+function at(output: TerminalReplayBuffer, units: number): string {
+  return `${output.generation}:${units}`
+}
+
 function sessionWith(...chunks: string[]): { output: TerminalReplayBuffer; replaySnapshot?: string } {
   const output = new TerminalReplayBuffer()
   for (const chunk of chunks) output.append(chunk, BUDGET)
@@ -16,7 +21,7 @@ test('a read within the budget is everything retained, uncut, ending at the stre
   const session = sessionWith('one\n', 'two\n')
   assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024 }), {
     text: 'one\ntwo\n',
-    cursor: 8,
+    cursor: at(session.output, 8),
     truncated: false,
   })
 })
@@ -27,7 +32,7 @@ test('a read over the budget keeps the newest bytes, from a whole line, and says
   // The newest 14 bytes are "nd line\nthird\n"; the half line is dropped.
   assert.equal(read.text, 'third\n')
   assert.equal(read.truncated, true)
-  assert.equal(read.cursor, 29)
+  assert.equal(read.cursor, at(session.output, 29))
 })
 
 test('a buffer whose head was evicted reports truncated even when the tail fits', () => {
@@ -45,12 +50,12 @@ test('since a cursor, only what came after it is read', () => {
   session.output.append('three\n', BUDGET)
   assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024, since: first.cursor }), {
     text: 'three\n',
-    cursor: 14,
+    cursor: at(session.output, 14),
     truncated: false,
   })
-  assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024, since: 14 }), {
+  assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024, since: at(session.output, 14) }), {
     text: '',
-    cursor: 14,
+    cursor: at(session.output, 14),
     truncated: false,
   })
 })
@@ -76,16 +81,41 @@ test('a gap partly evicted since the cursor is read from what is retained, marke
 
 test('a cursor past the end of the stream reads as no cursor, not as nothing new forever', () => {
   const session = sessionWith('respawned\n')
-  const read = readTerminalOutputTail(session, { maxBytes: 1024, since: 10_000 })
+  const read = readTerminalOutputTail(session, { maxBytes: 1024, since: at(session.output, 10_000) })
   assert.equal(read.text, 'respawned\n')
-  assert.equal(read.cursor, 10)
+  assert.equal(read.cursor, at(session.output, 10))
+  assert.equal(read.truncated, true, 'what came before the stream it now reads is not known')
+})
+
+test('a cursor from the stream a session had before it was given a fresh buffer is not placed in the new one', () => {
+  // A parked agent read up to a point, then resumed under the same session id
+  // with a new buffer whose count starts again at zero. Its old position is
+  // well inside the new stream, and read as this stream's it would skip the
+  // new stream's first lines without a word.
+  const parked = sessionWith('old screen line one\n', 'old screen line two\n')
+  const cursor = readTerminalOutputTail(parked, { maxBytes: 1024 }).cursor
+  const resumed = sessionWith('resumed: line one\n', 'resumed: line two\n', 'resumed: line three\n')
+  assert.notEqual(resumed.output.generation, parked.output.generation)
+  const read = readTerminalOutputTail(resumed, { maxBytes: 1024, since: cursor })
+  assert.equal(read.text, 'resumed: line one\nresumed: line two\nresumed: line three\n')
+  assert.equal(read.truncated, true)
+  assert.equal(read.cursor, at(resumed.output, resumed.output.appendedUnits))
+})
+
+test('a cursor that does not parse reads as no cursor', () => {
+  const session = sessionWith('one\n')
+  for (const since of ['', '12', 'zz', `${session.output.generation}:-1`, `${session.output.generation}:1.5`]) {
+    const read = readTerminalOutputTail(session, { maxBytes: 1024, since })
+    assert.equal(read.text, 'one\n', since)
+    assert.equal(read.truncated, true, since)
+  }
 })
 
 test('a multi-byte character is never split, and the cursor counts UTF-16 units', () => {
   const session = sessionWith('ok ✓\n', '🚀 done\n')
-  const read = readTerminalOutputTail(session, { maxBytes: 1024, since: 5 })
+  const read = readTerminalOutputTail(session, { maxBytes: 1024, since: at(session.output, 5) })
   assert.equal(read.text, '🚀 done\n')
-  assert.equal(read.cursor, 'ok ✓\n🚀 done\n'.length)
+  assert.equal(read.cursor, at(session.output, 'ok ✓\n🚀 done\n'.length))
 })
 
 test('a released stream answers from the rendered screen, and nothing once the reader has seen its end', () => {
@@ -96,13 +126,13 @@ test('a released stream answers from the rendered screen, and nothing once the r
   const session = { output, replaySnapshot: 'the last screen\n' }
   assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024 }), {
     text: 'the last screen\n',
-    cursor: end,
+    cursor: at(output, end),
     truncated: false,
   })
-  assert.equal(readTerminalOutputTail(session, { maxBytes: 1024, since: 3 }).text, 'the last screen\n')
-  assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024, since: end }), {
+  assert.equal(readTerminalOutputTail(session, { maxBytes: 1024, since: at(output, 3) }).text, 'the last screen\n')
+  assert.deepEqual(readTerminalOutputTail(session, { maxBytes: 1024, since: at(output, end) }), {
     text: '',
-    cursor: end,
+    cursor: at(output, end),
     truncated: false,
   })
 })
@@ -118,7 +148,7 @@ test('a read ending inside an escape sequence holds it back for the next read', 
   const session = sessionWith('ready\n\x1b[3')
   const first = readTerminalOutputTail(session, { maxBytes: 1024 })
   assert.equal(first.text, 'ready\n')
-  assert.equal(first.cursor, 6)
+  assert.equal(first.cursor, at(session.output, 6))
   session.output.append('1merror\x1b[0m\n', BUDGET)
   const next = readTerminalOutputTail(session, { maxBytes: 1024, since: first.cursor })
   assert.equal(next.text, '\x1b[31merror\x1b[0m\n')
