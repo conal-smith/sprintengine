@@ -37,10 +37,18 @@ import { basename, dirname, join, sep } from 'node:path'
 export type UsageSourceId = 'studio' | 'claude-code' | 'codex' | 'opencode' | 'gemini' | 'grok'
 
 /**
- * One hour of one model's usage in one session:
- * `[hourStartMs, model, link, input, output, cacheRead, cacheWrite, requests, costUsd]`.
+ * A speed tier billed above the model's list price: Claude Code's fast mode
+ * (`usage.speed: 'fast'`), and Codex's priority and ultrafast service tiers.
+ * Standard speed is the absence of one.
+ */
+export type UsageSpeed = 'fast' | 'ultrafast'
+
+/**
+ * One hour of one model's usage in one session at one speed:
+ * `[hourStartMs, model, link, input, output, cacheRead, cacheWrite, requests, costUsd, speed?]`.
  * `link` is the agent CLI session a Studio turn ran, '' elsewhere. `input` is
- * fresh input only; cache reads and writes are apart from it.
+ * fresh input only; cache reads and writes are apart from it. `speed` is last
+ * and absent at standard speed, so a bucket without one reads as it always did.
  */
 export type UsageBucket = [
   hour: number,
@@ -52,6 +60,7 @@ export type UsageBucket = [
   cacheWrite: number,
   requests: number,
   costUsd: number,
+  speed?: UsageSpeed,
 ]
 
 /** One session's aggregate, as the cache keeps it per group of files. */
@@ -331,19 +340,36 @@ function blankEntry(group: Group, providerId: string): UsageCacheEntry {
   }
 }
 
-/** Add one request (or one turn) to the entry's hour bucket for its model and link. */
+/** Add one request (or one turn) to the entry's hour bucket for its model, link and speed. */
 function addUsage(
   buckets: Map<string, UsageBucket>,
   at: number,
   model: string,
   link: string,
   counts: [input: number, output: number, cacheRead: number, cacheWrite: number, requests: number, costUsd: number],
+  speed?: UsageSpeed,
 ): void {
   const hour = hourOf(at)
-  const key = `${hour}|${model}|${link}`
-  const bucket = buckets.get(key) ?? [hour, model, link, 0, 0, 0, 0, 0, 0]
+  const key = `${hour}|${model}|${link}|${speed ?? ''}`
+  let bucket = buckets.get(key)
+  if (!bucket) {
+    bucket = [hour, model, link, 0, 0, 0, 0, 0, 0]
+    if (speed) bucket.push(speed)
+  }
   for (let index = 0; index < 6; index += 1) bucket[3 + index] = (bucket[3 + index] as number) + counts[index]!
   buckets.set(key, bucket)
+}
+
+// Claude Code stamps each reply's usage with the speed it ran at.
+const claudeSpeed = (usage: Record<string, unknown>): UsageSpeed | undefined =>
+  usage.speed === 'fast' ? 'fast' : undefined
+
+// Codex's service tier, as its thread settings name it: `fast` is the
+// configuration's word for the API's `priority`.
+function codexSpeed(tier: unknown): UsageSpeed | undefined {
+  if (tier === 'priority' || tier === 'fast') return 'fast'
+  if (tier === 'ultrafast') return 'ultrafast'
+  return undefined
 }
 
 /**
@@ -363,7 +389,7 @@ function addUsage(
 export async function foldClaude(group: Group, yieldEveryBytes?: number): Promise<UsageCacheEntry> {
   const entry = blankEntry(group, CLAUDE_PROVIDER)
   const sessionId = basename(group.main, '.jsonl')
-  const requests = new Map<string, { at: number; model: string; counts: number[] }>()
+  const requests = new Map<string, { at: number; model: string; counts: number[]; speed?: UsageSpeed }>()
   let anonymous = 0
   for (const file of group.files) {
     const isMain = file === group.main && file.endsWith(`${sep}${sessionId}.jsonl`)
@@ -397,19 +423,21 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
         const messageId = str(message.id)
         const requestId = str(record.requestId)
         const key = messageId || requestId ? `${messageId ?? ''}|${requestId ?? ''}` : `anon:${anonymous++}`
+        const speed = claudeSpeed(usage)
         const known = requests.get(key)
         if (known) {
           // A later block of the same reply: its usage is the more complete one.
           for (let index = 0; index < 4; index += 1)
             known.counts[index] = Math.max(known.counts[index]!, counts[index]!)
-        } else requests.set(key, { at, model, counts })
+          known.speed ??= speed
+        } else requests.set(key, { at, model, counts, ...(speed ? { speed } : {}) })
       },
       { yieldEveryBytes },
     )
   }
   const buckets = new Map<string, UsageBucket>()
-  for (const { at, model, counts } of requests.values()) {
-    addUsage(buckets, at, model, '', [counts[0]!, counts[1]!, counts[2]!, counts[3]!, 1, 0])
+  for (const { at, model, counts, speed } of requests.values()) {
+    addUsage(buckets, at, model, '', [counts[0]!, counts[1]!, counts[2]!, counts[3]!, 1, 0], speed)
   }
   entry.sessionId = sessionId
   entry.buckets = [...buckets.values()]
@@ -424,6 +452,13 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
  * `token_count` events, whose running `total_token_usage` is differenced
  * (a total that went down means the count restarted). Codex's `input_tokens`
  * includes the cached part, which is taken out.
+ *
+ * The service tier a response was billed at comes from the
+ * `thread_settings_applied` event Codex writes ahead of a turn, and holds
+ * until the next one. Codex writes none ahead of a thread's first turn, so
+ * the responses before the first carry the tier it names: settings change
+ * between turns far more rarely than they stay put. A rollout with none (an
+ * `exec` run, an app-server thread) is read at standard speed.
  */
 export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise<UsageCacheEntry> {
   const entry = blankEntry(group, CODEX_PROVIDER)
@@ -431,7 +466,17 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
   const responses = new Set<string>()
   const buckets = new Map<string, UsageBucket>()
   let hasRecords = false
-  const fallback: Array<{ at: number; model: string; counts: [number, number, number, number, number, number] }> = []
+  // `null` until the first thread settings say; what came before them is kept
+  // aside and given the first tier named.
+  let speed: UsageSpeed | undefined | null = null
+  let firstSpeed: UsageSpeed | undefined
+  const early: Array<{ at: number; model: string; counts: [number, number, number, number, number, number] }> = []
+  const fallback: Array<{
+    at: number
+    model: string
+    counts: [number, number, number, number, number, number]
+    speed: UsageSpeed | undefined | null
+  }> = []
   let previousTotal: number[] | null = null
   await forEachLine(
     group.main,
@@ -440,6 +485,7 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
       line.includes('"turn_context"') ||
       line.includes('"token_usage_record"') ||
       line.includes('"token_count"') ||
+      line.includes('"thread_settings_applied"') ||
       (!entry.title && line.includes('"user_message"')),
     (line) => {
       const record = parseJson(line)
@@ -455,6 +501,18 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
         entry.cwd ??= str(payload.cwd)
         return
       }
+      if (payload?.type === 'thread_settings_applied') {
+        const settings = rec(payload.thread_settings)
+        if (settings && 'service_tier' in settings) {
+          const named = codexSpeed(settings.service_tier)
+          if (speed === null) {
+            firstSpeed = named
+            for (const item of early.splice(0)) addUsage(buckets, item.at, item.model, '', item.counts, named)
+          }
+          speed = named
+        }
+        return
+      }
       const at = timeOf(record.timestamp)
       if (at === null) return
       if (record.type === 'token_usage_record' && payload) {
@@ -466,14 +524,16 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
         const input = num(usage.input_tokens)
         const cached = Math.min(input, num(usage.cached_input_tokens))
         const written = Math.min(input - cached, num(usage.cache_write_input_tokens))
-        addUsage(buckets, at, str(payload.model) ?? model, '', [
+        const counts: [number, number, number, number, number, number] = [
           input - cached - written,
           num(usage.output_tokens),
           cached,
           written,
           1,
           0,
-        ])
+        ]
+        if (speed === null) early.push({ at, model: str(payload.model) ?? model, counts })
+        else addUsage(buckets, at, str(payload.model) ?? model, '', counts, speed)
         return
       }
       if (payload?.type === 'token_count') {
@@ -491,7 +551,7 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
         if (delta.every((value) => value === 0)) return
         const cached = Math.min(delta[0]!, delta[1]!)
         const written = Math.min(delta[0]! - cached, delta[2]!)
-        fallback.push({ at, model, counts: [delta[0]! - cached - written, delta[3]!, cached, written, 1, 0] })
+        fallback.push({ at, model, counts: [delta[0]! - cached - written, delta[3]!, cached, written, 1, 0], speed })
         return
       }
       if (record.type === 'event_msg' && payload?.type === 'user_message' && !entry.title) {
@@ -500,7 +560,11 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
     },
     { yieldEveryBytes },
   )
-  if (!hasRecords) for (const item of fallback) addUsage(buckets, item.at, item.model, '', item.counts)
+  // No thread settings at all: standard speed.
+  for (const item of early) addUsage(buckets, item.at, item.model, '', item.counts)
+  if (!hasRecords)
+    for (const item of fallback)
+      addUsage(buckets, item.at, item.model, '', item.counts, item.speed === null ? firstSpeed : item.speed)
   if (!entry.sessionId) entry.sessionId = basename(group.main, '.jsonl')
   entry.buckets = [...buckets.values()]
   return entry

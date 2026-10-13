@@ -154,3 +154,23 @@ test('the window is by hour, and day and model group the rest', () => {
   ])
   assert.deepEqual(aggregateUsage([], { from: H0, to: H0 + HOUR }, context), [])
 })
+
+test('usage at a premium speed is a row of its own only when the speed is asked for', () => {
+  const fast: UsageBucket = [H0, 'claude-opus-5-5', '', 10, 1, 0, 0, 1, 0, 'fast']
+  const entries = [cli({ sessionId: 's-speed', buckets: [bucket(H0, 'claude-opus-5-5', '', [20, 2, 0, 0]), fast] })]
+  const query = { from: H0, to: H0 + HOUR, groupBy: ['model' as const] }
+
+  const merged = aggregateUsage(entries, query, context)
+  assert.equal(merged.length, 1)
+  assert.deepEqual(merged[0]!.tokens, { input: 30, output: 3, cacheRead: 0, cacheWrite: 0 })
+  assert.equal('speed' in merged[0]!, false, 'a module never sees the speed')
+
+  const split = aggregateUsage(entries, query, { ...context, bySpeed: true })
+  assert.deepEqual(
+    split.map((row) => [row.model, row.speed ?? 'standard', row.tokens.input]),
+    [
+      ['claude-opus-5-5', 'standard', 20],
+      ['claude-opus-5-5', 'fast', 10],
+    ],
+  )
+})

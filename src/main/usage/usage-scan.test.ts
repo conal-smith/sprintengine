@@ -443,3 +443,86 @@ test('repositoryRoot follows a linked worktree back to its repository', async ()
   assert.equal(await repositoryRoot(join(repo)), repo)
   assert.equal(await repositoryRoot(join(home, 'elsewhere')), null)
 })
+
+test('a Claude Code reply in fast mode lands in a bucket of its own speed', async () => {
+  const sid = '22222222-3333-4444-5555-666666666666'
+  const folder = join(roots.claudeProjects, '-repo')
+  await mkdir(folder, { recursive: true })
+  const usage = (speed: string) => ({ input_tokens: 10, output_tokens: 20, speed }) as unknown as Record<string, number>
+  await writeFile(
+    join(folder, `${sid}.jsonl`),
+    jsonl([
+      assistant(sid, 'msg_std', 'req_std', usage('standard'), 1),
+      assistant(sid, 'msg_fast', 'req_fast', usage('fast'), 2),
+      // A later block of the same fast reply, with its fuller count.
+      assistant(sid, 'msg_fast', 'req_fast', { ...usage('fast'), output_tokens: 50 }, 2),
+    ]),
+  )
+  const { entries } = await scan()
+  const buckets = [...entries[0]!.buckets].sort((a, b) => String(a[9] ?? '').localeCompare(String(b[9] ?? '')))
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.slice(1)),
+    [
+      ['claude-opus-4-1', '', 10, 20, 0, 0, 1, 0],
+      ['claude-opus-4-1', '', 10, 50, 0, 0, 1, 0, 'fast'],
+    ],
+  )
+})
+
+test('Codex: a response takes the service tier its thread settings name, and the first turn the first named', async () => {
+  const day = join(roots.codexHome, 'sessions', '2026', '10', '08')
+  await mkdir(day, { recursive: true })
+  const response = (minutes: number, id: string) => ({
+    type: 'token_usage_record',
+    timestamp: at(minutes),
+    payload: { response_id: id, usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } },
+  })
+  const settings = (minutes: number, tier: string) => ({
+    type: 'event_msg',
+    timestamp: at(minutes),
+    payload: { type: 'thread_settings_applied', thread_settings: { model: 'gpt-5.5', service_tier: tier } },
+  })
+  await writeFile(
+    join(day, 'rollout-tiers.jsonl'),
+    jsonl([
+      { type: 'session_meta', timestamp: at(0), payload: { id: 'tiers-1', cwd: join(home, 'repo') } },
+      { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5.5' } },
+      // The first turn: Codex writes its settings only before the second.
+      response(1, 'r1'),
+      settings(2, 'priority'),
+      response(3, 'r2'),
+      settings(4, 'default'),
+      response(5, 'r3'),
+      settings(6, 'ultrafast'),
+      response(7, 'r4'),
+      settings(8, 'fast'),
+      response(9, 'r5'),
+    ]),
+  )
+  const { entries } = await scan()
+  const requests = new Map<string, number>()
+  for (const bucket of entries[0]!.buckets) {
+    const speed = bucket[9] ?? 'standard'
+    requests.set(speed, (requests.get(speed) ?? 0) + bucket[7])
+  }
+  assert.deepEqual(Object.fromEntries(requests), { fast: 3, standard: 1, ultrafast: 1 })
+})
+
+test('Codex: a rollout with no thread settings is read at standard speed', async () => {
+  const day = join(roots.codexHome, 'sessions', '2026', '10', '08')
+  await mkdir(day, { recursive: true })
+  await writeFile(
+    join(day, 'rollout-plain.jsonl'),
+    jsonl([
+      { type: 'session_meta', timestamp: at(0), payload: { id: 'plain-1' } },
+      { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5' } },
+      {
+        type: 'token_usage_record',
+        timestamp: at(1),
+        payload: { response_id: 'r1', usage: { input_tokens: 10, output_tokens: 2 } },
+      },
+    ]),
+  )
+  const { entries } = await scan()
+  assert.deepEqual(entries[0]!.buckets[0]!.slice(1), ['gpt-5', '', 10, 2, 0, 0, 1, 0])
+})

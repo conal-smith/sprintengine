@@ -1,4 +1,4 @@
-import type { UsageRow, UsageSource } from '../../shared/modules/activity-service'
+import type { UsageSource } from '../../shared/modules/activity-service'
 import {
   usageAgentOf,
   usageTokenTotal,
@@ -9,14 +9,17 @@ import {
   type UsageReportPoint,
   type UsageReportTokens,
 } from '../../shared/usage-report'
-import type { UsagePricing } from './usage-pricing'
+import type { UsageSpeedRow } from './usage-aggregate'
+import { ratesAtSpeed, type UsagePricing } from './usage-pricing'
 
 // The dashboard's answer, built from the usage service's rows grouped by
 // hour, provider, model and session. Each row is priced once:
 //
 // - a cost the agent reported for the turns it priced itself (OpenCode, Grok,
 //   a Studio chat whose CLI log is not on this machine) is kept as it is;
-// - every other row is priced from its model's list price;
+// - every other row is priced from its model's list price, or from the
+//   premium rate for the speed it ran at (Claude's fast mode, Codex's priority
+//   and ultrafast tiers) where the list names one;
 // - a row neither covers is unpriced: its tokens count, its cost does not.
 //
 // Cache savings are what the cache reads would have cost at full input price,
@@ -32,8 +35,8 @@ function addTokens(into: UsageReportTokens, from: UsageReportTokens): void {
 }
 
 export function buildUsageReport(input: {
-  /** Rows grouped by `day` (an hour's start, as a string), `provider`, `model` and `session`. */
-  rows: readonly UsageRow[]
+  /** Rows grouped by `day` (an hour's start, as a string), `provider`, `model` and `session`, and split by speed. */
+  rows: readonly UsageSpeedRow[]
   from: number
   to: number
   scannedAt: number | null
@@ -59,7 +62,8 @@ export function buildUsageReport(input: {
     const hour = Number(row.day)
     const tokens = row.tokens
     const total = usageTokenTotal(tokens)
-    const rates = pricing.ratesFor(model)
+    const listed = pricing.ratesFor(model)
+    const rates = listed ? ratesAtSpeed(listed, row.speed) : null
     let cost: number | null = null
     if (row.reportedCostUsd !== null && row.reportedCostUsd > 0) cost = row.reportedCostUsd
     else if (rates) {
