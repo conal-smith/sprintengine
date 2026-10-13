@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { LinkButton, MediaButton } from '../../ui'
 import { showToast } from '../../../store/toastStore'
-import { isPreviewableImagePath, useLocalImage } from './useLocalImage'
+import { isHomePath, isPreviewableImagePath, useLocalImage } from './useLocalImage'
 
 type ImageSource = { kind: 'web'; url: string } | { kind: 'data'; url: string } | { kind: 'path'; path: string }
 
@@ -74,7 +74,7 @@ export function ConversationImage({
   onOpenFile?: (path: string) => void
 }) {
   const source = conversationImageSource(src)
-  const local = useLocalImage(source?.kind === 'path' ? source.path : null)
+  const local = useLocalImage(source?.kind === 'path' ? source.path : null, { home: true })
   // A web image can still 404, and a broken-image glyph says less than the alt text.
   const [broken, setBroken] = useState<string>()
   // A web image waits for a click. The reply is the agent's text, and whatever
@@ -133,7 +133,11 @@ export function ConversationImage({
           source,
           url,
           name,
-          source.kind === 'path' && resolved && onOpenFile ? () => onOpenFile(resolved) : undefined,
+          // A `~/` path is expanded only by main, so the picture opens in the
+          // system viewer rather than as a file the app would look up as typed.
+          source.kind === 'path' && resolved && !isHomePath(resolved) && onOpenFile
+            ? () => onOpenFile(resolved)
+            : undefined,
         )
       }
     >

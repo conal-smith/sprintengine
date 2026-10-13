@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -160,4 +160,38 @@ test('a command list is asked for with a chat CLI and an absolute folder, as ove
     commands: [],
     fetchedAt: 0,
   })
+})
+
+test('a ~/ picture is read as the file in the home folder, and held to the same folders', async () => {
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'studio-chat-home-')))
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
+  process.env.HOME = home
+  process.env.USERPROFILE = home
+  try {
+    await mkdir(join(home, 'Desktop'))
+    await writeFile(join(home, 'Desktop', 'shot.png'), 'png')
+    const read: string[] = []
+    const { value } = deps()
+    const chat = createStudioChatBackend({
+      ...value,
+      readableRoots: () => [join(home, 'Desktop')],
+      files: {
+        ...value.files,
+        readImageDataUrl: async (path) => {
+          read.push(path)
+          return 'data:image/png;base64,cG5n'
+        },
+      },
+    })
+    assert.equal(await chat.readImage('~/Desktop/shot.png'), 'data:image/png;base64,cG5n')
+    assert.deepEqual(read, [join(home, 'Desktop', 'shot.png')])
+    await assert.rejects(chat.readImage('~/Desktop/../Desktop/shot.png'), /not written plainly/)
+    await assert.rejects(chat.readImage('~/elsewhere.png'), /outside the folders this chat can read/)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    await rm(home, { recursive: true, force: true })
+  }
 })
