@@ -79,3 +79,41 @@ test('rows are priced by model, a reported cost is kept, and an unknown model is
     ],
   )
 })
+
+test('a row at a premium speed is priced at that speed, and at the list price where none is listed', () => {
+  const tiered = createPricing(
+    new Map([
+      [
+        'm-tiered',
+        {
+          input: 1,
+          output: 10,
+          cacheRead: 0.1,
+          cacheWrite: 1.25,
+          fast: { input: 2, output: 20, cacheRead: 0.2, cacheWrite: 2.5 },
+        },
+      ],
+    ]),
+    { source: 'live', fetchedAt: 5 },
+  )
+  const tokens = { input: 1, output: 1, cacheRead: 10, cacheWrite: 0 }
+  const report = buildUsageReport({
+    from: T0,
+    to: T0 + 24 * HOUR,
+    scannedAt: 9,
+    sources: [],
+    pricing: tiered,
+    rows: [
+      { ...row({ model: 'm-tiered', tokens }) },
+      { ...row({ model: 'm-tiered', tokens }), speed: 'fast' },
+      // No ultrafast price listed: the list price.
+      { ...row({ model: 'm-tiered', tokens }), speed: 'ultrafast' },
+    ],
+  })
+  // 1 + 10 + 1 at the list price, 2 + 20 + 2 fast, and 12 again for ultrafast.
+  assert.ok(Math.abs(report.totals.costUsd - 48) < 1e-9, String(report.totals.costUsd))
+  assert.equal(report.models.length, 1, 'one row per model, whatever speed it ran at')
+  assert.ok(Math.abs(report.models[0]!.costUsd! - 48) < 1e-9)
+  // Savings at each speed's own rates: 10*(1-0.1) twice and 10*(2-0.2) once.
+  assert.ok(Math.abs(report.totals.cacheSavingsUsd - 36) < 1e-9)
+})

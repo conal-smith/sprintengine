@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test } from 'vitest'
 
 import {
@@ -235,4 +237,15 @@ test('a home that cannot be written is logged, and nothing is recorded or regist
   assert.deepEqual(h.commands, [])
   assert.deepEqual(h.recorded, [])
   assert.deepEqual(h.logs, ['warning: The link handler could not be registered'])
+})
+
+// The legacy AppImage runtime electron-builder defaults to loads libfuse.so.2,
+// which Ubuntu 24.04 and other FUSE3-only systems no longer install, and the
+// AppImage then does not start at all. The static runtime carries its own
+// FUSE code and sets APPIMAGE for the handler above as the legacy one did.
+test('the AppImage is built on the static runtime, which needs no libfuse2', () => {
+  const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+    build: { toolsets?: { appimage?: string } }
+  }
+  assert.equal(pkg.build.toolsets?.appimage, '1.0.3')
 })

@@ -77,6 +77,9 @@ export type TranscriptToolEntry = {
   // Which kind of agent was spawned ('Explore', 'general-purpose', a custom
   // agent id) when the call named one; the lane's label.
   subagentType?: string
+  // An MCP tool's own title and its server's name, where the provider sent them.
+  displayTitle?: string
+  serverName?: string
   // The lane this call ran inside, when it is a subagent's own tool call.
   parentToolUseId?: string
   // Tool calls made inside this lane, in the order they started.
@@ -562,6 +565,8 @@ export type ToolAccumulator = {
   removedLines?: number
   subagentLane?: boolean
   subagentType?: string
+  displayTitle?: string
+  serverName?: string
   parentToolUseId?: string
   agent?: TranscriptAgentState
   messages?: TranscriptAgentMessage[]
@@ -867,6 +872,8 @@ export function projectConversation(
           removedLines: readNumber(event.payload, 'removedLines'),
           subagentLane: readBoolean(event.payload, 'subagentLane'),
           subagentType: readString(event.payload, 'subagentType'),
+          displayTitle: readString(event.payload, 'displayTitle') ?? turn.tools.get(id)?.displayTitle,
+          serverName: readString(event.payload, 'serverName') ?? turn.tools.get(id)?.serverName,
           parentToolUseId,
         }
         const pendingMessage = pendingMessages.get(id)
@@ -1390,6 +1397,8 @@ export function nestSubagentLanes(turn: TurnAccumulator, index: LaneIndex): Tran
       // stamp the flag (older event streams, or a renamed spawn tool).
       ...(tool.subagentLane || children.length > 0 ? { subagentLane: true } : {}),
       ...(tool.subagentType ? { subagentType: tool.subagentType } : {}),
+      ...(tool.displayTitle ? { displayTitle: tool.displayTitle } : {}),
+      ...(tool.serverName ? { serverName: tool.serverName } : {}),
       ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
       ...(children.length > 0 ? { children } : {}),
       ...(tool.agent ? { agent: tool.agent } : {}),

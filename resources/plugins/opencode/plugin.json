@@ -133,6 +133,10 @@
     "versionArgs": ["--version"]
   },
   "package": { "npm": "opencode-ai", "brew": "opencode" },
+  "selfUpdate": {
+    "$comment": "Verified 2026-10-13 against OpenCode 1.18.32: `opencode upgrade --help` documents `upgrade [target]` and `--method` (curl, npm, pnpm, bun, brew, choco, scoop). Without `--method` it works out the method itself, `curl` for a binary under ~/.opencode/bin, which is where the install script puts it. For a binary it cannot place it asks (\"Install anyways?\") before going on, which is why this runs only for a binary under neither Homebrew nor npm (chooseCliUpdateCommand); a Homebrew or npm install is updated by its own manager.",
+    "args": ["upgrade"]
+  },
   "install": {
     "darwin": [
       {

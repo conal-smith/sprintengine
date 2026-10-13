@@ -77,6 +77,7 @@ import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/
 import type { AgentMcpServerStatus } from '../../shared/skills'
 
 import type {
+  EffortLevel,
   Options,
   PermissionResult,
   Query,
@@ -272,6 +273,10 @@ type SessionState = {
   // And the mode of Claude Code's own it runs at that preset, null for the
   // preset's own.
   childMode: string | null
+  // The permission mode the live child reports itself in, and the one it
+  // first reported (mapSdkMessage). Null until its first init.
+  cliMode: string | null
+  cliSpawnMode: string | null
   // Session-level events (resume cursor updates) that arrived while no turn
   // stream was open to carry them; flushed at the next turn start.
   pendingSessionEvents: ConversationEvent[]
@@ -609,6 +614,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.query = null
     state.childPreset = null
     state.childMode = null
+    state.cliMode = null
+    state.cliSpawnMode = null
     state.childPid = null
     state.spawnedAt = null
     if (state.skillPluginDir) removeSkillPlugin(state.skillPluginDir)
@@ -655,10 +662,58 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   // background agent, shell or monitor works inside the child with no turn
   // open, so an idle turn alone does not say the child is free.
   function childIsIdle(state: SessionState): boolean {
-    if (state.turn) return false
-    for (const agent of state.subagents.values()) if (agent.background) return false
-    for (const tracked of state.tasks.values()) if (tracked.background) return false
-    return true
+    return !state.turn && !backgroundWorkRunning(state)
+  }
+
+  // A background agent, shell or monitor the live child runs: work that ends
+  // with the child, so a setting that would replace it waits for it instead.
+  function backgroundWorkRunning(state: SessionState): boolean {
+    if (!state.query) return false
+    for (const agent of state.subagents.values()) if (agent.background) return true
+    for (const tracked of state.tasks.values()) if (tracked.background) return true
+    return false
+  }
+
+  // Move the live child to another effort over the control channel, as
+  // /effort does, rather than respawning it. False when it cannot: no child,
+  // or a Claude Code that refuses or does not answer the request (one older
+  // than `apply_flag_settings`). No effort is the model's own default, which
+  // a null effortLevel goes back to.
+  async function applyEffortLive(state: SessionState, effort: string | undefined): Promise<boolean> {
+    const query = state.query
+    if (!query || typeof query.applyFlagSettings !== 'function') return false
+    const applied = await answeredWithin(
+      query.applyFlagSettings({ effortLevel: (effort ?? null) as EffortLevel | null }),
+      childAnswerTimeoutMs,
+      { rejectAsUnanswered: true },
+    )
+    return applied && state.query === query
+  }
+
+  // A child that does not run under the session's recorded preset is replaced
+  // before the next message (ensureQuery), unless background work runs in it.
+  // Then it is moved over the control channel instead: to the preset's own
+  // mode, or under `none`, whose mode no request names, to 'default', which
+  // asks before anything that changes something, until the work drains and
+  // the next message can respawn it. A child that will not move is replaced
+  // all the same: running a message under looser permissions than the person
+  // chose is worse than ending the work.
+  async function reconcilePresetWhileBusy(state: SessionState): Promise<void> {
+    const query = state.query
+    if (!query || childHonorsPreset(state) || !backgroundWorkRunning(state)) return
+    const target = nativePermissionMode(state, state.mode)
+    const moved = await answeredWithin(query.setPermissionMode(target ?? 'default'), childAnswerTimeoutMs, {
+      rejectAsUnanswered: true,
+    })
+    if (state.query !== query) return
+    if (!moved) {
+      disposeChild(state)
+      return
+    }
+    if (target !== undefined) {
+      state.childPreset = state.permissionPreset
+      state.childMode = ownSdkMode(state)
+    }
   }
 
   async function pump(state: SessionState, q: Query): Promise<void> {
@@ -830,7 +885,9 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // reconciled here, so the turn about to start runs under the preset the
     // session actually recorded. The respawn below resumes the same provider
     // session, so the conversation continues rather than restarting.
-    if (state.query && !childHonorsPreset(state)) disposeChild(state)
+    // One with background work in it was moved instead, or replaced, by
+    // reconcilePresetWhileBusy before the turn came here.
+    if (state.query && !childHonorsPreset(state) && !backgroundWorkRunning(state)) disposeChild(state)
     // A child still registering its servers is not ready for a message yet.
     if (state.query) return state.spawning ?? Promise.resolve()
     // Two callers racing past the check above would each stage a plugin folder
@@ -1098,6 +1155,29 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     return !LOOKUP_TOOL_KINDS.has(claudeToolKind(toolName))
   }
 
+  // Claude can enter plan mode on its own (EnterPlanMode), and a plan it then
+  // had rejected leaves it there. The chat's own mode says otherwise, so a
+  // reused child is moved back before the next message reaches it: to the
+  // preset's mode, or under `none` to 'default', unless the child started in
+  // plan mode, which is then the person's own default. One that will not move
+  // is replaced when nothing runs in the background, and otherwise stays in
+  // plan mode, which is the stricter of the two.
+  async function leaveStrayPlanMode(state: SessionState): Promise<void> {
+    const query = state.query
+    if (!query || state.cliMode !== 'plan' || nativePermissionMode(state, state.mode) === 'plan') return
+    const target = sdkPermissionMode(state)
+    if (target === undefined && state.cliSpawnMode === 'plan') return
+    const moved = await answeredWithin(query.setPermissionMode(target ?? 'default'), childAnswerTimeoutMs, {
+      rejectAsUnanswered: true,
+    })
+    if (state.query !== query) return
+    if (moved) state.cliMode = target ?? 'default'
+    else if (!backgroundWorkRunning(state)) {
+      disposeChild(state)
+      await ensureQuery(state)
+    }
+  }
+
   // Move the live child to another chat mode over the control channel rather
   // than respawning it, which costs a cold start, a re-read of the session
   // file, and any background agent it had running. False when only a respawn
@@ -1221,10 +1301,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     })
     state.pendingPermissions.delete(requestId)
     let planTransitionError: string | undefined
-    if (decision.approved && plan !== null && state.mode === 'plan') {
+    // A plan Claude entered on its own (EnterPlanMode) leaves plan mode on
+    // approval too: the chat never chose it, so nothing else would.
+    if (decision.approved && plan !== null && (state.mode === 'plan' || state.cliMode === 'plan')) {
       try {
-        await state.query?.setPermissionMode(sdkPermissionMode(state) ?? 'default')
-        state.mode = 'default'
+        const target = sdkPermissionMode(state) ?? 'default'
+        await state.query?.setPermissionMode(target)
+        state.cliMode = target
+        if (state.mode === 'plan') state.mode = 'default'
       } catch (error) {
         decision.approved = false
         planTransitionError = error instanceof Error ? error.message : 'Could not leave plan mode.'
@@ -1318,6 +1402,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         pendingPermissions: new Map(),
         childPreset: null,
         childMode: null,
+        cliMode: null,
+        cliSpawnMode: null,
         pendingSessionEvents: [],
         onSessionEvent: input.onSessionEvent ?? null,
         continuationSequence: 0,
@@ -1359,22 +1445,46 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         return
       }
       yield eventFor(state, 'turn_started', { turnId: input.turnId })
+      // What waits for the chat's background work, said once the turn opens.
+      const waiting: string[] = []
       try {
         const nextMode = input.mode ?? 'default'
+        // Each change below goes to the live child where it can, and
+        // replaces the child where it cannot, unless background work runs in
+        // it: that ends with the child, so the change waits, kept off the
+        // session's state so the next message tries it again.
         if (state.reasoningEffort !== input.reasoningEffort) {
-          disposeChild(state)
-          state.mode = nextMode
-          state.reasoningEffort = input.reasoningEffort
-        } else if (state.mode !== nextMode) {
-          if (!(await switchModeLive(state, nextMode))) disposeChild(state)
-          state.mode = nextMode
+          if (!state.query || (await applyEffortLive(state, input.reasoningEffort))) {
+            state.reasoningEffort = input.reasoningEffort
+          } else if (backgroundWorkRunning(state)) {
+            waiting.push('the new effort')
+          } else {
+            disposeChild(state)
+            state.reasoningEffort = input.reasoningEffort
+          }
+        }
+        if (state.mode !== nextMode) {
+          if (await switchModeLive(state, nextMode)) state.mode = nextMode
+          // Back to default from plan or ask: the child stays in the stricter
+          // mode meanwhile. Into plan or ask it never waits, since the turn
+          // would run with less care than the person asked for.
+          else if (nextMode === 'default' && backgroundWorkRunning(state)) waiting.push('default mode')
+          else {
+            disposeChild(state)
+            state.mode = nextMode
+          }
         }
         const skillIds = [...new Set(input.skills ?? [])].sort()
         if (JSON.stringify(skillIds) !== JSON.stringify(state.skillIds ?? [])) {
-          disposeChild(state)
-          state.skillIds = skillIds
+          if (backgroundWorkRunning(state)) waiting.push('the attached skills')
+          else {
+            disposeChild(state)
+            state.skillIds = skillIds
+          }
         }
+        await reconcilePresetWhileBusy(state)
         await ensureQuery(state)
+        await leaveStrayPlanMode(state)
       } catch (error) {
         yield eventFor(state, 'turn_failed', {
           turnId: input.turnId,
@@ -1397,6 +1507,12 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.turn = turn
       state.lastActivityAt = now()
       for (const pendingEvent of state.pendingSessionEvents.splice(0)) turn.queue.push(pendingEvent)
+      if (waiting.length > 0)
+        turn.queue.push(
+          eventFor(state, 'session_updated', {
+            notice: waitingNotice(waiting),
+          }),
+        )
 
       const onAbort = (): void => {
         interruptChild(state)
@@ -1417,11 +1533,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // skills stay loaded for the command either way.
       const opensWithCommand =
         leadingCommandFor(input.message, { cli: CLAUDE_COMMANDS_CLI, cwd: state.workspaceRoot }) !== null
+      // Skills that wait for background work are not loaded yet, so the note
+      // does not name them.
+      const skillsLoaded = !waiting.includes('the attached skills')
       if (!turn.queue.closed)
         pushUserMessage(
           state,
           buildUserMessageContent(
-            input.skills?.length && !opensWithCommand
+            input.skills?.length && skillsLoaded && !opensWithCommand
               ? `Use the attached skills: ${input.skills.map(attachedSkillName).join(', ')}.\n\n${input.message}`
               : input.message,
             input.attachments,
@@ -1886,6 +2005,42 @@ const MCP_REGISTRATION_TIMEOUT_MS = 90_000
 const MCP_SIGN_IN_WATCH_MS = 5 * 60_000
 const MCP_SIGN_IN_POLL_MS = 3_000
 
+// The titles Claude Code gives an assistant message's tool calls
+// (`tool_use_meta`, beside the message, never in it: an MCP tool's
+// `annotations.title` or a readable form of its wire name, and its server's
+// display name), by call id. Plain text only, kept short: the server wrote
+// it, and it is shown as a row's title on every device. The icon URL it may
+// carry is left: a row draws its kind's glyph, never a server's picture.
+const TOOL_DISPLAY_CHARS = 120
+
+function toolDisplays(meta: unknown): Map<string, { displayTitle?: string; serverName?: string }> {
+  const displays = new Map<string, { displayTitle?: string; serverName?: string }>()
+  if (!Array.isArray(meta)) return displays
+  const clean = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined
+    const text = value
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return text ? text.slice(0, TOOL_DISPLAY_CHARS) : undefined
+  }
+  for (const entry of meta.map(asRecord)) {
+    if (!entry || typeof entry.id !== 'string') continue
+    const displayTitle = clean(entry.display_name)
+    const serverName = clean(entry.server_display_name)
+    if (displayTitle || serverName)
+      displays.set(entry.id, { ...(displayTitle ? { displayTitle } : {}), ...(serverName ? { serverName } : {}) })
+  }
+  return displays
+}
+
+// "The new effort and the attached skills will apply …": what a turn left
+// waiting for the chat's background work, as the notice that says so.
+function waitingNotice(waiting: string[]): string {
+  const list = waiting.length > 1 ? `${waiting.slice(0, -1).join(', ')} and ${waiting.at(-1)}` : waiting[0]!
+  return `${list[0]!.toUpperCase()}${list.slice(1)} will apply to your messages once the background work in this chat finishes.`
+}
+
 /**
  * Whether `promise` settled within `ms`. A rejection counts as an answer
  * unless `rejectAsUnanswered` — for a request whose refusal means the same as
@@ -2317,6 +2472,12 @@ export function mapSdkMessage(
     promptCacheTtl?: PromptCacheTtl | null
     commandOutputShown?: boolean
     compactedInExchange?: boolean
+    // The permission mode the child last said it runs in (its init's and its
+    // status messages' `permissionMode`), and the one its first init named:
+    // Claude can enter plan mode on its own (EnterPlanMode), which no mode the
+    // chat set accounts for.
+    cliMode?: string | null
+    cliSpawnMode?: string | null
     // A compaction is under way: the CLI repeats its `compacting` status every
     // half minute while it summarises, and the transcript hears it once.
     compacting?: boolean
@@ -2413,6 +2574,10 @@ export function mapSdkMessage(
   // is written to the transcript as is.
   const apiKeySource = init ? normalizeApiKeySource(message.apiKeySource) : null
   if (init && typeof message.model === 'string' && message.model) state.contextModel = message.model
+  if (init && typeof message.permissionMode === 'string') {
+    state.cliSpawnMode ??= message.permissionMode
+    state.cliMode = message.permissionMode
+  }
   const billing = init ? claudeBillingOf(apiKeySource) : null
   if (billing) {
     state.usageBilling = billing
@@ -2492,6 +2657,7 @@ export function mapSdkMessage(
       // when the window filled. A summary takes a minute or more, and a turn
       // that said "Thinking…" through it read as the model working.
       if (message.subtype === 'status') {
+        if (typeof message.permissionMode === 'string') state.cliMode = message.permissionMode
         const compacting = message.status === 'compacting'
         if (compacting && !state.compacting) events.push(eventFor(state, 'context_compacting', { turnId }))
         state.compacting = compacting
@@ -2603,6 +2769,7 @@ export function mapSdkMessage(
         break
       }
       const tracked = parentToolUseId ? state.subagents?.get(parentToolUseId) : undefined
+      const displays = toolDisplays(message.tool_use_meta)
       for (const rawBlock of content) {
         const block = asRecord(rawBlock)
         // What an agent says between its steps belongs to its own thread. A
@@ -2629,13 +2796,16 @@ export function mapSdkMessage(
         const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
         if (taskTool)
           (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+        const kind = taskTool ? 'todo' : inferConversationToolKind(block.name)
+        const display = kind === 'mcp' && typeof block.id === 'string' ? displays.get(block.id) : undefined
         const payload: ConversationToolStartedPayload = {
           turnId,
           toolCallId: typeof block.id === 'string' ? block.id : undefined,
           tool: block.name,
           toolUseId: typeof block.id === 'string' ? block.id : undefined,
           name: block.name,
-          kind: taskTool ? 'todo' : inferConversationToolKind(block.name),
+          kind,
+          ...display,
           input: JSON.parse(
             JSON.stringify({
               ...toolInput,

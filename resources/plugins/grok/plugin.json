@@ -143,6 +143,10 @@
     "versionArgs": ["--version"]
   },
   "package": { "npm": "@xai-official/grok" },
+  "selfUpdate": {
+    "$comment": "Verified 2026-10-13 against Grok Build 1.0.41: `grok --help` lists `update` (\"Check for updates or install a specific version\") and `grok update --help` documents `--check`, `--version` and the channel switches, so a bare `grok update` installs the latest stable build. It downloads into ~/.grok/bin and moves the `grok` link there, which is where the official installer puts it; an npm install of the same CLI is updated with npm instead (chooseCliUpdateCommand), since this would leave the npm copy first on PATH.",
+    "args": ["update"]
+  },
   "install": {
     "darwin": [
       {

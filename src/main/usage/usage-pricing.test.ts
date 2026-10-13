@@ -103,3 +103,45 @@ test('with no copy and no network, the bundled table prices alone', async () => 
   assert.equal(pricing.fetchedAt, null)
   assert.ok(pricing.ratesFor('claude-sonnet-4-5'))
 })
+
+test('the live list keeps premium speeds: priced outright, or as a multiple of the list price', () => {
+  const table = parseLiteLlmPrices({
+    'gpt-tiered': {
+      input_cost_per_token: 2e-6,
+      output_cost_per_token: 10e-6,
+      cache_read_input_token_cost: 2e-7,
+      input_cost_per_token_priority: 4e-6,
+      output_cost_per_token_priority: 20e-6,
+      cache_read_input_token_cost_priority: 4e-7,
+      input_cost_per_token_ultrafast: 12e-6,
+      output_cost_per_token_ultrafast: 60e-6,
+    },
+    'claude-fast': {
+      input_cost_per_token: 4e-6,
+      output_cost_per_token: 20e-6,
+      cache_read_input_token_cost: 2e-7,
+      cache_creation_input_token_cost: 5e-6,
+      provider_specific_entry: { us: 1.1, fast: 2 },
+    },
+    // Half a priority price is no price for that tier.
+    'gpt-half-tier': { input_cost_per_token: 5e-8, output_cost_per_token: 4e-7, input_cost_per_token_priority: 2.5e-6 },
+  })
+  assert.deepEqual(table.get('gpt-tiered')?.fast, { input: 4e-6, output: 20e-6, cacheRead: 4e-7, cacheWrite: 4e-6 })
+  assert.deepEqual(table.get('gpt-tiered')?.ultrafast, {
+    input: 12e-6,
+    output: 60e-6,
+    cacheRead: 12e-6,
+    cacheWrite: 12e-6,
+  })
+  assert.deepEqual(table.get('claude-fast')?.fast, { input: 8e-6, output: 40e-6, cacheRead: 4e-7, cacheWrite: 10e-6 })
+  assert.equal(table.get('claude-fast')?.ultrafast, undefined)
+  assert.equal(table.get('gpt-half-tier')?.fast, undefined)
+  assert.equal(table.get('gpt-half-tier')?.input, 5e-8)
+})
+
+test('the bundled table prices fast mode for the models that have it', () => {
+  const pricing = createPricing(null, { source: 'bundled', fetchedAt: null })
+  near(pricing.ratesFor('claude-opus-5-5')?.fast?.output, 40 / MTOK)
+  near(pricing.ratesFor('gpt-5')?.fast?.input, 2.5 / MTOK)
+  assert.equal(pricing.ratesFor('claude-sonnet-4-5')?.fast, undefined)
+})

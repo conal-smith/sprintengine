@@ -302,3 +302,37 @@ test('accepts a failureWhen discriminator and rejects an unknown discriminator f
   assert.ok(paths.includes('agentStateSpec.events[0].failureWhen.field'))
   assert.ok(paths.includes('agentStateSpec.events[1].failureWhen.oneOf'))
 })
+
+test('accepts an update and a selfUpdate given as the binary’s arguments', () => {
+  const result = validateCliPluginManifest({
+    ...VALID,
+    update: { args: ['update'] },
+    selfUpdate: { args: ['upgrade'] },
+  })
+  assert.equal(result.ok, true, result.ok ? '' : JSON.stringify(result.issues))
+})
+
+test('rejects a selfUpdate or update with no arguments, or one that is not a list of words', () => {
+  const result = validateCliPluginManifest({
+    ...VALID,
+    update: { args: [] },
+    selfUpdate: { args: ['upgrade', ''] },
+  })
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.deepEqual(result.issues.map((issue) => issue.path).sort(), ['selfUpdate.args', 'update.args'])
+  const shell = validateCliPluginManifest({ ...VALID, selfUpdate: 'grok update' })
+  assert.equal(shell.ok, false)
+})
+
+test('the bundled Grok and OpenCode manifests name their own updaters for a script install', () => {
+  for (const [id, args] of [
+    ['grok', ['update']],
+    ['opencode', ['upgrade']],
+  ] as const) {
+    const source = readFileSync(join(process.cwd(), 'resources/plugins', id, 'plugin.json'), 'utf8')
+    const result = parseCliPluginManifest(source)
+    assert.equal(result.ok, true, result.ok ? '' : JSON.stringify(result.issues))
+    assert.deepEqual((JSON.parse(source) as { selfUpdate?: { args: string[] } }).selfUpdate?.args, args)
+  }
+})

@@ -82,7 +82,8 @@ export type UsageService = {
   dispose(): Promise<void>
 }
 
-const CACHE_VERSION = 1
+// 2: buckets carry the speed a premium tier billed at, so every log is read again.
+const CACHE_VERSION = 2
 const GROUP_BY: ReadonlySet<UsageGroupBy> = new Set(['day', 'model', 'workspace', 'session', 'provider'])
 
 type CacheFile = { version: number; scannedAt: number | null; entries: UsageCacheEntry[] }
@@ -265,11 +266,12 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
     const refresh = request.refresh === true
     // The price list is fetched while the logs are read, not after.
     const [prices] = await Promise.all([pricing.get({ force: refresh }), ready(refresh)])
-    // Grouped by the hour (as the day key) so the window buckets into its own days.
+    // Grouped by the hour (as the day key) so the window buckets into its own
+    // days, and by speed so a premium tier is priced at its own rate.
     const rows = aggregateUsage(
       entries.values(),
       { from, to, groupBy: ['day', 'provider', 'model', 'session'] },
-      { workspaces: workspaceRefs(), chatTitle, dayOf: String },
+      { workspaces: workspaceRefs(), chatTitle, dayOf: String, bySpeed: true },
     )
     return {
       ok: true,
