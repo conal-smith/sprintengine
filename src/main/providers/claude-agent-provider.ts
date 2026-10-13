@@ -273,6 +273,10 @@ type SessionState = {
   // And the mode of Claude Code's own it runs at that preset, null for the
   // preset's own.
   childMode: string | null
+  // The permission mode the live child reports itself in, and the one it
+  // first reported (mapSdkMessage). Null until its first init.
+  cliMode: string | null
+  cliSpawnMode: string | null
   // Session-level events (resume cursor updates) that arrived while no turn
   // stream was open to carry them; flushed at the next turn start.
   pendingSessionEvents: ConversationEvent[]
@@ -610,6 +614,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.query = null
     state.childPreset = null
     state.childMode = null
+    state.cliMode = null
+    state.cliSpawnMode = null
     state.childPid = null
     state.spawnedAt = null
     if (state.skillPluginDir) removeSkillPlugin(state.skillPluginDir)
@@ -1149,6 +1155,29 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     return !LOOKUP_TOOL_KINDS.has(claudeToolKind(toolName))
   }
 
+  // Claude can enter plan mode on its own (EnterPlanMode), and a plan it then
+  // had rejected leaves it there. The chat's own mode says otherwise, so a
+  // reused child is moved back before the next message reaches it: to the
+  // preset's mode, or under `none` to 'default', unless the child started in
+  // plan mode, which is then the person's own default. One that will not move
+  // is replaced when nothing runs in the background, and otherwise stays in
+  // plan mode, which is the stricter of the two.
+  async function leaveStrayPlanMode(state: SessionState): Promise<void> {
+    const query = state.query
+    if (!query || state.cliMode !== 'plan' || nativePermissionMode(state, state.mode) === 'plan') return
+    const target = sdkPermissionMode(state)
+    if (target === undefined && state.cliSpawnMode === 'plan') return
+    const moved = await answeredWithin(query.setPermissionMode(target ?? 'default'), childAnswerTimeoutMs, {
+      rejectAsUnanswered: true,
+    })
+    if (state.query !== query) return
+    if (moved) state.cliMode = target ?? 'default'
+    else if (!backgroundWorkRunning(state)) {
+      disposeChild(state)
+      await ensureQuery(state)
+    }
+  }
+
   // Move the live child to another chat mode over the control channel rather
   // than respawning it, which costs a cold start, a re-read of the session
   // file, and any background agent it had running. False when only a respawn
@@ -1272,10 +1301,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     })
     state.pendingPermissions.delete(requestId)
     let planTransitionError: string | undefined
-    if (decision.approved && plan !== null && state.mode === 'plan') {
+    // A plan Claude entered on its own (EnterPlanMode) leaves plan mode on
+    // approval too: the chat never chose it, so nothing else would.
+    if (decision.approved && plan !== null && (state.mode === 'plan' || state.cliMode === 'plan')) {
       try {
-        await state.query?.setPermissionMode(sdkPermissionMode(state) ?? 'default')
-        state.mode = 'default'
+        const target = sdkPermissionMode(state) ?? 'default'
+        await state.query?.setPermissionMode(target)
+        state.cliMode = target
+        if (state.mode === 'plan') state.mode = 'default'
       } catch (error) {
         decision.approved = false
         planTransitionError = error instanceof Error ? error.message : 'Could not leave plan mode.'
@@ -1369,6 +1402,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         pendingPermissions: new Map(),
         childPreset: null,
         childMode: null,
+        cliMode: null,
+        cliSpawnMode: null,
         pendingSessionEvents: [],
         onSessionEvent: input.onSessionEvent ?? null,
         continuationSequence: 0,
@@ -1449,6 +1484,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         }
         await reconcilePresetWhileBusy(state)
         await ensureQuery(state)
+        await leaveStrayPlanMode(state)
       } catch (error) {
         yield eventFor(state, 'turn_failed', {
           turnId: input.turnId,
@@ -2407,6 +2443,12 @@ export function mapSdkMessage(
     promptCacheTtl?: PromptCacheTtl | null
     commandOutputShown?: boolean
     compactedInExchange?: boolean
+    // The permission mode the child last said it runs in (its init's and its
+    // status messages' `permissionMode`), and the one its first init named:
+    // Claude can enter plan mode on its own (EnterPlanMode), which no mode the
+    // chat set accounts for.
+    cliMode?: string | null
+    cliSpawnMode?: string | null
     // A compaction is under way: the CLI repeats its `compacting` status every
     // half minute while it summarises, and the transcript hears it once.
     compacting?: boolean
@@ -2503,6 +2545,10 @@ export function mapSdkMessage(
   // is written to the transcript as is.
   const apiKeySource = init ? normalizeApiKeySource(message.apiKeySource) : null
   if (init && typeof message.model === 'string' && message.model) state.contextModel = message.model
+  if (init && typeof message.permissionMode === 'string') {
+    state.cliSpawnMode ??= message.permissionMode
+    state.cliMode = message.permissionMode
+  }
   const billing = init ? claudeBillingOf(apiKeySource) : null
   if (billing) {
     state.usageBilling = billing
@@ -2582,6 +2628,7 @@ export function mapSdkMessage(
       // when the window filled. A summary takes a minute or more, and a turn
       // that said "Thinking…" through it read as the model working.
       if (message.subtype === 'status') {
+        if (typeof message.permissionMode === 'string') state.cliMode = message.permissionMode
         const compacting = message.status === 'compacting'
         if (compacting && !state.compacting) events.push(eventFor(state, 'context_compacting', { turnId }))
         state.compacting = compacting
