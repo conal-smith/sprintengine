@@ -90,13 +90,17 @@ export function splitImageDataUrl(dataUrl: string): { mediaType: string; dataBas
   return { mediaType, dataBase64 }
 }
 
-export function readFileAsDataUrl(file: File): Promise<string> {
+export function readFileAsDataUrl(file: Blob & { name?: string }): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
     reader.onerror = () => reject(new Error(`Could not read ${file.name || 'the image'}.`))
     reader.readAsDataURL(file)
   })
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality))
 }
 
 export function loadImageElement(src: string): Promise<HTMLImageElement> {
@@ -113,57 +117,65 @@ export function loadImageElement(src: string): Promise<HTMLImageElement> {
 // accepts. Rejects with a message the composer shows verbatim — never a silent
 // truncation or a half-sized image passed off as the original.
 //
-// Exported so the canvas/FileReader path can be exercised in a real browser:
-// the DOM-less unit test can cover the pure helpers around it but not this.
+// Exported so the canvas/FileReader path can be exercised: the unit test
+// stands in the image, the canvas's encoder and the FileReader.
 export async function readImageAttachment(file: File, id: string): Promise<ConversationImageAttachment> {
-  const dataUrl = await readFileAsDataUrl(file)
-  const original = splitImageDataUrl(dataUrl)
-  if (!original) throw new Error(`Could not read ${file.name || 'the image'}.`)
+  // Decoded from the file itself rather than from a data URL of it: a
+  // screenshot is several megabytes, and base64-encoding all of it on the
+  // renderer's thread only to measure it and draw it smaller froze the
+  // composer for as long as that took.
+  const source = URL.createObjectURL(file)
+  try {
+    const image = await loadImageElement(source)
+    const target = scaledImageDimensions(image.naturalWidth, image.naturalHeight)
+    const fits = file.size <= MAX_ATTACHMENT_BYTES
+    const sameSize = target.width === image.naturalWidth && target.height === image.naturalHeight
+    // An image that already fits both budgets ships byte-for-byte — notably an
+    // animated GIF, which a canvas round-trip would flatten to one frame.
+    if (fits && sameSize) {
+      const original = splitImageDataUrl(await readFileAsDataUrl(file))
+      if (!original) throw new Error(`Could not read ${file.name || 'the image'}.`)
+      return {
+        id,
+        mediaType: original.mediaType,
+        dataBase64: original.dataBase64,
+        ...(file.name ? { name: file.name } : {}),
+        byteLength: base64ByteLength(original.dataBase64),
+      }
+    }
 
-  const originalBytes = base64ByteLength(original.dataBase64)
-  const image = await loadImageElement(dataUrl)
-  const target = scaledImageDimensions(image.naturalWidth, image.naturalHeight)
-  const fits = originalBytes <= MAX_ATTACHMENT_BYTES
-  const sameSize = target.width === image.naturalWidth && target.height === image.naturalHeight
-  // An image that already fits both budgets ships byte-for-byte — notably an
-  // animated GIF, which a canvas round-trip would flatten to one frame.
-  if (fits && sameSize) {
+    const canvas = document.createElement('canvas')
+    canvas.width = target.width
+    canvas.height = target.height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('This window cannot resize images right now.')
+    context.drawImage(image, 0, 0, target.width, target.height)
+
+    // Keep the source encoding when it can hold the image; fall back to JPEG only
+    // when the re-encode is still over budget (JPEG drops alpha, so it is the
+    // second choice, not the default). Encoded off the main thread, measured as
+    // bytes, and only the encoding that is sent is turned into base64.
+    const preferredType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png'
+    let encoded = await canvasToBlob(canvas, preferredType)
+    if (encoded && encoded.size > MAX_ATTACHMENT_BYTES && preferredType !== 'image/jpeg') {
+      encoded = await canvasToBlob(canvas, 'image/jpeg', ATTACHMENT_JPEG_QUALITY)
+    }
+    if (!encoded) throw new Error(`Could not prepare ${file.name || 'the image'} for sending.`)
+    if (encoded.size > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `${file.name || 'That image'} is still over ${formatAttachmentBytes(MAX_ATTACHMENT_BYTES)} after resizing.`,
+      )
+    }
+    const payload = splitImageDataUrl(await readFileAsDataUrl(encoded).catch(() => ''))
+    if (!payload) throw new Error(`Could not prepare ${file.name || 'the image'} for sending.`)
     return {
       id,
-      mediaType: original.mediaType,
-      dataBase64: original.dataBase64,
+      mediaType: payload.mediaType,
+      dataBase64: payload.dataBase64,
       ...(file.name ? { name: file.name } : {}),
-      byteLength: originalBytes,
+      byteLength: base64ByteLength(payload.dataBase64),
     }
-  }
-
-  const canvas = document.createElement('canvas')
-  canvas.width = target.width
-  canvas.height = target.height
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('This window cannot resize images right now.')
-  context.drawImage(image, 0, 0, target.width, target.height)
-
-  // Keep the source encoding when it can hold the image; fall back to JPEG only
-  // when the re-encode is still over budget (JPEG drops alpha, so it is the
-  // second choice, not the default).
-  const preferredType = original.mediaType === 'image/jpeg' ? 'image/jpeg' : 'image/png'
-  let encoded = splitImageDataUrl(canvas.toDataURL(preferredType))
-  if (encoded && base64ByteLength(encoded.dataBase64) > MAX_ATTACHMENT_BYTES && preferredType !== 'image/jpeg') {
-    encoded = splitImageDataUrl(canvas.toDataURL('image/jpeg', ATTACHMENT_JPEG_QUALITY))
-  }
-  if (!encoded) throw new Error(`Could not prepare ${file.name || 'the image'} for sending.`)
-  const byteLength = base64ByteLength(encoded.dataBase64)
-  if (byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(
-      `${file.name || 'That image'} is still over ${formatAttachmentBytes(MAX_ATTACHMENT_BYTES)} after resizing.`,
-    )
-  }
-  return {
-    id,
-    mediaType: encoded.mediaType,
-    dataBase64: encoded.dataBase64,
-    ...(file.name ? { name: file.name } : {}),
-    byteLength,
+  } finally {
+    URL.revokeObjectURL(source)
   }
 }

@@ -82,3 +82,19 @@ export function isTerminalChromeTarget(target: EventTarget | null | undefined): 
   if (!element || typeof element.closest !== 'function') return false
   return element.closest(`[${TERMINAL_CHROME_ATTRIBUTE}]`) != null
 }
+
+/**
+ * Whether a keydown is the given letter's key: by the character it typed, or
+ * by where the key sits.
+ *
+ * On a layout whose letters are not Latin — Russian, Greek, Ukrainian — the
+ * key marked S types `ы` or `σ`, so `event.key` never says `s` and a ⌘S that
+ * read only the character did nothing at all. `event.code` names the physical
+ * key whatever the layout prints on it, and is read only when the key typed no
+ * Latin letter: on AZERTY the key in A's place types `q`, and is Q.
+ */
+export function isLetterKey(event: { key: string; code: string }, letter: string): boolean {
+  const key = event.key.toLowerCase()
+  if (/^[a-z]$/u.test(key)) return key === letter
+  return event.code === `Key${letter.toUpperCase()}`
+}

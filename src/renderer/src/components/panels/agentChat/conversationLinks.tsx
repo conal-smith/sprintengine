@@ -415,7 +415,7 @@ export function ConversationMarkdown({
       renderText: conversationText,
       renderLink,
       renderImage,
-      ...(userText ? { userText } : {}),
+      ...(userText ? { userText } : { repairFileLinks: true }),
     }),
     [streaming, userText, tone, size],
   )

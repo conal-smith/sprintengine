@@ -234,7 +234,7 @@ function slowRunner(delayMs: number, events: string[]): SlotGitRunner {
     })()
   return (cwd, args, options) => {
     if (args[0] === 'fetch') return slow('fetch')(cwd, args, options)
-    if (args[0] === 'worktree' && args[1] === 'add') return slow('add')(cwd, args, options)
+    if (args.includes('worktree') && args.includes('add')) return slow('add')(cwd, args, options)
     return defaultSlotGitRunner(cwd, args, options)
   }
 }
@@ -266,6 +266,27 @@ test('a reused slot is reset while the base is fetched, then moved on when the f
   assert.equal(await git(second.path, 'rev-parse', 'HEAD'), pushed)
   assert.equal(await readFile(join(second.path, 'later.txt'), 'utf8'), 'later\n')
   assert.equal(await git(second.path, 'status', '--porcelain'), '')
+})
+
+test('a slot is made and reset with parallel checkout, at the repository’s own checkout.workers', async () => {
+  await git(repo, 'config', 'checkout.workers', '3')
+  const checkouts: string[][] = []
+  const recording: SlotGitRunner = (cwd, args, options) => {
+    if (args.includes('read-tree') || (args.includes('worktree') && args.includes('add'))) checkouts.push(args)
+    return defaultSlotGitRunner(cwd, args, options)
+  }
+  const harness = makeService({ git: recording })
+  await lease(harness, 'first')
+  await returnAll(harness)
+  await pushToOrigin('later.txt', 'later\n')
+  await lease(harness, 'second')
+  assert.deepEqual(
+    checkouts.map((args) => args.slice(0, 3)),
+    [
+      ['-c', 'checkout.workers=3', 'worktree'],
+      ['-c', 'checkout.workers=3', 'read-tree'],
+    ],
+  )
 })
 
 test('two leases at once get two different slots', async () => {
