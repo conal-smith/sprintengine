@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 
 import type { WebContents } from 'electron'
 import { CONSOLE_BUFFER_MAX, createBrowserControl, parseKeyChord } from './browser-control'
+import type { BrowserDownload } from './browser-manager'
 import { test } from 'vitest'
 
 test('browser-control', async () => {
@@ -71,6 +72,7 @@ test('browser-control', async () => {
         humanListeners.push(listener)
         return () => {}
       },
+      onDownload: () => () => {},
       notePointer: (event) => {
         log.push(`pointer:${event.kind}@${event.x},${event.y}`)
       },
@@ -507,6 +509,7 @@ test('an action a dialog ended does not resume typing once the dialog is answere
     noteAgentActivity: () => {},
     noteAgentInput: () => {},
     onHumanInput: () => () => {},
+    onDownload: () => () => {},
     notePointer: () => {},
   })
 
@@ -519,4 +522,49 @@ test('an action a dialog ended does not resume typing once the dialog is answere
   const after = wc.debugger.commands.slice(wc.debugger.commands.indexOf('Page.handleJavaScriptDialog') + 1)
   assert.deepEqual(after, [], 'the abandoned type sent nothing to the page after the dialog closed')
   assert.ok(!wc.debugger.commands.includes('Input.insertText'))
+})
+
+test('a download the agent’s tab saved is in its action history with the path, and says how it ended', async () => {
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async () => ({}),
+  })
+  const wc = Object.assign(new EventEmitter(), {
+    debugger: debuggerStub,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+  })
+  let tell: (tabId: string, download: BrowserDownload) => void = () => {}
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: (listener) => {
+      tell = listener
+      return () => {}
+    },
+    notePointer: () => {},
+  })
+  assert.equal((await control.console('t1', {})).ok, true)
+  const path = '/Users/dev/app/.sprintengine/browser/downloads/report.csv'
+  tell('t1', { url: 'http://localhost:5173/report.csv', path, state: 'started' })
+  assert.deepEqual(
+    control.actionsOf('t1').map(({ action, args, path, status }) => ({ action, args, path, status })),
+    [{ action: 'download', args: 'http://localhost:5173/report.csv', path, status: 'running' }],
+  )
+  tell('t1', { url: 'http://localhost:5173/report.csv', path, state: 'interrupted' })
+  const [entry] = control.actionsOf('t1')
+  assert.equal(entry?.status, 'failed')
+  assert.equal(entry?.error, 'The download was interrupted.')
 })

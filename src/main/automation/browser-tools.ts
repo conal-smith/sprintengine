@@ -654,7 +654,7 @@ export function createBrowserTools(deps: BrowserToolsDeps): McpToolRegistration[
     {
       name: 'browser.actions',
       description:
-        'What happened to a browser tab lately: your actions with their outcome (succeeded / failed / interrupted) and the moments the person took the page back. Newest last. Read-only.',
+        'What happened to a browser tab lately: your actions with their outcome (succeeded / failed / interrupted), the files the page downloaded while you drove it (`download`, with the `path` each was saved to), and the moments the person took the page back. Newest last. Read-only.',
       inputSchema: {
         type: 'object',
         properties: { tabId: TARGET_PROPERTIES.tabId, workspaceId: TARGET_PROPERTIES.workspaceId },

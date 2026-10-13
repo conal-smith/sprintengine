@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { WebContents } from 'electron'
 
 import type { BrowserPointerEvent } from '../../shared/browser'
+import type { BrowserDownload } from './browser-manager'
 
 // The agent's hands on a browser tab (browser-pane epic, child 6). One
 // in-process DevTools-protocol session per tab, shared with the appearance
@@ -76,13 +77,15 @@ export type NetworkEntry = {
   at: number
 }
 
-/** One thing that happened to a tab: an agent action, or the person taking it back. */
+/** One thing that happened to a tab: an agent action, a file it downloaded, or the person taking it back. */
 export type ActionEntry = {
   id: string
-  /** The tool's verb (`click`, `type`, …) or `human` for the person's own input. */
+  /** The tool's verb (`click`, `type`, …), `download` for a file the page sent, or `human` for the person's own input. */
   action: string
-  /** A short rendering of the arguments, never the full text typed. */
+  /** A short rendering of the arguments, never the full text typed; a download's URL. */
   args: string
+  /** Where a download was saved. */
+  path?: string
   status: 'running' | 'succeeded' | 'failed' | 'interrupted'
   startedAt: string
   completedAt?: string
@@ -108,6 +111,8 @@ export type BrowserControlManager = {
   noteAgentInput(tabId: string, delta: 1 | -1): void
   /** Subscribe to the person's own input on any tab (the epoch bumps). */
   onHumanInput(listener: (tabId: string) => void): () => void
+  /** Subscribe to the downloads a tab the agent drives saved, as each starts and ends. */
+  onDownload(listener: (tabId: string, download: BrowserDownload) => void): () => void
   /** Where the agent's pointer is about to act, for the cursor overlay. */
   notePointer(event: BrowserPointerEvent): void
 }
@@ -341,6 +346,29 @@ export function createBrowserControl(manager: BrowserControlManager) {
       startedAt: now.toISOString(),
       completedAt: now.toISOString(),
     })
+  })
+
+  // A download the agent's action set off is saved without a dialog
+  // (browser-manager); its entry says where, and whether it finished.
+  manager.onDownload((tabId, download) => {
+    const s = sessions.get(tabId)
+    if (!s) return
+    if (download.state === 'started') {
+      pushBounded(s.actions, ACTION_HISTORY_MAX, {
+        id: nextActionId(),
+        action: 'download',
+        args: download.url.slice(0, 200),
+        path: download.path,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+      })
+      return
+    }
+    const entry = s.actions.findLast((candidate) => candidate.action === 'download' && candidate.path === download.path)
+    if (!entry) return
+    entry.status = download.state === 'completed' ? 'succeeded' : 'failed'
+    entry.completedAt = new Date().toISOString()
+    if (download.state !== 'completed') entry.error = `The download was ${download.state}.`
   })
 
   function nextActionId(): string {
