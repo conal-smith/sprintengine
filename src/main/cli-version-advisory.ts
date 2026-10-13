@@ -14,6 +14,9 @@ import type {
   CliVersionAdvisory,
   CliVersionAdvisoryMap,
 } from '../shared/electron-api'
+import { existsSync, realpathSync } from 'node:fs'
+import { win32 } from 'node:path'
+
 import { LOCAL_HOST_ID, type ExecutionHostId } from '../shared/execution-host'
 import type { PluginManifest } from '../shared/plugin-manifest'
 import { compareSemver } from '../shared/semver'
@@ -86,25 +89,121 @@ export function isHomebrewPath(path: string | null | undefined): boolean {
   )
 }
 
-// The update the button runs, in precedence order: the CLI's own updater when the
-// manifest declares one, `brew upgrade` when the binary lives under Homebrew
-// and a formula is known, `npm install -g` when an npm package is known, else
-// nothing here (updateCli falls back to re-running the install method).
+// What the chooser may read of the machine the CLI is on: where a path ends up
+// once every symlink is followed, and whether a file is there. Null for a
+// machine whose files main cannot read (a WSL distribution).
+export type CliInstallFs = {
+  realPath: (path: string) => string | null
+  exists: (path: string) => boolean
+}
+
+export const localCliInstallFs: CliInstallFs = {
+  realPath: (path) => {
+    try {
+      return realpathSync(path)
+    } catch {
+      return null
+    }
+  },
+  exists: (path) => existsSync(path),
+}
+
+// Package managers the update button does not drive. Each keeps its own global
+// tree (a Volta image even lays one out as `lib/node_modules/<pkg>`), and
+// `npm install -g` would put a second copy beside it that PATH may never reach.
+const FOREIGN_PACKAGE_MANAGERS: ReadonlyArray<readonly [name: string, segment: RegExp]> = [
+  ['Volta', /[\\/]\.?volta[\\/]/i],
+  ['pnpm', /[\\/]\.?pnpm[\\/]/i],
+  ['Bun', /[\\/]\.bun[\\/]/i],
+  ['Yarn', /[\\/](?:\.yarn|yarn[\\/]global)[\\/]/i],
+]
+
+/** The package manager other than npm and Homebrew that put a binary here, when its path says so. */
+export function foreignPackageManager(...paths: Array<string | null | undefined>): string | null {
+  for (const path of paths) {
+    if (!path) continue
+    for (const [name, segment] of FOREIGN_PACKAGE_MANAGERS) if (segment.test(path)) return name
+  }
+  return null
+}
+
+const isWindowsPath = (path: string): boolean => /^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\')
+
+/**
+ * The npm prefix a binary was installed under by `npm install -g <pkg>`, or
+ * null when npm did not put it there. On macOS and Linux npm links
+ * `<prefix>/bin/<name>` into `<prefix>/lib/node_modules/<pkg>/`, so the
+ * binary's real path names both; on Windows npm writes a shim beside
+ * `<prefix>/node_modules/<pkg>/`.
+ */
+export function npmGlobalPrefix(resolvedPath: string, packageName: string, fs: CliInstallFs): string | null {
+  if (isWindowsPath(resolvedPath)) {
+    const prefix = win32.dirname(resolvedPath)
+    const installed = win32.join(prefix, 'node_modules', ...packageName.split('/'), 'package.json')
+    return fs.exists(installed) ? prefix : null
+  }
+  const real = fs.realPath(resolvedPath)
+  if (!real) return null
+  const marker = `/lib/node_modules/${packageName}/`
+  const at = real.indexOf(marker)
+  return at > 0 ? real.slice(0, at) : null
+}
+
+// A prefix goes into a shell command line; one with a space or a quote in it
+// is quoted for the shell the update runs in (PowerShell on Windows).
+function shellPath(path: string): string {
+  if (/^[\w@%+=:,./\\-]+$/.test(path)) return path
+  return isWindowsPath(path) ? `'${path.replace(/'/g, "''")}'` : `'${path.replace(/'/g, `'\\''`)}'`
+}
+
+// The update the button runs, in precedence order: the CLI's own updater when
+// the manifest declares one that is always right (`update`); `brew upgrade`
+// when the binary lives under Homebrew and a formula is known; `npm install -g`
+// into the same prefix when npm is what put the binary where it is; the CLI's
+// own updater when the manifest declares one for the installs no package
+// manager made (`selfUpdate`, the vendor's script); else nothing here, and
+// updateCli falls back to re-running the install method. npm is never the
+// guess: run against a binary another installer put on PATH, it installs a
+// second copy somewhere else, PATH keeps finding the first, and the update
+// reads as having done nothing. Where the machine's files cannot be read (a
+// WSL distribution, `fs: null`) the CLI's own updater is preferred, since it
+// can tell how it was installed, and npm is only the last resort.
 export function chooseCliUpdateCommand(input: {
-  manifest: Pick<PluginManifest, 'binary' | 'update' | 'package'>
+  manifest: Pick<PluginManifest, 'binary' | 'update' | 'selfUpdate' | 'package'>
   resolvedPath: string | null | undefined
+  fs?: CliInstallFs | null
 }): CliUpdateCommand | null {
   const { manifest, resolvedPath } = input
+  const fs = input.fs === undefined ? localCliInstallFs : input.fs
   if (manifest.update?.args?.length) {
     return { kind: 'cli-updater', command: [manifest.binary, ...manifest.update.args].join(' ') }
   }
-  if (manifest.package?.brew && isHomebrewPath(resolvedPath)) {
-    return { kind: 'brew', command: `brew upgrade ${manifest.package.brew}` }
+  const selfUpdate = manifest.selfUpdate?.args?.length
+    ? ({ kind: 'cli-updater', command: [manifest.binary, ...manifest.selfUpdate.args].join(' ') } as const)
+    : null
+  const npm = manifest.package?.npm
+  const brew = manifest.package?.brew
+  const real = resolvedPath && fs ? fs.realPath(resolvedPath) : null
+  if (foreignPackageManager(resolvedPath, real)) return null
+  // A Homebrew keg can hold an npm tree of its own (a formula that vendors a
+  // Node package), so the keg is read first: only brew moves what is in it.
+  if (isHomebrewKeg(real)) return brew ? { kind: 'brew', command: `brew upgrade ${brew}` } : null
+  if (!fs) {
+    if (brew && isHomebrewPath(resolvedPath)) return { kind: 'brew', command: `brew upgrade ${brew}` }
+    if (selfUpdate) return selfUpdate
+    return npm ? { kind: 'npm', command: `npm install -g ${npm}@latest` } : null
   }
-  if (manifest.package?.npm) {
-    return { kind: 'npm', command: `npm install -g ${manifest.package.npm}@latest` }
-  }
-  return null
+  const prefix = npm && resolvedPath ? npmGlobalPrefix(resolvedPath, npm, fs) : null
+  if (npm && prefix) return { kind: 'npm', command: `npm install -g --prefix ${shellPath(prefix)} ${npm}@latest` }
+  // Under Homebrew's bin with nowhere further to follow: brew's own link.
+  if (brew && !real && isHomebrewPath(resolvedPath)) return { kind: 'brew', command: `brew upgrade ${brew}` }
+  return selfUpdate
+}
+
+// Inside a formula's or cask's own directory: what only brew installs.
+function isHomebrewKeg(path: string | null): boolean {
+  if (!path) return false
+  return /\/(cellar|caskroom)\//i.test(path.replace(/\\/g, '/'))
 }
 
 export type ResolveCliVersionAdvisoriesDeps = {
@@ -114,6 +213,8 @@ export type ResolveCliVersionAdvisoriesDeps = {
   fetchLatest?: (packageName: string, force: boolean) => Promise<string | null>
   now?: () => Date
   force?: boolean
+  /** This machine's files, read to tell who installed a CLI; another machine's are not read. */
+  fs?: CliInstallFs
 }
 
 // One advisory per CLI in the availability map. Only an installed CLI with a
@@ -134,7 +235,13 @@ export async function resolveCliVersionAdvisories(
     Object.values(availability).map(async (entry) => {
       if (!entry) return
       const manifest = deps.getManifest(entry.cli)
-      const updateCommand = manifest ? chooseCliUpdateCommand({ manifest, resolvedPath: entry.resolvedPath }) : null
+      const updateCommand = manifest
+        ? chooseCliUpdateCommand({
+            manifest,
+            resolvedPath: entry.resolvedPath,
+            fs: hostId === LOCAL_HOST_ID ? deps.fs : null,
+          })
+        : null
       const packageName = manifest?.package?.npm ?? null
       const currentVersion = entry.version?.trim() || null
       const latestVersion =

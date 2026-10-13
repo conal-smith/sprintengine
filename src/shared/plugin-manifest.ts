@@ -428,10 +428,16 @@ export type PluginManifest = {
   detect?: PluginDetectSpec
   install?: PluginInstallSpec
   update?: PluginUpdateSpec
+  // The CLI's own updater for an install no package manager made (the
+  // vendor's install script): run only when the binary is under neither
+  // Homebrew nor npm, which each update their own copy. `update` is for an
+  // updater that is right whatever installed the CLI; this one is not, since
+  // run against an npm install it writes a second copy PATH never reaches.
+  selfUpdate?: PluginUpdateSpec
   // Where the CLI is published, so the studio can ask a registry for the
   // newest version (npm's `/<pkg>/latest`) and choose the update command
-  // (`brew upgrade <formula>` when the binary lives under Homebrew, else
-  // `npm install -g <pkg>@latest`). Absent for CLIs that install from a
+  // (`brew upgrade <formula>` when the binary lives under Homebrew,
+  // `npm install -g` when npm put it where it is). Absent for CLIs that install from a
   // vendor script only (cursor, kimi-code): their version check is `unknown`.
   package?: PluginPackageSpec
 }

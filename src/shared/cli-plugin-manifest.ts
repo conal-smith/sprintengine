@@ -359,6 +359,17 @@ export type CliPluginManifest = {
   skillIntegration?: CliSkillIntegration
   agentStateSpec?: CliAgentStateSpec
   auth?: CliAuthSpec
+  /** The CLI's own updater, right however the CLI was installed: `args` run against its binary. */
+  update?: CliUpdateSpec
+  /**
+   * The CLI's own updater for an install no package manager made (the vendor's
+   * install script). Run only when the binary is under neither Homebrew nor npm.
+   */
+  selfUpdate?: CliUpdateSpec
+}
+
+export type CliUpdateSpec = {
+  args: string[]
 }
 
 // Plugin directories handed to the CLI on its command line, one flag per
@@ -454,6 +465,8 @@ export function validateCliPluginManifest(value: unknown): CliManifestResult {
   if (value.skillIntegration !== undefined) validateSkillIntegration(value.skillIntegration, issues)
   if (value.agentStateSpec !== undefined) validateAgentStateSpec(value.agentStateSpec, issues)
   if (value.auth !== undefined) validateAuth(value.auth, issues)
+  if (value.update !== undefined) validateUpdateSpec(value.update, 'update', issues)
+  if (value.selfUpdate !== undefined) validateUpdateSpec(value.selfUpdate, 'selfUpdate', issues)
 
   if (issues.length > 0) return { ok: false, issues }
   return { ok: true, manifest: value as unknown as CliPluginManifest }
@@ -1146,6 +1159,19 @@ function validateAuth(value: unknown, issues: CliManifestIssue[]): void {
   }
   requireString(value, 'label', issues, undefined, 'auth')
   if (value.env !== undefined) requireString(value, 'env', issues, undefined, 'auth')
+}
+
+// An updater the Update button runs: arguments for the CLI's own binary. Each
+// is one argv entry, never a shell line, so none may be empty.
+function validateUpdateSpec(value: unknown, path: string, issues: CliManifestIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, message: `${path} must be an object when present.` })
+    return
+  }
+  const args = value.args
+  if (!Array.isArray(args) || args.length === 0 || !args.every((arg) => typeof arg === 'string' && arg.trim())) {
+    issues.push({ path: `${path}.args`, message: `${path}.args must be a non-empty list of non-empty strings.` })
+  }
 }
 
 function validateSkillIntegration(value: unknown, issues: CliManifestIssue[]): void {

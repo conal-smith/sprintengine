@@ -4,6 +4,9 @@ import type { PluginManifest } from '../shared/plugin-manifest'
 import {
   chooseCliUpdateCommand,
   clearNpmLatestCache,
+  foreignPackageManager,
+  npmGlobalPrefix,
+  type CliInstallFs,
   deriveCliVersionStatus,
   fetchNpmLatestVersion,
   isHomebrewPath,
@@ -12,10 +15,19 @@ import {
 } from './cli-version-advisory'
 import { test } from 'vitest'
 
-test('cli-version-advisory', async () => {
-  const manifest = (over: Partial<PluginManifest>): PluginManifest =>
-    ({ id: 'codex', displayName: 'Codex', binary: 'codex', version: 1, ...over }) as PluginManifest
+const manifest = (over: Partial<PluginManifest>): PluginManifest =>
+  ({ id: 'codex', displayName: 'Codex', binary: 'codex', version: 1, ...over }) as PluginManifest
 
+// A machine's files as the chooser reads them: each link and where it ends,
+// and the files that exist. A path that is in neither does not resolve.
+function fakeFs(links: Record<string, string>, files: string[] = []): CliInstallFs {
+  return {
+    realPath: (path) => links[path] ?? (files.includes(path) ? path : null),
+    exists: (path) => files.includes(path),
+  }
+}
+
+test('cli-version-advisory', async () => {
   async function main(): Promise<void> {
     // Status: loose compare, unknown when either side has no version.
     assert.equal(deriveCliVersionStatus('codex-cli 0.153.2', '0.153.3'), 'behind_latest')
@@ -43,6 +55,7 @@ test('cli-version-advisory', async () => {
           package: { npm: '@anthropic-ai/claude-code', brew: 'claude-code' },
         }),
         resolvedPath: '/opt/homebrew/bin/claude',
+        fs: fakeFs({}),
       }),
       { kind: 'cli-updater', command: 'claude update' },
       "the CLI's own updater wins even under Homebrew",
@@ -51,6 +64,7 @@ test('cli-version-advisory', async () => {
       chooseCliUpdateCommand({
         manifest: manifest({ package: { npm: '@openai/codex', brew: 'codex' } }),
         resolvedPath: '/opt/homebrew/bin/codex',
+        fs: fakeFs({ '/opt/homebrew/bin/codex': '/opt/homebrew/Caskroom/codex/0.161.0/bin/codex' }),
       }),
       { kind: 'brew', command: 'brew upgrade codex' },
     )
@@ -58,15 +72,27 @@ test('cli-version-advisory', async () => {
       chooseCliUpdateCommand({
         manifest: manifest({ package: { npm: '@openai/codex', brew: 'codex' } }),
         resolvedPath: '/Users/me/.nvm/versions/node/v22/bin/codex',
+        fs: fakeFs({
+          '/Users/me/.nvm/versions/node/v22/bin/codex':
+            '/Users/me/.nvm/versions/node/v22/lib/node_modules/@openai/codex/bin/codex.js',
+        }),
       }),
-      { kind: 'npm', command: 'npm install -g @openai/codex@latest' },
+      { kind: 'npm', command: 'npm install -g --prefix /Users/me/.nvm/versions/node/v22 @openai/codex@latest' },
+      'npm updates the copy in the prefix it installed',
     )
     assert.deepEqual(
-      chooseCliUpdateCommand({ manifest: manifest({ package: { brew: 'codex' } }), resolvedPath: '/usr/bin/codex' }),
+      chooseCliUpdateCommand({
+        manifest: manifest({ package: { brew: 'codex' } }),
+        resolvedPath: '/usr/bin/codex',
+        fs: fakeFs({}, ['/usr/bin/codex']),
+      }),
       null,
       'a formula alone helps only when the binary is under Homebrew',
     )
-    assert.equal(chooseCliUpdateCommand({ manifest: manifest({}), resolvedPath: '/usr/bin/codex' }), null)
+    assert.equal(
+      chooseCliUpdateCommand({ manifest: manifest({}), resolvedPath: '/usr/bin/codex', fs: fakeFs({}) }),
+      null,
+    )
 
     // npm latest: parsed, cached for an hour (misses too), force bypasses.
     clearNpmLatestCache()
@@ -139,6 +165,7 @@ test('cli-version-advisory', async () => {
       },
       {
         getManifest: (cli) => manifests[cli] ?? null,
+        fs: fakeFs({ '/opt/homebrew/bin/codex': '/opt/homebrew/Caskroom/codex/0.161.0/bin/codex' }),
         fetchLatest: async (pkg) => {
           asked.push(pkg)
           return latest[pkg] ?? null
@@ -172,4 +199,156 @@ test('cli-version-advisory', async () => {
   })
 
   await suiteRun
+})
+
+const grok = manifest({
+  id: 'grok',
+  displayName: 'Grok Build',
+  binary: 'grok',
+  package: { npm: '@xai-official/grok' },
+  selfUpdate: { args: ['update'] },
+})
+
+test('a CLI its vendor script installed updates itself, never through npm', () => {
+  const fs = fakeFs({ '/Users/dev/.grok/bin/grok': '/Users/dev/.grok/bin/grok-1.0.41' })
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: grok, resolvedPath: '/Users/dev/.grok/bin/grok', fs }), {
+    kind: 'cli-updater',
+    command: 'grok update',
+  })
+})
+
+test('a CLI with no updater of its own, at a path npm did not make, names no command', () => {
+  const opencodeScript = manifest({ id: 'opencode', binary: 'opencode', package: { npm: 'opencode-ai' } })
+  const fs = fakeFs({}, ['/Users/dev/.opencode/bin/opencode'])
+  assert.equal(
+    chooseCliUpdateCommand({ manifest: opencodeScript, resolvedPath: '/Users/dev/.opencode/bin/opencode', fs }),
+    null,
+  )
+})
+
+test('the same CLI installed by npm is updated by npm, in the prefix that holds it', () => {
+  const fs = fakeFs({ '/opt/homebrew/bin/grok': '/opt/homebrew/lib/node_modules/@xai-official/grok/bin/grok-native' })
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: grok, resolvedPath: '/opt/homebrew/bin/grok', fs }), {
+    kind: 'npm',
+    command: 'npm install -g --prefix /opt/homebrew @xai-official/grok@latest',
+  })
+})
+
+test('an npm install under Homebrew’s prefix is npm’s, not a formula’s', () => {
+  const opencode = manifest({ id: 'opencode', binary: 'opencode', package: { npm: 'opencode-ai', brew: 'opencode' } })
+  const npmUnderBrew = fakeFs({
+    '/opt/homebrew/bin/opencode': '/opt/homebrew/lib/node_modules/opencode-ai/bin/opencode.exe',
+  })
+  assert.deepEqual(
+    chooseCliUpdateCommand({ manifest: opencode, resolvedPath: '/opt/homebrew/bin/opencode', fs: npmUnderBrew }),
+    { kind: 'npm', command: 'npm install -g --prefix /opt/homebrew opencode-ai@latest' },
+  )
+  const formula = fakeFs({ '/opt/homebrew/bin/opencode': '/opt/homebrew/Cellar/opencode/1.18.27/bin/opencode' })
+  assert.deepEqual(
+    chooseCliUpdateCommand({ manifest: opencode, resolvedPath: '/opt/homebrew/bin/opencode', fs: formula }),
+    { kind: 'brew', command: 'brew upgrade opencode' },
+  )
+})
+
+test('a formula that vendors an npm tree in its keg is still brew’s', () => {
+  const codex = manifest({ package: { npm: '@openai/codex', brew: 'codex' } })
+  const fs = fakeFs({
+    '/opt/homebrew/bin/codex': '/opt/homebrew/Cellar/codex/0.161.0/libexec/lib/node_modules/@openai/codex/bin/codex.js',
+  })
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: codex, resolvedPath: '/opt/homebrew/bin/codex', fs }), {
+    kind: 'brew',
+    command: 'brew upgrade codex',
+  })
+  const noFormula = manifest({ package: { npm: '@openai/codex' } })
+  assert.equal(
+    chooseCliUpdateCommand({ manifest: noFormula, resolvedPath: '/opt/homebrew/bin/codex', fs }),
+    null,
+    'npm is never pointed into a keg',
+  )
+})
+
+test('pnpm, Bun, Volta and Yarn installs are left to the manager that made them', () => {
+  const codex = manifest({ package: { npm: '@openai/codex', brew: 'codex' }, selfUpdate: { args: ['update'] } })
+  const cases: Array<[string, string, string]> = [
+    [
+      '/Users/dev/Library/pnpm/codex',
+      '/Users/dev/Library/pnpm/global/5/.pnpm/@openai+codex@0.161.0/node_modules/@openai/codex/bin/codex.js',
+      'pnpm',
+    ],
+    ['/Users/dev/.bun/bin/codex', '/Users/dev/.bun/install/global/node_modules/@openai/codex/bin/codex.js', 'Bun'],
+    [
+      '/Users/dev/.volta/bin/codex',
+      '/Users/dev/.volta/tools/image/packages/@openai/codex/lib/node_modules/@openai/codex/bin/codex.js',
+      'Volta',
+    ],
+    ['/Users/dev/.yarn/bin/codex', '/Users/dev/.config/yarn/global/node_modules/@openai/codex/bin/codex.js', 'Yarn'],
+  ]
+  for (const [path, real, name] of cases) {
+    assert.equal(foreignPackageManager(path, real), name)
+    assert.equal(
+      chooseCliUpdateCommand({ manifest: codex, resolvedPath: path, fs: fakeFs({ [path]: real }) }),
+      null,
+      name,
+    )
+  }
+  assert.equal(foreignPackageManager('/Users/dev/.nvm/versions/node/v22/bin/codex', null), null)
+})
+
+test('a Windows npm shim is npm’s when the package sits beside it', () => {
+  const codex = manifest({ package: { npm: '@openai/codex' } })
+  const shim = 'C:\\Users\\Dev User\\AppData\\Roaming\\npm\\codex.cmd'
+  const fs = fakeFs({}, ['C:\\Users\\Dev User\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\package.json'])
+  assert.equal(npmGlobalPrefix(shim, '@openai/codex', fs), 'C:\\Users\\Dev User\\AppData\\Roaming\\npm')
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: codex, resolvedPath: shim, fs }), {
+    kind: 'npm',
+    command: "npm install -g --prefix 'C:\\Users\\Dev User\\AppData\\Roaming\\npm' @openai/codex@latest",
+  })
+  assert.equal(chooseCliUpdateCommand({ manifest: codex, resolvedPath: shim, fs: fakeFs({}) }), null)
+})
+
+test('a prefix with a space is quoted for the shell', () => {
+  const codex = manifest({ package: { npm: '@openai/codex' } })
+  const fs = fakeFs({
+    '/Users/dev/my tools/bin/codex': '/Users/dev/my tools/lib/node_modules/@openai/codex/bin/codex.js',
+  })
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: codex, resolvedPath: '/Users/dev/my tools/bin/codex', fs }), {
+    kind: 'npm',
+    command: "npm install -g --prefix '/Users/dev/my tools' @openai/codex@latest",
+  })
+})
+
+test('on a machine whose files cannot be read, the CLI’s own updater comes before a guess at npm', () => {
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: grok, resolvedPath: '/home/dev/.grok/bin/grok', fs: null }), {
+    kind: 'cli-updater',
+    command: 'grok update',
+  })
+  const codex = manifest({ package: { npm: '@openai/codex', brew: 'codex' } })
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: codex, resolvedPath: '/usr/local/bin/codex', fs: null }), {
+    kind: 'npm',
+    command: 'npm install -g @openai/codex@latest',
+  })
+  assert.deepEqual(
+    chooseCliUpdateCommand({ manifest: codex, resolvedPath: '/home/linuxbrew/.linuxbrew/bin/codex', fs: null }),
+    { kind: 'brew', command: 'brew upgrade codex' },
+  )
+})
+
+test('an advisory for a WSL machine never reads this machine’s files', async () => {
+  let read = 0
+  const fs: CliInstallFs = {
+    realPath: () => {
+      read += 1
+      return null
+    },
+    exists: () => {
+      read += 1
+      return false
+    },
+  }
+  const advisories = await resolveCliVersionAdvisories(
+    { grok: { cli: 'grok', installed: true, resolvedPath: '/home/dev/.grok/bin/grok', version: 'grok 1.0.41' } },
+    { hostId: 'wsl:Ubuntu', getManifest: () => grok, fetchLatest: async () => '1.0.52', fs },
+  )
+  assert.deepEqual(advisories.grok?.updateCommand, { kind: 'cli-updater', command: 'grok update' })
+  assert.equal(read, 0)
 })
