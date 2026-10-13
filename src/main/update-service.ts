@@ -233,6 +233,44 @@ function defaultInstallPlatform(): UpdateInstallPlatform {
   }
 }
 
+// An updater error's message is its top line; what went wrong underneath (a
+// DNS failure, a TLS error, a 403 from the feed) is in its code and its cause,
+// which the diagnostics log never saw. The summary is one bounded line, with
+// no stacks, and with addresses and credentials taken out of each message,
+// because an HTTP error appends the request and its headers after the first line.
+function redactUpdateMessage(message: string): string {
+  return (message.split(/[\r\n]/, 1)[0] ?? '')
+    .replace(/\b(?:https?|file):\/\/[^\s"'<>]+/gi, '[redacted URL]')
+    .replace(/\b(?:Bearer|Basic)\s+[^\s,;]+/gi, '[redacted credential]')
+    .replace(/\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*[:=].*$/gi, '[redacted header]')
+    .replace(
+      /\b[\w-]*(?:token|password|secret|credential|api[_-]?key)[\w-]*\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '[redacted credential]',
+    )
+    .slice(0, 512)
+}
+
+function summarizeUpdateCause(cause: unknown, depth: number): string {
+  if (depth >= 3) return '[truncated cause]'
+  if (typeof cause === 'string') return redactUpdateMessage(cause)
+  if (typeof cause !== 'object' || cause === null) return typeof cause
+  const error = cause as { name?: unknown; message?: unknown; code?: unknown; cause?: unknown }
+  const name = typeof error.name === 'string' && error.name ? error.name : 'Error'
+  const code = typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(error.code) ? ` [${error.code}]` : ''
+  const message = typeof error.message === 'string' ? `: ${redactUpdateMessage(error.message)}` : ''
+  const nested = error.cause === undefined ? '' : `; caused by ${summarizeUpdateCause(error.cause, depth + 1)}`
+  return `${name}${code}${message}${nested}`
+}
+
+/** "Error [ERR_UPDATER_…]: …; caused by Error [ENOTFOUND]: …", at most 1 KB. */
+export function describeUpdateError(error: unknown): string {
+  try {
+    return summarizeUpdateCause(error, 0).slice(0, 1024)
+  } catch {
+    return 'Error'
+  }
+}
+
 export class SprintEngineUpdateService {
   private readonly writeDiagnosticLog: WriteDiagnosticLog
   private readonly channelStore: UpdateServiceOptions['channelStore']
@@ -523,7 +561,7 @@ export class SprintEngineUpdateService {
         errorMessage: message,
         lastCheckedAt: new Date().toISOString(),
       })
-      await this.logUpdateError('Update check failed', message, isManual)
+      await this.logUpdateError('Update check failed', message, isManual, error)
       return { ok: false, state: this.getState(), message }
     }
   }
@@ -558,7 +596,7 @@ export class SprintEngineUpdateService {
       }
       const message = error instanceof Error ? error.message : 'Unable to download update.'
       this.updateState({ status: 'error', errorMessage: message })
-      await this.logUpdateError('Update download failed', message, true)
+      await this.logUpdateError('Update download failed', message, true, error)
       return { ok: false, state: this.getState(), message }
     } finally {
       if (this.download === download) this.download = null
@@ -934,7 +972,7 @@ export class SprintEngineUpdateService {
       const message = error.message || 'Updater failed.'
       // An install under way owns the state until it hands over or says why not.
       if (this.state.status !== 'installing') this.updateState({ status: 'error', errorMessage: message })
-      void this.logUpdateError('Updater error', message, false)
+      void this.logUpdateError('Updater error', message, false, error)
     })
   }
 
@@ -954,7 +992,7 @@ export class SprintEngineUpdateService {
     }).catch(() => undefined)
   }
 
-  private async logUpdateError(title: string, message: string, manual: boolean): Promise<void> {
+  private async logUpdateError(title: string, message: string, manual: boolean, error: unknown): Promise<void> {
     try {
       await this.writeDiagnosticLog({
         level: 'error',
@@ -968,6 +1006,7 @@ export class SprintEngineUpdateService {
           packaged: this.state.packaged,
           updateVersion: this.state.updateVersion,
           lastCheckedAt: this.state.lastCheckedAt,
+          cause: describeUpdateError(error),
         }),
       })
     } catch {
