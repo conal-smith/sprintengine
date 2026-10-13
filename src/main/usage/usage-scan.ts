@@ -118,42 +118,82 @@ const GROK_PROVIDER = 'grok-agent'
 // ── Reading lines ────────────────────────────────────────────────────────────
 
 /**
- * Stream a file's lines without holding the file. `keep` is a cheap substring
- * test run before a line is handed on, so the many lines a reader does not care
- * about (tool output, attachments) are never JSON-parsed.
+ * Stream a file's lines without holding the file. `keep` is a cheap test of a
+ * line's raw bytes, run before the line is decoded and handed on, so the many
+ * lines a reader does not care about (tool output, attachments: most of a
+ * log's bytes) are never decoded, let alone JSON-parsed. The markers a reader
+ * looks for are ASCII, and in UTF-8 an ASCII byte only ever stands for itself,
+ * so a marker is in a line's bytes exactly when it is in the decoded line,
+ * whatever else the line holds. A line keeps a CRLF's carriage return, which
+ * JSON reads as whitespace.
  */
 export async function forEachLine(
   path: string,
-  keep: (line: string) => boolean,
+  keep: (line: Buffer) => boolean,
   onLine: (line: string) => void,
-  options: { yieldEveryBytes?: number } = {},
+  options: { yieldEveryBytes?: number; chunkBytes?: number } = {},
 ): Promise<void> {
-  const stream = createReadStream(path, { encoding: 'utf8', highWaterMark: 1 << 20 })
-  let carry = ''
+  const stream = createReadStream(path, { highWaterMark: options.chunkBytes ?? 1 << 20 })
+  // The start of a line that runs past the chunks read so far, joined once its end comes.
+  let carry: Buffer[] = []
+  let carried = 0
+  const take = (line: Buffer) => {
+    if (line.length && keep(line)) onLine(line.toString('utf8'))
+  }
   let sinceYield = 0
   try {
-    for await (const chunk of stream as AsyncIterable<string>) {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
       sinceYield += chunk.length
-      const text = carry + chunk
       let from = 0
-      for (let at = text.indexOf('\n', from); at >= 0; at = text.indexOf('\n', from)) {
-        const line = text.slice(from, at)
+      let at = chunk.indexOf(NEWLINE)
+      if (carry.length && at >= 0) {
+        take(Buffer.concat([...carry, chunk.subarray(0, at)]))
+        carry = []
+        carried = 0
         from = at + 1
-        if (line && keep(line)) onLine(line)
+        at = chunk.indexOf(NEWLINE, from)
       }
-      carry = text.slice(from)
-      // A single line longer than 64 MB is not one any reader here wants.
-      if (carry.length > 64 << 20) carry = ''
+      for (; at >= 0; at = chunk.indexOf(NEWLINE, from)) {
+        take(chunk.subarray(from, at))
+        from = at + 1
+      }
+      if (from < chunk.length) {
+        // A tail is copied, so the chunk it came in is not held for it.
+        carry.push(from === 0 ? chunk : Buffer.from(chunk.subarray(from)))
+        carried += chunk.length - from
+        // A single line longer than 64 MB is not one any reader here wants.
+        if (carried > 64 << 20) {
+          carry = []
+          carried = 0
+        }
+      }
       if (options.yieldEveryBytes && sinceYield >= options.yieldEveryBytes) {
         sinceYield = 0
         await new Promise((resolve) => setImmediate(resolve))
       }
     }
-    if (carry && keep(carry)) onLine(carry)
+    if (carry.length) take(Buffer.concat(carry))
   } finally {
     stream.destroy()
   }
 }
+
+const NEWLINE = 0x0a
+
+/** A line's test for any of `markers`, each an ASCII string, as raw bytes. */
+function markers(...texts: string[]): (line: Buffer) => boolean {
+  const encoded = texts.map((text) => Buffer.from(text, 'latin1'))
+  return (line) => encoded.some((marker) => line.includes(marker))
+}
+
+// What each reader keeps a line for.
+const CLAUDE_REPLY = markers('"type":"assistant"')
+const CLAUDE_TITLE = markers('"type":"ai-title"', '"type":"summary"')
+const CODEX_RECORD = markers('"session_meta"', '"turn_context"', '"token_usage_record"', '"token_count"')
+const CODEX_USER_MESSAGE = markers('"user_message"')
+const CODEX_THREAD_NAME = markers('thread_name')
+const STUDIO_TURN = markers('"turn_completed"')
+const GROK_TURN = markers('turn_completed')
 
 function parseJson(line: string): Record<string, unknown> | null {
   try {
@@ -369,9 +409,7 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
     const isMain = file === group.main && file.endsWith(`${sep}${sessionId}.jsonl`)
     await forEachLine(
       file,
-      (line) =>
-        line.includes('"type":"assistant"') ||
-        (isMain && (line.includes('"type":"ai-title"') || line.includes('"type":"summary"') || !entry.cwd)),
+      (line) => CLAUDE_REPLY(line) || (isMain && (CLAUDE_TITLE(line) || !entry.cwd)),
       (line) => {
         const record = parseJson(line)
         if (!record) return
@@ -435,12 +473,7 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
   let previousTotal: number[] | null = null
   await forEachLine(
     group.main,
-    (line) =>
-      line.includes('"session_meta"') ||
-      line.includes('"turn_context"') ||
-      line.includes('"token_usage_record"') ||
-      line.includes('"token_count"') ||
-      (!entry.title && line.includes('"user_message"')),
+    (line) => CODEX_RECORD(line) || (!entry.title && CODEX_USER_MESSAGE(line)),
     (line) => {
       const record = parseJson(line)
       if (!record) return
@@ -528,31 +561,27 @@ export async function foldStudio(
   entry.sessionId = agentId
   entry.cwd = dir.root
   entry.title = titles.get(agentId) ?? null
-  await forEachLine(
-    group.main,
-    (line) => line.includes('"turn_completed"'),
-    (line) => {
-      const record = parseJson(line)
-      if (!record || record.type !== 'turn_completed') return
-      entry.providerId = str(record.providerId) ?? entry.providerId
-      const payload = rec(record.payload)
-      const at = typeof record.createdAt === 'number' ? record.createdAt : timeOf(record.createdAt)
-      if (!payload || at === null) return
-      const link = str(rec(payload.providerCursor)?.sessionId) ?? ''
-      if (link) links.add(link)
-      const usage = rec(payload.usage)
-      const counts: [number, number, number, number, number, number] = [
-        num(usage?.inputTokens),
-        num(usage?.outputTokens),
-        num(usage?.cacheReadTokens),
-        num(usage?.cacheWriteTokens),
-        usage ? 1 : 0,
-        num(payload.costUsd),
-      ]
-      if (!usage && counts[5] === 0) return
-      addUsage(buckets, at, str(record.modelId) ?? 'default', link, counts)
-    },
-  )
+  await forEachLine(group.main, STUDIO_TURN, (line) => {
+    const record = parseJson(line)
+    if (!record || record.type !== 'turn_completed') return
+    entry.providerId = str(record.providerId) ?? entry.providerId
+    const payload = rec(record.payload)
+    const at = typeof record.createdAt === 'number' ? record.createdAt : timeOf(record.createdAt)
+    if (!payload || at === null) return
+    const link = str(rec(payload.providerCursor)?.sessionId) ?? ''
+    if (link) links.add(link)
+    const usage = rec(payload.usage)
+    const counts: [number, number, number, number, number, number] = [
+      num(usage?.inputTokens),
+      num(usage?.outputTokens),
+      num(usage?.cacheReadTokens),
+      num(usage?.cacheWriteTokens),
+      usage ? 1 : 0,
+      num(payload.costUsd),
+    ]
+    if (!usage && counts[5] === 0) return
+    addUsage(buckets, at, str(record.modelId) ?? 'default', link, counts)
+  })
   entry.studio = { workspaceId: dir.workspaceId, agentId, root: dir.root, links: [...links].slice(0, 500) }
   entry.buckets = [...buckets.values()]
   return entry
@@ -588,16 +617,12 @@ async function studioTitles(dir: string, cache: Map<string, Map<string, string>>
 async function codexTitles(codexHome: string): Promise<Map<string, string>> {
   const titles = new Map<string, string>()
   try {
-    await forEachLine(
-      join(codexHome, 'session_index.jsonl'),
-      (line) => line.includes('thread_name'),
-      (line) => {
-        const record = parseJson(line)
-        const id = str(record?.id)
-        const name = str(record?.thread_name)
-        if (id && name) titles.set(id, name.slice(0, 160))
-      },
-    )
+    await forEachLine(join(codexHome, 'session_index.jsonl'), CODEX_THREAD_NAME, (line) => {
+      const record = parseJson(line)
+      const id = str(record?.id)
+      const name = str(record?.thread_name)
+      if (id && name) titles.set(id, name.slice(0, 160))
+    })
   } catch {
     // No index: a session is titled by its first message.
   }
@@ -944,30 +969,26 @@ export async function foldGrok(group: Group): Promise<UsageCacheEntry> {
       num(usage.costUsdTicks) / GROK_TICKS_PER_USD,
     ])
   }
-  await forEachLine(
-    group.main,
-    (line) => line.includes('turn_completed'),
-    (line) => {
-      const record = parseJson(line)
-      const params = rec(record?.params)
-      const update = rec(params?.update)
-      const usage = rec(update?.usage)
-      if (!record || !update || !usage || update.sessionUpdate !== 'turn_completed') return
-      const at = timeOf(rec(params?._meta)?.agentTimestampMs) ?? timeOf(record.timestamp)
-      if (at === null) return
-      const turn = str(update.promptId) ?? str(params?.promptId) ?? str(record.prompt_id)
-      if (turn) {
-        if (seen.has(turn)) return
-        seen.add(turn)
-      }
-      const perModel = Object.entries(rec(usage.modelUsage) ?? {})
-      if (perModel.length === 0) return add(at, str(usage.model) ?? fallbackModel, usage)
-      for (const [model, value] of perModel) {
-        const modelUsage = rec(value)
-        if (modelUsage) add(at, model, modelUsage)
-      }
-    },
-  )
+  await forEachLine(group.main, GROK_TURN, (line) => {
+    const record = parseJson(line)
+    const params = rec(record?.params)
+    const update = rec(params?.update)
+    const usage = rec(update?.usage)
+    if (!record || !update || !usage || update.sessionUpdate !== 'turn_completed') return
+    const at = timeOf(rec(params?._meta)?.agentTimestampMs) ?? timeOf(record.timestamp)
+    if (at === null) return
+    const turn = str(update.promptId) ?? str(params?.promptId) ?? str(record.prompt_id)
+    if (turn) {
+      if (seen.has(turn)) return
+      seen.add(turn)
+    }
+    const perModel = Object.entries(rec(usage.modelUsage) ?? {})
+    if (perModel.length === 0) return add(at, str(usage.model) ?? fallbackModel, usage)
+    for (const [model, value] of perModel) {
+      const modelUsage = rec(value)
+      if (modelUsage) add(at, model, modelUsage)
+    }
+  })
   entry.buckets = [...buckets.values()]
   return entry
 }
