@@ -13,6 +13,10 @@ const ALLOWED: Record<string, string> = {
   // Windows only, on the write of a secret file, never at boot: the file must
   // not be readable by anyone else before the write returns.
   'server/platform/secret-cipher.ts': 'icacls on Windows when a secret file is written',
+  // Linux only, before the app is ready and before any window exists, and only
+  // on a native Wayland Hyprland session: Chromium's features are fixed at
+  // `ready`, so the compositor's version has to be known first. Bounded at 1s.
+  'main/hyprland-color-manager.ts': 'hyprctl version on a Hyprland Wayland session, before ready',
 }
 
 const SYNC_SPAWN = /\b(execFileSync|execSync|spawnSync)\s*\(/

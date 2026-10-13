@@ -159,7 +159,9 @@ export function formatUsageTokens(value: number): string {
     [1e3, 'K'],
   ]
   for (const [size, unit] of units) {
-    if (abs >= size) {
+    // A value that rounds to a thousand of the unit below takes this one, so
+    // 999,999 reads "1M" rather than "1000K".
+    if (abs >= size * 0.9995) {
       const scaled = value / size
       const digits = Math.abs(scaled) >= 100 ? 0 : Math.abs(scaled) >= 10 ? 1 : 2
       return `${Number(scaled.toFixed(digits))}${unit}`
