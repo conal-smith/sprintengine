@@ -1262,6 +1262,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             throw new Error('This ACP agent does not support images.')
           for (const attachment of input.attachments ?? [])
             prompt.push({ type: 'image', data: attachment.dataBase64, mimeType: attachment.mediaType })
+          // A Stop that landed while the model, the mode or the checkpoint was
+          // being set reached an agent with no prompt to cancel. Sent now, the
+          // prompt would run on until the watchdog ended the process.
+          if (input.signal?.aborted || state.cancelled) {
+            emit(state, 'turn_failed', { reason: 'interrupted' })
+            return
+          }
           const result = await state.connection!.prompt({ sessionId: state.nativeId!, prompt })
           // The agent has the conversation now. Until it answered the prompt
           // (a refused image, an agent that died on it) the conversation is

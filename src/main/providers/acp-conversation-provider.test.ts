@@ -387,6 +387,22 @@ test('ACP Stop cancels the turn and keeps the process for the next one', async (
     await f.cleanup()
   }
 })
+test('ACP Stop while the turn is being set up sends no prompt and keeps the process', async () => {
+  const f = await fixture()
+  try {
+    const before = await pidOf(f)
+    // The session reads its hooks off the input it started with.
+    Object.assign(f.input, { onBeforeTool: () => f.provider.interrupt(f.input) })
+    const events = await turn(f, 'hang')
+    Object.assign(f.input, { onBeforeTool: undefined })
+    expect(events.at(-1)).toMatchObject({ type: 'turn_failed', payload: { reason: 'interrupted' } })
+    // The agent never saw the prompt, so it said nothing.
+    expect(events.some((event) => event.type === 'reasoning_delta' || event.type === 'content_delta')).toBe(false)
+    expect(await pidOf(f)).toBe(before)
+  } finally {
+    await f.cleanup()
+  }
+})
 test('ACP ends the process of a stopped turn the agent does not wind down', async () => {
   const f = await fixture(false, undefined, { IGNORE_CANCEL: '1' })
   try {
