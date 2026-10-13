@@ -407,12 +407,25 @@ export function isClockFormat(value: unknown): value is ClockFormat {
   return typeof value === 'string' && (CLOCK_FORMATS as readonly string[]).includes(value)
 }
 
+// How a reply streaming in is drawn: `live`, each word as it arrives, or
+// `paragraph`, each block once it is finished (shared/conversation/
+// markdownSegments.ts, `createParagraphHold`), so text never reflows under the
+// reader. Either way the whole reply is drawn once it ends.
+const REPLY_STREAMING_MODES = ['live', 'paragraph'] as const
+export type ReplyStreaming = (typeof REPLY_STREAMING_MODES)[number]
+export const DEFAULT_REPLY_STREAMING: ReplyStreaming = 'live'
+
+export function isReplyStreaming(value: unknown): value is ReplyStreaming {
+  return typeof value === 'string' && (REPLY_STREAMING_MODES as readonly string[]).includes(value)
+}
+
 export type AppearanceSettings = {
   theme: AppTheme
   windowMaterial: WindowMaterial
   chatContrast: number
   chatWidth: ChatWidth
   clockFormat: ClockFormat
+  replyStreaming: ReplyStreaming
   // Draw each spawned agent as a small character that moves while it works.
   // Off, an agent is a working mark while it runs and a lifecycle glyph after.
   agentCharacters: boolean

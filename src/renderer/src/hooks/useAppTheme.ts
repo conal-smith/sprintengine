@@ -3,12 +3,14 @@ import { useWorkspaceStore } from '../store/workspaceStore'
 import { clientSupports } from '../clientCapabilities'
 import { setClockFormat } from '../utils/clockFormat'
 import { applyAppearanceFonts } from '../utils/fonts'
+import { setReplyStreaming } from '../utils/replyStreaming'
 import {
   colorSchemeForResolvedTheme,
   DEFAULT_CHAT_CONTRAST,
   effectiveWindowMaterial,
   LIGHT_SURFACE_THEMES,
   normalizeChatContrast,
+  type AppearanceSettings,
   type AppTheme,
   type ChatWidth,
   type ColorScheme,
@@ -153,12 +155,16 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
     applyWindowMaterial(windowMaterial, mirrorToMain)
   }, [mirrorToMain, windowMaterial])
 
-  // The Clock setting, followed as the store changes rather than after the
-  // render that changed it: a stamp re-rendered by the change must already
-  // read the new clock (utils/clockFormat.ts).
+  // The Clock and Show replies settings, followed as the store changes rather
+  // than after the render that changed them: a stamp re-rendered by the change
+  // must already read the new clock (utils/clockFormat.ts).
   useEffect(() => {
-    setClockFormat(useWorkspaceStore.getState().appSettings.appearance.clockFormat)
-    return useWorkspaceStore.subscribe((state) => setClockFormat(state.appSettings.appearance.clockFormat))
+    const follow = (appearance: AppearanceSettings) => {
+      setClockFormat(appearance.clockFormat)
+      setReplyStreaming(appearance.replyStreaming)
+    }
+    follow(useWorkspaceStore.getState().appSettings.appearance)
+    return useWorkspaceStore.subscribe((state) => follow(state.appSettings.appearance))
   }, [])
 
   // Before paint, as the boot script (public/boot-theme.js) stamps them before the

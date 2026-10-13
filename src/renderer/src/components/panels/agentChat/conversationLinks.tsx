@@ -9,6 +9,7 @@ import { availableFolderOpenTargets, resolveFolderOpenPrimary } from '../../work
 import { resolveTerminalFileReferencePath } from '../../../utils/terminalFileLinks'
 import { showToast } from '../../../store/toastStore'
 import { StreamingMarkdown } from './StreamingMarkdown'
+import { useReplyStreaming } from '../../../utils/replyStreaming'
 import { ConversationCodeBlock, ConversationReplyCodeBlock } from './ConversationCodeBlock'
 import { ConversationImage } from './ConversationImage'
 import { renderMarkdown } from '../../../utils/markdown'
@@ -402,6 +403,9 @@ export function ConversationMarkdown({
 }) {
   const streamed = useRef(streaming)
   if (streaming) streamed.current = true
+  // Show replies: a paragraph at a time holds what is still being written,
+  // and draws it all once the message ends.
+  const hold = useReplyStreaming() === 'paragraph' && streaming
   // What a person typed shows as they typed it; an agent's reply typesets its
   // math and draws its diagrams. A `$$` or a ```mermaid fence in a message is
   // far more often a question about the syntax than a request to draw it.
@@ -423,5 +427,5 @@ export function ConversationMarkdown({
   // it; its text has not changed, so neither has its parse.
   const settled = !streamed.current
   const rendered = useMemo(() => (settled ? renderMarkdown(text, options) : null), [settled, text, options])
-  return settled ? <>{rendered}</> : <StreamingMarkdown source={text} options={options} />
+  return settled ? <>{rendered}</> : <StreamingMarkdown source={text} options={options} hold={hold} />
 }

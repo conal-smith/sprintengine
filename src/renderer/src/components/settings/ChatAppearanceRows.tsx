@@ -7,6 +7,7 @@ import {
   DEFAULT_CHAT_CONTRAST,
   type ChatWidth,
   type ClockFormat,
+  type ReplyStreaming,
 } from '../../types/appTheme'
 import { ResetIcon } from '../AppIcons'
 import { IconButton, SegmentedControl, SettingRow, Tooltip } from '../ui'
@@ -32,10 +33,11 @@ const contrastIndex = (value: number) =>
 const CONTRAST_TICKS = [0, contrastIndex(DEFAULT_CHAT_CONTRAST), CONTRAST_STOPS.length - 1]
 
 /**
- * The chat's rows in Appearance → Interface: text contrast, column width, and
- * the clock its stamps (and every other time of day in the app) are written
- * in. All apply as they change — the chat behind the settings is the preview —
- * through the store fields `useAppTheme` follows.
+ * The chat's rows in Appearance → Interface: text contrast, column width, the
+ * clock its stamps (and every other time of day in the app) are written in,
+ * and how a reply streaming in is shown. All apply as they change — the chat
+ * behind the settings is the preview — through the store fields `useAppTheme`
+ * follows.
  */
 export function ChatAppearanceRows(): JSX.Element {
   const contrast = useWorkspaceStore((s) => s.appSettings.appearance.chatContrast)
@@ -44,6 +46,8 @@ export function ChatAppearanceRows(): JSX.Element {
   const setWidth = useWorkspaceStore((s) => s.setAppearanceChatWidth)
   const clockFormat = useWorkspaceStore((s) => s.appSettings.appearance.clockFormat)
   const setClockFormat = useWorkspaceStore((s) => s.setAppearanceClockFormat)
+  const replyStreaming = useWorkspaceStore((s) => s.appSettings.appearance.replyStreaming)
+  const setReplyStreaming = useWorkspaceStore((s) => s.setAppearanceReplyStreaming)
   const labelId = React.useId()
   const current = CONTRAST_STOPS[contrastIndex(contrast)]!
   return (
@@ -107,6 +111,20 @@ export function ChatAppearanceRows(): JSX.Element {
           ]}
           value={clockFormat}
           onChange={setClockFormat}
+        />
+      </SettingRow>
+      <SettingRow
+        label="Show replies"
+        help="A paragraph at a time holds each paragraph, list item or code block until it is finished, so text never moves while you read it. The working line stays up meanwhile, and the whole reply shows once it ends."
+      >
+        <SegmentedControl<ReplyStreaming>
+          ariaLabel="Show replies"
+          items={[
+            { value: 'live', label: 'As they’re written' },
+            { value: 'paragraph', label: 'A paragraph at a time' },
+          ]}
+          value={replyStreaming}
+          onChange={setReplyStreaming}
         />
       </SettingRow>
     </>

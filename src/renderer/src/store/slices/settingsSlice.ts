@@ -56,6 +56,8 @@ import {
   isAppTheme,
   isChatWidth,
   isClockFormat,
+  isReplyStreaming,
+  DEFAULT_REPLY_STREAMING,
   DEFAULT_CLOCK_FORMAT,
   LEGACY_CHAT_WIDTH,
   isWindowMaterial,
@@ -64,6 +66,7 @@ import {
   type AppTheme,
   type ChatWidth,
   type ClockFormat,
+  type ReplyStreaming,
   type WindowMaterial,
 } from '../../types/appTheme'
 import { normalizeModuleOverrides } from '../../../../shared/modules/manifest'
@@ -110,6 +113,7 @@ export function defaultAppearanceSettings(): AppearanceSettings {
     chatContrast: DEFAULT_CHAT_CONTRAST,
     chatWidth: DEFAULT_CHAT_WIDTH,
     clockFormat: DEFAULT_CLOCK_FORMAT,
+    replyStreaming: DEFAULT_REPLY_STREAMING,
     agentCharacters: true,
     usageLimits: true,
     interfaceFont: '',
@@ -131,6 +135,7 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
     chatContrast: normalizeChatContrast(candidate.chatContrast),
     chatWidth: isChatWidth(candidate.chatWidth) ? candidate.chatWidth : LEGACY_CHAT_WIDTH,
     clockFormat: isClockFormat(candidate.clockFormat) ? candidate.clockFormat : defaults.clockFormat,
+    replyStreaming: isReplyStreaming(candidate.replyStreaming) ? candidate.replyStreaming : defaults.replyStreaming,
     agentCharacters:
       typeof candidate.agentCharacters === 'boolean' ? candidate.agentCharacters : defaults.agentCharacters,
     usageLimits: typeof candidate.usageLimits === 'boolean' ? candidate.usageLimits : defaults.usageLimits,
@@ -1112,6 +1117,7 @@ export interface SettingsSliceActions {
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void
   setAppearanceClockFormat: (format: ClockFormat) => void
+  setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
   /** A family name (or comma-separated list); empty restores the bundled face. */
@@ -1821,6 +1827,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
           clockFormat: format,
+        })
+      }),
+
+    setAppearanceReplyStreaming: (mode) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          replyStreaming: mode,
         })
       }),
 

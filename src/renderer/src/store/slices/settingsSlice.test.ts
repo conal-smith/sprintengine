@@ -860,6 +860,7 @@ test('settingsSlice', async () => {
     chatContrast: 100,
     chatWidth: 'comfortable',
     clockFormat: 'system',
+    replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
     interfaceFont: '',
@@ -872,6 +873,7 @@ test('settingsSlice', async () => {
     chatContrast: 100,
     chatWidth: 'full',
     clockFormat: 'system',
+    replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
     interfaceFont: '',
@@ -885,6 +887,7 @@ test('settingsSlice', async () => {
       chatContrast: 100,
       chatWidth: 'full',
       clockFormat: 'system',
+      replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
       interfaceFont: '',
@@ -900,12 +903,23 @@ test('settingsSlice', async () => {
       chatContrast: 100,
       chatWidth: 'full',
       clockFormat: 'system',
+      replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
       interfaceFont: '',
       codeFont: '',
     },
     'a persisted appearance predating the material axis hydrates to the glass default',
+  )
+  assert.equal(
+    normalizeAppearanceSettings({ theme: 'sage', replyStreaming: 'paragraph' }).replyStreaming,
+    'paragraph',
+    'replies a paragraph at a time is kept',
+  )
+  assert.equal(
+    normalizeAppearanceSettings({ theme: 'sage', replyStreaming: 'turn' }).replyStreaming,
+    'live',
+    'a mode no version wrote falls back to replies as they are written',
   )
   assert.equal(
     normalizeAppearanceSettings({ theme: 'sage', agentCharacters: false }).agentCharacters,
@@ -1414,6 +1428,7 @@ test('a stored appearance from before the chat settings hydrates to the chat as 
     chatContrast: 100,
     chatWidth: 'full',
     clockFormat: 'system',
+    replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
     interfaceFont: '',

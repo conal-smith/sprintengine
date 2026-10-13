@@ -28,7 +28,7 @@ import type {
   WorkspaceHighlight,
   McpServerConfig,
 } from '../types/workspace'
-import type { AppTheme, ChatWidth, ClockFormat, WindowMaterial } from '../types/appTheme'
+import type { AppTheme, ChatWidth, ClockFormat, ReplyStreaming, WindowMaterial } from '../types/appTheme'
 import { noteLaunchedAgentArrived, type LaunchedAgentProjection } from '../utils/launchedAgentProjection'
 import type { DiscoveredCliModelCatalog } from '../../../shared/cli-model-catalog'
 import type { FolderOpenTargetId } from '../../../shared/folder-open-targets'
@@ -340,6 +340,7 @@ export interface WorkspaceStore
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void
   setAppearanceClockFormat: (format: ClockFormat) => void
+  setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
   setAppearanceInterfaceFont: (family: string) => void
