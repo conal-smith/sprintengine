@@ -59,6 +59,17 @@ function otherTitle(name: string, input: Record<string, unknown>, live: boolean)
     const span = ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.max(1, Math.round(ms / 1000))}s`
     return `${live ? 'Waiting' : 'Waited'} ${span}`
   }
+  // Codex drives the computer and runs scripts through JavaScript REPL tools
+  // whose names ("cua_repl.js", "js") say nothing; each call carries a title
+  // the model wrote for it, and a computer-use script imports the sky module.
+  if (name === 'js' || name === 'cua_repl.js' || name === 'node_repl.js') {
+    const title = read(input, 'title').trim()
+    if (title) return shorten(title)
+    const code = read(input, 'code')
+    if (name === 'cua_repl.js' || /\bsky\s*\./.test(code) || /["']@oai\/sky["']/.test(code))
+      return live ? 'Using the computer' : 'Used the computer'
+    return live ? 'Running JavaScript' : 'Ran JavaScript'
+  }
   return name
 }
 
