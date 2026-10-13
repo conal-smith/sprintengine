@@ -175,8 +175,12 @@ export function createConversationSessionsStore({
     const held = workingSince.get(summary.sessionId)
     let start: number
     if (held !== undefined) {
-      // Still working: hold the start, unless a newer turn began since.
-      start = fromEvent !== undefined && fromEvent > held ? fromEvent : held
+      // Still working: hold the start, unless the person sent a message that
+      // began a newer turn since. A turn the runtime opens by itself, when a
+      // background agent finishes and wakes the chat, is the same stretch of
+      // work, so it does not restart the count.
+      const sentSince = (summary.lastUserMessageAt ?? 0) > held
+      start = fromEvent !== undefined && fromEvent > held && sentSince ? fromEvent : held
     } else if (fromEvent !== undefined && fromEvent >= (summary.lastTurnEndedAt ?? 0)) {
       start = fromEvent
     } else {

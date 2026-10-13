@@ -209,6 +209,33 @@ test('the working clock starts at the turn and does not restart when updatedAt m
   expect(h.store.getSnapshot()[0]?.turnStartedAt).toBe(7_000)
 })
 
+test('a background agent waking the chat does not restart the working clock; the person sending does', async () => {
+  vi.useFakeTimers()
+  const h = harness([summary({ status: 'ready', phase: 'idle', updatedAt: 100, lastTurnEndedAt: 90 })])
+  await vi.advanceTimersByTimeAsync(0)
+  h.emit('turn_started', { createdAt: 1_000 })
+  h.setSessions([summary({ status: 'active', phase: 'running', updatedAt: 1_000, lastUserMessageAt: 990 })])
+  await vi.advanceTimersByTimeAsync(300)
+  expect(h.store.getSnapshot()[0]?.turnStartedAt).toBe(1_000)
+
+  // The turn ends with a background agent still out; when it finishes, the
+  // runtime opens a turn of its own to hand the agent's result over.
+  const background = { status: 'ready' as const, phase: 'completed' as const, backgroundAgents: 1 }
+  h.setSessions([summary({ ...background, updatedAt: 3_000, lastTurnEndedAt: 3_000, lastUserMessageAt: 990 })])
+  h.emit('turn_completed')
+  await vi.advanceTimersByTimeAsync(300)
+  h.emit('turn_started', { createdAt: 4_000 })
+  h.setSessions([summary({ status: 'active', phase: 'running', updatedAt: 4_000, lastUserMessageAt: 990 })])
+  await vi.advanceTimersByTimeAsync(300)
+  expect(h.store.getSnapshot()[0]?.turnStartedAt).toBe(1_000)
+
+  // The person sends a message, and that turn is counted from its own start.
+  h.emit('turn_started', { createdAt: 6_000 })
+  h.setSessions([summary({ status: 'active', phase: 'running', updatedAt: 6_000, lastUserMessageAt: 6_000 })])
+  await vi.advanceTimersByTimeAsync(300)
+  expect(h.store.getSnapshot()[0]?.turnStartedAt).toBe(6_000)
+})
+
 test('a window that opens mid-turn holds the first reading it had', async () => {
   vi.useFakeTimers()
   const h = harness([summary({ status: 'active', phase: 'running', updatedAt: 2_000 })])
