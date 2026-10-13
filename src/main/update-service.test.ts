@@ -95,7 +95,7 @@ standIn({
   },
 })
 
-const { SprintEngineUpdateService } = await import('./update-service')
+const { SprintEngineUpdateService, describeUpdateError } = await import('./update-service')
 type ServiceOptions = ConstructorParameters<typeof SprintEngineUpdateService>[0]
 type UpdateInstallPlatform = import('./update-service').UpdateInstallPlatform
 
@@ -125,7 +125,7 @@ function autoStore() {
 // Every step of the install path, in the order it happened.
 let steps: string[] = []
 let quitHandlers: Array<(exitCode: number) => void> = []
-let diagnostics: Array<{ level: string; title: string }> = []
+let diagnostics: Array<{ level: string; title: string; details?: string }> = []
 
 /** A machine the install path runs on, recording what it was asked to do. */
 function fakePlatform(overrides: Partial<UpdateInstallPlatform> = {}): Partial<UpdateInstallPlatform> {
@@ -160,7 +160,7 @@ function fakePlatform(overrides: Partial<UpdateInstallPlatform> = {}): Partial<U
 function service(store: ReturnType<typeof memoryStore> = memoryStore(), extra: Partial<ServiceOptions> = {}) {
   return new SprintEngineUpdateService({
     writeDiagnosticLog: async (input) => {
-      diagnostics.push({ level: input.level, title: input.title })
+      diagnostics.push({ level: input.level, title: input.title, details: input.details })
       return {} as never
     },
     channelStore: store,
@@ -766,4 +766,45 @@ test('Windows, all users: Later then quit installs nothing, rather than raise UA
   quitHandlers.forEach((handler) => handler(0))
   assert.deepEqual(steps, [])
   assert.equal(installNotes.written.length, 0)
+})
+
+test('a failed download is logged with its code and what caused it', async () => {
+  const s = service(autoStore())
+  hoisted.updater.offered = '0.5.3'
+  await s.checkForUpdates(false)
+  const cause = Object.assign(new Error('getaddrinfo ENOTFOUND github.com'), { code: 'ENOTFOUND' })
+  hoisted.updater.downloads[0]?.fail(
+    Object.assign(new Error('Cannot download update', { cause }), { code: 'ERR_UPDATER_ZIP_FILE_NOT_FOUND' }),
+  )
+  await settle()
+  const entry = diagnostics.find((d) => d.title === 'Update download failed')
+  assert.equal(
+    JSON.parse(entry?.details ?? '{}').cause,
+    'Error [ERR_UPDATER_ZIP_FILE_NOT_FOUND]: Cannot download update; caused by Error [ENOTFOUND]: getaddrinfo ENOTFOUND github.com',
+  )
+})
+
+test('an updater error summary leaves out addresses, credentials and everything after the first line', () => {
+  const error = new Error(
+    'HttpError: 403 Forbidden https://github.com/acme/app/releases/download/v1/latest-mac.yml?token=abc\nHeaders: {"set-cookie":"x"}',
+  )
+  assert.equal(describeUpdateError(error), 'Error: HttpError: 403 Forbidden [redacted URL]')
+  assert.equal(
+    describeUpdateError(new Error('proxy said Authorization: Bearer abc.def')),
+    'Error: proxy said [redacted header]',
+  )
+  assert.equal(
+    describeUpdateError(new Error('refused api_key=sk-123 for feed')),
+    'Error: refused [redacted credential] for feed',
+  )
+})
+
+test('an updater error summary is bounded however deep or long its causes are', () => {
+  let error: Error = new Error('x'.repeat(5000))
+  for (let level = 0; level < 10; level += 1) error = new Error(`level ${level}`, { cause: error })
+  const summary = describeUpdateError(error)
+  assert.ok(summary.length <= 1024)
+  assert.ok(summary.endsWith('[truncated cause]'))
+  assert.equal(describeUpdateError('plain words'), 'plain words')
+  assert.equal(describeUpdateError(undefined), 'undefined')
 })
