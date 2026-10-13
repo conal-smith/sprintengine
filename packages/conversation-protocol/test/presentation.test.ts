@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { presentToolItem } from '../src/presentation'
+import { presentToolItem, toolActionVerb } from '../src/presentation'
 
 test('an MCP call reads as its server and tool, made readable from the wire name', () => {
   const title = (name: string) => presentToolItem({ name, status: 'ok' }).title
@@ -31,4 +31,27 @@ test('an MCP call prefers the title and server name its provider reported', () =
 test('an MCP title stays within the row’s bound', () => {
   const long = presentToolItem({ name: 'mcp__acme__run', displayTitle: 'x'.repeat(200), status: 'ok' })
   assert.ok(long.title.length <= 72)
+})
+
+test('a Skill step names the skill it used', () => {
+  assert.equal(
+    presentToolItem({ name: 'Skill', input: { skill: 'studio-ship' }, status: 'ok' }).title,
+    'Used studio-ship skill',
+  )
+  assert.equal(
+    presentToolItem({ name: 'Skill', input: { skill: 'studio-ship' }, status: 'running' }).title,
+    'Using studio-ship skill',
+  )
+  // A call that names it as a slash command.
+  assert.equal(
+    presentToolItem({ name: 'Skill', input: { command: '/release-notes' }, status: 'ok' }).title,
+    'Used release-notes skill',
+  )
+  // A call that names none still reads as the tool.
+  assert.equal(presentToolItem({ name: 'Skill', input: {}, status: 'ok' }).title, 'Skill')
+})
+
+test('a Skill step’s verb says it used a skill', () => {
+  assert.equal(toolActionVerb('Skill', true), 'Using skill')
+  assert.equal(toolActionVerb('Skill', false), 'Used skill')
 })

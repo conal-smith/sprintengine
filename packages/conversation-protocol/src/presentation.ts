@@ -73,6 +73,13 @@ function otherTitle(name: string, input: Record<string, unknown>, live: boolean)
       return live ? 'Using the computer' : 'Used the computer'
     return live ? 'Running JavaScript' : 'Ran JavaScript'
   }
+  // Claude's Skill tool runs one of the agent's skills, named in its input:
+  // `skill`, as Claude Code 2.1.296 sends it, or `command` for a call that
+  // names it as a slash command.
+  if (name === 'Skill') {
+    const skill = read(input, 'skill', 'command').trim().replace(/^\//, '')
+    if (skill) return shorten(`${live ? 'Using' : 'Used'} ${skill} skill`)
+  }
   return name
 }
 
@@ -181,6 +188,7 @@ export function presentToolItem(
 
 export function toolActionVerb(name: string, live: boolean): string {
   if (name === 'WebSearch') return live ? 'Searching' : 'Searched'
+  if (name === 'Skill') return live ? 'Using skill' : 'Used skill'
   const kind = inferConversationToolKind(name)
   return kind === 'other' || kind === 'mcp' ? `${live ? 'Calling' : 'Called'} ${name}` : verbs[kind][live ? 1 : 0]
 }
