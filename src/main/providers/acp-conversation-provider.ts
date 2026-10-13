@@ -61,6 +61,12 @@ import type {
   MockAdapterTurnInput,
 } from './conversation-provider-adapter'
 import { cliStderrSummary } from '../../shared/conversation/permissionModes'
+import {
+  saveToolResultImages,
+  toolResultImages,
+  type SaveToolResultImages,
+  type ToolResultImage,
+} from './tool-result-images'
 
 type EnforcedPreset = Exclude<ConversationPermissionPreset, 'none'>
 
@@ -321,13 +327,64 @@ export function acpSubagentLaneFields(name: string | null | undefined, rawInput:
   return { subagentLane: true, ...(type ? { subagentType: type.trim() } : {}) }
 }
 
+// A data URL's picture, as the attachments of OpenCode's raw tool output carry one.
+const IMAGE_DATA_URL = /^data:(image\/[\w.+-]+);base64,(.+)$/s
+
+function acpAttachments(rawOutput: unknown): Array<Record<string, unknown>> {
+  const attachments =
+    rawOutput && typeof rawOutput === 'object' ? (rawOutput as { attachments?: unknown }).attachments : undefined
+  return Array.isArray(attachments)
+    ? attachments.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+    : []
+}
+
+/**
+ * The pictures a tool call returned, in order and once each: its image
+ * content blocks, and the data URLs among its raw output's attachments
+ * (OpenCode sends a screenshot both ways).
+ */
+export function acpToolResultImages(content: readonly unknown[], rawOutput: unknown): ToolResultImage[] {
+  const blocks: Array<{ type: 'image'; mimeType: unknown; data: unknown }> = []
+  for (const entry of content) {
+    const block = entry && typeof entry === 'object' ? (entry as { type?: unknown; content?: unknown }) : null
+    const inner = block?.type === 'content' ? (block.content as { type?: unknown } | null) : null
+    if (inner?.type === 'image') blocks.push(inner as { type: 'image'; mimeType: unknown; data: unknown })
+  }
+  for (const attachment of acpAttachments(rawOutput)) {
+    const match = typeof attachment.url === 'string' ? IMAGE_DATA_URL.exec(attachment.url) : null
+    if (match) blocks.push({ type: 'image', mimeType: match[1], data: match[2] })
+  }
+  const seen = new Set<unknown>()
+  return toolResultImages(blocks.filter((block) => !seen.has(block.data) && seen.add(block.data)))
+}
+
+/**
+ * What a tool call's raw output says, with its pictures' bytes left out: the
+ * tool's own text when it has one, else the raw output with each picture
+ * attachment's data URL dropped. Output with no pictures is unchanged.
+ */
+export function acpRawOutputText(rawOutput: unknown): unknown {
+  const attachments = acpAttachments(rawOutput)
+  if (!attachments.some((entry) => typeof entry.url === 'string' && entry.url.startsWith('data:'))) return rawOutput
+  const raw = rawOutput as Record<string, unknown>
+  if (typeof raw.output === 'string') return raw.output
+  return {
+    ...raw,
+    attachments: attachments.map(({ url, ...rest }) =>
+      typeof url === 'string' && url.startsWith('data:') ? rest : { url, ...rest },
+    ),
+  }
+}
+
+// Events in the order the agent sent them. One may wait on a promise (its
+// pictures being written to disk), and every event after it waits behind it.
 class Queue implements AsyncIterable<ConversationEvent> {
-  private items: ConversationEvent[] = []
+  private items: Array<{ event: ConversationEvent; ready?: Promise<void> }> = []
   private wake?: () => void
   private ended = false
-  push(event: ConversationEvent) {
+  push(event: ConversationEvent, ready?: Promise<void>) {
     if (!this.ended) {
-      this.items.push(event)
+      this.items.push({ event, ready })
       this.wake?.()
     }
   }
@@ -338,8 +395,10 @@ class Queue implements AsyncIterable<ConversationEvent> {
   async *[Symbol.asyncIterator]() {
     while (!this.ended || this.items.length) {
       const next = this.items.shift()
-      if (next) yield next
-      else
+      if (next) {
+        if (next.ready) await next.ready
+        yield next.event
+      } else
         await new Promise<void>((resolve) => {
           this.wake = resolve
         })
@@ -438,6 +497,8 @@ type Options = {
   // The app's MCP gateway on the machine the chat's CLI runs on. Null leaves
   // it out; the chat runs without Studio's tools rather than not at all.
   resolveStudioMcpServer?: StudioMcpServerResolver
+  // Writes a step's pictures; the app's data folder unless a test stands in.
+  saveToolImages?: SaveToolResultImages
 }
 
 /** Text helpers refuse symlinks in every path component, not only the leaf.
@@ -638,9 +699,14 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
     type,
     payload: { ...(state.turn ? { turnId: state.turn.turnId } : {}), ...payload },
   })
-  const emit = (state: State, type: ConversationEvent['type'], payload: Record<string, unknown>) => {
+  const emit = (
+    state: State,
+    type: ConversationEvent['type'],
+    payload: Record<string, unknown>,
+    ready?: Promise<void>,
+  ) => {
     state.lastActivityAt = Date.now()
-    if (!state.loading) state.queue?.push(event(state, type, payload))
+    if (!state.loading) state.queue?.push(event(state, type, payload), ready)
   }
   const cancelPermissions = (state: State) => {
     for (const pending of state.pending.values()) pending.resolve({ outcome: { outcome: 'cancelled' } })
@@ -756,25 +822,56 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             : tool.rawInput,
         })
       const output =
-        value.rawOutput ??
-        content
-          .map((entry) =>
-            entry.type === 'content' && entry.content.type === 'text'
-              ? entry.content.text
-              : entry.type === 'diff'
-                ? { path: entry.path, oldText: entry.oldText, newText: entry.newText }
-                : '',
-          )
-          .filter(Boolean)
-      if (value.status === 'completed' || value.status === 'failed' || value.rawOutput !== undefined || content.length)
-        emit(state, 'tool_output', {
+        value.rawOutput !== undefined && value.rawOutput !== null
+          ? acpRawOutputText(value.rawOutput)
+          : content
+              .map((entry) =>
+                entry.type === 'content' && entry.content.type === 'text'
+                  ? entry.content.text
+                  : entry.type === 'diff'
+                    ? { path: entry.path, oldText: entry.oldText, newText: entry.newText }
+                    : '',
+              )
+              .filter(Boolean)
+      // A step's pictures (a browser screenshot), kept to show under it rather
+      // than as base64 in its output; on disk before the step says where.
+      const pictures = state.input.workspaceRoot ? acpToolResultImages(content, value.rawOutput) : []
+      const write = pictures.length
+        ? (options.saveToolImages ?? saveToolResultImages)({
+            key: {
+              workspaceRoot: state.input.workspaceRoot!,
+              workspaceId: state.input.workspaceId,
+              agentId: state.input.agentId,
+            },
+            toolUseId: value.toolCallId,
+            images: pictures,
+          })
+        : null
+      if (
+        value.status === 'completed' ||
+        value.status === 'failed' ||
+        value.rawOutput !== undefined ||
+        content.length
+      ) {
+        const payload: Record<string, unknown> = {
           toolUseId: value.toolCallId,
           toolCallId: value.toolCallId,
           output,
           status: value.status === 'failed' ? 'error' : value.status === 'completed' ? 'success' : 'running',
           isError: value.status === 'failed',
           partial: value.status !== 'completed' && value.status !== 'failed',
-        })
+        }
+        // The same list, which the write trims of any file it could not make.
+        if (write) payload.images = write.paths
+        emit(
+          state,
+          'tool_output',
+          payload,
+          write?.written.then(() => {
+            if (!write.paths.length) delete payload.images
+          }),
+        )
+      }
     } else if (value.sessionUpdate === 'plan') {
       state.replyClosed = true
       const toolUseId = `plan_${state.turn.turnId}`
