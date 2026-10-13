@@ -221,6 +221,10 @@
       "sha256": "15b401938a4e2b18ce26197dc9f5a3ce2a0b513e2a7550f5b4179e0403cfae43"
     },
     {
+      "name": "terminal.read",
+      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
+    },
+    {
       "name": "terminal.create",
       "sha256": "d7b71f5c6dff41c7ef7e51db3b52f8c5f753a464828b3bc0643abba77a8402e5"
     },
@@ -537,6 +541,10 @@
     {
       "name": "terminal.list",
       "sha256": "15b401938a4e2b18ce26197dc9f5a3ce2a0b513e2a7550f5b4179e0403cfae43"
+    },
+    {
+      "name": "terminal.read",
+      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
     },
     {
       "name": "terminal.create",

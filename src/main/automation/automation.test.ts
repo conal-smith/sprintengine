@@ -307,6 +307,7 @@ test('automation', async () => {
       'schedule.run',
       'terminal.create',
       'terminal.list',
+      'terminal.read',
       'workspace.checkout',
       'workspace.create',
       'workspace.extensions',

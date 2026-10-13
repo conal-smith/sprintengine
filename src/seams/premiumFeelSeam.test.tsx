@@ -441,8 +441,8 @@ test('premiumFeelSeam', async () => {
     // ═══ 2. T4's probe → T5's version-control rows ═══════════════════════════
     //
     // Real main handler → real preload → real settings sections. The only
-    // stand-ins are the two functions that shell out to `git --version` and
-    // `gh auth status`, because their answers would otherwise be this laptop's.
+    // stand-ins are the functions that shell out to `--version` and to the
+    // forge CLIs' auth, because their answers would otherwise be this laptop's.
 
     const { ipcMain } = await import('electron')
     const { registerVersionControlIpc } = await import('../main/ipc/version-control-ipc')
@@ -463,6 +463,7 @@ test('premiumFeelSeam', async () => {
     registerVersionControlIpc(ipcMain, {
       probeVersion: async (binary) => binaryProbe(binary),
       readGhLogin: async () => ghLogin,
+      readForgeLogin: async () => null,
     })
 
     domWindow.api = withInertPreloadFallback({
@@ -536,7 +537,7 @@ test('premiumFeelSeam', async () => {
       binaryProbe = (binary) =>
         ({
           outcome: 'resolved',
-          version: binary === 'git' ? 'git version 2.45.1' : 'gh version 2.62.0',
+          version: binary === 'git' ? 'git version 2.45.1' : `${binary} version 2.62.0`,
         }) as BinaryVersionProbe
       ghLogin = null
 
@@ -557,7 +558,7 @@ test('premiumFeelSeam', async () => {
 
         // Only the providers the probe answers for, and no forge the product does
         // not integrate: absence, not a disabled row.
-        for (const absent of ['GitLab', 'Bitbucket', 'Azure']) {
+        for (const absent of ['Bitbucket', 'Azure']) {
           assert.doesNotMatch(rendered.text, new RegExp(absent))
         }
         assert.ok(rendered.rowFor('Git'), 'the git row rendered')
@@ -615,10 +616,10 @@ test('premiumFeelSeam', async () => {
     })
 
     await check('a provider the round-trip skipped reads unknown, not installed', async () => {
-      // The handler answers for both ids, so this failure can only be modelled by
+      // The handler answers for every id, so this failure can only be modelled by
       // breaking the round-trip itself — which is the same non-answer.
       const skipped: VersionControlProviderId[] = [...VERSION_CONTROL_PROVIDER_IDS]
-      assert.deepEqual(skipped, ['git', 'gh'], 'the row universe is the probe id list')
+      assert.deepEqual(skipped, ['git', 'gh', 'glab', 'tea'], 'the row universe is the probe id list')
       binaryProbe = () => {
         throw new Error('probe exploded')
       }
@@ -628,7 +629,7 @@ test('premiumFeelSeam', async () => {
         assert.match(rendered.text, /probe exploded/, 'with the real reason behind it')
         // Every row with no answer reads unknown — never "not installed", and
         // never a silently empty list.
-        assert.equal((rendered.text.match(/Availability unknown — the check did not complete/g) ?? []).length, 2)
+        assert.equal((rendered.text.match(/Availability unknown — the check did not complete/g) ?? []).length, 4)
       } finally {
         await rendered.unmount()
       }

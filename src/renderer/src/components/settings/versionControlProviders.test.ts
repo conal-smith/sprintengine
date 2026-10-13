@@ -23,12 +23,12 @@ test('versionControlProviders', async () => {
     )
     const rendered = sections.flatMap((section) => section.providers.map((spec) => spec.id))
     // The row universe IS the probe's id list: a forge the product does not
-    // integrate (GitLab, Bitbucket, Azure DevOps) has no id, so no row can appear
-    // for it without the probe contract changing first.
+    // integrate (Bitbucket, Azure DevOps) has no id, so no row can appear for it
+    // without the probe contract changing first.
     assert.deepEqual([...rendered].sort(), [...VERSION_CONTROL_PROVIDER_IDS].sort())
     assert.deepEqual(
       sections.map((section) => section.providers.map((spec) => spec.label)),
-      [['Git'], ['GitHub']],
+      [['Git'], ['GitHub', 'GitLab', 'Gitea and Forgejo']],
     )
     // Every section that renders has something in it — a title over nothing
     // groups nothing.

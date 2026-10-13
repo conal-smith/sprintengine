@@ -2,9 +2,11 @@
 // 2026-10-04): whether it may show for a checkout, the draft of a title and
 // description from the person's own agent CLI, the push, and the creation.
 // The app does it itself, in the conversation's own checkout on this
-// computer: `gh pr create` on GitHub, and on the other forges the forge's own
-// prefilled "new pull request" page in the browser, since the app drives no
-// other forge's CLI.
+// computer: `gh pr create` on GitHub, `glab mr create` on GitLab and
+// `tea pulls create` on Gitea, Forgejo and Codeberg (forge-pull-request.ts).
+// Where that CLI is missing, signed out or fails, and on Bitbucket, it opens
+// the forge's own "new pull request" page with the confirmed title and
+// description filled in, and says why it did.
 //
 // Every step answers with a reason when it fails, never silently: the strip
 // shows it. Nothing here records a pull request; the window does, through the
@@ -20,7 +22,9 @@ import { SIDECAR_DIR_NAME } from '../shared/workspace-sidecar'
 import {
   createPullRequestReadiness,
   forgeOfRemote,
-  newPullRequestPageUrl,
+  prefilledPullRequestPage,
+  pullRequestListPageUrl,
+  pullRequestNoun,
   type CreatePullRequestFacts,
   type CreatePullRequestOutcome,
   type CreatePullRequestReadiness,
@@ -31,6 +35,7 @@ import {
 } from '../shared/git/pull-request-create'
 import type { PullRequestTextInput } from '../shared/text-generation/pull-request-text'
 import { followsConventionalCommits } from '../shared/text-generation/writing-style'
+import { createForgePullRequests, isDriven } from './forge-pull-request'
 import { listBranchPullRequests } from './github/branch-pull-request'
 import { sharedGhRunner, type GhRunner } from './github/gh'
 import { runGitCommand } from './git-utils'
@@ -40,11 +45,17 @@ export type DraftInputOutcome = { ok: true; input: PullRequestTextInput } | { ok
 export type PullRequestCreateDeps = {
   git?: typeof runGitCommand
   gh?: GhRunner
+  /** GitLab's CLI; the shared runner by default. */
+  glab?: GhRunner
+  /** Gitea's CLI, for Gitea, Forgejo and Codeberg; the shared runner by default. */
+  tea?: GhRunner
   listBranch?: typeof listBranchPullRequests
   now?: () => number
+  /** The platform whose shell opens the forge's page, which caps its address; this one by default. */
+  platform?: NodeJS.Platform
 }
 
-/** How long a branch lookup answers the button before `gh` is asked again. */
+/** How long a branch lookup answers the button before the forge's CLI is asked again. */
 const LOOKUP_HOLD_MS = 30_000
 /** How much of the diff is read for a draft; the prompt cuts it again. */
 const MAX_PATCH_READ_CHARS = 60_000
@@ -70,6 +81,12 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
   const git = deps.git ?? runGitCommand
   const listBranch = deps.listBranch ?? listBranchPullRequests
   const now = deps.now ?? (() => Date.now())
+  const platform = deps.platform ?? process.platform
+  const forges = createForgePullRequests({
+    ...(deps.glab ? { glab: deps.glab } : {}),
+    ...(deps.tea ? { tea: deps.tea } : {}),
+    now,
+  })
   const lookups = new Map<string, Lookup>()
   // One push or creation at a time per checkout: a second confirm waits for
   // the first to finish, then finds the branch pushed and its pull request
@@ -150,8 +167,11 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     const uncommittedChanges = status.ok ? status.stdout.split('\n').filter((line) => line.trim()).length : null
     let openPullRequest: boolean | null = null
     let mergedHeads: string[] = []
-    if (branch && remote?.forge === 'github' && branch !== defaultBranch) {
-      const lookup = await lookUp(gitRoot, branch, { fresh: options.fresh === true })
+    // GitHub's lookup is gh's; GitLab's and Gitea's are their CLI's, and
+    // only once that CLI is known to be there and signed in (held, so a
+    // checkout without glab or tea starts no process per ask).
+    if (branch && remote && (remote.forge === 'github' || isDriven(remote.forge)) && branch !== defaultBranch) {
+      const lookup = await lookUp(gitRoot, remote, branch, { fresh: options.fresh === true })
       openPullRequest = lookup.open
       mergedHeads = lookup.mergedHeads
     }
@@ -177,18 +197,38 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
    * heads its merged ones carried. `fresh` asks the forge again even when a
    * recent answer is held.
    */
-  async function lookUp(gitRoot: string, branch: string, { fresh }: { fresh: boolean }): Promise<Lookup> {
+  async function lookUp(
+    gitRoot: string,
+    remote: ForgeRemote,
+    branch: string,
+    { fresh }: { fresh: boolean },
+  ): Promise<Lookup> {
     const key = `${gitRoot}\0${branch}`
     const held = lookups.get(key)
     if (held && !fresh && now() - held.at < LOOKUP_HOLD_MS) return held
-    const read = await listBranch({ gitRoot, branch })
+    const read: { settled: false } | { settled: true; heads: Array<{ state: string; sha: string | null }> } =
+      remote.forge === 'github'
+        ? await listBranch({ gitRoot, branch }).then((github) =>
+            github.settled
+              ? {
+                  settled: true as const,
+                  heads: github.pullRequests.map((pr) => ({ state: pr.state, sha: pr.headRefOid ?? null })),
+                }
+              : { settled: false as const },
+          )
+        : await forges.listBranch({ gitRoot, remote, branch }).then((forge) =>
+            forge.settled
+              ? {
+                  settled: true as const,
+                  heads: forge.requests.map((request) => ({ state: request.state, sha: request.headSha })),
+                }
+              : { settled: false as const },
+          )
     const lookup: Lookup = read.settled
       ? {
           at: now(),
-          open: read.pullRequests.some((pr) => pr.state === 'open'),
-          mergedHeads: read.pullRequests.flatMap((pr) =>
-            pr.state === 'merged' && pr.headRefOid ? [pr.headRefOid] : [],
-          ),
+          open: read.heads.some((head) => head.state === 'open'),
+          mergedHeads: read.heads.flatMap((head) => (head.state === 'merged' && head.sha ? [head.sha] : [])),
         }
       : { at: now(), open: null, mergedHeads: held?.mergedHeads ?? [] }
     lookups.set(key, lookup)
@@ -390,8 +430,34 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
   }
 
   /**
-   * Open the pull request: `gh pr create` on GitHub, the forge's own page
-   * elsewhere. With a pin, only while the checkout is still on it.
+   * The repository the branch is pushed to, when that is not `base`'s (a
+   * fork, whichever remote names it); null when it is the same, or git could
+   * not say where the push goes.
+   *
+   * Read from the remote's push URL, where the branch actually went: a clone
+   * that fetches from the parent and pushes to the person's fork
+   * (`remote.origin.pushurl`) has the parent as its fetch URL, and glab and
+   * tea told that as the head would look for the branch where it is not. A
+   * remote with several push URLs pushes to each; the first names it.
+   */
+  async function pushedRepositoryOf(
+    gitRoot: string,
+    branch: string,
+    defaultBranch: string | null,
+    base: ForgeRemote,
+  ): Promise<ForgeRemote | null> {
+    const target = await pushTargetOf(gitRoot, branch, defaultBranch)
+    if (!target.ok) return null
+    const pushUrls = await out(gitRoot, ['remote', 'get-url', '--push', target.remote])
+    const url = pushUrls?.split('\n')[0]?.trim() || target.remote
+    const pushed = forgeOfRemote(url)
+    return pushed && pushed.webUrl.toLowerCase() !== base.webUrl.toLowerCase() ? pushed : null
+  }
+
+  /**
+   * Open the pull request: `gh pr create` on GitHub, `glab` on GitLab and
+   * `tea` on Gitea, the forge's own page where none of those can. With a pin,
+   * only while the checkout is still on it.
    */
   function create(
     cwd: string,
@@ -407,18 +473,51 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     pin?: PullRequestCheckoutPin,
   ): Promise<CreatePullRequestOutcome> {
     const title = text.title.trim()
-    if (!title) return { ok: false, message: 'A pull request needs a title.' }
     const { facts, gitRoot, remote, headSha } = await readFacts(cwd, { fresh: true })
+    const noun = pullRequestNoun(remote?.forge ?? null)
+    if (!title) return { ok: false, message: `A ${noun} needs a title.` }
     if (!gitRoot || !facts.branch || !facts.defaultBranch || !remote) {
-      return { ok: false, message: 'This checkout has no branch and remote to open a pull request from.' }
+      return { ok: false, message: `This checkout has no branch and remote to open a ${noun} from.` }
     }
     const moved = movedFrom(pin, facts.branch, headSha)
     if (moved) return { ok: false, message: moved }
     if (remote.forge !== 'github') {
-      const url = newPullRequestPageUrl(remote, facts.defaultBranch, facts.branch)
-      return url
-        ? { ok: true, kind: 'page', url }
-        : { ok: false, message: 'Pull requests on this forge cannot be opened from here yet.' }
+      const place = forgePlace(remote)
+      let reason: string | undefined
+      if (isDriven(remote.forge)) {
+        const pushedTo = await pushedRepositoryOf(gitRoot, facts.branch, facts.defaultBranch, remote)
+        const made = await forges.create(
+          { gitRoot, remote, branch: facts.branch, base: facts.defaultBranch, pushedTo },
+          { title, body: text.body },
+        )
+        lookups.delete(`${gitRoot}\0${facts.branch}`)
+        if (made.kind === 'address-unknown') {
+          const list = pullRequestListPageUrl(remote)
+          return list
+            ? { ok: true, kind: 'list', url: list, place, reason: made.reason }
+            : { ok: false, message: made.reason }
+        }
+        if (made.kind !== 'unavailable') return { ok: true, kind: made.kind, url: made.url }
+        reason = made.reason
+      }
+      const page = prefilledPullRequestPage(
+        remote,
+        facts.defaultBranch,
+        facts.branch,
+        { title, body: text.body },
+        platform,
+      )
+      if (!page) {
+        return { ok: false, message: reason ?? `${capitalized(noun)}s on this forge cannot be opened from here yet.` }
+      }
+      return {
+        ok: true,
+        kind: 'page',
+        url: page.url,
+        place,
+        ...(reason ? { reason } : {}),
+        ...(page.descriptionFilled ? {} : { descriptionLeftOut: true as const }),
+      }
     }
     const scratch = await mkdtemp(path.join(tmpdir(), 'sprintengine-pr-'))
     try {
@@ -479,6 +578,20 @@ function readinessMessage(readiness: Extract<CreatePullRequestReadiness, { ready
     case 'unsupported-forge':
       return 'Pull requests on this forge cannot be opened from here yet.'
   }
+}
+
+/** How the strip names the forge whose page or list opens: GitLab by name, a Gitea or Forgejo by its host, which is what the person knows it as. */
+function forgePlace(remote: ForgeRemote): string {
+  if (remote.forge === 'gitlab') return 'GitLab'
+  try {
+    return new URL(remote.webUrl).host
+  } catch {
+    return 'The forge'
+  }
+}
+
+function capitalized(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function gitFailure(step: string, result: { stderr: string; message: string | null }): string {

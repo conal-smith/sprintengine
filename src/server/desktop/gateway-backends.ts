@@ -49,6 +49,7 @@ export type GatewayBackendDeps = Pick<
   AutomationBackends,
   | 'getWorkspaceSyncSnapshot'
   | 'listTerminalSessions'
+  | 'readTerminalOutputTail'
   | 'launchAgent'
   | 'linkLaunchedAgent'
   | 'resolveAgentPermissionPreset'

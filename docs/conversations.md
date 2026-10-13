@@ -668,9 +668,10 @@ in the app's own process.
 Conversations are the only agents that cross the tailnet (2026-09-29). A
 paired device, phone or desktop, cannot list, watch, type into, or start a
 terminal on this machine: there is no terminal socket and no terminal scope,
-and the tools that list terminals or start an agent in one (`terminal.list`,
-`terminal.create`, `agent.launch`, `backlog.work`) are served
-on the local socket only, to the agents and MCP clients on this machine. What a
+and the tools that list terminals, read their output or start an agent in one
+(`terminal.list`, `terminal.read`, `terminal.create`, `agent.launch`,
+`backlog.work`) are served on the local socket only, to the agents and MCP
+clients on this machine. What a
 paired device starts is a chat, through `conversation.create`, and the machine
 dropdown in New chat offers a paired machine only for a Chat agent. Scheduled
 agents stay on the machine too: the phone neither lists nor runs them. A tab left open on a remote terminal by an earlier build reopens as
