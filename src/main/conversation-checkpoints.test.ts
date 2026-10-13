@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { copyFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, vi } from 'vitest'
@@ -710,3 +710,47 @@ test('a turn whose own files would overflow one command line is diffed in batche
     await rm(f.directory, { recursive: true, force: true })
   }
 })
+
+test('a repository with no commit inside the work tree is left out, and the turn keeps its checkpoint', async () => {
+  const f = await repository()
+  try {
+    // What an agent's `git init` leaves: one at the top, one inside a folder git has not seen.
+    for (const nested of ['scratch', join('tools', 'generated')]) {
+      await mkdir(join(f.root, nested), { recursive: true })
+      await git(join(f.root, nested), ['init'])
+      await writeFile(join(f.root, nested, 'notes.txt'), 'nested\n')
+    }
+    await writeFile(join(f.root, 'tools', 'build.sh'), 'echo build\n')
+    const checkpoints = new ConversationCheckpoints()
+    const pre = await checkpoints.capture(f.key, 1, 'pre')
+    assert.ok(pre.ok, JSON.stringify(pre))
+    await writeFile(join(f.root, 'existing.txt'), 'agent edit\n')
+    const post = await checkpoints.capture(f.key, 1, 'post')
+    assert.ok(post.ok, JSON.stringify(post))
+    const files = await git(f.root, ['ls-tree', '-r', '--name-only', post.ref])
+    assert.deepEqual(files.trim().split('\n'), ['.gitignore', 'deleted.txt', 'existing.txt', 'tools/build.sh'])
+    assert.deepEqual(await turnFiles(checkpoints, f.key, 1), ['existing.txt'])
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+// An unreadable file fails the add for a reason of its own; root, and Windows, read it anyway.
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a snapshot that fails for another reason still fails, with git’s own error',
+  async () => {
+    const f = await repository()
+    const secret = join(f.root, 'locked', 'secret.txt')
+    try {
+      await mkdir(join(f.root, 'locked'))
+      await writeFile(secret, 'x\n')
+      await chmod(secret, 0o000)
+      const captured = await new ConversationCheckpoints().capture(f.key, 1, 'pre')
+      assert.equal(captured.ok, false)
+      assert.match(captured.ok ? '' : captured.message, /secret\.txt/)
+    } finally {
+      await chmod(secret, 0o644).catch(() => {})
+      await rm(f.directory, { recursive: true, force: true })
+    }
+  },
+)

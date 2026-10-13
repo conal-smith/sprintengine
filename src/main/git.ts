@@ -17,7 +17,13 @@ import {
 import { listGitWorktrees } from './git-worktree-list'
 import { activeWorktreePool } from './worktree-pool/active-pool'
 import { activeDependencyInstaller } from './worktree-pool/dependency-install'
-import { defaultSlotGitRunner, parallelCheckoutConfig, resolveAgentForkBase } from './worktree-pool/slot-git'
+import {
+  AGENT_BRANCH_BLOCKED_MESSAGE,
+  agentBranchBlocked,
+  defaultSlotGitRunner,
+  parallelCheckoutConfig,
+  resolveAgentForkBase,
+} from './worktree-pool/slot-git'
 import type { WorktreePoolLeaseResult } from './worktree-pool/worktree-pool-service'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { repoRootFromWorktreePath, WORKTREE_CONTAINER_DIR, worktreeContainerPath } from '../shared/worktree-paths'
@@ -294,7 +300,8 @@ export async function getGitRepoRoot(folderPath: string): Promise<string | null>
 
 /**
  * The branch-already-exists refusal from `worktree add -b`, reworded to name
- * where that branch is checked out, which is what the person has to act on.
+ * where that branch is checked out, which is what the person has to act on,
+ * and the refusal a branch named `agent` causes, reworded to name that branch.
  * Null for any other failure, which keeps git's own words.
  */
 async function explainBranchConflict(
@@ -302,6 +309,9 @@ async function explainBranchConflict(
   branch: string,
   addResult: GitCommandResult,
 ): Promise<string | null> {
+  // A branch named `agent` refuses every `agent/…` branch ("cannot lock ref").
+  // Asked only once the add failed, so a worktree that is made pays nothing for it.
+  if (await agentBranchBlocked(defaultSlotGitRunner, repoRoot, branch)) return AGENT_BRANCH_BLOCKED_MESSAGE
   if (
     !/already exists|already checked out|already used by worktree/i.test(
       `${addResult.stderr}\n${addResult.message ?? ''}`,

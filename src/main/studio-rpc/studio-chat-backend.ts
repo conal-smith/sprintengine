@@ -15,6 +15,7 @@ import {
 } from '../conversation-ipc-inputs'
 import type { ConversationIpcHandlers } from '../ipc/conversation-ipc'
 import { confineToRoots } from './studio-file-confinement'
+import { expandHomePath } from '../home-path'
 
 // The Studio RPC's chat surface in main: the very handlers the conversation
 // IPC serves Studio's windows with, behind the same input checks
@@ -247,8 +248,9 @@ export function createStudioChatBackend(deps: StudioChatBackendDeps): StudioChat
     searchFiles: (slot, input) => deps.files.searchFiles(slot, input),
     cancelFileSearch: (slot, channel) => deps.files.cancelActiveFileSearch(slot, channel),
     releaseFileSearches: (slot) => deps.files.cancelAllFileSearches(slot),
-    stat: async (path) => deps.files.statPath(await confined(path)),
-    readImage: async (path) => deps.files.readImageDataUrl(await confined(path)),
+    // Expanded before the roots are checked, so a `~/` path is held to them as the file it names.
+    stat: async (path) => deps.files.statPath(await confined(expandHomePath(path))),
+    readImage: async (path) => deps.files.readImageDataUrl(await confined(expandHomePath(path))),
     repoRoot: (folderPath, hostId) => deps.repoRoot(folderPath, hostId),
     workspaces: () => deps.workspaces(),
   }

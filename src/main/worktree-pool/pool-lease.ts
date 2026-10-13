@@ -10,6 +10,8 @@ import { GIT_NETWORK_TIMEOUT_MS } from '../git-run'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
+  AGENT_BRANCH_BLOCKED_MESSAGE,
+  agentBranchBlocked,
   amongIgnored,
   cleanWouldRemove,
   clearStaleIndexLock,
@@ -424,6 +426,8 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
   const branch = `agent/${slug}`
   const format = await ctx.git(pool.record.repoRoot, ['check-ref-format', '--branch', branch])
   if (!format.ok) return { ok: false, reason: 'invalid-name', message: `"${branch}" is not a valid branch name.` }
+  if (await agentBranchBlocked(ctx.git, pool.record.repoRoot, branch))
+    return { ok: false, reason: 'branch-exists', message: AGENT_BRANCH_BLOCKED_MESSAGE }
   if (await branchExists(ctx, pool.record.repoRoot, branch)) {
     return {
       ok: false,

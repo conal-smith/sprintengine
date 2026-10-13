@@ -1,3 +1,4 @@
+import { lstatSync, mkdirSync, writeFileSync } from 'node:fs'
 import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -70,6 +71,34 @@ export async function ensureSidecarDirNoLinks(workspaceRoot: string, ...segments
           if (error.code !== 'EEXIST') throw error
         },
       )
+    }
+  }
+  return at
+}
+
+/**
+ * `ensureSidecarDirNoLinks` for a caller that has to answer before it returns:
+ * Electron takes a download's save path only inside its `will-download`
+ * handler, so the folder is made and checked there, the same way.
+ */
+export function ensureSidecarDirNoLinksSync(workspaceRoot: string, ...segments: string[]): string {
+  let at = workspaceSidecarRoot(workspaceRoot)
+  for (const [index, segment] of ['', ...segments].entries()) {
+    at = segment ? join(at, segment) : at
+    try {
+      mkdirSync(at)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    const info = lstatSync(at)
+    if (info.isSymbolicLink()) throw new SidecarLinkError(at)
+    if (!info.isDirectory()) throw new Error(`${at} is not a folder.`)
+    if (index === 1) {
+      try {
+        writeFileSync(join(at, '.gitignore'), '*\n', { encoding: 'utf8', flag: 'wx' })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
     }
   }
   return at

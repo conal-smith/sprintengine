@@ -1062,8 +1062,21 @@ export function createCodexConversationProvider(
             forkLost = true
           }
         } else if (state.threadId) {
+          const resume = () => transport.request('thread/resume', { ...threadParams, threadId: state.threadId })
           try {
-            result = record(await transport.request('thread/resume', { ...threadParams, threadId: state.threadId }))
+            try {
+              result = record(await resume())
+            } catch (error) {
+              // The person archived the thread in Codex's own CLI or app, and
+              // Codex refuses to resume it until it is unarchived. Unarchive it
+              // and resume once more; when Codex will not, the thread is as
+              // good as gone and is treated as below.
+              if (!isArchivedThreadError(error)) throw error
+              await transport.request('thread/unarchive', { threadId: state.threadId }).catch(() => {
+                throw error
+              })
+              result = record(await resume())
+            }
           } catch (error) {
             // Codex no longer has the thread (its history was cleared, or the
             // cursor came from another machine). Retrying the same id would
@@ -1071,7 +1084,7 @@ export function createCodexConversationProvider(
             // conversation over as context, and say so. Any other answer — the
             // thread is busy, a rate limit — fails this turn and keeps the id,
             // since the thread is still there to resume next time.
-            if (!isMissingThreadError(error)) throw error
+            if (!isMissingThreadError(error) && !isArchivedThreadError(error)) throw error
             result = record(await transport.request('thread/start', threadParams))
             resumeLost = true
           }
@@ -1629,6 +1642,11 @@ function isMissingThreadError(error: unknown): boolean {
     error instanceof CodexRpcError &&
     /not found|no rollout|no such thread|unknown thread|invalid thread id|does not exist/i.test(error.message)
   )
+}
+
+/** Codex's answer to `thread/resume` for a thread that was archived ("session … is archived"). */
+function isArchivedThreadError(error: unknown): boolean {
+  return error instanceof CodexRpcError && /\bis archived\b/i.test(error.message)
 }
 
 // A subagent's name from its path in the agent tree (`/root/reviewer`).

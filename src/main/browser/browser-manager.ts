@@ -39,7 +39,8 @@ import {
 import { listProcListeners } from '../../server/web/preview-ports'
 import { safeExternalUrl } from '../ipc/external-url'
 import { parsePsTree, type ProcRow } from '../terminal-subtree-probe'
-import { ensureSidecarDirNoLinks } from '../workspace-sidecar'
+import { ensureSidecarDirNoLinks, ensureSidecarDirNoLinksSync } from '../workspace-sidecar'
+import { createAgentDownloads, type AgentDownloadItem } from './agent-downloads'
 
 // The embedded browser's main-process half (browser-pane epic). The renderer
 // owns the `<webview>` elements; this owns everything the renderer must not:
@@ -93,6 +94,13 @@ const HOST_FORWARDED_CHORDS: readonly Chord[] = [
 const CAPTURE_TIMEOUT_MS = 5_000
 // How long a controller claim (agent or human) outlives its last input.
 const CONTROLLER_LINGER_MS = 1_500
+
+/** A file the agent's tab downloaded, from the moment it was given a path to its end. */
+export type BrowserDownload = {
+  url: string
+  path: string
+  state: 'started' | 'completed' | 'cancelled' | 'interrupted'
+}
 
 type TerminalRootInfo = {
   sessionId: string
@@ -459,6 +467,8 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
   const agentAssignments = createAgentTabAssignments()
   const unregisterListeners = new Set<(tabId: string) => void>()
   const humanInputListeners = new Set<(tabId: string) => void>()
+  const downloadListeners = new Set<(tabId: string, download: BrowserDownload) => void>()
+  const agentDownloads = createAgentDownloads()
 
   /** A claim on the page that lapses CONTROLLER_LINGER_MS after the last input. */
   function claim(tab: BrowserTab, controller: BrowserController): void {
@@ -488,8 +498,35 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       callback(ALLOWED_PERMISSIONS.has(permission))
     })
     created.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission))
+    created.on('will-download', (_event, item, wc) => saveAgentDownload(item, wc))
     browserSessions.set(partition, created)
     return created
+  }
+
+  /**
+   * A download from a tab the agent is driving is saved to the workspace's
+   * browser sidecar without a dialog (agent-downloads.ts). Anything else —
+   * the person's own download, a tab with no workspace folder, a sidecar
+   * that cannot be made — returns without a path, and Chromium asks.
+   */
+  function saveAgentDownload(item: AgentDownloadItem, wc: WebContents | undefined): void {
+    const tab = [...tabs.values()].find((candidate) => candidate.wc === wc)
+    if (!tab || tab.state.controller !== 'agent') return
+    const workspaceRoot = deps.resolveWorkspaceRoot(tab.workspaceId)
+    if (!workspaceRoot || !isAbsolute(workspaceRoot) || !existsSync(workspaceRoot)) return
+    let directory: string
+    try {
+      directory = ensureSidecarDirNoLinksSync(resolve(workspaceRoot), 'browser', 'downloads')
+    } catch {
+      return
+    }
+    const url = item.getURL()
+    const path = agentDownloads.save(item, directory)
+    const tell = (state: BrowserDownload['state']) => {
+      for (const listener of downloadListeners) listener(tab.tabId, { url, path, state })
+    }
+    item.once('done', (_event, state) => tell(state))
+    tell('started')
   }
 
   /** The partition a guest's session is, by asking each one this manager made. */
@@ -894,6 +931,12 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
     onHumanInput(listener: (tabId: string) => void): () => void {
       humanInputListeners.add(listener)
       return () => humanInputListeners.delete(listener)
+    },
+
+    /** Called as a download the agent's tab set off is saved, and again when it ends. */
+    onDownload(listener: (tabId: string, download: BrowserDownload) => void): () => void {
+      downloadListeners.add(listener)
+      return () => downloadListeners.delete(listener)
     },
 
     /** A recording started or ended on a tab: the toolbar shows it while it runs. */

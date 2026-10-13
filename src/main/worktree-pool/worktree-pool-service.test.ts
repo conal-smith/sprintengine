@@ -212,6 +212,16 @@ test('a first lease makes a slot on the freshly fetched default branch, whatever
   assert.equal((await slotAt(harness, 'pool-01')).state, 'leased')
 })
 
+test('a branch named agent refuses the lease up front, saying so, and makes no slot', async () => {
+  await git(repo, 'branch', 'agent')
+  const harness = makeService()
+  const leased = await harness.service.lease({ repoRoot: repo, name: 'fix-login', owner: 'agent-fix-login' })
+  assert.equal(leased.ok, false)
+  assert.equal(leased.ok ? null : leased.reason, 'branch-exists')
+  assert.match(leased.ok ? '' : leased.message, /A branch named “agent” in this repository blocks/)
+  assert.equal(await exists(join(container, 'pool-01')), false, 'no slot was made for a lease that cannot finish')
+})
+
 /** A runner whose fetch and `worktree add` each take `delayMs` longer, logging when each starts and ends. */
 function slowRunner(delayMs: number, events: string[]): SlotGitRunner {
   const slow = (name: string) => (cwd: string, args: string[], options?: Parameters<SlotGitRunner>[2]) =>

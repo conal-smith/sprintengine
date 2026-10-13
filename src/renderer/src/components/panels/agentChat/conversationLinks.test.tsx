@@ -9,6 +9,7 @@ import {
 } from './conversationLinks'
 import { classifyLinkToken } from '../../../../../shared/links/classifyLinkToken'
 import { conversationImageSource } from './ConversationImage'
+import { resolveTerminalFileReferencePath } from '../../../utils/terminalFileLinks'
 import {
   ConversationTransportProvider,
   useConversationTransport,
@@ -184,6 +185,34 @@ test('an image path from another machine says where it is instead of loading', (
   )
   expect(html).toContain('[Image: Screenshot]')
   expect(html).toContain('the image is not on this machine')
+})
+
+test('an image in the agent’s home folder is read on this machine, though a terminal never links one', () => {
+  // Read through main after mount, which knows the home folder; until then the alt text holds the place.
+  const html = render('![shot](~/Desktop/shot.png)')
+  expect(html).not.toContain('not on this machine')
+  expect(html).not.toContain('[Image: shot]')
+  expect(html).toContain('shot')
+  expect(resolveTerminalFileReferencePath('~/Desktop/shot.png', { workspaceRoot: '/workspace/app' })).toBeNull()
+})
+
+const WSL_ROOT = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\app'
+
+test('an image in the home folder of a chat in WSL or on another machine is not looked for here', () => {
+  const wsl = renderToStaticMarkup(
+    <ConversationLinkProvider workspaceId="workspace" workspaceRoot={WSL_ROOT} cwd={WSL_ROOT}>
+      <ConversationMarkdown text="![shot](~/Desktop/shot.png)" />
+    </ConversationLinkProvider>,
+  )
+  expect(wsl).toContain('[Image: shot]')
+  const remote = renderToStaticMarkup(
+    <RemoteFiles>
+      <ConversationLinkProvider workspaceId="workspace" workspaceRoot="/workspace/app" cwd="/workspace/app">
+        <ConversationMarkdown text="![shot](~/Desktop/shot.png)" />
+      </ConversationLinkProvider>
+    </RemoteFiles>,
+  )
+  expect(remote).toContain('the image is not on this machine')
 })
 
 test('an image source is classified before anything is loaded', () => {

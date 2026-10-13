@@ -54,7 +54,7 @@
     },
     {
       "name": "browser.actions",
-      "sha256": "065ab218787c3d3be00006d83cbaf65eec79f5db65a1f3d8acf3d7ed99599d63"
+      "sha256": "cadd9f76dcb101ed83844e9e70424a99450bae82735229d8efaad068ecfb6002"
     },
     {
       "name": "browser.network",
@@ -376,7 +376,7 @@
     },
     {
       "name": "browser.actions",
-      "sha256": "065ab218787c3d3be00006d83cbaf65eec79f5db65a1f3d8acf3d7ed99599d63"
+      "sha256": "cadd9f76dcb101ed83844e9e70424a99450bae82735229d8efaad068ecfb6002"
     },
     {
       "name": "browser.network",
@@ -666,7 +666,7 @@
     },
     {
       "name": "browser.actions",
-      "sha256": "065ab218787c3d3be00006d83cbaf65eec79f5db65a1f3d8acf3d7ed99599d63"
+      "sha256": "cadd9f76dcb101ed83844e9e70424a99450bae82735229d8efaad068ecfb6002"
     },
     {
       "name": "browser.network",
