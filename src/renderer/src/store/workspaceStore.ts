@@ -337,6 +337,8 @@ export interface WorkspaceStore
   setAppearanceClockFormat: (format: ClockFormat) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
+  setAppearanceInterfaceFont: (family: string) => void
+  setAppearanceCodeFont: (family: string) => void
   addWorkspace: (
     template: LayoutTemplate,
     options?: {

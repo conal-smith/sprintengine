@@ -419,4 +419,10 @@ export type AppearanceSettings = {
   // Show a subscription's usage limits (the five-hour and weekly windows the
   // agents report) on a Claude or Codex chat's composer strip.
   usageLimits: boolean
+  // The families put in front of the design system's two stacks: the
+  // interface's (`--sem-font-family-ui`) and code's (`--sem-font-family-mono`,
+  // which the terminals and editors draw in too). Free text, cleaned by
+  // `normalizeFontFamilyPreference`; empty is the bundled face.
+  interfaceFont: string
+  codeFont: string
 }

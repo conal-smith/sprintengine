@@ -862,6 +862,8 @@ test('settingsSlice', async () => {
     clockFormat: 'system',
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   })
   assert.deepEqual(normalizeAppearanceSettings(undefined), defaultAppearanceSettings())
   assert.deepEqual(normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'glass' }), {
@@ -872,6 +874,8 @@ test('settingsSlice', async () => {
     clockFormat: 'system',
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   })
   assert.deepEqual(
     normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'tinted' }),
@@ -883,6 +887,8 @@ test('settingsSlice', async () => {
       clockFormat: 'system',
       agentCharacters: true,
       usageLimits: true,
+      interfaceFont: '',
+      codeFont: '',
     },
     'tinted is a stored material in its own right',
   )
@@ -896,6 +902,8 @@ test('settingsSlice', async () => {
       clockFormat: 'system',
       agentCharacters: true,
       usageLimits: true,
+      interfaceFont: '',
+      codeFont: '',
     },
     'a persisted appearance predating the material axis hydrates to the glass default',
   )
@@ -1408,6 +1416,8 @@ test('a stored appearance from before the chat settings hydrates to the chat as 
     clockFormat: 'system',
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   })
 })
 
@@ -1440,6 +1450,41 @@ test('the chat appearance setters store normalised values', () => {
   assert.equal(useWorkspaceStore.getState().appSettings.appearance.chatWidth, 'comfortable')
   store.setAppearanceChatContrast(100)
   store.setAppearanceChatWidth('full')
+})
+
+test('a stored appearance from before the font settings reads as the bundled faces', () => {
+  const appearance = normalizeAppearanceSettings({ theme: 'light', windowMaterial: 'solid', chatWidth: 'wide' })
+  assert.equal(appearance.interfaceFont, '')
+  assert.equal(appearance.codeFont, '')
+})
+
+test('a stored font family is kept, and one that is not a string is the default', () => {
+  const appearance = normalizeAppearanceSettings({ interfaceFont: 'IBM Plex Sans', codeFont: 'Fira Code, Menlo' })
+  assert.equal(appearance.interfaceFont, 'IBM Plex Sans')
+  assert.equal(appearance.codeFont, 'Fira Code, Menlo')
+  assert.equal(normalizeAppearanceSettings({ interfaceFont: 42, codeFont: null }).interfaceFont, '')
+  assert.equal(normalizeAppearanceSettings({ interfaceFont: 42, codeFont: null }).codeFont, '')
+})
+
+test('a stored font family that could break out of CSS is cleaned on the way in', () => {
+  assert.equal(
+    normalizeAppearanceSettings({ codeFont: 'Fira"; } body { color: red; } /*' }).codeFont,
+    'Fira body color: red /*',
+  )
+  assert.equal(normalizeAppearanceSettings({ interfaceFont: 'x'.repeat(500) }).interfaceFont.length, 200)
+})
+
+test('the font setters store cleaned values, and the empty string restores the default', () => {
+  const store = useWorkspaceStore.getState()
+  const appearance = () => useWorkspaceStore.getState().appSettings.appearance
+  store.setAppearanceInterfaceFont('  Source   Sans 3 ')
+  assert.equal(appearance().interfaceFont, 'Source Sans 3')
+  store.setAppearanceCodeFont('<Iosevka>')
+  assert.equal(appearance().codeFont, 'Iosevka')
+  store.setAppearanceInterfaceFont('')
+  store.setAppearanceCodeFont('')
+  assert.equal(appearance().interfaceFont, '')
+  assert.equal(appearance().codeFont, '')
 })
 
 test('the writing style for drafted commits and pull requests is set one part at a time', () => {

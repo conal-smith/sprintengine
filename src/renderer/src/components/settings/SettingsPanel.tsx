@@ -15,6 +15,7 @@ import { StudioServerSettings } from './StudioServerSettings'
 import { ModuleSettingsSectionHost } from './ModuleSettingsSection'
 import AppThemePicker from './AppThemePicker'
 import { ChatAppearanceRows } from './ChatAppearanceRows'
+import { FontAppearanceRows } from './FontAppearanceRows'
 import { effectiveWindowMaterial, type WindowMaterial } from '../../types/appTheme'
 import { resolveProjectKnowledgeConfig } from '../../utils/projectKnowledge'
 import { basename } from '../../utils/paths'
@@ -1332,6 +1333,12 @@ export default function SettingsPanel({
                 enabled={usageLimits}
                 onChange={setAppearanceUsageLimits}
               />
+            </SettingCard>
+          </section>
+          <section className="space-y-3">
+            <SettingsSectionTitle>Fonts</SettingsSectionTitle>
+            <SettingCard>
+              <FontAppearanceRows />
             </SettingCard>
           </section>
         </div>

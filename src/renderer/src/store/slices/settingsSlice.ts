@@ -61,6 +61,7 @@ import {
   type WindowMaterial,
 } from '../../types/appTheme'
 import { normalizeModuleOverrides } from '../../../../shared/modules/manifest'
+import { normalizeFontFamilyPreference } from '../../utils/fontFamilyPreference'
 import { LEGACY_COMMAND_ID_ALIASES, collapseDuplicateKeybindings } from '../../commands/keybindings'
 
 export const MAX_RECENT_WORKSPACE_FOLDERS = 50
@@ -105,6 +106,8 @@ export function defaultAppearanceSettings(): AppearanceSettings {
     clockFormat: DEFAULT_CLOCK_FORMAT,
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   }
 }
 
@@ -125,6 +128,9 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
     agentCharacters:
       typeof candidate.agentCharacters === 'boolean' ? candidate.agentCharacters : defaults.agentCharacters,
     usageLimits: typeof candidate.usageLimits === 'boolean' ? candidate.usageLimits : defaults.usageLimits,
+    // Absent before the font settings existed, which reads as the bundled faces.
+    interfaceFont: normalizeFontFamilyPreference(candidate.interfaceFont),
+    codeFont: normalizeFontFamilyPreference(candidate.codeFont),
   }
 }
 
@@ -1087,6 +1093,9 @@ export interface SettingsSliceActions {
   setAppearanceClockFormat: (format: ClockFormat) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
+  /** A family name (or comma-separated list); empty restores the bundled face. */
+  setAppearanceInterfaceFont: (family: string) => void
+  setAppearanceCodeFont: (family: string) => void
 }
 
 export type SettingsSlice = SettingsSliceState & SettingsSliceActions
@@ -1794,6 +1803,22 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
           usageLimits: enabled,
+        })
+      }),
+
+    setAppearanceInterfaceFont: (family) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          interfaceFont: family,
+        })
+      }),
+
+    setAppearanceCodeFont: (family) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          codeFont: family,
         })
       }),
   }

@@ -32,7 +32,6 @@ import {
   pasteDroppedCommitIntoTerminal,
   pasteDroppedFilesIntoTerminal,
 } from '../../utils/terminalDrop'
-import { waitForMonoFontReady } from '../../utils/fonts'
 import { CursorErrorPopover } from '../ui/CursorErrorPopover'
 import { TerminalMount } from '../terminal/TerminalMount'
 import { FOCUS_RING_TERMINAL_CLASS } from '../ui/tokens'
@@ -329,7 +328,9 @@ function PlainTerminalPanelOnThisComputer({
     fitTerminal()
     focusTerminal()
     let disposed = false
-    void waitForMonoFontReady().then(() => {
+    // Fits once the code face has loaded, and again whenever Settings changes
+    // it: the cells change size under a container that does not.
+    studioTerminal.followCodeFont(() => {
       if (disposed) return
       fitTerminal()
       term.refresh(0, Math.max(0, term.rows - 1))

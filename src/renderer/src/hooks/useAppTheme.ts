@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import { clientSupports } from '../clientCapabilities'
 import { setClockFormat } from '../utils/clockFormat'
+import { applyAppearanceFonts } from '../utils/fonts'
 import {
   colorSchemeForResolvedTheme,
   DEFAULT_CHAT_CONTRAST,
@@ -145,6 +146,8 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
   const windowMaterial = useWorkspaceStore((s) => s.appSettings.appearance.windowMaterial)
   const chatContrast = useWorkspaceStore((s) => s.appSettings.appearance.chatContrast)
   const chatWidth = useWorkspaceStore((s) => s.appSettings.appearance.chatWidth)
+  const interfaceFont = useWorkspaceStore((s) => s.appSettings.appearance.interfaceFont)
+  const codeFont = useWorkspaceStore((s) => s.appSettings.appearance.codeFont)
 
   useEffect(() => {
     applyWindowMaterial(windowMaterial, mirrorToMain)
@@ -164,6 +167,14 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
     if (typeof document === 'undefined') return
     applyChatAppearance(document.documentElement, chatContrast, chatWidth)
   }, [chatContrast, chatWidth])
+
+  // The two fonts, before paint too, and before the panes' own effects run: a
+  // terminal or an editor mounting in the same commit is built in the chosen
+  // code face rather than built in the default and changed a moment later.
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return
+    applyAppearanceFonts(document.documentElement, { interfaceFont, codeFont })
+  }, [interfaceFont, codeFont])
 
   useEffect(() => {
     applyTheme(resolveTheme(theme), mirrorToMain)

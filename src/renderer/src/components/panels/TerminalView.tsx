@@ -40,7 +40,6 @@ import {
   pasteDroppedSkillIntoTerminal,
 } from '../../utils/terminalDrop'
 import { recordBacklogAgentHandoff } from '../../utils/backlogAgentHandoff'
-import { waitForMonoFontReady } from '../../utils/fonts'
 import { resolveProjectKnowledgeConfig } from '../../utils/projectKnowledge'
 import { knowledgeLaunchContext, type KnowledgeLaunchContext } from '../../../../shared/project-knowledge'
 import { resolveAgentCliPermissionPreset } from '../../utils/agentCliPermissions'
@@ -619,7 +618,9 @@ function TerminalViewOnThisComputer({
     studioTerminal.loadWebLinks()
 
     let disposed = false
-    void waitForMonoFontReady().then(() => {
+    // Fits once the code face has loaded, and again whenever Settings changes
+    // it: the cells change size under a container that does not.
+    studioTerminal.followCodeFont(() => {
       if (disposed) return
       fitTerminal()
       term.refresh(0, Math.max(0, term.rows - 1))

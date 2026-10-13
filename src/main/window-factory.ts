@@ -8,7 +8,7 @@ import type { WindowMaterial } from '../shared/electron-api'
 import { sendWindowHidden, sendWindowPlacement, sendWindowState } from './ipc/window-ipc'
 import { getWindowCanvasColor, getWindowMaterial } from './window-material-store'
 import { appDocumentUrl, guardPrivilegedWindow } from './privileged-window-navigation'
-import { allowAppWindowPermissionRequest } from './app-window-permissions'
+import { allowAppWindowPermissionCheck, allowAppWindowPermissionRequest } from './app-window-permissions'
 
 /** The one document every window made here may show; see privileged-window-navigation.ts. */
 function appDocument(): URL {
@@ -306,14 +306,17 @@ export function createMainWindow({
   guardPrivilegedWindow(win.webContents, appDocument(), (url) => shell.openExternal(url))
 
   // Refuse the microphone, the camera and everything else; let a tab recording's
-  // display capture through to its own handler. Without these handlers the
+  // display capture through to its own handler, and Settings read the installed
+  // font families. Without these handlers the
   // session would grant every request. See app-window-permissions.ts.
   win.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     callback(allowAppWindowPermissionRequest(permission, details as { mediaTypes?: string[] }))
   })
-  // Checks (`navigator.permissions.query`, device labels) are all refused; a
-  // display capture does not depend on one.
-  win.webContents.session.setPermissionCheckHandler(() => false)
+  // Checks (`navigator.permissions.query`, device labels) are refused but for
+  // the font list; a display capture does not depend on one.
+  win.webContents.session.setPermissionCheckHandler((_webContents, permission) =>
+    allowAppWindowPermissionCheck(permission),
+  )
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     const url = new URL(process.env['ELECTRON_RENDERER_URL'])
