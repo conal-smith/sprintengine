@@ -37,6 +37,7 @@ import type {
   NewChatAgentChoice,
   AgentConversationRuntime,
   CliPermissionPreset,
+  FollowUpBehavior,
   Workspace,
 } from '../../types/workspace'
 import type { DiscoveredCliModel, DiscoveredCliModelCatalog } from '../../../../shared/cli-model-catalog'
@@ -650,6 +651,10 @@ export function normalizeTerminalKeepRecentAlive(value: unknown): number {
   return Math.max(MIN_TERMINAL_KEEP_RECENT_ALIVE, Math.min(MAX_TERMINAL_KEEP_RECENT_ALIVE, Math.round(value)))
 }
 
+export function normalizeFollowUpBehavior(value: unknown): FollowUpBehavior {
+  return value === 'steer' ? 'steer' : 'queue'
+}
+
 export const defaultAppSettings = (): AppSettings => ({
   cliRuntimes: {
     codex: { command: 'codex' },
@@ -697,6 +702,9 @@ export const defaultAppSettings = (): AppSettings => ({
   terminalKeepRecentAlive: DEFAULT_TERMINAL_KEEP_RECENT_ALIVE,
   settleOnPullRequestMerge: true,
   browserAutoFloatAgentPreview: true,
+  // A message sent mid-turn waits for the turn, as every one did before the
+  // choice: a steer is something a person asks for.
+  followUpBehavior: 'queue',
   // Off is the rule from before background mode exactly; keeping a process alive is a choice
   // the user has to make, never one an upgrade makes for them.
   keepRunningInBackground: false,
@@ -789,6 +797,9 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     // Only an explicit stored `false` turns the player off: it is the
     // feature's default, and an unreadable value should not hide an agent.
     browserAutoFloatAgentPreview: settings?.browserAutoFloatAgentPreview !== false,
+    // Only an explicit stored `steer` steers. A profile from before the choice
+    // has none, and keeps queueing, which is what its Enter always did.
+    followUpBehavior: normalizeFollowUpBehavior(settings?.followUpBehavior),
     // Only an explicit stored `true` keeps the app alive past its last window;
     // anything else (fresh profile, corrupt value) reads as off.
     keepRunningInBackground: settings?.keepRunningInBackground === true,
@@ -1083,6 +1094,7 @@ export interface SettingsSliceActions {
   setTerminalKeepRecentAlive: (count: number) => void
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
+  setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
   setKeepRunningInBackground: (enabled: boolean) => void
   setTelemetryEnabled: (enabled: boolean) => void
@@ -1738,6 +1750,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
     setTerminalKeepRecentAlive: (count) =>
       set((state) => {
         state.appSettings.terminalKeepRecentAlive = normalizeTerminalKeepRecentAlive(count)
+      }),
+
+    setFollowUpBehavior: (behavior) =>
+      set((state) => {
+        state.appSettings.followUpBehavior = normalizeFollowUpBehavior(behavior)
       }),
 
     setKeepRunningInBackground: (enabled) =>

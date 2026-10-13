@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import type { CliRuntimeSettings } from '../../types/workspace'
+import type { AppSettings, CliRuntimeSettings } from '../../types/workspace'
 import type { Workspace } from '../../types/workspace'
 import { LEGACY_COMMAND_ID_ALIASES } from '../../commands/keybindings'
 import { useWorkspaceStore } from '../workspaceStore'
@@ -1513,4 +1513,27 @@ test('a persisted style is read back, and an unreadable one is the default', () 
       .writingStyle,
     MATCH_REPOSITORY,
   )
+})
+
+test('a new install queues a message sent mid-turn', () => {
+  assert.equal(defaultAppSettings().followUpBehavior, 'queue')
+  assert.equal(normalizeAppSettings(undefined, []).followUpBehavior, 'queue')
+})
+
+test('a profile from before the follow-up choice keeps queueing, and a stored choice is kept', () => {
+  const stored = (followUpBehavior: unknown) =>
+    normalizeAppSettings({ followUpBehavior } as unknown as Partial<AppSettings>, []).followUpBehavior
+  assert.equal(stored(undefined), 'queue', 'a profile without the key queues, as its Enter always did')
+  assert.equal(stored('steer'), 'steer')
+  assert.equal(stored('queue'), 'queue')
+  assert.equal(stored('interrupt'), 'queue', 'an unknown choice queues rather than steers')
+  assert.equal(stored(true), 'queue')
+})
+
+test('the follow-up setter stores the choice, and only a steer steers', () => {
+  const store = useWorkspaceStore.getState()
+  store.setFollowUpBehavior('steer')
+  assert.equal(useWorkspaceStore.getState().appSettings.followUpBehavior, 'steer')
+  store.setFollowUpBehavior('sometimes' as unknown as 'queue')
+  assert.equal(useWorkspaceStore.getState().appSettings.followUpBehavior, 'queue')
 })

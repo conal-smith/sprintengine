@@ -103,7 +103,7 @@ export function isConversationBusy(activeTurn: boolean, awaitingApproval: boolea
 // The composer's one commit rule, shared by every affordance that can commit a
 // turn — Enter, the send button, and the right-click menu's Send item (1793) —
 // so the three can never disagree about whether a turn can be committed or
-// whether committing sends now or queues (D6/1776). Content is text OR staged
+// whether committing sends now, queues or steers (D6/1776). Content is text OR staged
 // images (D3/1774): an image-only message is sendable.
 export function composerSendAction(options: {
   ready: boolean
@@ -111,9 +111,11 @@ export function composerSendAction(options: {
   sending: boolean
   hasText: boolean
   attachmentCount: number
+  /** What a commit does while busy, where the person's choice says (followUpDispatch.ts). */
+  busyLabel?: string
 }): { label: string; disabled: boolean } {
   return {
-    label: options.sending ? 'Sending' : options.busy ? 'Queue message' : 'Send message',
+    label: options.sending ? 'Sending' : options.busy ? (options.busyLabel ?? 'Queue message') : 'Send message',
     disabled: !options.ready || (!options.hasText && options.attachmentCount === 0),
   }
 }

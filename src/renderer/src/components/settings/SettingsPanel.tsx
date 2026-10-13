@@ -48,6 +48,7 @@ import { SettledChatsSettingsTab } from './SettledChatsSettingsTab'
 import { WorktreesSettingsTab } from './WorktreesSettingsTab'
 import { AgentClisSection, AgentsMachineSwitcher, useAgentCliRuns } from './AgentClisSection'
 import { ConversationApprovalSettings } from './ConversationApprovalSettings'
+import { FollowUpBehaviorSetting } from './FollowUpBehaviorSetting'
 import { StudioSkillsSettings } from './StudioSkillsSettings'
 import {
   agentsMachines,
@@ -1545,6 +1546,8 @@ export default function SettingsPanel({
           <ConversationImportSettings />
           {/* A chat a usage limit stopped, carried on when the limit resets. */}
           <UsageLimitResumeSettings />
+          {/* What Enter does while a chat's agent works: queue, or steer. */}
+          <FollowUpBehaviorSetting />
           <AgentClisSection
             runs={agentCliRuns}
             machine={agentsMachine}

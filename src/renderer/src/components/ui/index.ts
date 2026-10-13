@@ -209,7 +209,9 @@ export {
   ComposerPlusGlyph,
   ConversationGlyph,
   PluginsGlyph,
+  QueueGlyph,
   SendGlyph,
+  SteerGlyph,
   TerminalAgentGlyph,
   WorktreeGlyph,
 } from './ComposerGlyphs'

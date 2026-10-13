@@ -154,7 +154,9 @@
       "glyphs/plugins.svg",
       "glyphs/plus.svg",
       "glyphs/send.svg",
-      "glyphs/terminal-agent.svg"
+      "glyphs/terminal-agent.svg",
+      "glyphs/queue.svg",
+      "glyphs/steer.svg"
     ],
     "assets": []
   },

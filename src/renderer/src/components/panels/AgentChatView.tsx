@@ -184,6 +184,8 @@ import {
 } from './agentChat/imageAttachments'
 import { ConversationPendingDock, coversComposer, type ApprovalModeSwitch } from './agentChat/pendingDock'
 import { QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
+import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './agentChat/followUpDispatch'
+import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
 import { BackgroundTasksTrayRow } from './agentChat/backgroundTasksRow'
 import { WorktreeInstallTrayRow } from './agentChat/worktreeInstallRow'
@@ -404,6 +406,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // chats would sit at their creation time for ever while every CLI chat moved.
   const recordUserMessage = binding.recordUserMessage
   const appCliRuntimes = useWorkspaceStore((s) => s.appSettings.cliRuntimes)
+  // What Enter does while the agent works: queue the message, or steer the
+  // turn with it (followUpDispatch.ts). Read alone, so a change elsewhere in
+  // the settings does not render the chat again.
+  const followUpBehavior = useWorkspaceStore((s) => s.appSettings.followUpBehavior)
   const hostSettings = useWorkspaceStore((s) => s.appSettings.hosts)
   // A chat in a workspace on a WSL machine runs that machine's `claude`. One
   // that records no machine runs where its folder defaults to, as the router
@@ -1509,79 +1515,126 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     !draftMetadata.skillIds.length &&
     !draftMetadata.files.length
 
+  // What "send it now" does for the queued message: a steer where both the
+  // transport and the provider take one, else stop the turn and let the queue
+  // send it the moment the session is free.
+  const canSteer = transport.capabilities.steer && capabilities?.steer === true
+  const queuedSendNow = queuedTurnSendNow({
+    canSteer,
+    activeTurn: projection.activeTurn,
+    awaitingApproval: projection.awaitingApproval,
+    stopping: pending === 'stopping',
+    steering: steeringTurnId !== null,
+  })
+  // Whether a message committed now may go into the turn, or stop it, rather
+  // than wait for it: the person's choice decides which only while this holds.
+  const sendNowAvailable = operate && !queuedSendNow.disabled
+  // Set further down, beside the "Send now" it shares with the queued row.
+  const steerTurnRef = useRef<(turn: QueuedTurn) => Promise<void>>(async () => undefined)
+
   // Composer submit (Enter or the send affordance). Sends immediately when the
-  // session is idle. While a turn runs the message queues, where it stays in
-  // sight: the flush effect below sends it the moment the session unlocks,
-  // and "Send now" hands it to the running turn only when the person asks.
-  // Handing every mid-turn Enter straight to the turn lost messages the
-  // running turn never took in, with nothing left in the queue to show for
-  // them, so the queue is the default and a steer is always a choice.
-  const submitComposer = useCallback((): boolean => {
-    const text = draft.trim()
-    // Typed while a New chat is still setting up, before its first message
-    // has gone: queued behind it, as a reply typed while a turn runs is. Any
-    // other chat that cannot send yet keeps the words where they are.
-    if (readiness.kind !== 'ready') {
-      if (!startupHolding || (!text && attachments.length === 0 && !draftMetadata.files.length)) return false
-      const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
-      setQueuedTurn(turn)
-      clearDraft()
-      setAttachments([])
-      setActionError(queuedDropNotice(dropped))
-      return true
-    }
-    if (
-      !text &&
-      attachments.length === 0 &&
-      !draftMetadata.mentions.length &&
-      !draftMetadata.skillIds.length &&
-      !draftMetadata.files.length
-    )
-      return false
-    // A time is picked: the draft is scheduled, whatever the turn is doing.
-    if (sendAt !== null) {
-      void scheduleDraftRef.current()
-      return true
-    }
-    // A command Studio answers itself, or one it will not send, is handled
-    // here whatever the turn is doing: it never reaches the CLI or the queue.
-    if (runAppCommandRef.current(text, attachments.length + draftMetadata.files.length)) return true
-    if (isConversationBusy(projection.activeTurn, projection.awaitingApproval, pending) || steeringTurnId !== null) {
-      if (handsQueueToHost && text) {
+  // session is idle. While a turn runs the message queues by default, where it
+  // stays in sight: the flush effect below sends it the moment the session
+  // unlocks. Handing every mid-turn Enter straight to the turn lost messages
+  // the running turn never took in, with nothing left in the queue to show for
+  // them, so a steer is always a choice: the person's, in Settings ▸ Agents,
+  // or for one message by Primary+Enter (`commitComposerNow`). A steer the
+  // turn cannot take now queues instead, and one the runtime refuses goes back
+  // to the queue, so a message is never lost to the race with the turn's end.
+  const commitDraft = useCallback(
+    (forceQueue: boolean): boolean => {
+      const text = draft.trim()
+      // Typed while a New chat is still setting up, before its first message
+      // has gone: queued behind it, as a reply typed while a turn runs is. Any
+      // other chat that cannot send yet keeps the words where they are.
+      if (readiness.kind !== 'ready') {
+        if (!startupHolding || (!text && attachments.length === 0 && !draftMetadata.files.length)) return false
+        const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
+        setQueuedTurn(turn)
         clearDraft()
-        setActionError(null)
-        void handToHost(text)
+        setAttachments([])
+        setActionError(queuedDropNotice(dropped))
         return true
       }
-      // The cap is the IPC boundary's; trimming to it is right, hiding the trim
-      // is not — the user must know which images did not make the queue.
-      const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
-      setQueuedTurn(turn)
-      clearDraft()
+      if (
+        !text &&
+        attachments.length === 0 &&
+        !draftMetadata.mentions.length &&
+        !draftMetadata.skillIds.length &&
+        !draftMetadata.files.length
+      )
+        return false
+      // A time is picked: the draft is scheduled, whatever the turn is doing.
+      if (sendAt !== null) {
+        void scheduleDraftRef.current()
+        return true
+      }
+      // A command Studio answers itself, or one it will not send, is handled
+      // here whatever the turn is doing: it never reaches the CLI or the queue.
+      if (runAppCommandRef.current(text, attachments.length + draftMetadata.files.length)) return true
+      if (isConversationBusy(projection.activeTurn, projection.awaitingApproval, pending) || steeringTurnId !== null) {
+        const dispatch = forceQueue
+          ? 'queue'
+          : resolveComposerDispatch({
+              busy: true,
+              behavior: followUpBehavior,
+              alternate: false,
+              canSteer,
+              sendNowAvailable,
+            })
+        if (dispatch === 'steer') {
+          // The draft alone: a message already queued keeps its place.
+          const { turn, dropped } = queueComposerDraft(null, text, attachments, draftMetadata)
+          clearDraft()
+          setAttachments([])
+          setActionError(queuedDropNotice(dropped))
+          void steerTurnRef.current(turn)
+          return true
+        }
+        if (handsQueueToHost && text) {
+          clearDraft()
+          setActionError(null)
+          void handToHost(text)
+          return true
+        }
+        // The cap is the IPC boundary's; trimming to it is right, hiding the trim
+        // is not — the user must know which images did not make the queue.
+        const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
+        setQueuedTurn(turn)
+        clearDraft()
+        setAttachments([])
+        setActionError(queuedDropNotice(dropped))
+        return true
+      }
+      void sendTurn(text, attachments, draftMetadata, true)
       setAttachments([])
-      setActionError(queuedDropNotice(dropped))
       return true
-    }
-    void sendTurn(text, attachments, draftMetadata, true)
-    setAttachments([])
-    return true
-  }, [
-    readiness.kind,
-    startupHolding,
-    attachments,
-    draft,
-    draftMetadata,
-    clearDraft,
-    projection.activeTurn,
-    projection.awaitingApproval,
-    pending,
-    queuedTurn,
-    steeringTurnId,
-    sendTurn,
-    sendAt,
-    handsQueueToHost,
-    handToHost,
-  ])
+    },
+    [
+      readiness.kind,
+      startupHolding,
+      attachments,
+      draft,
+      draftMetadata,
+      clearDraft,
+      projection.activeTurn,
+      projection.awaitingApproval,
+      pending,
+      queuedTurn,
+      steeringTurnId,
+      sendTurn,
+      sendAt,
+      handsQueueToHost,
+      handToHost,
+      followUpBehavior,
+      canSteer,
+      sendNowAvailable,
+    ],
+  )
+  const submitComposer = useCallback((): boolean => commitDraft(false), [commitDraft])
+  // The draft to the queue, whatever Enter would do with it: Primary+Enter's
+  // commit where Steer is the person's choice.
+  const submitQueued = () => commitDraft(true)
 
   // Open the composer's right-click menu (1793). The clipboard read is awaited
   // before opening so Paste is never offered against an empty clipboard, and the
@@ -1962,29 +2015,48 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     const text = turn.text.trim()
     const files = attachedFilesOf(metadata.files)
     const localTurnId = `user-${userTurns.length}-${Date.now()}`
+    // An optimistic bubble only where the runtime echoes its id back, as for
+    // any send: a paired machine's chat draws the message from its own event.
+    const optimistic = transport.capabilities.optimisticTurns
     setActionError(null)
     setSteeringTurnId(localTurnId)
-    pendingUserScrollIdRef.current = `user:${localTurnId}`
-    setUserTurns((current) => [
-      ...current,
-      {
-        id: localTurnId,
-        text,
-        createdAt: Date.now(),
-        mentions: metadata.mentions,
-        ...(files.length > 0 ? { files } : {}),
-        skills: metadata.skillIds,
-        ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
-      },
-    ])
+    if (optimistic) {
+      pendingUserScrollIdRef.current = `user:${localTurnId}`
+      setUserTurns((current) => [
+        ...current,
+        {
+          id: localTurnId,
+          text,
+          createdAt: Date.now(),
+          mentions: metadata.mentions,
+          ...(files.length > 0 ? { files } : {}),
+          skills: metadata.skillIds,
+          ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
+        },
+      ])
+    }
     recordUserMessage?.(Date.now())
     // The send settles only when the turn the steer opened does, so a failure
     // can arrive after the message was already written to the conversation.
     // Queueing that one again would send it twice; only a message that never
-    // landed goes back to the head of the queue.
+    // landed goes back to the head of the queue. Where the landing cannot be
+    // seen (no echoed id: a paired machine, which holds a steer its turn
+    // could not take for the turn's end itself), a refused one goes back to
+    // the composer instead, for the person to send again or not.
     const requeue = (message: string) => {
       setActionError(message)
       if (landedSteerIdsRef.current.has(localTurnId)) return
+      if (!optimistic) {
+        setDraft((current) => restoreRefusedText(current, turn.text))
+        setDraftMetadata((current) => ({
+          skillIds: [...new Set([...turn.metadata.skillIds, ...current.skillIds])],
+          mentions: [...turn.metadata.mentions, ...current.mentions],
+          files: [...new Set([...turn.metadata.files, ...current.files])],
+        }))
+        if (turn.attachments.length)
+          setAttachments((current) => [...turn.attachments, ...current].slice(0, MAX_ATTACHMENTS_PER_TURN))
+        return
+      }
       setUserTurns((current) => current.filter((entry) => entry.id !== localTurnId))
       putBackQueued(turn)
     }
@@ -2012,6 +2084,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       setSteeringTurnId((current) => (current === localTurnId ? null : current))
     }
   }
+  steerTurnRef.current = steerTurn
 
   // The steer is delivered once its own `user_message` replaces the optimistic
   // bubble; the queue may hand over the next one from then on. The id is kept
@@ -2026,17 +2099,6 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     setSteeringTurnId(null)
   }, [steeringTurnId, shapeEntries])
 
-  // What "send it now" does for the queued message: a steer where both the
-  // transport and the provider take one, else stop the turn and let the queue
-  // send it the moment the session is free.
-  const canSteer = transport.capabilities.steer && capabilities?.steer === true
-  const queuedSendNow = queuedTurnSendNow({
-    canSteer,
-    activeTurn: projection.activeTurn,
-    awaitingApproval: projection.awaitingApproval,
-    stopping: pending === 'stopping',
-    steering: steeringTurnId !== null,
-  })
   const sendQueuedNow = (turn: QueuedTurn) => {
     if (queuedSendNow.disabled || !operate) {
       setQueuedTurn(turn)
@@ -2079,8 +2141,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     }
   }
 
-  // ⌘↵ / Ctrl+↵: commit and send now. Idle, that is an ordinary send; while
-  // the agent works, the draft joins the queue and the queue goes at once.
+  // ⌘↵ / Ctrl+↵ (and a Primary-click on send): the other of what Enter does
+  // while the agent works. Idle, that is an ordinary send. With Steer chosen,
+  // the draft queues. Otherwise the draft joins the queue and the queue goes
+  // at once: steered into the turn, or, where the provider cannot take it,
+  // sent once the turn is stopped. With nothing typed, the queue goes now.
   const commitComposerNow = () => {
     // A time is picked: ⌘↵ schedules, as Enter does.
     if (sendAt !== null) {
@@ -2098,6 +2163,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       draftMetadata.mentions.length > 0 ||
       draftMetadata.skillIds.length > 0 ||
       draftMetadata.files.length > 0
+    const dispatch = resolveComposerDispatch({
+      busy: true,
+      behavior: followUpBehavior,
+      alternate: true,
+      canSteer,
+      sendNowAvailable,
+    })
+    if (hasDraft && dispatch === 'queue') {
+      submitQueued()
+      return
+    }
     if (!hasDraft) {
       if (queuedTurn) sendQueuedNow(queuedTurn)
       // What the machine running the chat holds goes when the turn ends there,
@@ -2105,7 +2181,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       else if (hostQueue?.messages.some((message) => message.failure === undefined)) stopForHostQueue()
       return
     }
-    if (handsQueueToHost && text) {
+    // Held by the machine running the chat, then let go by stopping its turn.
+    // A steer goes into that turn instead, through the queue below.
+    if (handsQueueToHost && text && dispatch !== 'steer') {
       clearDraft()
       setActionError(null)
       void handToHost(text).then((held) => {
@@ -2257,6 +2335,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // the message it gave back: neither can send (Send and Enter wait on ready).
   const composerInputDisabled =
     !ready && !startupHolding && readiness.kind !== 'preparing-worktree' && readiness.kind !== 'worktree-failed'
+  // While the agent works the send queues or steers, by the person's choice,
+  // and a Primary-click does the other: the button, Enter and the menu's
+  // Send all read it from here.
+  const followUpPresentation = followUpSendPresentation({
+    behavior: followUpBehavior,
+    canSteer,
+    sendNowAvailable,
+    ...(queuedSendNow.reason ? { unavailableReason: queuedSendNow.reason } : {}),
+    clickModifier: primaryClickModifier(window.api?.platform),
+    shortcutLabel: sendNowShortcutLabel,
+  })
   // One rule for both send affordances — the footer button and the right-click
   // menu's Send item (1793) — so they can never label or gate a commit
   // differently from each other or from Enter.
@@ -2267,6 +2356,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     sending,
     hasText: draft.trim().length > 0 || draftMetadata.mentions.length > 0 || draftMetadata.skillIds.length > 0,
     attachmentCount: attachments.length + draftMetadata.files.length,
+    busyLabel: followUpPresentation.labels[followUpPresentation.action],
   })
 
   // The runtime binds a session to one provider/model, so the model is editable
@@ -3964,24 +4054,40 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     Schedule
                     <ScheduleGlyph className="icon-sm" />
                   </SendButton>
-                ) : projection.activeTurn && !operate ? null : projection.activeTurn ? (
-                  <ComposerActionButton
-                    tone="neutral"
-                    ariaLabel={pending === 'stopping' ? 'Stopping' : 'Stop responding'}
-                    onClick={() => void interrupt()}
-                    disabled={stopDisabledForPending(pending)}
-                  >
-                    <StopGlyph className="icon-sm shrink-0" />
-                  </ComposerActionButton>
-                ) : (
-                  <ComposerActionButton
-                    tone="accent"
-                    ariaLabel={sendAction.label}
-                    onClick={submitComposer}
-                    disabled={sendAction.disabled}
-                  >
-                    <SendGlyph className="icon-sm shrink-0" />
-                  </ComposerActionButton>
+                ) : projection.activeTurn && !operate ? null : (
+                  <>
+                    {projection.activeTurn ? (
+                      <ComposerActionButton
+                        tone="neutral"
+                        ariaLabel={pending === 'stopping' ? 'Stopping' : 'Stop responding'}
+                        onClick={() => void interrupt()}
+                        disabled={stopDisabledForPending(pending)}
+                      >
+                        <StopGlyph className="icon-sm shrink-0" />
+                      </ComposerActionButton>
+                    ) : null}
+                    {/* While the agent works, the send says whether it queues
+                        or steers. With nothing typed, Stop stands alone. */}
+                    {composerBusy || startupHolding ? (
+                      projection.activeTurn && sendAction.disabled ? null : (
+                        <FollowUpSendButton
+                          presentation={followUpPresentation}
+                          platform={window.api?.platform}
+                          disabled={sendAction.disabled}
+                          onSend={(alternate) => (alternate ? commitComposerNow() : void submitComposer())}
+                        />
+                      )
+                    ) : (
+                      <ComposerActionButton
+                        tone="accent"
+                        ariaLabel={sendAction.label}
+                        onClick={submitComposer}
+                        disabled={sendAction.disabled}
+                      >
+                        <SendGlyph className="icon-sm shrink-0" />
+                      </ComposerActionButton>
+                    )}
+                  </>
                 )}
               </div>
               {/*

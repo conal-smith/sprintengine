@@ -19,6 +19,7 @@ import type {
   AgentConversationRuntime,
   AppSettings,
   CliRuntimeSettings,
+  FollowUpBehavior,
   NewChatAgentChoice,
   AgentExecution,
   WorkspaceWorktreeState,
@@ -315,6 +316,8 @@ export interface WorkspaceStore
   setTerminalKeepRecentAlive: (count: number) => void
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
+  /** What Enter does in a chat whose agent is working: queue the message, or steer the turn with it. */
+  setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
   setKeepRunningInBackground: (enabled: boolean) => void
   setTelemetryEnabled: (enabled: boolean) => void
