@@ -723,8 +723,10 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         state.reply += value.content.text
       }
     } else if (value.sessionUpdate === 'tool_call' || value.sessionUpdate === 'tool_call_update') {
-      state.replyClosed = true
       const prior = state.toolCalls.get(value.toolCallId)
+      // Only a new call ends the message. A call already running reports its
+      // progress while the agent talks over it, and that text is one message.
+      if (!prior) state.replyClosed = true
       // Kept from the update that first showed a spawn, and added to as later
       // ones fill in its input: an update may retitle the call with what the
       // agent was sent to do, which is no spawn tool's name.
