@@ -77,6 +77,7 @@ import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/
 import type { AgentMcpServerStatus } from '../../shared/skills'
 
 import type {
+  EffortLevel,
   Options,
   PermissionResult,
   Query,
@@ -655,10 +656,58 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   // background agent, shell or monitor works inside the child with no turn
   // open, so an idle turn alone does not say the child is free.
   function childIsIdle(state: SessionState): boolean {
-    if (state.turn) return false
-    for (const agent of state.subagents.values()) if (agent.background) return false
-    for (const tracked of state.tasks.values()) if (tracked.background) return false
-    return true
+    return !state.turn && !backgroundWorkRunning(state)
+  }
+
+  // A background agent, shell or monitor the live child runs: work that ends
+  // with the child, so a setting that would replace it waits for it instead.
+  function backgroundWorkRunning(state: SessionState): boolean {
+    if (!state.query) return false
+    for (const agent of state.subagents.values()) if (agent.background) return true
+    for (const tracked of state.tasks.values()) if (tracked.background) return true
+    return false
+  }
+
+  // Move the live child to another effort over the control channel, as
+  // /effort does, rather than respawning it. False when it cannot: no child,
+  // or a Claude Code that refuses or does not answer the request (one older
+  // than `apply_flag_settings`). No effort is the model's own default, which
+  // a null effortLevel goes back to.
+  async function applyEffortLive(state: SessionState, effort: string | undefined): Promise<boolean> {
+    const query = state.query
+    if (!query || typeof query.applyFlagSettings !== 'function') return false
+    const applied = await answeredWithin(
+      query.applyFlagSettings({ effortLevel: (effort ?? null) as EffortLevel | null }),
+      childAnswerTimeoutMs,
+      { rejectAsUnanswered: true },
+    )
+    return applied && state.query === query
+  }
+
+  // A child that does not run under the session's recorded preset is replaced
+  // before the next message (ensureQuery), unless background work runs in it.
+  // Then it is moved over the control channel instead: to the preset's own
+  // mode, or under `none`, whose mode no request names, to 'default', which
+  // asks before anything that changes something, until the work drains and
+  // the next message can respawn it. A child that will not move is replaced
+  // all the same: running a message under looser permissions than the person
+  // chose is worse than ending the work.
+  async function reconcilePresetWhileBusy(state: SessionState): Promise<void> {
+    const query = state.query
+    if (!query || childHonorsPreset(state) || !backgroundWorkRunning(state)) return
+    const target = nativePermissionMode(state, state.mode)
+    const moved = await answeredWithin(query.setPermissionMode(target ?? 'default'), childAnswerTimeoutMs, {
+      rejectAsUnanswered: true,
+    })
+    if (state.query !== query) return
+    if (!moved) {
+      disposeChild(state)
+      return
+    }
+    if (target !== undefined) {
+      state.childPreset = state.permissionPreset
+      state.childMode = ownSdkMode(state)
+    }
   }
 
   async function pump(state: SessionState, q: Query): Promise<void> {
@@ -830,7 +879,9 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // reconciled here, so the turn about to start runs under the preset the
     // session actually recorded. The respawn below resumes the same provider
     // session, so the conversation continues rather than restarting.
-    if (state.query && !childHonorsPreset(state)) disposeChild(state)
+    // One with background work in it was moved instead, or replaced, by
+    // reconcilePresetWhileBusy before the turn came here.
+    if (state.query && !childHonorsPreset(state) && !backgroundWorkRunning(state)) disposeChild(state)
     // A child still registering its servers is not ready for a message yet.
     if (state.query) return state.spawning ?? Promise.resolve()
     // Two callers racing past the check above would each stage a plugin folder
@@ -1359,21 +1410,44 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         return
       }
       yield eventFor(state, 'turn_started', { turnId: input.turnId })
+      // What waits for the chat's background work, said once the turn opens.
+      const waiting: string[] = []
       try {
         const nextMode = input.mode ?? 'default'
+        // Each change below goes to the live child where it can, and
+        // replaces the child where it cannot, unless background work runs in
+        // it: that ends with the child, so the change waits, kept off the
+        // session's state so the next message tries it again.
         if (state.reasoningEffort !== input.reasoningEffort) {
-          disposeChild(state)
-          state.mode = nextMode
-          state.reasoningEffort = input.reasoningEffort
-        } else if (state.mode !== nextMode) {
-          if (!(await switchModeLive(state, nextMode))) disposeChild(state)
-          state.mode = nextMode
+          if (!state.query || (await applyEffortLive(state, input.reasoningEffort))) {
+            state.reasoningEffort = input.reasoningEffort
+          } else if (backgroundWorkRunning(state)) {
+            waiting.push('the new effort')
+          } else {
+            disposeChild(state)
+            state.reasoningEffort = input.reasoningEffort
+          }
+        }
+        if (state.mode !== nextMode) {
+          if (await switchModeLive(state, nextMode)) state.mode = nextMode
+          // Back to default from plan or ask: the child stays in the stricter
+          // mode meanwhile. Into plan or ask it never waits, since the turn
+          // would run with less care than the person asked for.
+          else if (nextMode === 'default' && backgroundWorkRunning(state)) waiting.push('default mode')
+          else {
+            disposeChild(state)
+            state.mode = nextMode
+          }
         }
         const skillIds = [...new Set(input.skills ?? [])].sort()
         if (JSON.stringify(skillIds) !== JSON.stringify(state.skillIds ?? [])) {
-          disposeChild(state)
-          state.skillIds = skillIds
+          if (backgroundWorkRunning(state)) waiting.push('the attached skills')
+          else {
+            disposeChild(state)
+            state.skillIds = skillIds
+          }
         }
+        await reconcilePresetWhileBusy(state)
         await ensureQuery(state)
       } catch (error) {
         yield eventFor(state, 'turn_failed', {
@@ -1397,6 +1471,12 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.turn = turn
       state.lastActivityAt = now()
       for (const pendingEvent of state.pendingSessionEvents.splice(0)) turn.queue.push(pendingEvent)
+      if (waiting.length > 0)
+        turn.queue.push(
+          eventFor(state, 'session_updated', {
+            notice: waitingNotice(waiting),
+          }),
+        )
 
       const onAbort = (): void => {
         interruptChild(state)
@@ -1417,11 +1497,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // skills stay loaded for the command either way.
       const opensWithCommand =
         leadingCommandFor(input.message, { cli: CLAUDE_COMMANDS_CLI, cwd: state.workspaceRoot }) !== null
+      // Skills that wait for background work are not loaded yet, so the note
+      // does not name them.
+      const skillsLoaded = !waiting.includes('the attached skills')
       if (!turn.queue.closed)
         pushUserMessage(
           state,
           buildUserMessageContent(
-            input.skills?.length && !opensWithCommand
+            input.skills?.length && skillsLoaded && !opensWithCommand
               ? `Use the attached skills: ${input.skills.map(attachedSkillName).join(', ')}.\n\n${input.message}`
               : input.message,
             input.attachments,
@@ -1885,6 +1968,13 @@ const MCP_REGISTRATION_TIMEOUT_MS = 90_000
 // How long, and how often, a server's state is read again after a sign-in.
 const MCP_SIGN_IN_WATCH_MS = 5 * 60_000
 const MCP_SIGN_IN_POLL_MS = 3_000
+
+// "The new effort and the attached skills will apply …": what a turn left
+// waiting for the chat's background work, as the notice that says so.
+function waitingNotice(waiting: string[]): string {
+  const list = waiting.length > 1 ? `${waiting.slice(0, -1).join(', ')} and ${waiting.at(-1)}` : waiting[0]!
+  return `${list[0]!.toUpperCase()}${list.slice(1)} will apply to your messages once the background work in this chat finishes.`
+}
 
 /**
  * Whether `promise` settled within `ms`. A rejection counts as an answer
