@@ -309,6 +309,30 @@ export function fileStamp(now = new Date()): string {
 }
 
 /**
+ * Write a capture as `<name>-<stamp>.png` in `directory`, never over another
+ * file. The stamp is to the second, so a second capture within it (an agent
+ * taking two in a row) is numbered `-2`, `-3`, … instead of replacing the
+ * first, which an earlier message may already show. Returns the path written.
+ */
+export async function writeCaptureFile(
+  directory: string,
+  name: string,
+  data: Uint8Array,
+  now = new Date(),
+): Promise<string> {
+  const base = `${name}-${fileStamp(now)}`
+  for (let n = 1; ; n += 1) {
+    const file = join(directory, n === 1 ? `${base}.png` : `${base}-${n}.png`)
+    try {
+      await writeFile(file, data, { flag: 'wx' })
+      return file
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || n >= 1000) throw error
+    }
+  }
+}
+
+/**
  * A guest-viewport CSS rect as a crop of the captured image: padded, scaled by
  * the zoom factor into DIP, clamped to the image; null when nothing of it is on
  * screen or the numbers are not sane.
@@ -960,8 +984,7 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
         // its own .gitignore still never sees screenshots in `git status`;
         // and it is never made or written through a link the project holds.
         const directory = await ensureSidecarDirNoLinks(resolve(workspaceRoot), 'browser')
-        const file = join(directory, `${input.kind}-${hostSlug(tab.state.url)}-${fileStamp()}.png`)
-        await writeFile(file, image.toPNG())
+        const file = await writeCaptureFile(directory, `${input.kind}-${hostSlug(tab.state.url)}`, image.toPNG())
         return { ok: true, path: file, width: size.width, height: size.height }
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : 'The capture failed.' }

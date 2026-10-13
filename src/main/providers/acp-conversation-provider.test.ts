@@ -70,6 +70,8 @@ createInterface({input:process.stdin}).on('line',async line=>{
  // As OpenCode 1.18 keeps a checklist: its todowrite tool, ACP kind other, the list only in the
  // call's input, retitled with a count once done, and no plan update. 'todowrite plan' also sends one.
  if(text.startsWith('todowrite')){const todos=[{content:'Read the config',status:'completed',priority:'high'},{content:'Write the test',status:'in_progress',priority:'high'},{content:'Run the suite',status:'pending',priority:'medium'}];update({sessionUpdate:'tool_call',toolCallId:'call_todo',title:'todowrite',kind:'other',status:'pending',locations:[],rawInput:{}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'in_progress',kind:'other',title:'todowrite',locations:[],rawInput:{todos}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'completed',kind:'other',title:'2 todos',rawInput:{todos},rawOutput:{output:JSON.stringify(todos,null,2),metadata:{todos}},content:[{type:'content',content:{type:'text',text:JSON.stringify(todos,null,2)}}]});if(text==='todowrite plan')update({sessionUpdate:'plan',entries:todos.map(({content,status,priority})=>({content,status:status==='in_progress'?'completed':status,priority}))});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Planned'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // A long tool the agent talks over while it reports progress, then (for 'progress then tool') a new call.
+ if(text.startsWith('progress')){const say=t=>update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:t}});update({sessionUpdate:'tool_call',toolCallId:'long',kind:'execute',title:'Run the suite',rawInput:{},status:'pending'});say('Started the suite. ');update({sessionUpdate:'tool_call_update',toolCallId:'long',status:'in_progress',content:[{type:'content',content:{type:'text',text:'40 of 120'}}]});say('Halfway there. ');update({sessionUpdate:'tool_call_update',toolCallId:'long',status:'completed'});say('All 120 pass.');if(text==='progress then tool'){update({sessionUpdate:'tool_call',toolCallId:'next',kind:'read',title:'Read',rawInput:{},status:'completed'});say('Read it too.')}result(m.id,{stopReason:'end_turn'});prompt=null;return}
  update({sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'Thinking'}});
  if(text==='hang'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'waiting'}});return}
  update({sessionUpdate:'tool_call',toolCallId:'tool',kind:'edit',title:'Write',rawInput:{path:'result.txt'},status:'pending'});
@@ -249,6 +251,29 @@ test('ACP streams text, reasoning, typed edits, permissions, usage and workspace
     await f.cleanup()
   }
 })
+test('ACP keeps the reply whole across progress updates of a tool already running', async () => {
+  const f = await fixture()
+  try {
+    const events = await turn(f, 'progress')
+    expect(events.at(-1)).toMatchObject({
+      type: 'turn_completed',
+      payload: { text: 'Started the suite. Halfway there. All 120 pass.' },
+    })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('ACP starts the reply again after a new tool call', async () => {
+  const f = await fixture()
+  try {
+    const events = await turn(f, 'progress then tool')
+    expect(events.at(-1)).toMatchObject({ type: 'turn_completed', payload: { text: 'Read it too.' } })
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('ACP refuses a new-file write before asking for approval it cannot use', async () => {
   const f = await fixture()
   try {
@@ -358,6 +383,22 @@ test('ACP Stop cancels the turn and keeps the process for the next one', async (
     expect(await pidOf(f)).toBe(before)
     // Not reopened: the session stayed live in the same process.
     expect((await launched(f)).opened).toBe('session/new')
+  } finally {
+    await f.cleanup()
+  }
+})
+test('ACP Stop while the turn is being set up sends no prompt and keeps the process', async () => {
+  const f = await fixture()
+  try {
+    const before = await pidOf(f)
+    // The session reads its hooks off the input it started with.
+    Object.assign(f.input, { onBeforeTool: () => f.provider.interrupt(f.input) })
+    const events = await turn(f, 'hang')
+    Object.assign(f.input, { onBeforeTool: undefined })
+    expect(events.at(-1)).toMatchObject({ type: 'turn_failed', payload: { reason: 'interrupted' } })
+    // The agent never saw the prompt, so it said nothing.
+    expect(events.some((event) => event.type === 'reasoning_delta' || event.type === 'content_delta')).toBe(false)
+    expect(await pidOf(f)).toBe(before)
   } finally {
     await f.cleanup()
   }

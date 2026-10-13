@@ -145,7 +145,8 @@ export function PointerPopover({
       // The menu tier (`--z-menu`) keeps it above the popover layer, matching ContextMenu.
       style={{ position: 'fixed', left: pos.left, top: pos.top, zIndex: 'var(--z-menu)' }}
       className={[
-        'rounded-[7px] border border-[color:var(--border-strong)]',
+        // Clickable over a window-drag region; see OVERLAY_SURFACE_CLASS.
+        'app-no-drag rounded-[7px] border border-[color:var(--border-strong)]',
         // design-tokens-allow: canonical popover elevation shared by anchored app-shell surfaces (matches Popover)
         // One ground per surface, written as one class each: `surface-glass`
         // sets `background` and the raised arm sets `background-color`, so

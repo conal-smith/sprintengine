@@ -324,3 +324,95 @@ test('a chat with no toolbar showing is not woken by scrolls, or by selections e
     }
   }
 })
+
+// A selection in the transcript, a press on a button (a message's overflow
+// menu, the composer's model picker) and its release. Chromium keeps the
+// selection through a button press, so reading it again on the release put the
+// toolbar back beside the words, under the menu the button had just opened.
+async function pressAfterSelecting(pressed: (document: Document) => Element) {
+  const dom = new JSDOM(
+    '<!doctype html><body><div id="log"><p>Reply text</p><button type="button">More</button></div><span role="button">Model</span><p id="outside">Elsewhere</p></body>',
+    { url: 'http://localhost' },
+  )
+  dom.window.Range.prototype.getClientRects = function () {
+    return Object.assign([RECT], { item: () => RECT }) as unknown as DOMRectList
+  }
+  dom.window.Range.prototype.getBoundingClientRect = () => RECT as DOMRect
+  const previous = Object.getOwnPropertyDescriptors(globalThis)
+  const frames: FrameRequestCallback[] = []
+  const requestFrame = (callback: FrameRequestCallback) => frames.push(callback)
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    requestAnimationFrame: requestFrame,
+    cancelAnimationFrame: () => undefined,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  })
+  Object.assign(dom.window, { requestAnimationFrame: requestFrame, cancelAnimationFrame: () => undefined })
+  const { act, createElement } = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const { QuoteSelectionToolbar } = await import('./quoteSelection')
+  const document = dom.window.document
+  const log = document.getElementById('log')!
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const toolbar = () => document.querySelector('[data-quote-toolbar]')
+  const flush = () => act(async () => frames.splice(0).forEach((frame) => frame(0)))
+  try {
+    await act(async () =>
+      root.render(
+        createElement(QuoteSelectionToolbar, { rootRef: { current: log }, enabled: true, onQuote: () => {} }),
+      ),
+    )
+    const press = async (target: Element) => {
+      await act(async () => {
+        target.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true }))
+        target.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }))
+      })
+      await flush()
+    }
+    // A drag over the reply: the selection settles on the release.
+    document.getSelection()!.selectAllChildren(log.querySelector('p')!)
+    await press(log.querySelector('p')!)
+    const shownAfterSelecting = toolbar() !== null
+    await press(pressed(document))
+    return { shownAfterSelecting, shownAfterPress: toolbar() !== null }
+  } finally {
+    await act(async () => root.unmount())
+    dom.window.close()
+    for (const key of [
+      'window',
+      'document',
+      'navigator',
+      'requestAnimationFrame',
+      'cancelAnimationFrame',
+      'IS_REACT_ACT_ENVIRONMENT',
+    ]) {
+      if (previous[key]) Object.defineProperty(globalThis, key, previous[key])
+      else Reflect.deleteProperty(globalThis, key)
+    }
+  }
+}
+
+test('pressing a button leaves the quote toolbar down', async () => {
+  expect(await pressAfterSelecting((document) => document.querySelector('button')!)).toEqual({
+    shownAfterSelecting: true,
+    shownAfterPress: false,
+  })
+})
+
+test('pressing a control that only plays a button leaves the quote toolbar down', async () => {
+  expect(await pressAfterSelecting((document) => document.querySelector('[role="button"]')!)).toEqual({
+    shownAfterSelecting: true,
+    shownAfterPress: false,
+  })
+})
+
+test('a press on anything but a button still reads the selection on its release', async () => {
+  expect(await pressAfterSelecting((document) => document.getElementById('outside')!)).toEqual({
+    shownAfterSelecting: true,
+    shownAfterPress: true,
+  })
+})

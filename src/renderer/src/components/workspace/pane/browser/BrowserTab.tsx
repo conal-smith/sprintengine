@@ -38,6 +38,7 @@ import { BrowserRecordingIndicator } from './BrowserRecordingIndicator'
 import { useTabRecording } from './useTabRecording'
 import { buildBrowserElementBlock, normalizePickedElement, readPickTheme, sendTextToFocusedAgent } from './browserPick'
 import { usePaneHost } from '../paneHost'
+import { replayGuestFocusAsPress } from './guestPress'
 
 // The browser tab (browser-pane epic): a `<webview>` guest the renderer mounts
 // and main drives. The element is created once per tab and never re-keyed —
@@ -409,6 +410,14 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
     element.addEventListener('ipc-message', onMessage)
     return () => element.removeEventListener('ipc-message', onMessage)
   }, [handlePicked, config])
+
+  // A click into the page closes whatever menu is open, as a click anywhere
+  // else in the app does (guestPress.ts).
+  useEffect(() => {
+    const element = webviewRef.current
+    if (!element) return
+    return replayGuestFocusAsPress(element)
+  }, [config])
 
   // A new document tears the picker down: the guest's overlay went with the
   // old one, and the host un-presses to match. Keyed on the committed

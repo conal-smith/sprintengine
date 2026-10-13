@@ -328,3 +328,33 @@ test('terminalFileLinks', async () => {
 
   await suiteRun
 })
+
+// A compiler's diagnostic: the colon after the position starts the message.
+// Read as part of the path, it named a file that does not exist, so the link
+// opened "File does not exist" instead of the file at that line.
+for (const [line, path, position] of [
+  ['./main.go:10:5: undefined: x', './main.go', [10, 5]],
+  ['src/app.ts:12:3: error TS2304', 'src/app.ts', [12, 3]],
+  ['src/app.ts:12: warning', 'src/app.ts', [12, undefined]],
+  ['in src/app.ts: no exports', 'src/app.ts', [undefined, undefined]],
+  ['/repo/README.md:', '/repo/README.md', [undefined, undefined]],
+] as const) {
+  test(`a path ending in a colon links without it: ${line}`, () => {
+    const [reference] = findTerminalFileReferences(line, { workspaceRoot: '/repo' })
+    assert.equal(reference?.path, path)
+    assert.equal(
+      reference?.text,
+      `${path}${position[0] ? `:${position[0]}` : ''}${position[1] ? `:${position[1]}` : ''}`,
+    )
+    assert.equal(reference?.line, position[0])
+    assert.equal(reference?.column, position[1])
+  })
+}
+
+test('a web address after a path is not taken into the path', () => {
+  const references = findTerminalFileReferences('see src/app.ts: https://example.com/a:b', { workspaceRoot: '/repo' })
+  assert.deepEqual(
+    references.map((reference) => reference.text),
+    ['src/app.ts'],
+  )
+})

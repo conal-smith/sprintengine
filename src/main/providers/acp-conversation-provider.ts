@@ -723,8 +723,10 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         state.reply += value.content.text
       }
     } else if (value.sessionUpdate === 'tool_call' || value.sessionUpdate === 'tool_call_update') {
-      state.replyClosed = true
       const prior = state.toolCalls.get(value.toolCallId)
+      // Only a new call ends the message. A call already running reports its
+      // progress while the agent talks over it, and that text is one message.
+      if (!prior) state.replyClosed = true
       // Kept from the update that first showed a spawn, and added to as later
       // ones fill in its input: an update may retitle the call with what the
       // agent was sent to do, which is no spawn tool's name.
@@ -1260,6 +1262,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             throw new Error('This ACP agent does not support images.')
           for (const attachment of input.attachments ?? [])
             prompt.push({ type: 'image', data: attachment.dataBase64, mimeType: attachment.mediaType })
+          // A Stop that landed while the model, the mode or the checkpoint was
+          // being set reached an agent with no prompt to cancel. Sent now, the
+          // prompt would run on until the watchdog ended the process.
+          if (input.signal?.aborted || state.cancelled) {
+            emit(state, 'turn_failed', { reason: 'interrupted' })
+            return
+          }
           const result = await state.connection!.prompt({ sessionId: state.nativeId!, prompt })
           // The agent has the conversation now. Until it answered the prompt
           // (a refused image, an agent that died on it) the conversation is

@@ -165,18 +165,33 @@ export function createDefaultGhRunner(environment: GhRunnerEnvironment = {}): De
       return resultFromSpawnError(error)
     }
   }
+  // Where the binary is on Windows, with the PATH it was found on. The lookup
+  // checks for a file in every PATH folder, so it is made once per PATH, not
+  // once per call. "Not found" is never kept: a CLI installed since is seen on
+  // the next call.
+  let windowsProgram: { pathValue: string; file: string } | null = null
+  const resolveOnWindowsPath = async (): Promise<{ file: string; remembered: boolean } | null> => {
+    const pathValue = process.env.PATH ?? process.env.Path ?? ''
+    if (windowsProgram?.pathValue === pathValue) return { file: windowsProgram.file, remembered: true }
+    const file = await resolveWindowsProgram(binary)
+    windowsProgram = file ? { pathValue, file } : null
+    return file ? { file, remembered: false } : null
+  }
   const runDirect = async (args: string[], options: GhRunOptions): Promise<GhResult> => {
     // On Windows a bare `gh` would be looked for in `cwd` — the repository —
     // before PATH, so a `gh.exe` a repository ships would run in its place. The
     // program is resolved on PATH and spawned by its full path instead, and a
     // PATH with no `gh` on it is "not installed" rather than a bare-name spawn.
-    let file = binary
-    if (platform === 'win32') {
-      const resolved = await resolveWindowsProgram(binary)
-      if (!resolved) return { found: false, code: -1, stdout: '', stderr: '' }
-      file = resolved
-    }
-    return runFile(file, args, options)
+    if (platform !== 'win32') return runFile(binary, args, options)
+    const resolved = await resolveOnWindowsPath()
+    if (!resolved) return { found: false, code: -1, stdout: '', stderr: '' }
+    const result = await runFile(resolved.file, args, options)
+    if (result.found || !resolved.remembered) return result
+    // Uninstalled or moved since it was remembered. A process that never
+    // started did nothing, so looking again and running once more is safe.
+    windowsProgram = null
+    const again = await resolveOnWindowsPath()
+    return again ? runFile(again.file, args, options) : result
   }
   /**
    * gh on the person's shell PATH, looked up once and shared by every
@@ -221,6 +236,7 @@ export function createDefaultGhRunner(environment: GhRunnerEnvironment = {}): De
     },
     forgetLocation() {
       located = null
+      windowsProgram = null
       loginShellPath.invalidate()
     },
   }
