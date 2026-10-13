@@ -140,6 +140,7 @@ import type { TerminalSessionDeltaEntry, TerminalSessionsDelta } from '../shared
 import { parsePromptCacheReading } from '../shared/prompt-cache'
 import { noteStatusLineRateLimits } from './usage-limits/store'
 import { broadcastToAllWindows } from './window-broadcast'
+import { readTerminalOutputTail, type TerminalOutputTail } from './terminal-output-tail'
 
 type TerminalRuntimeOptions = {
   diagnosticsEnabled: boolean
@@ -305,6 +306,14 @@ type TerminalRuntime = {
   // plane's pattern wait asks this every 100 ms, and joining a multi-megabyte
   // scrollback each time was the whole cost of a wait.
   readTerminalOutputSince(sessionId: string, cursor: number): { text: string; cursor: number } | undefined
+  // At most `maxBytes` of the newest output, optionally only what came after
+  // `since`, decoded from the end of the buffer (terminal-output-tail.ts): for
+  // `terminal.read`, where an agent follows a dev server's log and the cost of
+  // a read must be what it returns. `undefined` for no such session.
+  readTerminalOutputTail(
+    sessionId: string,
+    options: { maxBytes: number; since?: number },
+  ): TerminalOutputTail | undefined
   // Fires once per coalesced sessions broadcast — the same beat the windows
   // hear — so a main-process consumer (the launched-agent reconcile) never
   // polls the session list. Carries nothing: the listener reads.
@@ -399,6 +408,7 @@ export function createTerminalRuntime(options: TerminalRuntimeOptions): Terminal
     ingestAgentStateFrame,
     readTerminalOutput,
     readTerminalOutputSince,
+    readTerminalOutputTail: readSessionOutputTail,
     subscribeSessionsChanged(listener) {
       terminalSessionsChangedListeners.add(listener)
       return () => terminalSessionsChangedListeners.delete(listener)
@@ -3536,6 +3546,15 @@ function readTerminalOutputSince(sessionId: string, cursor: number): { text: str
     return { text: session.replaySnapshot, cursor: read.cursor }
   }
   return { text: read.text, cursor: read.cursor }
+}
+
+function readSessionOutputTail(
+  sessionId: string,
+  options: { maxBytes: number; since?: number },
+): TerminalOutputTail | undefined {
+  const session = terminals.get(sessionId)
+  if (!session || session.isDisposed) return undefined
+  return readTerminalOutputTail(session, options)
 }
 
 function writeTerminalInput(sessionId: string, data: string): void {

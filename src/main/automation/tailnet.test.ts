@@ -1084,13 +1084,15 @@ test('tailnet', async () => {
     }
   }
 
-  // terminal.list and terminal.create serve agents on this machine. A paired
-  // device, however wide its grant, neither sees them nor may call them, and
-  // a call it makes anyway is refused as local-only; the create, a mutation
-  // like agent.launch, lands in the audit with the device that asked. A list
-  // is a read, and reads stay unaudited.
+  // terminal.list, terminal.read and terminal.create serve agents on this
+  // machine. A paired device, however wide its grant, neither sees them nor
+  // may call them, and a call it makes anyway is refused as local-only; the
+  // create, a mutation like agent.launch, lands in the audit with the device
+  // that asked. A list and a read of a terminal's output are reads, and reads
+  // stay unaudited — and would need only `workspace:read`, never an operate
+  // grant, were the family ever served.
   async function testTerminalToolsAreNeverServedOverTheTailnet(): Promise<void> {
-    const terminalTools = ['terminal.list', 'terminal.create']
+    const terminalTools = ['terminal.list', 'terminal.read', 'terminal.create']
     for (const name of terminalTools) {
       assert.notEqual(localOnlyGatewayToolReason(name), null, `${name} is local-only`)
     }
@@ -1098,6 +1100,8 @@ test('tailnet', async () => {
     assert.notEqual(localOnlyGatewayToolReason('terminal.anything_later'), null, 'the family is local by its prefix')
     assert.equal(isMutation('terminal.create'), true, 'creating a terminal is audited like agent.launch')
     assert.equal(isMutation('terminal.list'), false)
+    assert.equal(isMutation('terminal.read'), false, 'reading output is a read')
+    assert.equal(requiredScopeForTool('terminal.read', isMutation('terminal.read')), 'workspace:read')
 
     const calls: string[] = []
     const stubs: McpToolRegistration[] = terminalTools.map((name) => ({

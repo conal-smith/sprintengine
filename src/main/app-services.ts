@@ -1671,6 +1671,8 @@ export function createAppServices(
             createServerGatewayBackends({
               getWorkspaceSyncSnapshot: () => workspaceSyncService.getSnapshot(),
               listTerminalSessions: () => terminalRuntime.ipcHandlers.listTerminals(),
+              readTerminalOutputTail: (sessionId, options) =>
+                terminalRuntime.readTerminalOutputTail(sessionId, options),
               launchAgent: (request) => agentLaunchService.launch(request),
               linkLaunchedAgent: (link) => agentLaunchNotices.link(link),
               resolveAgentPermissionPreset,
@@ -1807,6 +1809,8 @@ export function createAppServices(
               createServerGatewayBackends({
                 getWorkspaceSyncSnapshot: () => workspaceSyncService.getSnapshot(),
                 listTerminalSessions: () => terminalRuntime.ipcHandlers.listTerminals(),
+                readTerminalOutputTail: (sessionId, options) =>
+                  terminalRuntime.readTerminalOutputTail(sessionId, options),
                 launchAgent: (request) => agentLaunchService.launch(request),
                 linkLaunchedAgent: (link) => agentLaunchNotices.link(link),
                 // An agent launches no looser than it runs: its terminal here,
