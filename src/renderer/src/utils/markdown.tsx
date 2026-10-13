@@ -21,6 +21,7 @@ import {
 } from './markdownHeadingIds'
 import { DisplayMath, InlineMath, isMathLanguage, remarkMathDelimiters } from './markdownMath'
 import { remarkUserText } from './markdownUserText'
+import { repairMarkdownFileLinks } from './markdownFileLinks'
 
 /**
  * A document renders at `document` scale; a document read inside a dense
@@ -92,6 +93,12 @@ type MarkdownRenderOptions = {
    * line break and HTML shows as the text it is (`remarkUserText`).
    */
   userText?: boolean
+  /**
+   * The text is an agent's reply: a local file link written without the `>`
+   * that closes its destination is closed before the parse
+   * (`markdownFileLinks.ts`). Off for a document, which renders as written.
+   */
+  repairFileLinks?: boolean
   /**
    * Typeset math (`markdownMath.tsx`): `$$…$$` and `\(…\)` inline, `$$` and
    * `\[` blocks, and ```math fences. Off for a document, where a dollar sign is
@@ -902,6 +909,10 @@ function MarkdownRenderer({
   options: MarkdownRenderOptions
 }): React.ReactNode {
   const { lineChanges, links, density, renderText, renderLink, renderImage, codeBlock, math, inPageLinks } = options
+  const source = React.useMemo(
+    () => (options.repairFileLinks ? repairMarkdownFileLinks(markdown) : markdown),
+    [markdown, options.repairFileLinks],
+  )
   // Component types must outlive a streamed source update: recreating them
   // remounts code blocks, discards their wrap state, and destroys text selection.
   // Streaming state travels through context without changing those types.
@@ -939,7 +950,7 @@ function MarkdownRenderer({
   // streaming file would otherwise pay again in full on every token
   // (`markdownFence.ts`). Not where line changes read source positions, nor
   // for a person's own text, which has a plugin of its own.
-  const fenced = lineChanges || options.userText ? null : singleFencedCode(markdown)
+  const fenced = lineChanges || options.userText ? null : singleFencedCode(source)
   const content = (
     <StreamingContext.Provider value={options.streaming ?? false}>
       <ReactMarkdown
@@ -955,7 +966,7 @@ function MarkdownRenderer({
         components={components}
         urlTransform={urlTransform}
       >
-        {fenced ? fenced.placeholder : markdown}
+        {fenced ? fenced.placeholder : source}
       </ReactMarkdown>
     </StreamingContext.Provider>
   )
