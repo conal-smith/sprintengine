@@ -11,6 +11,7 @@
 import type { ConversationLaunchRequest, ConversationLaunchResult } from '../conversation-launch-service'
 import type { ConversationSessionSummary } from '../../shared/conversation-runtime'
 import { agentWorktreePaths } from '../../shared/worktree-paths'
+import { worktreeBranchPrefix } from '../worktree-branch-prefix'
 import type { ExecutionHostId } from '../../shared/execution-host'
 import type { ScheduledAgent, ScheduledAgentLastRun } from '../../shared/scheduled-agents'
 import type { WorkspaceWorktree } from '../../renderer/src/types/workspace'
@@ -148,7 +149,7 @@ async function makeRunWorktree(
     }
   }
   const base = agent.worktree?.name.trim() || 'scheduled'
-  const paths = agentWorktreePaths(repoRoot, `${base}-${runStamp(at)}`)
+  const paths = agentWorktreePaths(repoRoot, `${base}-${runStamp(at)}`, worktreeBranchPrefix())
   if (!paths) return { ok: false, message: `"${base}" does not make a usable worktree name.` }
   const created = await deps.createWorktree({
     repoRoot,

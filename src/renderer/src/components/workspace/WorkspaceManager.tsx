@@ -2580,7 +2580,7 @@ export default function WorkspaceManager() {
 
   // Create the git worktree an agent spawn requested ("+ Worktree" in the
   // agent composer): placed under the shared worktree container on branch
-  // `agent/<slug>`, and registered in the workspace's worktree registry with
+  // `<prefix>/<slug>` (the person's branch prefix), and registered in the workspace's worktree registry with
   // the new agent as owner. Returns the agent's execution, or null after
   // publishing a diagnostic — the caller aborts the spawn, because silently
   // spawning into the main checkout would drop the isolation the user asked for.
@@ -2615,7 +2615,7 @@ export default function WorkspaceManager() {
     // A typed name is used verbatim; an empty one derives from the agent's tab
     // name plus a short uid so repeat spawns never collide on the branch.
     const name = requestedName.trim() || `${tabName}-${nanoid(4).toLowerCase()}`
-    const paths = agentWorktreePaths(repoRoot, name)
+    const paths = agentWorktreePaths(repoRoot, name, useWorkspaceStore.getState().appSettings.worktreeBranchPrefix)
     if (!paths) {
       spawnError('Worktree name invalid', `"${name}" does not reduce to a usable worktree name.`)
       return null

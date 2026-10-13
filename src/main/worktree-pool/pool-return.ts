@@ -1,4 +1,5 @@
 import { agentLeaseKey } from '../../shared/ipc/worktree-pool'
+import { worktreeBranchName } from '../../shared/worktree-branch'
 import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
 import { UNCLAIMED_LEASE_MS, type SlotLease, type SlotRecord } from './pool-store'
 import {
@@ -112,7 +113,7 @@ export async function returnSlot(
     // the reflog once the slot is reset.
     if (status.status.branch === null && oid && oid !== slot.baseSha) {
       if (!(await commitIsReachable(ctx.git, slot.path, oid))) {
-        const rescue = `${branch ?? `agent/${slot.id}`}-rescued-${oid.slice(0, 7)}`
+        const rescue = `${branch ?? worktreeBranchName(ctx.branchPrefix(), slot.id)}-rescued-${oid.slice(0, 7)}`
         const created = await ctx.git(slot.path, ['branch', rescue, oid])
         if (!created.ok) {
           await hold(ctx, pool, slot, 'error', `could not keep detached commits: ${tail(created.message)}`, {

@@ -279,6 +279,8 @@ export interface WorkspaceStore
   refreshMcpServersFromSource: (servers: McpServerConfig[]) => void
   removeMcpServer: (serverId: string) => void
   setLastSelectedCli: (cli: AgentCli) => void
+  /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
+  setWorktreeBranchPrefix: (prefix: string) => void
   recordProjectUse: (folderPath: string) => void
   setLastSelectedConversationModel: (selection: AgentConversationRuntime | null) => void
   setTextGenerationEnabled: (enabled: boolean) => void

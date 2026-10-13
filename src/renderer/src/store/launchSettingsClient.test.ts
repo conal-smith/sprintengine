@@ -238,6 +238,7 @@ test('client: nothing is adopted while an update is in flight, then the newest r
     cliPermissionPresets: {},
     cliPermissionModes: {},
     projectUsage: {},
+    worktreeBranchPrefix: null,
   })
   const applied: Array<string | null> = []
   const client = createLaunchSettingsClient()
@@ -255,6 +256,7 @@ test('client: nothing is adopted while an update is in flight, then the newest r
       cliPermissionPresets: {},
       cliPermissionModes: {},
       projectUsage: {},
+      worktreeBranchPrefix: null,
     }),
     onLegacySettled: () => applied.push('settled'),
   })
@@ -298,6 +300,7 @@ test('client: a main that does not answer the boot read leaves the legacy values
     cliPermissionPresets: {},
     cliPermissionModes: {},
     projectUsage: {},
+    worktreeBranchPrefix: null,
   }
   const warn = console.warn
   console.warn = () => undefined

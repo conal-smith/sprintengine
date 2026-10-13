@@ -1149,7 +1149,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           },
           additionalProperties: false,
           description:
-            'Isolate the agent in a git worktree on an "agent/<name>" branch instead of the workspace checkout.',
+            'Isolate the agent in a git worktree on a "<prefix>/<name>" branch (the branch prefix set in Settings ▸ ' +
+            'Worktrees, "agent" unless changed) instead of the workspace checkout.',
         },
         notifyParent: {
           type: 'boolean',
@@ -2251,7 +2252,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           properties: { name: { type: 'string', description: 'Worktree/branch name; defaults to the agent name.' } },
           additionalProperties: false,
           description:
-            'Isolate the agent in a git worktree on an "agent/<name>" branch instead of the workspace checkout.',
+            'Isolate the agent in a git worktree on a "<prefix>/<name>" branch (the branch prefix set in Settings ▸ ' +
+            'Worktrees, "agent" unless changed) instead of the workspace checkout.',
         },
         instructions: {
           type: 'string',

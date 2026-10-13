@@ -7,6 +7,11 @@ import {
 } from '../../../../shared/launch-settings'
 import { normalizeMachineMarkSettings, type MachineMarkSetting } from '../../../../shared/machine-identity'
 import { normalizeProjectUsageMap } from '../../../../shared/project-frecency'
+import {
+  AGENT_BRANCH_PREFIX,
+  effectiveWorktreeBranchPrefix,
+  sanitizeWorktreeBranchPrefix,
+} from '../../../../shared/worktree-branch'
 import { normalizeTextGenerationSettings } from '../../../../shared/text-generation/contract'
 import {
   DEFAULT_WRITING_STYLE,
@@ -678,6 +683,7 @@ export const defaultAppSettings = (): AppSettings => ({
   cliPermissionPresets: {},
   cliPermissionModes: {},
   projectUsage: {},
+  worktreeBranchPrefix: AGENT_BRANCH_PREFIX,
   lastSelectedAgentModel: null,
   projectKnowledgeRoots: {},
   // Nothing seen yet. Every project in the map got there by being shown once,
@@ -746,6 +752,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     cliPermissionPresets: normalizeCliPermissionPresets(settings?.cliPermissionPresets),
     cliPermissionModes: normalizeCliPermissionModes(settings?.cliPermissionModes),
     projectUsage: normalizeProjectUsageMap(settings?.projectUsage),
+    worktreeBranchPrefix: effectiveWorktreeBranchPrefix(settings?.worktreeBranchPrefix),
     // Every field here is built explicitly and `settings` is never spread, so a
     // key an older build persisted drops on every hydration — the same
     // merge-not-only-migrate enforcement as the opt-in reset below.
@@ -981,6 +988,8 @@ export interface SettingsSliceActions {
   refreshMcpServersFromSource: (servers: McpServerConfig[]) => void
   removeMcpServer: (serverId: string) => void
   setLastSelectedCli: (cli: AgentCli) => void
+  /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
+  setWorktreeBranchPrefix: (prefix: string) => void
   /**
    * Count a new chat started in the project at `folderPath`, for the project
    * pickers' order. Main records it and the store follows main's broadcast;
@@ -1430,6 +1439,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.lastSelectedCli = cli
       })
       launchSettingsClient.update({ lastSelectedCli: cli })
+    },
+
+    setWorktreeBranchPrefix: (prefix) => {
+      const worktreeBranchPrefix = sanitizeWorktreeBranchPrefix(prefix)
+      set((state) => {
+        state.appSettings.worktreeBranchPrefix = worktreeBranchPrefix
+      })
+      launchSettingsClient.update({ worktreeBranchPrefix })
     },
 
     recordProjectUse: (folderPath) => {

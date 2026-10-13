@@ -138,3 +138,26 @@ test('a branch named agent is named as what refuses an agent worktree, and nothi
   assert.match(created.ok ? '' : created.message, /A branch named “agent” in this repository blocks/)
   assert.equal(await git(blocked, 'branch', '--list', 'agent/*'), '')
 })
+
+test('a branch named like a part of a chosen prefix is named as what refuses the worktree', async () => {
+  const blocked = join(scratch, 'blocked-prefix')
+  await mkdir(blocked, { recursive: true })
+  await git(blocked, 'init', '-q', '-b', 'main')
+  await writeFile(join(blocked, 'README.md'), '# blocked\n')
+  await git(blocked, 'add', '.')
+  await git(blocked, 'commit', '-q', '-m', 'init')
+  await git(blocked, 'branch', 'jane/wip')
+  const container = join(scratch, 'blocked-prefix-worktrees')
+  const created = await createGitWorktree({
+    repoRoot: blocked,
+    containerPath: container,
+    destinationPath: join(container, 'fix'),
+    branchName: 'jane/wip/fix',
+    baseRef: 'HEAD',
+  })
+  assert.equal(created.ok, false)
+  assert.match(
+    created.ok ? '' : created.message,
+    /A branch named “jane\/wip” in this repository blocks Studio’s jane\/wip\/… branches/,
+  )
+})

@@ -17,6 +17,7 @@ const missing: Array<[string, boolean]> = []
 const toasts: Array<{ title: string; description?: string }> = []
 const state = {
   workspaces: [] as FakeWorkspace[],
+  appSettings: { worktreeBranchPrefix: 'agent' },
   setWorkspaceWorktreeReclaimed: (id: string, at: number | null) => {
     reclaimed.push([id, at])
     const worktree = state.workspaces.find((workspace) => workspace.id === id)?.worktree
@@ -65,6 +66,7 @@ function stubApi(onDisk: Set<string>, answer: (input: GitWorktreeRestoreInput) =
 afterEach(() => {
   ;(globalThis as { window?: unknown }).window = originalWindow
   state.workspaces = []
+  state.appSettings.worktreeBranchPrefix = 'agent'
   reclaimed.length = 0
   missing.length = 0
   toasts.length = 0
@@ -219,6 +221,42 @@ test('a settled agent-branch chat whose folder is gone comes back even without t
   assert.deepEqual(
     restores.map((input) => input.path),
     [`${CONTAINER}/unmarked`],
+  )
+})
+
+test('without the mark, a settled chat comes back on the chosen prefix or agent/, and on no other branch', async () => {
+  state.appSettings.worktreeBranchPrefix = 'feat'
+  state.workspaces = [
+    { id: 'feat', folderPath: `${CONTAINER}/feat`, worktree: { branch: 'feat/fix' }, settledAt: 1 },
+    { id: 'before', folderPath: `${CONTAINER}/before`, worktree: { branch: 'agent/fix' }, settledAt: 1 },
+    { id: 'feature', folderPath: `${CONTAINER}/feature`, worktree: { branch: 'feature/fix' }, settledAt: 1 },
+  ]
+  const restores = stubApi(new Set(), () => ({ ok: true }))
+  for (const id of ['feat', 'before', 'feature']) assert.equal(await ensureChatWorktree(id), true)
+  assert.deepEqual(
+    restores.map((input) => input.branchName),
+    ['feat/fix', 'agent/fix'],
+  )
+})
+
+test('with no prefix, an unmarked settled chat on an unprefixed branch is not recreated', async () => {
+  state.appSettings.worktreeBranchPrefix = ''
+  state.workspaces = [
+    { id: 'plain', folderPath: `${CONTAINER}/plain`, worktree: { branch: 'chat-ab12' }, settledAt: 1 },
+    // The mark is the sweep's own word that it took the worktree: that still brings it back.
+    {
+      id: 'marked',
+      folderPath: `${CONTAINER}/marked`,
+      worktree: { branch: 'fix-login', reclaimedAt: 5 },
+      settledAt: 1,
+    },
+  ]
+  const restores = stubApi(new Set(), () => ({ ok: true }))
+  assert.equal(await ensureChatWorktree('plain'), true)
+  assert.equal(await ensureChatWorktree('marked'), true)
+  assert.deepEqual(
+    restores.map((input) => input.branchName),
+    ['fix-login'],
   )
 })
 

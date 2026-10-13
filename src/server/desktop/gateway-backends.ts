@@ -17,6 +17,7 @@ import {
 import { ensureSkillInstalled } from '../../main/builtin-skills'
 import { createGitWorktree, getGitRepoRoot } from '../../main/git'
 import { startedDependencyInstall } from '../../main/worktree-pool/dependency-install'
+import { worktreeBranchPrefix } from '../../main/worktree-branch-prefix'
 import { readBranchName, resolveTrunk } from '../../main/git-branch-span'
 import { getGitBranches } from '../../main/git-read-models'
 import { listGitWorktrees } from '../../main/git-worktree-list'
@@ -121,12 +122,13 @@ export function createServerGatewayBackends(deps: GatewayBackendDeps): Automatio
     // phone, it only answers what a paired device asks.
     mobileControl: createMobileControl(() => deps.getWorkspaceSyncSnapshot()),
     // Agent-at-launch worktrees (agent.launch isolation + every connector
-    // launch): derive the `agent/<slug>` branch and container the Worktree
-    // manager uses, then create through the shared git helper. Mirrors
-    // WorkspaceManager's own worktree-agent spawn (copyIncludedFiles carries
-    // the repo's worktree-include set into the isolated tree).
+    // launch): derive the `<prefix>/<slug>` branch (the person's branch prefix)
+    // and container the Worktree manager uses, then create through the shared
+    // git helper. Mirrors WorkspaceManager's own worktree-agent spawn
+    // (copyIncludedFiles carries the repo's worktree-include set into the
+    // isolated tree).
     createAgentWorktree: async ({ workspaceRoot, name, baseRef }) => {
-      const paths = agentWorktreePaths(workspaceRoot, name)
+      const paths = agentWorktreePaths(workspaceRoot, name, worktreeBranchPrefix())
       if (!paths) return { error: `"${name}" does not reduce to a usable worktree name.` }
       const named = baseRef?.trim()
       const created = await createGitWorktree({

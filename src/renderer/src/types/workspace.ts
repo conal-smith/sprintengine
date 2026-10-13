@@ -343,6 +343,13 @@ export type AppSettings = {
    */
   projectUsage?: ProjectUsageMap
   /**
+   * What new worktree branches start with (Settings ▸ Worktrees): `agent`
+   * unless changed, `''` for no prefix. A read model of main's launch
+   * settings, which name a worktree with no window open too; never chosen
+   * reads as `agent` (`effectiveWorktreeBranchPrefix`).
+   */
+  worktreeBranchPrefix: string
+  /**
    * The model (and reasoning-effort level) an agent spawn last ran on, stored
    * with the CLI it was picked for so a later CLI switch cannot leak a stale
    * model across CLIs. Honored only when the spawn's effective CLI matches;

@@ -292,7 +292,8 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   `new-chat-worktree` takes `worktree: true` beside `newChat: true` and starts
   the chat in a worktree of its own, cut exactly as New chat here cuts one with
   Worktree on: from the worktree pool where this process keeps one, on the
-  project's default branch, as `agent/chat-<id>` under the project's worktree
+  project's default branch, as `<prefix>/chat-<id>` (the branch prefix from
+  Settings ▸ Worktrees, `agent` unless changed) under the project's worktree
   container, and filed under the project it was cut from, so the chat lists here
   as if it had been started here. A project that is not a git repository, or a
   folder on an SSH machine, is refused with `worktree_unavailable` rather than

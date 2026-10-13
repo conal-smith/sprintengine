@@ -3,12 +3,14 @@ import type {
   AgentWorktreeCleanupInput,
   AgentWorktreeCleanupReport,
 } from '../shared/ipc/git'
+import { isStudioBranch, studioBranchPrefixes } from '../shared/worktree-branch'
 import { repoRootFromWorktreePath } from '../shared/worktree-paths'
 import type { GitCommandResult, GitWorktreeEntry } from './git'
 import { normalizeComparablePath, pathExists, runGitCommand } from './git-utils'
 import { listGitWorktrees } from './git-worktree-list'
 import { resolveRepoRoot } from './git-worktree-validation'
 import { lockAgentWorktree, relockWorktree } from './agent-worktree-lock'
+import { worktreeBranchPrefix } from './worktree-branch-prefix'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import type { WorktreePoolReturnInput, WorktreePoolSweepEntry } from './worktree-pool/worktree-pool-service'
 import {
@@ -31,9 +33,14 @@ import {
  *
  * A worktree is removed only when ALL of these hold:
  *
- * 1. **It is an agent worktree.** Its branch is `agent/<slug>` and it lives in
- *    the app's own worktree container (`.sprintengine-worktrees`). Every other
- *    worktree goes by the stricter rules for other worktrees below.
+ * 1. **It is an agent worktree.** It lives in the app's own worktree container
+ *    (`.sprintengine-worktrees`) and is on one of Studio's branches: under the
+ *    person's branch prefix or under `agent/`, the prefix there was before it
+ *    could be chosen (`isStudioBranch`). With no prefix a branch says nothing
+ *    about who made it, so a worktree on any other branch is an agent's only
+ *    when it carries this profile's agent lock, which only Studio places, as
+ *    it makes one. Every other worktree goes by the stricter rules for other
+ *    worktrees below.
  * 2. **Nothing uses it.** No path the caller protects — every workspace's
  *    folder and worktree, every agent still holding one — and no live terminal
  *    session sits in it. Paths are compared with symlinks resolved on both
@@ -69,8 +76,8 @@ import {
  *    ancestry rule alone decides, and a squash-merged branch is kept.
  *    An agent worktree nothing uses is taken unmerged too (owner ruling
  *    2026-10-08: a settled chat counts as deleted): its commits stay on its
- *    `agent/` branch, which the branch cleanup below never deletes while
- *    unmerged, exactly as a pool slot's do when the pool takes it back.
+ *    branch, which the branch cleanup below never deletes while unmerged,
+ *    exactly as a pool slot's do when the pool takes it back.
  * 8. **Nothing git does not show would be lost.** No tracked file is hidden
  *    from `status` by `--assume-unchanged` or `--skip-worktree`, and every
  *    ignored file is either rebuildable output (dependencies, build output,
@@ -97,7 +104,7 @@ import {
  * - **Unmerged work goes too, after a week unused**
  *   (`UNMERGED_WORKTREE_MIN_IDLE_MS`), when its HEAD is on a branch, or on a
  *   commit some branch or remote branch holds. Removing a worktree never
- *   deletes its branch (this sweep deletes only merged `agent/` branches), so
+ *   deletes its branch (this sweep deletes only Studio's merged branches), so
  *   every commit stays where it was and the branch can be checked out again;
  *   what a removal could lose (uncommitted, hidden and ignored work) keeps it
  *   by rules 6 and 8 as before. A detached HEAD on commits no ref holds is kept.
@@ -114,7 +121,9 @@ import {
  * supplies what the app's records use, and reports what the pool did.
  *
  * **Merged agent branches** are deleted afterwards (owner ruling 2026-10-05):
- * an `agent/` branch that no worktree has checked out, that no record of the
+ * one of Studio's branches (under the person's prefix or `agent/`; never one
+ * with no prefix, since nothing records which of those Studio made) that no
+ * worktree has checked out, that no record of the
  * app's names (`keepBranches`: a chat is restored from its branch), and whose
  * work is on the default branch by rule 7 holds nothing anyone still needs.
  * Git itself refuses to delete a branch some worktree has checked out at that
@@ -149,9 +158,10 @@ export type AgentWorktreeCleanupDeps = {
    * A settled chat counts as deleted, and its history keeps nothing.
    */
   knownWorkspaceIds?: () => Iterable<string> | null
+  /** The person's worktree branch prefix; the process's own (`worktree-branch-prefix.ts`) unless given. */
+  branchPrefix?: () => string
 }
 
-const AGENT_BRANCH_PREFIX = 'agent/'
 const DEFAULT_REF_CANDIDATES = ['origin/main', 'origin/master', 'main', 'master']
 /** How long git must have left a worktree alone before the sweep may take it. */
 export const AGENT_WORKTREE_MIN_IDLE_MS = 60 * 60_000
@@ -254,8 +264,11 @@ export async function cleanupAgentWorktrees(
   // A slot the pool's records were not yet read for would look like any other
   // agent worktree here, and be removed from under its lease.
   await pool?.load()
+  // Read once per sweep, so every decision in it goes by the same prefix.
+  const branchPrefix = (deps.branchPrefix ?? worktreeBranchPrefix)()
   const isAgentWorktree = (worktree: GitWorktreeEntry): boolean =>
-    worktree.branch?.startsWith(AGENT_BRANCH_PREFIX) === true && repoRootFromWorktreePath(worktree.path) !== null
+    repoRootFromWorktreePath(worktree.path) !== null &&
+    (isStudioBranch(worktree.branch, branchPrefix) || worktree.agentLock === 'this-profile')
   // Git lists the main working tree first, whichever checkout asked: a sweep
   // run from a workspace opened on a worktree still never takes the main one.
   const candidates = worktrees.filter(
@@ -453,7 +466,15 @@ export async function cleanupAgentWorktrees(
 
   const deletedBranches =
     defaultRef && input.keepBranches
-      ? await deleteMergedAgentBranches(root, defaultRef, new Set(input.keepBranches), dryRun, runGit, log)
+      ? await deleteMergedAgentBranches(
+          root,
+          defaultRef,
+          branchPrefix,
+          new Set(input.keepBranches),
+          dryRun,
+          runGit,
+          log,
+        )
       : []
   return { repoRoot: root, defaultRef, entries, deletedBranches, dryRun }
 }
@@ -475,8 +496,9 @@ function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
 }
 
 /**
- * Delete every `agent/` branch whose work is already on the default branch and
- * that no worktree has checked out. "On the default branch" is rule 7: no
+ * Delete every one of Studio's branches (`studioBranchPrefixes`: the person's
+ * prefix and `agent/`) whose work is already on the default branch and that no
+ * worktree has checked out. "On the default branch" is rule 7: no
  * commit the default branch lacks, or changes the default branch already holds
  * by content (a squash merge). Only `git branch -D` can delete a squash-merged
  * branch, so the merge test is ours; git still refuses, by itself, a branch a
@@ -486,6 +508,7 @@ function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
 async function deleteMergedAgentBranches(
   root: string,
   defaultRef: string,
+  branchPrefix: string,
   keep: ReadonlySet<string>,
   dryRun: boolean,
   runGit: NonNullable<AgentWorktreeCleanupDeps['runGit']>,
@@ -494,13 +517,14 @@ async function deleteMergedAgentBranches(
   const branches = await runGit(root, [
     'for-each-ref',
     '--format=%(refname:short)%00%(worktreepath)',
-    'refs/heads/agent/',
+    ...studioBranchPrefixes(branchPrefix).map((namespace) => `refs/heads/${namespace}`),
   ])
   if (!branches.ok) return []
   const deleted: string[] = []
   for (const line of branches.stdout.split(/\r?\n/)) {
     const [branch, worktreePath] = line.split('\0')
-    if (!branch?.startsWith(AGENT_BRANCH_PREFIX) || worktreePath || keep.has(branch)) continue
+    // Asked again of each name git lists: the patterns are git's, the rule is ours.
+    if (!branch || !isStudioBranch(branch, branchPrefix) || worktreePath || keep.has(branch)) continue
     const unique = await runGit(root, ['rev-list', '--count', `${defaultRef}..refs/heads/${branch}`])
     const uniqueCommits = unique.ok ? Number.parseInt(unique.stdout.trim(), 10) : Number.NaN
     if (!Number.isFinite(uniqueCommits)) continue

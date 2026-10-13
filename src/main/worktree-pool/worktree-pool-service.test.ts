@@ -79,10 +79,12 @@ function makeService(
     git?: SlotGitRunner
     fetchBackoffMs?: number
     userData?: string
+    branchPrefix?: string
   } = {},
 ) {
   const live = options.live ?? []
   const clock = { offset: 0 }
+  const prefix = options.branchPrefix
   const service = createWorktreePoolService({
     store: createPoolStore(options.userData ?? userData),
     ...(options.git ? { git: options.git } : {}),
@@ -95,6 +97,7 @@ function makeService(
     instanceId: options.instanceId,
     measure: options.measure ?? fakeMeasure(GB),
     ...(options.knownWorkspaceIds ? { knownWorkspaceIds: options.knownWorkspaceIds } : {}),
+    ...(prefix !== undefined ? { branchPrefix: () => prefix } : {}),
   })
   return { service, live, clock }
 }
@@ -219,6 +222,38 @@ test('a branch named agent refuses the lease up front, saying so, and makes no s
   assert.equal(leased.ok, false)
   assert.equal(leased.ok ? null : leased.reason, 'branch-exists')
   assert.match(leased.ok ? '' : leased.message, /A branch named “agent” in this repository blocks/)
+  assert.equal(await exists(join(container, 'pool-01')), false, 'no slot was made for a lease that cannot finish')
+})
+
+test('a lease by name goes on the person’s branch prefix', async () => {
+  const harness = makeService({ branchPrefix: 'jane/wip' })
+  const leased = await lease(harness, 'fix-login')
+  assert.equal(leased.branch, 'jane/wip/fix-login')
+  assert.equal(await git(leased.path, 'branch', '--show-current'), 'jane/wip/fix-login')
+})
+
+test('with no prefix, a lease by name goes on the name alone', async () => {
+  const harness = makeService({ branchPrefix: '' })
+  const leased = await lease(harness, 'fix-login')
+  assert.equal(leased.branch, 'fix-login')
+})
+
+test('a lease that names its branch is put on that branch, whatever the prefix', async () => {
+  const harness = makeService({ branchPrefix: 'feat' })
+  const leased = await harness.service.lease({ repoRoot: repo, name: 'agent/fix-login', branch: 'agent/fix-login' })
+  assert.ok(leased.ok, leased.ok ? '' : leased.message)
+  assert.equal(leased.branch, 'agent/fix-login')
+})
+
+test('a branch named like the first part of the prefix refuses the lease up front, naming it', async () => {
+  await git(repo, 'branch', 'jane')
+  const harness = makeService({ branchPrefix: 'jane/wip' })
+  const leased = await harness.service.lease({ repoRoot: repo, name: 'fix-login', owner: 'agent-fix-login' })
+  assert.equal(leased.ok ? null : leased.reason, 'branch-exists')
+  assert.match(
+    leased.ok ? '' : leased.message,
+    /A branch named “jane” in this repository blocks Studio’s jane\/… branches/,
+  )
   assert.equal(await exists(join(container, 'pool-01')), false, 'no slot was made for a lease that cannot finish')
 })
 

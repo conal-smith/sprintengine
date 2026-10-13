@@ -35,6 +35,7 @@ import { startedDependencyInstall } from '../../main/worktree-pool/dependency-in
 import { installGitHostResolver, withGitHost } from '../../main/git-run'
 import { createHostRegistry, installHostRegistry } from '../../main/hosts/host-registry'
 import { createAgentLaunchSettingsStore } from '../../main/launch-settings-store'
+import { setWorktreeBranchPrefixReader } from '../../main/worktree-branch-prefix'
 import { readDiscoveredCliModelCatalogs } from '../../main/model-discovery/service'
 import { listPluginRegistryEntries } from '../../main/plugin-registry-instance'
 import { powerActivity } from '../../main/power-activity'
@@ -169,6 +170,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     resolveUserDataDir: () => platform.paths.dataDir(),
     logDiagnostic: logDiagnostic('agents'),
   })
+  // The prefix every worktree branch this process names starts with, and the
+  // ones its cleanup recognises: read from the record on each use, so a
+  // change in Settings ▸ Worktrees names the next one.
+  setWorktreeBranchPrefixReader(() => effectiveAgentLaunchSettings(agentLaunchSettings.get()).worktreeBranchPrefix)
 
   // The machines this computer offers (shared/execution-host.ts): this one,
   // and on Windows each WSL distribution. One registry, installed for the whole

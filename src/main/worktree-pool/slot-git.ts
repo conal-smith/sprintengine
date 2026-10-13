@@ -2,6 +2,7 @@ import { lstat, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { GitCommandResult } from '../git'
 import { runGitCommand, type GitRunOptions } from '../git-run'
+import { branchNamespaceParents } from '../../shared/worktree-branch'
 
 /**
  * The git a pool slot needs, and nothing a slot does not. Every call goes
@@ -432,19 +433,27 @@ export async function resolveAgentForkBase(run: SlotGitRunner, repoRoot: string)
 }
 
 /**
- * Said when a branch named `agent` stands where every agent branch would go.
- * Git keeps `agent/<name>` as a file under a folder `agent`, and a branch
- * named `agent` is a file by that name, so it refuses each one ("cannot lock
- * ref … 'refs/heads/agent' exists"). Studio says so before it tries rather
- * than naming its branches something else: what it cleans up afterwards is
- * only ever an `agent/` branch.
+ * Said when a branch stands where a worktree branch would go: `agent` in the
+ * way of `agent/<name>`, or `jane` in the way of `jane/wip/<name>`. Git keeps
+ * `agent/<name>` as a file under a folder `agent`, and a branch named `agent`
+ * is a file by that name, so it refuses each one ("cannot lock ref …
+ * 'refs/heads/agent' exists"). Studio says so before it tries rather than
+ * naming the branch something else: the cleanup recognises a branch it made
+ * only by its prefix, so a branch under another one would be left behind.
  */
-export const AGENT_BRANCH_BLOCKED_MESSAGE =
-  'A branch named “agent” in this repository blocks Studio’s agent/… branches. Rename it (git branch -m agent <new-name>) to start chats in a worktree.'
+export function branchBlockedMessage(blocker: string): string {
+  return `A branch named “${blocker}” in this repository blocks Studio’s ${blocker}/… branches. Rename it (git branch -m ${blocker} <new-name>), or choose another branch prefix in Settings ▸ Worktrees, to start chats in a worktree.`
+}
 
-/** Whether a branch named `agent` blocks `branch`, one of Studio's `agent/…` branches. */
-export async function agentBranchBlocked(run: SlotGitRunner, repoRoot: string, branch: string): Promise<boolean> {
-  if (!branch.startsWith('agent/')) return false
-  const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', 'refs/heads/agent'])
-  return found.ok && found.stdout.trim().length > 0
+/**
+ * The existing branch that stops git making `branch`, one of its parents
+ * (`branchNamespaceParents`), or null when none does. One `rev-parse` per
+ * parent, the shortest first: a branch under the default prefix asks one.
+ */
+export async function branchBlockedBy(run: SlotGitRunner, repoRoot: string, branch: string): Promise<string | null> {
+  for (const parent of branchNamespaceParents(branch)) {
+    const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${parent}`])
+    if (found.ok && found.stdout.trim().length > 0) return parent
+  }
+  return null
 }

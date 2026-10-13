@@ -11,7 +11,7 @@ import { join } from 'path'
 import { test } from 'vitest'
 import type { McpServerConfig } from '../shared/agent-state'
 import type { AgentLaunchSettings, AgentLaunchSettingsRecord } from '../shared/launch-settings'
-import { parseAgentLaunchSettingsRecord } from '../shared/launch-settings'
+import { effectiveAgentLaunchSettings, parseAgentLaunchSettingsRecord } from '../shared/launch-settings'
 import { createAgentLaunchSettingsStore } from './launch-settings-store'
 
 const FILE_NAME = 'agent-launch-settings.json'
@@ -29,6 +29,7 @@ function settings(overrides: Partial<AgentLaunchSettings> = {}): AgentLaunchSett
     cliPermissionPresets: {},
     cliPermissionModes: {},
     projectUsage: {},
+    worktreeBranchPrefix: null,
     ...overrides,
   }
 }
@@ -207,6 +208,27 @@ test('an update is normalized fail-soft: a malformed field is dropped, not the p
     assert.equal(result.record.settings.lastAgentSpawnPermissionPreset, null, 'an unknown preset is not written')
     assert.equal(result.record.settings.lastSelectedCli, 'codex')
     assert.equal(store.update('not a patch', 'ui').changed, false, 'a non-object patch changes nothing')
+    await result.persisted
+  })
+})
+
+test('a worktree branch prefix never chosen reads as agent; a chosen one is kept sanitized, empty included', async () => {
+  await withHarness(async (harness) => {
+    const store = harness.create()
+    assert.equal(store.get().worktreeBranchPrefix, null)
+    assert.equal(effectiveAgentLaunchSettings(store.get()).worktreeBranchPrefix, 'agent')
+
+    let result = store.update({ worktreeBranchPrefix: ' /my team//wip.lock/ ' }, 'ui')
+    assert.equal(result.record.settings.worktreeBranchPrefix, 'my-team/wip')
+    result = store.update({ worktreeBranchPrefix: '' }, 'ui')
+    assert.equal(result.record.settings.worktreeBranchPrefix, '', 'no prefix is a choice, not never chosen')
+    assert.equal(effectiveAgentLaunchSettings(result.record.settings).worktreeBranchPrefix, '')
+    await result.persisted
+    assert.equal(harness.create().get().worktreeBranchPrefix, '', 'and it survives a restart')
+
+    assert.equal(store.update({ worktreeBranchPrefix: 42 }, 'ui').changed, false, 'a malformed prefix is dropped')
+    result = store.update({ worktreeBranchPrefix: null }, 'ui')
+    assert.equal(effectiveAgentLaunchSettings(result.record.settings).worktreeBranchPrefix, 'agent')
     await result.persisted
   })
 })

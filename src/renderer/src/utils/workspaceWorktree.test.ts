@@ -238,21 +238,27 @@ test('workspaceWorktree', async () => {
   }
 
   // 29. Agent worktree paths land under the same shared container as the Worktree
-  //     manager and connector chats, on an `agent/<slug>` branch.
+  //     manager and connector chats, on a `<prefix>/<slug>` branch, or the
+  //     slug alone with no prefix.
   {
-    const paths = agentWorktreePaths('/Users/example/project', 'Fix Payments')
+    const paths = agentWorktreePaths('/Users/example/project', 'Fix Payments', 'agent')
     assert.deepEqual(paths, {
       containerPath: '/Users/example/.sprintengine-worktrees/project',
       destinationPath: '/Users/example/.sprintengine-worktrees/project/fix-payments',
       slug: 'fix-payments',
       branchName: 'agent/fix-payments',
     })
+    assert.equal(
+      agentWorktreePaths('/Users/example/project', 'Fix Payments', 'jane/wip')?.branchName,
+      'jane/wip/fix-payments',
+    )
+    assert.equal(agentWorktreePaths('/Users/example/project', 'Fix Payments', '')?.branchName, 'fix-payments')
   }
 
   // 30. A name that reduces to an empty slug → null (caller surfaces the error
   //     instead of creating a worktree at the container root).
   {
-    assert.equal(agentWorktreePaths('/Users/example/project', ' // '), null)
+    assert.equal(agentWorktreePaths('/Users/example/project', ' // ', 'agent'), null)
   }
 
   // --- repoRootFromWorktreePath / workspaceProjectRoot ---
@@ -262,7 +268,7 @@ test('workspaceWorktree', async () => {
   {
     const repo = '/Users/example/project'
     assert.equal(repoRootFromWorktreePath(`${worktreeContainerPath(repo)}/nova-x1`), repo)
-    assert.equal(repoRootFromWorktreePath(agentWorktreePaths(repo, 'Fix Payments')!.destinationPath), repo)
+    assert.equal(repoRootFromWorktreePath(agentWorktreePaths(repo, 'Fix Payments', 'agent')!.destinationPath), repo)
     // A slug may itself contain `/` (slugifyWorktreeName allows it); everything
     // past `<repo>` is slug and simply falls away.
     assert.equal(repoRootFromWorktreePath(`${worktreeContainerPath(repo)}/feat/x`), repo)

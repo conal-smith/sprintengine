@@ -35,6 +35,7 @@ import {
   type ExecutionHostSettings,
 } from './execution-host'
 import { normalizeProjectUsageMap, withProjectUse, type ProjectUsageMap } from './project-frecency'
+import { effectiveWorktreeBranchPrefix, sanitizeWorktreeBranchPrefix } from './worktree-branch'
 
 // 2: the per-CLI "run through WSL" switch left the CLI runtime, and each
 // machine this computer offers (a WSL distribution) got settings of its own in
@@ -104,6 +105,15 @@ export type AgentLaunchSettings = {
    * started from the phone with no window open.
    */
   projectUsage: ProjectUsageMap
+  /**
+   * What every worktree branch Studio names starts with (Settings ▸
+   * Worktrees): `feat` names `feat/<name>`, and `''` names the branch `<name>`
+   * alone. `null` = never chosen, which reads as `agent`, the prefix there
+   * was before it could be chosen (`effectiveWorktreeBranchPrefix`). Kept
+   * here because main names a launch's worktree with no window open, as it
+   * reads every other launch input; held sanitized (`worktree-branch.ts`).
+   */
+  worktreeBranchPrefix: string | null
 }
 
 /** Names the process boundary a write came through, never the human. */
@@ -145,6 +155,8 @@ export type AgentLaunchSettingsRecord = {
  * - `projectUse` records one use of the project at that folder, at `at`
  *   (epoch milliseconds). It adds to what main holds rather than replacing it,
  *   so two windows and the phone each starting a chat all count.
+ * - `worktreeBranchPrefix` replaces the prefix, sanitized; `null` returns it
+ *   to "never chosen", which reads as `agent`.
  */
 export type AgentLaunchSettingsPatch = {
   cliRuntimes?: Record<string, AgentLaunchCliRuntimeSettings | null>
@@ -162,6 +174,7 @@ export type AgentLaunchSettingsPatch = {
   cliPermissionPresets?: Record<string, CliPermissionPreset | null>
   cliPermissionModes?: Record<string, string | null>
   projectUse?: { folderPath: string; at: number }
+  worktreeBranchPrefix?: string | null
 }
 
 /**
@@ -229,10 +242,11 @@ export const DEFAULT_AGENT_SPAWN_PERMISSION_PRESET: CliPermissionPreset = DEFAUL
 /** The launch settings with every never-chosen value read as the app default. */
 export type EffectiveAgentLaunchSettings = Omit<
   AgentLaunchSettings,
-  'lastSelectedCli' | 'lastAgentSpawnPermissionPreset'
+  'lastSelectedCli' | 'lastAgentSpawnPermissionPreset' | 'worktreeBranchPrefix'
 > & {
   lastSelectedCli: string
   lastAgentSpawnPermissionPreset: CliPermissionPreset
+  worktreeBranchPrefix: string
 }
 
 /**
@@ -246,6 +260,7 @@ export function effectiveAgentLaunchSettings(settings: AgentLaunchSettings): Eff
     ...settings,
     lastSelectedCli: settings.lastSelectedCli || DEFAULT_AGENT_LAUNCH_CLI,
     lastAgentSpawnPermissionPreset: settings.lastAgentSpawnPermissionPreset ?? DEFAULT_AGENT_SPAWN_PERMISSION_PRESET,
+    worktreeBranchPrefix: effectiveWorktreeBranchPrefix(settings.worktreeBranchPrefix),
   }
 }
 
@@ -310,6 +325,7 @@ export function emptyAgentLaunchSettings(): AgentLaunchSettings {
     cliPermissionPresets: {},
     cliPermissionModes: {},
     projectUsage: {},
+    worktreeBranchPrefix: null,
   }
 }
 
@@ -339,6 +355,11 @@ export function normalizeAgentLaunchHosts(value: unknown): AgentLaunchSettings['
 
 function normalizeLastSelectedCli(value: unknown): string | null {
   return typeof value === 'string' && value ? value : null
+}
+
+/** A chosen prefix, sanitized (`''` is a choice: no prefix); anything else is never chosen. */
+function normalizeWorktreeBranchPrefix(value: unknown): string | null {
+  return typeof value === 'string' ? sanitizeWorktreeBranchPrefix(value) : null
 }
 
 /**
@@ -403,6 +424,7 @@ export function normalizeAgentLaunchSettings(raw: unknown): AgentLaunchSettings 
     cliPermissionPresets: normalizeCliPermissionPresets(raw.cliPermissionPresets),
     cliPermissionModes: normalizeCliPermissionModes(raw.cliPermissionModes),
     projectUsage: normalizeProjectUsageMap(raw.projectUsage),
+    worktreeBranchPrefix: normalizeWorktreeBranchPrefix(raw.worktreeBranchPrefix),
   }
 }
 
@@ -515,6 +537,9 @@ export function normalizeAgentLaunchSettingsPatch(raw: unknown): AgentLaunchSett
   ) {
     patch.projectUse = { folderPath: raw.projectUse.folderPath, at: raw.projectUse.at }
   }
+  if (raw.worktreeBranchPrefix === null || typeof raw.worktreeBranchPrefix === 'string') {
+    patch.worktreeBranchPrefix = normalizeWorktreeBranchPrefix(raw.worktreeBranchPrefix)
+  }
   return patch
 }
 
@@ -573,6 +598,7 @@ export function applyAgentLaunchSettingsPatch(
   if (patch.projectUse) {
     next.projectUsage = withProjectUse(next.projectUsage, patch.projectUse.folderPath, patch.projectUse.at)
   }
+  if (patch.worktreeBranchPrefix !== undefined) next.worktreeBranchPrefix = patch.worktreeBranchPrefix
   return next
 }
 

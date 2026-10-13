@@ -11,7 +11,14 @@ const REPO = '/code/app'
 const POOL = '/code/.sprintengine-worktrees/app'
 
 const fixtures = vi.hoisted(() => ({
-  state: { workspaces: [] as unknown[] },
+  state: {
+    workspaces: [] as unknown[],
+    appSettings: { worktreeBranchPrefix: 'agent' },
+    setWorktreeBranchPrefix: (prefix: string) => {
+      fixtures.prefixes.push(prefix)
+    },
+  },
+  prefixes: [] as string[],
 }))
 vi.mock('../../store/workspaceStore', () => {
   const useWorkspaceStore = (select: (state: typeof fixtures.state) => unknown) => select(fixtures.state)
@@ -130,6 +137,8 @@ beforeEach(() => {
   calls.actions.length = 0
   calls.removed.length = 0
   opened.length = 0
+  fixtures.prefixes.length = 0
+  fixtures.state.appSettings.worktreeBranchPrefix = 'agent'
   fixtures.state.workspaces = [
     { id: 'w1', name: 'Fix the login redirect loop', folderPath: `${POOL}/pool-01`, agents: {} },
   ]
@@ -532,4 +541,35 @@ test('opened again, the page shows what it last read at once and measures only s
     await Promise.resolve()
   })
   expect(calls.inventory.map((input) => input.measure)).toEqual([false])
+})
+
+test('the branch prefix names the branch it makes as it is typed, and is saved sanitized when left', async () => {
+  await render()
+  const input = host.querySelector<HTMLInputElement>('input[placeholder="No prefix"]')!
+  const example = document.getElementById(input.getAttribute('aria-describedby')!)!
+  expect(input.value).toBe('agent')
+  expect(example.textContent).toBe('New worktrees are named agent/fix-login')
+
+  const type = async (value: string) =>
+    act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setValue.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  await type('my team//')
+  expect(example.textContent).toBe('New worktrees are named my-team/fix-login')
+  // Nothing is saved while typing.
+  expect(fixtures.prefixes).toEqual([])
+  await act(async () => {
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  })
+  expect(fixtures.prefixes).toEqual(['my-team'])
+  expect(input.value).toBe('my-team')
+
+  await type('')
+  expect(example.textContent).toBe('New worktrees are named fix-login, with no prefix')
+  await act(async () => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })
+  expect(fixtures.prefixes).toEqual(['my-team', ''])
 })
