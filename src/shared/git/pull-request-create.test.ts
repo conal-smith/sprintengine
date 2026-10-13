@@ -6,6 +6,8 @@ import {
   createPullRequestReadiness,
   forgeOfRemote,
   newPullRequestPageUrl,
+  prefilledPullRequestPage,
+  pullRequestNoun,
   type CreatePullRequestFacts,
 } from './pull-request-create'
 
@@ -82,4 +84,59 @@ test('a remote names its forge by host, and the forges the app does not drive op
     'https://bitbucket.org/acme/app/pull-requests/new?source=feature%2Fmarks&dest=main',
   )
   assert.equal(newPullRequestPageUrl(forgeOfRemote('git@github.com:acme/app.git')!, 'main', head), null)
+})
+
+test('a forge page carries the confirmed title and description where the forge reads them', () => {
+  const text = { title: 'feat: marks & "more"', body: 'Line one\nLine two' }
+  assert.deepEqual(
+    prefilledPullRequestPage(forgeOfRemote('git@gitlab.com:acme/app.git')!, 'main', 'feature/marks', text),
+    {
+      url: 'https://gitlab.com/acme/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fmarks&merge_request%5Btarget_branch%5D=main&merge_request%5Btitle%5D=feat%3A%20marks%20%26%20%22more%22&merge_request%5Bdescription%5D=Line%20one%0ALine%20two',
+      descriptionFilled: true,
+    },
+  )
+  // Gitea reads `title` and `body`; Forgejo ignores them, and a host does not
+  // say which it runs, so the description is not counted as delivered.
+  assert.deepEqual(
+    prefilledPullRequestPage(forgeOfRemote('https://codeberg.org/acme/app.git')!, 'main', 'feature/marks', text),
+    {
+      url: 'https://codeberg.org/acme/app/compare/main...feature%2Fmarks?title=feat%3A%20marks%20%26%20%22more%22&body=Line%20one%0ALine%20two',
+      descriptionFilled: false,
+    },
+  )
+  assert.deepEqual(
+    prefilledPullRequestPage(forgeOfRemote('git@bitbucket.org:acme/app.git')!, 'main', 'feature/marks', text),
+    {
+      url: 'https://bitbucket.org/acme/app/pull-requests/new?source=feature%2Fmarks&dest=main',
+      descriptionFilled: false,
+    },
+  )
+  assert.equal(
+    prefilledPullRequestPage(forgeOfRemote('git@gitlab.com:acme/app.git')!, 'main', 'feature/marks', {
+      title: 'x',
+      body: '',
+    })?.descriptionFilled,
+    true,
+    'an empty description has nothing to lose',
+  )
+  assert.equal(
+    prefilledPullRequestPage(forgeOfRemote('git@github.com:acme/app.git')!, 'main', 'feature/marks', text),
+    null,
+  )
+})
+
+test('a description too long for an address is left out of it, and the title still goes', () => {
+  const page = prefilledPullRequestPage(forgeOfRemote('git@gitlab.com:acme/app.git')!, 'main', 'feature/marks', {
+    title: 'feat: marks',
+    body: 'x'.repeat(20_000),
+  })
+  assert.equal(page?.descriptionFilled, false)
+  assert.ok(page?.url.endsWith('&merge_request%5Btitle%5D=feat%3A%20marks'))
+})
+
+test('GitLab says merge request; every other forge says pull request', () => {
+  assert.equal(pullRequestNoun('gitlab'), 'merge request')
+  assert.equal(pullRequestNoun('gitea'), 'pull request')
+  assert.equal(pullRequestNoun('github'), 'pull request')
+  assert.equal(pullRequestNoun(null), 'pull request')
 })

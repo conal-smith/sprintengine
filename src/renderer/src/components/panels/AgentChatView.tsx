@@ -3284,6 +3284,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
             onSettled: () => setCreatePullRequestAsk((count) => count + 1),
             onHoldChange: setCreatePullRequestHeld,
             ready: createPullRequestState?.readiness.ready === true,
+            forge: createPullRequestState?.forge ?? null,
           }
         : null,
     [createPullRequestCwd, createPullRequestState, createPullRequestHeld, workspaceId, agentId],

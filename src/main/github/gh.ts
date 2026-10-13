@@ -73,6 +73,12 @@ export interface GhRunOptions {
    * again. Only fixed variable names belong here, never a value.
    */
   unsetEnv?: readonly string[]
+  /**
+   * Variables set for the child on top of its environment, such as a CLI's
+   * own "never prompt" switch. Fixed names and fixed values only, never a
+   * token: anything here is visible to every process the CLI starts.
+   */
+  setEnv?: Readonly<Record<string, string>>
 }
 
 export interface GhRunner {
@@ -96,6 +102,13 @@ export type GhSpawn = (
 ) => Promise<{ stdout: string; stderr: string }>
 
 export type GhRunnerEnvironment = {
+  /**
+   * The host CLI this runner drives: `gh` by default. GitLab's `glab` and
+   * Gitea's `tea` are found and spawned exactly as gh is (the login-shell
+   * PATH on macOS and Linux, the resolved `.exe` on Windows), so the chat's
+   * Create PR reaches them however they were installed.
+   */
+  binary?: string
   spawn?: GhSpawn
   /** `process.env.SHELL` by default; the person's shell, asked once for its PATH. */
   shell?: string | undefined
@@ -129,6 +142,7 @@ export function createDefaultGhRunner(environment: GhRunnerEnvironment = {}): De
   const platform = environment.platform ?? process.platform
   const resolveWindowsProgram = environment.resolveWindowsProgram ?? ((name) => resolveWindowsProgramOnPath(name))
   const find = environment.findExecutable ?? findExecutable
+  const binary = environment.binary ?? 'gh'
   // The process's one login-shell lookup, shared with CLI detection: a second
   // shell would only print the same PATH again. A runner given its own spawn or
   // shell asks that shell through that spawn instead, so a test sees every
@@ -156,9 +170,9 @@ export function createDefaultGhRunner(environment: GhRunnerEnvironment = {}): De
     // before PATH, so a `gh.exe` a repository ships would run in its place. The
     // program is resolved on PATH and spawned by its full path instead, and a
     // PATH with no `gh` on it is "not installed" rather than a bare-name spawn.
-    let file = 'gh'
+    let file = binary
     if (platform === 'win32') {
-      const resolved = await resolveWindowsProgram('gh')
+      const resolved = await resolveWindowsProgram(binary)
       if (!resolved) return { found: false, code: -1, stdout: '', stderr: '' }
       file = resolved
     }
@@ -175,7 +189,7 @@ export function createDefaultGhRunner(environment: GhRunnerEnvironment = {}): De
     const pending = (async (): Promise<GhLocation | null> => {
       const loginPath = await loginShellPath.resolve(process.env)
       const directories = searchDirectories(loginPath, process.env.PATH)
-      const file = await find('gh', directories)
+      const file = await find(binary, directories)
       // Run with the PATH it was found on, so the git and credential helpers
       // gh starts are the ones a terminal would give it.
       return file ? { file, path: directories.join(delimiter) } : null
@@ -238,7 +252,7 @@ function ownLoginShellPath(spawn: GhSpawn, shell: string | undefined): LoginShel
 function ghEnv(options: GhRunOptions): NodeJS.ProcessEnv {
   const env = gitSafetyEnv(process.env, options.cwd)
   for (const name of options.unsetEnv ?? []) delete env[name]
-  return env
+  return { ...env, ...options.setEnv }
 }
 
 /** The kill terms for one call, or nothing at all when the caller set no bound. */
@@ -266,21 +280,35 @@ function resultFromSpawnError(error: unknown): GhResult {
 
 /**
  * The shared runner every main-process caller uses. One process-wide instance
- * so "one runner" is literally true — a second `createDefaultGhRunner()` in a
- * call site would be a second spawner's worth of drift waiting to happen.
+ * per binary so "one runner" is literally true — a second
+ * `createDefaultGhRunner()` in a call site would be a second spawner's worth
+ * of drift waiting to happen.
  */
-let shared: DefaultGhRunner | null = null
+const shared = new Map<string, DefaultGhRunner>()
 
 export function sharedGhRunner(): GhRunner {
-  if (!shared) shared = createDefaultGhRunner()
-  return shared
+  return sharedHostCliRunner('gh')
 }
 
 /**
- * Forget where the shared runner found gh. Called with the app's forced
- * re-check of the CLIs (an install, an update, Settings' refresh), which is
- * when a gh installed or moved from a terminal should be seen.
+ * The shared runner for another forge's CLI, `glab` or `tea`: found, cached
+ * and spawned as gh is. Only these fixed names ever reach it.
+ */
+export function sharedHostCliRunner(binary: 'gh' | 'glab' | 'tea'): GhRunner {
+  let runner = shared.get(binary)
+  if (!runner) {
+    runner = createDefaultGhRunner({ binary })
+    shared.set(binary, runner)
+  }
+  return runner
+}
+
+/**
+ * Forget where the shared runners found gh, glab and tea. Called with the
+ * app's forced re-check of the CLIs (an install, an update, Settings'
+ * refresh), which is when a CLI installed or moved from a terminal should be
+ * seen.
  */
 export function forgetSharedGhLocation(): void {
-  shared?.forgetLocation()
+  for (const runner of shared.values()) runner.forgetLocation()
 }

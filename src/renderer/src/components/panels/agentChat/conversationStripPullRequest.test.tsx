@@ -467,3 +467,63 @@ test('a watched pull request says what it waits on, in words, and offers Stop wa
   expect(elsewhere.container.textContent).toContain('PR #12 · Waiting for review')
   await elsewhere.unmount()
 })
+
+test('on GitLab the control says merge request, and a page opened instead says why and keeps the description', async () => {
+  const copied: string[] = []
+  const api = (dom.window as unknown as { api: Record<string, unknown> }).api
+  Object.assign(api, {
+    draftPullRequestText: async () => ({ ok: true, value: { title: 'feat: marks', body: 'Body' }, ms: 1 }),
+    createPullRequestState: async () => ({ branch: 'feature/marks', headSha: 'abc1234def' }),
+    pushForPullRequest: async () => ({ ok: true, pushed: false }),
+    clipboardWriteText: async (text: string) => {
+      copied.push(text)
+    },
+    createPullRequest: async () => ({
+      ok: true,
+      kind: 'page',
+      url: 'https://gitlab.com/acme/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fmarks',
+      note: 'GitLab’s page opened instead. Install glab and run `glab auth login` to open merge requests from here.',
+      descriptionLeftOut: true,
+    }),
+  })
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  useWorkspaceStore.setState((state) => ({
+    ...state,
+    appSettings: { ...state.appSettings, textGeneration: { enabled: true, engine: { cli: 'claude-code', model: '' } } },
+    pluginCatalogEntries: [{ id: 'claude-code' }] as never,
+  }))
+  const { CreatePullRequestControl } = await import('./createPullRequest')
+  let settled = 0
+  const { container, act, unmount } = await mount(
+    <CreatePullRequestControl
+      cwd="/Users/dev/app"
+      conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+      onSettled={() => (settled += 1)}
+      forge="gitlab"
+      ready
+    />,
+  )
+  const button = [...container.querySelectorAll('button')].find((node) => node.textContent?.includes('Create MR'))
+  expect(button?.getAttribute('aria-label')).toBe('Create a merge request from this branch')
+  await act(async () => button?.click())
+  await waitFor(() =>
+    [...dom.window.document.querySelectorAll('h2, h1, [id]')].find(
+      (node) => node.textContent === 'Create a merge request',
+    ),
+  )
+  const title = await waitFor(() => dom.window.document.querySelector<HTMLInputElement>('input[maxlength="300"]'))
+  await waitFor(() => (title.value === 'feat: marks' ? title : null))
+  const create = [...dom.window.document.querySelectorAll('button')].find((node) => node.textContent === 'Create')
+  await act(async () => create?.click())
+  await waitFor(() => (settled > 0 ? true : null))
+  expect(opened).toContain(
+    'https://gitlab.com/acme/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fmarks',
+  )
+  expect(copied).toEqual(['Body'])
+  const note = await waitFor(() => container.querySelector('[data-create-pull-request-note]'))
+  expect(note.textContent).toBe(
+    'GitLab’s page opened instead. Install glab and run `glab auth login` to open merge requests from here. The description is on the clipboard to paste into the page.',
+  )
+  expect(container.querySelector('[data-create-pull-request-error]')).toBe(null)
+  await unmount()
+})

@@ -7,6 +7,7 @@ import type { OverflowMenuItem } from '../../ui/OverflowMenu'
 import { FOCUS_RING_CLASS } from '../../ui/tokens'
 import { ComposerStrip } from '../../workspace/agentComposer/ComposerStrip'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
+import type { PullRequestForge } from '../../../../../shared/git/pr-url'
 import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import { LocalServersStripButton, localServersStripCopy } from '../../workspace/LocalServerMarks'
 import { PullRequestStripButton, stripPullRequestCopy } from '../../workspace/PullRequestMark'
@@ -114,6 +115,8 @@ export function ConversationComposerStrip({
     onHoldChange?: (held: boolean) => void
     /** Whether the checkout reads as ready now; a held failure is dismissed rather than retried when not. */
     ready?: boolean
+    /** The forge the checkout's remote is on: GitLab's control says "Create MR". */
+    forge?: PullRequestForge | null
   } | null
   /**
    * The local servers this conversation's agents linked, and the workspace
@@ -400,6 +403,7 @@ export function ConversationComposerStrip({
               onSettled={createPullRequest.onSettled}
               onHoldChange={createPullRequest.onHoldChange}
               ready={createPullRequest.ready}
+              forge={createPullRequest.forge ?? null}
             />
           ) : (
             <PullRequestStripButton
