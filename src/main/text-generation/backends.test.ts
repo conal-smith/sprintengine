@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import {
   claudeChatTitleInvocation,
   codexChatTitleInvocation,
+  codexMcpListInvocation,
+  codexTextInvocation,
   readClaudeChatTitleStdout,
   readCodexChatTitleOutput,
+  readCodexEnabledMcpServers,
 } from './backends'
 import { test } from 'vitest'
 
@@ -46,6 +49,10 @@ test('backends', async () => {
     assert.deepEqual(args.slice(0, 5), ['exec', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only'])
     assert.deepEqual(args.slice(5, 9), ['--model', 'gpt-5.6-luna', '-c', 'model_reasoning_effort="low"'])
     assert.deepEqual(args.slice(9), [
+      '-c',
+      'features.plugins=false',
+      '-c',
+      'features.apps=false',
       '--output-schema',
       '/tmp/x/schema.json',
       '--output-last-message',
@@ -94,3 +101,59 @@ test('backends', async () => {
   }
   if (failed > 0) throw new Error(`${failed} backends test(s) failed`)
 })
+
+test('codex turns each listed MCP server off by name in one inline table', () => {
+  const { args } = codexChatTitleInvocation({
+    binaryPath: 'codex',
+    model: 'gpt-5.6-luna',
+    schemaPath: '/tmp/x/schema.json',
+    outputPath: '/tmp/x/last-message.txt',
+    mcpServersOff: ['docs', 'my.server', 'say "hi"', 'a\u007fb'],
+  })
+  assert.deepEqual(args.slice(7, 13), [
+    '-c',
+    'features.plugins=false',
+    '-c',
+    'features.apps=false',
+    '-c',
+    // A dot stays inside its quoted key, a quote is escaped, and DEL, which
+    // TOML refuses raw, is written as an escape.
+    'mcp_servers={"docs"={enabled=false},"my.server"={enabled=false},"say \\"hi\\""={enabled=false},"a\\u007fb"={enabled=false}}',
+  ])
+})
+
+test('codex free text turns MCP servers off the same way', () => {
+  const { args } = codexTextInvocation({
+    binaryPath: 'codex',
+    model: 'gpt-5.6-luna',
+    outputPath: '/tmp/out.txt',
+    mcpServersOff: ['docs'],
+  })
+  assert.ok(args.includes('features.plugins=false') && args.includes('features.apps=false'))
+  assert.equal(args[args.indexOf('--json') - 1], 'mcp_servers={"docs"={enabled=false}}')
+})
+
+test('codex lists its MCP servers with plugins and apps off', () => {
+  assert.deepEqual(codexMcpListInvocation('/opt/homebrew/bin/codex'), {
+    file: '/opt/homebrew/bin/codex',
+    args: ['-c', 'features.plugins=false', '-c', 'features.apps=false', 'mcp', 'list', '--json'],
+  })
+})
+
+test('only the servers codex mcp list reports enabled are read', () => {
+  // The shape codex-cli 0.161.0 prints, trimmed to the keys that are read.
+  const stdout = JSON.stringify([
+    { name: 'docs', enabled: true, transport: { type: 'stdio', command: 'docs-mcp' } },
+    { name: 'paused', enabled: false, disabled_reason: null },
+    { name: 'my.server', enabled: true },
+    { enabled: true },
+  ])
+  assert.deepEqual(readCodexEnabledMcpServers(stdout), ['docs', 'my.server'])
+})
+
+test.each(['', 'error: unexpected argument', '{"name":"docs","enabled":true}', 'null'])(
+  'codex mcp list output %j that is not the list reads as no servers',
+  (stdout) => {
+    assert.deepEqual(readCodexEnabledMcpServers(stdout), [])
+  },
+)

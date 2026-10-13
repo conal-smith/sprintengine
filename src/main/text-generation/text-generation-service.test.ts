@@ -127,6 +127,7 @@ test('text-generation-service', async () => {
     const d = deps({
       run: async (input) => {
         d.runs.push(input)
+        if (input.args.includes('mcp')) return ok('[]')
         const outputPath = input.args[input.args.indexOf('--output-last-message') + 1]!
         const schemaPath = input.args[input.args.indexOf('--output-schema') + 1]!
         const schema = JSON.parse(await readFile(schemaPath, 'utf8')) as { required?: string[] }
@@ -137,7 +138,7 @@ test('text-generation-service', async () => {
     })
     const result = await generateChatTitle({ prompt: 'fix the flicker', engine: codexEngine }, d)
     assert.deepEqual(result, { ok: true, value: 'Fix Mobile Sidebar Flicker', ms: 1000 })
-    const call = d.runs[0]!
+    const call = d.runs[1]!
     assert.equal(call.file, '/bin/codex')
     assert.equal(call.args[0], 'exec')
     assert.equal(call.env.ANTHROPIC_API_KEY, 'sk-secret', 'codex has no subscription/API split to guard')
@@ -386,4 +387,74 @@ test('a commit message that breaks the convention it was asked for is a guardrai
     code: 'guardrail',
     message: 'claude-code returned no usable Conventional Commits message.',
   })
+})
+
+// A Codex CLI that answers `codex mcp list --json` with `listing` and every
+// other call with a title, recording each run.
+function codexAnswering(
+  listing: Partial<CommandRun> | (() => never),
+  runs: CommandRunInput[],
+): TextGenerationServiceDeps {
+  return {
+    detect: async (cli) => ({
+      cli,
+      binary: 'codex',
+      installed: true,
+      version: '1.0.0',
+      resolvedPath: '/bin/codex',
+      hostId: 'local',
+      error: null,
+    }),
+    env: () => ({ PATH: '/bin', HOME: '/Users/dev' }),
+    run: async (input) => {
+      runs.push(input)
+      const done = { code: 0, stdout: '', stderr: '', timedOut: false, spawnError: null }
+      if (input.args.includes('mcp')) return typeof listing === 'function' ? listing() : { ...done, ...listing }
+      const outputPath = input.args[input.args.indexOf('--output-last-message') + 1]!
+      await writeFile(outputPath, '{"title":"Fix Mobile Sidebar Flicker"}\n', 'utf8')
+      return done
+    },
+  }
+}
+
+const CODEX_TITLE = { prompt: 'fix the flicker', engine: { cli: 'codex', model: 'gpt-5.6-luna' } }
+
+test('a Codex title runs with every MCP server its config would start turned off', async () => {
+  const runs: CommandRunInput[] = []
+  const listing = JSON.stringify([
+    { name: 'docs', enabled: true },
+    { name: 'my.server', enabled: true },
+    { name: 'paused', enabled: false },
+  ])
+  const result = await generateChatTitle(CODEX_TITLE, codexAnswering({ stdout: listing }, runs))
+  assert.equal(result.ok && result.value, 'Fix Mobile Sidebar Flicker')
+  const [list, exec] = runs
+  assert.deepEqual(list!.args, ['-c', 'features.plugins=false', '-c', 'features.apps=false', 'mcp', 'list', '--json'])
+  assert.equal(list!.file, '/bin/codex')
+  assert.equal(list!.cwd, exec!.cwd, 'the listing reads the same config the call does')
+  assert.deepEqual(list!.env, exec!.env)
+  assert.equal(list!.timeoutMs, 10_000)
+  assert.ok(exec!.args.includes('features.plugins=false') && exec!.args.includes('features.apps=false'))
+  assert.ok(exec!.args.includes('mcp_servers={"docs"={enabled=false},"my.server"={enabled=false}}'))
+})
+
+test.each([
+  ['exits non-zero', { code: 2, stderr: "error: unrecognized subcommand 'mcp'" }],
+  ['times out', { code: null, timedOut: true }],
+  ['cannot be started', { code: null, spawnError: 'spawn /bin/codex EACCES' }],
+  ['prints something that is not the list', { stdout: 'Warning: config\n[' }],
+  [
+    'throws',
+    () => {
+      throw new Error('exploded')
+    },
+  ],
+] as const)('a Codex title still runs, with no MCP override, when the listing %s', async (_, listing) => {
+  const runs: CommandRunInput[] = []
+  const result = await generateChatTitle(CODEX_TITLE, codexAnswering(listing, runs))
+  assert.equal(result.ok && result.value, 'Fix Mobile Sidebar Flicker')
+  const exec = runs[runs.length - 1]!
+  assert.equal(exec.args[0], 'exec')
+  assert.ok(exec.args.includes('features.plugins=false'), 'plugins and apps are off whatever the listing did')
+  assert.ok(!exec.args.some((arg) => arg.startsWith('mcp_servers=')))
 })
