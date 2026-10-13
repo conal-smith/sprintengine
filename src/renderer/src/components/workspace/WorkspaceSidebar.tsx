@@ -154,12 +154,15 @@ import {
   rowHasOpenTerminals,
 } from './sidebar/rowTerminals'
 import { useVisitStamp, type VisitTarget } from './sidebar/useVisitStamp'
+import { useChatJumpHints } from './sidebar/useChatJumpHints'
+import { platformKeybindingsFromApiPlatform } from '../../commands/effectiveKeybindings'
 import { noteChatLeft, noteChatOpened } from '../panels/agentChat/unreadDivider'
 import { onWorkspaceSettledElsewhere, takeWorkspacesSettledElsewhere } from '../../utils/settledElsewhere'
 import { useWindowActive } from '../../utils/windowActivity'
 import {
   AttentionPulse,
   BranchChip,
+  ChatJumpHint,
   ProjectLine,
   MachineRowGlyph,
   ScheduledRunGlyph,
@@ -1158,6 +1161,17 @@ function WorkspaceSidebar({
     () => workspaces.filter((workspace) => !isHiddenFromRail(workspace, moduleOverrides)),
     [workspaces, moduleOverrides],
   )
+
+  // Holding the number keys' modifier labels the rows they open. Off while the
+  // tree is out of sight — collapsed, or under the Extensions section or a
+  // door's rail — where there are no rows on screen to label.
+  const keybindingSettings = useWorkspaceStore((s) => s.appSettings.keybindings)
+  useChatJumpHints({
+    enabled: !sidebarCollapsed && !homeHidden,
+    workspaces: railWorkspaces,
+    keybindings: keybindingSettings,
+    platform: platformKeybindingsFromApiPlatform(window.api?.platform ?? ''),
+  })
 
   // Each paired machine's sessions, read while this rail is the one showing; a
   // machine that is asleep is drawn from its last read. No longer gated on a
@@ -4651,6 +4665,10 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
           +{rowLines.overflow} more {rowLines.overflow === 1 ? 'terminal' : 'terminals'}
         </div>
       ) : null}
+      {/* The number key that opens this row, while its modifier is held.
+          Reads its own hint, so the hints coming and going re-render the
+          rows that carry one and not this whole row's props. */}
+      <ChatJumpHint rowKey={rowKey} />
     </div>
   )
   // The card is this row's hover surface where it has one, so the row's own

@@ -1,8 +1,10 @@
 // The small pieces a sidebar row is built from: the shelf fold row, the
 // attention pulse, row tooltips, the machine and schedule marks, the project
-// line, the branch chip and the working timer.
+// line, the branch chip, the working timer and the number key's hint.
 
-import { MachineGlyph, RowButton, Tooltip, TruncatedText } from '../../ui'
+import { KbdChord, MachineGlyph, RowButton, Tooltip, TruncatedText } from '../../ui'
+import { platformKeybindingsFromApiPlatform } from '../../../commands/effectiveKeybindings'
+import { useChatJumpHint } from './chatJumpHints'
 import type { MachineRef } from '../../../../../shared/machine-identity'
 import { useMachineIdentity } from '../../../hooks/useMachineIdentity'
 import { useChangePulse } from '../../../hooks/useChangePulse'
@@ -382,3 +384,27 @@ export function BranchChip({
     </RowTooltip>
   )
 }
+
+/**
+ * The chord that opens this row, while the number keys' modifier is held
+ * (`useChatJumpHints`). It floats over the row's trailing edge rather than
+ * taking a slot in it, so nothing on the row moves when it comes and goes, and
+ * it lets the pointer through to whatever it covers. Last in the row, so it
+ * paints over the row's other overlays without a layer of its own. Hidden from
+ * assistive tech: it is a moment's reminder of a shortcut the command palette
+ * and Settings ▸ Keyboard already name. Memoized on its key, so a row that
+ * re-renders for its own reasons does not re-render this with it.
+ */
+export const ChatJumpHint = React.memo(function ChatJumpHint({ rowKey }: { rowKey: string }) {
+  const chord = useChatJumpHint(rowKey)
+  if (!chord) return null
+  return (
+    <span
+      aria-hidden="true"
+      data-chat-jump-hint={chord}
+      className="pointer-events-none absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] p-0.5 shadow-[var(--shadow-popover)]"
+    >
+      <KbdChord chord={chord} platform={platformKeybindingsFromApiPlatform(window.api?.platform ?? '')} />
+    </span>
+  )
+})
