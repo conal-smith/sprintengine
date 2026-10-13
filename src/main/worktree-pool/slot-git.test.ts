@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
 import type { GitCommandResult } from '../git'
-import { parallelCheckoutConfig, type SlotGitRunner } from './slot-git'
+import { fetchBase, parallelCheckoutConfig, type SlotGitRunner } from './slot-git'
 
 /** A git that answers `config --get checkout.workers` with `answer`, recording every call. */
 function fakeGit(answer: GitCommandResult): { run: SlotGitRunner; calls: string[][] } {
@@ -44,4 +44,12 @@ test('a read of checkout.workers that failed is tried again next time', async ()
   assert.deepEqual(await parallelCheckoutConfig(git.run, '/Users/dev/broken'), ['-c', 'checkout.workers=0'])
   await parallelCheckoutConfig(git.run, '/Users/dev/broken')
   assert.equal(git.calls.length, 2)
+})
+
+test('the base is fetched alone, without tags, and sets off no automatic gc', async () => {
+  const git = fakeGit({ ok: true, stdout: '', stderr: '', message: null })
+  await fetchBase(git.run, '/Users/dev/app', 'origin/main')
+  assert.deepEqual(git.calls, [
+    ['fetch', '--no-tags', '--no-auto-gc', '--quiet', 'origin', '+refs/heads/main:refs/remotes/origin/main'],
+  ])
 })

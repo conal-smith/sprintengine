@@ -242,7 +242,11 @@ export const LEASE_FETCH_TIMEOUT_MS = 10_000
 
 /**
  * Bring `origin/<branch>` up to date, once. Only the one branch the pool bases
- * on is fetched, without tags: a base to fork from, not a pull.
+ * on is fetched, without tags: a base to fork from, not a pull. Nor does it
+ * start git's automatic gc, which a fetch otherwise may: this one sits on the
+ * launch path of a new chat, and a gc it set off would hold the repository
+ * and slow the git calls that follow. `--no-auto-gc` is git 2.23, the
+ * release that brought the `switch` every lease runs.
  */
 export async function fetchBase(
   run: SlotGitRunner,
@@ -255,10 +259,8 @@ export async function fetchBase(
   const [, remote, branch] = match
   return run(
     repoRoot,
-    ['fetch', '--no-tags', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
-    {
-      timeoutMs,
-    },
+    ['fetch', '--no-tags', '--no-auto-gc', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+    { timeoutMs },
   )
 }
 
