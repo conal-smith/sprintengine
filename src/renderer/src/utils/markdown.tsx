@@ -22,6 +22,7 @@ import {
 import { DisplayMath, InlineMath, isMathLanguage, remarkMathDelimiters } from './markdownMath'
 import { remarkUserText } from './markdownUserText'
 import { repairMarkdownFileLinks } from './markdownFileLinks'
+import { remarkWindowsPaths } from './markdownWindowsPaths'
 
 /**
  * A document renders at `document` scale; a document read inside a dense
@@ -430,7 +431,7 @@ function markAlert(quote: MarkdownSyntaxNode): void {
   quote.data = { ...quote.data, hProperties: { ...quote.data?.hProperties, dataAlert: match[1].toLowerCase() } }
 }
 
-const MARKDOWN_PLUGINS = [remarkGfm, remarkGithubAlerts, remarkHeadingIds]
+const MARKDOWN_PLUGINS = [remarkGfm, remarkGithubAlerts, remarkHeadingIds, remarkWindowsPaths]
 const USER_TEXT_PLUGINS = [...MARKDOWN_PLUGINS, remarkUserText]
 // remark-math builds the formulas' nodes; which delimiters open one is ours
 // (`markdownMath.tsx`), and a single dollar never does: in a reply it is a
