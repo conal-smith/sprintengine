@@ -252,13 +252,22 @@ export const QuoteSelectionToolbar = memo(function QuoteSelectionToolbar({
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(read)
     }
+    // A press on a button is an action, not the end of a selection. Chromium
+    // keeps the selection through it, so reading it again on the release put
+    // the toolbar back beside the words, under whatever the button opened.
+    let pressedControl = false
     const onPointerDown = (event: PointerEvent) => {
       if (toolbarRef.current?.contains(event.target as Node)) return
       draggingRef.current = true
+      pressedControl = Boolean((event.target as Element | null)?.closest?.('button, [role="button"]'))
       setSelection(null)
     }
     const onPointerUp = () => {
       draggingRef.current = false
+      if (pressedControl) {
+        pressedControl = false
+        return
+      }
       schedule()
     }
     // A selection that changed somewhere else — a caret moving in a text

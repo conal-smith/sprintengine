@@ -29,6 +29,7 @@ function fixture(
     env?: NodeJS.ProcessEnv
     account?: unknown
     resume?: (params: unknown) => unknown
+    unarchive?: (params: unknown) => unknown
     fork?: (params: unknown) => unknown
     // Codex refuses `turn/start` while this answers true.
     refuseTurn?: () => boolean
@@ -71,6 +72,7 @@ function fixture(
           if (method === 'account/read')
             return setup.account ?? { requiresOpenaiAuth: true, account: { type: 'chatgpt' } }
           if (method === 'thread/resume' && setup.resume) return setup.resume(params)
+          if (method === 'thread/unarchive' && setup.unarchive) return setup.unarchive(params)
           if (method === 'thread/fork') return setup.fork ? setup.fork(params) : { thread: { id: 'forked-thread' } }
           if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: 'native-thread' } }
           if (method === 'turn/start') {
@@ -931,6 +933,73 @@ test('a resume Codex refuses for now fails the turn and keeps the thread to resu
   const resumes = f.calls.filter((call) => call.method === 'thread/resume')
   expect(resumes.map((call) => (call.params as { threadId?: string }).threadId)).toEqual(['kept-thread', 'kept-thread'])
   expect(f.calls.map((call) => call.method)).not.toContain('thread/start')
+})
+
+test('a thread archived in Codex is unarchived and resumed, keeping its id', async () => {
+  let archived = true
+  const f = fixture({
+    resume: () => {
+      if (archived)
+        throw new CodexRpcError('session archived-thread is archived. Run `codex unarchive archived-thread`')
+      return { thread: { id: 'archived-thread' } }
+    },
+    unarchive: () => {
+      archived = false
+      return {}
+    },
+  })
+  await f.adapter.startSession({ ...f.input, resumeSessionId: 'archived-thread' })
+  const done = f.send()
+  await f.started
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  const threadCalls = f.calls.filter((call) => call.method.startsWith('thread/'))
+  expect(threadCalls.map((call) => call.method)).toEqual(['thread/resume', 'thread/unarchive', 'thread/resume'])
+  expect(threadCalls[1]?.params).toEqual({ threadId: 'archived-thread' })
+  const update = f.events.find((event) => event.type === 'session_updated')
+  expect(update?.payload?.providerSessionId).toBe('archived-thread')
+  expect(update?.payload).not.toHaveProperty('notice')
+  expect(f.events.at(-1)?.type).toBe('turn_completed')
+})
+
+test('an archived thread Codex will not unarchive continues in a new thread with the conversation', async () => {
+  const f = fixture({
+    resume: () => {
+      throw new CodexRpcError('session archived-thread is archived. Run `codex unarchive archived-thread`')
+    },
+    unarchive: () => {
+      throw new CodexRpcError('could not move the rollout file')
+    },
+  })
+  await f.adapter.startSession({
+    ...f.input,
+    resumeSessionId: 'archived-thread',
+    fallbackHistory: [{ role: 'user', content: 'persisted question' }],
+  })
+  const done = f.send()
+  await f.started
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  const methods = f.calls.map((call) => call.method).filter((method) => method.startsWith('thread/'))
+  expect(methods).toEqual(['thread/resume', 'thread/unarchive', 'thread/start'])
+  const update = f.events.find((event) => event.type === 'session_updated')
+  expect(update?.payload?.providerSessionId).toBe('native-thread')
+  expect(String(update?.payload?.notice)).toContain('could not be resumed')
+  expect(JSON.stringify(f.calls.find((call) => call.method === 'turn/start')?.params)).toContain('persisted question')
+})
+
+test('a resume refused for another reason is not unarchived', async () => {
+  const f = fixture({
+    resume: () => {
+      throw new CodexRpcError('thread is busy with another turn')
+    },
+  })
+  await f.adapter.startSession({ ...f.input, resumeSessionId: 'kept-thread' })
+  await f.send()
+  const methods = f.calls.map((call) => call.method)
+  expect(methods).not.toContain('thread/unarchive')
+  expect(methods).not.toContain('thread/start')
+  expect(f.events.at(-1)).toMatchObject({ type: 'turn_failed' })
 })
 
 test('a resume that is never answered fails the turn instead of dropping the thread', async () => {

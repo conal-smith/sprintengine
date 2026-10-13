@@ -201,6 +201,38 @@ export async function revParseCommit(run: SlotGitRunner, cwd: string, ref: strin
   return /^[0-9a-f]{40,64}$/iu.test(value) ? value : null
 }
 
+// The repository's `checkout.workers`, by repository root: read once per run.
+const checkoutWorkersByRepo = new Map<string, Promise<string>>()
+
+/**
+ * `-c checkout.workers=<n>` for a git that writes a whole working tree
+ * (`worktree add`, `read-tree -u`). Unset, git checks a tree out one file at a
+ * time; with it, git writes files on as many workers as the machine has cores
+ * (0), and a large tree lands several times faster. A value the person set
+ * themselves is kept. Read once per repository and remembered for the run, so
+ * only the first checkout in a repository pays for the read; a read that
+ * failed is not remembered. A git older than 2.32 ignores the key.
+ */
+export async function parallelCheckoutConfig(run: SlotGitRunner, repoRoot: string): Promise<string[]> {
+  let workers = checkoutWorkersByRepo.get(repoRoot)
+  if (!workers) {
+    workers = run(repoRoot, ['config', '--get', 'checkout.workers']).then(
+      (result) => {
+        const value = result.stdout.trim()
+        // Unset answers exit 1 with nothing on stderr; anything else is a failed read.
+        if (!result.ok && result.stderr.trim()) checkoutWorkersByRepo.delete(repoRoot)
+        return result.ok && /^-?\d+[kmg]?$/iu.test(value) ? value : '0'
+      },
+      () => {
+        checkoutWorkersByRepo.delete(repoRoot)
+        return '0'
+      },
+    )
+    checkoutWorkersByRepo.set(repoRoot, workers)
+  }
+  return ['-c', `checkout.workers=${await workers}`]
+}
+
 /**
  * How long a lease waits for its fetch. The fetch sits on the launch path of a
  * new chat, so a slow or unreachable remote must not hold the chat up: past
@@ -210,7 +242,11 @@ export const LEASE_FETCH_TIMEOUT_MS = 10_000
 
 /**
  * Bring `origin/<branch>` up to date, once. Only the one branch the pool bases
- * on is fetched, without tags: a base to fork from, not a pull.
+ * on is fetched, without tags: a base to fork from, not a pull. Nor does it
+ * start git's automatic gc, which a fetch otherwise may: this one sits on the
+ * launch path of a new chat, and a gc it set off would hold the repository
+ * and slow the git calls that follow. `--no-auto-gc` is git 2.23, the
+ * release that brought the `switch` every lease runs.
  */
 export async function fetchBase(
   run: SlotGitRunner,
@@ -223,10 +259,8 @@ export async function fetchBase(
   const [, remote, branch] = match
   return run(
     repoRoot,
-    ['fetch', '--no-tags', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
-    {
-      timeoutMs,
-    },
+    ['fetch', '--no-tags', '--no-auto-gc', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+    { timeoutMs },
   )
 }
 
@@ -395,4 +429,22 @@ export async function resolveAgentForkBase(run: SlotGitRunner, repoRoot: string)
   if (!ref) return null
   if (ref.includes('/')) await fetchBase(run, repoRoot, ref)
   return ref
+}
+
+/**
+ * Said when a branch named `agent` stands where every agent branch would go.
+ * Git keeps `agent/<name>` as a file under a folder `agent`, and a branch
+ * named `agent` is a file by that name, so it refuses each one ("cannot lock
+ * ref … 'refs/heads/agent' exists"). Studio says so before it tries rather
+ * than naming its branches something else: what it cleans up afterwards is
+ * only ever an `agent/` branch.
+ */
+export const AGENT_BRANCH_BLOCKED_MESSAGE =
+  'A branch named “agent” in this repository blocks Studio’s agent/… branches. Rename it (git branch -m agent <new-name>) to start chats in a worktree.'
+
+/** Whether a branch named `agent` blocks `branch`, one of Studio's `agent/…` branches. */
+export async function agentBranchBlocked(run: SlotGitRunner, repoRoot: string, branch: string): Promise<boolean> {
+  if (!branch.startsWith('agent/')) return false
+  const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', 'refs/heads/agent'])
+  return found.ok && found.stdout.trim().length > 0
 }

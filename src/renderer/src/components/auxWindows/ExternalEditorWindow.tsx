@@ -48,6 +48,7 @@ import {
 } from './editorTreePrefs'
 import { startColumnResizeDrag } from '../workspace/columnResizeDrag'
 import { splitTreePath } from '../../utils/fileTreeEntries'
+import { isLetterKey } from '../../utils/keyboard'
 
 // Match EditorPanel: above this size the rendered preview is disabled and the
 // file falls back to the Monaco source view so a huge document can't hang the
@@ -369,7 +370,7 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
   // docked first rather than lost to a single keypress.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      if ((event.metaKey || event.ctrlKey) && isLetterKey(event, 's')) {
         event.preventDefault()
         saveActive()
         return

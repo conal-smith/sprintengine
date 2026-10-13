@@ -199,10 +199,15 @@ export async function diffBranchSelection(cwd: string, selection: BranchStepSele
         // is no HEAD to diff and the empty tree is the only honest start.
         ((facts?.hasHead === false ? facts.diffFrom : 'HEAD') ?? 'HEAD')
       : (facts?.diffFrom ?? 'HEAD')
-  const base = ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', from]
+  // `diff-index`, which never writes the index, where `git diff` rewrites it
+  // for a file whose stat data alone moved (git-branch-span.ts, `diffFlags`).
+  // Its status pass names such a file as modified with no change to count, so
+  // only the files the counts list are kept. `-M`: it finds no renames unless asked.
+  const base = ['diff-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', '-M', from]
+  const counts = await numstat(cwd, [...base, '--numstat', '-z'])
   const tracked = combine(
-    await numstat(cwd, [...base, '--numstat', '-z']),
-    await nameStatus(cwd, [...base, '--name-status', '-z']),
+    counts,
+    (await nameStatus(cwd, [...base, '--name-status', '-z'])).filter((entry) => counts.has(entry.path)),
   )
   return selection.kind === 'uncommitted' ? withUntracked(cwd, tracked) : tracked
 }

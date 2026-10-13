@@ -17,7 +17,13 @@ import {
 import { listGitWorktrees } from './git-worktree-list'
 import { activeWorktreePool } from './worktree-pool/active-pool'
 import { activeDependencyInstaller } from './worktree-pool/dependency-install'
-import { defaultSlotGitRunner, resolveAgentForkBase } from './worktree-pool/slot-git'
+import {
+  AGENT_BRANCH_BLOCKED_MESSAGE,
+  agentBranchBlocked,
+  defaultSlotGitRunner,
+  parallelCheckoutConfig,
+  resolveAgentForkBase,
+} from './worktree-pool/slot-git'
 import type { WorktreePoolLeaseResult } from './worktree-pool/worktree-pool-service'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { repoRootFromWorktreePath, WORKTREE_CONTAINER_DIR, worktreeContainerPath } from '../shared/worktree-paths'
@@ -294,7 +300,8 @@ export async function getGitRepoRoot(folderPath: string): Promise<string | null>
 
 /**
  * The branch-already-exists refusal from `worktree add -b`, reworded to name
- * where that branch is checked out, which is what the person has to act on.
+ * where that branch is checked out, which is what the person has to act on,
+ * and the refusal a branch named `agent` causes, reworded to name that branch.
  * Null for any other failure, which keeps git's own words.
  */
 async function explainBranchConflict(
@@ -302,6 +309,9 @@ async function explainBranchConflict(
   branch: string,
   addResult: GitCommandResult,
 ): Promise<string | null> {
+  // A branch named `agent` refuses every `agent/…` branch ("cannot lock ref").
+  // Asked only once the add failed, so a worktree that is made pays nothing for it.
+  if (await agentBranchBlocked(defaultSlotGitRunner, repoRoot, branch)) return AGENT_BRANCH_BLOCKED_MESSAGE
   if (
     !/already exists|already checked out|already used by worktree/i.test(
       `${addResult.stderr}\n${addResult.message ?? ''}`,
@@ -407,7 +417,8 @@ export async function seedWorktreeIncludedFiles(
  * Five git processes, in order, and no more: resolve the repository root once,
  * check the branch name and the base ref, `worktree add`, and one `worktree
  * list` to report the entry the way git spells it. An agent worktree adds a
- * sixth, the `worktree lock` that marks it in use. Every one is a process start
+ * sixth, the `worktree lock` that marks it in use, and the first worktree in a
+ * repository one more, the read of its `checkout.workers`. Every one is a process start
  * on the launch path of a worktree agent, and on Windows or a network mount
  * each costs far more than the ~20 ms it costs here.
  *
@@ -439,8 +450,17 @@ export async function createGitWorktree(
   }
 
   await mkdir(toFilesystemPath(destination.data.containerPath), { recursive: true })
+  const checkoutConfig = await parallelCheckoutConfig(defaultSlotGitRunner, root.data)
   const addResult = await withWorktreeRegistryLock(root.data, () =>
-    runGitCommand(root.data, ['worktree', 'add', '-b', branch.data, destination.data.destinationPath, baseRef.data]),
+    runGitCommand(root.data, [
+      ...checkoutConfig,
+      'worktree',
+      'add',
+      '-b',
+      branch.data,
+      destination.data.destinationPath,
+      baseRef.data,
+    ]),
   )
 
   if (!addResult.ok) {
@@ -772,7 +792,13 @@ async function restoreGitWorktreeOnce(input: GitWorktreeRestoreInput): Promise<G
   }
 
   await mkdir(toFilesystemPath(dirname(worktreePath)), { recursive: true })
-  const addResult = await runGitCommand(root.data, ['worktree', 'add', worktreePath, branch.data])
+  const addResult = await runGitCommand(root.data, [
+    ...(await parallelCheckoutConfig(defaultSlotGitRunner, root.data)),
+    'worktree',
+    'add',
+    worktreePath,
+    branch.data,
+  ])
   if (!addResult.ok) {
     // Another process (a second app instance, a person at a shell) may have
     // put it back in the meantime, or the add made it and only a hook failed:

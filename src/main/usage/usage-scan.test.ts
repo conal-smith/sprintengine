@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
+import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 
-import { repositoryRoot, runUsageScan, type UsageCacheEntry, type UsageScanRoots } from './usage-scan'
+import { forEachLine, repositoryRoot, runUsageScan, type UsageCacheEntry, type UsageScanRoots } from './usage-scan'
 
 let home: string
 let roots: UsageScanRoots
@@ -525,4 +526,100 @@ test('Codex: a rollout with no thread settings is read at standard speed', async
   )
   const { entries } = await scan()
   assert.deepEqual(entries[0]!.buckets[0]!.slice(1), ['gpt-5', '', 10, 2, 0, 0, 1, 0])
+})
+
+// ── Reading lines ──
+
+// How lines were read before they were tested as bytes: the whole file decoded,
+// split on the newline character, each line tested as text.
+async function decodedLines(path: string, keep: (line: string) => boolean): Promise<string[]> {
+  const kept: string[] = []
+  let carry = ''
+  for await (const chunk of createReadStream(path, { encoding: 'utf8', highWaterMark: 7 }) as AsyncIterable<string>) {
+    const text = carry + chunk
+    let from = 0
+    for (let at = text.indexOf('\n', from); at >= 0; at = text.indexOf('\n', from)) {
+      const line = text.slice(from, at)
+      from = at + 1
+      if (line && keep(line)) kept.push(line)
+    }
+    carry = text.slice(from)
+  }
+  if (carry && keep(carry)) kept.push(carry)
+  return kept
+}
+
+async function byteLines(path: string, markers: string[], chunkBytes?: number): Promise<string[]> {
+  const encoded = markers.map((marker) => Buffer.from(marker))
+  const kept: string[] = []
+  await forEachLine(
+    path,
+    (line) => encoded.some((marker) => line.includes(marker)),
+    (line) => kept.push(line),
+    chunkBytes ? { chunkBytes } : {},
+  )
+  return kept
+}
+
+// Every awkward line at once: markers beside multibyte text, CRLF endings, a
+// blank line, a marker only in text that is not JSON, and no final newline.
+const MIXED = [
+  JSON.stringify({ type: 'assistant', text: 'héllo wörld' }),
+  '',
+  `${JSON.stringify({ type: 'user', text: '日本語のテキスト' })}\r`,
+  `${JSON.stringify({ text: '🙂🙂', type: 'assistant' })}\r`,
+  JSON.stringify({ type: 'summary', summary: 'Résumé "type":"assistant" inside a string' }),
+  'not json but "type":"assistant"',
+  JSON.stringify({ type: 'tool_result', content: 'ünïcödé'.repeat(40) }),
+  JSON.stringify({ type: 'assistant', text: 'the last line, with no newline after it ✓' }),
+].join('\n')
+
+test('lines tested as bytes are the lines tested as decoded text, at every chunk size', async () => {
+  const path = join(home, 'mixed.jsonl')
+  await writeFile(path, MIXED)
+  for (const markers of [['"type":"assistant"'], ['"type":"summary"', '"type":"user"'], ['ünïcödé'], ['']]) {
+    const expected = await decodedLines(path, (line) => markers.some((marker) => line.includes(marker)))
+    assert.ok(expected.length > 0)
+    for (const chunkBytes of [1, 2, 3, 5, 16, 64, undefined])
+      assert.deepEqual(await byteLines(path, markers, chunkBytes), expected, `${markers} at ${chunkBytes ?? 'default'}`)
+  }
+})
+
+test('a marker split across two chunks still keeps its line', async () => {
+  const path = join(home, 'split.jsonl')
+  const line = JSON.stringify({ padding: 'x'.repeat(10), type: 'assistant' })
+  await writeFile(path, `${line}\n`)
+  const marker = '"type":"assistant"'
+  // Chunks that end inside the marker, at each of its bytes.
+  for (let cut = line.indexOf(marker) + 1; cut < line.indexOf(marker) + marker.length; cut += 1)
+    assert.deepEqual(await byteLines(path, [marker], cut), [line])
+})
+
+test('a multibyte character split across two chunks decodes whole, beside a marker', async () => {
+  const path = join(home, 'multibyte.jsonl')
+  const line = `${JSON.stringify({ type: 'assistant', text: '€🙂€' })}`
+  await writeFile(path, `${line}\r\n${line}`)
+  for (let chunkBytes = 1; chunkBytes <= Buffer.byteLength(line) + 2; chunkBytes += 1)
+    assert.deepEqual(await byteLines(path, ['"type":"assistant"'], chunkBytes), [`${line}\r`, line])
+})
+
+test('a Claude Code log written with CRLF counts what the same log with LF does', async () => {
+  const sid = '99999999-2222-3333-4444-555555555555'
+  const folder = join(roots.claudeProjects, '-repo')
+  await mkdir(folder, { recursive: true })
+  const records = [
+    { type: 'user', sessionId: sid, cwd: join(home, 'repo'), timestamp: at(0), message: { content: 'naïve café' } },
+    assistant(sid, 'msg_1', 'req_1', { input_tokens: 10, output_tokens: 40, cache_read_input_tokens: 100 }, 1),
+    { type: 'ai-title', aiTitle: 'Fix the café' },
+  ]
+  await writeFile(join(folder, `${sid}.jsonl`), jsonl(records))
+  const lf = (await scan()).entries
+  await writeFile(join(folder, `${sid}.jsonl`), jsonl(records).replaceAll('\n', '\r\n'))
+  const crlf = (await scan()).entries
+  assert.equal(lf.length, 1)
+  assert.deepEqual(
+    crlf.map(({ fp: _fp, ...entry }) => entry),
+    lf.map(({ fp: _fp, ...entry }) => entry),
+  )
+  assert.equal(crlf[0]!.title, 'Fix the café')
 })

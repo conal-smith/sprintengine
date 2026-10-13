@@ -27,6 +27,8 @@ const SIDECARS = ['.sprintengine', '.multi-code']
 // The line a checkpoint's message records HEAD on, so a turn can tell its own
 // work from what a pull or rebase brought in (see `authoredPaths`).
 const HEAD_TRAILER = 'Head:'
+// The most nested repositories with no commit a snapshot looks for and leaves out.
+const MAX_UNBORN_REPOSITORIES = 64
 // Windows caps a command line at 32,767 characters; leave room for the rest of
 // a diff's arguments when paths are passed as pathspecs.
 const PATHSPEC_CHARS = 24_000
@@ -447,7 +449,20 @@ export class ConversationCheckpoints {
         !(await runGitCommand(root, ['check-ignore', '-q', `${sidecar}/`], env)).ok
       )
         excludes.push(`:(exclude)${sidecar}`)
-    await this.git(root, [...SNAPSHOT_CONFIG, 'add', '-A', '--', '.', ...excludes], env)
+    const add = (more: string[] = []) =>
+      this.git(root, [...SNAPSHOT_CONFIG, 'add', '-A', '--', '.', ...excludes, ...more], env)
+    try {
+      await add()
+    } catch (error) {
+      // A repository with no commit in a folder of the work tree (an agent ran
+      // `git init` there) cannot be recorded as a submodule, and `git add`
+      // refuses the whole add for it ("does not have a commit checked out").
+      // Leave each such folder out and add the rest: the checkpoint then
+      // holds nothing of what is in them, as it holds nothing of an ignored one.
+      const unborn = await this.unbornRepositories(root, env)
+      if (!unborn.length) throw error
+      await add(unborn.map((path) => `:(exclude,literal)${path}`))
+    }
     if (include.length) {
       const captured = new Set((await this.git(root, ['ls-files', '--cached', '-z'], env)).split('\0'))
       const extra: string[] = []
@@ -462,6 +477,30 @@ export class ConversationCheckpoints {
         )
     }
     return (await this.git(root, ['write-tree'], env)).trim()
+  }
+
+  /**
+   * Untracked folders of the work tree that hold a repository of their own
+   * whose HEAD names no commit, at most MAX_UNBORN_REPOSITORIES of them. Git
+   * lists a nested repository as its folder, with a trailing slash, rather
+   * than the files in it.
+   */
+  private async unbornRepositories(root: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+    const listed = await runGitCommand(root, ['ls-files', '--others', '--exclude-standard', '-z'], env)
+    if (!listed.ok) return []
+    const candidates = listed.stdout
+      .split('\0')
+      .filter((path) => path.endsWith('/') && !isSidecar(path))
+      .slice(0, MAX_UNBORN_REPOSITORIES)
+    const unborn: string[] = []
+    for (const folder of candidates) {
+      const path = folder.slice(0, -1)
+      if (!(await lstatIn(root, `${path}/.git`))) continue
+      // Asked of the nested repository itself, so not through the snapshot's index.
+      const head = await runGitCommand(safePath(root, path), ['rev-parse', '--verify', '--quiet', 'HEAD'])
+      if (!head.ok) unborn.push(path)
+    }
+    return unborn
   }
 
   private async blobPaths(root: string, commit: string): Promise<string[]> {

@@ -120,7 +120,10 @@ export type TerminalFileLinkProviderOptions = {
 const FILE_REFERENCE_PATTERN =
   /(^|[\s"'(<{[])([A-Za-z]:[\\/][^\s"'<>`)\]}]+|\/[^\s"'<>`)\]}]+|\.{1,2}[\\/][^\s"'<>`)\]}]+|(?:[\w@.+-]+[\\/])+[\w@.+-][^\s"'<>`]*)/gu
 
-const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/u
+// A colon too: compilers print `main.go:10:5: undefined`, and the colon after
+// the position belongs to the message, not the path. URLs never reach this —
+// the pattern cannot start one, and the web-link provider owns them.
+const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?]+$/u
 
 function stripTrailingPunctuation(value: string): string {
   let next = value.replace(TRAILING_PUNCTUATION_PATTERN, '')

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   ALLOWED_PERMISSIONS,
@@ -11,6 +14,7 @@ import {
   fileStamp,
   parseListeningSockets,
   stripUserAgent,
+  writeCaptureFile,
 } from './browser-manager'
 import { applyGuestWebPreferences } from './guest-policy'
 import { BROWSER_PARTITION } from '../../shared/browser'
@@ -222,6 +226,22 @@ test("a page may go fullscreen, and the guest's fullscreen never resizes the app
   const prefs: Record<string, unknown> = { disableHtmlFullscreenWindowResize: false }
   applyGuestWebPreferences(prefs, { partition: BROWSER_PARTITION, src: 'https://example.com/' }, null)
   assert.equal(prefs.disableHtmlFullscreenWindowResize, true, 'whatever the tag asked for')
+})
+
+test('two captures within the same second are both kept, the second numbered', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'browser-capture-'))
+  try {
+    const second = new Date(2026, 8, 4, 8, 18, 2)
+    const first = await writeCaptureFile(directory, 'page-localhost', Buffer.from('one'), second)
+    const next = await writeCaptureFile(directory, 'page-localhost', Buffer.from('two'), second)
+    assert.equal(first, join(directory, 'page-localhost-2026-09-04_08-18-02.png'))
+    assert.equal(next, join(directory, 'page-localhost-2026-09-04_08-18-02-2.png'))
+    assert.equal(await readFile(first, 'utf8'), 'one', 'the first capture is not overwritten')
+    assert.equal(await readFile(next, 'utf8'), 'two')
+    assert.equal((await readdir(directory)).length, 2)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test('user agent: a packaged build loses its space-less productName token', () => {

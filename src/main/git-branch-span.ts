@@ -367,7 +367,7 @@ export function scopeOfFacts(facts: BranchFacts | null): 'worktree' | 'branch' |
 }
 
 /**
- * `git diff --numstat <from>` — staged and unstaged, against the working tree.
+ * `git diff-index --numstat <from>` — staged and unstaged, against the working tree.
  * Null when the diff could not be run at all, which the caller must not report
  * as a zero.
  *
@@ -398,17 +398,26 @@ async function diffWorkingTreeFrom(cwd: string, fromRev: string): Promise<Branch
  * The flags every reading here shares, so the two passes over one diff can never
  * be told different things about it.
  *
- * `--find-renames` explicitly rather than by default: `diff.renames=false` in a
- * user's config would make BOTH passes split a rename into a delete plus an add,
- * turning one moved file into two and contradicting decision 1 ("a rename is one
- * updated"). Asking for it here takes that config out of the answer.
+ * `diff-index` rather than `diff`: both compare a commit with the working tree,
+ * but `git diff` first refreshes the index's stat cache and writes it back
+ * (taking `index.lock`) whenever a file's stat data moved without its content,
+ * GIT_OPTIONAL_LOCKS=0 or not. These readings run on every poll, so that write
+ * could fail an agent's own `git commit` and woke the gitdir watcher that asked
+ * for the reading. `diff-index` reads the index and never writes it. Its counts
+ * are the same; its status pass also names a file whose stat data alone moved,
+ * as `M`, which the counts below never ask about, being driven by the numstat
+ * list.
+ *
+ * `-M` explicitly: `diff-index` finds no renames unless asked, and asking takes
+ * the user's `diff.renames` out of the answer too, so a moved file is one
+ * updated (decision 1) rather than a delete plus an add.
  *
  * Exported shape kept as a function, not a constant array, because the argument
  * lists are handed straight to `runGitCommand` and a shared array would be one
  * splice away from a cross-call bug.
  */
 export function diffFlags(mode: '--numstat' | '--name-status'): string[] {
-  return ['diff', mode, '-z', '--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', '--find-renames']
+  return ['diff-index', mode, '-z', '--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', '-M']
 }
 
 /**

@@ -39,7 +39,8 @@ import {
 import { listProcListeners } from '../../server/web/preview-ports'
 import { safeExternalUrl } from '../ipc/external-url'
 import { parsePsTree, type ProcRow } from '../terminal-subtree-probe'
-import { ensureSidecarDirNoLinks } from '../workspace-sidecar'
+import { ensureSidecarDirNoLinks, ensureSidecarDirNoLinksSync } from '../workspace-sidecar'
+import { createAgentDownloads, type AgentDownloadItem } from './agent-downloads'
 
 // The embedded browser's main-process half (browser-pane epic). The renderer
 // owns the `<webview>` elements; this owns everything the renderer must not:
@@ -93,6 +94,13 @@ const HOST_FORWARDED_CHORDS: readonly Chord[] = [
 const CAPTURE_TIMEOUT_MS = 5_000
 // How long a controller claim (agent or human) outlives its last input.
 const CONTROLLER_LINGER_MS = 1_500
+
+/** A file the agent's tab downloaded, from the moment it was given a path to its end. */
+export type BrowserDownload = {
+  url: string
+  path: string
+  state: 'started' | 'completed' | 'cancelled' | 'interrupted'
+}
 
 type TerminalRootInfo = {
   sessionId: string
@@ -309,6 +317,30 @@ export function fileStamp(now = new Date()): string {
 }
 
 /**
+ * Write a capture as `<name>-<stamp>.png` in `directory`, never over another
+ * file. The stamp is to the second, so a second capture within it (an agent
+ * taking two in a row) is numbered `-2`, `-3`, … instead of replacing the
+ * first, which an earlier message may already show. Returns the path written.
+ */
+export async function writeCaptureFile(
+  directory: string,
+  name: string,
+  data: Uint8Array,
+  now = new Date(),
+): Promise<string> {
+  const base = `${name}-${fileStamp(now)}`
+  for (let n = 1; ; n += 1) {
+    const file = join(directory, n === 1 ? `${base}.png` : `${base}-${n}.png`)
+    try {
+      await writeFile(file, data, { flag: 'wx' })
+      return file
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || n >= 1000) throw error
+    }
+  }
+}
+
+/**
  * A guest-viewport CSS rect as a crop of the captured image: padded, scaled by
  * the zoom factor into DIP, clamped to the image; null when nothing of it is on
  * screen or the numbers are not sane.
@@ -435,6 +467,8 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
   const agentAssignments = createAgentTabAssignments()
   const unregisterListeners = new Set<(tabId: string) => void>()
   const humanInputListeners = new Set<(tabId: string) => void>()
+  const downloadListeners = new Set<(tabId: string, download: BrowserDownload) => void>()
+  const agentDownloads = createAgentDownloads()
 
   /** A claim on the page that lapses CONTROLLER_LINGER_MS after the last input. */
   function claim(tab: BrowserTab, controller: BrowserController): void {
@@ -464,8 +498,35 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       callback(ALLOWED_PERMISSIONS.has(permission))
     })
     created.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission))
+    created.on('will-download', (_event, item, wc) => saveAgentDownload(item, wc))
     browserSessions.set(partition, created)
     return created
+  }
+
+  /**
+   * A download from a tab the agent is driving is saved to the workspace's
+   * browser sidecar without a dialog (agent-downloads.ts). Anything else —
+   * the person's own download, a tab with no workspace folder, a sidecar
+   * that cannot be made — returns without a path, and Chromium asks.
+   */
+  function saveAgentDownload(item: AgentDownloadItem, wc: WebContents | undefined): void {
+    const tab = [...tabs.values()].find((candidate) => candidate.wc === wc)
+    if (!tab || tab.state.controller !== 'agent') return
+    const workspaceRoot = deps.resolveWorkspaceRoot(tab.workspaceId)
+    if (!workspaceRoot || !isAbsolute(workspaceRoot) || !existsSync(workspaceRoot)) return
+    let directory: string
+    try {
+      directory = ensureSidecarDirNoLinksSync(resolve(workspaceRoot), 'browser', 'downloads')
+    } catch {
+      return
+    }
+    const url = item.getURL()
+    const path = agentDownloads.save(item, directory)
+    const tell = (state: BrowserDownload['state']) => {
+      for (const listener of downloadListeners) listener(tab.tabId, { url, path, state })
+    }
+    item.once('done', (_event, state) => tell(state))
+    tell('started')
   }
 
   /** The partition a guest's session is, by asking each one this manager made. */
@@ -872,6 +933,12 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       return () => humanInputListeners.delete(listener)
     },
 
+    /** Called as a download the agent's tab set off is saved, and again when it ends. */
+    onDownload(listener: (tabId: string, download: BrowserDownload) => void): () => void {
+      downloadListeners.add(listener)
+      return () => downloadListeners.delete(listener)
+    },
+
     /** A recording started or ended on a tab: the toolbar shows it while it runs. */
     setRecording(tabId: string, recording: BrowserRecordingState | null): void {
       const tab = requireTab(tabId)
@@ -960,8 +1027,7 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
         // its own .gitignore still never sees screenshots in `git status`;
         // and it is never made or written through a link the project holds.
         const directory = await ensureSidecarDirNoLinks(resolve(workspaceRoot), 'browser')
-        const file = join(directory, `${input.kind}-${hostSlug(tab.state.url)}-${fileStamp()}.png`)
-        await writeFile(file, image.toPNG())
+        const file = await writeCaptureFile(directory, `${input.kind}-${hostSlug(tab.state.url)}`, image.toPNG())
         return { ok: true, path: file, width: size.width, height: size.height }
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : 'The capture failed.' }

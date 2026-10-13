@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { distroOfUncPath } from '../../../../../shared/host-paths'
 import { resolveTerminalFileReferencePath } from '../../../utils/terminalFileLinks'
 import { useConversationLinkContext } from './conversationLinks'
 import type { ChatFileSource } from './chatServices'
@@ -52,19 +53,33 @@ async function readLocalImage(files: ChatFileSource, path: string): Promise<stri
   return read
 }
 
+/** A path in the agent's home folder (`~/Desktop/shot.png`), which main expands (home-path.ts). */
+export function isHomePath(path: string): boolean {
+  return /^~[\\/]/u.test(path)
+}
+
 // An image path the agent wrote — a screenshot it read, a picture its reply
 // shows — read from this machine's disk as a data URL. Relative paths resolve
 // against the conversation's folder the way a file link in the same transcript
 // does, so the picture and the link beside it always name the same file.
-export function useLocalImage(path: string | null | undefined): LocalImage {
+//
+// `home` lets a picture in a reply name it in the agent's home folder, as
+// `~/…`. A terminal link does not follow such a path (terminalFileLinks.ts),
+// since a shell's `~` may be another machine's; a chat on this computer, not
+// in a WSL distribution, ran its agent here, so its `~` is this machine's home
+// folder. The path goes to main as it is, since only main knows that folder.
+export function useLocalImage(path: string | null | undefined, options: { home?: boolean } = {}): LocalImage {
   const context = useConversationLinkContext()
   const transport = useConversationTransport()
   const localFiles = transport.capabilities.localFiles
   const files = transport.services.files
+  const inWsl = Boolean(distroOfUncPath(context?.cwd || context?.workspaceRoot || ''))
   const resolved =
-    path && localFiles
-      ? resolveTerminalFileReferencePath(path, { executionRoot: context?.cwd, workspaceRoot: context?.workspaceRoot })
-      : null
+    !path || !localFiles
+      ? null
+      : options.home && isHomePath(path) && transport.kind === 'local' && !inWsl
+        ? path
+        : resolveTerminalFileReferencePath(path, { executionRoot: context?.cwd, workspaceRoot: context?.workspaceRoot })
   const [image, setImage] = useState<{ path: string; src?: string; failed?: boolean }>()
   useEffect(() => {
     if (!resolved) return

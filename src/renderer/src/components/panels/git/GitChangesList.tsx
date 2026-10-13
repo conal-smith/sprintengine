@@ -49,6 +49,7 @@
 import React, { type JSX } from 'react'
 
 import { getGitStatusAppearance } from '../../../utils/gitStatusAppearance'
+import { isLetterKey } from '../../../utils/keyboard'
 import {
   CheckRow,
   ContextMenu,
@@ -367,7 +368,7 @@ export const GitChangesList = React.memo(function GitChangesList({
     } else if (event.key === 'End') {
       event.preventDefault()
       moveTo(visibleRows.length - 1, event.shiftKey)
-    } else if (event.key === 'a' && (event.metaKey || event.ctrlKey)) {
+    } else if (isLetterKey(event, 'a') && !event.shiftKey && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
       onSelectAll()
     } else if (event.key === ' ') {

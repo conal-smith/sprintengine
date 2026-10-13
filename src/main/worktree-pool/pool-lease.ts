@@ -10,6 +10,8 @@ import { GIT_NETWORK_TIMEOUT_MS } from '../git-run'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
+  AGENT_BRANCH_BLOCKED_MESSAGE,
+  agentBranchBlocked,
   amongIgnored,
   cleanWouldRemove,
   clearStaleIndexLock,
@@ -18,6 +20,7 @@ import {
   hasFile,
   ignoredPaths,
   ignoredFilesInTheWay,
+  parallelCheckoutConfig,
   operationInProgress,
   pathsBetween,
   readSlotGitDir,
@@ -265,7 +268,13 @@ async function resetSlot(ctx: PoolContext, pool: PoolRuntime, slot: SlotRecord, 
       return false
     }
   }
-  const reset = await ctx.git(slot.path, ['read-tree', '--reset', '-u', 'HEAD'])
+  const reset = await ctx.git(slot.path, [
+    ...(await parallelCheckoutConfig(ctx.git, pool.record.repoRoot)),
+    'read-tree',
+    '--reset',
+    '-u',
+    'HEAD',
+  ])
   if (!reset.ok) {
     await hold(ctx, pool, slot, 'error', `reset failed: ${tail(reset.message)}`)
     return false
@@ -361,8 +370,9 @@ async function createSlot(
     return created
   })
   if (!slot) return 'full'
+  const checkoutConfig = await parallelCheckoutConfig(ctx.git, pool.record.repoRoot)
   const result = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
-    ctx.git(pool.record.repoRoot, ['worktree', 'add', '--quiet', '--detach', slot.path, base.sha]),
+    ctx.git(pool.record.repoRoot, [...checkoutConfig, 'worktree', 'add', '--quiet', '--detach', slot.path, base.sha]),
   )
   if (!result.ok) {
     ctx.log(`${slot.path}: worktree add failed (${tail(result.message, 300)})`)
@@ -416,6 +426,8 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
   const branch = `agent/${slug}`
   const format = await ctx.git(pool.record.repoRoot, ['check-ref-format', '--branch', branch])
   if (!format.ok) return { ok: false, reason: 'invalid-name', message: `"${branch}" is not a valid branch name.` }
+  if (await agentBranchBlocked(ctx.git, pool.record.repoRoot, branch))
+    return { ok: false, reason: 'branch-exists', message: AGENT_BRANCH_BLOCKED_MESSAGE }
   if (await branchExists(ctx, pool.record.repoRoot, branch)) {
     return {
       ok: false,

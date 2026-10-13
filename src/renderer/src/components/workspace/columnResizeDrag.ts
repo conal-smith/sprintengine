@@ -30,7 +30,11 @@
 // The drag ends on pointer-up, on pointer-cancel, on losing capture (the
 // handle unmounted mid-drag), and on the window losing focus. Whichever comes
 // first, `onDragEnd` runs exactly once and the shield always comes back down —
-// a shield left up would swallow every click in the app.
+// a shield left up would swallow every click in the app. Only a pointer-up
+// says where the drag stopped: the width is drawn at the release's x before
+// `onDragEnd` commits, because the last move may still be waiting for its
+// frame, and a quick flick would otherwise persist a width short of where the
+// pointer let go.
 
 import type React from 'react'
 
@@ -59,6 +63,7 @@ export function startColumnResizeDrag(
   const handle = event.currentTarget
   const pointerId = event.pointerId
   let pendingX = event.clientX
+  let drawnX = event.clientX
   let frame: number | null = null
   let ended = false
   // Terminals beside the column follow the drag at a throttled rate instead
@@ -77,6 +82,7 @@ export function startColumnResizeDrag(
 
   const apply = (): void => {
     frame = null
+    drawnX = pendingX
     onDrag(pendingX)
   }
   const onMove = (e: PointerEvent): void => {
@@ -84,15 +90,16 @@ export function startColumnResizeDrag(
     pendingX = e.clientX
     if (frame === null) frame = window.requestAnimationFrame(apply)
   }
-  const end = (): void => {
+  const end = (releasedAt?: number): void => {
     if (ended) return
     ended = true
     if (frame !== null) window.cancelAnimationFrame(frame)
+    if (releasedAt !== undefined && releasedAt !== drawnX) onDrag(releasedAt)
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onPointerEnd)
     window.removeEventListener('pointercancel', onPointerEnd)
-    window.removeEventListener('blur', end)
-    handle.removeEventListener('lostpointercapture', end)
+    window.removeEventListener('blur', interrupt)
+    handle.removeEventListener('lostpointercapture', interrupt)
     try {
       if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId)
     } catch {
@@ -107,8 +114,9 @@ export function startColumnResizeDrag(
   }
   const onPointerEnd = (e: PointerEvent): void => {
     if (e.pointerId !== pointerId) return
-    end()
+    end(e.type === 'pointerup' ? e.clientX : undefined)
   }
+  const interrupt = (): void => end()
 
   try {
     handle.setPointerCapture(pointerId)
@@ -116,12 +124,12 @@ export function startColumnResizeDrag(
     // No capture available (a synthetic pointer, a stale id). The shield alone
     // keeps the gesture in this document, so the drag still completes.
   }
-  handle.addEventListener('lostpointercapture', end)
+  handle.addEventListener('lostpointercapture', interrupt)
   document.body.appendChild(shield)
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onPointerEnd)
   window.addEventListener('pointercancel', onPointerEnd)
-  window.addEventListener('blur', end)
+  window.addEventListener('blur', interrupt)
 }

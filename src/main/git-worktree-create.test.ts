@@ -54,7 +54,7 @@ afterAll(async () => {
   if (scratch) await rm(scratch, { recursive: true, force: true })
 })
 
-test('a worktree is cut in five git processes and seeded from .worktreeinclude', async () => {
+test('a worktree is cut in five git processes, six for the first, and seeded from .worktreeinclude', async () => {
   const container = join(scratch, 'worktrees')
   const before = spawnTotal()
   const created = await createGitWorktree({
@@ -67,8 +67,19 @@ test('a worktree is cut in five git processes and seeded from .worktreeinclude',
   })
   assert.ok(created.ok, created.ok ? '' : created.message)
   assert.equal(created.data.branch, 'agent/first')
-  // root, check-ref-format, rev-parse --verify, worktree add, worktree list.
-  assert.equal(spawnTotal() - before, 5, 'resolve the root once and list once')
+  // root, check-ref-format, rev-parse --verify, worktree add, worktree list,
+  // and for the repository's first worktree, config --get checkout.workers.
+  assert.equal(spawnTotal() - before, 6, 'resolve the root once and list once')
+  const beforeNext = spawnTotal()
+  const next = await createGitWorktree({
+    repoRoot: repo,
+    containerPath: container,
+    destinationPath: join(container, 'next'),
+    branchName: 'agent/next',
+    baseRef: 'HEAD',
+  })
+  assert.ok(next.ok, next.ok ? '' : next.message)
+  assert.equal(spawnTotal() - beforeNext, 5, 'checkout.workers is read once per repository')
 
   const seeded = join(container, 'first')
   assert.equal(await readFile(join(seeded, '.env'), 'utf8'), 'TOKEN=placeholder\n')
@@ -105,4 +116,25 @@ test('a filesystem that refuses to clone falls back to a plain copy', async () =
   })
   assert.deepEqual(modes, [constants.COPYFILE_FICLONE, 0], 'a clone is asked for first, then a plain copy')
   assert.equal(await readFile(join(scratch, 'clone-target', 'nested', 'file.txt'), 'utf8'), 'content\n')
+})
+
+test('a branch named agent is named as what refuses an agent worktree, and nothing is made', async () => {
+  const blocked = join(scratch, 'blocked')
+  await mkdir(blocked, { recursive: true })
+  await git(blocked, 'init', '-q', '-b', 'main')
+  await writeFile(join(blocked, 'README.md'), '# blocked\n')
+  await git(blocked, 'add', '.')
+  await git(blocked, 'commit', '-q', '-m', 'init')
+  await git(blocked, 'branch', 'agent')
+  const container = join(scratch, 'blocked-worktrees')
+  const created = await createGitWorktree({
+    repoRoot: blocked,
+    containerPath: container,
+    destinationPath: join(container, 'fix'),
+    branchName: 'agent/fix',
+    baseRef: 'HEAD',
+  })
+  assert.equal(created.ok, false)
+  assert.match(created.ok ? '' : created.message, /A branch named “agent” in this repository blocks/)
+  assert.equal(await git(blocked, 'branch', '--list', 'agent/*'), '')
 })

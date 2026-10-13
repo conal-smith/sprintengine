@@ -222,7 +222,8 @@
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "notarize": true,
       "extendInfo": {
-        "NSLocalNetworkUsageDescription": "SprintEngine Studio uses your local network to reach your SSH machines and the devices you pair with it, to preview servers running on this Mac or nearby, and for the commands your terminals and agents run."
+        "NSLocalNetworkUsageDescription": "SprintEngine Studio uses your local network to reach your SSH machines and the devices you pair with it, to preview servers running on this Mac or nearby, and for the commands your terminals and agents run.",
+        "NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac": true
       }
     },
     "linux": {

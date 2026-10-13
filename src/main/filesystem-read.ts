@@ -4,6 +4,7 @@ import { pathToFileURL } from 'url'
 import { imageMimeType } from './filesystem-image'
 import { MAX_IMAGE_DATA_URL_BYTES, MAX_TEXT_FILE_READ_BYTES } from './filesystem-read-limits'
 import { checkWorkspaceFolder, pathExists } from './filesystem-workspace'
+import { expandHomePath } from './home-path'
 import { createProjectLogoResolver, type ProjectLogoIo } from './project-logo'
 
 const BINARY_SNIFF_BYTES = 4096
@@ -58,7 +59,8 @@ export function createFilesystemReadHandlers(options: { opener?: FileOpener; pro
 
       return content.toString('utf-8')
     },
-    async readImageDataUrl(filePath: string) {
+    async readImageDataUrl(requested: string) {
+      const filePath = expandHomePath(requested)
       const mimeType = imageMimeType(filePath)
       if (!mimeType) throw new Error('Unsupported image file type.')
       const targetStats = await stat(filePath)
@@ -74,7 +76,7 @@ export function createFilesystemReadHandlers(options: { opener?: FileOpener; pro
       return `data:${mimeType};base64,${content.toString('base64')}`
     },
     async statPath(targetPath: string) {
-      const targetStats = await stat(targetPath)
+      const targetStats = await stat(expandHomePath(targetPath))
       return {
         isFile: targetStats.isFile(),
         isDirectory: targetStats.isDirectory(),
