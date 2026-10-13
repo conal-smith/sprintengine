@@ -78,6 +78,9 @@
     // The shell linter the install-script suites run every generated script
     // through, where it is installed. Not an npm binary.
     "shellcheck",
+    // Hyprland's control tool: the entry asks it for the compositor's version
+    // before the app is ready (hyprland-color-manager.ts). Not an npm binary.
+    "hyprctl",
   ],
   "ignoreDependencies": [
     // Imported from CSS (`@import "tailwindcss"`), which knip does not read.
