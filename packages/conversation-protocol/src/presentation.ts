@@ -10,6 +10,9 @@ export type PresentableTool = {
   exitCode?: number
   summary?: string
   subagentType?: string
+  /** An MCP tool's own title, and its server's name, where the provider names them. */
+  displayTitle?: string
+  serverName?: string
 }
 export type ToolPresentation = {
   icon: ConversationToolKind
@@ -73,6 +76,22 @@ function otherTitle(name: string, input: Record<string, unknown>, live: boolean)
   return name
 }
 
+function text(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
+}
+// An MCP call as "Server: tool". The title and server name the provider got
+// from the server come first; without them the wire name is made readable:
+// `mcp__claude_ai_Gmail__search_threads` reads "Gmail: search threads", a
+// claude.ai connector's prefix dropped and underscores and dashes spaced.
+function mcpTitle(name: string, displayTitle: string, serverName: string): string {
+  const wire = name.replace(/^mcp(?:__|[.:/])/i, '')
+  const split = wire.indexOf('__')
+  const readable = (value: string) => value.replace(/[_-]+/g, ' ').trim()
+  const server = serverName || (split > 0 ? readable(wire.slice(0, split).replace(/^claude_ai_/, '')) : '')
+  const tool = displayTitle || readable(split > 0 ? wire.slice(split + 2) : wire) || name
+  return server && !tool.toLowerCase().startsWith(server.toLowerCase()) ? `${server}: ${tool}` : tool
+}
+
 /** Presentation is shared by desktop and remote clients; malformed tools stay readable. */
 export function presentToolItem(
   item: PresentableTool,
@@ -127,7 +146,7 @@ export function presentToolItem(
       break
     }
     case 'mcp':
-      title = name.replace(/^mcp__/, '').replace(/__/g, ': ')
+      title = mcpTitle(name, text(safe.displayTitle), text(safe.serverName))
       break
     case 'subagent':
       title = `${safe.subagentType || read(input, 'subagent_type') || 'Agent'}: ${read(input, 'description', 'prompt') || legacy}`

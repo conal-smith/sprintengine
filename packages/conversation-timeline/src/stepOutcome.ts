@@ -16,6 +16,8 @@ export function toolPresentationInput(tool: TranscriptToolEntry): PresentableToo
     exitCode: tool.exitCode,
     summary: tool.summary,
     subagentType: tool.subagentType,
+    ...(tool.displayTitle ? { displayTitle: tool.displayTitle } : {}),
+    ...(tool.serverName ? { serverName: tool.serverName } : {}),
   }
 }
 

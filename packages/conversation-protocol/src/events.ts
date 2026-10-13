@@ -224,6 +224,15 @@ export type ConversationToolStartedPayload = {
    * consumer falls back to `summary`.
    */
   subagentType?: string
+  /**
+   * An MCP tool's title as its server gives it (`tool.annotations.title`, or
+   * a readable form of the wire name), and the server's own display name,
+   * where the provider reports them (Claude Code does, for each call). Plain
+   * text, at most 120 characters each; a reader without them makes the wire
+   * name readable instead.
+   */
+  displayTitle?: string
+  serverName?: string
 }
 
 /** Payload carried on `tool_output`. `parentToolUseId` mirrors `tool_started`. */

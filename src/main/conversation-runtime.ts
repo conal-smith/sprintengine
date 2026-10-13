@@ -2417,6 +2417,8 @@ export class ConversationRuntime {
         name: String(event.payload?.name ?? event.payload?.tool ?? ''),
         input: event.payload?.input as ConversationJsonValue | undefined,
         status: 'running',
+        ...(typeof event.payload?.displayTitle === 'string' ? { displayTitle: event.payload.displayTitle } : {}),
+        ...(typeof event.payload?.serverName === 'string' ? { serverName: event.payload.serverName } : {}),
       }).title
     // Summarising the conversation is the step, until the summary lands.
     else if (event.type === 'context_compacting') session.currentToolTitle = 'Compacting'

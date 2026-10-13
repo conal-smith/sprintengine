@@ -2005,6 +2005,35 @@ const MCP_REGISTRATION_TIMEOUT_MS = 90_000
 const MCP_SIGN_IN_WATCH_MS = 5 * 60_000
 const MCP_SIGN_IN_POLL_MS = 3_000
 
+// The titles Claude Code gives an assistant message's tool calls
+// (`tool_use_meta`, beside the message, never in it: an MCP tool's
+// `annotations.title` or a readable form of its wire name, and its server's
+// display name), by call id. Plain text only, kept short: the server wrote
+// it, and it is shown as a row's title on every device. The icon URL it may
+// carry is left: a row draws its kind's glyph, never a server's picture.
+const TOOL_DISPLAY_CHARS = 120
+
+function toolDisplays(meta: unknown): Map<string, { displayTitle?: string; serverName?: string }> {
+  const displays = new Map<string, { displayTitle?: string; serverName?: string }>()
+  if (!Array.isArray(meta)) return displays
+  const clean = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined
+    const text = value
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return text ? text.slice(0, TOOL_DISPLAY_CHARS) : undefined
+  }
+  for (const entry of meta.map(asRecord)) {
+    if (!entry || typeof entry.id !== 'string') continue
+    const displayTitle = clean(entry.display_name)
+    const serverName = clean(entry.server_display_name)
+    if (displayTitle || serverName)
+      displays.set(entry.id, { ...(displayTitle ? { displayTitle } : {}), ...(serverName ? { serverName } : {}) })
+  }
+  return displays
+}
+
 // "The new effort and the attached skills will apply …": what a turn left
 // waiting for the chat's background work, as the notice that says so.
 function waitingNotice(waiting: string[]): string {
@@ -2740,6 +2769,7 @@ export function mapSdkMessage(
         break
       }
       const tracked = parentToolUseId ? state.subagents?.get(parentToolUseId) : undefined
+      const displays = toolDisplays(message.tool_use_meta)
       for (const rawBlock of content) {
         const block = asRecord(rawBlock)
         // What an agent says between its steps belongs to its own thread. A
@@ -2766,13 +2796,16 @@ export function mapSdkMessage(
         const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
         if (taskTool)
           (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+        const kind = taskTool ? 'todo' : inferConversationToolKind(block.name)
+        const display = kind === 'mcp' && typeof block.id === 'string' ? displays.get(block.id) : undefined
         const payload: ConversationToolStartedPayload = {
           turnId,
           toolCallId: typeof block.id === 'string' ? block.id : undefined,
           tool: block.name,
           toolUseId: typeof block.id === 'string' ? block.id : undefined,
           name: block.name,
-          kind: taskTool ? 'todo' : inferConversationToolKind(block.name),
+          kind,
+          ...display,
           input: JSON.parse(
             JSON.stringify({
               ...toolInput,

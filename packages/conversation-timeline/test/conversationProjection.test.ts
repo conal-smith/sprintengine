@@ -286,3 +286,23 @@ test('the projection keeps the background work the session last reported, until 
     ]),
   ).toEqual([])
 })
+
+test('an MCP step keeps the title and server name its provider reported, through a second report', () => {
+  const entries = projectConversation([
+    event('user_message', 0, { turnId: 't1', text: 'Find the invoice' }),
+    event('turn_started', 1, { turnId: 't1' }),
+    event('tool_started', 10, {
+      turnId: 't1',
+      toolUseId: 'mail',
+      name: 'mcp__claude_ai_Gmail__search_threads',
+      displayTitle: 'Search threads',
+      serverName: 'Gmail',
+    }),
+    // Reported again without them (its input filled in): they stay.
+    event('tool_started', 11, { turnId: 't1', toolUseId: 'mail', name: 'mcp__claude_ai_Gmail__search_threads' }),
+    event('tool_output', 20, { turnId: 't1', toolUseId: 'mail', output: '1 thread' }),
+  ]).entries
+  const tool = entries.find((entry) => entry.kind === 'tool' && entry.id === 'mail') as
+    { displayTitle?: string; serverName?: string } | undefined
+  expect([tool?.displayTitle, tool?.serverName]).toEqual(['Search threads', 'Gmail'])
+})

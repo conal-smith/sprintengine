@@ -8,6 +8,7 @@ import {
   claudeMcpLaunch,
   claudeMcpServers,
   createClaudeAgentProvider,
+  mapSdkMessage,
 } from './claude-agent-provider'
 import type { MockAdapterTurnInput } from './conversation-provider-adapter'
 
@@ -346,4 +347,57 @@ test('a server action asked while the child registers its servers waits for them
     { reconnected: 'stripe' },
   ])
   await adapter.disposeAll()
+})
+
+test('an MCP call carries the title and server name Claude Code gave it, as short plain text', () => {
+  const state = {
+    sessionId: 'conv_1',
+    workspaceId: 'ws-1',
+    agentId: 'agent-1',
+    providerId: CLAUDE_AGENT_PROVIDER_ID,
+    modelId: 'sonnet',
+    providerSessionId: null as string | null,
+    turn: { turnId: 'turn_1' },
+  }
+  const events = mapSdkMessage(
+    state,
+    {
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_mail',
+            name: 'mcp__claude_ai_Gmail__search_threads',
+            input: { query: 'invoice' },
+          },
+          { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/Users/dev/app/a.ts' } },
+          { type: 'tool_use', id: 'toolu_bare', name: 'mcp__acme__run', input: {} },
+        ],
+      },
+      tool_use_meta: [
+        {
+          id: 'toolu_mail',
+          display_name: 'Search\nthreads\u0007',
+          server_display_name: 'Gmail',
+          icon_url: 'https://example.com/gmail.png',
+        },
+        // Built-in tools carry none; one that did is not an MCP call's.
+        { id: 'toolu_read', display_name: 'Read file' },
+        { id: 'toolu_bare', display_name: 'R'.repeat(300) },
+      ],
+    },
+    { saveToolImages: false },
+  )
+  const started = new Map(
+    events.filter((event) => event.type === 'tool_started').map((event) => [event.payload?.toolUseId, event.payload]),
+  )
+  assert.equal(started.get('toolu_mail')?.displayTitle, 'Search threads')
+  assert.equal(started.get('toolu_mail')?.serverName, 'Gmail')
+  assert.equal('icon_url' in (started.get('toolu_mail') ?? {}), false)
+  assert.equal('iconUrl' in (started.get('toolu_mail') ?? {}), false)
+  assert.equal(started.get('toolu_read')?.displayTitle, undefined)
+  assert.equal((started.get('toolu_bare')?.displayTitle as string).length, 120)
+  assert.equal(started.get('toolu_bare')?.serverName, undefined)
 })
