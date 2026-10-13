@@ -237,6 +237,9 @@
       "icon": "resources/icon.png",
       "category": "Development"
     },
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
