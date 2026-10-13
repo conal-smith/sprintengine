@@ -119,7 +119,10 @@ export async function getGitRowSummary(repoRoot: string): Promise<GitRowSummary>
   try {
     // Staged + unstaged against HEAD in one number pair. Untracked files are
     // invisible to `diff` — accepted: the row summarises edits, not inventory.
-    const stat = await runGit(repoRoot, ['diff', '--shortstat', 'HEAD'])
+    // `diff-index`, which never writes the index, where `git diff` rewrites it
+    // for a file whose stat data alone moved (git-branch-span.ts, `diffFlags`);
+    // `-M` because it finds no renames unless asked, and `git diff` does.
+    const stat = await runGit(repoRoot, ['diff-index', '--shortstat', '-M', 'HEAD'])
     const additions = Number(/([0-9]+) insertion/.exec(stat)?.[1] ?? 0)
     const deletions = Number(/([0-9]+) deletion/.exec(stat)?.[1] ?? 0)
     return { branch, additions, deletions }
