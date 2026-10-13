@@ -4,6 +4,12 @@
 
 ### Added
 
+- **A steered send** (`conversation-steer-sends`, in `welcome.conversation`):
+  `conversation.send` may say `steer: true`, read by the conversation lane's
+  own validator, and the message goes into the turn the conversation is
+  running where its provider takes one. A turn that cannot take it has the
+  Studio hold the message for the turn's end, answered with a `notice`.
+
 - **Pull request watches** (`pull-request-watch`, owners): `pullRequests.unwatch`
   stops a conversation's watch on one of its pull requests, and a listed
   `StudioPullRequest` may carry `watch` (`StudioPullRequestWatch`: when it

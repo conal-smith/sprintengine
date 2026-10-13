@@ -46,13 +46,23 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   this message, at most `CONVERSATION_MAX_SEND_SKILLS`. Never beside
  *   `queue`. Needs `conversation-send-skills`; a desktop without it drops the
  *   member and the message goes without them.
+ * - `send` may say `steer`: the message goes into the turn that is running
+ *   rather than waiting for it to end, where the chat's provider takes one
+ *   (the listed chat's `capabilities.steer`). Answered when that turn ends, as
+ *   any send is. With no turn running it is an ordinary send. A turn that
+ *   cannot take it (a provider that cannot, a request the agent waits on, a
+ *   turn that ended on the way) has the desktop hold it as a `queue` send is
+ *   held, answered at once with a `notice` saying so; one carrying `uploadIds`
+ *   or `skills`, which a held message cannot, is refused `busy` instead. Never
+ *   beside `queue`. Needs `conversation-steer-sends`; a desktop without it
+ *   drops the member, and a send made while a turn runs is refused `busy`.
  * - `cancelQueued` takes back a message the desktop holds (`queued` frames
  *   name each by `id`), refused once it is on its way into the chat. Needs
  *   `conversation-queued-sends` too.
  */
 export type ConversationCommand =
   | Exclude<ConversationWireCommand, { kind: 'setPermissionPreset' } | { kind: 'send' }>
-  | { kind: 'send'; message: string; uploadIds?: string[]; queue?: true; skills?: string[] }
+  | { kind: 'send'; message: string; uploadIds?: string[]; queue?: true; skills?: string[]; steer?: true }
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }

@@ -662,6 +662,15 @@ in the app's own process.
   sends them. A machine without the capability, or one that refuses to hold a
   message, leaves it queued in this pane, which sends it when the turn ends
   only while this machine is awake, as every queued message was before.
+- **A message can steer the turn over there** (2026-10-14). Where the machine
+  advertises `conversation-steer-sends` and lists the chat's provider as taking
+  a message mid-turn (`capabilities.steer`), the composer's Steer, chosen in
+  Settings ▸ Agents or by Primary+Enter for one message, sends with `steer`,
+  and the message goes into the running turn there. A turn that cannot take it
+  then (a request it waits on, a turn that ended on the way) has that machine
+  hold it as a queued message, and the pane shows it among the held rows. A
+  machine without the capability is never sent a steer: the composer offers
+  only Queue, and Primary+Enter stops the turn and sends after, as before.
 
 ### Terminals stay on the machine
 

@@ -321,7 +321,19 @@ frames only to a client that asked, so a phone that never asks never sees
 one. A client asks whenever the desktop has not said it lacks the
 capability, since an older desktop's refusal is harmless. The Studio RPC does
 not advertise it: its conversation topic carries no `queued` frames, and its
-`conversation.cancelQueued` method is an owner's only. Breaking frame changes require a new
+`conversation.cancelQueued` method is an owner's only.
+A steered message is the `conversation-steer-sends` capability (2026-10-14):
+a `send` that says `steer: true` goes into the turn the chat is running, where
+its provider takes one, and each listed chat says whether it does as
+`capabilities.steer`, an optional boolean. With no turn running the send is an
+ordinary one; a turn that cannot take it has the desktop hold the message as a
+`queue` send is held, answered at once with a `notice`, or, for a message with
+`uploadIds` or `skills` that a held one cannot carry, refused `busy` as a
+mid-turn send always was. `steer` is never beside `queue`. All of it is
+additive: a desktop without the capability drops `steer`, so the send is
+refused `busy` mid-turn as before, and a client sends it only where it is
+advertised. The Studio RPC advertises it too: its `conversation.send` reads
+the lane's own validator and reaches the same host. Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.
 Both ESM and CommonJS tarball consumers and Node16 declarations are checked by

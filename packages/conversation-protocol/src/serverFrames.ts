@@ -46,7 +46,15 @@ export type ConversationWirePage = { events: ConversationWireEvent[]; hasMore: b
  */
 export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & {
   permissionMode?: string
-  capabilities?: NonNullable<ConversationWireThread['capabilities']> & { permissionModes?: string[] }
+  capabilities?: NonNullable<ConversationWireThread['capabilities']> & {
+    permissionModes?: string[]
+    /**
+     * The chat's provider takes a message into a turn it is running (a
+     * `send` that says `steer`), from a desktop that advertises
+     * `conversation-steer-sends`. Absent means unknown.
+     */
+    steer?: boolean
+  }
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
    * listed, and for a chat whose machine the desktop cannot name yet.
@@ -395,6 +403,7 @@ function thread(value: unknown): ConversationThread | null {
             ...(Array.isArray(flags.permissionModes)
               ? { permissionModes: flags.permissionModes.filter(isConversationPermissionModeId) }
               : {}),
+            ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
           },
         }
       : {}),

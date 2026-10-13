@@ -163,6 +163,12 @@ export const TAILNET_CAPABILITIES = [
   // A message may bring skills (2026-10-09): `send` takes `skills`, ids of
   // this machine's skills the chat runs with it. CONVERSATION_SEND_SKILLS_CAPABILITY.
   'conversation-send-skills',
+  // A message may steer the turn that is running (2026-10-14): `send` takes
+  // `steer`, and a listed chat says whether its provider takes one
+  // (`capabilities.steer`). A steer the turn cannot take is held as a queued
+  // message is, or refused busy where it carries what a held one cannot.
+  // CONVERSATION_STEER_SENDS_CAPABILITY.
+  'conversation-steer-sends',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:
