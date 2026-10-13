@@ -396,3 +396,21 @@ export async function resolveAgentForkBase(run: SlotGitRunner, repoRoot: string)
   if (ref.includes('/')) await fetchBase(run, repoRoot, ref)
   return ref
 }
+
+/**
+ * Said when a branch named `agent` stands where every agent branch would go.
+ * Git keeps `agent/<name>` as a file under a folder `agent`, and a branch
+ * named `agent` is a file by that name, so it refuses each one ("cannot lock
+ * ref … 'refs/heads/agent' exists"). Studio says so before it tries rather
+ * than naming its branches something else: what it cleans up afterwards is
+ * only ever an `agent/` branch.
+ */
+export const AGENT_BRANCH_BLOCKED_MESSAGE =
+  'A branch named “agent” in this repository blocks Studio’s agent/… branches. Rename it (git branch -m agent <new-name>) to start chats in a worktree.'
+
+/** Whether a branch named `agent` blocks `branch`, one of Studio's `agent/…` branches. */
+export async function agentBranchBlocked(run: SlotGitRunner, repoRoot: string, branch: string): Promise<boolean> {
+  if (!branch.startsWith('agent/')) return false
+  const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', 'refs/heads/agent'])
+  return found.ok && found.stdout.trim().length > 0
+}

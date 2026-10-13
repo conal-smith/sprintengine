@@ -106,3 +106,24 @@ test('a filesystem that refuses to clone falls back to a plain copy', async () =
   assert.deepEqual(modes, [constants.COPYFILE_FICLONE, 0], 'a clone is asked for first, then a plain copy')
   assert.equal(await readFile(join(scratch, 'clone-target', 'nested', 'file.txt'), 'utf8'), 'content\n')
 })
+
+test('a branch named agent is named as what refuses an agent worktree, and nothing is made', async () => {
+  const blocked = join(scratch, 'blocked')
+  await mkdir(blocked, { recursive: true })
+  await git(blocked, 'init', '-q', '-b', 'main')
+  await writeFile(join(blocked, 'README.md'), '# blocked\n')
+  await git(blocked, 'add', '.')
+  await git(blocked, 'commit', '-q', '-m', 'init')
+  await git(blocked, 'branch', 'agent')
+  const container = join(scratch, 'blocked-worktrees')
+  const created = await createGitWorktree({
+    repoRoot: blocked,
+    containerPath: container,
+    destinationPath: join(container, 'fix'),
+    branchName: 'agent/fix',
+    baseRef: 'HEAD',
+  })
+  assert.equal(created.ok, false)
+  assert.match(created.ok ? '' : created.message, /A branch named “agent” in this repository blocks/)
+  assert.equal(await git(blocked, 'branch', '--list', 'agent/*'), '')
+})
