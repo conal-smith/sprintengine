@@ -23,6 +23,7 @@ import {
   createPullRequestReadiness,
   forgeOfRemote,
   prefilledPullRequestPage,
+  pullRequestListPageUrl,
   pullRequestNoun,
   type CreatePullRequestFacts,
   type CreatePullRequestOutcome,
@@ -50,6 +51,8 @@ export type PullRequestCreateDeps = {
   tea?: GhRunner
   listBranch?: typeof listBranchPullRequests
   now?: () => number
+  /** The platform whose shell opens the forge's page, which caps its address; this one by default. */
+  platform?: NodeJS.Platform
 }
 
 /** How long a branch lookup answers the button before the forge's CLI is asked again. */
@@ -78,6 +81,7 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
   const git = deps.git ?? runGitCommand
   const listBranch = deps.listBranch ?? listBranchPullRequests
   const now = deps.now ?? (() => Date.now())
+  const platform = deps.platform ?? process.platform
   const forges = createForgePullRequests({
     ...(deps.glab ? { glab: deps.glab } : {}),
     ...(deps.tea ? { tea: deps.tea } : {}),
@@ -429,6 +433,12 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
    * The repository the branch is pushed to, when that is not `base`'s (a
    * fork, whichever remote names it); null when it is the same, or git could
    * not say where the push goes.
+   *
+   * Read from the remote's push URL, where the branch actually went: a clone
+   * that fetches from the parent and pushes to the person's fork
+   * (`remote.origin.pushurl`) has the parent as its fetch URL, and glab and
+   * tea told that as the head would look for the branch where it is not. A
+   * remote with several push URLs pushes to each; the first names it.
    */
   async function pushedRepositoryOf(
     gitRoot: string,
@@ -438,7 +448,8 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
   ): Promise<ForgeRemote | null> {
     const target = await pushTargetOf(gitRoot, branch, defaultBranch)
     if (!target.ok) return null
-    const url = (await out(gitRoot, ['remote', 'get-url', target.remote])) ?? target.remote
+    const pushUrls = await out(gitRoot, ['remote', 'get-url', '--push', target.remote])
+    const url = pushUrls?.split('\n')[0]?.trim() || target.remote
     const pushed = forgeOfRemote(url)
     return pushed && pushed.webUrl.toLowerCase() !== base.webUrl.toLowerCase() ? pushed : null
   }
@@ -471,7 +482,8 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     const moved = movedFrom(pin, facts.branch, headSha)
     if (moved) return { ok: false, message: moved }
     if (remote.forge !== 'github') {
-      let note: string | undefined
+      const place = forgePlace(remote)
+      let reason: string | undefined
       if (isDriven(remote.forge)) {
         const pushedTo = await pushedRepositoryOf(gitRoot, facts.branch, facts.defaultBranch, remote)
         const made = await forges.create(
@@ -479,18 +491,31 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
           { title, body: text.body },
         )
         lookups.delete(`${gitRoot}\0${facts.branch}`)
+        if (made.kind === 'address-unknown') {
+          const list = pullRequestListPageUrl(remote)
+          return list
+            ? { ok: true, kind: 'list', url: list, place, reason: made.reason }
+            : { ok: false, message: made.reason }
+        }
         if (made.kind !== 'unavailable') return { ok: true, kind: made.kind, url: made.url }
-        note = `${forgePlace(remote)}’s page opened instead. ${made.reason}`
+        reason = made.reason
       }
-      const page = prefilledPullRequestPage(remote, facts.defaultBranch, facts.branch, { title, body: text.body })
+      const page = prefilledPullRequestPage(
+        remote,
+        facts.defaultBranch,
+        facts.branch,
+        { title, body: text.body },
+        platform,
+      )
       if (!page) {
-        return { ok: false, message: note ?? `${capitalized(noun)}s on this forge cannot be opened from here yet.` }
+        return { ok: false, message: reason ?? `${capitalized(noun)}s on this forge cannot be opened from here yet.` }
       }
       return {
         ok: true,
         kind: 'page',
         url: page.url,
-        ...(note ? { note } : {}),
+        place,
+        ...(reason ? { reason } : {}),
         ...(page.descriptionFilled ? {} : { descriptionLeftOut: true as const }),
       }
     }
@@ -555,7 +580,7 @@ function readinessMessage(readiness: Extract<CreatePullRequestReadiness, { ready
   }
 }
 
-/** How a note names the forge whose page opened: GitLab by name, a Gitea or Forgejo by its host, which is what the person knows it as. */
+/** How the strip names the forge whose page or list opens: GitLab by name, a Gitea or Forgejo by its host, which is what the person knows it as. */
 function forgePlace(remote: ForgeRemote): string {
   if (remote.forge === 'gitlab') return 'GitLab'
   try {

@@ -37,7 +37,11 @@ import { linkPullRequestToConversation } from '../../workspace/useConversationPu
 // signed out or fails (and on Bitbucket) it opens the forge's own page with
 // the title and description filled in, and the strip says why; a description
 // the page could not take is put on the clipboard, so nothing written is
-// lost. Every step says where it is, and a failure says why, on the strip.
+// lost. A page the system would not open (Windows refuses a long address) is
+// never claimed opened: the title and description go on the clipboard and
+// the strip says so. Where the CLI probably opened the request but its
+// address is not known, the forge's list of requests opens instead, to find
+// it in. Every step says where it is, and a failure says why, on the strip.
 //
 // GitLab calls them merge requests, and so does the control on a GitLab
 // checkout: "Create MR", "Create a merge request".
@@ -106,10 +110,51 @@ function stepWords(step: 'pushing' | 'creating' | 'recording', noun: string): st
 }
 
 /** What the strip says when the forge's page opened: why, and where the description went if the page could not take it. */
-function pageNote(note: string | undefined, descriptionCopied: boolean): string | null {
+function pageNote(place: string, reason: string | undefined, descriptionCopied: boolean): string | null {
+  const note = reason ? `${place}’s page opened instead. ${reason}` : null
   const copied = descriptionCopied ? 'The description is on the clipboard to paste into the page.' : null
   if (note && copied) return `${note} ${copied}`
   return note ?? copied
+}
+
+/**
+ * What the strip says when the forge's page would not open: that it did not,
+ * where the title and description went instead, and why the page was the
+ * way at all. `copied` names what reached the clipboard, null when nothing
+ * did (the copy says its own failure).
+ */
+function unopenedPageNote(
+  place: string,
+  reason: string | undefined,
+  copied: 'title' | 'title and description' | null,
+): string {
+  const lead = copied
+    ? `${place}’s page could not be opened, so the ${copied} ${copied === 'title' ? 'is' : 'are'} on the clipboard.`
+    : `${place}’s page could not be opened.`
+  return reason ? `${lead} ${reason}` : lead
+}
+
+/** What the strip says when the request's address is not known and the forge's list of them was to open. */
+function listNote(place: string, reason: string, noun: string, opened: boolean): string {
+  return opened
+    ? `${reason} ${place}’s ${noun} list opened, to look for it there.`
+    : `${reason} Look for it in ${place}’s ${noun} list.`
+}
+
+/**
+ * Whether the system opened `url` in the browser. The shell answers
+ * `{ ok: false }` when it would not (an address too long for Windows, no
+ * handler for it), and a shell with no bridge opens nothing.
+ */
+async function openedExternally(url: string): Promise<boolean> {
+  const open = typeof window === 'undefined' ? undefined : window.api?.openExternal
+  if (typeof open !== 'function') return false
+  try {
+    const result = await open(url)
+    return result?.ok !== false
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -173,17 +218,37 @@ export function CreatePullRequestControl({
       setProgress({ step: 'failed', message: created.message })
       return
     }
-    if (created.kind === 'page' || created.kind === 'existing') {
+    if (created.kind === 'page' || created.kind === 'list' || created.kind === 'existing') {
       // A page: the forge opens it from there, and nothing exists to record
-      // yet. An existing one: the branch had it already, perhaps a
-      // teammate's, so it is shown, not claimed for this chat (whose merge
-      // would then settle it).
-      void api.openExternal?.(created.url)
-      const copied =
-        created.kind === 'page' && created.descriptionLeftOut === true && text.body.trim() !== ''
-          ? await copyToClipboardWithToast(text.body, { success: 'silent' })
-          : false
-      const note = created.kind === 'page' ? pageNote(created.note, copied) : null
+      // yet. A list: the request is probably there, but with no address
+      // there is nothing to record either. An existing one: the branch had
+      // it already, perhaps a teammate's, so it is shown, not claimed for
+      // this chat (whose merge would then settle it).
+      const opened = await openedExternally(created.url)
+      let note: string | null = null
+      if (created.kind === 'existing') {
+        if (!opened) note = `This branch already has a ${noun}, and it could not be opened.`
+      } else if (created.kind === 'list') {
+        note = listNote(created.place, created.reason, noun, opened)
+      } else if (opened) {
+        const copied =
+          created.descriptionLeftOut === true && text.body.trim() !== ''
+            ? await copyToClipboardWithToast(text.body, { success: 'silent' })
+            : false
+        note = pageNote(created.place, created.reason, copied)
+      } else {
+        // Nothing opened, so nothing was filled in anywhere: everything the
+        // person confirmed goes on the clipboard for them to take to the forge.
+        const described = text.body.trim() !== ''
+        const copied = await copyToClipboardWithToast(described ? `${text.title}\n\n${text.body}` : text.title, {
+          success: 'silent',
+        })
+        note = unopenedPageNote(
+          created.place,
+          created.reason,
+          copied ? (described ? 'title and description' : 'title') : null,
+        )
+      }
       setProgress(note ? { step: 'noted', message: note } : null)
       onSettled()
       return

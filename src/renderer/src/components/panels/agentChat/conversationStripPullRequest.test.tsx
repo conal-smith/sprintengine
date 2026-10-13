@@ -482,7 +482,8 @@ test('on GitLab the control says merge request, and a page opened instead says w
       ok: true,
       kind: 'page',
       url: 'https://gitlab.com/acme/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fmarks',
-      note: 'GitLab’s page opened instead. Install glab and run `glab auth login` to open merge requests from here.',
+      place: 'GitLab',
+      reason: 'Install glab and run `glab auth login` to open merge requests from here.',
       descriptionLeftOut: true,
     }),
   })
@@ -526,4 +527,101 @@ test('on GitLab the control says merge request, and a page opened instead says w
   )
   expect(container.querySelector('[data-create-pull-request-error]')).toBe(null)
   await unmount()
+})
+
+/**
+ * Confirms the Create MR dialog with the drafted text against a creation that
+ * answers `outcome`, a shell whose openExternal answers `openResult`, and
+ * reads back what was opened, what was copied and what the strip said.
+ */
+async function confirmCreate(outcome: unknown, openResult: unknown, draft = { title: 'feat: marks', body: 'Body' }) {
+  const copied: string[] = []
+  const asked: string[] = []
+  const api = (dom.window as unknown as { api: Record<string, unknown> }).api
+  const previousOpen = api.openExternal
+  Object.assign(api, {
+    draftPullRequestText: async () => ({ ok: true, value: draft, ms: 1 }),
+    createPullRequestState: async () => ({ branch: 'feature/marks', headSha: 'abc1234def' }),
+    pushForPullRequest: async () => ({ ok: true, pushed: false }),
+    clipboardWriteText: async (text: string) => {
+      copied.push(text)
+    },
+    createPullRequest: async () => outcome,
+    openExternal: async (url: string) => {
+      asked.push(url)
+      return openResult
+    },
+  })
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  useWorkspaceStore.setState((state) => ({
+    ...state,
+    appSettings: { ...state.appSettings, textGeneration: { enabled: true, engine: { cli: 'claude-code', model: '' } } },
+    pluginCatalogEntries: [{ id: 'claude-code' }] as never,
+  }))
+  const { CreatePullRequestControl } = await import('./createPullRequest')
+  let settled = 0
+  const { container, act, unmount } = await mount(
+    <CreatePullRequestControl
+      cwd="/Users/dev/app"
+      conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+      onSettled={() => (settled += 1)}
+      forge="gitlab"
+      ready
+    />,
+  )
+  try {
+    const button = [...container.querySelectorAll('button')].find((node) => node.textContent?.includes('Create MR'))
+    await act(async () => button?.click())
+    const title = await waitFor(() => dom.window.document.querySelector<HTMLInputElement>('input[maxlength="300"]'))
+    await waitFor(() => (title.value === draft.title ? title : null))
+    const create = [...dom.window.document.querySelectorAll('button')].find((node) => node.textContent === 'Create')
+    await act(async () => create?.click())
+    await waitFor(() => (settled > 0 ? true : null))
+    const note = container.querySelector('[data-create-pull-request-note]')?.textContent ?? null
+    return { asked, copied, note }
+  } finally {
+    await unmount()
+    api.openExternal = previousOpen
+  }
+}
+
+test('a forge page the system would not open is not claimed opened, and the title and description go on the clipboard', async () => {
+  const page = 'https://gitlab.com/acme/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fmarks'
+  const { asked, copied, note } = await confirmCreate(
+    {
+      ok: true,
+      kind: 'page',
+      url: page,
+      place: 'GitLab',
+      reason: 'Install glab and run `glab auth login` to open merge requests from here.',
+    },
+    { ok: false, message: 'The filename or extension is too long.' },
+  )
+  expect(asked).toEqual([page])
+  expect(copied).toEqual(['feat: marks\n\nBody'])
+  expect(note).toBe(
+    'GitLab’s page could not be opened, so the title and description are on the clipboard. Install glab and run `glab auth login` to open merge requests from here.',
+  )
+  expect(note).not.toContain('opened instead')
+})
+
+test('a merge request opened without a known address opens the list of them, and says why', async () => {
+  const list = 'https://gitlab.com/acme/app/-/merge_requests'
+  const outcome = {
+    ok: true,
+    kind: 'list',
+    url: list,
+    place: 'GitLab',
+    reason: 'glab opened the merge request without saying its address.',
+  }
+  const opened = await confirmCreate(outcome, { ok: true })
+  expect(opened.asked).toEqual([list])
+  expect(opened.copied).toEqual([])
+  expect(opened.note).toBe(
+    'glab opened the merge request without saying its address. GitLab’s merge request list opened, to look for it there.',
+  )
+  const unopened = await confirmCreate(outcome, { ok: false, message: 'No handler.' })
+  expect(unopened.note).toBe(
+    'glab opened the merge request without saying its address. Look for it in GitLab’s merge request list.',
+  )
 })

@@ -371,7 +371,42 @@ test('GitLab without glab opens its page with the confirmed title and descriptio
     ok: true,
     kind: 'page',
     url: 'https://gitlab.com/acme/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fmarks&merge_request%5Btarget_branch%5D=main&merge_request%5Btitle%5D=feat%3A%20marks&merge_request%5Bdescription%5D=Marks%20%26%20more.',
-    note: 'GitLab’s page opened instead. Install glab and run `glab auth login` to open merge requests from here.',
+    place: 'GitLab',
+    reason: 'Install glab and run `glab auth login` to open merge requests from here.',
+  })
+})
+
+test('on Windows a description that would make the page address too long is left out of it, to paste', async () => {
+  const { clone } = await checkout()
+  await git(clone, 'remote', 'set-url', 'origin', 'git@gitlab.com:acme/app.git')
+  const body = 'word '.repeat(500)
+  const created = (platform: NodeJS.Platform) =>
+    createPullRequestCreator({ gh: refusing('gh'), glab: NOT_INSTALLED, tea: refusing('tea'), platform }).create(
+      clone,
+      { title: 'feat: marks', body },
+    )
+  const mac = await created('darwin')
+  assert.ok(mac.ok && mac.kind === 'page' && !mac.descriptionLeftOut && mac.url.length > 2_048)
+  const windows = await created('win32')
+  assert.ok(windows.ok && windows.kind === 'page')
+  assert.equal(windows.ok && windows.kind === 'page' ? windows.descriptionLeftOut : null, true)
+  assert.ok(windows.ok && windows.url.length < 2_048)
+})
+
+test('a merge request glab opened without saying where opens the list of them, never a second new page', async () => {
+  const { clone } = await checkout()
+  await git(clone, 'remote', 'set-url', 'origin', 'git@gitlab.com:acme/app.git')
+  const glab: GhRunner = {
+    available: async () => true,
+    run: async (args) => ({ found: true, code: 0, stdout: args[1] === 'list' ? '[]' : '', stderr: '' }),
+  }
+  const creator = createPullRequestCreator({ gh: refusing('gh'), glab, tea: refusing('tea') })
+  assert.deepEqual(await creator.create(clone, { title: 'feat: marks', body: '' }), {
+    ok: true,
+    kind: 'list',
+    url: 'https://gitlab.com/acme/app/-/merge_requests',
+    place: 'GitLab',
+    reason: 'glab opened the merge request without saying its address.',
   })
 })
 
@@ -410,6 +445,33 @@ test('GitLab with glab opens the merge request here, and a branch with an open o
   assert.deepEqual((await creator.state(clone)).readiness, { ready: false, reason: 'open-pull-request' })
 })
 
+test('a clone that fetches from the parent and pushes to a fork names the fork as the head, read from the push URL', async () => {
+  const { clone } = await checkout()
+  // One remote, two addresses: fetched from the parent, pushed to the person's fork.
+  await git(clone, 'remote', 'set-url', 'origin', 'git@gitlab.com:acme/app.git')
+  await git(clone, 'remote', 'set-url', '--push', 'origin', 'git@gitlab.com:dev/app.git')
+  const asked: string[][] = []
+  const glab: GhRunner = {
+    available: async () => true,
+    run: async (args) => {
+      asked.push(args)
+      if (args[1] === 'create') {
+        return { found: true, code: 0, stdout: 'https://gitlab.com/acme/app/-/merge_requests/8\n', stderr: '' }
+      }
+      return { found: true, code: 0, stdout: args[1] === 'list' ? '[]' : '', stderr: '' }
+    },
+  }
+  const creator = createPullRequestCreator({ gh: refusing('gh'), glab, tea: refusing('tea') })
+  assert.deepEqual(await creator.create(clone, { title: 'feat: marks', body: '' }), {
+    ok: true,
+    kind: 'created',
+    url: 'https://gitlab.com/acme/app/-/merge_requests/8',
+  })
+  const created = asked.find((args) => args[1] === 'create') ?? []
+  assert.ok(created.includes('--repo=https://gitlab.com/acme/app'), created.join(' '))
+  assert.ok(created.includes('--head=https://gitlab.com/dev/app'), created.join(' '))
+})
+
 test('a page that takes no description says so, so the window can keep it', async () => {
   const { clone } = await checkout()
   await git(clone, 'remote', 'set-url', 'origin', 'git@bitbucket.org:acme/app.git')
@@ -418,6 +480,7 @@ test('a page that takes no description says so, so the window can keep it', asyn
     ok: true,
     kind: 'page',
     url: 'https://bitbucket.org/acme/app/pull-requests/new?source=feature%2Fmarks&dest=main',
+    place: 'bitbucket.org',
     descriptionLeftOut: true,
   })
 })

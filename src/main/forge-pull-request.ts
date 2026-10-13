@@ -6,9 +6,13 @@
 //
 // Whatever goes wrong before a request exists, the answer is `unavailable`
 // with a sentence saying why (the CLI is missing, is not signed in to that
-// host, refused, or did not answer), and the caller opens the forge's own
-// prefilled page instead: the person still gets to propose what they
-// confirmed, and learns what would let the app do it next time.
+// host, or refused), and the caller opens the forge's own prefilled page
+// instead: the person still gets to propose what they confirmed, and learns
+// what would let the app do it next time. Once the CLI may have opened one
+// (it said it did but printed no address Studio can read, or it ran out of
+// time mid-creation), the answer is `address-unknown` instead, and the caller
+// opens the repository's list of requests: the prefilled page would invite a
+// second request beside the one that is probably there.
 //
 // This computer's checkouts only, like the button itself: a chat on WSL, an
 // SSH machine or a paired machine draws no Create PR, so there is no remote
@@ -57,6 +61,8 @@ export type ForgeCreateOutcome =
   | { kind: 'created' | 'existing'; url: string }
   /** No request was opened here; `reason` says why, and the forge's page opens instead. */
   | { kind: 'unavailable'; reason: string }
+  /** One was probably opened, but where is not known; `reason` says why, and the forge's list opens instead. */
+  | { kind: 'address-unknown'; reason: string }
 
 export type ForgePullRequestDeps = {
   glab?: GhRunner
@@ -211,8 +217,15 @@ export function createForgePullRequests(deps: ForgePullRequestDeps = {}) {
     if (!result.found || result.timedOut || result.code !== 0) return { settled: false }
     const rows = parseJsonDocument(result.stdout)
     if (!Array.isArray(rows)) return { settled: false }
+    // A list none of whose addresses reads as a request on this forge is one
+    // this cannot read, not one with none from the branch: a Gitea served
+    // under a path (`https://host/git/<owner>/<repo>/pulls/<n>`) prints
+    // addresses `classifyPullRequestUrl` does not take, and reading its list
+    // as empty would show Create PR beside the request already open.
+    const forge = remote.forge
+    if (rows.length > 0 && !rows.some((row) => rowClassifies(row, forge))) return { settled: false }
     const requests = rows.flatMap((row) => {
-      const read = remote.forge === 'gitlab' ? gitlabRow(row, branch) : giteaRow(row, branch)
+      const read = forge === 'gitlab' ? gitlabRow(row, branch) : giteaRow(row, branch)
       return read ? [read] : []
     })
     return { settled: true, requests }
@@ -276,7 +289,15 @@ export function createForgePullRequests(deps: ForgePullRequestDeps = {}) {
           )
     if (!result.found) return { kind: 'unavailable', reason: missingReason(cli) }
     if (result.timedOut) {
-      return { kind: 'unavailable', reason: `${cli} did not answer in time, so the ${noun} may or may not be open.` }
+      // The forge may have opened it before the CLI was stopped. The button
+      // shows only while the branch has no open request it knows of, so one
+      // open now is, as after a quiet success, taken for the one asked for.
+      const url = await openRequestOf(target)
+      if (url) return { kind: 'created', url }
+      return {
+        kind: 'address-unknown',
+        reason: `${cli} did not answer in time, so the ${noun} may or may not be open.`,
+      }
     }
     const output = `${result.stdout}\n${result.stderr}`
     if (result.code === 0) {
@@ -288,7 +309,7 @@ export function createForgePullRequests(deps: ForgePullRequestDeps = {}) {
           ? ((await openRequestOf(target)) ?? lastRequestUrl(output, remote))
           : (lastRequestUrl(output, remote) ?? (await openRequestOf(target)))
       if (url) return { kind: 'created', url }
-      return { kind: 'unavailable', reason: `${cli} answered without the address of the ${noun} it opened.` }
+      return { kind: 'address-unknown', reason: `${cli} opened the ${noun} without saying its address.` }
     }
     // The branch already has one, whoever opened it: shown, not claimed, as
     // gh's refusal is.
@@ -344,7 +365,14 @@ function originOf(webUrl: string): string {
   }
 }
 
-/** `owner/repo` of a Gitea repository's web URL: always its last two segments, whatever path the server is mounted on. */
+/**
+ * `owner/repo` of a Gitea repository's web URL: its last two segments, which
+ * is what tea's `--repo` takes whatever path the server is mounted on. The
+ * addresses such a server prints back are another matter: the pull request
+ * record reads a Gitea request only at `/<owner>/<repo>/pulls/<n>` from the
+ * host's root, so on a server under a path a branch lookup is unsettled and
+ * a creation ends `address-unknown`, with the list to find it in.
+ */
 function repositorySlug(webUrl: string): string {
   return webUrl.split('/').slice(-2).join('/')
 }
@@ -408,6 +436,13 @@ export function teaLoginFor(logins: unknown, webUrl: string): string | null {
   })
   const chosen = matches.find((login) => String(login.default) === 'true') ?? matches[0]
   return chosen ? (chosen.name as string) : null
+}
+
+/** Whether a listed row's address reads as a request on `forge`, whatever branch it is from. */
+function rowClassifies(row: unknown, forge: DrivenForge): boolean {
+  if (!isRecord(row)) return false
+  const url = forge === 'gitlab' ? row.web_url : row.url
+  return typeof url === 'string' && classifyPullRequestUrl(url)?.forge === forge
 }
 
 /** A row of `glab mr list --output json`: GitLab's own merge request object. */

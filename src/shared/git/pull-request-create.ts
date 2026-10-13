@@ -90,26 +90,49 @@ export type CreatePullRequestState = {
  */
 export type PullRequestCheckoutPin = { branch: string; headSha: string }
 
-/** A creation's end: created by the forge's CLI, already there, a forge page to open, or why not. */
+/**
+ * A creation's end: created by the forge's CLI, already there, a forge page to
+ * open, the forge's list to look in, or why not. The window opens the address
+ * and says what happened; the sentences about a page or list are its to write,
+ * because only it learns whether the page actually opened.
+ */
 export type CreatePullRequestOutcome =
-  /** `existing`: the branch had one already, whoever opened it; shown, never linked to the chat. */
-  | { ok: true; kind: 'created' | 'existing'; url: string }
+  | { ok: true; kind: 'created'; url: string }
+  /** The branch had one already, whoever opened it; shown, never linked to the chat. */
+  | { ok: true; kind: 'existing'; url: string }
   | {
       ok: true
       kind: 'page'
       url: string
+      /** How the strip names the forge whose page it is: GitLab by name, a Gitea or Bitbucket by its host. */
+      place: string
       /**
-       * Why the page opened rather than the request being created here (the
+       * Why the page opens rather than the request being created here (the
        * forge's CLI is missing, signed out or failed), for the strip to say.
        * Absent on a forge the app has no CLI for, where the page is the way.
        */
-      note?: string
+      reason?: string
       /**
        * The description was not put in the page's address (the forge's page
        * takes none, or it was too long for an address), so the window keeps
        * it for the person to paste rather than losing what they wrote.
        */
       descriptionLeftOut?: true
+    }
+  | {
+      ok: true
+      /**
+       * The forge's CLI may well have opened the request, but its address
+       * could not be read (the CLI printed none Studio recognises, or did not
+       * answer in time). `url` is the repository's list of requests, where
+       * the person can find it: opening the "new request" page instead would
+       * invite a second one.
+       */
+      kind: 'list'
+      url: string
+      place: string
+      /** What is not known, for the strip to say. */
+      reason: string
     }
   | { ok: false; message: string }
 
@@ -154,6 +177,17 @@ export function pullRequestNoun(forge: PullRequestForge | null): 'merge request'
 
 /** The longest new-request page address the app opens; past it a server may refuse the request line. */
 const MAX_PAGE_URL_CHARS = 8_000
+/**
+ * The longest it opens on Windows, where the shell hands an address to the
+ * browser through a call that refuses one much past 2,048 characters, so a
+ * longer one would open nothing at all. Kept under that with room to spare.
+ */
+const MAX_WINDOWS_PAGE_URL_CHARS = 2_000
+
+/** The longest page address that opens on `platform` (`process.platform`'s values). */
+export function maxPageUrlChars(platform: string): number {
+  return platform === 'win32' ? MAX_WINDOWS_PAGE_URL_CHARS : MAX_PAGE_URL_CHARS
+}
 
 /**
  * The forge's new-request page with the confirmed title and description in
@@ -162,13 +196,15 @@ const MAX_PAGE_URL_CHARS = 8_000
  * page (Forgejo and Codeberg ignore them and fill the title from the commit).
  * `descriptionFilled` is false when the description is not in the address,
  * because the forge has no field for it or it would make the address too
- * long, so the window can keep it for the person to paste.
+ * long for `platform` (`maxPageUrlChars`), so the window can keep it for the
+ * person to paste.
  */
 export function prefilledPullRequestPage(
   remote: ForgeRemote,
   base: string,
   head: string,
   text: { title: string; body: string },
+  platform: string,
 ): { url: string; descriptionFilled: boolean } | null {
   const page = newPullRequestPageUrl(remote, base, head)
   if (!page) return null
@@ -186,10 +222,27 @@ export function prefilledPullRequestPage(
   // Forgejo and Codeberg ignore `body`, and a host does not say whether it
   // runs Gitea or Forgejo, so only GitLab's page is trusted to show the
   // description it was handed.
-  if (full.length <= MAX_PAGE_URL_CHARS) {
+  const max = maxPageUrlChars(platform)
+  if (full.length <= max) {
     return { url: full, descriptionFilled: !text.body.trim() || remote.forge === 'gitlab' }
   }
-  return { url: titled.length <= MAX_PAGE_URL_CHARS ? titled : page, descriptionFilled: !text.body.trim() }
+  return { url: titled.length <= max ? titled : page, descriptionFilled: !text.body.trim() }
+}
+
+/**
+ * The repository's list of open requests on the forge, where one the forge's
+ * CLI opened without saying its address can be found. Null for a forge the
+ * app drives no CLI on.
+ */
+export function pullRequestListPageUrl(remote: ForgeRemote): string | null {
+  switch (remote.forge) {
+    case 'gitlab':
+      return `${remote.webUrl}/-/merge_requests`
+    case 'gitea':
+      return `${remote.webUrl}/pulls`
+    default:
+      return null
+  }
 }
 
 /**

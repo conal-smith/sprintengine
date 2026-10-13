@@ -287,6 +287,67 @@ test('a fork on the same host is named as the head; one on another host is not d
   assert.equal(outcome.kind, 'unavailable')
 })
 
+test('a CLI that opened the request without a readable address says the address is unknown, not unavailable', async () => {
+  // glab exits 0 but prints nothing that reads as the merge request, and the
+  // list does not have it yet: it is probably open, so its page must not be
+  // offered again.
+  const glab = glabSignedIn({ create: { stdout: 'Done.\n' } })
+  assert.deepEqual(await createForgePullRequests({ glab }).create(target('git@gitlab.com:acme/app.git'), TEXT), {
+    kind: 'address-unknown',
+    reason: 'glab opened the merge request without saying its address.',
+  })
+})
+
+test('a creation that ran out of time asks the list once, and says the address is unknown when it is not there', async () => {
+  const slow = glabSignedIn({ create: { found: true, code: -1, timedOut: true } })
+  assert.deepEqual(await createForgePullRequests({ glab: slow }).create(target('git@gitlab.com:acme/app.git'), TEXT), {
+    kind: 'address-unknown',
+    reason: 'glab did not answer in time, so the merge request may or may not be open.',
+  })
+  assert.deepEqual(
+    slow.calls.map((call) => call.args.slice(0, 2)),
+    [
+      ['auth', 'status'],
+      ['mr', 'create'],
+      ['mr', 'list'],
+    ],
+  )
+
+  const slowButMade = glabSignedIn({
+    create: { found: true, code: -1, timedOut: true },
+    list: {
+      stdout: JSON.stringify([
+        { state: 'opened', source_branch: 'feature/marks', web_url: 'https://gitlab.com/acme/app/-/merge_requests/9' },
+      ]),
+    },
+  })
+  assert.deepEqual(
+    await createForgePullRequests({ glab: slowButMade }).create(target('git@gitlab.com:acme/app.git'), TEXT),
+    { kind: 'created', url: 'https://gitlab.com/acme/app/-/merge_requests/9' },
+  )
+})
+
+test('a Gitea served under a path lists addresses this cannot read, so its lookup is unsettled, never empty', async () => {
+  const subpathRow = JSON.stringify([
+    { index: '3', state: 'open', head: 'feature/marks', url: 'https://gitea.example.com/git/acme/app/pulls/3' },
+  ])
+  const tea = teaSignedIn({ list: { stdout: subpathRow }, create: { stdout: '# #3 feat: marks (open)\n' } })
+  const forges = createForgePullRequests({ tea })
+  const onSubpath = target('https://gitea.example.com/git/acme/app.git')
+  assert.deepEqual(await forges.listBranch(onSubpath), { settled: false })
+  // Created, but neither the list nor tea's output gives an address to record.
+  assert.deepEqual(await forges.create(onSubpath, TEXT), {
+    kind: 'address-unknown',
+    reason: 'tea opened the pull request without saying its address.',
+  })
+  // A readable list with no row from the branch is still a settled "none".
+  const other = teaSignedIn({ list: { stdout: CODEBERG_ROW('open', 'feature/other') } })
+  assert.deepEqual(await createForgePullRequests({ tea: other }).listBranch(target('git@codeberg.org:acme/app.git')), {
+    settled: true,
+    requests: [],
+  })
+})
+
 test('a branch lookup reads open and merged requests and the merged heads, and asks no CLI it holds as missing', async () => {
   const glab = glabSignedIn({
     list: {
