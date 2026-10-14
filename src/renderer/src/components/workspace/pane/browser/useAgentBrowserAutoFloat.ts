@@ -4,11 +4,12 @@ import type { BrowserTabState } from '../../../../../../shared/browser'
 import { useWorkspaceStore } from '../../../../store/workspaceStore'
 import type { WorkspaceId } from '../../../../types/workspace'
 import { agentBrowserTracker, shouldFloatForAgent } from './agentBrowserFloat'
+import { canvasPushMatchesBoard } from '../canvas/canvasSync'
 
-// The window's ear on every browser tab main drives: the floating player comes
-// up when an agent takes a page in a closed pane, and goes back up when the
-// person closes the pane on a page an agent is still driving. Mounted once per
-// window, in the pane column.
+// The window's ear on every browser tab main drives, and every board an agent
+// draws on: the floating player comes up when an agent takes a page or a board
+// in a closed pane, and goes back up when the person closes the pane on one an
+// agent is still working in. Mounted once per window, in the pane column.
 
 // The last state main reported per tab. The player's bar shows the Agent badge
 // and the recording clock from it, and it mounts AFTER the report that brought
@@ -62,6 +63,33 @@ export function useAgentBrowserAutoFloat(activeWorkspaceId: WorkspaceId | null, 
         const { activeWorkspaceId: workspaceId, suppressed: doorUp } = target.current
         if (!tookOver || doorUp || !workspaceId) return
         floatForAgent(workspaceId, state.tabId, now)
+      }),
+    [],
+  )
+
+  // A board an agent draws on comes up the same way. Main says who holds a
+  // board's pen to every window subscribed to it, and a Canvas tab subscribes
+  // while it is mounted, closed pane or not (it is a retained kind), so the
+  // board is found by its tab. The tracker is keyed on tab ids, which no page
+  // and board share, and canvas presence uses the browser's three controllers.
+  useEffect(
+    () =>
+      window.api.onCanvasPresence((presence) => {
+        const store = useWorkspaceStore.getState()
+        const tab = store.workspaces
+          .find((w) => w.id === presence.workspaceId)
+          ?.paneState?.tabs.find(
+            (candidate) =>
+              candidate.kind === 'canvas' &&
+              candidate.canvas !== undefined &&
+              canvasPushMatchesBoard(presence, { workspaceId: presence.workspaceId, path: candidate.canvas.path }),
+          )
+        if (!tab) return
+        const now = Date.now()
+        const tookOver = agentBrowserTracker.observe(tab.id, presence.controller, now)
+        const { activeWorkspaceId: workspaceId, suppressed: doorUp } = target.current
+        if (!tookOver || doorUp || workspaceId !== presence.workspaceId) return
+        floatForAgent(workspaceId, tab.id, now)
       }),
     [],
   )
