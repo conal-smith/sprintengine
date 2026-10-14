@@ -383,8 +383,8 @@ export function scopeOfFacts(facts: BranchFacts | null): 'worktree' | 'branch' |
  */
 async function diffWorkingTreeFrom(cwd: string, fromRev: string): Promise<BranchSpanStat | null> {
   const [numstat, nameStatus] = await Promise.all([
-    runGitCommand(cwd, [...diffFlags('--numstat'), fromRev]),
-    runGitCommand(cwd, [...diffFlags('--name-status'), fromRev]),
+    runGitCommand(cwd, [...diffFlags('--numstat'), fromRev, '--']),
+    runGitCommand(cwd, [...diffFlags('--name-status'), fromRev, '--']),
   ])
   if (!numstat.ok) return null
   const stat = parseNumstatZ(numstat.stdout)

@@ -122,7 +122,9 @@ export async function getGitRowSummary(repoRoot: string): Promise<GitRowSummary>
     // `diff-index`, which never writes the index, where `git diff` rewrites it
     // for a file whose stat data alone moved (git-branch-span.ts, `diffFlags`);
     // `-M` because it finds no renames unless asked, and `git diff` does.
-    const stat = await runGit(repoRoot, ['diff-index', '--shortstat', '-M', 'HEAD'])
+    // `--` ends the revisions: a file named HEAD in the checkout otherwise makes
+    // `HEAD` ambiguous and the read fails.
+    const stat = await runGit(repoRoot, ['diff-index', '--shortstat', '-M', 'HEAD', '--'])
     const additions = Number(/([0-9]+) insertion/.exec(stat)?.[1] ?? 0)
     const deletions = Number(/([0-9]+) deletion/.exec(stat)?.[1] ?? 0)
     return { branch, additions, deletions }
