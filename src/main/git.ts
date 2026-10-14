@@ -14,6 +14,7 @@ import {
   toFilesystemPath,
   toPosixPath,
 } from './git-utils'
+import { GIT_NETWORK_TIMEOUT_MS } from './git-run'
 import { listGitWorktrees } from './git-worktree-list'
 import { worktreeBranchLedger } from './worktree-branch-ledger'
 import { activeWorktreePool } from './worktree-pool/active-pool'
@@ -490,19 +491,24 @@ export async function createGitWorktree(
 
   // Written down before anything else can fail: the branch exists now.
   if (input.agentLockOwner) await worktreeBranchLedger().record(root.data, branch.data)
-  const finished = await finishAddedWorktree(root.data, destination.data.destinationPath, input, addResult)
+  const finished = await finishAddedWorktree(
+    root.data,
+    destination.data.destinationPath,
+    { ...input, checkoutSubmodules: true },
+    addResult,
+  )
   return finished.ok ? { ...finished, data: { ...finished.data, baseRef: baseRef.data, leaseId: null } } : finished
 }
 
 /**
  * What follows a successful `worktree add`, for a new worktree and a restored
- * one alike: the in-use lock, the `.worktreeinclude` seeding, and the entry as
- * git lists it.
+ * one alike: the in-use lock, the submodules' checkout, the `.worktreeinclude`
+ * seeding, and the entry as git lists it.
  */
 async function finishAddedWorktree(
   repoRoot: string,
   worktreePath: string,
-  input: { agentLockOwner?: string; copyIncludedFiles?: boolean },
+  input: { agentLockOwner?: string; copyIncludedFiles?: boolean; checkoutSubmodules?: boolean },
   addResult: GitCommandResult,
 ): Promise<GitWorktreeOperationResult<GitWorktreeEntry>> {
   if (input.agentLockOwner) {
@@ -512,6 +518,20 @@ async function finishAddedWorktree(
     const locked = await lockAgentWorktree(repoRoot, worktreePath, input.agentLockOwner)
     if (!locked.ok) {
       console.warn(`[git] could not lock agent worktree ${worktreePath}: ${locked.message ?? locked.stderr}`)
+    }
+  }
+
+  // `worktree add` leaves every submodule an empty folder, so a project built
+  // on one would not build in the new worktree. Checked for on disk, so a
+  // repository without submodules starts no process for it. It may fetch, so
+  // it has the network deadline, and one that fails is logged, not fatal, as
+  // when the pool leases a worktree: the agent can run it again.
+  if (input.checkoutSubmodules && (await pathExists(join(worktreePath, '.gitmodules')))) {
+    const modules = await runGitCommand(worktreePath, ['submodule', 'update', '--init', '--recursive'], undefined, {
+      timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    })
+    if (!modules.ok) {
+      console.warn(`[git] could not check out the submodules of ${worktreePath}: ${modules.message ?? modules.stderr}`)
     }
   }
 
@@ -834,7 +854,7 @@ async function restoreGitWorktreeOnce(input: GitWorktreeRestoreInput): Promise<G
     }
   }
 
-  return finishAddedWorktree(root.data, worktreePath, input, addResult)
+  return finishAddedWorktree(root.data, worktreePath, { ...input, checkoutSubmodules: true }, addResult)
 }
 
 /**
