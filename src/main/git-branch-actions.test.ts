@@ -14,6 +14,7 @@ import {
   deleteGitBranch,
   mergeGitRef,
   pullGitBranchWithStash,
+  pushGitBranch,
   rebaseGitBranch,
   renameGitBranch,
   resetGitBranchToCommit,
@@ -527,4 +528,78 @@ test('git-branch-actions', async () => {
   }
 
   await suiteRun
+})
+
+/** A bare origin with `main` and `develop`, and a clone of it. */
+function pushFixture(): { root: string; origin: string; clone: string; run: (cwd: string, args: string[]) => string } {
+  const root = mkdtempSync(join(tmpdir(), 'sprintengine-git-push-'))
+  const origin = join(root, 'origin.git')
+  const clone = join(root, 'clone')
+  const run = (cwd: string, args: string[]) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  run(root, ['init', '--bare', '--initial-branch=main', origin])
+  run(root, ['clone', '-q', origin, clone])
+  run(clone, ['config', 'user.email', 'dev@example.com'])
+  run(clone, ['config', 'user.name', 'Dev'])
+  writeFileSync(join(clone, 'file.txt'), 'base\n')
+  run(clone, ['add', 'file.txt'])
+  run(clone, ['commit', '-qm', 'base'])
+  run(clone, ['push', '-q', 'origin', 'main', 'main:develop'])
+  run(clone, ['fetch', '-q'])
+  return { root, origin, clone, run }
+}
+
+test('Push sends a branch cut from origin/main to its own name, never to main, and tracks it after', async () => {
+  for (const pushDefault of ['upstream', null]) {
+    const { root, origin, clone, run } = pushFixture()
+    try {
+      if (pushDefault) run(clone, ['config', 'push.default', pushDefault])
+      // As a worktree's branch is made: from the base, so tracking it.
+      run(clone, ['switch', '-q', '-c', 'feature/marks', '--track', 'origin/main'])
+      writeFileSync(join(clone, 'marks.txt'), 'marks\n')
+      run(clone, ['add', 'marks.txt'])
+      run(clone, ['commit', '-qm', 'marks'])
+      const mainBefore = run(origin, ['rev-parse', 'refs/heads/main'])
+
+      const pushed = await pushGitBranch(clone)
+      assert.equal(pushed.ok, true, pushed.message ?? pushed.stderr)
+      assert.equal(pushed.pushedCommitCount, 1)
+      assert.equal(run(origin, ['rev-parse', 'refs/heads/main']), mainBefore, 'main is untouched')
+      assert.equal(run(origin, ['rev-parse', 'refs/heads/feature/marks']), run(clone, ['rev-parse', 'HEAD']))
+      assert.equal(run(clone, ['rev-parse', '--abbrev-ref', '@{u}']), 'origin/feature/marks')
+
+      // From then on it is an ordinary branch, counted against its own name.
+      writeFileSync(join(clone, 'marks.txt'), 'marks 2\n')
+      run(clone, ['commit', '-qam', 'more marks'])
+      const again = await pushGitBranch(clone)
+      assert.equal(again.ok, true, again.message ?? again.stderr)
+      assert.equal(again.pushedCommitCount, 1)
+      assert.equal(run(origin, ['rev-parse', 'refs/heads/feature/marks']), run(clone, ['rev-parse', 'HEAD']))
+    } finally {
+      rmSync(root, { force: true, recursive: true })
+    }
+  }
+})
+
+test('Push keeps an upstream someone chose, and their push.default upstream still pushes to it', async () => {
+  const { root, origin, clone, run } = pushFixture()
+  try {
+    run(clone, ['switch', '-q', '-c', 'topic', '--track', 'origin/develop'])
+    writeFileSync(join(clone, 'topic.txt'), 'topic\n')
+    run(clone, ['add', 'topic.txt'])
+    run(clone, ['commit', '-qm', 'topic'])
+
+    // Without the setting git would refuse; the branch goes to its own name and keeps tracking develop.
+    const own = await pushGitBranch(clone)
+    assert.equal(own.ok, true, own.message ?? own.stderr)
+    assert.equal(run(origin, ['rev-parse', 'refs/heads/topic']), run(clone, ['rev-parse', 'HEAD']))
+    assert.equal(run(clone, ['rev-parse', '--abbrev-ref', '@{u}']), 'origin/develop')
+
+    run(clone, ['config', 'push.default', 'upstream'])
+    const followed = await pushGitBranch(clone)
+    assert.equal(followed.ok, true, followed.message ?? followed.stderr)
+    assert.equal(run(origin, ['rev-parse', 'refs/heads/develop']), run(clone, ['rev-parse', 'HEAD']))
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
 })
