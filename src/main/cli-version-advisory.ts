@@ -111,11 +111,23 @@ export const localCliInstallFs: CliInstallFs = {
 // Package managers the update button does not drive. Each keeps its own global
 // tree (a Volta image even lays one out as `lib/node_modules/<pkg>`), and
 // `npm install -g` would put a second copy beside it that PATH may never reach.
+//
+// mise is read three ways. Its shim (`mise/shims/<cli>`) is a link to the mise
+// binary itself, so the shim's real path is mise, wherever MISE_DATA_DIR put
+// the shims; a Homebrew mise sits in a Cellar keg, and without this the keg
+// would offer `brew upgrade` of a formula nobody installed. Its npm backend
+// lays a tool version out as `mise/installs/<tool>/<version>/lib/node_modules/…`,
+// which reads as an npm prefix and would have npm write into mise's version
+// folder. A global installed by the npm of a mise-managed Node
+// (`mise/installs/node/<version>/…`) is npm's, and keeps the npm update.
 const FOREIGN_PACKAGE_MANAGERS: ReadonlyArray<readonly [name: string, segment: RegExp]> = [
   ['Volta', /[\\/]\.?volta[\\/]/i],
   ['pnpm', /[\\/]\.?pnpm[\\/]/i],
   ['Bun', /[\\/]\.bun[\\/]/i],
   ['Yarn', /[\\/](?:\.yarn|yarn[\\/]global)[\\/]/i],
+  ['mise', /[\\/]mise[\\/]shims[\\/]/i],
+  ['mise', /(?:^|[\\/])mise(?:\.exe)?$/i],
+  ['mise', /[\\/]mise[\\/]installs[\\/](?!node[\\/])[^\\/]+[\\/][^\\/]+[\\/]/i],
 ]
 
 /** The package manager other than npm and Homebrew that put a binary here, when its path says so. */

@@ -13,8 +13,10 @@ import { AGENT_CURSOR_LINGER_MS } from './agentCursor'
 // guest. The canvas is a track again, and MediaRecorder encodes it to WebM.
 //
 // A page that does not repaint produces no frames, so while the cursor is
-// moving or fading the last frame is drawn again with it. While the tab is
-// hidden no frames arrive at all and the video holds the last one.
+// moving or fading the last frame is drawn again with it. A tab out of view
+// keeps painting while it records: its layer waits behind the app rather than
+// outside the window (WorkspacePaneBody's `hiddenBrowserLayerStyle`), and main
+// keeps the tab and this window unthrottled while Studio is in the background.
 
 /** What MediaRecorder is asked for, in order. WebM only: its VP9 and VP8 encoders are in every build. */
 export const RECORDING_MIME_TYPES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'] as const

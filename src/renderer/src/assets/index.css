@@ -594,6 +594,8 @@
      inside an isolated stacking context (the tinted material's wash behind the
      brand wordmark). */
   --z-behind: var(--sem-z-behind);
+  /* A browser tab recording out of view: under everything, still painting. */
+  --z-parked: var(--sem-z-parked);
   --z-sticky: var(--sem-z-sticky);
   --z-pane: var(--sem-z-pane);
   --z-float: var(--sem-z-float);

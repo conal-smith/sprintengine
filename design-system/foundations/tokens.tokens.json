@@ -2352,6 +2352,18 @@
           }
         }
       },
+      "parked": {
+        "$type": "number",
+        "$value": -1,
+        "$description": "A live surface kept out of sight behind the app's content because it must go on painting: a browser tab being recorded while another tab or workspace is in front.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "layering",
+            "use": "A hidden layer that has to stay inside the window, because Chromium stops compositing a page placed outside it and a recording of that page gets no frames. It sinks under every ancestor's background on purpose, so nothing of it shows; pair it with `pointer-events: none` and `inert`.",
+            "doNotUse": "Hiding anything that need not keep painting: that is `visibility: hidden`, or a browser layer parked outside the window. Decoration behind its own element's content is `z.behind`."
+          }
+        }
+      },
       "sticky": {
         "$type": "number",
         "$value": 10,

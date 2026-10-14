@@ -159,7 +159,7 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
   const [state, setState] = useState<BrowserTabState | null>(null)
   // An agent's recording of this tab is captured and encoded here, where the
   // guest is (browser.record_start).
-  useTabRecording(tab.id)
+  useTabRecording(tab.id, workspaceId)
   const [picking, setPicking] = useState(false)
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   // The URL the guest starts on. Read once: a later change to the tab record

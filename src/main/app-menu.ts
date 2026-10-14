@@ -20,11 +20,30 @@ function sendMenuCommand(win: Electron.BaseWindow | null, command: string): void
   browserWindow.webContents.send('app-menu:command', command)
 }
 
-function zoomFocusedWindowIn(win: Electron.BaseWindow | null): void {
+// What a change to a window's zoom has to put back after it: Electron carries
+// the window's zoom into the browser pane's pages, which keep their own.
+let afterWindowZoom: ((contents: Electron.WebContents) => void) | null = null
+
+/** Set once, by the browser pane: called with a window's contents after the menu zooms it. */
+export function setAfterWindowZoom(listener: ((contents: Electron.WebContents) => void) | null): void {
+  afterWindowZoom = listener
+}
+
+/**
+ * The View menu's zoom, on the window rather than on whatever has focus in it
+ * (a browser tab's page has its own zoom, in its own menu), in Electron's
+ * roles' half-level steps.
+ */
+export function zoomWindowContents(contents: Electron.WebContents, step: 1 | -1 | 0): void {
+  contents.setZoomLevel(step === 0 ? 0 : contents.getZoomLevel() + step * 0.5)
+  afterWindowZoom?.(contents)
+}
+
+function zoomFocusedWindow(win: Electron.BaseWindow | null, step: 1 | -1 | 0): void {
   if (!win || win.isDestroyed()) return
   const browserWindow = BrowserWindow.fromId(win.id)
   if (!browserWindow || browserWindow.isDestroyed()) return
-  browserWindow.webContents.setZoomLevel(browserWindow.webContents.getZoomLevel() + 0.5)
+  zoomWindowContents(browserWindow.webContents, step)
 }
 
 // `fallback` is the command's default keybinding; omit it for commands that
@@ -139,13 +158,23 @@ export function createAppMenu(): Menu {
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' },
+        // Not the roles: each keeps the label and key its role had, and also
+        // puts the browser pane's pages back at their own zoom after it.
+        {
+          label: 'Actual Size',
+          accelerator: 'CmdOrCtrl+0',
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 0),
+        },
         {
           label: 'Zoom In',
           accelerator: 'CmdOrCtrl+=',
-          click: (_, win) => zoomFocusedWindowIn(win ?? BrowserWindow.getFocusedWindow()),
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 1),
         },
-        { role: 'zoomOut' },
+        {
+          label: 'Zoom Out',
+          accelerator: 'CmdOrCtrl+-',
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), -1),
+        },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],

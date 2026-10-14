@@ -1,5 +1,6 @@
-import { readFile } from 'fs/promises'
-import { isAbsolute, join } from 'path'
+import { copyFile, mkdtemp, readFile, rm, stat, utimes } from 'fs/promises'
+import { tmpdir } from 'os'
+import { isAbsolute, join, resolve } from 'path'
 
 import { parseNumstatZ, readBranchFacts, scopeOfFacts } from './git-branch-span'
 import { isInsideRepo, runGitCommand } from './git-utils'
@@ -28,6 +29,14 @@ import type {
 
 /** Untracked files bigger than this are listed without a line count. */
 const UNTRACKED_COUNT_LIMIT_BYTES = 1_000_000
+
+/**
+ * Above this many untracked files the uncommitted reading lists them as new
+ * without looking for files they were moved from (`readPairingMoves`): a build
+ * output nobody ignored would otherwise cost a copy of the index and a `git add`
+ * of every one of its files on each read.
+ */
+const RENAME_PAIRING_MAX_UNTRACKED = 300
 
 /** A blob bigger than this is reported as too large rather than sent to Monaco. */
 const REV_FILE_MAX_BYTES = 5 * 1024 * 1024
@@ -184,8 +193,8 @@ export async function diffBranchSelection(cwd: string, selection: BranchStepSele
       selection.hash,
     ]
     return combine(
-      await numstat(cwd, [...base, '--numstat', '-z']),
-      await nameStatus(cwd, [...base, '--name-status', '-z']),
+      (await numstat(cwd, [...base, '--numstat', '-z'])) ?? new Map(),
+      (await nameStatus(cwd, [...base, '--name-status', '-z'])) ?? [],
     )
   }
 
@@ -204,18 +213,83 @@ export async function diffBranchSelection(cwd: string, selection: BranchStepSele
   // Its status pass names such a file as modified with no change to count, so
   // only the files the counts list are kept. `-M`: it finds no renames unless asked.
   const base = ['diff-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', '-M', from]
-  const counts = await numstat(cwd, [...base, '--numstat', '-z', '--'])
-  const tracked = combine(
-    counts,
-    (await nameStatus(cwd, [...base, '--name-status', '-z', '--'])).filter((entry) => counts.has(entry.path)),
-  )
-  return selection.kind === 'uncommitted' ? withUntracked(cwd, tracked) : tracked
+  if (selection.kind !== 'uncommitted') return (await readTracked(cwd, base)) ?? totals([])
+  const untracked = await listUntracked(cwd)
+  const paired = from === 'HEAD' && untracked ? await readPairingMoves(cwd, base, untracked) : null
+  return withUntracked(cwd, paired ?? (await readTracked(cwd, base)) ?? totals([]), untracked ?? [])
 }
 
-async function numstat(cwd: string, args: string[]): Promise<Map<string, { additions: number; deletions: number }>> {
-  const result = await runGitCommand(cwd, args)
+/**
+ * The tracked half of a working-tree reading. Read through a copied index
+ * (`env`), a failure is null, so the caller can read the plain way instead.
+ */
+async function readTracked(cwd: string, base: string[], env?: NodeJS.ProcessEnv): Promise<BranchStepDiff | null> {
+  const counts = await numstat(cwd, [...base, '--numstat', '-z', '--'], env)
+  const statuses = await nameStatus(cwd, [...base, '--name-status', '-z', '--'], env)
+  if (env && (!counts || !statuses)) return null
+  const known = counts ?? new Map<string, { additions: number; deletions: number }>()
+  return combine(
+    known,
+    (statuses ?? []).filter((entry) => known.has(entry.path)),
+  )
+}
+
+/**
+ * The uncommitted reading with each file moved without `git mv` read as one
+ * rename. Git pairs a deleted path with an added one only when both are in the
+ * index, and an untracked file is not, so a plain `mv a.ts b.ts` read as a.ts
+ * deleted and an unrelated b.ts new. The untracked files are added to a COPY of
+ * the index as intent-to-add entries (`git add -N`, which records the path and
+ * none of its content), and the same diff is read through the copy. The
+ * person's own index is never written: every git here runs on the copy, with
+ * optional locks off. Null on any failure, and the caller reads the plain way.
+ */
+async function readPairingMoves(
+  cwd: string,
+  base: string[],
+  untracked: readonly string[],
+): Promise<BranchStepDiff | null> {
+  // A directory entry is an embedded repository, which `add` would record as a
+  // gitlink; it stays a plain new path, added after.
+  const files = untracked.filter((path) => !path.endsWith('/'))
+  if (files.length === 0 || files.length > RENAME_PAIRING_MAX_UNTRACKED) return null
+  const gitPath = await runGitCommand(cwd, ['rev-parse', '--git-path', 'index'])
+  if (!gitPath.ok || !gitPath.stdout.trim()) return null
+  const source = resolve(cwd, gitPath.stdout.trim())
+  const temp = await mkdtemp(join(tmpdir(), 'branch-steps-index-')).catch(() => null)
+  if (!temp) return null
+  const index = join(temp, 'index')
+  const env = { GIT_INDEX_FILE: index, GIT_OPTIONAL_LOCKS: '0' }
+  try {
+    const info = await stat(source)
+    await copyFile(source, index)
+    // The copy keeps the original's mtime: git judges an entry racily clean by
+    // comparing it with the index file's own, and a fresh one would trust stale
+    // stat data for a file changed in the same second the index was written.
+    await utimes(index, info.atime, info.mtime)
+    // `:(top,literal)`: the paths are repo-root-relative (`--full-name`) while
+    // cwd may be a subdirectory, and a name with `*` in it is a name.
+    const added = await runGitCommand(
+      cwd,
+      ['add', '--intent-to-add', '--', ...files.map((path) => `:(top,literal)${path}`)],
+      env,
+    )
+    return added.ok ? await readTracked(cwd, base, env) : null
+  } catch {
+    return null
+  } finally {
+    await rm(temp, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+async function numstat(
+  cwd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<Map<string, { additions: number; deletions: number }> | null> {
+  const result = await runGitCommand(cwd, args, env)
+  if (!result.ok) return null
   const map = new Map<string, { additions: number; deletions: number }>()
-  if (!result.ok) return map
   for (const file of parseNumstatZ(result.stdout).files) {
     map.set(file.path, { additions: file.additions, deletions: file.deletions })
   }
@@ -259,9 +333,9 @@ export function parseNameStatusZ(stdout: string): NameStatusEntry[] {
   return out
 }
 
-async function nameStatus(cwd: string, args: string[]): Promise<NameStatusEntry[]> {
-  const result = await runGitCommand(cwd, args)
-  return result.ok ? parseNameStatusZ(result.stdout) : []
+async function nameStatus(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<NameStatusEntry[] | null> {
+  const result = await runGitCommand(cwd, args, env)
+  return result.ok ? parseNameStatusZ(result.stdout) : null
 }
 
 /**
@@ -306,13 +380,7 @@ function totals(files: BranchStepFile[]): BranchStepDiff {
  * file is listed with zero lines rather than being omitted or holding up the
  * panel.
  */
-async function withUntracked(cwd: string, tracked: BranchStepDiff): Promise<BranchStepDiff> {
-  // `--full-name` for the same reason as `--no-relative`: from a subdirectory
-  // ls-files answers relative to cwd, and these paths sit in the same list as
-  // the diff's repo-relative ones.
-  const listed = await runGitCommand(cwd, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z'])
-  if (!listed.ok) return tracked
-  const paths = listed.stdout.split('\0').filter(Boolean)
+async function withUntracked(cwd: string, tracked: BranchStepDiff, paths: readonly string[]): Promise<BranchStepDiff> {
   if (paths.length === 0) return tracked
 
   // These paths are repo-root-relative (`--full-name`), so reading them off disk
@@ -320,6 +388,7 @@ async function withUntracked(cwd: string, tracked: BranchStepDiff): Promise<Bran
   const toplevel = await runGitCommand(cwd, ['rev-parse', '--show-toplevel'])
   const root = toplevel.ok ? toplevel.stdout.trim() || cwd : cwd
 
+  // A moved file is already listed under its new name, as the rename.
   const known = new Set(tracked.files.map((file) => file.path))
   const added = await Promise.all(
     paths
@@ -332,6 +401,15 @@ async function withUntracked(cwd: string, tracked: BranchStepDiff): Promise<Bran
       })),
   )
   return added.length === 0 ? tracked : totals([...tracked.files, ...added])
+}
+
+/** The untracked files, repo-root-relative, or null when git could not list them. */
+async function listUntracked(cwd: string): Promise<string[] | null> {
+  // `--full-name` for the same reason as `--no-relative`: from a subdirectory
+  // ls-files answers relative to cwd, and these paths sit in the same list as
+  // the diff's repo-relative ones.
+  const listed = await runGitCommand(cwd, ['ls-files', '--others', '--exclude-standard', '--full-name', '-z'])
+  return listed.ok ? listed.stdout.split('\0').filter(Boolean) : null
 }
 
 async function countLines(absolutePath: string): Promise<number> {

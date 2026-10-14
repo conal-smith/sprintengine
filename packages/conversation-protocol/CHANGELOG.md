@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- **A command led by shell grammar is not named after it.** `labelCommand`
+  read `if`, `for`, `[`, `{`, `(cd` or `!` as the program that ran ("Ran if",
+  "Ran ["). Control keywords, `test` and `[ … ]` conditions, `true`, `false`,
+  `:` and function definitions now label as "Ran command", and a subshell,
+  group, negation or `eval` is labelled by the command it holds. A pinned
+  file: the phone's copy changes with it.
+
 ### Added
 
 - **A message may steer the turn that is running.**

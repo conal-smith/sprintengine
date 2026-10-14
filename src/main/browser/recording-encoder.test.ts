@@ -25,16 +25,34 @@ function fakeSession() {
   return session
 }
 
+// Whether Chromium may throttle a WebContents in the background, and every change asked of it.
+function throttling() {
+  const state = {
+    throttled: true,
+    changes: [] as boolean[],
+    getBackgroundThrottling: () => state.throttled,
+    setBackgroundThrottling: (allowed: boolean) => {
+      state.throttled = allowed
+      state.changes.push(allowed)
+    },
+  }
+  return state
+}
+
 function fakeHost(id: number, session = fakeSession()) {
   const events = new EventEmitter()
   const mainFrame = { processId: id, routingId: 1 }
   const sent: Array<[string, unknown]> = []
   let destroyed = false
+  const background = throttling()
   const host = {
     id,
     session,
     mainFrame,
     sent,
+    background,
+    getBackgroundThrottling: background.getBackgroundThrottling,
+    setBackgroundThrottling: background.setBackgroundThrottling,
     isDestroyed: () => destroyed,
     send: (channel: string, payload: unknown) => void sent.push([channel, payload]),
     once: (name: string, fn: (...args: unknown[]) => void) => void events.once(name, fn),
@@ -48,8 +66,14 @@ function fakeHost(id: number, session = fakeSession()) {
   return host
 }
 
-function fakeGuest() {
-  return { isDestroyed: () => false, mainFrame: { guest: true } }
+function fakeGuest(background = throttling()) {
+  return {
+    isDestroyed: () => false,
+    mainFrame: { guest: true },
+    background,
+    getBackgroundThrottling: background.getBackgroundThrottling,
+    setBackgroundThrottling: background.setBackgroundThrottling,
+  }
 }
 
 function fakeIpcMain() {
@@ -223,4 +247,54 @@ test('a start stopped while it waits its turn on the window is never sent there'
     [[BROWSER_RECORDING_START_CHANNEL, 'rec-1']],
     'the window is asked to start the first only, and to stop nothing',
   )
+})
+
+test('a recording keeps its tab and window unthrottled until the last recording of them ends', async () => {
+  const { encoder, ipcMain, host, guest } = setup()
+  const started = (recordingId: string) =>
+    ipcMain.emit('browser:recording-started', host, {
+      recordingId,
+      ok: true,
+      mimeType: 'video/webm',
+      width: 1,
+      height: 1,
+      cursor: false,
+    })
+  const first = encoder.start(START('rec-1'))
+  await Promise.resolve()
+  assert.equal(guest.background.throttled, false, 'the tab paints with Studio in the background')
+  assert.equal(host.background.throttled, false, 'the window encodes with Studio in the background')
+  started('rec-1')
+  await first
+  const second = encoder.start(START('rec-2'))
+  await Promise.resolve()
+  await Promise.resolve()
+  started('rec-2')
+  await second
+
+  ipcMain.emit('browser:recording-ended', host, { recordingId: 'rec-1', durationMs: 10 })
+  assert.equal(guest.background.throttled, false, 'another recording of the tab still runs')
+  assert.equal(host.background.throttled, false)
+  ipcMain.emit('browser:recording-ended', host, { recordingId: 'rec-2', durationMs: 10 })
+  assert.deepEqual(guest.background.changes, [false, true])
+  assert.deepEqual(host.background.changes, [false, true])
+})
+
+test('a capture that fails, or a window that closes, hands throttling back as it was', async () => {
+  const failed = setup()
+  failed.guest.background.throttled = false
+  const starting = failed.encoder.start(START('rec-1'))
+  await Promise.resolve()
+  failed.ipcMain.emit('browser:recording-started', failed.host, { recordingId: 'rec-1', ok: false, message: 'x' })
+  await starting
+  assert.equal(failed.guest.background.throttled, false, 'a tab that was never throttled stays that way')
+  assert.equal(failed.host.background.throttled, true)
+
+  const closed = setup()
+  const second = closed.encoder.start(START('rec-2'))
+  await Promise.resolve()
+  closed.host.destroy()
+  await second
+  assert.equal(closed.guest.background.throttled, true)
+  assert.deepEqual(closed.host.background.changes, [false], 'a closed window is not touched')
 })
