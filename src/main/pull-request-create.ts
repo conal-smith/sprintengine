@@ -282,7 +282,9 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     const [commits, diffStat, patch, history] = await Promise.all([
       out(gitRoot, ['log', '--no-merges', '--format=%s%n%n%b%n---', `${base}..HEAD`]),
       out(gitRoot, ['diff', '--stat', `${base}...HEAD`]),
-      out(gitRoot, ['diff', `${base}...HEAD`]),
+      // Git's own patch for the model to read, whatever diff tool or textconv
+      // filter the repository has set up for people.
+      out(gitRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', `${base}...HEAD`]),
       out(gitRoot, ['log', '-30', '--format=%s', base]),
     ])
     let template: string | null = null
