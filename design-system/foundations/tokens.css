@@ -187,6 +187,7 @@
   --sem-tinted-brand-ink: 0.025;
   --sem-tinted-brand-reach: 24px;
   --sem-z-behind: -1;
+  --sem-z-parked: -1;
   --sem-z-sticky: 10;
   --sem-z-pane: 20;
   --sem-z-float: 30;

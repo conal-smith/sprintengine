@@ -59,6 +59,7 @@ export type RecordingEncoderTabs = {
 type Running = {
   recordingId: string
   host: WebContents
+  guest: WebContents
   answerStart: ((answer: RecordingEncoderStarted | RecordingFailure) => void) | null
   /** The window has been asked to start: before that, it is waiting its turn and the window knows nothing of it. */
   sent: boolean
@@ -80,13 +81,45 @@ export function createHostRecordingEncoder(deps: {
   const handledSessions = new WeakSet<Session>()
   const watchedHosts = new WeakSet<WebContents>()
   let listener: Parameters<RecordingEncoder['listen']>[0] | null = null
+  // A recording keeps the tab and the window hosting it from being throttled
+  // in the background. Chromium slows a backgrounded page's timers and
+  // painting, so with Studio behind another app the tab stopped producing
+  // frames and the window stopped encoding them, and the video froze until
+  // Studio came back to the front. Held per WebContents, for as long as any
+  // recording of it runs, and handed back as it was when the last one ends.
+  const unthrottled = new Map<WebContents, { holds: number; previous: boolean }>()
+
+  function holdUnthrottled(contents: WebContents): void {
+    const held = unthrottled.get(contents)
+    if (held) {
+      held.holds++
+      return
+    }
+    unthrottled.set(contents, { holds: 1, previous: contents.getBackgroundThrottling() })
+    contents.setBackgroundThrottling(false)
+  }
+
+  function releaseUnthrottled(contents: WebContents): void {
+    const held = unthrottled.get(contents)
+    if (!held || --held.holds > 0) return
+    unthrottled.delete(contents)
+    if (!contents.isDestroyed()) contents.setBackgroundThrottling(held.previous)
+  }
+
+  /** Every way a recording stops passes here once. */
+  function settle(recording: Running): void {
+    if (recording.ended) return
+    recording.ended = true
+    running.delete(recording.recordingId)
+    releaseUnthrottled(recording.guest)
+    releaseUnthrottled(recording.host)
+  }
 
   const fail = (code: string, message: string): RecordingFailure => ({ ok: false, code, message })
 
   function end(recording: Running, outcome: { durationMs?: number; error?: string }): void {
     if (recording.ended) return
-    recording.ended = true
-    running.delete(recording.recordingId)
+    settle(recording)
     for (const [hostId, entry] of armed) if (entry.recordingId === recording.recordingId) armed.delete(hostId)
     recording.answerStart?.(fail('capture_failed', outcome.error ?? 'The recording ended before it started.'))
     recording.answerStart = null
@@ -151,8 +184,7 @@ export function createHostRecordingEncoder(deps: {
     recording.answerStart = null
     for (const [hostId, entry] of armed) if (entry.recordingId === recording.recordingId) armed.delete(hostId)
     if (payload.ok !== true) {
-      running.delete(recording.recordingId)
-      recording.ended = true
+      settle(recording)
       answer(fail('capture_failed', String(payload.message || 'The tab could not be captured.').slice(0, 500)))
       return
     }
@@ -196,11 +228,14 @@ export function createHostRecordingEncoder(deps: {
       const recording: Running = {
         recordingId: input.recordingId,
         host,
+        guest,
         answerStart: null,
         sent: false,
         ended: false,
       }
       running.set(recording.recordingId, recording)
+      holdUnthrottled(guest)
+      holdUnthrottled(host)
       // One armed grant per window at a time: wait for the one before to be taken.
       const previous = turns.get(host.id) ?? Promise.resolve()
       let release: () => void = () => undefined

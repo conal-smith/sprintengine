@@ -56,6 +56,7 @@ vi.mock('./browserRecording', async (original) => ({
 
 const { useTabRecording } = await import('./useTabRecording')
 const { BrowserRecordingIndicator } = await import('./BrowserRecordingIndicator')
+const { useRecordingTabsStore } = await import('./recordingTabs')
 
 const sent = {
   started: [] as BrowserRecordingStarted[],
@@ -118,7 +119,7 @@ afterEach(() => {
 })
 
 function Recorder({ tabId }: { tabId: string }) {
-  useTabRecording(tabId)
+  useTabRecording(tabId, 'ws')
   return null
 }
 
@@ -154,10 +155,16 @@ test("main's start is answered once capture runs; its stop ends it with the last
     { recordingId: 'rec-1', ok: true, mimeType: 'video/webm;codecs=vp9', width: 1280, height: 800, cursor: true },
   ])
   assert.deepEqual(sent.chunks, [['rec-1', 3]])
+  assert.deepEqual(
+    useRecordingTabsStore.getState().recordings,
+    { 'rec-1': { tabId: 't1', workspaceId: 'ws' } },
+    'the pane keeps the tab painting while it records',
+  )
   await emitStop('rec-1')
   await flush()
   assert.equal(capture.made[0]!.stopped, 1)
   assert.deepEqual(sent.ended, [{ recordingId: 'rec-1', durationMs: 2_000 }])
+  assert.deepEqual(useRecordingTabsStore.getState().recordings, {})
 })
 
 test('a capture that cannot start says why', async () => {
@@ -167,6 +174,7 @@ test('a capture that cannot start says why', async () => {
   await flush()
   assert.deepEqual(sent.started, [{ recordingId: 'rec-1', ok: false, message: 'Permission denied' }])
   assert.deepEqual(sent.ended, [])
+  assert.deepEqual(useRecordingTabsStore.getState().recordings, {})
 })
 
 test('a stop that comes while the capture is starting is kept, and ends it as soon as it runs', async () => {

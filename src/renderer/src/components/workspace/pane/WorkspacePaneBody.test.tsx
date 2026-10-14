@@ -160,3 +160,42 @@ test('"Bring back" docks the tab into the pane, on screen', async () => {
   assert.equal(pane?.tabs.find((tab) => tab.id === 'away')?.poppedOut, undefined)
   assert.equal(pane?.activeTabId, 'away')
 })
+
+// A browser tab out of view is parked outside the window, where it paints
+// nothing. One being recorded must keep painting, so it waits under the app
+// instead, still out of reach of the pointer, the keyboard and a screen reader.
+
+test('a hidden browser layer is parked outside the window, or under the app while it records', async () => {
+  const { hiddenBrowserLayerStyle } = await import('./WorkspacePaneBody')
+  assert.equal(hiddenBrowserLayerStyle(false).transform, 'translateX(-100000px)')
+  const recording = hiddenBrowserLayerStyle(true)
+  assert.equal(recording.transform, undefined, 'inside the window, where Chromium composites it')
+  assert.equal(recording.zIndex, 'var(--z-parked)')
+  assert.equal(recording.pointerEvents, 'none')
+  assert.equal(recording.visibility, 'visible', 'visibility:hidden blanks a macOS guest for good')
+})
+
+test('a browser tab recording behind another stays in place, out of reach', async () => {
+  const { useRecordingTabsStore } = await import('./browser/recordingTabs')
+  const paneTabs = [
+    { id: 'front', kind: 'browser' },
+    { id: 'recorded', kind: 'browser' },
+    { id: 'idle', kind: 'browser' },
+  ] as WorkspacePaneTab[]
+  act(() => useRecordingTabsStore.getState().begin('rec-1', 'recorded', 'ws-popped'))
+  try {
+    const body = await renderBody(paneTabs, 'front')
+    const recorded = body.querySelector<HTMLElement>('#pane-ws-popped-panel-recorded')!
+    const idle = body.querySelector<HTMLElement>('#pane-ws-popped-panel-idle')!
+    assert.equal(recorded.style.transform, '')
+    assert.equal(recorded.style.pointerEvents, 'none')
+    assert.equal(recorded.hasAttribute('inert'), true)
+    assert.equal(recorded.getAttribute('aria-hidden'), 'true')
+    assert.equal(idle.style.transform, 'translateX(-100000px)')
+
+    act(() => useRecordingTabsStore.getState().end('rec-1'))
+    assert.equal(recorded.style.transform, 'translateX(-100000px)', 'parked again once the recording ends')
+  } finally {
+    act(() => useRecordingTabsStore.getState().end('rec-1'))
+  }
+})

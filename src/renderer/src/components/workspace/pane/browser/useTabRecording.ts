@@ -1,14 +1,17 @@
 import { useEffect } from 'react'
 
 import { readRecordingTheme, startGuestRecording, type GuestRecording } from './browserRecording'
+import { useRecordingTabsStore } from './recordingTabs'
 
 /**
  * Record this tab when main asks (an agent's `browser.record_start`), and
  * stop when main says. A recording belongs to the tab's component: when the
  * tab closes, its recording ends with it and what was captured is kept.
+ * While it runs, the pane keeps the tab painting out of view (`recordingTabs.ts`).
  */
-export function useTabRecording(tabId: string): void {
+export function useTabRecording(tabId: string, workspaceId: string): void {
   useEffect(() => {
+    const { begin, end } = useRecordingTabsStore.getState()
     const running = new Map<string, GuestRecording>()
     /** This tab's recordings still starting, and those of them already asked to stop. */
     const starting = new Set<string>()
@@ -19,6 +22,7 @@ export function useTabRecording(tabId: string): void {
       if (start.tabId !== tabId) return
       const { recordingId } = start
       starting.add(recordingId)
+      begin(recordingId, tabId, workspaceId)
       void (async () => {
         let recording: GuestRecording
         try {
@@ -33,6 +37,7 @@ export function useTabRecording(tabId: string): void {
         } catch (error) {
           starting.delete(recordingId)
           stopRequested.delete(recordingId)
+          end(recordingId)
           window.api.browserRecordingStarted({
             recordingId,
             ok: false,
@@ -53,6 +58,7 @@ export function useTabRecording(tabId: string): void {
         if (unmounted || stopRequested.delete(recordingId)) recording.stop()
         const outcome = await recording.finished
         running.delete(recordingId)
+        end(recordingId)
         window.api.browserRecordingEnded({ recordingId, ...outcome })
       })()
     })
@@ -69,5 +75,5 @@ export function useTabRecording(tabId: string): void {
       offStop()
       for (const recording of running.values()) recording.stop()
     }
-  }, [tabId])
+  }, [tabId, workspaceId])
 }

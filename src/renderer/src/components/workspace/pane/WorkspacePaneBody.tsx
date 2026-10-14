@@ -14,6 +14,7 @@ import { clientSupports } from '../../../clientCapabilities'
 import { EmptyState, OpenInWindowGlyph, OutlineButton, PrimaryButton } from '../../ui'
 import { bringBackPaneTab, showPanePopOut } from './popout/panePopOutHost'
 import { paneTabLabel } from './paneTabItem'
+import { useRecordingTabIds } from './browser/recordingTabs'
 
 // The pane's content region: one layer per tab that needs to stay mounted
 // (terminal, browser, canvas) plus the active tab. Inactive retained layers are
@@ -49,10 +50,26 @@ const DocumentTab = React.lazy(() =>
 // offscreen instead. Electron blanks a `visibility:hidden` guest for good on
 // macOS, and a guest fully outside the window stops compositing without
 // losing its page. Parking is the only hiding a browser layer survives.
-export const OFFSCREEN_LAYER_STYLE: React.CSSProperties = {
+const OFFSCREEN_LAYER_STYLE: React.CSSProperties = {
   visibility: 'visible',
   transform: 'translateX(-100000px)',
   pointerEvents: 'none',
+}
+
+// Parked outside the window, a guest paints nothing, so a tab being recorded
+// out of view gave its recording no frames and the video froze on the last
+// one. While it records it waits where it is instead, under everything else
+// in the window: Chromium still composites it there, and nothing of it shows
+// or takes a click.
+const BEHIND_APP_LAYER_STYLE: React.CSSProperties = {
+  visibility: 'visible',
+  zIndex: 'var(--z-parked)',
+  pointerEvents: 'none',
+}
+
+/** How a browser layer out of view is hidden: behind the app while it records, else outside the window. */
+export function hiddenBrowserLayerStyle(recording: boolean): React.CSSProperties {
+  return recording ? BEHIND_APP_LAYER_STYLE : OFFSCREEN_LAYER_STYLE
 }
 
 // The explicit, labelled unavailable state (never a silently blank surface) —
@@ -354,6 +371,7 @@ export function WorkspacePaneBody({
 }: WorkspacePaneBodyProps) {
   const floatingTab = tabs.find((tab) => tab.floating && tab.kind === 'browser') ?? null
   const floatRect = useFloatRect(workspaceId, floatingTab)
+  const recordingTabIds = useRecordingTabIds()
   return (
     <>
       {tabs.map((tab) => {
@@ -373,8 +391,9 @@ export function WorkspacePaneBody({
             id={`pane-${workspaceId}-panel-${tab.id}`}
             aria-labelledby={`pane-${workspaceId}-tab-${tab.id}`}
             aria-hidden={!selected}
-            // No stacking tier: an unselected panel is offscreen (browser) or
-            // invisible (terminal), so the selected one is the only paint.
+            // No stacking tier: an unselected panel is offscreen or, while it
+            // records, under everything (browser), or invisible (terminal), so
+            // the selected one is the only paint.
             // `aria-hidden` below is load-bearing as well as correct: a canvas
             // layer needs its subtree hidden a second time, because the editor's
             // own stylesheet takes `visibility` back on a few of its nodes, and
@@ -400,7 +419,7 @@ export function WorkspacePaneBody({
               floating
                 ? { ...floatRect, pointerEvents: 'auto' }
                 : offscreen
-                  ? OFFSCREEN_LAYER_STYLE
+                  ? hiddenBrowserLayerStyle(recordingTabIds.has(tab.id))
                   : { pointerEvents: selected ? 'auto' : 'none' }
             }
             // An offscreen layer is still in the DOM: `inert` keeps its address
