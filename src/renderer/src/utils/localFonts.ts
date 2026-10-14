@@ -68,8 +68,26 @@ export function familyNamesOf(fonts: readonly LocalFontData[]): string[] {
 export function filterFontFamilies(families: readonly string[], query: string): readonly string[] {
   const needle = query.trim().toLocaleLowerCase()
   if (needle.length === 0) return families
-  return families.filter((family) => family.toLocaleLowerCase().includes(needle))
+  // Best match first, so Enter takes the face that was typed: the name itself,
+  // then names that start with it, then a word inside a name that does, and
+  // only then the rest that merely hold it ("inter" is in "SignPainter").
+  // Each tier keeps the system's order.
+  const tiers: string[][] = [[], [], [], []]
+  for (const family of families) {
+    const name = family.toLocaleLowerCase()
+    const at = name.indexOf(needle)
+    if (at < 0) continue
+    if (name === needle) tiers[0].push(family)
+    else if (at === 0) tiers[1].push(family)
+    else if (WORD_START.test(name.slice(0, at)) || name.split(WORD_SPLIT).some((word) => word.startsWith(needle)))
+      tiers[2].push(family)
+    else tiers[3].push(family)
+  }
+  return tiers.flat()
 }
+
+const WORD_START = /[\s\-_.]$/
+const WORD_SPLIT = /[\s\-_.]+/
 
 // ── Probes ─────────────────────────────────────────────────────────────────
 //

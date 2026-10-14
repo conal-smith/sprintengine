@@ -72,12 +72,17 @@ export function FontFamilyPicker({
   }, [open])
 
   const families = list.status === 'granted' ? list.families : NO_FAMILIES
-  const options = React.useMemo(() => fontPickerOptions(families, query), [families, query])
+  const options = React.useMemo(
+    () => fontPickerOptions(families, query, defaultFamily),
+    [families, query, defaultFamily],
+  )
   const selectedKey = selectedFontOptionKey(value)
   const activeIndex = ((): number => {
     const held = activeKey === null ? -1 : options.findIndex((option) => option.key === activeKey)
     if (held >= 0) return held
-    const selected = options.findIndex((option) => option.key === selectedKey)
+    // Opened, the highlight rests on the chosen face; once something is typed
+    // it starts on the best match, so Enter takes what was typed.
+    const selected = query.length === 0 ? options.findIndex((option) => option.key === selectedKey) : -1
     if (selected >= 0) return selected
     return options.length > 0 ? 0 : -1
   })()

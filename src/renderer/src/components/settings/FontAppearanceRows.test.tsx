@@ -119,6 +119,22 @@ test('typing narrows the list, and Enter takes the highlighted family', async ()
   expect(trigger('Interface font').textContent).toContain('Fira Sans')
 })
 
+test('with a face chosen, typing another and pressing Enter takes the best match, not the chosen one', async () => {
+  useWorkspaceStore.getState().setAppearanceInterfaceFont('Fira Sans')
+  await open('Interface font')
+  type('fira')
+  press('Enter')
+  expect(appearance().interfaceFont).toBe('Fira Code')
+})
+
+test('typing the bundled face and pressing Enter puts Default back', async () => {
+  useWorkspaceStore.getState().setAppearanceInterfaceFont('Avenir')
+  await open('Interface font')
+  type('Inter')
+  press('Enter')
+  expect(appearance().interfaceFont).toBe('')
+})
+
 test('Default puts the bundled face back', async () => {
   useWorkspaceStore.getState().setAppearanceInterfaceFont('Avenir')
   await open('Interface font')

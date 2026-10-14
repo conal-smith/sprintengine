@@ -32,6 +32,17 @@ test('search matches anywhere in the name, ignoring case', () => {
   expect(filterFontFamilies(families, '')).toBe(families)
 })
 
+test('the name typed comes first, then names that start with it, then a word that does', () => {
+  const families = ['SignPainter', 'Avenir Next', 'Inter Display', 'Inter', 'Noto Sans Inter-ish']
+  expect(filterFontFamilies(families, 'inter')).toEqual([
+    'Inter',
+    'Inter Display',
+    'Noto Sans Inter-ish',
+    'SignPainter',
+  ])
+  expect(filterFontFamilies(['Fira Mono', 'Menlo', 'Mono Lisa'], 'mono')).toEqual(['Mono Lisa', 'Fira Mono'])
+})
+
 test('equal advances are monospace, unequal ones are not, and an unmeasurable face is let through', () => {
   expect(advancesAreEqual([7.8, 7.8, 7.805])).toBe(true)
   expect(advancesAreEqual([3.1, 9.4, 7.8])).toBe(false)

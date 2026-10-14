@@ -42,6 +42,20 @@ test('without a family list, the picker is Default and whatever is typed', () =>
   expect(fontPickerOptions([], 'Inter').map((option) => option.key)).toEqual(['typed:Inter'])
 })
 
+test('typing the bundled face offers Default first, never as a typed name', () => {
+  const families = ['SignPainter', 'Inter Display']
+  expect(fontPickerOptions(families, 'Inter', 'Inter').map((option) => option.key)).toEqual([
+    DEFAULT_FONT_OPTION_KEY,
+    'family:Inter Display',
+    'family:SignPainter',
+  ])
+  expect(fontPickerOptions(families, 'int', 'Inter')[0].key).toBe(DEFAULT_FONT_OPTION_KEY)
+  expect(fontPickerOptions(families, 'sign', 'Inter').map((option) => option.key)).toEqual([
+    'family:SignPainter',
+    'typed:sign',
+  ])
+})
+
 test('the stored value names the row that carries the check', () => {
   expect(selectedFontOptionKey('')).toBe(DEFAULT_FONT_OPTION_KEY)
   expect(selectedFontOptionKey(' Iosevka ')).toBe('family:Iosevka')

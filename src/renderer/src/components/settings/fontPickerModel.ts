@@ -19,18 +19,23 @@ export type FontPickerOption =
 export const DEFAULT_FONT_OPTION_KEY = 'default'
 
 /**
- * The rows a picker shows for a query: Default while nothing is typed, the
- * installed families whose name holds the query, and the typed name when no
- * listed family is exactly it.
+ * The rows a picker shows for a query: Default while nothing is typed or the
+ * query starts the bundled face's name (`defaultFamily`, "Inter"), the
+ * installed families whose name holds the query, best match first, and the
+ * typed name when neither Default nor a listed family is exactly it.
  */
-export function fontPickerOptions(families: readonly string[], query: string): FontPickerOption[] {
+export function fontPickerOptions(families: readonly string[], query: string, defaultFamily = ''): FontPickerOption[] {
   const typed = normalizeFontFamilyPreference(query)
+  const needle = typed.toLocaleLowerCase()
+  const bundled = defaultFamily.toLocaleLowerCase()
   const options: FontPickerOption[] = []
-  if (typed.length === 0) options.push({ key: DEFAULT_FONT_OPTION_KEY, kind: 'default' })
+  if (typed.length === 0 || (bundled.length > 0 && bundled.startsWith(needle)))
+    options.push({ key: DEFAULT_FONT_OPTION_KEY, kind: 'default' })
   for (const family of filterFontFamilies(families, typed)) {
     options.push({ key: `family:${family}`, kind: 'family', family })
   }
-  const listed = typed.length > 0 && families.some((family) => family.toLocaleLowerCase() === typed.toLocaleLowerCase())
+  const listed =
+    typed.length > 0 && (needle === bundled || families.some((family) => family.toLocaleLowerCase() === needle))
   if (typed.length > 0 && !listed) options.push({ key: `typed:${typed}`, kind: 'typed', family: typed })
   return options
 }
