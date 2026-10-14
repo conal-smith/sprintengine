@@ -2313,6 +2313,80 @@ test('a Claude API retry tells the turn why it has nothing yet and when the next
   })
 })
 
+test('a refusal Claude answered on its fallback model is noted once, and the session reads the fallback model', () => {
+  const state: Parameters<typeof mapSdkMessage>[0] = mapperState()
+  mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
+  const fallback = (extra: Record<string, unknown>) =>
+    mapSdkMessage(state, {
+      type: 'system',
+      subtype: 'model_refusal_fallback',
+      session_id: 'native',
+      trigger: 'refusal',
+      direction: 'retry',
+      original_model: 'claude-opus-4-7',
+      fallback_model: 'claude-sonnet-4-6',
+      request_id: null,
+      content: 'Opus 4.7 declined this request, so Sonnet 4.6 answered it.',
+      uuid: 'refusal-1',
+      ...extra,
+    })
+  // A subagent's answer came from the fallback; the session's model did not change.
+  const [local] = fallback({ scope: 'local' })
+  assert.equal(local?.type, 'command_output')
+  assert.deepEqual(local?.payload, {
+    turnId: 'turn_1',
+    adapterNote: true,
+    output: 'Opus 4.7 declined this request, so Sonnet 4.6 answered it.',
+  })
+  assert.equal(state.contextModel, 'claude-opus-4-7')
+  // The main thread's swap, said again as the turn ends: noted once, read as the session's.
+  assert.deepEqual(fallback({ scope: 'session' }), [])
+  assert.equal(state.contextModel, 'claude-sonnet-4-6')
+  mapSdkMessage(state, { type: 'result', subtype: 'success', is_error: false, session_id: 'native' })
+  // The next turn's refusal is noted again, in words of the adapter's own when the CLI sent none.
+  state.turn = { turnId: 'turn_2' }
+  assert.equal(
+    fallback({ content: '' })[0]?.payload?.output,
+    'The model declined to answer, so claude-sonnet-4-6 answered instead.',
+  )
+})
+
+test('a refusal no fallback answered says why with the turn’s failure', () => {
+  const state = mapperState()
+  const refused = mapSdkMessage(state, {
+    type: 'system',
+    subtype: 'model_refusal_no_fallback',
+    session_id: 'native',
+    original_model: 'claude-opus-4-7',
+    request_id: 'req_1',
+    api_refusal_explanation: 'The request asked for working exploit code.',
+    content: '',
+    uuid: 'refusal-2',
+  })
+  assert.deepEqual(refused, [])
+  const failed = mapSdkMessage(state, {
+    type: 'result',
+    subtype: 'success',
+    is_error: true,
+    session_id: 'native',
+    result: 'API Error: Claude declined to respond to this request.',
+  }).find((event) => event.type === 'turn_failed')
+  assert.equal(
+    failed?.payload?.message,
+    'API Error: Claude declined to respond to this request.\n\nThe request asked for working exploit code.',
+  )
+  // Said with that turn only.
+  state.turn = { turnId: 'turn_2' }
+  const next = mapSdkMessage(state, {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    session_id: 'native',
+    result: 'Something else failed.',
+  }).find((event) => event.type === 'turn_failed')
+  assert.equal(next?.payload?.message, 'Something else failed.')
+})
+
 test('Claude shell results say whether a command was declined, stopped or exited non-zero', () => {
   const state = mapperState()
   const output = (id: string, block: Record<string, unknown>, structured?: Record<string, unknown>) =>
