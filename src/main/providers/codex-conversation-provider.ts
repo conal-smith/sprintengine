@@ -1047,13 +1047,22 @@ export function createCodexConversationProvider(
         let resumeLost = false
         let forkLost = false
         let result: RecordValue
+        // Resume and fork answer with the thread's whole history in
+        // `thread.turns` unless told not to, and only the thread's id is read
+        // from the answer: a long thread would be serialised, piped and parsed
+        // for nothing on every start. A Codex that predates the flag ignores it.
         if (state.forkFrom) {
           // A fork's thread is the parent's, through the turn it was forked
           // at. One Codex cannot branch there, because the thread or that turn
           // of it is gone, carries the conversation over as a lost resume does:
           // a saved point it refuses would otherwise refuse every start.
           const from = state.forkFrom
-          const params: ThreadForkParams = { ...threadParams, threadId: from.threadId, lastTurnId: from.lastTurnId }
+          const params: ThreadForkParams = {
+            ...threadParams,
+            threadId: from.threadId,
+            lastTurnId: from.lastTurnId,
+            excludeTurns: true,
+          }
           try {
             result = record(await transport.request('thread/fork', params))
           } catch (error) {
@@ -1062,7 +1071,8 @@ export function createCodexConversationProvider(
             forkLost = true
           }
         } else if (state.threadId) {
-          const resume = () => transport.request('thread/resume', { ...threadParams, threadId: state.threadId })
+          const resume = () =>
+            transport.request('thread/resume', { ...threadParams, threadId: state.threadId, excludeTurns: true })
           try {
             try {
               result = record(await resume())

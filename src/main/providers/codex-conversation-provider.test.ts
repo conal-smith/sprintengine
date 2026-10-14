@@ -445,7 +445,11 @@ test('resume uses a stored thread cursor and crash terminates a running turn', a
   await f.started
   f.crash()
   await done
-  expect(f.calls.find((call) => call.method === 'thread/resume')?.params).toMatchObject({ threadId: 'previous-thread' })
+  expect(f.calls.find((call) => call.method === 'thread/resume')?.params).toMatchObject({
+    threadId: 'previous-thread',
+    // Only the thread's id is read back, so its history is not asked for.
+    excludeTurns: true,
+  })
   expect(f.events.at(-1)?.type).toBe('turn_failed')
   expect(f.adapter.listLiveSessions?.()[0]?.hasChildProcess).toBe(false)
 })
@@ -844,6 +848,7 @@ test('a fork’s first connection branches the parent’s thread through the tur
     threadId: 'parent-thread',
     lastTurnId: 'turn-7',
     cwd: '/workspace/app',
+    excludeTurns: true,
   })
   expect(f.events.find((event) => event.type === 'session_updated')?.payload).toMatchObject({
     providerSessionId: 'forked-thread',
