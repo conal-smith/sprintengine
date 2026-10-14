@@ -78,7 +78,8 @@ export type FolderOpenIpcDependencies = {
 // editor whose id we cannot vouch for lists none and is found by name alone. The
 // CLI names are the shims each editor installs (or JetBrains Toolbox writes to
 // its scripts folder, `wellKnownCliDirs`). `cliArgs` go before the folder for a
-// shim that needs a subcommand to open the editor rather than its other tool.
+// shim that needs a subcommand or flag to open the editor rather than its other
+// tool.
 const EDITOR_LAUNCHERS: Record<
   Exclude<FolderOpenTargetId, 'finder'>,
   { cliNames: string[]; cliArgs?: string[]; macAppNames: string[]; macBundleIds: string[] }
@@ -98,8 +99,11 @@ const EDITOR_LAUNCHERS: Record<
     macAppNames: ['VSCodium.app'],
     macBundleIds: ['com.vscodium'],
   },
+  // `--classic`: when Cursor's Agents window is the one in front, a plain
+  // `cursor <folder>` opens the folder there rather than in the editor.
   cursor: {
     cliNames: ['cursor'],
+    cliArgs: ['--classic'],
     macAppNames: ['Cursor.app'],
     macBundleIds: ['com.todesktop.230313mzl4w4u92'],
   },
