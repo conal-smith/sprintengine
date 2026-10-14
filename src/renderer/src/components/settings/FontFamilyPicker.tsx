@@ -174,6 +174,7 @@ export function FontFamilyPicker({
       }}
       ariaLabel={label}
       popupRole="dialog"
+      onOpenAutoFocus={focusFontSearch}
       placement="bottom-end"
       renderTrigger={({ ref, triggerProps, togglePopover }) => {
         triggerRef.current = ref
@@ -204,7 +205,6 @@ export function FontFamilyPicker({
           <Input
             variant="quiet"
             size="sm"
-            autoFocus
             type="search"
             role="combobox"
             aria-expanded
@@ -212,6 +212,7 @@ export function FontFamilyPicker({
             aria-activedescendant={activeIndex >= 0 ? optionId(options[activeIndex]!.key) : undefined}
             aria-autocomplete="list"
             aria-label={`Search ${label.toLocaleLowerCase()}`}
+            data-font-search="true"
             placeholder={list.status === 'unavailable' ? 'Type a font’s name…' : 'Search fonts…'}
             spellCheck={false}
             autoComplete="off"
@@ -250,6 +251,24 @@ export function FontFamilyPicker({
 }
 
 const NO_FAMILIES: readonly string[] = []
+
+/**
+ * Puts focus in the search field as the picker opens, by click or by key, so
+ * typing filters at once and Enter picks. Not `autoFocus`: the surface mounts
+ * hidden until it has been positioned, and focus on a hidden field goes
+ * nowhere — it stayed on the trigger. Asked again on the next frame when the
+ * first try did not land, as the project picker does.
+ */
+function focusFontSearch(surface: HTMLElement): void {
+  const field = surface.querySelector<HTMLInputElement>('input[data-font-search="true"]')
+  if (!field) return
+  field.focus()
+  if (document.activeElement !== field) {
+    requestAnimationFrame(() => {
+      if (field.isConnected) field.focus()
+    })
+  }
+}
 
 // The keyboard highlight: the step the pointer's hover takes, so the arrow
 // keys and the pointer mark a row the same way. Never on the row that holds

@@ -309,13 +309,21 @@ export function createMainWindow({
   // display capture through to its own handler, and Settings read the installed
   // font families. Without these handlers the
   // session would grant every request. See app-window-permissions.ts.
+  const app = appDocument()
   win.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-    callback(allowAppWindowPermissionRequest(permission, details as { mediaTypes?: string[] }))
+    callback(
+      allowAppWindowPermissionRequest(
+        permission,
+        details as { mediaTypes?: string[]; requestingUrl?: string; isMainFrame?: boolean },
+        app,
+      ),
+    )
   })
   // Checks (`navigator.permissions.query`, device labels) are refused but for
-  // the font list; a display capture does not depend on one.
-  win.webContents.session.setPermissionCheckHandler((_webContents, permission) =>
-    allowAppWindowPermissionCheck(permission),
+  // the font list, asked by the app's own page; a display capture does not
+  // depend on one.
+  win.webContents.session.setPermissionCheckHandler((_webContents, permission, _origin, details) =>
+    allowAppWindowPermissionCheck(permission, details, app),
   )
 
   if (process.env['ELECTRON_RENDERER_URL']) {

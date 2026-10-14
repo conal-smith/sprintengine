@@ -141,3 +141,26 @@ test('the code picker takes a monospace family', async () => {
   press('Enter')
   expect(appearance().codeFont).toBe('Iosevka')
 })
+
+test('opening a picker by click puts focus in its search field, so typing filters at once', async () => {
+  // As a browser does: focus on an element under a hidden ancestor goes
+  // nowhere. The surface mounts hidden until it has been positioned, which is
+  // what left focus on the trigger.
+  const focus = HTMLElement.prototype.focus
+  const spy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, options) {
+    if (this.closest('[style*="visibility: hidden"]')) return
+    focus.call(this, options)
+  })
+  try {
+    trigger('Code font').focus()
+    await open('Code font')
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+    })
+    expect(document.activeElement).toBe(search())
+    type('iose')
+    expect(optionNames()).toEqual(['Iosevka', 'ioseUse this name'])
+  } finally {
+    spy.mockRestore()
+  }
+})
