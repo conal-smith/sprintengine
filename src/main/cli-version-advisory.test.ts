@@ -294,6 +294,50 @@ test('pnpm, Bun, Volta and Yarn installs are left to the manager that made them'
   assert.equal(foreignPackageManager('/Users/dev/.nvm/versions/node/v22/bin/codex', null), null)
 })
 
+test('a mise install is left to mise, and a global under a mise-managed Node to npm', () => {
+  const codex = manifest({ package: { npm: '@openai/codex', brew: 'codex' }, selfUpdate: { args: ['update'] } })
+  const cases: Array<[label: string, path: string, real: string]> = [
+    [
+      'a shim resolving to a Homebrew mise',
+      '/Users/dev/.local/share/mise/shims/codex',
+      '/opt/homebrew/Cellar/mise/2026.9.1/bin/mise',
+    ],
+    ['a shim under a custom data directory', '/Users/dev/tool-data/shims/codex', '/Users/dev/.local/bin/mise'],
+    ['a Windows shim', 'C:\\Users\\dev\\AppData\\Local\\mise\\shims\\codex.cmd', 'C:\\Tools\\mise.exe'],
+    [
+      'the npm backend',
+      '/Users/dev/.local/share/mise/installs/npm-openai-codex/0.161.0/bin/codex',
+      '/Users/dev/.local/share/mise/installs/npm-openai-codex/0.161.0/lib/node_modules/@openai/codex/bin/codex.js',
+    ],
+    [
+      'a tool alias backed by npm',
+      '/Users/dev/.local/share/mise/installs/codex/0.161.0/bin/codex',
+      '/Users/dev/.local/share/mise/installs/codex/0.161.0/lib/node_modules/@openai/codex/bin/codex.js',
+    ],
+  ]
+  for (const [label, path, real] of cases) {
+    assert.equal(foreignPackageManager(path, real), 'mise', label)
+    assert.equal(
+      chooseCliUpdateCommand({ manifest: codex, resolvedPath: path, fs: fakeFs({ [path]: real }) }),
+      null,
+      label,
+    )
+  }
+
+  const nodePrefix = '/Users/dev/.local/share/mise/installs/node/24.13.0'
+  const real = `${nodePrefix}/lib/node_modules/@openai/codex/bin/codex.js`
+  assert.equal(foreignPackageManager(`${nodePrefix}/bin/codex`, real), null)
+  assert.deepEqual(
+    chooseCliUpdateCommand({
+      manifest: codex,
+      resolvedPath: `${nodePrefix}/bin/codex`,
+      fs: fakeFs({ [`${nodePrefix}/bin/codex`]: real }),
+    }),
+    { kind: 'npm', command: `npm install -g --prefix ${nodePrefix} @openai/codex@latest` },
+  )
+  assert.equal(foreignPackageManager('/Users/dev/.local/bin/promise', null), null, 'a name ending in mise is not mise')
+})
+
 test('a Windows npm shim is npm’s when the package sits beside it', () => {
   const codex = manifest({ package: { npm: '@openai/codex' } })
   const shim = 'C:\\Users\\Dev User\\AppData\\Roaming\\npm\\codex.cmd'
