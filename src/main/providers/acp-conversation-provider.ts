@@ -359,6 +359,20 @@ export function acpToolResultImages(content: readonly unknown[], rawOutput: unkn
 }
 
 /**
+ * What is kept of a tool call between its updates, for the next one to build
+ * on: its name, kind, title, input and what was read off them (its subagent
+ * lane, its todo mark). Not its content or raw output: each update's are read
+ * from that update alone, and kept they would hold every file the turn read
+ * and every screenshot's base64 until the turn ends.
+ */
+export function acpRememberedToolCall(tool: Record<string, unknown>): Record<string, unknown> {
+  const kept = { ...tool }
+  delete kept.content
+  delete kept.rawOutput
+  return kept
+}
+
+/**
  * What a tool call's raw output says, with its pictures' bytes left out: the
  * tool's own text when it has one, else the raw output with each picture
  * attachment's data URL dropped. Output with no pictures is unchanged.
@@ -832,7 +846,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       // `todowrite` with a count ("3 todos"), which names no todo tool.
       const todo = prior?.todo === true || acpTodoTool(value.title)
       const tool = { ...prior, ...value, ...(lane.subagentLane ? { lane } : {}), ...(todo ? { todo } : {}) }
-      state.toolCalls.set(value.toolCallId, tool)
+      state.toolCalls.set(value.toolCallId, acpRememberedToolCall(tool))
       const content = value.content ?? []
       const diff = content.find((entry) => entry.type === 'diff')
       if (!prior || value.rawInput !== undefined || diff)

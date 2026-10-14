@@ -11,6 +11,7 @@ import {
   acpApprovalInput,
   acpMcpServers,
   acpRawOutputText,
+  acpRememberedToolCall,
   acpToolResultImages,
   acpSubagentLaneFields,
   acpTodoTool,
@@ -806,6 +807,33 @@ test('an agent that sends a plan update beside its todowrite call shows one list
     await f.cleanup()
   }
 })
+test('an ACP tool call is kept between its updates without its content or raw output', () => {
+  const data = Buffer.from('not really a png').toString('base64')
+  const update = {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'call_shot',
+    title: 'screenshot',
+    kind: 'other',
+    status: 'completed',
+    rawInput: { url: 'http://localhost:5173' },
+    rawOutput: { output: 'Captured', attachments: [{ type: 'file', url: `data:image/png;base64,${data}` }] },
+    content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data } }],
+    lane: { subagentLane: true },
+    todo: true,
+  }
+  expect(acpRememberedToolCall(update)).toEqual({
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'call_shot',
+    title: 'screenshot',
+    kind: 'other',
+    status: 'completed',
+    rawInput: { url: 'http://localhost:5173' },
+    lane: { subagentLane: true },
+    todo: true,
+  })
+  expect(update.content).toHaveLength(1)
+})
+
 test('an ACP tool call is a todo by its tool name, in either spelling', () => {
   for (const name of ['todowrite', 'TodoWrite', 'todoread', 'update_todo', ' todowrite '])
     expect(acpTodoTool(name)).toBe(true)
