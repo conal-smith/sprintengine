@@ -17,6 +17,7 @@ import {
   acpToolKind,
   confinedAcpPath,
   createAcpConversationProvider,
+  cursorTransportFailure,
   probeAcpConversationCommands,
 } from './acp-conversation-provider'
 import type {
@@ -66,6 +67,8 @@ createInterface({input:process.stdin}).on('line',async line=>{
  if(text.includes('inspect history')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});result(m.id,{stopReason:'end_turn'});return}
  if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,permission:process.env.OPENCODE_PERMISSION??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='crash')process.exit(2);
+ // 'say <words>' answers with the words alone, as Cursor answers a turn its server connection broke.
+ if(text.startsWith('say ')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:text.slice(4)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='pid'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(process.pid)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='flood'){process.stdout.write('x'.repeat(17*1024*1024));return}
  // As OpenCode spawns a subagent: a call named for its task tool, then retitled with what it was sent to do.
@@ -834,6 +837,55 @@ test('an ACP permission request carries the locations the agent listed beside it
   })
   expect(acpApprovalInput({ target_file: 'a.ts' }, [])).toEqual({ target_file: 'a.ts' })
 })
+test("Cursor's connection diagnostic as its whole reply is a failed turn, and only that", () => {
+  for (const reply of [
+    'Error: RetriableError: WritableIterable is closed',
+    '  Error: ConnectError: [unavailable] read ECONNRESET\n',
+    'Something went wrong communicating with the server. Please try again.',
+    'Error: ConnectError: [unavailable] stream closed\n    at ConnectError.from (/app/index.js:12:3)\n    at next (/app/index.js:40:9)',
+    'Error: RetriableError: WritableIterable is closed\n\nSomething went wrong communicating with the server. Please try again.',
+  ])
+    expect(cursorTransportFailure(reply)).toBe(reply.trim())
+  for (const reply of [
+    '',
+    'Done',
+    // A reply that explains such an error is an answer.
+    'The log shows Error: ConnectError: [unavailable] — the proxy dropped the stream.',
+    'Error: ConnectError: [unavailable] stream closed\nI will retry the request.',
+    'Error: TypeError: x is undefined',
+    'Something went wrong communicating with the server. Please try again. I fixed the test anyway.',
+    // Stack frames alone are not a diagnostic.
+    '    at next (/app/index.js:40:9)',
+  ])
+    expect(cursorTransportFailure(reply)).toBeUndefined()
+})
+
+test('a Cursor turn whose reply is a connection diagnostic fails, and the next one answers as usual', async () => {
+  const f = await presetFixture('cursor-agent', 'bypass')
+  try {
+    const diagnostic = 'Error: RetriableError: WritableIterable is closed'
+    const events = await turn(f, `say ${diagnostic}`)
+    expect(events.at(-1)).toMatchObject({ type: 'turn_failed', payload: { message: diagnostic } })
+    expect(events.some((event) => event.type === 'turn_completed')).toBe(false)
+    expect((await turn(f, 'say Fine now')).at(-1)).toMatchObject({
+      type: 'turn_completed',
+      payload: { text: 'Fine now' },
+    })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('another ACP agent replying with the same words completes its turn', async () => {
+  const f = await presetFixture('opencode-agent', 'bypass')
+  try {
+    const events = await turn(f, 'say Error: RetriableError: WritableIterable is closed')
+    expect(events.at(-1)).toMatchObject({ type: 'turn_completed' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test("ACP launches each preset through the CLI's own switch, and Cursor offers no Manual", () => {
   const profile = (id: string) => ACP_PROFILES.find((entry) => entry.id === id)!
   const cursor = profile('cursor-agent')

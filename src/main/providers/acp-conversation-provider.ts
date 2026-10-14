@@ -419,6 +419,34 @@ function withStderrTail(message: string, stderrTail: string): string {
   return tail ? `${message} (${tail})` : message
 }
 
+// What Cursor's agent says, as its reply, when it has lost its connection to
+// Cursor's servers: the error it caught, or its generic apology, and nothing
+// else. It then ends the prompt with an ordinary stop reason.
+const CURSOR_TRANSPORT_LINES = [
+  /^(?:Error: )?(?:RetriableError|ConnectError): \S/,
+  /^Something went wrong communicating with the server\. Please try again\.$/,
+]
+const STACK_FRAME_LINE = /^\s+at \S/
+
+/**
+ * The reply itself when Cursor's whole reply is one of its connection
+ * diagnostics (with the stack frames it may print under one), else undefined.
+ * Such a turn failed: it never reached the model, and recorded as an answer it
+ * would read as the agent's reply and be carried into the next turn's
+ * history. Any other line, prose included, makes it an answer, so a reply that
+ * explains an error is never taken for one.
+ */
+export function cursorTransportFailure(reply: string): string | undefined {
+  const message = reply.trim()
+  let diagnostic = false
+  for (const line of message.split('\n')) {
+    if (!line.trim() || (diagnostic && STACK_FRAME_LINE.test(line))) continue
+    if (!CURSOR_TRANSPORT_LINES.some((pattern) => pattern.test(line.trim()))) return undefined
+    diagnostic = true
+  }
+  return diagnostic ? message : undefined
+}
+
 type State = {
   input: MockAdapterSessionInput
   // What the agent said it can connect to, from its handshake.
@@ -1381,8 +1409,14 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
               inputTokens: result.usage.inputTokens,
               outputTokens: result.usage.outputTokens,
             })
-          if (!state.cancelled && result.stopReason !== 'cancelled')
-            state.history.push({ user: input.message, assistant: state.assistantText })
+          const stopped = state.cancelled || result.stopReason === 'cancelled'
+          const transportFailure =
+            profile.cli === 'cursor' && !stopped ? cursorTransportFailure(state.assistantText) : undefined
+          if (transportFailure) {
+            emit(state, 'turn_failed', { message: transportFailure })
+            return
+          }
+          if (!stopped) state.history.push({ user: input.message, assistant: state.assistantText })
           // What the turn spent, as the agent's own protocol counts it.
           const usage = result.usage
             ? turnUsageOf({
@@ -1395,8 +1429,8 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           const reply = state.reply.trim() ? state.reply : ''
           emit(
             state,
-            state.cancelled || result.stopReason === 'cancelled' ? 'turn_failed' : 'turn_completed',
-            state.cancelled || result.stopReason === 'cancelled'
+            stopped ? 'turn_failed' : 'turn_completed',
+            stopped
               ? { reason: 'interrupted' }
               : {
                   stopReason: result.stopReason,
