@@ -157,7 +157,16 @@ type Session = {
   transport: CodexRpcTransport | null
   starting?: Promise<void>
   turn: ActiveTurn | null
-  pending: Map<string, { rpcId: string | number; kind: 'tool' | 'question'; questions?: RecordValue[] }>
+  // An `elicitation` keeps the answer an approval sends (`codexElicitationAccept`).
+  pending: Map<
+    string,
+    {
+      rpcId: string | number
+      kind: 'tool' | 'question' | 'elicitation'
+      questions?: RecordValue[]
+      accept?: RecordValue
+    }
+  >
   // Completed exchanges of this process, replayed with the persisted history
   // when the thread they belonged to cannot be resumed.
   history: Array<{ user: string; assistant: string }>
@@ -404,6 +413,35 @@ export function createCodexConversationProvider(
     turn.interrupting = state.transport.request('turn/interrupt', { threadId: state.threadId, turnId: turn.nativeId })
     await turn.interrupting
   }
+  // An MCP server (or an app Codex connects) asking the person's consent
+  // before a tool runs. Approving sends the answer worked out now; one that
+  // cannot be given is declined without a card, which approving would not
+  // change: a URL to finish in a browser, or a form with a required field the
+  // card has no way to fill in. Like a question, it is the person's to answer,
+  // so no permission mode or remembered rule answers it for them.
+  function raiseElicitation(state: Session, turn: ActiveTurn, rpcId: string | number, params: RecordValue) {
+    const accept = codexElicitationAccept(params)
+    if (!accept) {
+      state.transport?.respond(rpcId, { action: 'decline' })
+      return
+    }
+    const requestId = `${turn.id}:${String(rpcId)}`
+    const meta = record(params._meta)
+    const server = text(params.serverName)
+    const app = text(meta.app_name) || text(meta.appName) || text(meta.connector_name) || server || 'MCP server'
+    state.pending.set(requestId, { rpcId, kind: 'elicitation', accept })
+    emit(state, 'approval_requested', {
+      requestId,
+      action: `Use ${app}`,
+      kind: 'tool',
+      toolKind: 'mcp',
+      input: { server, message: params.message },
+      cwd: state.input.workspaceRoot,
+      summary: text(params.message) || `Allow ${app} to continue?`,
+      mustAsk: true,
+      suppressAlwaysAllowRule: true,
+    })
+  }
   async function onMessage(state: Session, message: RpcMessage) {
     const params = record(message.params)
     // Another thread is either a subagent this thread spawned, or not ours.
@@ -418,6 +456,10 @@ export function createCodexConversationProvider(
       const rpcId = message.id
       if (!turn) {
         state.transport?.reject(rpcId, 'No active conversation turn.')
+        return
+      }
+      if (message.method === 'mcpServer/elicitation/request') {
+        raiseElicitation(state, turn, rpcId, params)
         return
       }
       const isCommand = message.method === 'item/commandExecution/requestApproval'
@@ -1346,7 +1388,12 @@ export function createCodexConversationProvider(
             answers: input.approved ? [input.answers?.[text(question.question)] ?? ''] : [],
           }
         state.transport.respond(pending.rpcId, { answers })
-      } else state.transport.respond(pending.rpcId, { decision: input.approved ? 'accept' : 'decline' })
+      } else if (pending.kind === 'elicitation')
+        state.transport.respond(
+          pending.rpcId,
+          input.approved && pending.accept ? pending.accept : { action: 'decline' },
+        )
+      else state.transport.respond(pending.rpcId, { decision: input.approved ? 'accept' : 'decline' })
       state.pending.delete(input.requestId)
       emit(state, 'approval_resolved', {
         requestId: input.requestId,
@@ -1657,6 +1704,27 @@ function isMissingThreadError(error: unknown): boolean {
 /** Codex's answer to `thread/resume` for a thread that was archived ("session … is archived"). */
 function isArchivedThreadError(error: unknown): boolean {
   return error instanceof CodexRpcError && /\bis archived\b/i.test(error.message)
+}
+
+/**
+ * What approving an `mcpServer/elicitation/request` answers, or null when
+ * approval cannot answer it. A form is sent back filled with each field's
+ * default, which is all a card with Allow and Deny can choose; a required
+ * field without one would make an invalid form. A URL is for the person to
+ * open and finish elsewhere, which an approval does not do.
+ */
+function codexElicitationAccept(params: RecordValue): RecordValue | null {
+  if (params.mode === 'url') return null
+  const schema = record(params.requestedSchema)
+  const properties = record(schema.properties)
+  const content: RecordValue = {}
+  for (const [key, field] of Object.entries(properties)) {
+    const fallback = record(field).default
+    if (fallback !== undefined && fallback !== null) content[key] = fallback
+  }
+  const required = Array.isArray(schema.required) ? schema.required : []
+  if (required.some((key) => typeof key !== 'string' || !Object.hasOwn(content, key))) return null
+  return { action: 'accept', content }
 }
 
 // A subagent's name from its path in the agent tree (`/root/reviewer`).

@@ -472,6 +472,109 @@ test('unowned threads and unknown server requests never get an implicit approval
   expect(f.events.some((event) => event.type === 'approval_requested')).toBe(false)
 })
 
+test('an MCP server asking consent raises a card the person must answer, and Allow sends its form defaults', async () => {
+  const f = fixture()
+  await f.adapter.startSession(f.input)
+  const done = f.send()
+  await f.started
+  await f.message({
+    id: 30,
+    method: 'mcpServer/elicitation/request',
+    params: {
+      threadId: 'native-thread',
+      turnId: 'native-turn',
+      serverName: 'codex_apps',
+      message: 'Allow Codex to use Calendar?',
+      mode: 'form',
+      requestedSchema: {
+        type: 'object',
+        properties: { scope: { type: 'string', default: 'read' }, note: { type: 'string' } },
+        required: ['scope'],
+      },
+      _meta: { app_name: 'Calendar' },
+    },
+  })
+  await f.message({
+    id: 31,
+    method: 'mcpServer/elicitation/request',
+    params: { serverName: 'acme', message: 'Post to the acme channel?', mode: 'form', requestedSchema: {} },
+  })
+  expect(f.replies).toEqual([])
+  await f.adapter.resolveApproval({ ...f.input, turnId: 'turn', requestId: 'turn:30', approved: true })
+  await f.adapter.resolveApproval({ ...f.input, turnId: 'turn', requestId: 'turn:31', approved: false })
+  expect(f.replies).toEqual([
+    { id: 30, result: { action: 'accept', content: { scope: 'read' } } },
+    { id: 31, result: { action: 'decline' } },
+  ])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  const raised = f.events.filter((event) => event.type === 'approval_requested').map((event) => event.payload)
+  expect(raised[0]).toMatchObject({
+    requestId: 'turn:30',
+    kind: 'tool',
+    toolKind: 'mcp',
+    action: 'Use Calendar',
+    summary: 'Allow Codex to use Calendar?',
+    mustAsk: true,
+    suppressAlwaysAllowRule: true,
+  })
+  expect(raised[1]).toMatchObject({ requestId: 'turn:31', action: 'Use acme', summary: 'Post to the acme channel?' })
+})
+
+test('an MCP consent approving cannot answer is declined without a card', async () => {
+  const f = fixture()
+  await runTurn(f, [
+    {
+      id: 'url',
+      method: 'mcpServer/elicitation/request',
+      params: { serverName: 'acme', message: 'Sign in to acme', mode: 'url', url: 'https://example.com/auth' },
+    },
+    {
+      id: 'form',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        serverName: 'acme',
+        message: 'Which project?',
+        mode: 'form',
+        requestedSchema: { properties: { project: { type: 'string' } }, required: ['project'] },
+      },
+    },
+  ])
+  expect(f.replies).toEqual([
+    { id: 'url', result: { action: 'decline' } },
+    { id: 'form', result: { action: 'decline' } },
+  ])
+  expect(payloads(f.events, 'approval_requested')).toEqual([])
+})
+
+test('a subagent’s MCP consent is asked in its parent’s chat', async () => {
+  const f = fixture()
+  const child = 'child-thread'
+  const activity = {
+    id: 'call_spawn',
+    type: 'subAgentActivity',
+    kind: 'started',
+    agentThreadId: child,
+    agentPath: '/root/pong',
+  }
+  await f.adapter.startSession(f.input)
+  const done = f.send()
+  await f.started
+  await f.message({ method: 'item/started', params: { threadId: 'native-thread', item: activity } })
+  await f.message({
+    id: 40,
+    method: 'mcpServer/elicitation/request',
+    params: { threadId: child, serverName: 'acme', message: 'Read the acme wiki?', mode: 'form', requestedSchema: {} },
+  })
+  await f.adapter.resolveApproval({ ...f.input, turnId: 'turn', requestId: 'turn:40', approved: true })
+  expect(f.replies).toEqual([{ id: 40, result: { action: 'accept', content: {} } }])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  expect(payloads(f.events, 'approval_requested')).toEqual([
+    expect.objectContaining({ requestId: 'turn:40', summary: 'Read the acme wiki?' }),
+  ])
+})
+
 test('bypass is YOLO, auto is the workspace sandbox with auto-review past it, manual asks in a read-only sandbox, none sends nothing', () => {
   expect(codexPermissionPolicy('bypass')).toEqual({
     approvalPolicy: 'never',
