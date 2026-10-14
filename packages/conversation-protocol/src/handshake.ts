@@ -57,6 +57,15 @@ export const CONVERSATION_QUEUED_SENDS_CAPABILITY = 'conversation-queued-sends' 
  * if it is not there and keeps them on the chat.
  */
 export const CONVERSATION_SEND_SKILLS_CAPABILITY = 'conversation-send-skills' as const
+/**
+ * A message may be steered into the turn that is running, as its own
+ * composer's Steer does: `send` takes `steer`, and a listed chat says whether
+ * its provider takes a message mid-turn (`capabilities.steer`). A steer the
+ * turn cannot take is not lost: the desktop holds it as a queued message, or,
+ * where a held message could not carry it, refuses it `busy` as any send made
+ * mid-turn was.
+ */
+export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -74,6 +83,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_LIFECYCLE_CAPABILITY,
   CONVERSATION_QUEUED_SENDS_CAPABILITY,
   CONVERSATION_SEND_SKILLS_CAPABILITY,
+  CONVERSATION_STEER_SENDS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

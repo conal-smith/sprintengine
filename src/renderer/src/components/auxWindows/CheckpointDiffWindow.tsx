@@ -6,7 +6,7 @@ import { WindowCloseButton } from '../workspace/WindowControls'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
 import { detectLanguage } from '../../utils/files'
-import { MONO_FONT_STACK } from '../../utils/fonts'
+import { useCodeFontFamily } from '../../utils/fonts'
 import { TRAFFIC_LIGHT_INSET } from '../workspace/AppTitleBar'
 import type { ToolDiffWindowInput } from './openCheckpointDiffWindow'
 import { deriveEditHunks, editPreviewSources } from '../../../../shared/conversation/editHunks'
@@ -42,6 +42,7 @@ async function loadDiff(input: ConversationTurnDiffInput | ToolDiffWindowInput):
 /** Historical snapshots never read today's working file or offer staging actions. */
 export default function CheckpointDiffWindow({ request }: { request: string }) {
   const theme = useMonacoBaseTheme()
+  const codeFontFamily = useCodeFontFamily()
   const [result, setResult] = useState<ConversationTurnDiffResult>()
   const [retry, setRetry] = useState(0)
   const input = parseCheckpointDiffRequest(request)
@@ -103,7 +104,7 @@ export default function CheckpointDiffWindow({ request }: { request: string }) {
               automaticLayout: true,
               renderSideBySide: true,
               minimap: { enabled: false },
-              fontFamily: MONO_FONT_STACK,
+              fontFamily: codeFontFamily,
             }}
           />
         </div>

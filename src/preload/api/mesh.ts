@@ -180,6 +180,7 @@ export const meshApi = {
     attachments?: ConversationImageAttachment[]
     queue?: boolean
     skills?: string[]
+    steer?: boolean
   }): Promise<MeshConversationCommandResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_SEND_CHANNEL, {
       key: input.key,
@@ -187,6 +188,7 @@ export const meshApi = {
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.queue ? { queue: true } : {}),
       ...(input.skills?.length ? { skills: input.skills } : {}),
+      ...(input.steer ? { steer: true } : {}),
     }) as Promise<MeshConversationCommandResult>,
   meshConversationCancelQueued: (input: { key: MeshConversationKey; queuedId: string }) =>
     command(input.key, { kind: 'cancelQueued', queuedId: input.queuedId }),

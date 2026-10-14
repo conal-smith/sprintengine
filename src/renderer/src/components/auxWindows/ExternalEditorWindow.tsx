@@ -11,7 +11,7 @@ import {
   takeEditorLanding,
 } from '../../utils/agentEditorReveal'
 import type { EditorRange } from '../../../../shared/editor-reveal'
-import { MONO_FONT_STACK, remeasureMonacoFontsOnLoad } from '../../utils/fonts'
+import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { renderMarkdown } from '../../utils/markdown'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
@@ -121,6 +121,7 @@ function useTreeRoot(tab: FileTab | null): string | null {
 export default function ExternalEditorWindow({ incoming, nonce }: Props) {
   const isMac = window.api.platform === 'darwin'
   const monacoTheme = useMonacoBaseTheme()
+  const codeFontFamily = useCodeFontFamily()
   const { confirm: confirmDialog } = useConfirmDialog()
   const [tabs, setTabs] = useState<FileTab[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
@@ -571,16 +572,25 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
               </Tooltip>
             </div>
           ) : null}
-          {renderBody(activeTab, activeBuffer, activePath, setBuffers, showPreview, monacoTheme, (editor) => {
-            editorRef.current = editor
-            editor.onDidDispose(() => {
-              if (editorRef.current === editor) editorRef.current = null
-            })
-            editor.onKeyDown(() => {
-              lastKeyAtRef.current = Date.now()
-            })
-            landActive()
-          })}
+          {renderBody(
+            activeTab,
+            activeBuffer,
+            activePath,
+            setBuffers,
+            showPreview,
+            monacoTheme,
+            codeFontFamily,
+            (editor) => {
+              editorRef.current = editor
+              editor.onDidDispose(() => {
+                if (editorRef.current === editor) editorRef.current = null
+              })
+              editor.onKeyDown(() => {
+                lastKeyAtRef.current = Date.now()
+              })
+              landActive()
+            },
+          )}
         </div>
       </div>
     </div>
@@ -603,6 +613,7 @@ function renderBody(
   setBuffers: React.Dispatch<React.SetStateAction<Record<string, FileBuffer>>>,
   showPreview: boolean,
   monacoTheme: 'vs' | 'vs-dark',
+  codeFontFamily: string,
   onEditorMount?: (editor: Monaco.editor.IStandaloneCodeEditor) => void,
 ): React.ReactNode {
   // Kit states, not the window's own dialect: the sentences a person
@@ -663,7 +674,7 @@ function renderBody(
       }}
       options={{
         fontSize: 13,
-        fontFamily: MONO_FONT_STACK,
+        fontFamily: codeFontFamily,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         automaticLayout: true,

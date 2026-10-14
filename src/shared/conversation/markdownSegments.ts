@@ -243,3 +243,131 @@ export function createMarkdownSplitter(): (source: string) => MarkdownSegments {
 export function splitMarkdownSegments(source: string): MarkdownSegments {
   return createMarkdownSplitter()(source)
 }
+
+// ── A paragraph at a time ───────────────────────────────────────────────────
+//
+// Settings ▸ Appearance ▸ Show replies: "A paragraph at a time" draws a reply
+// streaming in only as far as its last finished block, so what is on screen
+// never reflows under the reader and the unfinished rest is not parsed at all.
+
+// A fence opens at any indentation (one in a list item sits past its marker);
+// it closes with the same character, at least as long, at most three spaces
+// deeper than its opener and with nothing after it.
+const HELD_FENCE = /^( *)(`{3,}|~{3,})(.*)$/u
+// A list item's marker and the space after it, at any depth, read where a
+// line starts. The space is required, so a `-` or `1.` still streaming is not
+// an item yet.
+const LIST_ITEM_START = /[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/uy
+// A section title: an ATX heading, or a line of bold text alone (with an
+// optional colon), which replies often use as one.
+const SECTION_TITLE = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))+\*\*:?$)/u
+// An ATX heading at the margin ends the block above it with no blank line between.
+const TOP_LEVEL_HEADING = /^#{1,6}(?:[ \t]|$)/u
+
+/**
+ * How much of a streaming reply is finished: the text up to its last
+ * boundary that is not inside an open code fence or display math block. A
+ * boundary falls
+ *  - after a blank line,
+ *  - after a closing code fence,
+ *  - before a list item (on the line still streaming too, once its marker
+ *    and the space after it are in: a tight list has no blank lines, and would
+ *    otherwise land whole), and
+ *  - before a heading at the margin.
+ * A section title (a heading, or a line of bold text) holds the boundary
+ * until a line of content follows it, so a title never shows alone above a
+ * block that is still being written. A line ending `\r\n` reads as one ending
+ * `\n`.
+ *
+ * Like `createMarkdownSplitter` it keeps its place: given the text it saw last
+ * with more appended, it reads only the lines the new text finished, and
+ * while nothing new is finished it answers with the same string as before, so
+ * whatever renders it can tell at once that nothing changed. Given anything
+ * else it starts over.
+ */
+export function createParagraphHold(): (source: string) => string {
+  let seen = ''
+  let shown = ''
+  let lineStart = 0
+  let boundary = 0
+  let fence: { char: string; width: number; indent: number } | null = null
+  let math: 'dollar' | 'bracket' | null = null
+  let titleAwaitingContent = false
+  // A line that is not blank has been read: before one, there is nothing to end.
+  let content = false
+
+  const reset = () => {
+    seen = ''
+    shown = ''
+    lineStart = 0
+    boundary = 0
+    fence = null
+    math = null
+    titleAwaitingContent = false
+    content = false
+  }
+
+  // A list item starting at `start` ends what came before it. Read in place,
+  // so the line still streaming, however long, is never copied.
+  const listItemBoundary = (source: string, start: number) => {
+    if (fence || math || !content || titleAwaitingContent) return
+    LIST_ITEM_START.lastIndex = start
+    if (LIST_ITEM_START.test(source)) boundary = start
+  }
+
+  const readLine = (source: string, start: number, newline: number) => {
+    listItemBoundary(source, start)
+    const line = source.slice(start, newline).replace(/[ \t\r]+$/u, '')
+    const next = newline + 1
+    const previousContent = content
+    content ||= line !== ''
+    if (math) {
+      if (math === 'dollar' ? DOLLAR_MATH_CLOSER.test(line) : bracketMathEnds(line)) math = null
+      return
+    }
+    const fenceLine = HELD_FENCE.exec(line)
+    if (fence) {
+      if (
+        fenceLine &&
+        fenceLine[2][0] === fence.char &&
+        fenceLine[2].length >= fence.width &&
+        fenceLine[1].length <= fence.indent + 3 &&
+        fenceLine[3] === ''
+      ) {
+        fence = null
+        boundary = next
+      }
+      return
+    }
+    // A backtick fence's info string holds no backtick; one that does is a code span.
+    if (fenceLine && (fenceLine[2][0] === '~' || !fenceLine[3].includes('`'))) {
+      fence = { char: fenceLine[2][0], width: fenceLine[2].length, indent: fenceLine[1].length }
+      titleAwaitingContent = false
+      return
+    }
+    if (line === '') {
+      if (previousContent && !titleAwaitingContent) boundary = next
+      return
+    }
+    const bracketMath = BRACKET_MATH_OPENER.exec(line)
+    if (DOLLAR_MATH.test(line)) math = 'dollar'
+    else if (bracketMath && !bracketMathEnds(line.slice(bracketMath[0].length))) math = 'bracket'
+    if (previousContent && !titleAwaitingContent && TOP_LEVEL_HEADING.test(line)) boundary = start
+    titleAwaitingContent = SECTION_TITLE.test(line)
+  }
+
+  return (source: string) => {
+    if (!source.startsWith(seen)) reset()
+    seen = source
+    let position = lineStart
+    for (let newline = source.indexOf('\n', position); newline >= 0; newline = source.indexOf('\n', position)) {
+      readLine(source, position, newline)
+      position = newline + 1
+    }
+    lineStart = position
+    // Only the marker of the line still streaming is read: the rest of it is not finished.
+    listItemBoundary(source, position)
+    if (boundary !== shown.length) shown = source.slice(0, boundary)
+    return shown
+  }
+}

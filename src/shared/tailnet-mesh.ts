@@ -417,6 +417,11 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * `sendSkills`: the machine advertises `conversation-send-skills` and
  * `workspace-extensions` — a message to one of its chats may carry its skills,
  * listed for the composer by `meshWorkspaceExtensions`.
+ *
+ * `steerSends`: the machine advertises `conversation-steer-sends` — a message
+ * may go into the turn one of its chats is running, where that chat's provider
+ * takes one (its listed `capabilities.steer`). False for a machine that does
+ * not, where a message sent mid-turn waits for the turn to end.
  */
 export type MeshConversationListResult =
   | {
@@ -428,6 +433,7 @@ export type MeshConversationListResult =
       lifecycle?: boolean
       queuedSends?: boolean
       sendSkills?: boolean
+      steerSends?: boolean
     }
   | { ok: false; code: string; message: string }
 

@@ -6,7 +6,7 @@ import {
   parseGitConflictBlocks,
   replaceGitConflictBlock,
 } from '../../utils/gitConflictMarkers'
-import { MONO_FONT_STACK, remeasureMonacoFontsOnLoad } from '../../utils/fonts'
+import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { detectLanguage } from '../../utils/files'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
@@ -27,6 +27,7 @@ export default function GitConflictResolverPanel({ repoRoot, filePath }: Props) 
   const [state, setState] = useState<ResolverState>({ status: 'loading' })
   const language = detectLanguage(filePath)
   const monacoTheme = useMonacoBaseTheme()
+  const codeFontFamily = useCodeFontFamily()
   const dialog = useConfirmDialog()
   const blocks = useMemo(() => (state.status === 'ready' ? parseGitConflictBlocks(state.content) : []), [state])
 
@@ -218,7 +219,7 @@ export default function GitConflictResolverPanel({ repoRoot, filePath }: Props) 
               theme={monacoTheme}
               options={{
                 fontSize: 13,
-                fontFamily: MONO_FONT_STACK,
+                fontFamily: codeFontFamily,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 automaticLayout: true,
@@ -245,6 +246,7 @@ function ConflictReadOnlyPane({
   empty: string
 }) {
   const monacoTheme = useMonacoBaseTheme()
+  const codeFontFamily = useCodeFontFamily()
   return (
     <section className="flex min-h-0 flex-col border-r border-[color:var(--border-default)] last:border-r-0">
       <div className="shrink-0 border-b border-[color:var(--border-default)] bg-[color:var(--bg-surface)] px-3 py-1.5 text-meta font-semibold text-[color:var(--text-default)]">
@@ -261,7 +263,7 @@ function ConflictReadOnlyPane({
           options={{
             readOnly: true,
             fontSize: 12,
-            fontFamily: MONO_FONT_STACK,
+            fontFamily: codeFontFamily,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
             automaticLayout: true,

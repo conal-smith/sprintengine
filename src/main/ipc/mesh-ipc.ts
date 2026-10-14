@@ -186,6 +186,7 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
       message: record.message,
       attachments: record.attachments,
       queue: record.queue,
+      steer: record.steer,
       skills: record.skills,
     })
   })

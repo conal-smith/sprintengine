@@ -44,6 +44,10 @@ export type PoolContext = {
   /** How long after a failed fetch leases fork from the ref as it stands without fetching. */
   fetchBackoffMs: number
   measureSize: MeasureDiskUsage
+  /** The person's worktree branch prefix, read as each lease or rescue names a branch. */
+  branchPrefix: () => string
+  /** Write down a branch the pool just made as one Studio made (worktree-branch-ledger.ts). Never throws. */
+  recordBranch: (repoRoot: string, branch: string) => Promise<void>
   pools: Map<string, PoolRuntime>
   /** Aborts a disk measurement in progress when quitting begins. */
   stopping: AbortController

@@ -435,8 +435,9 @@ export type AgentWorktreeCleanupReport = {
   defaultRef: string | null
   entries: AgentWorktreeCleanupEntry[]
   /**
-   * `agent/` branches no worktree has checked out whose work is on the default
-   * branch: deleted (or, on a dry run, the ones that would be).
+   * Studio's branches (under the person's branch prefix or `agent/`) no
+   * worktree has checked out whose work is on the default branch: deleted
+   * (or, on a dry run, the ones that would be).
    */
   deletedBranches?: string[]
   dryRun: boolean

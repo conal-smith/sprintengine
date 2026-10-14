@@ -1,4 +1,5 @@
 import type { WorktreePoolActionResult } from '../../shared/ipc/worktree-pool'
+import { worktreeBranchName } from '../../shared/worktree-branch'
 import type { SlotRecord } from './pool-store'
 import { operationInProgress, readSlotGitDir, readSlotStatus, removeSlotMarker } from './slot-git'
 import { type PoolContext, type PoolRuntime, messageOf } from './pool-context'
@@ -55,9 +56,10 @@ export async function heldAction(
       if (!status.ok) return (outcome = { ok: false, message: status.message })
       if (action === 'commit') {
         if (status.status.branch === null && status.status.oid) {
-          const name = `${slot.held?.branch ?? `agent/${slot.id}`}-held-${status.status.oid.slice(0, 7)}`
+          const name = `${slot.held?.branch ?? worktreeBranchName(ctx.branchPrefix(), slot.id)}-held-${status.status.oid.slice(0, 7)}`
           const onBranch = await ctx.git(slot.path, ['switch', '--quiet', '-c', name])
           if (!onBranch.ok) return (outcome = { ok: false, message: onBranch.message ?? 'Could not create a branch.' })
+          await ctx.recordBranch(pool.record.repoRoot, name)
         }
         const added = await ctx.git(slot.path, ['add', '--all'])
         if (!added.ok) return (outcome = { ok: false, message: added.message ?? 'git add failed.' })

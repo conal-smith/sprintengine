@@ -1027,6 +1027,10 @@ export type ElectronApi = {
    * `queue`: hand the message to the machine to hold until the chat's turn
    * ends, and answer once it holds it. Needs `conversation-queued-sends`
    * there, and words alone: a held message carries no images.
+   *
+   * `steer`: hand the message to the turn the chat is running, answered when
+   * that turn ends. Needs `conversation-steer-sends` there; a turn that cannot
+   * take it has the machine hold it for the turn's end, answered with a notice.
    */
   meshConversationSend: (input: {
     key: MeshConversationKey
@@ -1035,6 +1039,7 @@ export type ElectronApi = {
     queue?: boolean
     /** That machine's skill ids the chat runs with this message (`conversation-send-skills`). */
     skills?: string[]
+    steer?: boolean
   }) => Promise<MeshConversationCommandResult>
   // Take back a message the machine holds for the turn's end, by its id there.
   meshConversationCancelQueued: (input: {

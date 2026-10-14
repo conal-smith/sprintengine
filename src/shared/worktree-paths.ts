@@ -10,6 +10,7 @@
  */
 import { basename, parentPath, pathJoin, pathSeparatorFor, trimPath } from './paths'
 import { projectlessChatsRootOf } from './projectless-chats'
+import { worktreeBranchName } from './worktree-branch'
 
 /**
  * Directory name every worktree container is nested under. Named so the
@@ -127,12 +128,15 @@ export function newChatWorktreeName(suffix: string): string {
 /**
  * Resolve the git worktree location for an agent spawned with "create a
  * worktree", placing it under the same container the Worktree manager and
- * connector chats use. Branch is `agent/<slug>` so agent worktrees group
- * together in branch listings. Null when the name yields no usable slug.
+ * connector chats use. Branch is `<branchPrefix>/<slug>` (the person's prefix
+ * from Settings ▸ Worktrees, `agent` unless changed; `worktree-branch.ts`) so
+ * agent worktrees group together in branch listings. Null when the name
+ * yields no usable slug.
  */
 export function agentWorktreePaths(
   repoRoot: string,
   name: string,
+  branchPrefix: string,
 ): { containerPath: string; destinationPath: string; slug: string; branchName: string } | null {
   const slug = slugifyWorktreeName(name)
   if (!slug) return null
@@ -141,6 +145,6 @@ export function agentWorktreePaths(
     containerPath,
     destinationPath: pathJoin(containerPath, slug),
     slug,
-    branchName: `agent/${slug}`,
+    branchName: worktreeBranchName(branchPrefix, slug),
   }
 }

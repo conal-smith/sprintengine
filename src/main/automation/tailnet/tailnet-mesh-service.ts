@@ -329,7 +329,9 @@ export type TailnetMeshService = {
    * them by the ids that route answered. Without images it is the `send`
    * command as it always was. `queue` hands the message to the machine to
    * hold until the chat's turn ends (`conversation-queued-sends`); a queued
-   * message carries no images, and one with them is refused.
+   * message carries no images, and one with them is refused. `steer` hands it
+   * to the turn the chat is running (`conversation-steer-sends`), refused for
+   * a machine that does not take one rather than dropped.
    */
   conversationSend(input: {
     key: unknown
@@ -338,6 +340,7 @@ export type TailnetMeshService = {
     queue?: unknown
     /** Ids of that machine's skills the chat runs with this message (`conversation-send-skills`). */
     skills?: unknown
+    steer?: unknown
   }): Promise<MeshConversationCommandResult>
   /**
    * What a chat in one of that machine's projects can use: its skills and,
@@ -1918,6 +1921,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           sendSkills:
             tailnetPeerSupports(identity.value.capabilities, 'conversation-send-skills') &&
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
+          steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
         }
       : listed
   }
@@ -2183,6 +2187,25 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: 'A queued message carries no skills; send it once the turn ends instead.',
           }
       }
+      if (input.steer !== undefined && input.steer !== true)
+        return { ok: false, code: 'invalid_arguments', message: '"steer" is true or left out.' }
+      const steer = input.steer === true
+      if (steer) {
+        if (input.queue !== undefined)
+          return { ok: false, code: 'invalid_arguments', message: 'A message is steered or queued, not both.' }
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        // Refused, never dropped: a machine from before `steer` skips it and
+        // refuses the send busy, which the follow would send again and again
+        // until the turn it was meant to reach had ended.
+        if (!tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-steer-sends'))
+          return {
+            ok: false,
+            code: 'steer_unsupported',
+            message: `${connection.machineName} cannot take a message into a running turn from here yet. Update SprintEngine Studio there.`,
+          }
+      }
       const send = (uploadIds: string[]) =>
         conversationCommand({
           key: input.key,
@@ -2191,6 +2214,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: input.message,
             ...(uploadIds.length > 0 ? { uploadIds } : {}),
             ...(skills.ids.length > 0 ? { skills: skills.ids } : {}),
+            ...(steer ? { steer: true } : {}),
           },
         })
       if (input.queue !== undefined && input.queue !== true)

@@ -15,6 +15,7 @@ import { StudioServerSettings } from './StudioServerSettings'
 import { ModuleSettingsSectionHost } from './ModuleSettingsSection'
 import AppThemePicker from './AppThemePicker'
 import { ChatAppearanceRows } from './ChatAppearanceRows'
+import { FontAppearanceRows } from './FontAppearanceRows'
 import { effectiveWindowMaterial, type WindowMaterial } from '../../types/appTheme'
 import { resolveProjectKnowledgeConfig } from '../../utils/projectKnowledge'
 import { basename } from '../../utils/paths'
@@ -47,6 +48,7 @@ import { SettledChatsSettingsTab } from './SettledChatsSettingsTab'
 import { WorktreesSettingsTab } from './WorktreesSettingsTab'
 import { AgentClisSection, AgentsMachineSwitcher, useAgentCliRuns } from './AgentClisSection'
 import { ConversationApprovalSettings } from './ConversationApprovalSettings'
+import { FollowUpBehaviorSetting } from './FollowUpBehaviorSetting'
 import { StudioSkillsSettings } from './StudioSkillsSettings'
 import {
   agentsMachines,
@@ -1334,6 +1336,12 @@ export default function SettingsPanel({
               />
             </SettingCard>
           </section>
+          <section className="space-y-3">
+            <SettingsSectionTitle>Fonts</SettingsSectionTitle>
+            <SettingCard>
+              <FontAppearanceRows />
+            </SettingCard>
+          </section>
         </div>
       ) : null}
 
@@ -1538,6 +1546,8 @@ export default function SettingsPanel({
           <ConversationImportSettings />
           {/* A chat a usage limit stopped, carried on when the limit resets. */}
           <UsageLimitResumeSettings />
+          {/* What Enter does while a chat's agent works: queue, or steer. */}
+          <FollowUpBehaviorSetting />
           <AgentClisSection
             runs={agentCliRuns}
             machine={agentsMachine}

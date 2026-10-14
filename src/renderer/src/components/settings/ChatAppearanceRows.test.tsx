@@ -14,6 +14,7 @@ beforeEach(() => {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   useWorkspaceStore.getState().setAppearanceChatContrast(100)
   useWorkspaceStore.getState().setAppearanceChatWidth('full')
+  useWorkspaceStore.getState().setAppearanceReplyStreaming('live')
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -80,4 +81,15 @@ test('the clock control stores the chosen format', () => {
   const system = [...group.querySelectorAll('button')].find((button) => button.textContent === 'System')!
   act(() => system.click())
   expect(useWorkspaceStore.getState().appSettings.appearance.clockFormat).toBe('system')
+})
+
+test('Show replies is as they are written until a paragraph at a time is chosen', () => {
+  const group = host.querySelector<HTMLElement>('[aria-label="Show replies"]')!
+  const option = (label: string) =>
+    [...group.querySelectorAll<HTMLElement>('[role="radio"]')].find((item) => item.textContent === label)!
+  expect(option('As they’re written').getAttribute('aria-checked')).toBe('true')
+  act(() => option('A paragraph at a time').click())
+  expect(useWorkspaceStore.getState().appSettings.appearance.replyStreaming).toBe('paragraph')
+  act(() => option('As they’re written').click())
+  expect(useWorkspaceStore.getState().appSettings.appearance.replyStreaming).toBe('live')
 })

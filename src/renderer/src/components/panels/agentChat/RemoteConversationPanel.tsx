@@ -117,6 +117,9 @@ function remoteConversationSession(
       // list says; a machine that does not offer model switching never will.
       liveModelSwitch: modelSwitch && thread?.models?.liveModelSwitch === true,
       checkpoints: capabilities?.checkpoints ?? false,
+      // Whether its provider takes a message mid-turn, where the list says;
+      // the transport offers it only for a machine that takes a steer.
+      steer: capabilities?.steer === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
     },
@@ -147,6 +150,8 @@ export default function RemoteConversationPanel({
   // holds for this chat, as it last said.
   const [queuedSends, setQueuedSends] = useState(false)
   const [sendSkills, setSendSkills] = useState(false)
+  // The machine takes a message into a turn one of its chats is running.
+  const [steerSends, setSteerSends] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -169,6 +174,8 @@ export default function RemoteConversationPanel({
   queuedSendsRef.current = queuedSends
   const sendSkillsRef = useRef(sendSkills)
   sendSkillsRef.current = sendSkills
+  const steerSendsRef = useRef(steerSends)
+  steerSendsRef.current = steerSends
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -201,6 +208,7 @@ export default function RemoteConversationPanel({
           permissionModes: permissionModesRef.current,
           hostQueue: queuedSendsRef.current,
           skills: sendSkillsRef.current,
+          steer: steerSendsRef.current,
         }
       },
       ...(setModel
@@ -237,6 +245,7 @@ export default function RemoteConversationPanel({
         setPermissionModes(result.permissionModes === true)
         setQueuedSends(result.queuedSends === true)
         setSendSkills(result.sendSkills === true)
+        setSteerSends(result.steerSends === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,

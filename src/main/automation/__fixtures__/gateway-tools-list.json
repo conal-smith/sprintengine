@@ -146,7 +146,7 @@
     },
     {
       "name": "conversation.create",
-      "sha256": "3407c4a637532940a9ddbbd20183fadc9c340870f9ebf8e3fcd773666f740232"
+      "sha256": "13e9e5db1221a93e9efdc7c0853466bad3cb37d10029d8fe01721d2fe7b37e76"
     },
     {
       "name": "conversation.settle",
@@ -206,7 +206,7 @@
     },
     {
       "name": "agent.launch",
-      "sha256": "4c1ad25d2582888d158d705727b0468a4f4b9c2dc1d5b9fc8e2351cfd3efe008"
+      "sha256": "aa65aefb0fdae44ebc8916c1862e97657f9870f0bd7a45c7c9d1dfe52ad182ce"
     },
     {
       "name": "agent.status",
@@ -250,7 +250,7 @@
     },
     {
       "name": "backlog.work",
-      "sha256": "e1a59475ebd373d7bee6ba0e7e1a911a85ab4e0444333d1e6e5a083f71898643"
+      "sha256": "376869abec19697c94885336af8ea7ae61f25b54bc55ce1fcc77c3a44e0e57c2"
     },
     {
       "name": "module.list",
@@ -282,7 +282,7 @@
     },
     {
       "name": "worktree.lease",
-      "sha256": "cb80ba5b3e97b0b15e7c55d877d6e59e89ddf9a78248c7b46807e4b56724d6e8"
+      "sha256": "c4566fc4a0fe4a5d30ff0b00a7498ef587987374496d560bf55dbf7bddfa3d24"
     },
     {
       "name": "worktree.release",
@@ -468,7 +468,7 @@
     },
     {
       "name": "conversation.create",
-      "sha256": "3407c4a637532940a9ddbbd20183fadc9c340870f9ebf8e3fcd773666f740232"
+      "sha256": "13e9e5db1221a93e9efdc7c0853466bad3cb37d10029d8fe01721d2fe7b37e76"
     },
     {
       "name": "conversation.settle",
@@ -528,7 +528,7 @@
     },
     {
       "name": "agent.launch",
-      "sha256": "4c1ad25d2582888d158d705727b0468a4f4b9c2dc1d5b9fc8e2351cfd3efe008"
+      "sha256": "aa65aefb0fdae44ebc8916c1862e97657f9870f0bd7a45c7c9d1dfe52ad182ce"
     },
     {
       "name": "agent.status",
@@ -572,7 +572,7 @@
     },
     {
       "name": "backlog.work",
-      "sha256": "e1a59475ebd373d7bee6ba0e7e1a911a85ab4e0444333d1e6e5a083f71898643"
+      "sha256": "376869abec19697c94885336af8ea7ae61f25b54bc55ce1fcc77c3a44e0e57c2"
     },
     {
       "name": "module.list",
@@ -604,7 +604,7 @@
     },
     {
       "name": "worktree.lease",
-      "sha256": "cb80ba5b3e97b0b15e7c55d877d6e59e89ddf9a78248c7b46807e4b56724d6e8"
+      "sha256": "c4566fc4a0fe4a5d30ff0b00a7498ef587987374496d560bf55dbf7bddfa3d24"
     },
     {
       "name": "worktree.release",

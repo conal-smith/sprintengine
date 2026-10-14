@@ -8,6 +8,7 @@ type FakeWorkspace = { id: string; folderPath: string | null; worktree: unknown;
 
 const state = {
   workspaces: [] as FakeWorkspace[],
+  appSettings: { worktreeBranchPrefix: 'agent' },
   updateAgent: (workspaceId: string, agentId: string, patch: Partial<FakeAgent>) => {
     const agent = state.workspaces.find((workspace) => workspace.id === workspaceId)!.agents[agentId]!
     Object.assign(agent, patch)

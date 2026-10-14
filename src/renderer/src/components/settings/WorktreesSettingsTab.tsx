@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import {
   DEFAULT_WORKTREE_POOL_SETTINGS,
@@ -15,6 +15,11 @@ import {
   type WorktreePoolHeldAction,
   type WorktreePoolSettings,
 } from '../../../../shared/ipc/worktree-pool'
+import {
+  sanitizeWorktreeBranchPrefix,
+  worktreeBranchExample,
+  worktreeBranchPrefixWarning,
+} from '../../../../shared/worktree-branch'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { ChevronDownIcon } from '../AppIcons'
 import { samePath } from '../../utils/paths'
@@ -696,6 +701,11 @@ export function WorktreesSettingsTab({
         </SettingRow>
       </SettingCard>
 
+      <SettingsSectionTitle className="mb-2">Branches</SettingsSectionTitle>
+      <SettingCard className="mb-6">
+        <BranchPrefixSetting />
+      </SettingCard>
+
       <SettingsSectionTitle className="mb-2" count={totals.count}>
         Worktrees
       </SettingsSectionTitle>
@@ -1204,6 +1214,67 @@ function DependencyInstallSettings({
         </SettingRow>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * What every new worktree's branch starts with: a chat's, an agent's, a
+ * scheduled run's, wherever Studio names one. Kept in main's launch settings,
+ * so a worktree main makes with no window open is named the same way. The
+ * prefix is kept as typed and saved, sanitized to what git accepts, when the
+ * field is left; the line under it names the branch the draft would make as
+ * it is typed, sanitized the same way, so what is saved is never a surprise.
+ */
+function BranchPrefixSetting() {
+  const saved = useWorkspaceStore((s) => s.appSettings.worktreeBranchPrefix)
+  const setWorktreeBranchPrefix = useWorkspaceStore((s) => s.setWorktreeBranchPrefix)
+  const [draft, setDraft] = useState(saved)
+  useEffect(() => setDraft(saved), [saved])
+  const inputId = useId()
+  const exampleId = useId()
+  const warningId = useId()
+  const commit = () => {
+    const prefix = sanitizeWorktreeBranchPrefix(draft)
+    setDraft(prefix)
+    if (prefix !== saved) setWorktreeBranchPrefix(prefix)
+  }
+  const prefix = sanitizeWorktreeBranchPrefix(draft)
+  // A name git keeps for itself, or a common remote's, said as it is typed.
+  const warning = worktreeBranchPrefixWarning(draft)
+  return (
+    <SettingRow
+      label="Branch prefix"
+      htmlFor={inputId}
+      help="What each new worktree’s branch starts with, or nothing when empty. Your own branches can share it: Studio only ever deletes a branch it made, once its work is merged and no chat uses it."
+    >
+      <div className="flex flex-col items-end gap-1">
+        <Input
+          id={inputId}
+          size="sm"
+          placeholder="No prefix"
+          value={draft}
+          spellCheck={false}
+          autoCapitalize="none"
+          autoCorrect="off"
+          aria-describedby={warning ? `${exampleId} ${warningId}` : exampleId}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commit()
+          }}
+          className="w-48 font-mono"
+        />
+        <span id={exampleId} aria-live="polite" className="text-meta text-[color:var(--text-muted)]">
+          New worktrees are named <span className="font-mono">{worktreeBranchExample(prefix)}</span>
+          {prefix ? '' : ', with no prefix'}
+        </span>
+        {warning ? (
+          <span id={warningId} role="status" className="max-w-xs text-right text-meta text-[color:var(--tone-warn)]">
+            {warning}
+          </span>
+        ) : null}
+      </div>
+    </SettingRow>
   )
 }
 

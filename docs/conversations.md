@@ -292,7 +292,8 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   `new-chat-worktree` takes `worktree: true` beside `newChat: true` and starts
   the chat in a worktree of its own, cut exactly as New chat here cuts one with
   Worktree on: from the worktree pool where this process keeps one, on the
-  project's default branch, as `agent/chat-<id>` under the project's worktree
+  project's default branch, as `<prefix>/chat-<id>` (the branch prefix from
+  Settings ▸ Worktrees, `agent` unless changed) under the project's worktree
   container, and filed under the project it was cut from, so the chat lists here
   as if it had been started here. A project that is not a git repository, or a
   folder on an SSH machine, is refused with `worktree_unavailable` rather than
@@ -662,6 +663,15 @@ in the app's own process.
   sends them. A machine without the capability, or one that refuses to hold a
   message, leaves it queued in this pane, which sends it when the turn ends
   only while this machine is awake, as every queued message was before.
+- **A message can steer the turn over there** (2026-10-14). Where the machine
+  advertises `conversation-steer-sends` and lists the chat's provider as taking
+  a message mid-turn (`capabilities.steer`), the composer's Steer, chosen in
+  Settings ▸ Agents or by Primary+Enter for one message, sends with `steer`,
+  and the message goes into the running turn there. A turn that cannot take it
+  then (a request it waits on, a turn that ended on the way) has that machine
+  hold it as a queued message, and the pane shows it among the held rows. A
+  machine without the capability is never sent a steer: the composer offers
+  only Queue, and Primary+Enter stops the turn and sends after, as before.
 
 ### Terminals stay on the machine
 

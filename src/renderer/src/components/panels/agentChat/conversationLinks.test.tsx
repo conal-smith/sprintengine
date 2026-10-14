@@ -10,6 +10,7 @@ import {
 import { classifyLinkToken } from '../../../../../shared/links/classifyLinkToken'
 import { conversationImageSource } from './ConversationImage'
 import { resolveTerminalFileReferencePath } from '../../../utils/terminalFileLinks'
+import { setReplyStreaming } from '../../../utils/replyStreaming'
 import {
   ConversationTransportProvider,
   useConversationTransport,
@@ -304,4 +305,22 @@ test('prose words that cannot be links stay text, and every word that can keeps 
   expect(splitConversationText('Plain words, with punctuation. And e.g. v1.2 too!')).toEqual([
     'Plain words, with punctuation. And e.g. v1.2 too!',
   ])
+})
+
+test('a paragraph at a time, a streaming reply shows its finished blocks and all of it once it ends', () => {
+  const draw = (streaming: boolean) =>
+    renderToStaticMarkup(
+      <ConversationLinkProvider workspaceId="workspace" workspaceRoot="/workspace/app" cwd="/workspace/app">
+        <ConversationMarkdown text={'First.\n\nStill being writ'} streaming={streaming} />
+      </ConversationLinkProvider>,
+    )
+  setReplyStreaming('paragraph')
+  try {
+    expect(draw(true)).toContain('First.')
+    expect(draw(true)).not.toContain('Still being writ')
+    expect(draw(false)).toContain('Still being writ')
+  } finally {
+    setReplyStreaming('live')
+  }
+  expect(draw(true)).toContain('Still being writ')
 })

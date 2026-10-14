@@ -245,6 +245,12 @@ export type AgentCliModelSelection = {
 // `lastSelectedAgentModel` at spawn time, so a later CLI switch is honored.
 export type NewChatAgentChoice = { kind: 'general' } | { kind: 'terminal' } | { kind: 'conversation' }
 
+/**
+ * What a message sent while a chat's agent is working does: `queue` holds it
+ * and sends it when the turn ends; `steer` hands it to the running turn.
+ */
+export type FollowUpBehavior = 'queue' | 'steer'
+
 export type AppSettings = {
   cliRuntimes: Record<AgentCli, CliRuntimeSettings>
   /**
@@ -336,6 +342,13 @@ export type AppSettings = {
    * recorded through `recordProjectUse`.
    */
   projectUsage?: ProjectUsageMap
+  /**
+   * What new worktree branches start with (Settings ▸ Worktrees): `agent`
+   * unless changed, `''` for no prefix. A read model of main's launch
+   * settings, which name a worktree with no window open too; never chosen
+   * reads as `agent` (`effectiveWorktreeBranchPrefix`).
+   */
+  worktreeBranchPrefix: string
   /**
    * The model (and reasoning-effort level) an agent spawn last ran on, stored
    * with the CLI it was picked for so a later CLI switch cannot leak a stale
@@ -459,6 +472,15 @@ export type AppSettings = {
    * driving a tab in a closed pane shows nothing.
    */
   browserAutoFloatAgentPreview: boolean
+  /**
+   * What Enter does in a chat whose agent is working (Settings ▸ Agents).
+   * `queue`, the default and every message's rule before the choice existed,
+   * holds the message and sends it when the turn ends; `steer` hands it to the
+   * running turn, where the chat's provider takes one, and queues it anywhere
+   * else. Primary+Enter, or a Primary-click on the send button, does the other
+   * for one message.
+   */
+  followUpBehavior: FollowUpBehavior
   /**
    * Keep the app running when its last window closes, on every platform.
    * Off by default, which is byte-for-byte the rule before background mode existed:

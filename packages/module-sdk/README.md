@@ -344,7 +344,8 @@ reads its chats) and `dependsOn: ["agent-runtime"]`.
   installed and invoked, `attachments` are images, `name` is optional.
   `permissionPreset` is `'manual'`, `'none'`, `'auto'` or `'bypass'`; absent
   takes the person's default. `worktree: { name? }` starts the chat in a fresh
-  git worktree of the project (branch `agent/<name>-<suffix>`), in a workspace
+  git worktree of the project (branch `<prefix>/<name>-<suffix>`, the person's
+  worktree branch prefix being `agent` unless they changed it), in a workspace
   of its own whose id the answer names; a project that is not a git
   repository answers `worktree_unavailable`. Check
   `host.supports('conversation-worktrees')`.

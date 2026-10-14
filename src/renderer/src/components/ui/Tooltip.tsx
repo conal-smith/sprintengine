@@ -191,10 +191,15 @@ export function Tooltip({
     setOpen(false)
   }, [clearTimer])
 
+  // Whether `coords` holds a position, so a tooltip mounting closed clears
+  // nothing: that update cost the control it sits on a second commit, which
+  // a send button swapped in on Enter paid on the send's own frame.
+  const placedRef = useRef(false)
   const position = useCallback(() => {
     const wrap = triggerWrapRef.current
     const tip = tooltipRef.current
     if (!wrap || !tip) return
+    placedRef.current = true
     setCoords(
       computeTooltipCoords(
         wrap.getBoundingClientRect(),
@@ -208,7 +213,10 @@ export function Tooltip({
   // (scroll uses capture so nested scroll containers are caught too).
   useLayoutEffect(() => {
     if (!open) {
-      setCoords(null)
+      if (placedRef.current) {
+        placedRef.current = false
+        setCoords(null)
+      }
       return
     }
     position()

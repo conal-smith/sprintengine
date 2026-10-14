@@ -15,7 +15,7 @@ import { comparablePath } from '../host-paths'
  * - `idle`: detached, clean, unlocked, ready to lease. It sits at whatever base
  *   it was last leased at; the lease brings it up to date.
  * - `leasing`: being fetched up, reset and handed to an agent (a moment).
- * - `leased`: an agent owns it, on `agent/<slug>`, locked.
+ * - `leased`: an agent owns it, on `<prefix>/<slug>` (`agent` unless changed), locked.
  * - `returning`: its owner is gone and it is being checked for work.
  * - `held`: it holds work (or could not be checked) and waits for a person.
  * - `evicting`: being removed from disk.

@@ -15,11 +15,13 @@ import {
   toPosixPath,
 } from './git-utils'
 import { listGitWorktrees } from './git-worktree-list'
+import { worktreeBranchLedger } from './worktree-branch-ledger'
 import { activeWorktreePool } from './worktree-pool/active-pool'
 import { activeDependencyInstaller } from './worktree-pool/dependency-install'
 import {
-  AGENT_BRANCH_BLOCKED_MESSAGE,
-  agentBranchBlocked,
+  branchBlockedBy,
+  branchBlockedMessage,
+  branchShadowing,
   defaultSlotGitRunner,
   parallelCheckoutConfig,
   resolveAgentForkBase,
@@ -212,7 +214,9 @@ export type GitWorktreeCreateInput = {
    * naming this owner: the agent's id, or the branch when the agent does not
    * exist yet. The agent worktree cleanup never removes a worktree another
    * profile has locked, and this profile releases its own lock once its
-   * records no longer use the worktree.
+   * records no longer use the worktree. The branch of such a worktree is one
+   * Studio named, and is written down as one it made (worktree-branch-ledger.ts),
+   * which is what lets the cleanup delete it once its work is merged.
    */
   agentLockOwner?: string
   /**
@@ -220,7 +224,8 @@ export type GitWorktreeCreateInput = {
    * worktree pool when this process has one (its path is then a pool slot's,
    * not `destinationPath`), otherwise created fresh at `destinationPath` from
    * `origin/<default>` as fetched now. `baseRef` is used only when the
-   * repository has no default branch at all. Needs an `agent/` branch.
+   * repository has no default branch at all. `branchName` is the one
+   * `agentWorktreePaths` named, under the person's branch prefix.
    */
   fromPool?: boolean
   /** The machine whose git makes it (a WSL machine's); absent resolves from the folder. */
@@ -301,8 +306,9 @@ export async function getGitRepoRoot(folderPath: string): Promise<string | null>
 /**
  * The branch-already-exists refusal from `worktree add -b`, reworded to name
  * where that branch is checked out, which is what the person has to act on,
- * and the refusal a branch named `agent` causes, reworded to name that branch.
- * Null for any other failure, which keeps git's own words.
+ * and the refusal a branch named like the prefix (`agent` for `agent/…`)
+ * causes, reworded to name that branch. Null for any other failure, which
+ * keeps git's own words.
  */
 async function explainBranchConflict(
   repoRoot: string,
@@ -311,7 +317,8 @@ async function explainBranchConflict(
 ): Promise<string | null> {
   // A branch named `agent` refuses every `agent/…` branch ("cannot lock ref").
   // Asked only once the add failed, so a worktree that is made pays nothing for it.
-  if (await agentBranchBlocked(defaultSlotGitRunner, repoRoot, branch)) return AGENT_BRANCH_BLOCKED_MESSAGE
+  const blocker = await branchBlockedBy(defaultSlotGitRunner, repoRoot, branch)
+  if (blocker) return branchBlockedMessage(blocker)
   if (
     !/already exists|already checked out|already used by worktree/i.test(
       `${addResult.stderr}\n${addResult.message ?? ''}`,
@@ -417,8 +424,10 @@ export async function seedWorktreeIncludedFiles(
  * Five git processes, in order, and no more: resolve the repository root once,
  * check the branch name and the base ref, `worktree add`, and one `worktree
  * list` to report the entry the way git spells it. An agent worktree adds a
- * sixth, the `worktree lock` that marks it in use, and the first worktree in a
- * repository one more, the read of its `checkout.workers`. Every one is a process start
+ * sixth, the `worktree lock` that marks it in use (and, when its branch has a
+ * `/`, a seventh before the add: the repository's remotes, which its branch
+ * must not hide), and the first worktree in a repository one more, the read of
+ * its `checkout.workers`. Every one is a process start
  * on the launch path of a worktree agent, and on Windows or a network mount
  * each costs far more than the ~20 ms it costs here.
  *
@@ -429,7 +438,7 @@ export async function seedWorktreeIncludedFiles(
 export async function createGitWorktree(
   input: GitWorktreeCreateInput,
 ): Promise<GitWorktreeOperationResult<GitWorktreeCreated>> {
-  if (input.fromPool && input.branchName.startsWith('agent/')) return createAgentWorktreeFromPool(input)
+  if (input.fromPool) return createAgentWorktreeFromPool(input)
   const root = await resolveRepoRoot(input.repoRoot)
   if (!root.ok) return root
 
@@ -438,6 +447,10 @@ export async function createGitWorktree(
 
   const branch = await validateBranchName(root.data, input.branchName)
   if (!branch.ok) return branch
+  // A branch Studio named for an agent never hides a remote's (`origin/main`).
+  // One a person names in the Worktree manager is theirs to name.
+  const shadowing = input.agentLockOwner ? await branchShadowing(defaultSlotGitRunner, root.data, branch.data) : null
+  if (shadowing) return { ok: false, message: shadowing }
 
   const baseRef = await validateBaseRef(root.data, input.baseRef)
   if (!baseRef.ok) return baseRef
@@ -475,6 +488,8 @@ export async function createGitWorktree(
     }
   }
 
+  // Written down before anything else can fail: the branch exists now.
+  if (input.agentLockOwner) await worktreeBranchLedger().record(root.data, branch.data)
   const finished = await finishAddedWorktree(root.data, destination.data.destinationPath, input, addResult)
   return finished.ok ? { ...finished, data: { ...finished.data, baseRef: baseRef.data, leaseId: null } } : finished
 }
@@ -560,7 +575,8 @@ async function createAgentWorktreeFromPool(
     const leased = await pool
       .lease({
         repoRoot: input.repoRoot,
-        name: input.branchName.slice('agent/'.length),
+        name: input.branchName,
+        branch: input.branchName,
         owner: input.agentLockOwner ?? null,
         hostId: input.hostId ?? null,
         copyIncludedFiles: input.copyIncludedFiles === true,

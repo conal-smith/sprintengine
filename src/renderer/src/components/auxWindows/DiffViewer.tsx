@@ -15,7 +15,7 @@ import { joinFilePath } from '../../utils/paths'
 import { BranchStepStrip, BRANCH_STEP_PANEL_ID } from './BranchStepStrip'
 import { branchItemsFrom, scopeNote, stripEntriesFrom, type BranchDiffItem } from './branchSteps'
 import { useBranchSteps } from './useBranchSteps'
-import { MONO_FONT_STACK, remeasureMonacoFontsOnLoad } from '../../utils/fonts'
+import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { buildDiffFileList, findDiffFocusIndex, type DiffFileItem } from './diffFileList'
 import {
@@ -1311,7 +1311,12 @@ export function DiffViewer({
   const diffView = useWorkspaceStore((state) => (state.diffView === 'unified' ? 'unified' : 'side-by-side'))
   const [sessionPrefs, setSessionPrefs] = useState(DEFAULT_DIFF_EDITOR_PREFS)
   const editorPrefs = useMemo<DiffEditorPrefs>(() => ({ diffView, ...sessionPrefs }), [diffView, sessionPrefs])
-  const editorOptions = useMemo(() => diffEditorOptions(editorPrefs, MONO_FONT_STACK), [editorPrefs])
+  // The code font is a construction option too, and a live one: a change in
+  // Settings reaches the editor through the same `updateOptions` the wrapper
+  // makes for a new options object, and the effect below puts the live options
+  // and a playing tour's overrides back on top of it.
+  const codeFontFamily = useCodeFontFamily()
+  const editorOptions = useMemo(() => diffEditorOptions(editorPrefs, codeFontFamily), [editorPrefs, codeFontFamily])
 
   // ── The tour, played ────────────────────────────────────────────────────
   const [tourHostNode, setTourHostNode] = useState<HTMLElement | null>(null)
@@ -1366,7 +1371,7 @@ export function DiffViewer({
     // cursor is re-revealed rather than left to whatever the relayout produced.
     revealHunk(hunkIndexRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorPrefs, revealHunk, tourOptionsKey])
+  }, [editorPrefs, revealHunk, tourOptionsKey, codeFontFamily])
 
   const setDiffView = useCallback((next: DiffViewMode) => {
     // See auxSettingsWrite: an aux window may only write a setting after

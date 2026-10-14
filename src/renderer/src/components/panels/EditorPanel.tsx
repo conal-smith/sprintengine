@@ -17,7 +17,7 @@ import {
   revealEditorRange,
   takeEditorLanding,
 } from '../../utils/agentEditorReveal'
-import { MONO_FONT_STACK, remeasureMonacoFontsOnLoad } from '../../utils/fonts'
+import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
 import { ContextMenu, EmptyState, IconButton, InlineNotice, MenuDivider, MenuItem, Spinner, Tooltip } from '../ui'
@@ -72,6 +72,7 @@ function readCssVar(name: string): string {
 
 export default function EditorPanel({ workspaceId, filePath }: Props) {
   const monacoTheme = useMonacoBaseTheme()
+  const codeFontFamily = useCodeFontFamily()
   const editorState = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.editorState)
   const folderPath = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.folderPath ?? null)
   const setActiveFile = useWorkspaceStore((s) => s.setActiveFile)
@@ -690,7 +691,7 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
               theme={monacoTheme}
               options={{
                 fontSize: 13,
-                fontFamily: MONO_FONT_STACK,
+                fontFamily: codeFontFamily,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 renderLineHighlight: 'gutter',

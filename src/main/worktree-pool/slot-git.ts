@@ -2,6 +2,7 @@ import { lstat, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { GitCommandResult } from '../git'
 import { runGitCommand, type GitRunOptions } from '../git-run'
+import { branchNamespaceParents, isReservedFirstComponent, remoteShadowedBy } from '../../shared/worktree-branch'
 
 /**
  * The git a pool slot needs, and nothing a slot does not. Every call goes
@@ -432,19 +433,50 @@ export async function resolveAgentForkBase(run: SlotGitRunner, repoRoot: string)
 }
 
 /**
- * Said when a branch named `agent` stands where every agent branch would go.
- * Git keeps `agent/<name>` as a file under a folder `agent`, and a branch
- * named `agent` is a file by that name, so it refuses each one ("cannot lock
- * ref … 'refs/heads/agent' exists"). Studio says so before it tries rather
- * than naming its branches something else: what it cleans up afterwards is
- * only ever an `agent/` branch.
+ * Said when a branch stands where a worktree branch would go: `agent` in the
+ * way of `agent/<name>`, or `jane` in the way of `jane/wip/<name>`. Git keeps
+ * `agent/<name>` as a file under a folder `agent`, and a branch named `agent`
+ * is a file by that name, so it refuses each one ("cannot lock ref …
+ * 'refs/heads/agent' exists"). Studio says so before it tries rather than
+ * naming the branch something else: the prefix is the person's choice, and a
+ * branch under another one is not what they asked for.
  */
-export const AGENT_BRANCH_BLOCKED_MESSAGE =
-  'A branch named “agent” in this repository blocks Studio’s agent/… branches. Rename it (git branch -m agent <new-name>) to start chats in a worktree.'
+export function branchBlockedMessage(blocker: string): string {
+  return `A branch named “${blocker}” in this repository blocks Studio’s ${blocker}/… branches. Rename it (git branch -m ${blocker} <new-name>), or choose another branch prefix in Settings ▸ Worktrees, to start chats in a worktree.`
+}
 
-/** Whether a branch named `agent` blocks `branch`, one of Studio's `agent/…` branches. */
-export async function agentBranchBlocked(run: SlotGitRunner, repoRoot: string, branch: string): Promise<boolean> {
-  if (!branch.startsWith('agent/')) return false
-  const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', 'refs/heads/agent'])
-  return found.ok && found.stdout.trim().length > 0
+/**
+ * The existing branch that stops git making `branch`, one of its parents
+ * (`branchNamespaceParents`), or null when none does. One `rev-parse` per
+ * parent, the shortest first: a branch under the default prefix asks one.
+ */
+export async function branchBlockedBy(run: SlotGitRunner, repoRoot: string, branch: string): Promise<string | null> {
+  for (const parent of branchNamespaceParents(branch)) {
+    const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${parent}`])
+    if (found.ok && found.stdout.trim().length > 0) return parent
+  }
+  return null
+}
+
+/**
+ * Why Studio will not make `branch` in this repository, when its first part
+ * would make another name mean two things, or null. A local `origin/main`
+ * hides the remote's `origin/main` (git reads a local branch first), so the
+ * cleanup's merge test and a fork base would read Studio's branch instead of
+ * the remote's; a first part git keeps for itself (`refs`, `remotes`, …)
+ * muddles its own names the same way. Refused rather than named otherwise,
+ * as a blocking branch is (`branchBlockedMessage`). Remotes are per
+ * repository, so this asks git for them: one process, only for a branch with a
+ * `/` in it.
+ */
+export async function branchShadowing(run: SlotGitRunner, repoRoot: string, branch: string): Promise<string | null> {
+  if (!branch.includes('/')) return null
+  const first = branch.split('/', 1)[0]!
+  if (isReservedFirstComponent(first)) {
+    return `Studio’s branch “${branch}” would start with “${first}”, a name git keeps for itself. Choose another branch prefix in Settings ▸ Worktrees, or another worktree name.`
+  }
+  const remotes = await run(repoRoot, ['remote'])
+  const remote = remotes.ok ? remoteShadowedBy(branch, remotes.stdout.split(/\r?\n/).filter(Boolean)) : null
+  if (!remote) return null
+  return `A branch “${branch}” would hide the branches of this repository’s remote “${remote}”, and git would read Studio’s branch in their place. Choose another branch prefix in Settings ▸ Worktrees, or another worktree name.`
 }

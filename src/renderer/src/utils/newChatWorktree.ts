@@ -80,7 +80,7 @@ export async function createNewChatWorktree(
       )
     }
     const name = requestedName.trim() || newChatWorktreeName(nanoid(4))
-    const paths = agentWorktreePaths(repoRoot, name)
+    const paths = agentWorktreePaths(repoRoot, name, useWorkspaceStore.getState().appSettings.worktreeBranchPrefix)
     if (!paths) return fail('Worktree name invalid', `"${name}" does not reduce to a usable worktree name.`)
     options.onBranch?.(paths.branchName)
     // From the worktree pool, on the default branch (main's git.ts): a
@@ -274,8 +274,8 @@ export function startPendingNewChatInProject(workspaceId: WorkspaceId): boolean 
 // computer, on a branch named at random: a name typed into the chip is a
 // different branch, so it is made on Enter as before. Turning Worktree off,
 // moving to another project or closing New chat gives the slot back to the
-// pool, clean, for the next chat; its empty `agent/` branch goes at the next
-// cleanup sweep, like any other with no work of its own.
+// pool, clean, for the next chat; its empty branch goes at the next cleanup
+// sweep, like any other of Studio's with no work of its own.
 //
 // Kept for a while only: the slot was reset to the base fetched when it was
 // leased, and a chat should not start from a base an hour behind origin.

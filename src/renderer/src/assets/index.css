@@ -64,6 +64,12 @@
   --spacing-control-sm: var(--control-sm);
   --spacing-control-md: var(--control-md);
   --spacing-control-lg: var(--control-lg);
+
+  /* Tailwind's two family utilities, so `font-sans` and `font-mono` are the
+     design system's families (and the ones chosen in Settings ▸ Appearance)
+     rather than Tailwind's own platform stacks. */
+  --font-sans: var(--sem-font-family-ui);
+  --font-mono: var(--sem-font-family-mono);
 }
 
 /* The focus indicator, as markup's one name for it. Both utilities declare bare
@@ -1714,17 +1720,22 @@ body,
   overflow: hidden;
 }
 
+/* The two families are the design system's tokens, read rather than restated:
+   Settings ▸ Appearance overrides their values on <html> (applyAppearanceFonts
+   in src/renderer/src/utils/fonts.ts), and every surface typeset in CSS
+   follows from here. */
 body {
   background-color: var(--bg-app);
   color: var(--text-strong);
-  font-family: Inter, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--sem-font-family-ui);
   font-feature-settings: 'cv11', 'ss01', 'ss03';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Canonical app monospace. Mirrored for JS/canvas surfaces (xterm, Monaco) by
-   MONO_FONT_STACK in src/renderer/src/utils/fonts.ts — keep the two in sync. */
+/* Canonical app monospace. The JS/canvas surfaces (xterm, Monaco) take the
+   same stack as a string, from currentCodeFontStack in
+   src/renderer/src/utils/fonts.ts, whose default is this token's value. */
 code,
 kbd,
 pre,
@@ -1732,7 +1743,7 @@ samp,
 .font-mono,
 .composer-markdown .cm-md-code,
 .composer-markdown .cm-line.cm-md-fence {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--sem-font-family-mono);
   font-feature-settings: 'tnum', 'zero';
 }
 
@@ -3768,7 +3779,7 @@ body:has([data-selection-pane]:focus-within)
 
   --fl-font-size: var(--text-size-xs);
   --fl-font-weight: var(--sem-font-weight-regular);
-  --fl-font-family: Inter, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  --fl-font-family: var(--sem-font-family-ui);
 
   --fl-color-overflow: var(--text-muted);
   --color-icon: var(--text-muted);

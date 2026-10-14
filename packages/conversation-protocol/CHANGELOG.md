@@ -4,6 +4,21 @@
 
 ### Added
 
+- **A message may steer the turn that is running.**
+  `CONVERSATION_STEER_SENDS_CAPABILITY` (`conversation-steer-sends`) names a
+  desktop that takes `steer: true` on `send`: the message goes into the turn
+  the chat is running rather than waiting for it to end, where its provider
+  takes one, and the send is answered when that turn ends. A listed
+  `ConversationThread` says which chats can, as `capabilities.steer`. With no
+  turn running the send is an ordinary one; a turn that cannot take it has the
+  desktop hold the message as a queued one, answered at once with a `notice`,
+  or, for a message with `uploadIds` or `skills` that a held one cannot carry,
+  refused `busy`. Never beside `queue`. `parseConversationClientMessage` keeps
+  `steer` when it is `true` and refuses the frame otherwise;
+  `parseConversationServerFrame` keeps `capabilities.steer` when it is a
+  boolean. A desktop without the capability drops the member. The pinned files
+  are unchanged.
+
 - **A wake about a watched pull request is Studio's.** `pull-request-watch`
   joins `ConversationStudioMessageReason`: the desktop sent the chat news
   about a pull request its agent asked it to watch (a check failed, a review,

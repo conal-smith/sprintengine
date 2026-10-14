@@ -369,9 +369,9 @@ export function createRemoteConversationTransport(input: {
       reportsPreset: false,
       // Turned on from the machine's list, when it advertises the four modes.
       permissionModes: false,
-      // The Fleet's send carries the message and its images, and no steer; a
-      // steer would need the wire to say so, so a remote Send now stops the
-      // turn and sends after.
+      // Turned on from the machine's list, when it takes a message into a
+      // running turn (`conversation-steer-sends`). Without it a remote Send
+      // now stops the turn and sends after.
       steer: false,
       // Turned on from the machine's list, when it advertises queued sends.
       hostQueue: false,
@@ -400,6 +400,7 @@ export function createRemoteConversationTransport(input: {
           // The machine resolves them against its own folder, as its own
           // composer's chips are.
           ...(turn.skills?.length ? { skills: turn.skills.map((skill) => skill.id) } : {}),
+          ...(turn.steer ? { steer: true } : {}),
         }),
       ),
     queue: async (turn) =>

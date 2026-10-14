@@ -57,6 +57,14 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
         ? { type: 'command', commandId: value.commandId, command: { kind: 'cancelQueued', queuedId: command.queuedId } }
         : null
     }
+    // A steer is read as the send it rides on, and is never one held for
+    // later: the two ask for opposite things.
+    if (command.kind === 'send' && command.steer !== undefined) {
+      if (command.steer !== true || command.queue !== undefined) return null
+      const frame = parseConversationClientMessage({ ...value, command: { ...command, steer: undefined } })
+      if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
+      return { ...frame, command: { ...frame.command, steer: true } }
+    }
     // Skills ride a message the chat runs now, not one held for later.
     if (command.kind === 'send' && command.skills !== undefined) {
       const skills = command.skills

@@ -64,6 +64,9 @@ const wireCapabilities = (session: ConversationSessionSummary) =>
           ? { permissionPresets: [...session.capabilities.permissionPresets] }
           : {}),
         ...(session.capabilities.permissionModes ? { permissionModes: [...session.capabilities.permissionModes] } : {}),
+        // Whether a `send` that says `steer` can go into the turn now running
+        // (`conversation-steer-sends`); a client offers Steer only where it can.
+        steer: session.capabilities.steer === true,
       }
     : undefined
 
@@ -815,6 +818,29 @@ export function createConversationGatewayHost(
       // repeat after a dropped connection holds it once.
       if (command.kind === 'send' && command.queue && held)
         return Promise.resolve(held.hold(chat, command.message, JSON.stringify([deviceId, commandId])))
+      // A steer the running turn cannot take is held for the turn's end, as a
+      // queued send is, and answered at once with a notice saying so: the
+      // person's words are never lost to a provider that cannot take them, or
+      // to a turn that ended on their way. A held message is its words alone,
+      // so one with pictures or skills is refused busy instead, which a phone
+      // sends again as it does any send made mid-turn.
+      const steer = command.kind === 'send' && command.steer === true
+      const holdInstead = (reason: string): ConversationGatewayCommandResult => {
+        if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length)
+          return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
+        const holding = held.hold(chat, command.message, JSON.stringify([deviceId, commandId]))
+        return holding.ok
+          ? { ok: true, notice: `${reason.replace(/\.$/u, '')}, so it is queued and goes when this turn ends.` }
+          : holding
+      }
+      // Whether there is a turn for a steer to join. Without one it is an
+      // ordinary send, and waits its turn behind any send being prepared.
+      const live = steer ? sessionFor(key) : undefined
+      const joinsTurn = live?.status === 'active' || live?.status === 'awaiting_approval'
+      // Not asked of a provider that cannot take one: the runtime would only
+      // refuse it, after resolving its skills and mentions.
+      if (joinsTurn && live?.capabilities?.steer !== true)
+        return Promise.resolve(holdInstead('This agent cannot take a message while it is working.'))
       const stamp = fingerprint ? { commandFingerprint: fingerprint } : {}
       const execute = async (): Promise<ConversationGatewayCommandResult> => relay(await run())
       const run = async (): Promise<ConversationGatewayCommandResult | ConversationSessionActionResult> => {
@@ -853,6 +879,9 @@ export function createConversationGatewayHost(
             const retry =
               ids.length > 0 &&
               ids.every((id) => spent.get(id)?.deviceId === deviceId && spent.get(id)?.commandId === commandId)
+            // Into the running turn, where there is one; with none, the runtime
+            // sends it as the next turn, as an ordinary send.
+            const turnSteer = steer ? { steer: true } : {}
             if (retry)
               return api.send({
                 sessionId: session.sessionId,
@@ -861,6 +890,7 @@ export function createConversationGatewayHost(
                 attachments: [],
                 ...turnEffort,
                 ...turnSkills,
+                ...turnSteer,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
               })
@@ -901,14 +931,20 @@ export function createConversationGatewayHost(
             // it gave up on would still wake a settled chat).
             const noteUserMessage = registry.noteUserMessage
             const sessionId = session.sessionId
-            const stopWatching: (() => unknown) | null = noteUserMessage
-              ? runtime.onEvent((event) => {
-                  if (event.type !== 'user_message' || event.sessionId !== sessionId) return
-                  if (event.payload?.commandId !== commandId) return
-                  stopWatching?.()
-                  noteUserMessage(key.workspaceId, event.createdAt > 0 ? event.createdAt : Date.now())
-                })
-              : null
+            // A steer's send settles when the turn it opened ends, so it can
+            // fail after its message is in the chat; that one is not held a
+            // second time.
+            let landed = false
+            const stopWatching: (() => unknown) | null =
+              noteUserMessage || steer
+                ? runtime.onEvent((event) => {
+                    if (event.type !== 'user_message' || event.sessionId !== sessionId) return
+                    if (event.payload?.commandId !== commandId) return
+                    landed = true
+                    stopWatching?.()
+                    noteUserMessage?.(key.workspaceId, event.createdAt > 0 ? event.createdAt : Date.now())
+                  })
+                : null
             let sent: ConversationSessionActionResult
             try {
               sent = await api.send({
@@ -918,6 +954,7 @@ export function createConversationGatewayHost(
                 attachments,
                 ...turnEffort,
                 ...turnSkills,
+                ...turnSteer,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
               })
@@ -933,6 +970,16 @@ export function createConversationGatewayHost(
                 spent.set(id, { deviceId, commandId })
               }
               while (spent.size > MAX_SPENT_UPLOAD_REFS) spent.delete(spent.keys().next().value!)
+            }
+            if (!sent.ok && steer) {
+              // In the chat already, and its turn then failed: the message was
+              // taken, and what became of the turn is in the transcript. Said
+              // as a refusal, a client would send the same words again.
+              if (landed)
+                return { ok: true, notice: `It reached the agent, and then: ${sent.message.replace(/\.$/u, '')}.` }
+              // The turn could not take it (one awaiting an answer, one that
+              // ended on the way): it waits for the turn's end instead.
+              return holdInstead(sent.message)
             }
             return sent
           }
@@ -992,7 +1039,12 @@ export function createConversationGatewayHost(
       // waiting on them. Only turn preparation is serialized and deduplicated.
       if (command.kind !== 'send') return execute()
       const id = JSON.stringify([key.workspaceId, key.agentId])
-      const pending = sending.get(id)
+      // A steer goes beside the send whose turn it joins, which is still
+      // waiting on that turn here: queued behind it, it would wait for the
+      // very end it was sent to beat. With no turn running yet, a send being
+      // prepared goes first, and the steer is busy behind it, as a send is.
+      const beside = steer && joinsTurn
+      const pending = beside ? undefined : sending.get(id)
       if (pending)
         return pending.commandId === commandId && pending.deviceId === deviceId
           ? pending.promise
@@ -1016,7 +1068,7 @@ export function createConversationGatewayHost(
         if (sending.get(id)?.promise === promise) sending.delete(id)
         if (hasImages) imageSends--
       })
-      sending.set(id, { commandId, deviceId, promise })
+      if (!beside) sending.set(id, { commandId, deviceId, promise })
       return promise
     },
   }

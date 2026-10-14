@@ -74,6 +74,22 @@ export function SendGlyph({ className }: GlyphProps): React.JSX.Element {
 }
 
 /**
+ * A list with a plus: the round send while the agent works, when the message
+ * waits for the turn's end. `glyphs/queue.svg`.
+ */
+export function QueueGlyph({ className }: GlyphProps): React.JSX.Element {
+  return <Stroke className={className} d="M2.8 4.2h7.4M2.8 8h7.4M2.8 11.8h4.4M11.8 9.6v4.4M9.6 11.8H14" />
+}
+
+/**
+ * An arrow turning up and on: the round send while the agent works, when the
+ * message goes into the running turn. `glyphs/steer.svg`.
+ */
+export function SteerGlyph({ className }: GlyphProps): React.JSX.Element {
+  return <Stroke className={className} d="M3.6 12.8V9.4a3 3 0 0 1 3-3h6.2M9.6 3.2l3.2 3.2-3.2 3.2" />
+}
+
+/**
  * A folder holding a commit node: a checkout in its own directory. The Git
  * panel's Worktrees view, and the composer strip's Worktree switch.
  * `glyphs/worktree.svg`.

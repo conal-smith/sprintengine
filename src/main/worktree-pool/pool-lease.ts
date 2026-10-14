@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { comparablePath } from '../../shared/host-paths'
 import { hostIdForFolder, isWslHostId, normalizeExecutionHostId } from '../../shared/execution-host'
 import { pathJoin } from '../../shared/paths'
+import { worktreeBranchName } from '../../shared/worktree-branch'
 import { slugifyWorktreeName } from '../../shared/worktree-paths'
 import { agentWorktreeLockReason, lockAgentWorktree } from '../agent-worktree-lock'
 import { hiddenEditPaths } from '../agent-worktree-keep-checks'
@@ -10,8 +11,9 @@ import { GIT_NETWORK_TIMEOUT_MS } from '../git-run'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
-  AGENT_BRANCH_BLOCKED_MESSAGE,
-  agentBranchBlocked,
+  branchBlockedBy,
+  branchBlockedMessage,
+  branchShadowing,
   amongIgnored,
   cleanWouldRemove,
   clearStaleIndexLock,
@@ -405,9 +407,15 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
   const started = ctx.now()
   if (ctx.stopped) return { ok: false, reason: 'disabled', message: 'The worktree pool is shutting down.' }
   if (!(await ctx.getSettings()).enabled) return { ok: false, reason: 'disabled', message: 'The worktree pool is off.' }
-  const slug = slugifyWorktreeName(input.name)
-  if (!slug) {
-    return { ok: false, reason: 'invalid-name', message: `"${input.name}" does not reduce to a usable branch name.` }
+  // A caller that named the branch (git.ts, from `agentWorktreePaths`) is
+  // taken at its word; a name alone (`worktree.lease`) goes under the prefix.
+  let branch = input.branch
+  if (!branch) {
+    const slug = slugifyWorktreeName(input.name)
+    if (!slug) {
+      return { ok: false, reason: 'invalid-name', message: `"${input.name}" does not reduce to a usable branch name.` }
+    }
+    branch = worktreeBranchName(ctx.branchPrefix(), slug)
   }
   // Declined before any git runs: under a WSL machine's scope even the
   // repository lookup is that machine's git, and its answer (`/mnt/c/…`)
@@ -423,11 +431,12 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
   if (!(await ctx.ready(pool))) {
     return { ok: false, reason: 'other-instance', message: 'Another Studio is using this repository’s pool.' }
   }
-  const branch = `agent/${slug}`
   const format = await ctx.git(pool.record.repoRoot, ['check-ref-format', '--branch', branch])
   if (!format.ok) return { ok: false, reason: 'invalid-name', message: `"${branch}" is not a valid branch name.` }
-  if (await agentBranchBlocked(ctx.git, pool.record.repoRoot, branch))
-    return { ok: false, reason: 'branch-exists', message: AGENT_BRANCH_BLOCKED_MESSAGE }
+  const shadowing = await branchShadowing(ctx.git, pool.record.repoRoot, branch)
+  if (shadowing) return { ok: false, reason: 'invalid-name', message: shadowing }
+  const blocker = await branchBlockedBy(ctx.git, pool.record.repoRoot, branch)
+  if (blocker) return { ok: false, reason: 'branch-exists', message: branchBlockedMessage(blocker) }
   if (await branchExists(ctx, pool.record.repoRoot, branch)) {
     return {
       ok: false,
@@ -530,7 +539,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
           ctx.log(`${slot.path}: could not copy the .worktreeinclude files (${tail(seeded)}); leasing anyway`)
       }
       // Locked BEFORE the branch exists: from the moment the slot is on an
-      // `agent/` branch, nothing else may remove it.
+      // agent's branch, nothing else may remove it.
       const locked = await lockAgentWorktree(pool.record.repoRoot, slot.path, owner, ctx.git)
       if (!locked.ok) ctx.log(`${slot.path}: could not lock (${tail(locked.message)}); leasing anyway`)
       const switched = await ctx.git(slot.path, ['switch', '--quiet', '-c', branch])
@@ -550,6 +559,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
           message: switched.message ?? `Could not create ${branch}.`,
         }
       }
+      await ctx.recordBranch(pool.record.repoRoot, branch)
       const leaseId = randomUUID()
       await ctx.withPool(pool, async () => {
         slot!.state = 'leased'

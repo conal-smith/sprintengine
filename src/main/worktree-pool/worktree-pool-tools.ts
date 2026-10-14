@@ -22,8 +22,9 @@ export const WORKTREE_RELEASE_TOOL = 'worktree.release'
 
 /** The worktree-name rule `agentWorktreePaths` applies, said to the agent. */
 const NAME_DESCRIPTION =
-  'A short name for the work, e.g. "fix-login-redirect". The worktree is put on the branch `agent/<name>`; it ' +
-  'must not exist yet.'
+  'A short name for the work, e.g. "fix-login-redirect". The worktree is put on the branch `<prefix>/<name>`, ' +
+  'the prefix being the one set in Studio’s Settings ▸ Worktrees (`agent` unless changed, possibly none); the ' +
+  'lease answers with the branch it made. It must not exist yet.'
 
 export type WorktreePoolToolsDeps = {
   pool: Pick<WorktreePoolService, 'lease' | 'release' | 'leaseAt'>

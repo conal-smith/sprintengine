@@ -10,6 +10,8 @@ import { comparablePath } from '../../shared/host-paths'
 import { LOCAL_HOST_ID } from '../../shared/execution-host'
 import { worktreeContainerPath } from '../../shared/worktree-paths'
 import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
+import { worktreeBranchLedger, type WorktreeBranchLedger } from '../worktree-branch-ledger'
+import { worktreeBranchPrefix } from '../worktree-branch-prefix'
 import { measureDiskUsage, type MeasureDiskUsage } from './disk-usage'
 import {
   acquireInstanceLock,
@@ -69,7 +71,8 @@ import { release, returnUnused } from './pool-return'
  * A slot lives at `<repo-parent>/.sprintengine-worktrees/<repo>/pool-NN` and
  * keeps that path for its whole life: virtual environments and build caches
  * record absolute paths and do not survive a move. A leased slot is on
- * `agent/<slug>` and locked with the agent worktree lock
+ * `<prefix>/<slug>` (the person's branch prefix, `agent` unless changed) and
+ * locked with the agent worktree lock
  * (agent-worktree-lock.ts), so git's own `prune` and `remove`, another Studio
  * profile's cleanup and the Worktree manager all leave it alone.
  *
@@ -143,6 +146,18 @@ export type WorktreePoolServiceDeps = {
   /** How much disk a slot takes (disk-usage.ts). */
   measure?: MeasureDiskUsage
   /**
+   * The person's worktree branch prefix (Settings ▸ Worktrees), read on each
+   * lease: a lease asked for by name is put on `<prefix>/<name>`. The
+   * process's own (`worktree-branch-prefix.ts`) unless given.
+   */
+  branchPrefix?: () => string
+  /**
+   * Where a branch the pool makes (a lease's, a held or rescued slot's) is
+   * written down as one Studio made: the cleanup deletes a merged branch only
+   * when it is there or under `agent/`. The profile's own unless given.
+   */
+  branchLedger?: Pick<WorktreeBranchLedger, 'record'>
+  /**
    * The ids of every chat on record that is not settled (the workspace
    * registry), or null when unknown. A slot holding the history of one of them
    * is never removed (agent-worktree-keep-checks.ts); a settled chat counts
@@ -153,8 +168,14 @@ export type WorktreePoolServiceDeps = {
 
 export type WorktreePoolLeaseInput = {
   repoRoot: string
-  /** The name the branch is derived from: `agent/<slug>`. */
+  /** The name the branch is derived from, under the person's branch prefix: `<prefix>/<slug>`. */
   name: string
+  /**
+   * The branch itself, when the caller already named it (`agentWorktreePaths`,
+   * through git.ts): taken as it is, so a worktree's branch is the one its
+   * caller recorded even if the prefix changed in between.
+   */
+  branch?: string
   /** Who the slot's lock names: the agent's id, or the branch while there is no agent yet. */
   owner?: string | null
   /** The agent that asked for the worktree itself (MCP), which keeps it while it exists. */
@@ -251,6 +272,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   const fetchFreshMs = deps.fetchFreshMs ?? FETCH_FRESH_MS
   const fetchBackoffMs = deps.fetchBackoffMs ?? FETCH_FAILURE_BACKOFF_MS
   const measureSize = deps.measure ?? measureDiskUsage
+  const branchPrefix = deps.branchPrefix ?? worktreeBranchPrefix
+  const branchLedger = deps.branchLedger ?? worktreeBranchLedger()
   const pools = new Map<string, PoolRuntime>()
   const resolvedRepos = new Map<string, Promise<ResolvedRepo | null>>()
   let settings: WorktreePoolSettings | null = null
@@ -280,6 +303,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     fetchFreshMs,
     fetchBackoffMs,
     measureSize,
+    branchPrefix,
+    recordBranch: (repoRoot, branch) => branchLedger.record(repoRoot, branch).catch(() => undefined),
     pools,
     stopping,
     get stopped() {

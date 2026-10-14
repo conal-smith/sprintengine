@@ -245,8 +245,9 @@ export type ModuleConversationCreateInput = {
    * Start the chat in a fresh git worktree of `workspaceId`'s project instead
    * of its checkout, the way a scheduled agent's run with a worktree starts:
    * cut from the project's default branch (from the worktree pool where the
-   * app keeps one), on branch `agent/<name>-<suffix>` (the short suffix keeps
-   * each chat's branch its own; absent `name`, `agent/chat-<suffix>`), in a
+   * app keeps one), on branch `<prefix>/<name>-<suffix>` (the person's worktree
+   * branch prefix, `agent` unless they changed it; the short suffix keeps each
+   * chat's branch its own; absent `name`, `<prefix>/chat-<suffix>`), in a
    * new workspace of its own marked as a worktree of the project. The answer's
    * `workspaceId` is that new workspace, so address the chat by it. The chat
    * waits in the sidebar rather than taking the window. A project that is not

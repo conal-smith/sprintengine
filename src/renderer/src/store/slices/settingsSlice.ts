@@ -7,6 +7,11 @@ import {
 } from '../../../../shared/launch-settings'
 import { normalizeMachineMarkSettings, type MachineMarkSetting } from '../../../../shared/machine-identity'
 import { normalizeProjectUsageMap } from '../../../../shared/project-frecency'
+import {
+  AGENT_BRANCH_PREFIX,
+  effectiveWorktreeBranchPrefix,
+  sanitizeWorktreeBranchPrefix,
+} from '../../../../shared/worktree-branch'
 import { normalizeTextGenerationSettings } from '../../../../shared/text-generation/contract'
 import {
   DEFAULT_WRITING_STYLE,
@@ -37,6 +42,7 @@ import type {
   NewChatAgentChoice,
   AgentConversationRuntime,
   CliPermissionPreset,
+  FollowUpBehavior,
   Workspace,
 } from '../../types/workspace'
 import type { DiscoveredCliModel, DiscoveredCliModelCatalog } from '../../../../shared/cli-model-catalog'
@@ -50,6 +56,8 @@ import {
   isAppTheme,
   isChatWidth,
   isClockFormat,
+  isReplyStreaming,
+  DEFAULT_REPLY_STREAMING,
   DEFAULT_CLOCK_FORMAT,
   LEGACY_CHAT_WIDTH,
   isWindowMaterial,
@@ -58,9 +66,11 @@ import {
   type AppTheme,
   type ChatWidth,
   type ClockFormat,
+  type ReplyStreaming,
   type WindowMaterial,
 } from '../../types/appTheme'
 import { normalizeModuleOverrides } from '../../../../shared/modules/manifest'
+import { normalizeFontFamilyPreference } from '../../utils/fontFamilyPreference'
 import { LEGACY_COMMAND_ID_ALIASES, collapseDuplicateKeybindings } from '../../commands/keybindings'
 
 export const MAX_RECENT_WORKSPACE_FOLDERS = 50
@@ -103,8 +113,11 @@ export function defaultAppearanceSettings(): AppearanceSettings {
     chatContrast: DEFAULT_CHAT_CONTRAST,
     chatWidth: DEFAULT_CHAT_WIDTH,
     clockFormat: DEFAULT_CLOCK_FORMAT,
+    replyStreaming: DEFAULT_REPLY_STREAMING,
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   }
 }
 
@@ -122,9 +135,13 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
     chatContrast: normalizeChatContrast(candidate.chatContrast),
     chatWidth: isChatWidth(candidate.chatWidth) ? candidate.chatWidth : LEGACY_CHAT_WIDTH,
     clockFormat: isClockFormat(candidate.clockFormat) ? candidate.clockFormat : defaults.clockFormat,
+    replyStreaming: isReplyStreaming(candidate.replyStreaming) ? candidate.replyStreaming : defaults.replyStreaming,
     agentCharacters:
       typeof candidate.agentCharacters === 'boolean' ? candidate.agentCharacters : defaults.agentCharacters,
     usageLimits: typeof candidate.usageLimits === 'boolean' ? candidate.usageLimits : defaults.usageLimits,
+    // Absent before the font settings existed, which reads as the bundled faces.
+    interfaceFont: normalizeFontFamilyPreference(candidate.interfaceFont),
+    codeFont: normalizeFontFamilyPreference(candidate.codeFont),
   }
 }
 
@@ -644,6 +661,10 @@ export function normalizeTerminalKeepRecentAlive(value: unknown): number {
   return Math.max(MIN_TERMINAL_KEEP_RECENT_ALIVE, Math.min(MAX_TERMINAL_KEEP_RECENT_ALIVE, Math.round(value)))
 }
 
+export function normalizeFollowUpBehavior(value: unknown): FollowUpBehavior {
+  return value === 'steer' ? 'steer' : 'queue'
+}
+
 export const defaultAppSettings = (): AppSettings => ({
   cliRuntimes: {
     codex: { command: 'codex' },
@@ -667,6 +688,7 @@ export const defaultAppSettings = (): AppSettings => ({
   cliPermissionPresets: {},
   cliPermissionModes: {},
   projectUsage: {},
+  worktreeBranchPrefix: AGENT_BRANCH_PREFIX,
   lastSelectedAgentModel: null,
   projectKnowledgeRoots: {},
   // Nothing seen yet. Every project in the map got there by being shown once,
@@ -691,6 +713,9 @@ export const defaultAppSettings = (): AppSettings => ({
   terminalKeepRecentAlive: DEFAULT_TERMINAL_KEEP_RECENT_ALIVE,
   settleOnPullRequestMerge: true,
   browserAutoFloatAgentPreview: true,
+  // A message sent mid-turn waits for the turn, as every one did before the
+  // choice: a steer is something a person asks for.
+  followUpBehavior: 'queue',
   // Off is the rule from before background mode exactly; keeping a process alive is a choice
   // the user has to make, never one an upgrade makes for them.
   keepRunningInBackground: false,
@@ -732,6 +757,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     cliPermissionPresets: normalizeCliPermissionPresets(settings?.cliPermissionPresets),
     cliPermissionModes: normalizeCliPermissionModes(settings?.cliPermissionModes),
     projectUsage: normalizeProjectUsageMap(settings?.projectUsage),
+    worktreeBranchPrefix: effectiveWorktreeBranchPrefix(settings?.worktreeBranchPrefix),
     // Every field here is built explicitly and `settings` is never spread, so a
     // key an older build persisted drops on every hydration — the same
     // merge-not-only-migrate enforcement as the opt-in reset below.
@@ -783,6 +809,9 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     // Only an explicit stored `false` turns the player off: it is the
     // feature's default, and an unreadable value should not hide an agent.
     browserAutoFloatAgentPreview: settings?.browserAutoFloatAgentPreview !== false,
+    // Only an explicit stored `steer` steers. A profile from before the choice
+    // has none, and keeps queueing, which is what its Enter always did.
+    followUpBehavior: normalizeFollowUpBehavior(settings?.followUpBehavior),
     // Only an explicit stored `true` keeps the app alive past its last window;
     // anything else (fresh profile, corrupt value) reads as off.
     keepRunningInBackground: settings?.keepRunningInBackground === true,
@@ -964,6 +993,8 @@ export interface SettingsSliceActions {
   refreshMcpServersFromSource: (servers: McpServerConfig[]) => void
   removeMcpServer: (serverId: string) => void
   setLastSelectedCli: (cli: AgentCli) => void
+  /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
+  setWorktreeBranchPrefix: (prefix: string) => void
   /**
    * Count a new chat started in the project at `folderPath`, for the project
    * pickers' order. Main records it and the store follows main's broadcast;
@@ -1077,6 +1108,7 @@ export interface SettingsSliceActions {
   setTerminalKeepRecentAlive: (count: number) => void
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
+  setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
   setKeepRunningInBackground: (enabled: boolean) => void
   setTelemetryEnabled: (enabled: boolean) => void
@@ -1085,8 +1117,12 @@ export interface SettingsSliceActions {
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void
   setAppearanceClockFormat: (format: ClockFormat) => void
+  setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
+  /** A family name (or comma-separated list); empty restores the bundled face. */
+  setAppearanceInterfaceFont: (family: string) => void
+  setAppearanceCodeFont: (family: string) => void
 }
 
 export type SettingsSlice = SettingsSliceState & SettingsSliceActions
@@ -1411,6 +1447,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
       launchSettingsClient.update({ lastSelectedCli: cli })
     },
 
+    setWorktreeBranchPrefix: (prefix) => {
+      const worktreeBranchPrefix = sanitizeWorktreeBranchPrefix(prefix)
+      set((state) => {
+        state.appSettings.worktreeBranchPrefix = worktreeBranchPrefix
+      })
+      launchSettingsClient.update({ worktreeBranchPrefix })
+    },
+
     recordProjectUse: (folderPath) => {
       if (!folderPath.trim()) return
       launchSettingsClient.update({ projectUse: { folderPath, at: Date.now() } })
@@ -1731,6 +1775,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.terminalKeepRecentAlive = normalizeTerminalKeepRecentAlive(count)
       }),
 
+    setFollowUpBehavior: (behavior) =>
+      set((state) => {
+        state.appSettings.followUpBehavior = normalizeFollowUpBehavior(behavior)
+      }),
+
     setKeepRunningInBackground: (enabled) =>
       set((state) => {
         state.appSettings.keepRunningInBackground = enabled === true
@@ -1781,6 +1830,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         })
       }),
 
+    setAppearanceReplyStreaming: (mode) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          replyStreaming: mode,
+        })
+      }),
+
     setAppearanceAgentCharacters: (enabled) =>
       set((state) => {
         state.appSettings.appearance = normalizeAppearanceSettings({
@@ -1794,6 +1851,22 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
           usageLimits: enabled,
+        })
+      }),
+
+    setAppearanceInterfaceFont: (family) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          interfaceFont: family,
+        })
+      }),
+
+    setAppearanceCodeFont: (family) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          codeFont: family,
         })
       }),
   }

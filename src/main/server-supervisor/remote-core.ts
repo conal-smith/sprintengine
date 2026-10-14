@@ -3,8 +3,10 @@ import type { StudioCore } from '../../server/core/studio-core'
 import type { ControlRpc } from '../../server/bootstrap/control-rpc'
 import { SERVER_EVENTS, SERVER_METHODS } from '../../server/desktop/server-methods'
 import { gitHostIdForPath } from '../../shared/execution-host'
+import { effectiveAgentLaunchSettings } from '../../shared/launch-settings'
 import { installGitHostResolver } from '../git-run'
 import { createHostRegistry, installHostRegistry } from '../hosts/host-registry'
+import { setWorktreeBranchPrefixReader } from '../worktree-branch-prefix'
 import type { TerminalRootInfo } from '../workspace-memory'
 import type { GitHubTokenStatus, GitHubTokenStore } from '../github-token-store'
 import type { ProviderSecretStore, ProviderSecretValueResult } from '../secret-store'
@@ -61,6 +63,9 @@ export function createRemoteCore(link: ShellServerLink): StudioCore {
   // registry in each process, over the same settings.
   const hosts = createHostRegistry({ readHostSettings: () => mirror.launchSettings.get().hosts })
   installHostRegistry(hosts)
+  // The worktree branch prefix the shell names its own worktrees with (a New
+  // chat's, a pool lease's), from the same settings the server names its by.
+  setWorktreeBranchPrefixReader(() => effectiveAgentLaunchSettings(mirror.launchSettings.get()).worktreeBranchPrefix)
   let lastHosts = JSON.stringify(mirror.launchSettings.get().hosts)
   mirror.launchSettings.subscribe((record) => {
     const next = JSON.stringify(record.settings.hosts)

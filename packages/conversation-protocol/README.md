@@ -133,6 +133,14 @@ and adds, each behind its capability:
   refused `busy` as before; it refuses `cancelQueued` as `unsupported_command`
   and `watchQueued` as `invalid_frame`, each under its id. A desktop sends
   `queued` frames only to a client that asked.
+- `conversation-steer-sends`: a `send` with `steer: true` goes into the turn
+  that is running, where the chat's provider takes a message mid-turn (a
+  listed thread's `capabilities.steer`), and is answered when that turn ends.
+  With no turn running it is an ordinary send. A turn that cannot take it has
+  the desktop hold it as a `queue` send is held, answered at once with a
+  `notice`; one with `uploadIds` or `skills`, which cannot be held, is refused
+  `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
+  a send made while a turn runs is refused `busy` as before.
 
 `ConversationCreateRequest` is what starting a conversation takes, with
 `allowedTools` — tools the chat may use without asking — beside the preset.

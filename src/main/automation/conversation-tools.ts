@@ -114,7 +114,8 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
             description:
               'With newChat, start the new chat in a git worktree of its own, cut the way New chat on this ' +
               "machine cuts one with Worktree on: from this machine's worktree pool, on the project's default " +
-              'branch, as a branch `agent/chat-<id>`; the chat is listed under the project it was cut from. A ' +
+              'branch, as a branch `<prefix>/chat-<id>` (the branch prefix set in Settings ▸ Worktrees, `agent` ' +
+              'unless changed); the chat is listed under the project it was cut from. A ' +
               'project that is not a git repository (or a folder on an SSH machine) is refused with ' +
               '"worktree_unavailable", never started in the checkout. Omitted or false, the chat works in the ' +
               "project's own folder.",
@@ -123,7 +124,7 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
             type: 'string',
             description:
               "With worktree, what the new worktree is named from, as typed into New chat's Worktree field: its " +
-              "branch is `agent/<name>-<suffix>`, the short suffix keeping each chat's branch its own. A made-up " +
+              "branch is `<prefix>/<name>-<suffix>`, the short suffix keeping each chat's branch its own. A made-up " +
               '`chat-<suffix>` when omitted or blank.',
           },
           inWorktree: {

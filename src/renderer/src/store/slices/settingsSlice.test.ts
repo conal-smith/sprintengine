@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import type { CliRuntimeSettings } from '../../types/workspace'
+import type { AppSettings, CliRuntimeSettings } from '../../types/workspace'
 import type { Workspace } from '../../types/workspace'
 import { LEGACY_COMMAND_ID_ALIASES } from '../../commands/keybindings'
 import { useWorkspaceStore } from '../workspaceStore'
@@ -860,8 +860,11 @@ test('settingsSlice', async () => {
     chatContrast: 100,
     chatWidth: 'comfortable',
     clockFormat: 'system',
+    replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   })
   assert.deepEqual(normalizeAppearanceSettings(undefined), defaultAppearanceSettings())
   assert.deepEqual(normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'glass' }), {
@@ -870,8 +873,11 @@ test('settingsSlice', async () => {
     chatContrast: 100,
     chatWidth: 'full',
     clockFormat: 'system',
+    replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   })
   assert.deepEqual(
     normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'tinted' }),
@@ -881,8 +887,11 @@ test('settingsSlice', async () => {
       chatContrast: 100,
       chatWidth: 'full',
       clockFormat: 'system',
+      replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
+      interfaceFont: '',
+      codeFont: '',
     },
     'tinted is a stored material in its own right',
   )
@@ -894,10 +903,23 @@ test('settingsSlice', async () => {
       chatContrast: 100,
       chatWidth: 'full',
       clockFormat: 'system',
+      replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
+      interfaceFont: '',
+      codeFont: '',
     },
     'a persisted appearance predating the material axis hydrates to the glass default',
+  )
+  assert.equal(
+    normalizeAppearanceSettings({ theme: 'sage', replyStreaming: 'paragraph' }).replyStreaming,
+    'paragraph',
+    'replies a paragraph at a time is kept',
+  )
+  assert.equal(
+    normalizeAppearanceSettings({ theme: 'sage', replyStreaming: 'turn' }).replyStreaming,
+    'live',
+    'a mode no version wrote falls back to replies as they are written',
   )
   assert.equal(
     normalizeAppearanceSettings({ theme: 'sage', agentCharacters: false }).agentCharacters,
@@ -1406,8 +1428,11 @@ test('a stored appearance from before the chat settings hydrates to the chat as 
     chatContrast: 100,
     chatWidth: 'full',
     clockFormat: 'system',
+    replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
+    interfaceFont: '',
+    codeFont: '',
   })
 })
 
@@ -1442,6 +1467,41 @@ test('the chat appearance setters store normalised values', () => {
   store.setAppearanceChatWidth('full')
 })
 
+test('a stored appearance from before the font settings reads as the bundled faces', () => {
+  const appearance = normalizeAppearanceSettings({ theme: 'light', windowMaterial: 'solid', chatWidth: 'wide' })
+  assert.equal(appearance.interfaceFont, '')
+  assert.equal(appearance.codeFont, '')
+})
+
+test('a stored font family is kept, and one that is not a string is the default', () => {
+  const appearance = normalizeAppearanceSettings({ interfaceFont: 'IBM Plex Sans', codeFont: 'Fira Code, Menlo' })
+  assert.equal(appearance.interfaceFont, 'IBM Plex Sans')
+  assert.equal(appearance.codeFont, 'Fira Code, Menlo')
+  assert.equal(normalizeAppearanceSettings({ interfaceFont: 42, codeFont: null }).interfaceFont, '')
+  assert.equal(normalizeAppearanceSettings({ interfaceFont: 42, codeFont: null }).codeFont, '')
+})
+
+test('a stored font family that could break out of CSS is cleaned on the way in', () => {
+  assert.equal(
+    normalizeAppearanceSettings({ codeFont: 'Fira"; } body { color: red; } /*' }).codeFont,
+    'Fira body color: red /*',
+  )
+  assert.equal(normalizeAppearanceSettings({ interfaceFont: 'x'.repeat(500) }).interfaceFont.length, 200)
+})
+
+test('the font setters store cleaned values, and the empty string restores the default', () => {
+  const store = useWorkspaceStore.getState()
+  const appearance = () => useWorkspaceStore.getState().appSettings.appearance
+  store.setAppearanceInterfaceFont('  Source   Sans 3 ')
+  assert.equal(appearance().interfaceFont, 'Source Sans 3')
+  store.setAppearanceCodeFont('<Iosevka>')
+  assert.equal(appearance().codeFont, 'Iosevka')
+  store.setAppearanceInterfaceFont('')
+  store.setAppearanceCodeFont('')
+  assert.equal(appearance().interfaceFont, '')
+  assert.equal(appearance().codeFont, '')
+})
+
 test('the writing style for drafted commits and pull requests is set one part at a time', () => {
   const store = useWorkspaceStore.getState()
   const style = () => useWorkspaceStore.getState().appSettings.textGeneration.writingStyle
@@ -1468,4 +1528,27 @@ test('a persisted style is read back, and an unreadable one is the default', () 
       .writingStyle,
     MATCH_REPOSITORY,
   )
+})
+
+test('a new install queues a message sent mid-turn', () => {
+  assert.equal(defaultAppSettings().followUpBehavior, 'queue')
+  assert.equal(normalizeAppSettings(undefined, []).followUpBehavior, 'queue')
+})
+
+test('a profile from before the follow-up choice keeps queueing, and a stored choice is kept', () => {
+  const stored = (followUpBehavior: unknown) =>
+    normalizeAppSettings({ followUpBehavior } as unknown as Partial<AppSettings>, []).followUpBehavior
+  assert.equal(stored(undefined), 'queue', 'a profile without the key queues, as its Enter always did')
+  assert.equal(stored('steer'), 'steer')
+  assert.equal(stored('queue'), 'queue')
+  assert.equal(stored('interrupt'), 'queue', 'an unknown choice queues rather than steers')
+  assert.equal(stored(true), 'queue')
+})
+
+test('the follow-up setter stores the choice, and only a steer steers', () => {
+  const store = useWorkspaceStore.getState()
+  store.setFollowUpBehavior('steer')
+  assert.equal(useWorkspaceStore.getState().appSettings.followUpBehavior, 'steer')
+  store.setFollowUpBehavior('sometimes' as unknown as 'queue')
+  assert.equal(useWorkspaceStore.getState().appSettings.followUpBehavior, 'queue')
 })
