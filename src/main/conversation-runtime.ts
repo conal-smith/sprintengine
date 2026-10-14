@@ -1005,6 +1005,7 @@ export class ConversationRuntime {
       // Persist the user's side of the exchange so the JSONL transcript replays
       // as a complete conversation after a restart.
       try {
+        await this.enableCheckpointsIfRepository(session)
         const storedAttachments = await this.saveAttachments(session, attachments)
         await this.emit(
           session,
@@ -3448,6 +3449,22 @@ export class ConversationRuntime {
           ]),
         ),
     )
+  }
+
+  /**
+   * Checkpoints for a chat whose folder was not a repository when it started
+   * and is one now (`git init` since): whether a chat keeps them was decided
+   * once, at its start, so it would otherwise never offer Revert. Asked at
+   * each turn's start only while the chat has none, and that is one
+   * `rev-parse`; a chat that has them, or runs no tools, asks nothing. The
+   * chat's file scope moves to the repository too, so a revert there counts
+   * this chat among those sharing its files.
+   */
+  private async enableCheckpointsIfRepository(session: RuntimeSession): Promise<void> {
+    if (!session.capabilities?.tools || session.capabilities.checkpoints) return
+    if (!(await this.checkpoints.available(session.workspaceRoot))) return
+    session.fileScope = await this.checkpoints.fileScope(session.workspaceRoot)
+    await this.emit(session, this.eventForSession(session, 'session_updated', { capabilities: { checkpoints: true } }))
   }
 
   private async captureBeforeTool(session: RuntimeSession, name: string): Promise<void> {

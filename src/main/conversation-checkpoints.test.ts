@@ -754,3 +754,70 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     }
   },
 )
+
+test('a folder that becomes a repository after its chat started keeps checkpoints from the next turn', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'conversation-checkpoints-later-'))
+  const root = join(directory, 'project')
+  await mkdir(root)
+  await writeFile(join(root, 'notes.txt'), 'original\n')
+  const key = { workspaceRoot: root, workspaceId: 'workspace', agentId: 'agent' }
+  const adapter = {
+    ...createMockConversationProvider(),
+    async *sendTurn(
+      input: import('./providers/conversation-provider-adapter').MockAdapterTurnInput,
+    ): AsyncIterable<ConversationEvent> {
+      const envelope = {
+        id: '',
+        sessionId: input.sessionId,
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        createdAt: 0,
+      }
+      yield {
+        ...envelope,
+        type: 'tool_started',
+        payload: { turnId: input.turnId, tool: 'Write', toolCallId: input.turnId, input: { path: 'notes.txt' } },
+      }
+      await writeFile(join(root, 'notes.txt'), `${input.message}\n`)
+      yield { ...envelope, type: 'turn_completed', payload: { turnId: input.turnId } }
+    },
+  }
+  const runtime = new ConversationRuntime({ adapters: [adapter], getProviderById: () => undefined })
+  try {
+    const started = await runtime.startSession({ ...key, providerId: 'mock-provider', modelId: 'mock-model' })
+    assert.ok(started.ok)
+    assert.equal(started.session.capabilities?.checkpoints, false)
+    const sessionId = started.session.sessionId
+    assert.ok((await runtime.sendTurn({ sessionId, message: 'before git' })).ok)
+
+    await git(root, ['init'])
+    await git(root, ['config', 'user.name', 'Developer'])
+    await git(root, ['config', 'user.email', 'dev@example.com'])
+    await git(root, ['add', '.'])
+    await git(root, ['commit', '-m', 'Initial files'])
+    const turned = await runtime.sendTurn({ sessionId, message: 'after git' })
+    assert.ok(turned.ok)
+    assert.equal(turned.session.capabilities?.checkpoints, true)
+    assert.ok((await runtime.sendTurn({ sessionId, message: 'once more' })).ok)
+
+    const replay = await runtime.readTranscript(key)
+    assert.ok(replay.ok)
+    const enabled = replay.events.filter(
+      (event) =>
+        event.type === 'session_updated' &&
+        (event.payload?.capabilities as { checkpoints?: boolean } | undefined)?.checkpoints === true,
+    )
+    assert.equal(enabled.length, 1, 'said once, as the first turn in the repository starts')
+    const completed = replay.events.filter((event) => event.type === 'turn_completed')
+    assert.deepEqual(
+      completed.map((event) => event.payload?.checkpointAvailable),
+      [undefined, true, true],
+      'the turn before git init has no checkpoint; the ones after have',
+    )
+  } finally {
+    await runtime.shutdown()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
