@@ -5,6 +5,9 @@ import { test } from 'vitest'
 import {
   AGENT_BRANCH_PREFIX,
   branchNamespaceParents,
+  isReservedFirstComponent,
+  remoteShadowedBy,
+  worktreeBranchPrefixWarning,
   effectiveWorktreeBranchPrefix,
   isStudioBranch,
   sanitizeWorktreeBranchPrefix,
@@ -121,4 +124,33 @@ test('the branches that would block one are its parents', () => {
   assert.deepEqual(branchNamespaceParents('agent/fix'), ['agent'])
   assert.deepEqual(branchNamespaceParents('jane/wip/fix'), ['jane', 'jane/wip'])
   assert.deepEqual(branchNamespaceParents('fix'), [])
+})
+
+test('a leading name git keeps for itself is left out of the prefix', () => {
+  assert.equal(sanitizeWorktreeBranchPrefix('HEAD'), '')
+  assert.equal(sanitizeWorktreeBranchPrefix('refs/heads/feat'), 'feat')
+  assert.equal(sanitizeWorktreeBranchPrefix('Remotes/jane'), 'jane')
+  assert.equal(sanitizeWorktreeBranchPrefix('tags'), '')
+  // Only where git would read it as its own: further in, it is just a name.
+  assert.equal(sanitizeWorktreeBranchPrefix('jane/refs'), 'jane/refs')
+  assert.equal(isReservedFirstComponent('head'), true)
+  assert.equal(isReservedFirstComponent('feat'), false)
+})
+
+test('the field warns about a name git keeps for itself, and about a common remote’s', () => {
+  assert.match(worktreeBranchPrefixWarning('refs') ?? '', /“refs” is a name git keeps for itself/)
+  assert.match(worktreeBranchPrefixWarning('HEAD/x') ?? '', /“HEAD” is a name git keeps/)
+  assert.match(worktreeBranchPrefixWarning(' origin/ ') ?? '', /hide the branches of a remote named origin/)
+  assert.match(worktreeBranchPrefixWarning('Upstream') ?? '', /remote named Upstream/)
+  for (const fine of ['', 'feat', 'jane/origin', 'originals'])
+    assert.equal(worktreeBranchPrefixWarning(fine), null, fine)
+})
+
+test('a branch hides a remote whose name its first part is, in any case', () => {
+  assert.equal(remoteShadowedBy('origin/main', ['origin']), 'origin')
+  assert.equal(remoteShadowedBy('Origin/main', ['origin', 'fork']), 'origin')
+  assert.equal(remoteShadowedBy('fork/x', ['origin', 'Fork']), 'Fork')
+  assert.equal(remoteShadowedBy('feat/main', ['origin']), null)
+  assert.equal(remoteShadowedBy('origin', ['origin']), null, 'no namespace, nothing hidden')
+  assert.equal(remoteShadowedBy('jane/origin/x', ['origin']), null)
 })

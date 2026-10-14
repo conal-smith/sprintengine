@@ -161,3 +161,34 @@ test('a branch named like a part of a chosen prefix is named as what refuses the
     /A branch named “jane\/wip” in this repository blocks Studio’s jane\/wip\/… branches/,
   )
 })
+
+test('an agent worktree whose branch would hide a remote’s is refused; one a person names is theirs', async () => {
+  const shadow = join(scratch, 'shadow')
+  await mkdir(shadow, { recursive: true })
+  await git(shadow, 'init', '-q', '-b', 'main')
+  await writeFile(join(shadow, 'README.md'), '# shadow\n')
+  await git(shadow, 'add', '.')
+  await git(shadow, 'commit', '-q', '-m', 'init')
+  await git(shadow, 'remote', 'add', 'origin', 'https://github.com/acme/app.git')
+  const container = join(scratch, 'shadow-worktrees')
+  const make = (branchName: string, agentLockOwner?: string) =>
+    createGitWorktree({
+      repoRoot: shadow,
+      containerPath: container,
+      destinationPath: join(container, branchName.replace(/\//gu, '-')),
+      branchName,
+      baseRef: 'HEAD',
+      ...(agentLockOwner ? { agentLockOwner } : {}),
+    })
+  for (const branch of ['origin/main', 'ORIGIN/fix', 'remotes/fix']) {
+    const refused = await make(branch, branch)
+    assert.equal(refused.ok, false, branch)
+    assert.match(
+      refused.ok ? '' : refused.message,
+      /would hide the branches of this repository’s remote “origin”|a name git keeps for itself/u,
+    )
+  }
+  assert.equal(await git(shadow, 'branch', '--list', 'origin/*', 'ORIGIN/*', 'remotes/*'), '', 'nothing was made')
+  const own = await make('origin/by-hand')
+  assert.equal(own.ok, true, own.ok ? '' : own.message)
+})

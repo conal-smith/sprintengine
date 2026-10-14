@@ -21,6 +21,7 @@ import { activeDependencyInstaller } from './worktree-pool/dependency-install'
 import {
   branchBlockedBy,
   branchBlockedMessage,
+  branchShadowing,
   defaultSlotGitRunner,
   parallelCheckoutConfig,
   resolveAgentForkBase,
@@ -423,8 +424,10 @@ export async function seedWorktreeIncludedFiles(
  * Five git processes, in order, and no more: resolve the repository root once,
  * check the branch name and the base ref, `worktree add`, and one `worktree
  * list` to report the entry the way git spells it. An agent worktree adds a
- * sixth, the `worktree lock` that marks it in use, and the first worktree in a
- * repository one more, the read of its `checkout.workers`. Every one is a process start
+ * sixth, the `worktree lock` that marks it in use (and, when its branch has a
+ * `/`, a seventh before the add: the repository's remotes, which its branch
+ * must not hide), and the first worktree in a repository one more, the read of
+ * its `checkout.workers`. Every one is a process start
  * on the launch path of a worktree agent, and on Windows or a network mount
  * each costs far more than the ~20 ms it costs here.
  *
@@ -444,6 +447,10 @@ export async function createGitWorktree(
 
   const branch = await validateBranchName(root.data, input.branchName)
   if (!branch.ok) return branch
+  // A branch Studio named for an agent never hides a remote's (`origin/main`).
+  // One a person names in the Worktree manager is theirs to name.
+  const shadowing = input.agentLockOwner ? await branchShadowing(defaultSlotGitRunner, root.data, branch.data) : null
+  if (shadowing) return { ok: false, message: shadowing }
 
   const baseRef = await validateBaseRef(root.data, input.baseRef)
   if (!baseRef.ok) return baseRef

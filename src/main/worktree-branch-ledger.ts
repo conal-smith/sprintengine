@@ -30,7 +30,12 @@ import { runGitCommand } from './git-run'
  *
  * The desktop and a Studio server out of process may both make worktrees for
  * the same profile, so every change reads the file again just before writing
- * it, and changes in this process are written one after another.
+ * it, and changes in this process are written one after another; a read waits
+ * for this process's changes still being written. Two processes writing in the
+ * same instant can still lose one's change. That fails safe: a branch whose
+ * name is lost is one the cleanup leaves for the person, and a name that
+ * should have been struck off is struck off by the next sweep that finds its
+ * branch gone.
  */
 
 const FILE_NAME = 'worktree-branches.json'
@@ -154,6 +159,8 @@ export function createWorktreeBranchLedger(deps: WorktreeBranchLedgerDeps): Work
     },
 
     async branches(repoPath) {
+      // What this process recorded a moment ago is part of the answer.
+      await chain
       const path = filePath()
       const repo = path ? await identity(repoPath).catch(() => null) : null
       if (!path || !repo) return new Set()

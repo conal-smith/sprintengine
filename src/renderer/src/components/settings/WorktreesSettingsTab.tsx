@@ -15,7 +15,11 @@ import {
   type WorktreePoolHeldAction,
   type WorktreePoolSettings,
 } from '../../../../shared/ipc/worktree-pool'
-import { sanitizeWorktreeBranchPrefix, worktreeBranchExample } from '../../../../shared/worktree-branch'
+import {
+  sanitizeWorktreeBranchPrefix,
+  worktreeBranchExample,
+  worktreeBranchPrefixWarning,
+} from '../../../../shared/worktree-branch'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { ChevronDownIcon } from '../AppIcons'
 import { samePath } from '../../utils/paths'
@@ -1228,12 +1232,15 @@ function BranchPrefixSetting() {
   useEffect(() => setDraft(saved), [saved])
   const inputId = useId()
   const exampleId = useId()
+  const warningId = useId()
   const commit = () => {
     const prefix = sanitizeWorktreeBranchPrefix(draft)
     setDraft(prefix)
     if (prefix !== saved) setWorktreeBranchPrefix(prefix)
   }
   const prefix = sanitizeWorktreeBranchPrefix(draft)
+  // A name git keeps for itself, or a common remote's, said as it is typed.
+  const warning = worktreeBranchPrefixWarning(draft)
   return (
     <SettingRow
       label="Branch prefix"
@@ -1249,7 +1256,7 @@ function BranchPrefixSetting() {
           spellCheck={false}
           autoCapitalize="none"
           autoCorrect="off"
-          aria-describedby={exampleId}
+          aria-describedby={warning ? `${exampleId} ${warningId}` : exampleId}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
@@ -1261,6 +1268,11 @@ function BranchPrefixSetting() {
           New worktrees are named <span className="font-mono">{worktreeBranchExample(prefix)}</span>
           {prefix ? '' : ', with no prefix'}
         </span>
+        {warning ? (
+          <span id={warningId} role="status" className="max-w-xs text-right text-meta text-[color:var(--tone-warn)]">
+            {warning}
+          </span>
+        ) : null}
       </div>
     </SettingRow>
   )

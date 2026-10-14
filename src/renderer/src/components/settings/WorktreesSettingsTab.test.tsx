@@ -573,3 +573,24 @@ test('the branch prefix names the branch it makes as it is typed, and is saved s
   })
   expect(fixtures.prefixes).toEqual(['my-team', ''])
 })
+
+test('the branch prefix warns, as it is typed, about a remote’s name or one git keeps for itself', async () => {
+  await render()
+  const input = host.querySelector<HTMLInputElement>('input[placeholder="No prefix"]')!
+  const type = async (value: string) =>
+    act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setValue.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  const warning = () => host.querySelector('[role="status"]')?.textContent ?? null
+  expect(warning()).toBeNull()
+  await type('origin')
+  expect(warning()).toContain('would hide the branches of a remote named origin')
+  expect(input.getAttribute('aria-describedby')?.split(' ')).toHaveLength(2)
+  await type('refs/feat')
+  expect(warning()).toContain('“refs” is a name git keeps for itself')
+  expect(host.textContent).toContain('New worktrees are named feat/fix-login')
+  await type('feat')
+  expect(warning()).toBeNull()
+})

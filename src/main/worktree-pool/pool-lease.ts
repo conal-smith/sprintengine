@@ -13,6 +13,7 @@ import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
   branchBlockedBy,
   branchBlockedMessage,
+  branchShadowing,
   amongIgnored,
   cleanWouldRemove,
   clearStaleIndexLock,
@@ -432,6 +433,8 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
   }
   const format = await ctx.git(pool.record.repoRoot, ['check-ref-format', '--branch', branch])
   if (!format.ok) return { ok: false, reason: 'invalid-name', message: `"${branch}" is not a valid branch name.` }
+  const shadowing = await branchShadowing(ctx.git, pool.record.repoRoot, branch)
+  if (shadowing) return { ok: false, reason: 'invalid-name', message: shadowing }
   const blocker = await branchBlockedBy(ctx.git, pool.record.repoRoot, branch)
   if (blocker) return { ok: false, reason: 'branch-exists', message: branchBlockedMessage(blocker) }
   if (await branchExists(ctx, pool.record.repoRoot, branch)) {

@@ -29,6 +29,17 @@ const EXAMPLE_SLUG = 'fix-login'
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point
 const ILLEGAL_CHARACTERS = /[\u0000- \u007f~^:?*[\\]+/gu
 
+// A first component git reads as something other than a branch's namespace:
+// `HEAD`, and the folders under `refs/` (`refs/heads`, `refs/tags`,
+// `refs/remotes`). A branch `remotes/main` or `heads/main` makes those names
+// mean two things, and git picks the other one. Compared without case, as a
+// case-insensitive disk would.
+const RESERVED_FIRST_COMPONENTS = new Set(['head', 'refs', 'heads', 'tags', 'remotes'])
+
+// Remote names so common that a prefix spelled like one is warned about
+// before any repository is asked: `origin/main` is the default branch.
+const COMMON_REMOTES = new Set(['origin', 'upstream'])
+
 /** One `/`-separated component of a prefix, made into one git accepts. */
 function sanitizeComponent(raw: string): string {
   let component = raw
@@ -51,14 +62,60 @@ function sanitizeComponent(raw: string): string {
  * a branch name: each `/`-separated component sanitized by git's
  * check-ref-format rules (no `..`, no leading `.` or `-`, no `.lock` or `.` at
  * its end, no space, control character or `~^:?*[\`), repeated `/` collapsed
- * and `/` trimmed from both ends. Empty means no prefix. Case is kept: git's
- * names are case-sensitive.
+ * and `/` trimmed from both ends, and a leading `HEAD`, `refs`, `heads`, `tags`
+ * or `remotes` left out (`RESERVED_FIRST_COMPONENTS`). Empty means no prefix.
+ * Case is kept: git's names are case-sensitive.
+ *
+ * A prefix named after one of a repository's remotes (`origin`) is kept here,
+ * since remotes are per repository; making a worktree in a repository that
+ * has such a remote is refused (`worktree-pool/slot-git.ts`).
  */
 export function sanitizeWorktreeBranchPrefix(raw: string): string {
-  const join = (value: string): string => value.split('/').map(sanitizeComponent).filter(Boolean).join('/')
+  const join = (value: string): string => {
+    const components = value.split('/').map(sanitizeComponent).filter(Boolean)
+    while (components.length > 0 && isReservedFirstComponent(components[0]!)) components.shift()
+    return components.join('/')
+  }
   const prefix = join(raw.trim())
   // Cut, then sanitized again: the cut may leave a component ending in `.`.
   return prefix.length > PREFIX_MAX_LENGTH ? join(prefix.slice(0, PREFIX_MAX_LENGTH)) : prefix
+}
+
+/**
+ * What the setting's field says about a prefix as typed, or null: a leading
+ * name git keeps for itself, which is left out, or a common remote's name,
+ * which hides that remote's branches in any repository that has it.
+ */
+export function worktreeBranchPrefixWarning(raw: string): string | null {
+  const first = raw
+    .trim()
+    .split('/')
+    .find((component) => component.trim() !== '')
+  if (!first) return null
+  const name = first.trim()
+  if (isReservedFirstComponent(name)) {
+    return `“${name}” is a name git keeps for itself, so it is left out of the prefix.`
+  }
+  if (COMMON_REMOTES.has(name.toLowerCase())) {
+    return `A branch under “${name}/” would hide the branches of a remote named ${name}, so a repository with one refuses worktrees with this prefix.`
+  }
+  return null
+}
+
+/** Whether `component`, a branch's first, is a name git keeps for itself (`HEAD`, `refs`, …). */
+export function isReservedFirstComponent(component: string): boolean {
+  return RESERVED_FIRST_COMPONENTS.has(component.toLowerCase())
+}
+
+/**
+ * The remote among `remotes` that a branch's first component is named after,
+ * compared without case, or null. `origin/main` made as a local branch is
+ * read by git ahead of the remote's `origin/main`.
+ */
+export function remoteShadowedBy(branch: string, remotes: readonly string[]): string | null {
+  if (!branch.includes('/')) return null
+  const first = branch.split('/', 1)[0]!.toLowerCase()
+  return remotes.find((remote) => remote.toLowerCase() === first) ?? null
 }
 
 /** The prefix a stored setting stands for: never chosen (`null`) reads as `agent`; empty is no prefix. */

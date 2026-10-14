@@ -2,7 +2,7 @@ import { lstat, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { GitCommandResult } from '../git'
 import { runGitCommand, type GitRunOptions } from '../git-run'
-import { branchNamespaceParents } from '../../shared/worktree-branch'
+import { branchNamespaceParents, isReservedFirstComponent, remoteShadowedBy } from '../../shared/worktree-branch'
 
 /**
  * The git a pool slot needs, and nothing a slot does not. Every call goes
@@ -456,4 +456,27 @@ export async function branchBlockedBy(run: SlotGitRunner, repoRoot: string, bran
     if (found.ok && found.stdout.trim().length > 0) return parent
   }
   return null
+}
+
+/**
+ * Why Studio will not make `branch` in this repository, when its first part
+ * would make another name mean two things, or null. A local `origin/main`
+ * hides the remote's `origin/main` (git reads a local branch first), so the
+ * cleanup's merge test and a fork base would read Studio's branch instead of
+ * the remote's; a first part git keeps for itself (`refs`, `remotes`, …)
+ * muddles its own names the same way. Refused rather than named otherwise,
+ * as a blocking branch is (`branchBlockedMessage`). Remotes are per
+ * repository, so this asks git for them: one process, only for a branch with a
+ * `/` in it.
+ */
+export async function branchShadowing(run: SlotGitRunner, repoRoot: string, branch: string): Promise<string | null> {
+  if (!branch.includes('/')) return null
+  const first = branch.split('/', 1)[0]!
+  if (isReservedFirstComponent(first)) {
+    return `Studio’s branch “${branch}” would start with “${first}”, a name git keeps for itself. Choose another branch prefix in Settings ▸ Worktrees, or another worktree name.`
+  }
+  const remotes = await run(repoRoot, ['remote'])
+  const remote = remotes.ok ? remoteShadowedBy(branch, remotes.stdout.split(/\r?\n/).filter(Boolean)) : null
+  if (!remote) return null
+  return `A branch “${branch}” would hide the branches of this repository’s remote “${remote}”, and git would read Studio’s branch in their place. Choose another branch prefix in Settings ▸ Worktrees, or another worktree name.`
 }

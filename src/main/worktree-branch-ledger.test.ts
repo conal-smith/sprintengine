@@ -138,3 +138,9 @@ test('a folder that is not a repository records nothing', async () => {
   await ledgerIn(dir).record(plain, 'feat/a')
   assert.equal((await ledgerIn(dir).branches(plain)).size, 0)
 })
+
+test('a read waits for what this process is still writing', async () => {
+  const ledger = ledgerIn(await dataDir())
+  void ledger.record(repo, 'feat/just-made')
+  assert.ok((await ledger.branches(repo)).has('feat/just-made'))
+})

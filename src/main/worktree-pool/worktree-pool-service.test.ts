@@ -270,6 +270,14 @@ test('a branch named like the first part of the prefix refuses the lease up fron
   assert.equal(await exists(join(container, 'pool-01')), false, 'no slot was made for a lease that cannot finish')
 })
 
+test('a prefix named after the repository’s remote refuses the lease up front, and makes no slot', async () => {
+  const harness = makeService({ branchPrefix: 'Origin' })
+  const leased = await harness.service.lease({ repoRoot: repo, name: 'main', owner: 'agent-main' })
+  assert.equal(leased.ok ? null : leased.reason, 'invalid-name')
+  assert.match(leased.ok ? '' : leased.message, /would hide the branches of this repository’s remote “origin”/u)
+  assert.equal(await exists(join(container, 'pool-01')), false, 'no slot was made for a lease that cannot finish')
+})
+
 /** A runner whose fetch and `worktree add` each take `delayMs` longer, logging when each starts and ends. */
 function slowRunner(delayMs: number, events: string[]): SlotGitRunner {
   const slow = (name: string) => (cwd: string, args: string[], options?: Parameters<SlotGitRunner>[2]) =>
