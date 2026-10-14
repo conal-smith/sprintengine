@@ -5,6 +5,7 @@ import type { Tone } from '../ui'
 import { SettingCard, SettingsSectionTitle } from './SettingsAtoms'
 import { listOpenProjectKnowledge, relativePathBetween, type ProjectKnowledgeEntry } from '../../utils/projectKnowledge'
 import { isAbsolutePath } from '../../store/slices/memorySlice'
+import { isImeKey } from '../../utils/imeKey'
 
 type RowStatus = MemoryRootStatus | null
 
@@ -287,6 +288,7 @@ export function ProjectKnowledgeList({ activeProjectRoot }: ProjectKnowledgeList
                     onChange={(event) => setDrafts((d) => ({ ...d, [entry.key]: event.target.value }))}
                     onBlur={(event) => commit(entry, event.target.value)}
                     onKeyDown={(event) => {
+                      if (isImeKey(event)) return
                       if (event.key === 'Enter') event.currentTarget.blur()
                     }}
                     placeholder="../ecosystem-knowledge"

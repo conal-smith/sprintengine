@@ -33,6 +33,7 @@ import {
   type PopoverProps,
 } from '../../ui'
 import type { AgentComposerConnector } from './useAgentComposer'
+import { isImeKey } from '../../../utils/imeKey'
 
 // The composer's one picker for what a new agent starts with (browser-pane
 // epic, child 7): the skills this workspace has, the skills it could have,
@@ -495,6 +496,7 @@ export function SkillsAndMcpsPicker({
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeKey(event)) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       event.stopPropagation()

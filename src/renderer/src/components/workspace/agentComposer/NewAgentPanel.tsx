@@ -42,12 +42,7 @@ import { workspaceRunsHere } from '../../../utils/attachedFiles'
 import { ComposerAttachmentStrip } from '../../panels/ComposerAttachmentStrip'
 import { ComposerDropOverlay } from '../../panels/agentChat/ComposerDropOverlay'
 import { attachmentRejection, MAX_ATTACHMENTS_PER_TURN } from '../../panels/agentChat/imageAttachments'
-import {
-  ComposerField,
-  isImeKey,
-  type ComposerFieldHandle,
-  type ComposerKeyEvent,
-} from '../../panels/agentChat/ComposerField'
+import { ComposerField, type ComposerFieldHandle, type ComposerKeyEvent } from '../../panels/agentChat/ComposerField'
 import { basename, pathJoin } from '../../../utils/paths'
 import { resolveWorkspaceWorktree } from '../../../utils/workspaceWorktree'
 import {
@@ -142,6 +137,7 @@ import { clientSupports } from '../../../clientCapabilities'
 import { keydownMatchesKeybindings } from '../../../commands/commandDispatcher'
 import { getEffectiveKeybindings, platformKeybindingsFromApiPlatform } from '../../../commands/effectiveKeybindings'
 import { renderKeybinding } from '../../../commands/keybindings'
+import { isImeKey } from '../../../utils/imeKey'
 
 export type NewAgentLaunch = AgentComposerConfirm & {
   /** The agent's startup prompt. Empty means "start with nothing typed". */

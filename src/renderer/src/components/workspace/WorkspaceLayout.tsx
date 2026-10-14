@@ -95,6 +95,7 @@ import {
   isMeshConversationPane,
   MESH_CONVERSATION_COMPONENT,
 } from '../../../../shared/tailnet-mesh'
+import { isImeKey } from '../../utils/imeKey'
 
 const EMPTY_LAYOUT_MODEL: IJsonModel = { global: {}, borders: [], layout: { type: 'row', children: [] } }
 
@@ -1146,6 +1147,7 @@ function WorkspaceLayoutBody({
             onDoubleClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 commitRename()

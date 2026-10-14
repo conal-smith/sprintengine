@@ -31,6 +31,7 @@ import { PairRequestCard } from '../remote/PairRequestCard'
 import { OutboundPairRequestCard } from '../remote/OutboundPairRequestCard'
 import { useTailnetPresence } from '../workspace/topbar/useTailnetPresence'
 import { hostPlatform } from '../../clientCapabilities'
+import { isImeKey } from '../../utils/imeKey'
 
 // Settings → Remote (remote-settings-rebuild): one switch and one list of
 // machines.
@@ -372,6 +373,7 @@ export function RemoteTailnetSettingsTab() {
               aria-label="Pairing link"
               autoFocus
               onKeyDown={(event) => {
+                if (isImeKey(event)) return
                 if (event.key === 'Enter') void pairByLink()
                 if (event.key === 'Escape') setPasteOpen(false)
               }}

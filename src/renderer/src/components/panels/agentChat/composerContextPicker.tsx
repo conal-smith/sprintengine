@@ -27,7 +27,8 @@ import {
   type SlashCommandMenuStatus,
 } from './slashCommandMenu'
 import { useConversationTransport } from './conversationTransport'
-import { isImeKey, type ComposerKeyEvent } from './ComposerField'
+import { type ComposerKeyEvent } from './ComposerField'
+import { isImeKey } from '../../../utils/imeKey'
 
 type TriggerRange = ComposerTrigger['range']
 
