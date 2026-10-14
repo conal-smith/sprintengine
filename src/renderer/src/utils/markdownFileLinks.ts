@@ -10,8 +10,8 @@
 // comes between them. Code, escaped brackets and images are left exactly as
 // written.
 
-const FENCE_OPENER = /^ {0,3}(`{3,}|~{3,})/u
-const FENCE_CLOSER = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u
+export const FENCE_OPENER = /^ {0,3}(`{3,}|~{3,})/u
+export const FENCE_CLOSER = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u
 // Two characters at least, so a Windows drive (`C:\…`) still reads as a path.
 const URL_SCHEME = /^[a-z][a-z0-9+.-]+:/iu
 
