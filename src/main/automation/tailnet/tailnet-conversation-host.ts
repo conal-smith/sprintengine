@@ -833,17 +833,14 @@ export function createConversationGatewayHost(
           ? { ok: true, notice: `${reason.replace(/\.$/u, '')}, so it is queued and goes when this turn ends.` }
           : holding
       }
-      if (steer) {
-        const live = sessionFor(key)
-        // Not asked of a provider that cannot take one: the runtime would only
-        // refuse it, after resolving its skills and mentions.
-        if (
-          live &&
-          (live.status === 'active' || live.status === 'awaiting_approval') &&
-          live.capabilities?.steer !== true
-        )
-          return Promise.resolve(holdInstead('This agent cannot take a message while it is working.'))
-      }
+      // Whether there is a turn for a steer to join. Without one it is an
+      // ordinary send, and waits its turn behind any send being prepared.
+      const live = steer ? sessionFor(key) : undefined
+      const joinsTurn = live?.status === 'active' || live?.status === 'awaiting_approval'
+      // Not asked of a provider that cannot take one: the runtime would only
+      // refuse it, after resolving its skills and mentions.
+      if (joinsTurn && live?.capabilities?.steer !== true)
+        return Promise.resolve(holdInstead('This agent cannot take a message while it is working.'))
       const stamp = fingerprint ? { commandFingerprint: fingerprint } : {}
       const execute = async (): Promise<ConversationGatewayCommandResult> => relay(await run())
       const run = async (): Promise<ConversationGatewayCommandResult | ConversationSessionActionResult> => {
@@ -974,9 +971,16 @@ export function createConversationGatewayHost(
               }
               while (spent.size > MAX_SPENT_UPLOAD_REFS) spent.delete(spent.keys().next().value!)
             }
-            // The turn could not take it (one awaiting an answer, one that
-            // ended on the way): it waits for the turn's end instead.
-            if (!sent.ok && steer && !landed) return holdInstead(sent.message)
+            if (!sent.ok && steer) {
+              // In the chat already, and its turn then failed: the message was
+              // taken, and what became of the turn is in the transcript. Said
+              // as a refusal, a client would send the same words again.
+              if (landed)
+                return { ok: true, notice: `It reached the agent, and then: ${sent.message.replace(/\.$/u, '')}.` }
+              // The turn could not take it (one awaiting an answer, one that
+              // ended on the way): it waits for the turn's end instead.
+              return holdInstead(sent.message)
+            }
             return sent
           }
           case 'interrupt':
@@ -1037,8 +1041,10 @@ export function createConversationGatewayHost(
       const id = JSON.stringify([key.workspaceId, key.agentId])
       // A steer goes beside the send whose turn it joins, which is still
       // waiting on that turn here: queued behind it, it would wait for the
-      // very end it was sent to beat.
-      const pending = steer ? undefined : sending.get(id)
+      // very end it was sent to beat. With no turn running yet, a send being
+      // prepared goes first, and the steer is busy behind it, as a send is.
+      const beside = steer && joinsTurn
+      const pending = beside ? undefined : sending.get(id)
       if (pending)
         return pending.commandId === commandId && pending.deviceId === deviceId
           ? pending.promise
@@ -1062,7 +1068,7 @@ export function createConversationGatewayHost(
         if (sending.get(id)?.promise === promise) sending.delete(id)
         if (hasImages) imageSends--
       })
-      if (!steer) sending.set(id, { commandId, deviceId, promise })
+      if (!beside) sending.set(id, { commandId, deviceId, promise })
       return promise
     },
   }

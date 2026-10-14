@@ -893,7 +893,7 @@ export class ConversationRuntime {
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }
     const steerRefused = isSessionBusy(session) ? steerRefusal(session, adapter) : null
-    if (steerRefused) return { ok: false, message: steerRefused }
+    if (steerRefused) return steerBusy(steerRefused)
 
     if (input.mode === 'plan' && !session.capabilities?.planMode)
       return { ok: false, message: 'This provider does not support plan mode.' }
@@ -1220,12 +1220,11 @@ export class ConversationRuntime {
     await session.continuationTail.catch(() => undefined)
     const handover = (this.emissionTails.get(path) ?? Promise.resolve())
       .catch(() => undefined)
-      .then(async (): Promise<ProviderTurn | string> => {
-        const refused =
-          session.status === 'stopped' || this.sessions.get(session.sessionId) !== session
-            ? 'Conversation is no longer available.'
-            : steerRefusal(session, adapter)
-        if (refused) return refused
+      .then(async (): Promise<ProviderTurn | ConversationSessionActionResult> => {
+        if (session.status === 'stopped' || this.sessions.get(session.sessionId) !== session)
+          return { ok: false, message: 'Conversation is no longer available.' }
+        const refused = steerRefusal(session, adapter)
+        if (refused) return steerBusy(refused)
         const running = session.providerTurn!
         const delivered = await adapter.steer!({
           ...session,
@@ -1233,7 +1232,7 @@ export class ConversationRuntime {
           message: input.providerMessage,
           ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         })
-        if (!delivered.ok) return delivered.message
+        if (!delivered.ok) return steerBusy(delivered.message)
         const storedAttachments = await this.saveAttachments(session, input.attachments)
         // The work since the running turn's first file change is one change,
         // under that turn's number; a turn with none yet takes the new one.
@@ -1270,13 +1269,13 @@ export class ConversationRuntime {
         return running
       })
     this.emissionTails.set(path, handover)
-    let outcome: ProviderTurn | string
+    let outcome: ProviderTurn | ConversationSessionActionResult
     try {
       outcome = await handover
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'The message could not be delivered.' }
     }
-    if (typeof outcome === 'string') return { ok: false, message: outcome }
+    if ('ok' in outcome) return outcome
     return outcome.ended
   }
 
@@ -4133,6 +4132,15 @@ function busyRefusal(session: RuntimeSession): ConversationSessionActionResult {
       ? 'Conversation turn is awaiting approval.'
       : 'Conversation turn is already in progress.',
   }
+}
+
+// A steer the running turn could not take ran nothing: it is answered as busy,
+// as a send that met a turn is, so a retry under the same command id is run
+// again rather than answered from a receipt of the refusal. Once the turn is
+// over that retry goes as the next turn, so a client sending again cannot
+// meet the same refusal for ever.
+function steerBusy(message: string): ConversationSessionActionResult {
+  return { ok: false, code: 'busy', retryAfterMs: TURN_BUSY_RETRY_MS, message }
 }
 
 function isSessionBusy(session: RuntimeSession): boolean {

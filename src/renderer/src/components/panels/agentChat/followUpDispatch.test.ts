@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
+import { renderKeybinding } from '../../../commands/keybindings'
 import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './followUpDispatch'
 
 const running = { busy: true, canSteer: true, sendNowAvailable: true }
@@ -47,13 +48,18 @@ test('the button names its action and the chord for the other', () => {
     behavior: 'queue',
     canSteer: true,
     sendNowAvailable: true,
-    clickModifier: '⌘',
-    shortcutLabel: '⌘↵',
+    clickModifier: 'Cmd',
+    shortcutLabel: 'Cmd+Enter',
   })
   assert.equal(shown.action, 'queue')
   assert.equal(shown.alternate, 'steer')
   assert.equal(shown.labels[shown.action], 'Queue message')
-  assert.equal(shown.tooltip, 'Click to queue, ⌘-click or ⌘↵ to steer')
+  assert.equal(shown.tooltip, 'Click to queue, Cmd-click or Cmd+Enter to steer')
+  assert.equal(
+    shown.heldTooltip,
+    'Cmd-click to steer, or let go of Cmd to queue',
+    'what a click does with the key down',
+  )
   const steering = followUpSendPresentation({
     behavior: 'steer',
     canSteer: true,
@@ -70,13 +76,13 @@ test('a provider that cannot steer is never offered a steer by the button', () =
     behavior: 'steer',
     canSteer: false,
     sendNowAvailable: true,
-    clickModifier: '⌘',
-    shortcutLabel: '⌘↵',
+    clickModifier: 'Cmd',
+    shortcutLabel: 'Cmd+Enter',
   })
   assert.equal(shown.action, 'queue')
   assert.equal(shown.alternate, 'stop-and-send')
   assert.doesNotMatch(shown.tooltip, /steer/)
-  assert.equal(shown.tooltip, 'Click to queue, ⌘-click or ⌘↵ to stop and send')
+  assert.equal(shown.tooltip, 'Click to queue, Cmd-click or Cmd+Enter to stop and send')
 })
 
 test('with no choice to make now, the button says the message queues and why', () => {
@@ -85,16 +91,19 @@ test('with no choice to make now, the button says the message queues and why', (
     canSteer: true,
     sendNowAvailable: false,
     unavailableReason: 'The turn is still starting.',
-    clickModifier: '⌘',
-    shortcutLabel: '⌘↵',
+    clickModifier: 'Cmd',
+    shortcutLabel: 'Cmd+Enter',
   })
   assert.equal(shown.action, 'queue')
   assert.equal(shown.alternate, 'queue')
   assert.equal(shown.tooltip, 'Queue: it goes when this turn ends. The turn is still starting.')
+  assert.equal(shown.heldTooltip, shown.tooltip, 'holding the key changes nothing where there is no choice')
 })
 
-test('the click modifier is the platform’s Primary key', () => {
-  assert.equal(primaryClickModifier('darwin'), '⌘')
+test('the click modifier is the platform’s Primary key, named as its shortcut labels name it', () => {
+  assert.equal(primaryClickModifier('darwin'), 'Cmd')
+  assert.ok(renderKeybinding('Primary+Enter', 'darwin').startsWith(`${primaryClickModifier('darwin')}+`))
+  assert.ok(renderKeybinding('Primary+Enter', 'windows').startsWith(`${primaryClickModifier('win32')}+`))
   assert.equal(primaryClickModifier('win32'), 'Ctrl')
   assert.equal(primaryClickModifier('linux'), 'Ctrl')
 })

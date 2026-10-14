@@ -329,7 +329,9 @@ its provider takes one, and each listed chat says whether it does as
 ordinary one; a turn that cannot take it has the desktop hold the message as a
 `queue` send is held, answered at once with a `notice`, or, for a message with
 `uploadIds` or `skills` that a held one cannot carry, refused `busy` as a
-mid-turn send always was. `steer` is never beside `queue`. All of it is
+mid-turn send always was, and run as the next turn when sent again once the
+turn is over. One that reached the chat is answered as taken, its turn's end
+in the `notice`, even when that turn then fails. `steer` is never beside `queue`. All of it is
 additive: a desktop without the capability drops `steer`, so the send is
 refused `busy` mid-turn as before, and a client sends it only where it is
 advertised. The Studio RPC advertises it too: its `conversation.send` reads

@@ -60,12 +60,21 @@ test('a send refused as busy writes no receipt, and the same id runs once the tu
   }
   assert.deepEqual(await receiptFiles(workspaceRoot), [], 'nothing was recorded for a send that ran nothing')
 
-  // A send made as a steer is not turned away up front: the steer path answers it.
+  // A send made as a steer is not turned away up front: the steer path answers
+  // it, and its refusal ran nothing either, so it is busy and kept nowhere.
   const steered = await runtime.sendTurn({ sessionId, message: 'steer', commandId: 'phone-steer', steer: true })
-  assert.notEqual('code' in steered ? steered.code : undefined, 'busy')
+  assert.equal(steered.ok, false)
+  assert.match(steered.ok ? '' : steered.message, /cannot take a message while it is working/)
+  assert.equal(steered.ok ? undefined : steered.code, 'busy')
 
   assert.ok((await runtime.respondToRequest({ sessionId, requestId, approved: true })).ok)
   const sent = await runtime.sendTurn({ sessionId, message: 'from the phone', commandId: 'phone-1' })
   assert.equal(sent.ok, true, 'the same id runs once the chat is free')
   assert.equal((await receiptFiles(workspaceRoot)).length > 0, true)
+
+  // The refused steer's id was never answered from a receipt: sent again once
+  // the chat is free, it runs, as the next turn.
+  assert.ok((await runtime.respondToRequest({ sessionId, requestId, approved: true })).ok)
+  const resteered = await runtime.sendTurn({ sessionId, message: 'steer', commandId: 'phone-steer', steer: true })
+  assert.equal(resteered.ok, true, resteered.ok ? '' : resteered.message)
 })

@@ -161,7 +161,7 @@ test('a steer the turn refuses on the way is held instead, with the reason', asy
   }
 })
 
-test('a steer that failed after it landed in the chat is not held a second time', async () => {
+test('a steer whose turn failed after it landed is answered as taken, and not held a second time', async () => {
   const f = await fixture()
   try {
     f.running()
@@ -192,7 +192,9 @@ test('a steer that failed after it landed in the chat is not held a second time'
       message: 'Keep it to one file',
       steer: true,
     })
-    assert.deepEqual(answer, { ok: false, message: 'The turn failed.' })
+    // Taken, so answered as taken: a refusal would have the device send the
+    // same words again, after they are already in the chat.
+    assert.deepEqual(answer, { ok: true, notice: 'It reached the agent, and then: The turn failed.' })
     assert.deepEqual(f.holds, [])
   } finally {
     await f.cleanup()
@@ -230,5 +232,120 @@ test('a host that holds nothing refuses a steer it cannot deliver busy, as a sen
     assert.equal(answer.code, 'busy')
   } finally {
     await f.cleanup()
+  }
+})
+
+test('a steer behind a send still being prepared waits its turn rather than overtaking it', async () => {
+  const f = await fixture()
+  try {
+    let release: () => void = () => undefined
+    const send = vi.spyOn(f.runtime, 'sendTurn').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ok: true, session: f.session })
+        }),
+    )
+    // No turn is running yet: the first send is still resuming the chat.
+    const first = f.host.command(f.key, 'phone', 'first', { kind: 'send', message: 'Fix the flaky test' })
+    const steered = await f.host.command(f.key, 'phone', 'steer-1', {
+      kind: 'send',
+      message: 'Keep it to one file',
+      steer: true,
+    })
+    assert.equal(steered.code, 'busy', 'sent again once the first is under way')
+    assert.equal(send.mock.calls.length, 1)
+    assert.equal(send.mock.calls[0]![0].message, 'Fix the flaky test')
+    release()
+    assert.equal((await first).ok, true)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+/**
+ * A chat whose turn stays open until the test ends it, on a provider that says
+ * it steers but takes no steer now: the real runtime, its receipts on disk.
+ */
+async function openTurn() {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-steer-receipts-'))
+  const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+  const base = createMockConversationProvider({ steer: true })
+  let end: () => void = () => undefined
+  const adapter = {
+    ...base,
+    sendTurn: (input: Parameters<typeof base.sendTurn>[0]) =>
+      (async function* () {
+        const event = (type: 'turn_started' | 'turn_completed') => ({
+          id: '',
+          sessionId: input.sessionId,
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+          providerId: input.providerId,
+          modelId: input.modelId,
+          createdAt: 1,
+          type,
+          payload: { turnId: input.turnId },
+        })
+        yield event('turn_started')
+        if (input.message.startsWith('hold')) await new Promise<void>((resolve) => (end = resolve))
+        yield event('turn_completed')
+      })(),
+  }
+  const runtime = new ConversationRuntime({
+    adapters: [adapter],
+    getProviderById: () => undefined,
+    resolveSkills: async ({ skills }) => ({ ids: skills.map((skill) => skill.id) }),
+  })
+  const host = createConversationGatewayHost(
+    runtime,
+    (id) => (id === key.workspaceId ? workspaceRoot : null),
+    () => [{ workspaceRoot, workspaceId: key.workspaceId }],
+    () => 'bypass',
+  )
+  const started = await runtime.startSession({
+    ...key,
+    providerId: adapter.id,
+    modelId: adapter.listModels()[0]!,
+    permissionPreset: 'bypass',
+  })
+  assert.ok(started.ok)
+  return {
+    key,
+    host,
+    runtime,
+    end: () => end(),
+    cleanup: async () => {
+      await runtime.shutdown()
+      await rm(workspaceRoot, { recursive: true, force: true })
+    },
+  }
+}
+
+test('a steer that can be neither taken nor held is sent again until its turn is over, then goes as the next', async () => {
+  const chat = await openTurn()
+  const asked: string[] = []
+  const stop = chat.runtime.onEvent((event) => {
+    if (event.type === 'user_message') asked.push(String(event.payload?.text))
+  })
+  try {
+    const running = chat.host.command(chat.key, 'phone', 'first', { kind: 'send', message: 'hold the turn' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const steer = { kind: 'send' as const, message: 'Keep it to one file', skills: ['review'], steer: true as const }
+    // The provider takes no message now, and one with skills cannot be held:
+    // busy, and busy again under the same id, never a refusal kept for it.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const refused = await chat.host.command(chat.key, 'phone', 'steer-1', steer)
+      assert.equal(refused.ok, false)
+      assert.equal(refused.code, 'busy')
+    }
+    chat.end()
+    assert.equal((await running).ok, true)
+    // The same id, once the turn is over, runs: the message goes as the next turn.
+    const sent = await chat.host.command(chat.key, 'phone', 'steer-1', steer)
+    assert.equal(sent.ok, true, sent.message ?? '')
+    assert.deepEqual(asked, ['hold the turn', 'Keep it to one file'])
+  } finally {
+    stop()
+    await chat.cleanup()
   }
 })

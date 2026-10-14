@@ -53,7 +53,10 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   cannot take it (a provider that cannot, a request the agent waits on, a
  *   turn that ended on the way) has the desktop hold it as a `queue` send is
  *   held, answered at once with a `notice` saying so; one carrying `uploadIds`
- *   or `skills`, which a held message cannot, is refused `busy` instead. Never
+ *   or `skills`, which a held message cannot, is refused `busy` instead, and
+ *   sent again goes as the next turn once the turn is over. One that reached
+ *   the chat is answered as taken even if its turn then fails, with that in
+ *   its `notice`, so a client never sends the same words twice. Never
  *   beside `queue`. Needs `conversation-steer-sends`; a desktop without it
  *   drops the member, and a send made while a turn runs is refused `busy`.
  * - `cancelQueued` takes back a message the desktop holds (`queued` frames

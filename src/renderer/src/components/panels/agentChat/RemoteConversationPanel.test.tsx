@@ -104,6 +104,7 @@ async function mountRemote({
   modelSwitch = false,
   permissionModes = false,
   queuedSends = false,
+  steerSends = false,
   capabilities = thread.capabilities,
 }: {
   access: 'read' | 'operate'
@@ -112,6 +113,7 @@ async function mountRemote({
   modelSwitch?: boolean
   permissionModes?: boolean
   queuedSends?: boolean
+  steerSends?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
 }) {
@@ -152,6 +154,7 @@ async function mountRemote({
       modelSwitch,
       permissionModes,
       queuedSends,
+      steerSends,
     })),
     onMeshConversationSession: vi.fn(
       (input: { key: MeshConversationKey }, receive: (frame: MeshConversationFrame) => void) => {
@@ -174,6 +177,7 @@ async function mountRemote({
         message: string
         attachments?: unknown[]
         queue?: boolean
+        steer?: boolean
       }): Promise<{ ok: true } | { ok: false; code: string; message: string }> => ({ ok: true }),
     ),
     meshConversationCancelQueued: vi.fn(async (_input: { key: MeshConversationKey; queuedId: string }) => ({
@@ -699,6 +703,45 @@ test('a link that drops does not list the machine; one that comes back live does
     )
     expect(reads()).toBe(before + 1)
   } finally {
+    await chat.unmount()
+  }
+})
+
+test('a steer to a chat over there clears once its message is in, and a failure after that brings back nothing', async () => {
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  useWorkspaceStore.getState().setFollowUpBehavior('steer')
+  const chat = await mountRemote({
+    access: 'operate',
+    steerSends: true,
+    capabilities: { ...thread.capabilities!, steer: true },
+  })
+  let settleFirst: (result: { ok: false; code: string; message: string }) => void = () => undefined
+  chat.api.meshConversationSend.mockImplementationOnce(
+    () => new Promise((resolve) => (settleFirst = resolve as typeof settleFirst)),
+  )
+  try {
+    // The card is answered: the turn runs on, and can take a message.
+    await chat.act(async () =>
+      chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) }),
+    )
+    await chat.act(async () => chat.type('Keep it to one file'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({ key, message: 'Keep it to one file', steer: true })
+    // Its message arrives over there, with no id of this window's on it.
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('turn_completed', { turnId: 'a', steered: true }) })
+      chat.emit({ type: 'event', event: event('user_message', { turnId: 'b', text: 'Keep it to one file' }) })
+      chat.emit({ type: 'event', event: event('turn_started', { turnId: 'b' }) })
+    })
+    // Delivered, so the next message may steer too rather than wait behind it.
+    await chat.act(async () => chat.type('And the docs'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({ key, message: 'And the docs', steer: true })
+    // The turn it opened fails: the words are in the chat, not back in the composer.
+    await chat.act(async () => settleFirst({ ok: false, code: 'unavailable', message: 'The turn failed.' }))
+    expect(chat.draft()).toBe('')
+  } finally {
+    useWorkspaceStore.getState().setFollowUpBehavior('queue')
     await chat.unmount()
   }
 })

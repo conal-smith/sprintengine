@@ -1,7 +1,7 @@
 // The round send while the agent works: it queues the message or steers the
 // running turn with it, as the person's choice says, and a Primary-click does
-// the other (followUpDispatch.ts). Holding Primary turns the button to what a
-// click would then do, so the click is never a guess. The held key is tracked
+// the other (followUpDispatch.ts). Holding Primary turns the button, its name
+// and its tooltip to what a click would then do, so the click is never a guess. The held key is tracked
 // here, in the button alone, so pressing it re-renders nothing else.
 
 import React, { useEffect, useRef, useState } from 'react'
@@ -56,7 +56,7 @@ export function FollowUpSendButton({
   const held = usePrimaryHeld(platform === 'darwin' ? 'metaKey' : 'ctrlKey')
   const action = held ? presentation.alternate : presentation.action
   return (
-    <Tooltip content={presentation.tooltip} placement="top">
+    <Tooltip content={held ? presentation.heldTooltip : presentation.tooltip} placement="top">
       <SendButton
         size="sm"
         aria-label={presentation.labels[action]}

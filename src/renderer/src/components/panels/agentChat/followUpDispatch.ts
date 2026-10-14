@@ -60,6 +60,8 @@ export type FollowUpSendPresentation = {
   /** The button's accessible name for an action. */
   labels: Record<FollowUpAction, string>
   tooltip: string
+  /** The tooltip while Primary is held, when a click does `alternate`. */
+  heldTooltip: string
 }
 
 /**
@@ -72,7 +74,7 @@ export function followUpSendPresentation(input: {
   sendNowAvailable: boolean
   /** Why the turn cannot be acted on now, where it cannot. */
   unavailableReason?: string
-  /** The platform's Primary key as a click modifier: `⌘` or `Ctrl`. */
+  /** The platform's Primary key as a click modifier, as its shortcut labels name it: `Cmd` or `Ctrl`. */
   clickModifier: string
   /** Primary+Enter as the platform writes it. */
   shortcutLabel: string
@@ -87,14 +89,25 @@ export function followUpSendPresentation(input: {
     }) as FollowUpAction
   const action = resolve(false)
   const alternate = resolve(true)
-  const tooltip =
-    action === alternate
-      ? ['Queue: it goes when this turn ends.', input.unavailableReason].filter(Boolean).join(' ')
-      : `Click to ${VERBS[action]}, ${input.clickModifier}-click or ${input.shortcutLabel} to ${VERBS[alternate]}`
-  return { action, alternate, labels: LABELS, tooltip }
+  if (action === alternate) {
+    const tooltip = ['Queue: it goes when this turn ends.', input.unavailableReason].filter(Boolean).join(' ')
+    return { action, alternate, labels: LABELS, tooltip, heldTooltip: tooltip }
+  }
+  return {
+    action,
+    alternate,
+    labels: LABELS,
+    tooltip: `Click to ${VERBS[action]}, ${input.clickModifier}-click or ${input.shortcutLabel} to ${VERBS[alternate]}`,
+    // The key is down: a click now does the other, and letting go undoes it.
+    heldTooltip: `${input.clickModifier}-click to ${VERBS[alternate]}, or let go of ${input.clickModifier} to ${VERBS[action]}`,
+  }
 }
 
-/** The platform's Primary key as a click modifier. */
+/**
+ * The platform's Primary key as a click modifier, in the words the app's
+ * shortcut labels use for it (`renderKeybinding`), so "Cmd-click or
+ * Cmd+Enter" names the key one way.
+ */
 export function primaryClickModifier(platform: string | undefined): string {
-  return platform === 'darwin' ? '⌘' : 'Ctrl'
+  return platform === 'darwin' ? 'Cmd' : 'Ctrl'
 }

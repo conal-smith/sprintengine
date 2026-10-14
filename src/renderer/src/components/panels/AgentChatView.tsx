@@ -361,6 +361,12 @@ const COMPOSER_CLASS = 'max-h-[280px] min-h-[40px] w-full'
 // appears when there is one to repeat.
 type ComposerActionError = string | { message: string; retry: QueuedTurn }
 
+// A message's words as the runtime records them: one kind of line break, no
+// space at either end.
+function steeredText(text: string): string {
+  return text.replace(/\r\n?/gu, '\n').trim()
+}
+
 function composerErrorMessage(error: ComposerActionError | null): string | null {
   return typeof error === 'string' ? error : (error?.message ?? null)
 }
@@ -573,6 +579,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // Steers whose `user_message` is in the conversation while their send has
   // not settled yet.
   const landedSteerIdsRef = useRef(new Set<string>())
+  // A steer to a chat on a paired machine has no echoed id to land by: its
+  // words, and how many of the chat's messages were already in when it went,
+  // are what its own message is known by when it arrives.
+  const steerLandingRef = useRef<{ id: string; text: string; before: number } | null>(null)
   // The composer's right-click menu (1793); null when closed. Opening it snapshots
   // the click point, the field's selection, and the clipboard, so the menu's
   // enable states describe the moment the user asked for it.
@@ -2020,6 +2030,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     const optimistic = transport.capabilities.optimisticTurns
     setActionError(null)
     setSteeringTurnId(localTurnId)
+    steerLandingRef.current = optimistic
+      ? null
+      : {
+          id: localTurnId,
+          text: steeredText(text),
+          before: shapeEntries.filter((entry) => entry.kind === 'user' && entry.seq !== undefined).length,
+        }
     if (optimistic) {
       pendingUserScrollIdRef.current = `user:${localTurnId}`
       setUserTurns((current) => [
@@ -2081,6 +2098,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       requeue(err instanceof Error ? err.message : 'Could not send the message.')
     } finally {
       landedSteerIdsRef.current.delete(localTurnId)
+      if (steerLandingRef.current?.id === localTurnId) steerLandingRef.current = null
       setSteeringTurnId((current) => (current === localTurnId ? null : current))
     }
   }
@@ -2091,9 +2109,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // until its send settles, so a late failure knows the message is already in.
   useEffect(() => {
     if (steeringTurnId === null) return
-    const landed = shapeEntries.some(
-      (entry) => entry.kind === 'user' && entry.id === steeringTurnId && entry.seq !== undefined,
-    )
+    const landing = steerLandingRef.current?.id === steeringTurnId ? steerLandingRef.current : null
+    const landed = landing
+      ? shapeEntries
+          .filter((entry) => entry.kind === 'user' && entry.seq !== undefined)
+          .slice(landing.before)
+          .some((entry) => entry.kind === 'user' && steeredText(entry.text) === landing.text)
+      : shapeEntries.some((entry) => entry.kind === 'user' && entry.id === steeringTurnId && entry.seq !== undefined)
     if (!landed) return
     landedSteerIdsRef.current.add(steeringTurnId)
     setSteeringTurnId(null)
