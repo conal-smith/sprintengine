@@ -20,6 +20,31 @@ export type CommandLabel = { label: string; program: string; kind: CommandKind; 
 type Token = { value: string; operator: boolean; redirect?: boolean }
 const SEPARATORS = new Set(['&&', '||', ';', '|', '&', '\n'])
 const SETUP = new Set(['cd', 'pushd', 'export', 'set', 'source', '.', 'unset', 'ulimit', 'umask'])
+// The shell's own grammar and no-op builtins, which are never the program that
+// ran: "Ran if" or "Ran [" says nothing, so a command led by one is a command.
+const SHELL_SYNTAX = new Set([
+  'if',
+  'then',
+  'elif',
+  'else',
+  'fi',
+  'for',
+  'while',
+  'until',
+  'do',
+  'done',
+  'case',
+  'esac',
+  'select',
+  'function',
+  '[',
+  '[[',
+  '((',
+  'test',
+  ':',
+  'true',
+  'false',
+])
 const READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl'])
 const SEARCHERS = new Set(['rg', 'grep', 'ag', 'ack'])
 const LISTERS = new Set(['ls', 'tree', 'exa', 'eza'])
@@ -266,6 +291,10 @@ function classify(
   if (!args.length) return labeled('Ran command', '', 'run')
   const program = programName(args[0])
   const lower = program.toLowerCase()
+  // `name() { …; }` defines a function; nothing ran yet.
+  if (SHELL_SYNTAX.has(lower) || program.endsWith('()')) return labeled('Ran command', '', 'run')
+  if (depth < 3 && lower === 'eval' && args.length > 1)
+    return labelCommandInner(args.slice(1).join(' '), depth + 1, shell)
 
   if (depth < 3 && ['bash', 'sh', 'zsh', 'fish', 'powershell', 'pwsh'].includes(lower)) {
     const flag = args.findIndex((arg) => ['-c', '-lc', '-Command', '-command'].includes(arg))
@@ -450,12 +479,34 @@ function classify(
   return labeled(`Ran ${program || 'command'}`, program, 'run')
 }
 
+/**
+ * The command inside a subshell `( … )`, a group `{ …; }` or a negation `! …`,
+ * which run what they hold: `(cd apps && npm test)` ran npm, not "(cd".
+ * `(( … ))` is arithmetic, and is left for `SHELL_SYNTAX` to name.
+ */
+function unwrapGrouping(command: string): string {
+  let text = command.trim()
+  for (let loops = 0; loops < 4; loops++) {
+    if (text.startsWith('(') && !text.startsWith('((') && text.endsWith(')')) text = text.slice(1, -1).trim()
+    else if (/^\{\s/u.test(text) && /;\s*\}$/u.test(text))
+      text = text
+        .slice(1)
+        .replace(/;\s*\}$/u, '')
+        .trim()
+    else if (/^!\s/u.test(text)) text = text.slice(1).trim()
+    else break
+  }
+  return text
+}
+
 function labelCommandInner(
   input: string | string[],
   depth: number,
   shell: 'posix' | 'powershell' | 'cmd',
 ): CommandLabel {
-  const tokens = Array.isArray(input) ? input.map((value) => ({ value, operator: false })) : tokenize(input)
+  const tokens = Array.isArray(input)
+    ? input.map((value) => ({ value, operator: false }))
+    : tokenize(shell === 'posix' ? unwrapGrouping(input) : input)
   const segment = firstSegment(tokens)
   return classify(commandWords(segment), segment, depth, shell)
 }

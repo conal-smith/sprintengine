@@ -229,3 +229,37 @@ test('redirections, runner options and package manager subcommands are not argum
   assert.equal(labelCommand('yarn').kind, 'install')
   assert.equal(labelCommand('npm exec vitest').kind, 'test')
 })
+
+test('shell grammar is never named as the program that ran', () => {
+  for (const command of [
+    'if test -f package.json; then npm test; fi',
+    '[ -f package.json ]',
+    '[[ -f package.json ]]',
+    'test -f package.json',
+    'for file in *; do echo "$file"; done',
+    'while true; do sleep 1; done',
+    'until false; do sleep 1; done',
+    'case $name in test) npm test;; esac',
+    'select item in one two; do echo "$item"; done',
+    'function check() { npm test; }',
+    'check() { npm test; }',
+    '(( count += 1 ))',
+    ':',
+    'true',
+  ]) {
+    assert.deepEqual(labelCommand(command), { label: 'Ran command', program: '', kind: 'run' }, command)
+  }
+})
+
+test('a subshell, a group, a negation or an eval is labelled by the command it runs', () => {
+  for (const command of ['(npm test)', '(cd apps && npm test)', '{ npm test; }', '! npm test', "eval 'npm test'"]) {
+    assert.deepEqual(
+      labelCommand(command),
+      { label: 'Ran npm script test', program: 'npm', kind: 'test', target: 'test' },
+      command,
+    )
+  }
+  // The words only look like grammar inside an argument.
+  assert.equal(labelCommand('rg -n "if|for|while" src').program, 'rg')
+  assert.equal(labelCommand('node -e "if (true) console.log(1)"').program, 'node')
+})
