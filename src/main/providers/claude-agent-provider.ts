@@ -2518,6 +2518,12 @@ export function mapSdkMessage(
     // those calls still waiting for their results (claude-task-list.ts).
     claudeTasks?: ClaudeTaskList
     taskToolCalls?: Map<string, { name: string; input: Record<string, unknown> }>
+    // The model refused and the CLI answered on its fallback model, already
+    // noted (it may say so mid-turn and again as the turn ends); and why the
+    // model refused when no fallback ran, for the turn's end to say. Both
+    // cleared at every result.
+    refusalFallbackNoted?: boolean
+    refusalExplanation?: string
   },
   message: Record<string, unknown>,
   // exchangeContinues: a `result` that answers only part of what the child was
@@ -2661,6 +2667,30 @@ export function mapSdkMessage(
         const compacting = message.status === 'compacting'
         if (compacting && !state.compacting) events.push(eventFor(state, 'context_compacting', { turnId }))
         state.compacting = compacting
+        break
+      }
+      // The model refused, and the CLI answered again on its fallback model.
+      // The reply that follows is that model's, so the transcript says so, in
+      // the CLI's own words. When the swap is the session's (not only a
+      // subagent's or a side question's answer), the context window is read
+      // as the fallback model's from here.
+      if (message.subtype === 'model_refusal_fallback') {
+        const fallback = typeof message.fallback_model === 'string' ? message.fallback_model : ''
+        if (fallback && message.scope !== 'local') state.contextModel = fallback
+        const said = typeof message.content === 'string' ? message.content.trim() : ''
+        const output = said || (fallback ? `The model declined to answer, so ${fallback} answered instead.` : '')
+        if (output && !state.refusalFallbackNoted) {
+          state.refusalFallbackNoted = true
+          events.push(eventFor(state, 'command_output', { turnId, adapterNote: true, output }))
+        }
+        break
+      }
+      // The model refused and no fallback ran. The message has no words of its
+      // own; the API's explanation, when it gave one, goes with the turn's end.
+      if (message.subtype === 'model_refusal_no_fallback') {
+        const explanation =
+          typeof message.api_refusal_explanation === 'string' ? message.api_refusal_explanation.trim() : ''
+        if (explanation) state.refusalExplanation = explanation
         break
       }
       // The CLI summarised the conversation to free context, on /compact or
@@ -2922,6 +2952,9 @@ export function mapSdkMessage(
       state.commandOutputShown = false
       state.compactedInExchange = false
       state.compacting = false
+      const refusalExplanation = state.refusalExplanation
+      state.refusalExplanation = undefined
+      state.refusalFallbackNoted = false
       const refusals = [...(state.usageRefusals?.values() ?? [])]
       const heardRefusal = refusals.length > 0 || state.assistantRateLimited === true
       const authFailed = state.assistantAuthFailed === true
@@ -3044,11 +3077,16 @@ export function mapSdkMessage(
             reason: typeof message.subtype === 'string' && message.subtype !== 'success' ? message.subtype : 'provider',
             message: missingForkPoint
               ? 'Claude Code could not go back to that earlier message because its session no longer has it, so this message was not answered. Send it again to continue from the latest point of the conversation; the agent will still remember the messages after the one you edited.'
-              : reported || 'Claude Code reported an error for this turn.',
+              : [reported || 'Claude Code reported an error for this turn.', refusalExplanation]
+                  .filter(Boolean)
+                  .join('\n\n'),
             ...providerCursorPayload(state),
           }),
         )
       } else {
+        // A refusal the CLI ended as an answer still says why.
+        if (refusalExplanation)
+          events.push(eventFor(state, 'command_output', { turnId, adapterNote: true, output: refusalExplanation }))
         // The CLI's `result` is the text of the turn's last assistant message.
         const text = typeof message.result === 'string' && message.result.trim() ? message.result : undefined
         events.push(

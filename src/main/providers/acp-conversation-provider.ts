@@ -359,6 +359,20 @@ export function acpToolResultImages(content: readonly unknown[], rawOutput: unkn
 }
 
 /**
+ * What is kept of a tool call between its updates, for the next one to build
+ * on: its name, kind, title, input and what was read off them (its subagent
+ * lane, its todo mark). Not its content or raw output: each update's are read
+ * from that update alone, and kept they would hold every file the turn read
+ * and every screenshot's base64 until the turn ends.
+ */
+export function acpRememberedToolCall(tool: Record<string, unknown>): Record<string, unknown> {
+  const kept = { ...tool }
+  delete kept.content
+  delete kept.rawOutput
+  return kept
+}
+
+/**
  * What a tool call's raw output says, with its pictures' bytes left out: the
  * tool's own text when it has one, else the raw output with each picture
  * attachment's data URL dropped. Output with no pictures is unchanged.
@@ -417,6 +431,34 @@ const STDERR_TAIL_CHARS = 4000
 function withStderrTail(message: string, stderrTail: string): string {
   const tail = cliStderrSummary(stderrTail)
   return tail ? `${message} (${tail})` : message
+}
+
+// What Cursor's agent says, as its reply, when it has lost its connection to
+// Cursor's servers: the error it caught, or its generic apology, and nothing
+// else. It then ends the prompt with an ordinary stop reason.
+const CURSOR_TRANSPORT_LINES = [
+  /^(?:Error: )?(?:RetriableError|ConnectError): \S/,
+  /^Something went wrong communicating with the server\. Please try again\.$/,
+]
+const STACK_FRAME_LINE = /^\s+at \S/
+
+/**
+ * The reply itself when Cursor's whole reply is one of its connection
+ * diagnostics (with the stack frames it may print under one), else undefined.
+ * Such a turn failed: it never reached the model, and recorded as an answer it
+ * would read as the agent's reply and be carried into the next turn's
+ * history. Any other line, prose included, makes it an answer, so a reply that
+ * explains an error is never taken for one.
+ */
+export function cursorTransportFailure(reply: string): string | undefined {
+  const message = reply.trim()
+  let diagnostic = false
+  for (const line of message.split('\n')) {
+    if (!line.trim() || (diagnostic && STACK_FRAME_LINE.test(line))) continue
+    if (!CURSOR_TRANSPORT_LINES.some((pattern) => pattern.test(line.trim()))) return undefined
+    diagnostic = true
+  }
+  return diagnostic ? message : undefined
 }
 
 type State = {
@@ -804,7 +846,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       // `todowrite` with a count ("3 todos"), which names no todo tool.
       const todo = prior?.todo === true || acpTodoTool(value.title)
       const tool = { ...prior, ...value, ...(lane.subagentLane ? { lane } : {}), ...(todo ? { todo } : {}) }
-      state.toolCalls.set(value.toolCallId, tool)
+      state.toolCalls.set(value.toolCallId, acpRememberedToolCall(tool))
       const content = value.content ?? []
       const diff = content.find((entry) => entry.type === 'diff')
       if (!prior || value.rawInput !== undefined || diff)
@@ -1381,8 +1423,14 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
               inputTokens: result.usage.inputTokens,
               outputTokens: result.usage.outputTokens,
             })
-          if (!state.cancelled && result.stopReason !== 'cancelled')
-            state.history.push({ user: input.message, assistant: state.assistantText })
+          const stopped = state.cancelled || result.stopReason === 'cancelled'
+          const transportFailure =
+            profile.cli === 'cursor' && !stopped ? cursorTransportFailure(state.assistantText) : undefined
+          if (transportFailure) {
+            emit(state, 'turn_failed', { message: transportFailure })
+            return
+          }
+          if (!stopped) state.history.push({ user: input.message, assistant: state.assistantText })
           // What the turn spent, as the agent's own protocol counts it.
           const usage = result.usage
             ? turnUsageOf({
@@ -1395,8 +1443,8 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           const reply = state.reply.trim() ? state.reply : ''
           emit(
             state,
-            state.cancelled || result.stopReason === 'cancelled' ? 'turn_failed' : 'turn_completed',
-            state.cancelled || result.stopReason === 'cancelled'
+            stopped ? 'turn_failed' : 'turn_completed',
+            stopped
               ? { reason: 'interrupted' }
               : {
                   stopReason: result.stopReason,

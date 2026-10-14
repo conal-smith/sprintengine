@@ -684,7 +684,11 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
         },
       ) => {
         if (input.type !== 'keyDown') return
-        if (tab.agentInputDepth === 0) humanTookOver(tab)
+        // A key the agent sent (browser_press) is the page's, chords included:
+        // its Cmd+W is meant for the page under test, and as the app's own it
+        // would close a tab of the app's or reload the page under the agent.
+        if (tab.agentInputDepth > 0) return
+        humanTookOver(tab)
         const primary = process.platform === 'darwin' ? input.meta : input.control
         if (!primary) return
         const key = input.key.toLowerCase()
@@ -982,7 +986,13 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
     /** Bracket the agent's synthetic input so it does not read as a human taking over. */
     noteAgentInput(tabId: string, delta: 1 | -1): void {
       const tab = requireTab(tabId)
-      if (tab) tab.agentInputDepth = Math.max(0, tab.agentInputDepth + delta)
+      if (!tab) return
+      const wasDriving = tab.agentInputDepth > 0
+      tab.agentInputDepth = Math.max(0, tab.agentInputDepth + delta)
+      // The app menu's accelerators answer a guest's keys before the page
+      // does; while the agent types they stay out of it, as the chords above do.
+      const driving = tab.agentInputDepth > 0
+      if (driving !== wasDriving && !tab.wc.isDestroyed()) tab.wc.setIgnoreMenuShortcuts(driving)
     },
 
     /** Tabs a workspace owns, for the agent tools (browser-tools child). */

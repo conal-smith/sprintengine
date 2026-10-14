@@ -568,3 +568,54 @@ test('a download the agent’s tab saved is in its action history with the path,
   assert.equal(entry?.status, 'failed')
   assert.equal(entry?.error, 'The download was interrupted.')
 })
+
+test('a tab whose page is destroyed is forgotten, though its debugger can no longer be read', async () => {
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async () => ({}),
+  })
+  // As Electron's: reading `debugger` off destroyed contents throws.
+  let destroyed = false
+  const wc = Object.assign(new EventEmitter(), {
+    isDestroyed: () => destroyed,
+    isDevToolsOpened: () => false,
+  })
+  Object.defineProperty(wc, 'debugger', {
+    get() {
+      if (destroyed) throw new Error('Object has been destroyed')
+      return debuggerStub
+    },
+  })
+  let tell: (tabId: string, download: BrowserDownload) => void = () => {}
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: (listener) => {
+      tell = listener
+      return () => {}
+    },
+    notePointer: () => {},
+  })
+  assert.equal((await control.console('t1', {})).ok, true)
+  tell('t1', { url: 'http://localhost:5173/report.csv', path: '/Users/dev/report.csv', state: 'started' })
+  assert.equal(control.actionsOf('t1').length, 1)
+  assert.equal(debuggerStub.listenerCount('message'), 1)
+
+  destroyed = true
+  assert.doesNotThrow(() => wc.emit('destroyed'))
+  assert.deepEqual(control.actionsOf('t1'), [], 'the session is gone with its page')
+  assert.equal(debuggerStub.listenerCount('message'), 0, 'its listeners were taken off the debugger it held')
+  assert.equal(debuggerStub.listenerCount('detach'), 0)
+})

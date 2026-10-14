@@ -123,6 +123,11 @@ type Target = { ref?: string; selector?: string }
 type Session = {
   tabId: string
   wc: WebContents
+  /**
+   * The tab's debugger, read once as the session opens. `wc.debugger` throws
+   * once the contents are destroyed, which is where the session is disposed.
+   */
+  dbg: WebContents['debugger']
   console: ConsoleEntry[]
   network: NetworkEntry[]
   /** Newest last; agent actions and the person's takeovers, so an `interrupted` explains itself. */
@@ -389,9 +394,11 @@ export function createBrowserControl(manager: BrowserControlManager) {
       existing = undefined
     }
     if (!existing) {
+      const dbg = wc.debugger
       const created: Session = {
         tabId,
         wc,
+        dbg,
         console: [],
         network: [],
         actions: [],
@@ -407,30 +414,37 @@ export function createBrowserControl(manager: BrowserControlManager) {
         created.attached = false
       }
       const onDestroyed = () => {
-        created.dispose()
         if (sessions.get(tabId) === created) sessions.delete(tabId)
+        created.dispose()
       }
-      wc.debugger.on('message', onMessage)
-      wc.debugger.on('detach', onDetach)
+      dbg.on('message', onMessage)
+      dbg.on('detach', onDetach)
       wc.once('destroyed', onDestroyed)
       created.dispose = () => {
-        wc.debugger.removeListener('message', onMessage)
-        wc.debugger.removeListener('detach', onDetach)
-        wc.removeListener('destroyed', onDestroyed)
+        // Also run as the contents are destroyed, when what is left of them
+        // may throw: nothing here may stop the rest of a teardown.
+        try {
+          dbg.removeListener('message', onMessage)
+          dbg.removeListener('detach', onDetach)
+          wc.removeListener('destroyed', onDestroyed)
+        } catch {
+          // Gone with the contents.
+        }
       }
       sessions.set(tabId, created)
       existing = created
     }
-    if (!existing.attached || !wc.debugger.isAttached()) {
+    const { dbg } = existing
+    if (!existing.attached || !dbg.isAttached()) {
       if (wc.isDevToolsOpened()) {
         return fail('cdp', 'DevTools is open on this tab; close it to let the agent drive the page.')
       }
       try {
-        if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-        await wc.debugger.sendCommand('Runtime.enable')
-        await wc.debugger.sendCommand('Log.enable')
-        await wc.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 })
-        await wc.debugger.sendCommand('Page.enable')
+        if (!dbg.isAttached()) dbg.attach('1.3')
+        await dbg.sendCommand('Runtime.enable')
+        await dbg.sendCommand('Log.enable')
+        await dbg.sendCommand('Network.enable', { maxPostDataSize: 0 })
+        await dbg.sendCommand('Page.enable')
         existing.attached = true
       } catch (error) {
         return fail('cdp', `Could not attach to the page: ${error instanceof Error ? error.message : String(error)}`)
@@ -558,7 +572,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
   ): Promise<{ value: unknown; exception: string | null }> {
     stopIfAbandoned()
     const result = (await withDeadline(
-      s.wc.debugger.sendCommand('Runtime.evaluate', {
+      s.dbg.sendCommand('Runtime.evaluate', {
         expression,
         returnByValue: true,
         awaitPromise,
@@ -666,7 +680,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
     stopIfAbandoned()
     manager.noteAgentInput(s.tabId, 1)
     try {
-      await s.wc.debugger.sendCommand(method, params)
+      await s.dbg.sendCommand(method, params)
     } finally {
       manager.noteAgentInput(s.tabId, -1)
     }
@@ -1011,7 +1025,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       if (!open) return fail('no_dialog', 'No dialog is open on this tab.')
       try {
         await withDeadline(
-          s.wc.debugger.sendCommand('Page.handleJavaScriptDialog', {
+          s.dbg.sendCommand('Page.handleJavaScriptDialog', {
             accept: answer.accept,
             ...(answer.promptText !== undefined ? { promptText: answer.promptText } : {}),
           }),

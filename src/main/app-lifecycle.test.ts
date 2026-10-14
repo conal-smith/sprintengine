@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { standIn } from '../../tests/stand-in'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
 
 test('app-lifecycle', async () => {
   // The quit path, with Electron replaced. Nothing here opens a window or reaches
@@ -11,6 +14,8 @@ test('app-lifecycle', async () => {
 
   const appEvents = new Map<string, Handler[]>()
   let exitCalls: number[] = []
+  // The app's paths, logs among them: a quit that gives up on a leg says so there.
+  const appPath = mkdtempSync(join(tmpdir(), 'sprintengine-lifecycle-test-'))
 
   const mockApp = {
     isPackaged: false,
@@ -33,8 +38,8 @@ test('app-lifecycle', async () => {
     exit: (code: number) => {
       exitCalls.push(code)
     },
-    getPath: () => '/tmp/sprintengine-lifecycle-test',
-    getAppPath: () => '/tmp/sprintengine-lifecycle-test',
+    getPath: () => appPath,
+    getAppPath: () => appPath,
     setAppLogsPath: () => undefined,
     setAppUserModelId: () => undefined,
     setAsDefaultProtocolClient: () => true,
@@ -292,12 +297,57 @@ test('app-lifecycle', async () => {
     assert.equal(serverUpdateDrainBudgetMs(0), 6_000)
     assert.equal(serverUpdateDrainBudgetMs(4_000), 4_500)
     assert.equal(serverUpdateDrainBudgetMs(30_000), 500)
+
+    // A leg that never settles does not keep the app from quitting: past the
+    // quit's budget it exits, and the diagnostics name the leg it left.
+    appEvents.clear()
+    exitCalls = []
+    const { QUIT_SHUTDOWN_BUDGET_MS } = await import('./app-lifecycle')
+    let hung = false
+    registerAppLifecycle({
+      diagnosticsEnabled: false,
+      allowMultipleInstances: true,
+      terminalRuntime: {
+        shutdown: () => {
+          hung = true
+          return new Promise<void>(() => {})
+        },
+      },
+      updateService: {
+        checkForUpdates: async () => undefined,
+        setPrepareForInstall: () => undefined,
+      } as unknown as Parameters<typeof registerAppLifecycle>[0]['updateService'],
+      handleAuthCallback: () => undefined,
+    } as unknown as Parameters<typeof registerAppLifecycle>[0])
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      appEvents.get('before-quit')?.[0]?.({ preventDefault: () => undefined })
+      for (let pass = 0; pass < 50 && !hung; pass += 1) await new Promise((resolve) => setImmediate(resolve))
+      assert.ok(hung, 'the terminals leg is running')
+      vi.advanceTimersByTime(QUIT_SHUTDOWN_BUDGET_MS - 1)
+      for (let pass = 0; pass < 20; pass += 1) await new Promise((resolve) => setImmediate(resolve))
+      assert.deepEqual(exitCalls, [], 'the quit waits for the leg within its budget')
+      vi.advanceTimersByTime(1)
+    } finally {
+      vi.useRealTimers()
+    }
+    await vi.waitFor(() => assert.deepEqual(exitCalls, [0], 'past the budget the app exits anyway'))
+    const { getDiagnosticsLogDirectory } = await import('./diagnostics-service')
+    const notes = readdirSync(getDiagnosticsLogDirectory())
+      .filter((name) => name.endsWith('.jsonl'))
+      .flatMap((name) => readFileSync(join(getDiagnosticsLogDirectory(), name), 'utf8').trim().split('\n'))
+      .map((line) => JSON.parse(line) as { title: string; message: string })
+    assert.ok(
+      notes.some((note) => note.message.includes('"terminals" shutdown step still running')),
+      'the diagnostics name the leg the quit left running',
+    )
   }
 
   const suiteRun = main()
     .then(() => console.log('app-lifecycle: all assertions passed'))
     .finally(() => {
       restoreModules()
+      rmSync(appPath, { recursive: true, force: true })
     })
 
   await suiteRun
