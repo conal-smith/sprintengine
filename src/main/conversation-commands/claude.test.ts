@@ -168,7 +168,12 @@ test("the probe asks with a chat's settings and folder, no turn, no hooks and no
     settingSources: ['user'],
     settings: { disableAllHooks: true },
     strictMcpConfig: true,
-    env: { PATH: '/usr/bin', HOME: '/Users/dev' },
+    env: {
+      PATH: '/usr/bin',
+      HOME: '/Users/dev',
+      CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
+      CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
+    },
   })
   expect((session.options?.abortController as AbortController).signal.aborted).toBe(true)
   expect(session.closed).toBe(1)

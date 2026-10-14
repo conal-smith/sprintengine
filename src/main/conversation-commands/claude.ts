@@ -203,7 +203,7 @@ export async function probeClaudeConversationCommands(
       (deps.resolveExecutable ?? defaultResolveExecutable)(input.cliRuntimes),
       (deps.env ?? defaultEnv)(),
     ])
-    const { noTurns } = await import('../model-discovery/agent-sdk-probe')
+    const { noTurns, probeEnv } = await import('../model-discovery/agent-sdk-probe')
     session = query({
       prompt: noTurns(abort.signal),
       options: {
@@ -212,7 +212,7 @@ export async function probeClaudeConversationCommands(
         settingSources: ['user'],
         settings: { disableAllHooks: true },
         strictMcpConfig: true,
-        env,
+        env: probeEnv(env),
         abortController: abort,
       },
     })
