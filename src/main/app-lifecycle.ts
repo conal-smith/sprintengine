@@ -728,6 +728,8 @@ export function registerAppLifecycle({
   // which drives the progress window and the diagnostics timings. Joined late
   // (the shutdown already running), it still hears the legs that are left.
   let shutdownObserver: ((leg: ShutdownLegReport) => void) | null = null
+  // The leg running now, for the quit that gives up waiting on it to name.
+  let runningShutdownLeg: string | null = null
   const runShutdown = (observer?: (leg: ShutdownLegReport) => void): Promise<void> => {
     if (observer) shutdownObserver = observer
     if (shutdownRun) return shutdownRun
@@ -851,6 +853,7 @@ export function registerAppLifecycle({
     const shutdown = async () => {
       for (const [index, [name, task]] of legs.entries()) {
         const started = Date.now()
+        runningShutdownLeg = name
         let failed = false
         // One failing leg must not cost the ones after it: best-effort by
         // design, the process is leaving either way.
@@ -870,6 +873,7 @@ export function registerAppLifecycle({
         // seconds without them, and the progress window has to keep painting.
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
+      runningShutdownLeg = null
     }
     shutdownRun = shutdown()
     return shutdownRun
@@ -900,8 +904,23 @@ export function registerAppLifecycle({
     if (exitScheduled) return
     exitScheduled = true
     // Joins a shutdown "Restart to update" already ran, so the updater's own
-    // quit exits at once instead of running the legs a second time.
-    void runShutdown().finally(() => {
+    // quit exits at once instead of running the legs a second time. A leg
+    // that never settles (a child that ignores its signal, a write to a disk
+    // gone away) must not keep a quit the person asked for from happening, so
+    // past the budget the app leaves anyway, saying which leg it left behind.
+    void settleWithin(runShutdown(), QUIT_SHUTDOWN_BUDGET_MS).then(async (outcome) => {
+      if (outcome === 'timed-out') {
+        const leg = runningShutdownLeg ?? 'unknown'
+        await settleWithin(
+          writeDiagnosticLog({
+            level: 'warning',
+            source: 'workspace',
+            title: 'Quit did not finish shutting down',
+            message: `The app quit after ${QUIT_SHUTDOWN_BUDGET_MS / 1000} s with the "${leg}" shutdown step still running; the steps after it did not run.`,
+          }),
+          QUIT_DIAGNOSTIC_WRITE_MS,
+        )
+      }
       app.exit(0)
     })
   }
@@ -936,6 +955,16 @@ export function registerAppLifecycle({
     installFallback.unref()
   })
 }
+
+/**
+ * How long a quit waits for the ordered shutdown before the app exits anyway.
+ * Generous: the legs normally take a second or two, and the server's drain
+ * alone may take 8 s. Only a leg that has hung reaches it, and the legs run in
+ * order of importance, so what it cuts short is the least missed.
+ */
+export const QUIT_SHUTDOWN_BUDGET_MS = 25_000
+/** How long that exit waits for the note saying which leg hung to be written. */
+const QUIT_DIAGNOSTIC_WRITE_MS = 1_000
 
 /**
  * How long "Restart to update" waits for the ordered shutdown before handing
