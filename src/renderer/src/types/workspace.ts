@@ -724,13 +724,13 @@ export type WorkspacePaneTab = {
   document?: { path: string }
   // Browser only: the device toolbar's viewport; absent means fill.
   viewport?: BrowserViewport
-  // Browser only: where the floating player sits, in viewport pixels. Persisted
+  // Browser and canvas only: where the floating player sits, in viewport pixels. Persisted
   // — the rect is the thing worth remembering across a restart. Keyed on the
   // TAB rather than the workspace so two agents floating previews do not fight
   // over one rectangle: a floating player is keyed per thread, and a tab is this
   // app's equivalent grain now that agents hold tabs of their own.
   float?: { x: number; y: number; width: number; height: number }
-  // Browser only: whether the tab is floating right now. Session-only —
+  // Browser and canvas only: whether the tab is floating right now. Session-only —
   // partialize strips it, because a cold start showing a collapsed pane and a
   // window floating over the workspace is a confusing first frame, and the
   // spec only promises the RECT across restarts.

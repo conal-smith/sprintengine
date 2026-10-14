@@ -13,6 +13,9 @@ import { agentBrowserTracker } from './browser/agentBrowserFloat'
 // an agent taking a page in a closed pane floats it by itself
 // (useAgentBrowserAutoFloat).
 //
+// A Canvas tab floats the same way when an agent draws on its board with the
+// pane closed, as a picture of the drawing (CanvasTab) rather than the editor.
+//
 // The player is NOT a new surface. It is the same panel element the pane
 // renders, restyled to `position: fixed` — see the comment at the restyle in
 // `WorkspacePaneBody` — and the page inside it scaled down to fit (BrowserTab).
@@ -271,7 +274,7 @@ export function FloatingPlayerChrome({ workspaceId, tab, rect }: ChromeProps) {
           <Tooltip content="Close" placement="bottom">
             <CloseIconButton
               size="3xs"
-              aria-label="Close the floating browser"
+              aria-label={tab.kind === 'canvas' ? 'Close the floating board' : 'Close the floating browser'}
               onPointerDown={stopDrag}
               onDoubleClick={stopDrag}
               onClick={close}

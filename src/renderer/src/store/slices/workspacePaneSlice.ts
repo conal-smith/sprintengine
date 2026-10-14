@@ -104,6 +104,16 @@ export const FLOAT_MIN_WIDTH = 240
 export const FLOAT_MIN_HEIGHT = 160
 export const FLOAT_MAX_WIDTH = 1200
 export const FLOAT_MAX_HEIGHT = 900
+
+/**
+ * The kinds the floating player can show: a page, and a board an agent is
+ * drawing on. Both keep their panel mounted while the pane is closed, which is
+ * what the player restyles; a board floats as a picture of its drawing rather
+ * than its editor (CanvasTab).
+ */
+export function paneKindFloats(kind: WorkspacePaneTabKind): boolean {
+  return kind === 'browser' || kind === 'canvas'
+}
 // A favicon data URL past this is not a favicon; the main process caps what it
 // sends at the same size.
 const MAX_FAVICON_LENGTH = 12_000
@@ -149,9 +159,6 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
     }
     const viewport = normalizeBrowserViewport(raw.viewport)
     if (viewport && viewport.mode !== 'fill') tab.viewport = viewport
-    const float = normalizeFloatRect(raw.float)
-    if (float) tab.float = float
-    if (raw.floating === true) tab.floating = true
     if (
       typeof raw.faviconUrl === 'string' &&
       raw.faviconUrl.startsWith('data:image/') &&
@@ -159,6 +166,11 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
     ) {
       tab.faviconUrl = raw.faviconUrl
     }
+  }
+  if (paneKindFloats(tab.kind)) {
+    const float = normalizeFloatRect(raw.float)
+    if (float) tab.float = float
+    if (raw.floating === true) tab.floating = true
   }
   if (tab.kind === 'terminal') {
     if (typeof raw.terminalId !== 'string' || raw.terminalId.trim().length === 0) return null
@@ -541,7 +553,7 @@ export function createWorkspacePaneSlice(set: PaneSliceSet): WorkspacePaneSliceA
         const tab = pane.tabs.find((candidate) => candidate.id === tabId)
         // A tab in a pop-out window is already off the pane: it has no
         // docked panel to restyle into a player.
-        if (!tab || tab.kind !== 'browser' || tab.poppedOut) return
+        if (!tab || !paneKindFloats(tab.kind) || tab.poppedOut) return
         if (floating) {
           tab.floating = true
           // No rect is fabricated here: the window's size is not known at this

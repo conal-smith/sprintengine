@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react'
 
 import { getRendererHost, selectModuleEnabled } from '../../../modules'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
+import { paneKindFloats } from '../../../store/slices/workspacePaneSlice'
 import type { WorkspacePaneTab } from '../../../types/workspace'
 import { SuspenseFallback } from '../../ui/SuspenseFallback'
 import { resolveWorkspaceWorktree } from '../../../utils/workspaceWorktree'
@@ -369,7 +370,7 @@ export function WorkspacePaneBody({
   collapsed = false,
   onDiffCountChange,
 }: WorkspacePaneBodyProps) {
-  const floatingTab = tabs.find((tab) => tab.floating && tab.kind === 'browser') ?? null
+  const floatingTab = tabs.find((tab) => tab.floating && paneKindFloats(tab.kind)) ?? null
   const floatRect = useFloatRect(workspaceId, floatingTab)
   const recordingTabIds = useRecordingTabIds()
   return (
