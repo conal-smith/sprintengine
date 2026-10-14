@@ -135,6 +135,7 @@ import { cliResumeCapabilities } from './cli-resume-capabilities'
 import { createAgentChangelistFeed } from './agent-changelist-feed'
 import { createTerminalPullRequests, type TerminalPullRequests } from './terminal-pull-requests'
 import { createBrowserManager } from './browser/browser-manager'
+import { setAfterWindowZoom } from './app-menu'
 import { createBrowserControl } from './browser/browser-control'
 import { createBrowserRecorder } from './browser/browser-recorder'
 import { createHostRecordingEncoder } from './browser/recording-encoder'
@@ -1421,6 +1422,7 @@ export function createAppServices(
   })
   const browserControl = createBrowserControl(browserManager)
   browserManager.onUnregister((tabId) => browserControl.forget(tabId))
+  setAfterWindowZoom((contents) => browserManager.reapplyGuestZoom(contents))
   // Recording a tab to video for the agents' `browser.record_*` tools: the
   // window hosting the tab captures and encodes it, and the file goes into the
   // calling agent's workspace (docs/design/browser-recording.md).

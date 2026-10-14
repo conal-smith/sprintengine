@@ -1126,6 +1126,19 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       return true
     },
 
+    /**
+     * Put each tab hosted by `host` back at its own zoom. Electron carries a
+     * change to the embedding window's zoom into every guest it hosts, so the
+     * app's View ▸ Zoom would zoom the pages too, and leave each tab's zoom
+     * reading what it no longer is; the app menu calls this after each one.
+     */
+    reapplyGuestZoom(host: WebContents): void {
+      for (const tab of tabs.values()) {
+        if (tab.host !== host || tab.wc.isDestroyed()) continue
+        tab.wc.setZoomFactor(tab.state.zoomFactor)
+      }
+    },
+
     zoomStep(tabId: string, direction: 1 | -1 | 0): boolean {
       const tab = requireTab(tabId)
       if (!tab) return false
