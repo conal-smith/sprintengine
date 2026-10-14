@@ -37,7 +37,7 @@ export function tailnetShareLedgerWrite(servePort: number, localPort: number): I
   return {
     kind: 'tailnet-share',
     path: `tailscale-serve:https:${servePort}`,
-    marker: `http://127.0.0.1:${localPort}`,
+    marker: `http://localhost:${localPort}`,
     hostId: 'local',
     detail: { servePort, localPort },
   }

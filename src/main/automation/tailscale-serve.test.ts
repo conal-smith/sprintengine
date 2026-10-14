@@ -140,8 +140,9 @@ test('tailscale-serve', async () => {
     assert.equal(result.share.url, 'https://studio-mac.tail1a2b.ts.net:8443/')
     assert.equal(result.share.localPort, 5173)
     // `--bg` is what makes the mapping outlive this process; the proxy target
-    // stays loopback so the dev server is never asked to rebind.
-    assert.deepEqual(args[0], ['serve', '--bg', '--https=8443', 'http://127.0.0.1:5173'])
+    // stays loopback so the dev server is never asked to rebind, and is
+    // `localhost` so a server listening on `::1` alone is reached as well.
+    assert.deepEqual(args[0], ['serve', '--bg', '--https=8443', 'http://localhost:5173'])
   })
 
   check('no tailnet means no share, and it says so', async () => {
