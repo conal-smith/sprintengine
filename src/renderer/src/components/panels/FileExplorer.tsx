@@ -55,6 +55,7 @@ import { WorkingMark } from '../ui/WorkingMark'
 import { useAgentFileTrail } from './useAgentFileTrail'
 import { showToast } from '../../store/toastStore'
 import { useConfirmDialog } from '../ui/ConfirmDialog'
+import { isImeKey } from '../../utils/imeKey'
 
 const EMPTY_EXPANDED_PATHS: string[] = []
 const EMPTY_TREE_ROWS: TreeRow[] = []
@@ -1673,6 +1674,7 @@ function ExplorerTree({
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           event.stopPropagation()
+          if (isImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             void commitRename()

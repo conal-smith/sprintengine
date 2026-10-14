@@ -85,6 +85,7 @@ import {
   type InstalledSkillsPanelHandle,
 } from '../palette/InstalledSkillsPanel'
 import { OVERLAY_SHELL_CHROME_CLASS, overlayWidthStyle } from './tokens'
+import { isImeKey } from '../../utils/imeKey'
 
 // The four canonical source groups the global-search palette organizes results
 // into (T6), plus the two disk-backed groups: Files (name matches, plus the
@@ -1298,6 +1299,7 @@ export default function CommandPalette({
   }, [selected])
 
   const handleKey = (event: React.KeyboardEvent) => {
+    if (isImeKey(event)) return
     // The inventory's rows are the panel's; only the step back to All below is
     // the palette's own in that tab.
     if (scope === 'skills' && event.key !== 'Backspace') {

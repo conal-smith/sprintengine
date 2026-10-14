@@ -181,6 +181,7 @@ import {
   WorkspaceContextMenu,
   workspaceTypeRowActions,
 } from './sidebar/contextMenus'
+import { isImeKey } from '../../utils/imeKey'
 
 export { TerminalLineView } from './sidebar/TerminalLineView'
 
@@ -4474,6 +4475,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             onBlur={commitRename}
             onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter') commitRename()
               if (event.key === 'Escape') setRenamingId(null)
               event.stopPropagation()

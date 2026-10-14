@@ -88,7 +88,7 @@ export async function heldAction(
         if (!aborted.ok)
           return (outcome = { ok: false, message: aborted.message ?? `Could not abort the ${operation}.` })
       }
-      const reset = await ctx.git(slot.path, ['reset', '--hard', '--quiet', 'HEAD'])
+      const reset = await ctx.git(slot.path, ['reset', '--hard', '--quiet', 'HEAD', '--'])
       if (!reset.ok) return (outcome = { ok: false, message: reset.message ?? 'git reset failed.' })
       const cleaned = await ctx.git(slot.path, ['clean', '-fd', '--quiet'])
       if (!cleaned.ok) return (outcome = { ok: false, message: cleaned.message ?? 'git clean failed.' })

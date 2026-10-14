@@ -403,13 +403,28 @@ test('git-changelists', async () => {
 
   async function assertPatches(repo: string): Promise<void> {
     // The argv is the contract: `--` guards a path that looks like a flag,
-    // `:(literal)` guards a path that looks like a glob, and `--cached` is the
-    // only difference between the two sides of the index.
-    assert.deepEqual(gitPatchArgs(['a.ts'], false), ['diff', '--no-color', '--binary', '--', ':(literal)a.ts'])
+    // `:(literal)` guards a path that looks like a glob, `--cached` is the
+    // only difference between the two sides of the index, and the pins keep a
+    // person's diff settings out of the patch.
+    assert.deepEqual(gitPatchArgs(['a.ts'], false), [
+      'diff',
+      '--no-color',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      '--binary',
+      '--',
+      ':(literal)a.ts',
+    ])
     assert.deepEqual(gitPatchArgs(['a.ts'], true), [
       'diff',
       '--cached',
       '--no-color',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
       '--binary',
       '--',
       ':(literal)a.ts',
@@ -418,6 +433,10 @@ test('git-changelists', async () => {
       'diff',
       '--no-index',
       '--no-color',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
       '--binary',
       '--',
       '/dev/null',

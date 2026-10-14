@@ -437,7 +437,6 @@ test('each editor is offered only when its CLI or its app is installed', () => {
 
 test('the newer editors resolve through the CLI shim each one installs', () => {
   const shims = {
-    cursor: 'cursor',
     windsurf: 'windsurf',
     zed: 'zed',
     sublime: 'subl',
@@ -500,6 +499,14 @@ test('Kiro is asked for its editor by name, ahead of the folder', () => {
     kind: 'command',
     command: '/usr/local/bin/kiro',
     args: ['ide'],
+  })
+})
+
+test('Cursor is asked for its editor window, not its Agents window', () => {
+  assert.deepEqual(resolveFolderOpenLauncher('cursor', editorProbe('linux', ['/usr/local/bin/cursor'])), {
+    kind: 'command',
+    command: '/usr/local/bin/cursor',
+    args: ['--classic'],
   })
 })
 

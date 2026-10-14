@@ -108,6 +108,7 @@ import { subscribeAppUpdateState, useAppUpdateStore } from '../../store/appUpdat
 import type { SettingsUpdateBadge } from '../../utils/settingsUpdateBadges'
 import { sourceUpdateCadenceLine, type SkillRepoTransport } from '../../../../shared/skills'
 import { clientSupports, hostPlatform } from '../../clientCapabilities'
+import { isImeKey } from '../../utils/imeKey'
 
 interface Props {
   onClose: () => void
@@ -351,6 +352,7 @@ function CommittedNumberField({
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={(event) => {
+          if (isImeKey(event)) return
           if (event.key === 'Enter') event.currentTarget.blur()
         }}
         size="md"

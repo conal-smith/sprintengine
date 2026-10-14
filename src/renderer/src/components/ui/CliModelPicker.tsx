@@ -24,6 +24,7 @@ import {
   type CliRuntimePickerOption,
 } from './cliRuntimeCatalog'
 import type { AgentCli } from '../../types/workspace'
+import { isImeKey } from '../../utils/imeKey'
 
 export type { CliRuntimeOption, CliRuntimePickerOption } from './cliRuntimeCatalog'
 
@@ -364,6 +365,7 @@ export function CliModelPopoverSurface({
   }
 
   const onQueryKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (isImeKey(event)) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       consume(event)
       if (visible.length === 0) return

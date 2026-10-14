@@ -98,7 +98,7 @@ export async function getGitCommitGraph(repoRoot: string, options: GitGraphOptio
 
     const totalCount =
       Number.parseInt(
-        (await runGit(repoRoot, ['rev-list', '--branches', '--remotes', '--tags', 'HEAD', '--count'])).trim(),
+        (await runGit(repoRoot, ['rev-list', '--branches', '--remotes', '--tags', '--count', 'HEAD', '--'])).trim(),
         10,
       ) || 0
 
@@ -133,6 +133,7 @@ export async function getGitCommitGraph(repoRoot: string, options: GitGraphOptio
       `--max-count=${limit}`,
       '--date=format:%Y-%m-%d %H:%M',
       '--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%P%x1f%D%x1f%s%x1e',
+      '--',
     ])
 
     const commits = stdout

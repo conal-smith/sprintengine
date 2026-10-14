@@ -65,6 +65,7 @@ import {
   type WorktreeProjectView,
   type WorktreeRow,
 } from './worktreesSettingsModel'
+import { isImeKey } from '../../utils/imeKey'
 
 /**
  * Settings ▸ Worktrees (owner, 2026-10-05): every worktree Studio's agents
@@ -1207,6 +1208,7 @@ function DependencyInstallSettings({
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter') commit()
             }}
             className="w-64 font-mono"
@@ -1260,6 +1262,7 @@ function BranchPrefixSetting() {
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
+            if (isImeKey(event)) return
             if (event.key === 'Enter') commit()
           }}
           className="w-48 font-mono"

@@ -23,6 +23,7 @@ import { FOCUS_RING_CLASS } from './tokens'
 import { Spinner } from './Spinner'
 import { StarGlyph } from './StarGlyph'
 import { TruncatedText } from './TruncatedText'
+import { isImeKey } from '../../utils/imeKey'
 
 // One inventory, every door: the searchable workspace-skill list behind the
 // composer Skills chip, the `/` and `$` type-aheads, the terminal panel-header
@@ -417,6 +418,7 @@ export function SkillPickerPopover({
   const clampedActive = Math.min(activeIndex, Math.max(0, groups.flat.length - 1))
 
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeKey(event)) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveIndex(Math.min(clampedActive + 1, groups.flat.length - 1))

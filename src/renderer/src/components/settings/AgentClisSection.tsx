@@ -37,6 +37,7 @@ import { CliInstallControl } from './CliInstallControl'
 import { modelDiscoveryLine } from './modelDiscoveryLine'
 import { SettingCard, SettingsRow, SettingsSectionTitle } from './SettingsAtoms'
 import type { SettingsUpdateBadge } from '../../utils/settingsUpdateBadges'
+import { isImeKey } from '../../utils/imeKey'
 
 // The bare shell runtime is the machine's own `sh`, not a CLI this app
 // installs or updates. Asked `--version`, bash answers with its whole banner
@@ -790,6 +791,7 @@ function CliCredentialRow({ pluginId, displayName, label }: { pluginId: string; 
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
+                if (isImeKey(event)) return
                 if (event.key === 'Enter') {
                   event.preventDefault()
                   void save()
@@ -876,6 +878,7 @@ function PluginModelSettings({
           placeholder="Add model id and press Enter"
           onChange={(event) => setDraftModel(event.target.value)}
           onKeyDown={(event) => {
+            if (isImeKey(event)) return
             if (event.key === 'Enter') {
               event.preventDefault()
               addDraftModel()

@@ -33,6 +33,7 @@ import {
   readCachedProviderList,
   writeCachedProviderList,
 } from './providerSettings'
+import { isImeKey } from '../../utils/imeKey'
 
 // The field is `ui/Input`; this module used to carry a copy of SettingsPanel's
 // `INPUT_CLASS` under the same name. `font-mono` stays because an API
@@ -311,6 +312,7 @@ function ProviderRow({
                   value={draft}
                   onChange={(event) => onDraftChange(event.target.value)}
                   onKeyDown={(event) => {
+                    if (isImeKey(event)) return
                     if (event.key === 'Enter' && draft.trim() && !busy) onSave()
                   }}
                   placeholder="Paste API key"

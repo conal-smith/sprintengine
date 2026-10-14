@@ -7,12 +7,15 @@ import {
   BrowserWindow,
   clipboard,
   ClipboardItem,
+  Menu,
   session,
   shell,
   webContents,
+  type ContextMenuParams,
   type Session,
   type WebContents,
 } from 'electron'
+import { guestContextMenuTemplate } from './guest-context-menu'
 import {
   BROWSER_PARTITION,
   BROWSER_PICK_CROP_PADDING,
@@ -576,6 +579,22 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
     }
   }
 
+  /**
+   * The page's own right-click menu (`guest-context-menu.ts`). The page is
+   * focused first: Cut, Copy and Paste act on whichever contents has focus,
+   * and a right-click on a page you had not clicked into leaves the app's.
+   */
+  function showGuestMenu(contents: WebContents, params: ContextMenuParams, window: BrowserWindow | null): void {
+    if (contents.isDestroyed()) return
+    contents.focus()
+    const template = guestContextMenuTemplate(params, contents, (text) => clipboard.writeText(text))
+    Menu.buildFromTemplate(template).popup({
+      ...(window && !window.isDestroyed() ? { window } : {}),
+      // The frame that was clicked, so a menu over an iframe acts on it.
+      ...(params.frame ? { frame: params.frame } : {}),
+    })
+  }
+
   function attach(tab: BrowserTab): () => void {
     const { wc } = tab
     const disposers: (() => void)[] = []
@@ -723,9 +742,14 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       if (isHttp) void wc.loadURL(details.url)
       return { action: 'deny' }
     })
-    on('did-create-window', (child: { webContents: WebContents }) => {
+    on('did-create-window', (child: BrowserWindow) => {
       child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+      // A sign-in popup is a page too: right-click there gets the same menu.
+      child.webContents.on('context-menu', (_event, params) => showGuestMenu(child.webContents, params, child))
     })
+    on('context-menu', (_event: unknown, params: ContextMenuParams) =>
+      showGuestMenu(wc, params, BrowserWindow.fromWebContents(tab.host)),
+    )
     on('destroyed', () => {
       tabs.delete(tab.tabId)
       deps.machinePartitions?.tabClosed(tab.tabId)

@@ -21,6 +21,7 @@ import { GitHubRepoPicker, toRepoListState, type GitHubRepoListState } from '../
 import { cloneParentFor, describeCloneProgress, draftNamesRepo, resolveCloneSource } from '../newWorkspace/githubClone'
 import { suggestedWorkspaceFolderName } from '../newWorkspace/folderCreation'
 import { basename } from '../../../utils/paths'
+import { isImeKey } from '../../../utils/imeKey'
 
 // The New-chat project selector's body (remote-sessions-ux /
 // project-selector-sources): one surface that searches the projects, browses
@@ -252,6 +253,7 @@ export function ProjectSourceMenu({
               setCloneError(null)
             }}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter' && canClone) {
                 event.preventDefault()
                 void runClone()

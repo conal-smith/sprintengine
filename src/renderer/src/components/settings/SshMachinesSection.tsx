@@ -22,6 +22,7 @@ import { sshMachineRef } from '../../hooks/useMachineIdentity'
 import { MachineGhRow } from './MachineGhRow'
 import { MachineMarkPicker, MachineRowMark } from './MachineMarkPicker'
 import { SettingCard, SettingsRow, SettingsSectionTitle, SettingToggle } from './SettingsAtoms'
+import { isImeKey } from '../../utils/imeKey'
 
 // Settings › Machines › SSH machines (phase 8): the machines a person reaches
 // over SSH, each a Studio server of its own. One field adds one: an alias
@@ -355,6 +356,7 @@ function AddSshMachine({ api }: { api: Api }): React.JSX.Element {
               setChecked(null)
             }}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter' && text.trim()) void check(text)
             }}
             placeholder="build-box"

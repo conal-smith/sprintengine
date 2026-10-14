@@ -7,7 +7,7 @@ import { runTailscale, runTailscaleResult, type TailscaleRun } from './tailscale
 // was the write side.
 //
 // The mechanism is `tailscale serve`, and the reason it is the right one is
-// binding. A dev server listens on 127.0.0.1 by default; the usual advice is to
+// binding. A dev server listens on loopback by default; the usual advice is to
 // pass `--host` so it binds 0.0.0.0, which also exposes it to whatever coffee-shop
 // LAN the laptop is on. `tailscale serve` never asks the dev server to move:
 // tailscaled proxies to loopback from inside the machine and publishes the result
@@ -171,7 +171,10 @@ export async function shareLocalPort(
   deps: TailscaleServeDeps = {},
 ): Promise<TailscaleShareResult> {
   const run = deps.run ?? runTailscaleResult
-  const localHost = input.localHost ?? '127.0.0.1'
+  // `localhost`, not `127.0.0.1`: a dev server bound to "localhost" by a Node
+  // release that prefers IPv6 listens on `::1` alone, and tailscaled (Go)
+  // dials every address the name resolves to where a literal tries only one.
+  const localHost = input.localHost ?? 'localhost'
   const dnsName = await readSelfDnsName(deps)
   if (!dnsName) {
     return { ok: false, diagnostic: 'unavailable', message: describeServeDiagnostic('unavailable') }

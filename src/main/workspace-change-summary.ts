@@ -203,10 +203,10 @@ async function readUncommitted(
   // back paths that no other surface here agrees with, and `--find-renames` so a
   // moved file is one `updated` rather than a removed plus an added.
   const [diff, nameStatus] = await Promise.all([
-    runGitCommand(cwd, [...diffFlags('--numstat'), 'HEAD']),
+    runGitCommand(cwd, [...diffFlags('--numstat'), 'HEAD', '--']),
     // The status half of the same diff, asked beside it rather than after it:
     // two spawns that overlap cost one spawn's latency.
-    runGitCommand(cwd, [...diffFlags('--name-status'), 'HEAD']),
+    runGitCommand(cwd, [...diffFlags('--name-status'), 'HEAD', '--']),
   ])
   // Includes the unborn HEAD, where `git diff HEAD` has nothing to resolve. The
   // span already reports that repo's staged work against the empty tree, and a

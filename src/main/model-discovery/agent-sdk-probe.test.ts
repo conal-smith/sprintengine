@@ -19,7 +19,7 @@ vi.mock('../cli-runtime-install', () => ({
 }))
 import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk'
 
-import { mapAgentSdkModels, probeAgentSdkModels, type AgentSdkProbeDeps } from './agent-sdk-probe'
+import { mapAgentSdkModels, probeAgentSdkModels, probeEnv, type AgentSdkProbeDeps } from './agent-sdk-probe'
 import { CliModelProbeError } from './probe-types'
 
 const ROWS = JSON.parse(
@@ -86,7 +86,12 @@ test('the query sends no turn, loads no settings or tools, and is closed once an
   assert.deepEqual(options.tools, [])
   assert.deepEqual(options.settingSources, [])
   assert.equal(options.pathToClaudeCodeExecutable, '/Users/dev/.local/bin/claude')
-  assert.deepEqual(options.env, { PATH: '/usr/bin' })
+  // No IDE lookup: a probe answers one question and exits.
+  assert.deepEqual(options.env, {
+    PATH: '/usr/bin',
+    CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
+    CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
+  })
   assert.equal((options.abortController as AbortController).signal.aborted, true, 'the backstop fired too')
   // The input stream ends once the probe is torn down, so nothing waits on it.
   const iterator = session.prompt![Symbol.asyncIterator]()
@@ -122,5 +127,18 @@ test('an SDK failure, a WSL runtime and an unresolved path are sentences', async
 test('the probe runs on the CLI login: no API key, token or base URL reaches the child', async () => {
   const { deps, session } = fakeSdk(async () => ROWS)
   await probeAgentSdkModels(CONTEXT, { loadQuery: deps.loadQuery })
-  assert.deepEqual((session.options as { env: Record<string, string> }).env, { PATH: '/usr/bin', HOME: '/Users/dev' })
+  assert.deepEqual((session.options as { env: Record<string, string> }).env, {
+    PATH: '/usr/bin',
+    HOME: '/Users/dev',
+    CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
+    CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
+  })
+})
+
+test('a probe drops the terminal override and turns the IDE lookup off', () => {
+  assert.deepEqual(probeEnv({ PATH: '/usr/bin', FORCE_CODE_TERMINAL: '1', CLAUDE_CODE_AUTO_CONNECT_IDE: '1' }), {
+    PATH: '/usr/bin',
+    CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
+    CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
+  })
 })

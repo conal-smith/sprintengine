@@ -32,6 +32,7 @@ import {
   uniqueCanvasBoardName,
 } from './canvasPickerModel'
 import { hostPlatform } from '../../../../clientCapabilities'
+import { isImeKey } from '../../../../utils/imeKey'
 
 // What a Canvas tab shows before it has a board: this project's boards, and one
 // affordance that makes another.
@@ -258,6 +259,7 @@ export function CanvasBoardPicker({ workspaceId, onPick, openPaths }: CanvasBoar
               if (nameError) setNameError(null)
             }}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 create()

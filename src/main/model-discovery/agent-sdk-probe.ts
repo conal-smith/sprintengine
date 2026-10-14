@@ -65,6 +65,18 @@ function defaultEnv(): Record<string, string> {
   return stripAnthropicAuthEnv(env)
 }
 
+/**
+ * A probe asks one question and exits, so nothing an IDE connection brings can
+ * reach its answer. Claude Code still looks for a running IDE at startup, and
+ * on Windows that lookup is a `tasklist` process tree per probe. Both probes
+ * that start Claude Code (models here, commands in
+ * conversation-commands/claude.ts) run with it off.
+ */
+export function probeEnv(env: Record<string, string>): Record<string, string> {
+  const { FORCE_CODE_TERMINAL: _terminal, ...rest } = env
+  return { ...rest, CLAUDE_CODE_AUTO_CONNECT_IDE: '0', CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1' }
+}
+
 // An input stream with no turns in it. It ends when the probe is torn down, so
 // the SDK's reader is not left awaiting forever after close(). The command
 // probe (conversation-commands/claude.ts) asks its question the same way.
@@ -102,7 +114,7 @@ export async function probeAgentSdkModels(
         tools: [],
         settingSources: [],
         pathToClaudeCodeExecutable: context.binary,
-        env: (deps.env ?? defaultEnv)(),
+        env: probeEnv((deps.env ?? defaultEnv)()),
         abortController: abort,
       },
     })

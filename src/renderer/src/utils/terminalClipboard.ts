@@ -1,6 +1,6 @@
 import type { Terminal } from '@xterm/xterm'
 
-import { isTerminalChromeTarget } from './keyboard'
+import { isLetterKey, isTerminalChromeTarget } from './keyboard'
 import { hostPlatform } from '../clientCapabilities'
 
 type TerminalClipboardHandlersOptions = {
@@ -26,6 +26,8 @@ type TerminalClipboardHandlersOptions = {
    * there was no text to send and the CLI never heard a paste happened.
    */
   imagePasteKey?: () => string | null
+  /** The OS whose copy key applies (`hostPlatform()` unless a test says). */
+  platform?: string
 }
 
 // CLIs whose launch binary is Claude Code itself (claude-code, and the plugins
@@ -88,6 +90,7 @@ export function bindTerminalClipboardHandlers({
   recordKeydown,
   paste,
   imagePasteKey,
+  platform = hostPlatform(),
 }: TerminalClipboardHandlersOptions): () => void {
   let lastKnownSelection = term.getSelection()
   let secondaryClickSelection = ''
@@ -189,6 +192,25 @@ export function bindTerminalClipboardHandlers({
     }
   }
 
+  // Ctrl+C with text selected copies it, as Windows and Linux terminals and
+  // editors do, and clears the selection, so the next Ctrl+C is the interrupt
+  // again. Without it the key went to the CLI as ^C and could stop the agent
+  // whose output was being copied. Capture phase, on the pane: xterm's own
+  // keydown, on its textarea below, would otherwise send the ^C first. macOS
+  // copies with ⌘C, so Ctrl+C there stays the shell's.
+  const handleCopyKeyCapture = (event: KeyboardEvent) => {
+    if (platform === 'darwin') return
+    if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || !isLetterKey(event, 'c')) return
+    if (isTerminalChromeTarget(event.target) || !term.hasSelection()) return
+    const selection = term.getSelection()
+    if (!selection) return
+    event.preventDefault()
+    event.stopPropagation()
+    term.clearSelection()
+    lastKnownSelection = ''
+    void copySelection(selection).catch(() => {})
+  }
+
   const handleMouseDown = (event: MouseEvent) => {
     if (isTerminalChromeTarget(event.target)) return
     const isSecondaryClick = event.button === 2 || (event.ctrlKey && event.button === 0)
@@ -238,6 +260,7 @@ export function bindTerminalClipboardHandlers({
   container.addEventListener('copy', handleCopy)
   container.addEventListener('paste', handlePaste, { capture: true })
   container.addEventListener('keydown', handleKeyDown)
+  container.addEventListener('keydown', handleCopyKeyCapture, { capture: true })
   container.addEventListener('contextmenu', handleContextMenu, { capture: true })
 
   return () => {
@@ -245,6 +268,7 @@ export function bindTerminalClipboardHandlers({
     container.removeEventListener('copy', handleCopy)
     container.removeEventListener('paste', handlePaste, { capture: true })
     container.removeEventListener('keydown', handleKeyDown)
+    container.removeEventListener('keydown', handleCopyKeyCapture, { capture: true })
     container.removeEventListener('contextmenu', handleContextMenu, { capture: true })
     selectionDisposable.dispose()
   }
