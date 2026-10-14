@@ -2,6 +2,11 @@
 
 ## 0.1.0 (unreleased)
 
+### Changed
+
+- `formatStepDuration` moves up to hours from an hour on ("6h 59m 50s"),
+  where it read "419m 50s".
+
 ### Added
 
 - The projection carries `backgroundTasks`: the shells, monitors and workflows

@@ -65,6 +65,9 @@ test('a step duration rounds once, so it never reads "1m 60s"', () => {
   expect(formatStepDuration(59_600)).toBe('1m 0s')
   expect(formatStepDuration(83_000)).toBe('1m 23s')
   expect(formatStepDuration(59_400)).toBe('59s')
+  expect(formatStepDuration(3_599_400)).toBe('59m 59s')
+  expect(formatStepDuration(3_599_600)).toBe('1h 0m 0s')
+  expect(formatStepDuration(25_190_000)).toBe('6h 59m 50s')
 })
 
 test('a command that exited non-zero counts on the closed group header', () => {

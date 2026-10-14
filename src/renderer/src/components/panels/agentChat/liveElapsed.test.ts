@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest'
-import { formatClockTime, formatMessageTime } from './liveElapsed'
+import { formatClockTime, formatElapsedMs, formatMessageTime } from './liveElapsed'
 
 // Local-time instants, so the calendar arithmetic is what the reader sees.
 const at = (year: number, month: number, day: number, hour = 14, minute = 5) =>
@@ -105,4 +105,11 @@ test('live counters share one clock and hold their text in a hidden layer', asyn
       else Reflect.deleteProperty(globalThis, key)
     }
   }
+})
+
+test('a long run is counted in hours, not hundreds of minutes', () => {
+  expect(formatElapsedMs(59_000)).toBe('59s')
+  expect(formatElapsedMs(3_599_000)).toBe('59m 59s')
+  expect(formatElapsedMs(3_600_000)).toBe('1h 0m 0s')
+  expect(formatElapsedMs(25_190_000)).toBe('6h 59m 50s')
 })
