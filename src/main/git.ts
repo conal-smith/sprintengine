@@ -15,6 +15,7 @@ import {
   toPosixPath,
 } from './git-utils'
 import { listGitWorktrees } from './git-worktree-list'
+import { worktreeBranchLedger } from './worktree-branch-ledger'
 import { activeWorktreePool } from './worktree-pool/active-pool'
 import { activeDependencyInstaller } from './worktree-pool/dependency-install'
 import {
@@ -212,7 +213,9 @@ export type GitWorktreeCreateInput = {
    * naming this owner: the agent's id, or the branch when the agent does not
    * exist yet. The agent worktree cleanup never removes a worktree another
    * profile has locked, and this profile releases its own lock once its
-   * records no longer use the worktree.
+   * records no longer use the worktree. The branch of such a worktree is one
+   * Studio named, and is written down as one it made (worktree-branch-ledger.ts),
+   * which is what lets the cleanup delete it once its work is merged.
    */
   agentLockOwner?: string
   /**
@@ -478,6 +481,8 @@ export async function createGitWorktree(
     }
   }
 
+  // Written down before anything else can fail: the branch exists now.
+  if (input.agentLockOwner) await worktreeBranchLedger().record(root.data, branch.data)
   const finished = await finishAddedWorktree(root.data, destination.data.destinationPath, input, addResult)
   return finished.ok ? { ...finished, data: { ...finished.data, baseRef: baseRef.data, leaseId: null } } : finished
 }

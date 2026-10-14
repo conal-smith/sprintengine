@@ -18,11 +18,11 @@ import { isSettledWorkspace } from './workspaceSettle'
  * makes the chat whole again rather than a new checkout somewhere else.
  *
  * Asked of every chat that might need it: one marked `worktree.reclaimedAt`
- * by the sweep, settled or not by now, and a settled chat on one of Studio's
- * branches (the person's prefix or `agent/`, `isStudioBranch`) whose folder is
- * gone (a sweep whose report never reached the store still removed it; the
- * sweep takes no other branch by its name, so no other worktree is recreated
- * this way). Anything else answers at once. A marked chat always
+ * by the sweep, settled or not by now, and a settled chat on what looks like
+ * one of Studio's branches (the person's prefix or `agent/`, `isStudioBranch`)
+ * whose folder is gone (a sweep whose report never reached the store still
+ * removed it). Taking a person's own branch for Studio's here costs only a
+ * worktree brought back at the chat's own path. Anything else answers at once. A marked chat always
  * asks main, which knows a worktree from whatever else may sit at the path;
  * an unmarked one is satisfied by its folder being there, unless that folder
  * is a worktree pool slot, which outlives any one chat and is asked about too. One restore per
@@ -62,7 +62,7 @@ function restoreCandidate(workspace: Workspace | undefined): workspace is Restor
   // A chat on another machine has its folder there, and its own way back.
   if (workspace.environment || workspace.remoteOrigin) return false
   if (workspace.worktree.reclaimedAt !== undefined) return true
-  // The branches the agent worktree cleanup removes a worktree of by name
+  // The branches the agent worktree cleanup may remove a worktree of
   // (agent-worktree-cleanup.ts): a `sprintengine/<slug>` worktree opened as a
   // workspace, or one named by hand, never went that way.
   const prefix = useWorkspaceStore.getState().appSettings.worktreeBranchPrefix

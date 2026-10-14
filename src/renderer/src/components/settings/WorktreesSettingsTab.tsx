@@ -1238,7 +1238,7 @@ function BranchPrefixSetting() {
     <SettingRow
       label="Branch prefix"
       htmlFor={inputId}
-      help="What each new worktree’s branch starts with, or nothing when empty. The cleanup deletes merged branches under this prefix and under agent/ that no chat uses, so choose one your own branches don’t use."
+      help="What each new worktree’s branch starts with, or nothing when empty. Your own branches can share it: Studio only ever deletes a branch it made, once its work is merged and no chat uses it."
     >
       <div className="flex flex-col items-end gap-1">
         <Input

@@ -121,6 +121,7 @@ export async function returnSlot(
           })
           return 'held'
         }
+        await ctx.recordBranch(pool.record.repoRoot, rescue)
         ctx.log(`${slot.path}: kept detached commit ${oid.slice(0, 7)} on ${rescue}`)
       }
     }

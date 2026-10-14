@@ -3,8 +3,9 @@
  * is told to be one of them. Pure and string-only, shared by the renderer,
  * main and the server: the window names a New chat's branch with it, main
  * names a pool lease's and a launch's, and every rule that decides a branch is
- * Studio's (the cleanup that deletes merged ones, a chat's restore) asks
- * {@link isStudioBranch}.
+ * Studio's for a chat's restore asks {@link isStudioBranch}. Deleting one asks
+ * main's record of the branches Studio made instead (`worktree-branch-ledger.ts`),
+ * since a person may name their own branches under the same prefix.
  *
  * The prefix is the person's (Settings ▸ Worktrees, kept in main's launch
  * settings). It was always `agent` before it could be chosen, so `agent/` is
@@ -76,6 +77,12 @@ export function worktreeBranchExample(prefix: string): string {
   return worktreeBranchName(prefix, EXAMPLE_SLUG)
 }
 
+/** Whether `branch` is under `agent/`, the namespace every Studio branch had before the prefix could be chosen. */
+export function isAgentNamespaceBranch(branch: string | null | undefined): boolean {
+  const namespace = `${AGENT_BRANCH_PREFIX}/`
+  return !!branch && branch.length > namespace.length && branch.startsWith(namespace)
+}
+
 /**
  * The namespaces a Studio branch starts with, each ending in `/`: the
  * configured prefix's, then `agent/`, once each. An empty prefix adds none.
@@ -87,9 +94,11 @@ export function studioBranchPrefixes(prefix: string): string[] {
 }
 
 /**
- * Whether `branch` is one Studio named for a worktree: under the configured
- * prefix or under `agent/`, with a name after it. Nothing else is, so a rule
- * that deletes or restores Studio's branches never reaches a person's own.
+ * Whether `branch` looks like one Studio named for a worktree: under the
+ * configured prefix or under `agent/`, with a name after it. A person may name
+ * their own branches under the same prefix, so this is for what is safe to get
+ * wrong (bringing a chat's worktree back); deleting a branch asks the record of
+ * the branches Studio made (`worktree-branch-ledger.ts`) instead.
  */
 export function isStudioBranch(branch: string | null | undefined, prefix: string): boolean {
   if (!branch) return false

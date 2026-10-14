@@ -10,6 +10,7 @@ import { comparablePath } from '../../shared/host-paths'
 import { LOCAL_HOST_ID } from '../../shared/execution-host'
 import { worktreeContainerPath } from '../../shared/worktree-paths'
 import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
+import { worktreeBranchLedger, type WorktreeBranchLedger } from '../worktree-branch-ledger'
 import { worktreeBranchPrefix } from '../worktree-branch-prefix'
 import { measureDiskUsage, type MeasureDiskUsage } from './disk-usage'
 import {
@@ -151,6 +152,12 @@ export type WorktreePoolServiceDeps = {
    */
   branchPrefix?: () => string
   /**
+   * Where a branch the pool makes (a lease's, a held or rescued slot's) is
+   * written down as one Studio made: the cleanup deletes a merged branch only
+   * when it is there or under `agent/`. The profile's own unless given.
+   */
+  branchLedger?: Pick<WorktreeBranchLedger, 'record'>
+  /**
    * The ids of every chat on record that is not settled (the workspace
    * registry), or null when unknown. A slot holding the history of one of them
    * is never removed (agent-worktree-keep-checks.ts); a settled chat counts
@@ -266,6 +273,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   const fetchBackoffMs = deps.fetchBackoffMs ?? FETCH_FAILURE_BACKOFF_MS
   const measureSize = deps.measure ?? measureDiskUsage
   const branchPrefix = deps.branchPrefix ?? worktreeBranchPrefix
+  const branchLedger = deps.branchLedger ?? worktreeBranchLedger()
   const pools = new Map<string, PoolRuntime>()
   const resolvedRepos = new Map<string, Promise<ResolvedRepo | null>>()
   let settings: WorktreePoolSettings | null = null
@@ -296,6 +304,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     fetchBackoffMs,
     measureSize,
     branchPrefix,
+    recordBranch: (repoRoot, branch) => branchLedger.record(repoRoot, branch).catch(() => undefined),
     pools,
     stopping,
     get stopped() {

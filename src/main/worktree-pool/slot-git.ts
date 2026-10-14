@@ -438,8 +438,8 @@ export async function resolveAgentForkBase(run: SlotGitRunner, repoRoot: string)
  * `agent/<name>` as a file under a folder `agent`, and a branch named `agent`
  * is a file by that name, so it refuses each one ("cannot lock ref …
  * 'refs/heads/agent' exists"). Studio says so before it tries rather than
- * naming the branch something else: the cleanup recognises a branch it made
- * only by its prefix, so a branch under another one would be left behind.
+ * naming the branch something else: the prefix is the person's choice, and a
+ * branch under another one is not what they asked for.
  */
 export function branchBlockedMessage(blocker: string): string {
   return `A branch named “${blocker}” in this repository blocks Studio’s ${blocker}/… branches. Rename it (git branch -m ${blocker} <new-name>), or choose another branch prefix in Settings ▸ Worktrees, to start chats in a worktree.`

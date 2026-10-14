@@ -59,6 +59,7 @@ export async function heldAction(
           const name = `${slot.held?.branch ?? worktreeBranchName(ctx.branchPrefix(), slot.id)}-held-${status.status.oid.slice(0, 7)}`
           const onBranch = await ctx.git(slot.path, ['switch', '--quiet', '-c', name])
           if (!onBranch.ok) return (outcome = { ok: false, message: onBranch.message ?? 'Could not create a branch.' })
+          await ctx.recordBranch(pool.record.repoRoot, name)
         }
         const added = await ctx.git(slot.path, ['add', '--all'])
         if (!added.ok) return (outcome = { ok: false, message: added.message ?? 'git add failed.' })

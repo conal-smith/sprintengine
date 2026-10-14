@@ -3,14 +3,14 @@ import type {
   AgentWorktreeCleanupInput,
   AgentWorktreeCleanupReport,
 } from '../shared/ipc/git'
-import { isStudioBranch, studioBranchPrefixes } from '../shared/worktree-branch'
+import { isAgentNamespaceBranch } from '../shared/worktree-branch'
 import { repoRootFromWorktreePath } from '../shared/worktree-paths'
 import type { GitCommandResult, GitWorktreeEntry } from './git'
 import { normalizeComparablePath, pathExists, runGitCommand } from './git-utils'
 import { listGitWorktrees } from './git-worktree-list'
 import { resolveRepoRoot } from './git-worktree-validation'
 import { lockAgentWorktree, relockWorktree } from './agent-worktree-lock'
-import { worktreeBranchPrefix } from './worktree-branch-prefix'
+import { worktreeBranchLedger, type WorktreeBranchLedger } from './worktree-branch-ledger'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import type { WorktreePoolReturnInput, WorktreePoolSweepEntry } from './worktree-pool/worktree-pool-service'
 import {
@@ -34,13 +34,13 @@ import {
  * A worktree is removed only when ALL of these hold:
  *
  * 1. **It is an agent worktree.** It lives in the app's own worktree container
- *    (`.sprintengine-worktrees`) and is on one of Studio's branches: under the
- *    person's branch prefix or under `agent/`, the prefix there was before it
- *    could be chosen (`isStudioBranch`). With no prefix a branch says nothing
- *    about who made it, so a worktree on any other branch is an agent's only
- *    when it carries this profile's agent lock, which only Studio places, as
- *    it makes one. Every other worktree goes by the stricter rules for other
- *    worktrees below.
+ *    (`.sprintengine-worktrees`) and Studio made it: its branch is under
+ *    `agent/` (every Studio branch was, before the prefix could be chosen) or
+ *    in the record of the branches Studio made (worktree-branch-ledger.ts), or
+ *    it carries this profile's agent lock, which only Studio places as it makes
+ *    one. A branch under the person's chosen prefix is not enough: they may
+ *    name their own branches that way. Every other worktree goes by the
+ *    stricter rules for other worktrees below.
  * 2. **Nothing uses it.** No path the caller protects — every workspace's
  *    folder and worktree, every agent still holding one — and no live terminal
  *    session sits in it. Paths are compared with symlinks resolved on both
@@ -121,9 +121,9 @@ import {
  * supplies what the app's records use, and reports what the pool did.
  *
  * **Merged agent branches** are deleted afterwards (owner ruling 2026-10-05):
- * one of Studio's branches (under the person's prefix or `agent/`; never one
- * with no prefix, since nothing records which of those Studio made) that no
- * worktree has checked out, that no record of the
+ * a branch Studio made (under `agent/`, or in its record of the branches it
+ * made; never one only because it is under the chosen prefix, which a person's
+ * own may share) that no worktree has checked out, that no record of the
  * app's names (`keepBranches`: a chat is restored from its branch), and whose
  * work is on the default branch by rule 7 holds nothing anyone still needs.
  * Git itself refuses to delete a branch some worktree has checked out at that
@@ -158,8 +158,8 @@ export type AgentWorktreeCleanupDeps = {
    * A settled chat counts as deleted, and its history keeps nothing.
    */
   knownWorkspaceIds?: () => Iterable<string> | null
-  /** The person's worktree branch prefix; the process's own (`worktree-branch-prefix.ts`) unless given. */
-  branchPrefix?: () => string
+  /** The record of the branches Studio made; the profile's own (`worktree-branch-ledger.ts`) unless given. */
+  ledger?: Pick<WorktreeBranchLedger, 'branches' | 'forget'>
 }
 
 const DEFAULT_REF_CANDIDATES = ['origin/main', 'origin/master', 'main', 'master']
@@ -255,6 +255,13 @@ export async function cleanupAgentWorktrees(
     : await resolveRepoRoot(input.repoRoot).then((result) => (result.ok ? result.data : null))
   if (!root) return empty(input.repoRoot)
 
+  // Read before anything is listed, so a branch the record names that the
+  // listing then lacks is gone, not one made a moment ago.
+  const ledger = deps.ledger ?? worktreeBranchLedger()
+  const made = await ledger.branches(root).catch(() => new Set<string>())
+  const studioMade = (branch: string | null | undefined): boolean =>
+    isAgentNamespaceBranch(branch) || (!!branch && made.has(branch))
+
   const worktrees = deps.listWorktrees
     ? await deps.listWorktrees(root)
     : await listGitWorktrees(root, { resolvedRoot: true }).then((result) => (result.ok ? result.data.worktrees : null))
@@ -264,11 +271,9 @@ export async function cleanupAgentWorktrees(
   // A slot the pool's records were not yet read for would look like any other
   // agent worktree here, and be removed from under its lease.
   await pool?.load()
-  // Read once per sweep, so every decision in it goes by the same prefix.
-  const branchPrefix = (deps.branchPrefix ?? worktreeBranchPrefix)()
   const isAgentWorktree = (worktree: GitWorktreeEntry): boolean =>
     repoRootFromWorktreePath(worktree.path) !== null &&
-    (isStudioBranch(worktree.branch, branchPrefix) || worktree.agentLock === 'this-profile')
+    (studioMade(worktree.branch) || worktree.agentLock === 'this-profile')
   // Git lists the main working tree first, whichever checkout asked: a sweep
   // run from a workspace opened on a worktree still never takes the main one.
   const candidates = worktrees.filter(
@@ -469,7 +474,7 @@ export async function cleanupAgentWorktrees(
       ? await deleteMergedAgentBranches(
           root,
           defaultRef,
-          branchPrefix,
+          { made, studioMade, forget: (branches) => ledger.forget(root, branches) },
           new Set(input.keepBranches),
           dryRun,
           runGit,
@@ -496,9 +501,10 @@ function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
 }
 
 /**
- * Delete every one of Studio's branches (`studioBranchPrefixes`: the person's
- * prefix and `agent/`) whose work is already on the default branch and that no
- * worktree has checked out. "On the default branch" is rule 7: no
+ * Delete every branch Studio made (under `agent/`, or in its record) whose
+ * work is already on the default branch and that no worktree has checked out.
+ * A recorded name the repository no longer has, or one deleted here, is struck
+ * off the record. "On the default branch" is rule 7: no
  * commit the default branch lacks, or changes the default branch already holds
  * by content (a squash merge). Only `git branch -D` can delete a squash-merged
  * branch, so the merge test is ours; git still refuses, by itself, a branch a
@@ -508,23 +514,27 @@ function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
 async function deleteMergedAgentBranches(
   root: string,
   defaultRef: string,
-  branchPrefix: string,
+  studio: {
+    made: ReadonlySet<string>
+    studioMade: (branch: string) => boolean
+    forget: (branches: string[]) => Promise<void>
+  },
   keep: ReadonlySet<string>,
   dryRun: boolean,
   runGit: NonNullable<AgentWorktreeCleanupDeps['runGit']>,
   log: (line: string) => void,
 ): Promise<string[]> {
-  const branches = await runGit(root, [
-    'for-each-ref',
-    '--format=%(refname:short)%00%(worktreepath)',
-    ...studioBranchPrefixes(branchPrefix).map((namespace) => `refs/heads/${namespace}`),
-  ])
+  // Every local branch: a recorded one may be named anything, with no prefix at all.
+  const branches = await runGit(root, ['for-each-ref', '--format=%(refname)%00%(worktreepath)', 'refs/heads/'])
   if (!branches.ok) return []
+  const listed = new Set<string>()
   const deleted: string[] = []
   for (const line of branches.stdout.split(/\r?\n/)) {
-    const [branch, worktreePath] = line.split('\0')
-    // Asked again of each name git lists: the patterns are git's, the rule is ours.
-    if (!branch || !isStudioBranch(branch, branchPrefix) || worktreePath || keep.has(branch)) continue
+    const [ref, worktreePath] = line.split('\0')
+    if (!ref?.startsWith('refs/heads/')) continue
+    const branch = ref.slice('refs/heads/'.length)
+    listed.add(branch)
+    if (!studio.studioMade(branch) || worktreePath || keep.has(branch)) continue
     const unique = await runGit(root, ['rev-list', '--count', `${defaultRef}..refs/heads/${branch}`])
     const uniqueCommits = unique.ok ? Number.parseInt(unique.stdout.trim(), 10) : Number.NaN
     if (!Number.isFinite(uniqueCommits)) continue
@@ -540,6 +550,10 @@ async function deleteMergedAgentBranches(
     } else {
       log(`kept branch ${branch} — ${removed.message ?? 'git branch -D failed'}`)
     }
+  }
+  if (!dryRun) {
+    const gone = [...studio.made].filter((branch) => !listed.has(branch) || deleted.includes(branch))
+    if (gone.length > 0) await studio.forget(gone).catch(() => undefined)
   }
   return deleted
 }

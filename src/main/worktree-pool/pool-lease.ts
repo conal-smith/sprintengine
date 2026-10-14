@@ -556,6 +556,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
           message: switched.message ?? `Could not create ${branch}.`,
         }
       }
+      await ctx.recordBranch(pool.record.repoRoot, branch)
       const leaseId = randomUUID()
       await ctx.withPool(pool, async () => {
         slot!.state = 'leased'

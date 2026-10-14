@@ -80,6 +80,7 @@ function makeService(
     fetchBackoffMs?: number
     userData?: string
     branchPrefix?: string
+    recorded?: Array<[string, string]>
   } = {},
 ) {
   const live = options.live ?? []
@@ -98,6 +99,11 @@ function makeService(
     measure: options.measure ?? fakeMeasure(GB),
     ...(options.knownWorkspaceIds ? { knownWorkspaceIds: options.knownWorkspaceIds } : {}),
     ...(prefix !== undefined ? { branchPrefix: () => prefix } : {}),
+    branchLedger: {
+      record: async (repoRoot: string, branch: string) => {
+        options.recorded?.push([repoRoot, branch])
+      },
+    },
   })
   return { service, live, clock }
 }
@@ -230,6 +236,13 @@ test('a lease by name goes on the person’s branch prefix', async () => {
   const leased = await lease(harness, 'fix-login')
   assert.equal(leased.branch, 'jane/wip/fix-login')
   assert.equal(await git(leased.path, 'branch', '--show-current'), 'jane/wip/fix-login')
+})
+
+test('a lease writes its branch down as one Studio made', async () => {
+  const recorded: Array<[string, string]> = []
+  const harness = makeService({ branchPrefix: 'feat', recorded })
+  const leased = await lease(harness, 'fix-login')
+  assert.deepEqual(recorded, [[leased.repoRoot, 'feat/fix-login']])
 })
 
 test('with no prefix, a lease by name goes on the name alone', async () => {
