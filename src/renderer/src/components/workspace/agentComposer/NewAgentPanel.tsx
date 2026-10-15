@@ -41,7 +41,11 @@ import {
 import { workspaceRunsHere } from '../../../utils/attachedFiles'
 import { ComposerAttachmentStrip } from '../../panels/ComposerAttachmentStrip'
 import { ComposerDropOverlay } from '../../panels/agentChat/ComposerDropOverlay'
-import { attachmentRejection, MAX_ATTACHMENTS_PER_TURN } from '../../panels/agentChat/imageAttachments'
+import {
+  attachmentRejection,
+  MAX_ATTACHMENTS_PER_TURN,
+  readImageAttachment,
+} from '../../panels/agentChat/imageAttachments'
 import { ComposerField, type ComposerFieldHandle, type ComposerKeyEvent } from '../../panels/agentChat/ComposerField'
 import { basename, pathJoin } from '../../../utils/paths'
 import { resolveWorkspaceWorktree } from '../../../utils/workspaceWorktree'
@@ -1091,22 +1095,21 @@ export default function NewAgentPanel({
       const existingPath = window.api.getPathForFile(file)
       setAttachingCount((count) => count + 1)
       try {
-        const { mediaType, dataBase64 } = await readFileAsBase64(file)
-        const path = existingPath || (await window.api.saveDroppedImage({ mediaType, dataBase64 }))
+        // The bytes a paired machine is sent, read the way the chat's own
+        // composer reads an image: shrunk to the edge a vision model uses.
+        // Claude refuses an image over 2000px a side once a thread holds more
+        // than 20, and from then on every turn of that chat fails.
+        const attachment = await readImageAttachment(file, file.name)
+        // The file a chat on this computer reads is the one dropped, or the
+        // image as it came, saved; it is shrunk when that chat reads it.
+        const path = existingPath || (await window.api.saveDroppedImage(await readFileAsBase64(file)))
         // The slice holds the cap under overlapping batches (a paste landing
         // while a drop is still reading); the check above already said why.
         setImages((current) =>
-          [
-            ...current,
-            {
-              id: `${Date.now()}-${current.length}-${file.name}`,
-              mediaType,
-              dataBase64,
-              byteLength: file.size,
-              ...(file.name ? { name: file.name } : {}),
-              path,
-            },
-          ].slice(0, MAX_ATTACHMENTS_PER_TURN),
+          [...current, { ...attachment, id: `${Date.now()}-${current.length}-${file.name}`, path }].slice(
+            0,
+            MAX_ATTACHMENTS_PER_TURN,
+          ),
         )
       } catch (error) {
         // Shown verbatim under the box.
