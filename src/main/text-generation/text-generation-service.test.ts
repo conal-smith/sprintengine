@@ -49,6 +49,7 @@ test('text-generation-service', async () => {
         let tick = 0
         return () => (tick += 1000)
       })(),
+      managedMcpConfig: () => false,
       ...overrides,
       runs,
     }
@@ -70,6 +71,16 @@ test('text-generation-service', async () => {
     )
     assert.deepEqual(result, { ok: false, code: 'unsupported', message: 'cursor has no text generation backend.' })
     assert.equal(probed, false)
+  })
+
+  run("a Claude title leaves strict MCP mode off beside an administrator's managed-mcp.json", async () => {
+    const strict = deps()
+    await generateChatTitle({ prompt: 'x', engine: claudeEngine }, strict)
+    assert.ok(strict.runs[0]!.args.includes('--strict-mcp-config'))
+    const managed = deps({ managedMcpConfig: () => true })
+    const result = await generateChatTitle({ prompt: 'x', engine: claudeEngine }, managed)
+    assert.equal(result.ok && result.value, 'Sidebar flicker on switch')
+    assert.ok(!managed.runs[0]!.args.includes('--strict-mcp-config'))
   })
 
   run('an empty model is refused', async () => {

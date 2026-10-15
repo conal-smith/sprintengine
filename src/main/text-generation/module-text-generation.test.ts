@@ -82,6 +82,13 @@ test('the free-text call shuts every door a title does, with the system prompt a
   )
 })
 
+test("the Claude call leaves strict MCP mode off beside an administrator's managed-mcp.json, which Claude would refuse", () => {
+  const args = claudeTextInvocation({ binaryPath: '/bin/claude', model: 'haiku', managedMcpConfig: true }).args
+  expect(args).not.toContain('--strict-mcp-config')
+  expect(args).toContain('--disable-slash-commands')
+  expect(args[args.indexOf('--tools') + 1]).toBe('')
+})
+
 test('the Codex call writes its last message to a file and reports its usage as JSON events', () => {
   expect(
     codexTextInvocation({

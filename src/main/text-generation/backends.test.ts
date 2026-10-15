@@ -32,6 +32,18 @@ test('backends', async () => {
     assert.equal(args[args.indexOf('--settings') + 1], '{"disableAllHooks":true}')
   })
 
+  run("claude leaves strict MCP mode off beside an administrator's managed-mcp.json, and every other door shut", () => {
+    const { args } = claudeChatTitleInvocation({
+      binaryPath: 'claude',
+      model: 'fable',
+      schemaJson: '{}',
+      managedMcpConfig: true,
+    })
+    assert.ok(!args.includes('--strict-mcp-config'))
+    assert.ok(args.includes('--disable-slash-commands'))
+    assert.equal(args[args.indexOf('--tools') + 1], '')
+  })
+
   run('claude passes no effort flag when none is chosen', () => {
     const { args } = claudeChatTitleInvocation({ binaryPath: 'claude', model: 'fable', schemaJson: '{}' })
     assert.ok(!args.includes('--effort'))

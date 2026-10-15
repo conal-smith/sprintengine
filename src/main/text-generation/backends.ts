@@ -19,6 +19,12 @@ export type ClaudeInvocationInput = {
   reasoning?: string | undefined
   /** The output schema, already serialised. */
   schemaJson: string
+  /**
+   * An administrator's `managed-mcp.json` is installed. Claude refuses
+   * `--strict-mcp-config` beside it, and the file already keeps the person's
+   * own MCP servers out, so the flag is left off.
+   */
+  managedMcpConfig?: boolean
 }
 
 // `claude -p` with `--json-schema` returns a JSON envelope carrying the
@@ -44,7 +50,7 @@ export function claudeChatTitleInvocation(input: ClaudeInvocationInput): ChatTit
       '--tools',
       '',
       '--disable-slash-commands',
-      '--strict-mcp-config',
+      ...(input.managedMcpConfig ? [] : ['--strict-mcp-config']),
     ],
   }
 }
@@ -90,6 +96,8 @@ export type ClaudeTextInvocationInput = {
   reasoning?: string | undefined
   /** The system prompt the call runs under instead of Claude Code's own. */
   system?: string
+  /** As on {@link ClaudeInvocationInput}. */
+  managedMcpConfig?: boolean
 }
 
 // `claude -p` for free text: the same doors shut as for a title (no tools, so
@@ -113,7 +121,7 @@ export function claudeTextInvocation(input: ClaudeTextInvocationInput): ChatTitl
       '--tools',
       '',
       '--disable-slash-commands',
-      '--strict-mcp-config',
+      ...(input.managedMcpConfig ? [] : ['--strict-mcp-config']),
     ],
   }
 }

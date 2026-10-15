@@ -68,6 +68,7 @@ import {
   type ClaudeTextAnswer,
 } from './backends'
 import { runCommand, type RunCommand } from './run-command'
+import { hasClaudeManagedMcpConfig } from '../claude-managed-mcp'
 
 export type TextGenerationServiceDeps = {
   detect?: (cli: string, runtime?: { command?: string; hostId?: ExecutionHostId }) => Promise<CliDetectResult>
@@ -76,6 +77,8 @@ export type TextGenerationServiceDeps = {
   /** Where scratch directories are made. Defaults to the OS temp dir. */
   scratchRoot?: string
   now?: () => number
+  /** Whether an administrator's `managed-mcp.json` is installed; read from disk by default. */
+  managedMcpConfig?: () => boolean
 }
 
 const SCRATCH_PREFIX = 'sprintengine-text-'
@@ -226,6 +229,7 @@ export async function generateHeadlessText(
           model,
           reasoning: request.engine.reasoning,
           ...(request.system ? { system: request.system } : {}),
+          managedMcpConfig: (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
         }),
         ...common,
         stdin: request.prompt,
@@ -286,6 +290,7 @@ async function runStructuredJob<T>(
       reasoning: engine.reasoning,
       schemaJson: JSON.stringify(job.schema),
       scratch,
+      managedMcpConfig: engine.cli !== 'codex' && (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
       listMcpServers: () =>
         listCodexMcpServers(binaryPath.path, run, {
           cwd: scratch,
@@ -332,6 +337,7 @@ async function prepareBackend(
     reasoning: string | undefined
     schemaJson: string
     scratch: string
+    managedMcpConfig: boolean
     listMcpServers: () => Promise<string[]>
   },
 ): Promise<PreparedBackend> {
