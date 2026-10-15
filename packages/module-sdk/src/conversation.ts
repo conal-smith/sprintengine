@@ -576,10 +576,10 @@ export type ModuleChatRuntimeOption = {
  *   runtimes the app can drive headlessly (another answers `unsupported`).
  *   Absent, the runtime the person chose for Studio's own text generation in
  *   Settings, else `claude-code`.
- * - `model`: a model id the runtime takes (`claude-haiku-4-5`, an alias such as
+ * - `model`: a model id the runtime takes (`claude-haiku-5-5`, an alias such as
  *   `haiku`, `gpt-5.6-luna`). Absent, the person's chosen model when the call
  *   runs on their chosen runtime, else that runtime's small default
- *   (`claude-haiku-4-5` for Claude Code, `gpt-5.6-luna` for Codex).
+ *   (`claude-haiku-5-5` for Claude Code, `gpt-5.6-luna` for Codex).
  * - `maxOutputTokens`: a cap on the answer, 1 to 64,000. Claude Code honours
  *   it; Codex has no output cap and ignores it.
  * - `json`: the answer must be one JSON value. The model is told so, the host

@@ -939,7 +939,7 @@ describe('createFakeMainHost: agents, conversations and scheduled agents', () =>
       ok: true,
       text: 'on claude-code',
       usage: { outputTokens: 4 },
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-5-5',
     })
     const codex = await text.generate({ prompt: 'Summarise', cli: 'codex' })
     assert.ok(codex.ok && codex.model === 'gpt-5.6-luna' && codex.text === 'on codex')
