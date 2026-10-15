@@ -14,7 +14,8 @@
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
 import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
+import { spawnClaudeLocalProcess } from './claude-local-process'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -2274,12 +2275,10 @@ function spawnLocalChild(spawnInput: SpawnOptions): ChildProcess {
   const launch = localLaunchToken(launchIdentityOfEnv(env))
   let child: ChildProcess
   try {
-    child = spawn(spawnInput.command, spawnInput.args, {
+    child = spawnClaudeLocalProcess(spawnInput.command, spawnInput.args, {
       cwd: spawnInput.cwd,
       env: claudeLocalChildEnv(env, launch?.token ?? null, spawnInput.cwd),
-      stdio: ['pipe', 'pipe', 'pipe'],
       signal: spawnInput.signal,
-      windowsHide: true,
     })
   } catch (error) {
     launch?.revoke()
