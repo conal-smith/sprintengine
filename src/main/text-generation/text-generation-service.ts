@@ -60,6 +60,7 @@ import {
   codexMcpListInvocation,
   codexTextInvocation,
   codexTextPrompt,
+  readClaudeErrorResult,
   readClaudeStructuredStdout,
   readClaudeTextStdout,
   readCodexEnabledMcpServers,
@@ -237,6 +238,8 @@ export async function generateHeadlessText(
       const failure = runFailure(cli, outcome)
       if (failure) return failure
       answer = readClaudeTextStdout(outcome.stdout)
+      const reason = answer ? null : readClaudeErrorResult(outcome.stdout)
+      if (reason) return { ok: false, code: 'guardrail', message: `${cli} answered with an error: ${lastLine(reason)}` }
     }
     if (!answer) return { ok: false, code: 'guardrail', message: `${cli} returned no usable answer.` }
     return { ok: true, text: answer.text, usage: answer.usage, model: answer.model ?? model, ms: now() - startedAt }
@@ -310,7 +313,11 @@ async function runStructuredJob<T>(
     if (failure) return failure
     const value = job.read(await backend.readAnswer(outcome.stdout))
     if (value === null) {
-      return { ok: false, code: 'guardrail', message: `${engine.cli} returned no usable ${job.nothing}.` }
+      const reason = engine.cli === 'codex' ? null : readClaudeErrorResult(outcome.stdout)
+      const message = reason
+        ? `${engine.cli} answered with an error: ${lastLine(reason)}`
+        : `${engine.cli} returned no usable ${job.nothing}.`
+      return { ok: false, code: 'guardrail', message }
     }
     return { ok: true, value, ms: now() - startedAt }
   } catch (error) {
@@ -474,6 +481,12 @@ function runFailure(
   }
   if (outcome.timedOut) return { ok: false, code: 'timeout', message: `${cli} did not answer in time.` }
   if (outcome.code !== 0) {
+    // Claude's own reason is in its stdout envelope; stderr then carries at
+    // most a wrapper's notice, and a bare stdout fallback is the raw JSON.
+    const claudeReason = cli === 'codex' ? null : readClaudeErrorResult(outcome.stdout)
+    if (claudeReason) {
+      return { ok: false, code: 'transport', message: `${cli} exited ${outcome.code}: ${lastLine(claudeReason)}` }
+    }
     const detail = outcome.stderr.trim() || outcome.stdout.trim()
     return {
       ok: false,

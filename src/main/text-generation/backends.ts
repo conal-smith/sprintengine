@@ -90,6 +90,30 @@ export function readClaudeStructuredStdout(stdout: string): unknown {
   return envelope.result ?? null
 }
 
+/**
+ * The CLI's own reason in a failed `claude -p --output-format json` call: the
+ * `result` of an `is_error` envelope, in either shape the stdout comes in
+ * (one object, or verbose mode's array with the result last). Claude writes
+ * its reason there, not to stderr, so stderr on a failed call holds at most a
+ * wrapper's notice and the reason would otherwise be lost. Null when stdout is
+ * not such an envelope or it gives no reason.
+ */
+export function readClaudeErrorResult(stdout: string): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    return null
+  }
+  const entries = Array.isArray(parsed) ? parsed : [parsed]
+  const envelope = entries.findLast((entry): entry is Record<string, unknown> =>
+    Boolean(entry && typeof entry === 'object' && (entry as { type?: unknown }).type === 'result'),
+  )
+  if (!envelope || envelope.is_error !== true) return null
+  const reason = typeof envelope.result === 'string' ? envelope.result.trim() : ''
+  return reason || null
+}
+
 export type ClaudeTextInvocationInput = {
   binaryPath: string
   model: string
