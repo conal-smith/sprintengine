@@ -16,6 +16,7 @@ import type { PluginAgentStateSpec } from '../../shared/plugin-manifest'
 import { createIntegrationLedger, installIntegrationLedger, type IntegrationWrite } from './ledger'
 import { runRemovalCommand } from './remove-integrations-cli'
 import { removeIntegrations, SESSION_INTEGRATION_KINDS, type IntegrationRemovalDeps } from './remove-integrations'
+import { ensureUserLevelSkillCopy } from './launch-integration'
 import { ensureStudioLauncher, launcherRefForHome } from './launcher'
 import { excludeFromWorktree } from './worktree-exclude'
 import { renderUrlHandlerEntry } from '../linux-url-handler'
@@ -515,4 +516,37 @@ test("an AppImage's link-handler entry is deleted only while it is still Studio'
   assert.equal(await readFile(rewritten, 'utf8'), theirs)
   assert.equal(outcome('sprintengine-url-handler.desktop')?.status, 'skipped', 'a path that is not absolute is refused')
   assert.equal(report.failed, 0)
+})
+
+test('a skill a launch copied into a CLI’s user folder goes at quit, unless someone changed it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'se-remove-launch-skill-'))
+  const ledger = createIntegrationLedger({ path: join(root, 'integration-ledger.json') })
+  installIntegrationLedger(ledger)
+  try {
+    const source = join(root, 'source', 'backlog')
+    await mkdir(source, { recursive: true })
+    await writeFile(join(source, 'SKILL.md'), 'work the item\n')
+    const skillsDir = join(root, 'home', '.codex', 'skills')
+    const untouched = await ensureUserLevelSkillCopy({
+      skillsDir,
+      skill: { id: 'backlog', version: '1' },
+      sourceDir: source,
+      cli: 'codex',
+    })
+    const edited = await ensureUserLevelSkillCopy({
+      skillsDir: join(root, 'home', '.grok', 'skills'),
+      skill: { id: 'backlog', version: '1' },
+      sourceDir: source,
+      cli: 'grok',
+    })
+    await ledger.flush()
+    await writeFile(join(edited!, 'SKILL.md'), 'my own notes\n')
+
+    const report = await removeIntegrations({ ledger, scan: false }, { kinds: SESSION_INTEGRATION_KINDS })
+    assert.equal(existsSync(untouched!), false)
+    assert.equal(await readFile(join(edited!, 'SKILL.md'), 'utf8'), 'my own notes\n')
+    assert.equal(report.outcomes.length, 2)
+  } finally {
+    installIntegrationLedger(null)
+  }
 })

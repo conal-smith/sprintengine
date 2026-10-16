@@ -1,19 +1,20 @@
 import { basename, isAbsolute, join, resolve } from 'path'
 import { readdir, readFile } from 'fs/promises'
 
-import { ensureBacklogObjectRecords, readBacklogFrontmatterFields, readBacklogObjectStore } from '../../backlog-service'
+import {
+  defaultBacklogKeyFor,
+  ensureBacklogObjectRecords,
+  readBacklogConfigText,
+  readBacklogFrontmatterFields,
+  readBacklogObjectStore,
+} from '../../backlog-service'
 import {
   backlogTitleFromPath,
   extractBacklogTitle,
   parseBacklogFrontmatter,
   stripBacklogFrontmatter,
 } from '../../../shared/backlog/frontmatter'
-import {
-  deriveDefaultBacklogKey,
-  formatBacklogDisplayId,
-  isValidBacklogKey,
-  parseBacklogNumericId,
-} from '../../../shared/backlog/item-id'
+import { formatBacklogDisplayId, isValidBacklogKey, parseBacklogNumericId } from '../../../shared/backlog/item-id'
 import type { BacklogFrontmatterFields } from '../../backlog-service'
 import type { BacklogObjectRecordPayload } from '../../../shared/electron-api'
 import type {
@@ -28,7 +29,6 @@ import {
   defaultBacklogLocation,
   type BacklogLocation,
 } from '../../../shared/backlog/scan'
-import { workspaceSidecarPath } from '../../workspace-sidecar'
 
 const BACKLOG_FOLDER = 'backlog'
 const ARCHIVED_PREFIX = 'backlog/archived/'
@@ -64,7 +64,7 @@ export async function readMobileBacklogWorkspaceSnapshot(
 
 const EPICS_RELATIVE_PATH = 'backlog/epics'
 
-// Read the workspace's backlog display key (`.sprintengine/backlog/config.json`),
+// Read the workspace's backlog display key (its store's `backlog/config.json`),
 // read-only — unlike the desktop resolver, this never persists a derived default,
 // because a snapshot read must not write to the workspace.
 // Where this workspace keeps its items. Read-only, like the key resolver above:
@@ -72,7 +72,7 @@ const EPICS_RELATIVE_PATH = 'backlog/epics'
 // configured root reads as the default `<root>/backlog`.
 async function readBacklogLocation(root: string): Promise<BacklogLocation> {
   try {
-    const raw = await readFile(workspaceSidecarPath(root, 'backlog', 'config.json'), 'utf-8')
+    const raw = await readBacklogConfigText(root)
     const parsed = JSON.parse(raw) as { root?: unknown }
     if (typeof parsed.root === 'string' && parsed.root.trim()) return backlogLocationFor(root, parsed.root)
   } catch {
@@ -83,13 +83,13 @@ async function readBacklogLocation(root: string): Promise<BacklogLocation> {
 
 async function readBacklogWorkspaceKey(root: string): Promise<string> {
   try {
-    const raw = await readFile(workspaceSidecarPath(root, 'backlog', 'config.json'), 'utf-8')
+    const raw = await readBacklogConfigText(root)
     const parsed = JSON.parse(raw) as { key?: unknown }
     if (isValidBacklogKey(parsed.key)) return parsed.key
   } catch {
     // Missing/unreadable config: fall back to the same default the desktop derives.
   }
-  return deriveDefaultBacklogKey(basename(root) || root)
+  return defaultBacklogKeyFor(root)
 }
 
 // Epic metadata: for each `backlog/epics/*.md` file, its display id

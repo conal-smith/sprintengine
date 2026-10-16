@@ -164,8 +164,8 @@ export type CapabilityPermission =
   // Checked on every call.
   | 'agents:generate'
   // Persist the module's own data through the SDK's scoped storage service
-  // (host-placed: the workspace's app-owned `.sprintengine/modules/<id>/`, or
-  // per-user app data).
+  // (host-placed: `modules/<id>/` in the project's store in the person's home,
+  // or per-user app data).
   | 'storage'
   // Read the conversations the module started through the SDK's scoped
   // conversation service: their events, transcripts and list.
@@ -764,8 +764,8 @@ export type ModuleWorkspaceListEntry = ModuleWorkspaceView & {
 export type ModuleWorkspaceListOptions = {
   /**
    * Also list the workspaces closed on this machine (the most recent 500),
-   * so a module can tie what it kept — a transcript under the project's
-   * `.sprintengine/`, its own storage — back to a project no longer open.
+   * so a module can tie what it kept — a transcript in the project's store,
+   * its own storage — back to a project no longer open.
    * Check `host.supports('workspace-history')` first.
    */
   includeClosed?: boolean
@@ -1196,8 +1196,9 @@ export type ModuleStorageResult<T> = ({ ok: true } & T) | { ok: false; code: Mod
 /**
  * Per-module, per-workspace JSON storage, scoped to your module by
  * `getModuleStorage(host)`. The host owns file placement — workspace-scoped
- * keys live in the workspace's app-owned folder (`.sprintengine/modules/<moduleId>/`),
- * global keys under the app's per-user data — so modules stop inventing
+ * keys live in the project's store in the person's home
+ * (`~/.sprintengine/workspaces/<project>/modules/<moduleId>/`, one per project
+ * whichever checkout asks), global keys under the app's per-user data — so modules stop inventing
  * locations (home-dir files, raw localStorage). Keys match
  * `^[a-z0-9][a-z0-9._-]{0,63}$`; values must be JSON-serializable and at most
  * 1 MB; writes are atomic (write-then-rename). Pass `workspaceRoot` (absolute;
@@ -1206,10 +1207,12 @@ export type ModuleStorageResult<T> = ({ ok: true } & T) | { ok: false; code: Mod
  * disclosure). Renderer panels reach storage through the module's own
  * `host.invoke` channels.
  *
- * Workspace-scoped keys are plain files in the project, so they travel with it
- * (commit `.sprintengine/modules/<moduleId>/` if your data belongs to the
- * project, ignore it if it does not — that is the project's call, not the
- * host's). Data past the 1 MB value limit — caches, blobs, indexes — belongs
+ * Workspace-scoped keys are not in the project's folder, so they never show
+ * in its `git status` and do not travel with a clone; data that belongs to
+ * the project is a file the module writes where the person asks. (Builds
+ * before the store kept them in `<project>/.sprintengine/modules/<moduleId>/`;
+ * the host moves them out once, leaving each file git tracks where it is.)
+ * Data past the 1 MB value limit — caches, blobs, indexes — belongs
  * in `MainHost.getModuleDataDir()` instead.
  */
 export type ModuleStorageService = {
@@ -1236,8 +1239,8 @@ export type ModuleStorageService = {
   /**
    * Hear which keys of a scope changed — set or deleted — as
    * `{ keys: string[] }`. Your own writes are reported at once; a change made
-   * by other means (a `git pull` into the workspace, a teammate's commit, a
-   * file edited by hand) within a couple of seconds. Like a module event it
+   * by other means (another Studio window, a file edited by hand) within a
+   * couple of seconds. Like a module event it
    * is a signal, not state: read the keys again. Returns the unsubscriber —
    * call it in `onShutdown`. Throws for an invalid `workspaceRoot`.
    * Check `host.supports('storage-watch')` first.

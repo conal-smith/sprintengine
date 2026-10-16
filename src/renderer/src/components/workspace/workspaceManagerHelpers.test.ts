@@ -8,6 +8,7 @@ import {
   deriveSessionStatus,
   getSessionItems,
   groupSessionItems,
+  newChatInheritedScope,
   newChatProjectOptionsOf,
   sessionsAttentionTone,
 } from './workspaceManagerHelpers'
@@ -549,4 +550,26 @@ test('New chat never offers the chats started without a project as a project', (
     options.map((option) => option.path),
     ['/Users/dev/app'],
   )
+})
+
+test('New chat opens on the project an open worktree chat was cut from, never the worktree', () => {
+  const slot = {
+    folderPath: '/Users/dev/.sprintengine-worktrees/app/pool-01',
+    worktree: { repoRoot: '/Users/dev/app', branch: 'agent/chat-ab' },
+  } as unknown as Workspace
+  assert.equal(newChatInheritedScope(undefined, null, slot), '/Users/dev/app')
+  // One recorded before the marker carried its project, by the folder layout.
+  const legacy = { folderPath: '/Users/dev/.sprintengine-worktrees/app/chat-k_iq' } as unknown as Workspace
+  assert.equal(newChatInheritedScope(undefined, null, legacy), '/Users/dev/app')
+  // A draft parked on a worktree before this rule held is mapped the same way.
+  assert.equal(
+    newChatInheritedScope(undefined, '/Users/dev/.sprintengine-worktrees/app/pool-02', null),
+    '/Users/dev/app',
+  )
+  // A plain project, nothing open, and a folder handed in on purpose are kept.
+  const plain = { folderPath: '/Users/dev/toolbox' } as unknown as Workspace
+  assert.equal(newChatInheritedScope(undefined, null, plain), '/Users/dev/toolbox')
+  assert.equal(newChatInheritedScope(undefined, null, null), null)
+  assert.equal(newChatInheritedScope(null, '/Users/dev/app', plain), null)
+  assert.equal(newChatInheritedScope('/Users/dev/site', null, slot), '/Users/dev/site')
 })

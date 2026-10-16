@@ -14,8 +14,15 @@ import type { StudioScope } from './scopes.js'
 // (`ifMatch`, the SHA-256 of the file's bytes; null to create only), and in
 // this version only a board (`*.excalidraw`) may be written or removed.
 
-/** Where a path is read from: the workspace's own folder, or the board store Studio keeps for it. */
-export type StudioFileRoot = { kind: 'boards' | 'workspace'; workspaceId: string }
+/**
+ * Where a path is read from: the workspace's own folder, the board store
+ * Studio keeps for it, or the project's store, where Studio keeps the rest of
+ * what it knows about the project (the browser's captures and recordings, chat
+ * transcripts) in the person's home rather than in the project. `store` is
+ * additive: a Studio that serves it says `store: true` from `files.roots`, and
+ * one built before it leaves the member out and refuses the kind.
+ */
+export type StudioFileRoot = { kind: 'boards' | 'workspace' | 'store'; workspaceId: string }
 
 export type StudioFileEntry = { name: string; kind: 'file' | 'directory' }
 
@@ -33,8 +40,8 @@ export const STUDIO_MAX_FILE_BYTES = 64 * 1024 * 1024
 export const STUDIO_WRITABLE_FILE_EXTENSIONS = ['.excalidraw'] as const
 
 export type StudioFilesMethodMap = {
-  /** Which roots a workspace has here. */
-  'files.roots': { params: { workspaceId: string }; result: { workspace: boolean; boards: boolean } }
+  /** Which roots a workspace has here. `store` is absent from a Studio that does not serve it. */
+  'files.roots': { params: { workspaceId: string }; result: { workspace: boolean; boards: boolean; store?: boolean } }
   /** One level of a directory. A symbolic link is listed as neither kind, and is not followed. */
   'files.list': { params: { root: StudioFileRoot; path: string }; result: { entries: StudioFileEntry[] } }
   'files.read': {
@@ -123,7 +130,12 @@ function id(value: unknown): value is string {
 
 /** A root, or null. */
 export function parseStudioFileRoot(value: unknown): StudioFileRoot | null {
-  if (!record(value) || (value.kind !== 'boards' && value.kind !== 'workspace') || !id(value.workspaceId)) return null
+  if (
+    !record(value) ||
+    (value.kind !== 'boards' && value.kind !== 'workspace' && value.kind !== 'store') ||
+    !id(value.workspaceId)
+  )
+    return null
   return { kind: value.kind, workspaceId: value.workspaceId }
 }
 
@@ -148,7 +160,7 @@ export function isStudioWritableFile(path: string): boolean {
   )
 }
 
-const ROOT = '"root" is { kind: "boards" | "workspace", workspaceId }.'
+const ROOT = '"root" is { kind: "boards" | "workspace" | "store", workspaceId }.'
 const PATH = '"path" is relative to its root, with "/" between parts and no "..".'
 const HASH = /^[0-9a-f]{64}$/
 

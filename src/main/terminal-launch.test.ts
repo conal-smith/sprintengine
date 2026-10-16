@@ -235,6 +235,16 @@ test('terminal-launch', async () => {
     assert.equal(merged.theme, 'tokyonight', "the user's own keys survive")
     assert.deepEqual(merged.instructions, ['AGENTS.md', '/ctx/s1.md'], 'lists concatenate')
 
+    // A table merges key by key: the app's MCP servers join the person's own.
+    const tables = mergeProviderLaunchEnv(
+      { OPENCODE_CONFIG_CONTENT: '{"mcp":{"mine":{"type":"local","command":["a"]}}}' },
+      { OPENCODE_CONFIG_CONTENT: '{"mcp":{"sprintengine-studio":{"type":"local","command":["b"]}}}' },
+    )
+    assert.deepEqual(Object.keys(JSON.parse(tables.OPENCODE_CONFIG_CONTENT).mcp).sort(), [
+      'mine',
+      'sprintengine-studio',
+    ])
+
     // Everything that is not a JSON object still takes the plain replacement path,
     // so no other manifest's env changes behaviour.
     const plain = mergeProviderLaunchEnv({ ANTHROPIC_BASE_URL: 'https://a' }, { ANTHROPIC_BASE_URL: 'https://b' })

@@ -709,17 +709,18 @@ pauses while your module is off.
 ## Module storage
 
 `getModuleStorage(host)` → `get` / `set` / `delete` / `list`, keyed per module
-and optionally per workspace. Workspace keys live under the workspace's
-`.sprintengine/modules/<moduleId>/`, global keys under the app's data; JSON
+and optionally per workspace. Workspace keys live in the project's store in
+the person's home (`~/.sprintengine/workspaces/<project>/modules/<moduleId>/`),
+never in the project's folder; global keys under the app's data; JSON
 values up to 1 MB, atomic writes. Declare `storage` and
 `dependsOn: ["agent-runtime"]`.
 
 `list({ prefix })` and `getMany({ keys })` read a record family in one call
 (`supports('storage-query')`). `watch({ workspaceRoot? }, cb)` says which keys
 changed: your own writes at once, and a change made by other means — a
-`git pull`, a hand edit — within a couple of seconds (`supports('storage-watch')`).
-Whether a project commits `.sprintengine/modules/<moduleId>/` is the project's
-call; say in your README which your data wants. Data past the value limit
+hand edit — within a couple of seconds (`supports('storage-watch')`).
+Workspace keys do not travel with a clone; data that belongs to the project
+is a file your module writes where the person asks. Data past the value limit
 belongs in `host.getModuleDataDir()` (`supports('module-data-dir')`).
 
 ## Workspaces from entry.main

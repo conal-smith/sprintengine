@@ -18,7 +18,7 @@
 //     server declared as `bun run --cwd ${CLAUDE_PLUGIN_ROOT} … start` cannot
 //     start unless those files are on disk and that variable means something,
 //     and only Claude Code's own loader sets it. So the plugin root lands under
-//     `.sprintengine/claude-plugins/<id>` and the variable is resolved to where it
+//     `claude-plugins/<id>` in the workspace's store and the variable is resolved to where it
 //     landed (plugin-directory.ts, shared/mcp/plugin-root.ts). A plugin whose
 //     servers name no such directory copies nothing extra.
 //  4. **Commands, agents, hooks and language servers are not installed.** They
@@ -143,7 +143,7 @@ export type PluginInstallResult =
        * its directory name so a Remove can take it back.
        */
       pluginRoot: string
-      /** The single path segment under `.sprintengine/claude-plugins`, '' when nothing was copied. */
+      /** The single path segment under `claude-plugins` in the workspace's store, '' when nothing was copied. */
       pluginDirName: string
       /** Files copied into `pluginRoot`; 0 when nothing was. */
       pluginFileCount: number
@@ -446,7 +446,7 @@ export type PluginUninstallOptions = {
   /** Skill directory names the install copied; swept from every harness dir. */
   skillDirNames: readonly string[]
   /**
-   * The plugin's own directory under `.sprintengine/claude-plugins`, '' when the
+   * The plugin's own directory under `claude-plugins` in the workspace's store, '' when the
    * install copied none. Absent on a receipt written before plugin directories
    * existed, which means the same thing: there is nothing of that kind to
    * remove.

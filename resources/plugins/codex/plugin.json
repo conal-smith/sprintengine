@@ -77,6 +77,7 @@
       { "spreadIf": "reasoningArgs" },
       { "spreadIf": "themeArgs" },
       { "spreadIf": "contextArgs" },
+      { "spreadIf": "integrationArgs" },
       { "spreadIf": "promptOverflowArgs" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
@@ -87,6 +88,7 @@
       "{{binary}}",
       { "spreadIf": "permissionArgs" },
       { "spreadIf": "themeArgs" },
+      { "spreadIf": "integrationArgs" },
       "resume",
       { "valueIf": "sessionId", "value": "{{sessionId}}" }
     ]
@@ -111,6 +113,11 @@
     "path": "{{workspaceRoot}}/.codex/config.toml",
     "userPath": "{{home}}/.codex/config.toml",
     "format": "codex"
+  },
+  "launchIntegration": {
+    "$comment": "The gateway and the person's synced servers as `-c mcp_servers.<id>={…}` overrides, the agent-state hook as one `-c hooks.<Event>=[…]` per registered event (both rendered into integrationArgs), and the skill a launch's prompt invokes copied into ~/.codex/skills while the app runs, so nothing is written into the repository's .codex/. Measured against codex-cli 0.161.0 on 2026-10-16: `codex mcp list` shows an override server with its env, and `required` is honoured; the hooks fire, as session-flag hooks, which Codex reviews like any hook that is not admin-managed — the TUI asks once (`Hooks need review`) and records the trust in ~/.codex/config.toml keyed to the command, so later launches with the same command run them unasked (the repository registration this replaces asked the same, and only loaded at all in a trusted project). `--dangerously-bypass-hook-trust` would skip that review for every hook in the session, so it is not passed. There is no launch-time skill folder: no flag and no -c key adds one.",
+    "route": "codex",
+    "userSkillsDir": ".codex/skills"
   },
   "skillIntegration": {
     "support": "native",

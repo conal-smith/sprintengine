@@ -169,6 +169,12 @@ export const TAILNET_CAPABILITIES = [
   // message is, or refused busy where it carries what a held one cannot.
   // CONVERSATION_STEER_SENDS_CAPABILITY.
   'conversation-steer-sends',
+  // The pictures a person sent with a message (2026-10-16): `GET
+  // conversation-image` takes `attachment`, the `ref` a `user_message`'s
+  // `attachments` entry records, in place of `toolUseId`, and serves the
+  // picture this machine kept for that chat. A client without it names the
+  // picture instead. CONVERSATION_MESSAGE_IMAGES_CAPABILITY.
+  'conversation-message-images',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, symlink, stat, link } from 'node:fs/promises'
+import { workspaceStorePath } from './workspace-store'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
@@ -11,7 +12,7 @@ async function fixture(
   const root = await mkdtemp(join(tmpdir(), 'conversation-index-'))
   const key = { workspaceRoot: root, workspaceId: 'workspace', agentId: 'agent' }
   const path = conversationIndexTranscriptPath(key)
-  await mkdir(join(root, '.sprintengine', 'conversations', 'workspace'), { recursive: true })
+  await mkdir(workspaceStorePath(root, 'conversations', 'workspace'), { recursive: true })
   try {
     await run(key, path)
   } finally {
@@ -49,7 +50,7 @@ test('missing, corrupt and old-version caches rebuild from authoritative events'
       ]),
     )
     const index = new ConversationIndex(),
-      cache = join(key.workspaceRoot, '.sprintengine', 'conversations', key.workspaceId, 'index.json')
+      cache = workspaceStorePath(key.workspaceRoot, 'conversations', key.workspaceId, 'index.json')
     expect(await index.list(key)).toMatchObject([
       { agentId: 'agent', title: 'Build a useful chat', titleSource: 'first-message', turnCount: 1, lastSeq: 2 },
     ])
@@ -116,7 +117,7 @@ test('refresh creates the cache and a later append invalidates a stale cache', a
     const index = new ConversationIndex()
     await index.refresh(key)
     expect(
-      await stat(join(key.workspaceRoot, '.sprintengine', 'conversations', key.workspaceId, 'index.json')),
+      await stat(workspaceStorePath(key.workspaceRoot, 'conversations', key.workspaceId, 'index.json')),
     ).toBeDefined()
     await appendFile(path, lines([event(2, 'user_message', { turnId: 'two', text: 'Second' })]))
     expect((await index.list(key))[0]?.turnCount).toBe(2)
@@ -240,7 +241,7 @@ test('a transcript past the read limit is listed and searched from its opening a
 test('an unreadable transcript gets a row of its own instead of failing the whole list and search', async () =>
   fixture(async (key, path) => {
     await writeFile(path, lines([event(1, 'user_message', { turnId: 't', text: 'Readable chat' })]))
-    const folder = join(key.workspaceRoot, '.sprintengine', 'conversations', key.workspaceId)
+    const folder = workspaceStorePath(key.workspaceRoot, 'conversations', key.workspaceId)
     const other = join(folder, 'other.jsonl')
     await writeFile(other, lines([event(1, 'user_message', { turnId: 't', text: 'Readable chat too' }, 'other')]))
     // A hard link is refused by confined file access, like any other unsafe file.
@@ -266,7 +267,7 @@ test('an unreadable transcript gets a row of its own instead of failing the whol
 test('an unreadable transcript whose file name is not valid percent-encoding still gets its row', async () =>
   fixture(async (key, path) => {
     await writeFile(path, lines([event(1, 'user_message', { turnId: 't', text: 'Readable chat' })]))
-    const folder = join(key.workspaceRoot, '.sprintengine', 'conversations', key.workspaceId)
+    const folder = workspaceStorePath(key.workspaceRoot, 'conversations', key.workspaceId)
     const odd = join(folder, '50%.jsonl')
     await writeFile(odd, lines([event(1, 'user_message', { turnId: 't', text: 'Hidden' }, '50%')]))
     const linked = join(tmpdir(), `conversation-index-link-${process.pid}-${Date.now()}`)
@@ -284,7 +285,7 @@ test('an unreadable transcript whose file name is not valid percent-encoding sti
 
 test('a listing reads only the transcripts that changed and keeps every other cached row', async () =>
   fixture(async (key, path) => {
-    const folder = join(key.workspaceRoot, '.sprintengine', 'conversations', key.workspaceId)
+    const folder = workspaceStorePath(key.workspaceRoot, 'conversations', key.workspaceId)
     await writeFile(path, lines([event(1, 'user_message', { turnId: 'one', text: 'Busy chat' })]))
     await writeFile(
       join(folder, 'quiet.jsonl'),
@@ -419,7 +420,7 @@ test('a cache written before rows kept the turn end is read again, so older turn
         event(2, 'turn_completed', { turnId: 'one' }),
       ]),
     )
-    const cache = join(key.workspaceRoot, '.sprintengine', 'conversations', key.workspaceId, 'index.json')
+    const cache = workspaceStorePath(key.workspaceRoot, 'conversations', key.workspaceId, 'index.json')
     // The file as the version before wrote it: the same fingerprint, a row
     // with no turn end.
     await new ConversationIndex().list(key)

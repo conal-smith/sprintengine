@@ -681,7 +681,7 @@ export function parseStudioChatParams<M extends StudioChatMethod>(method: M, par
       if (value.root === undefined)
         return isStudioPath(value.path) ? ok({ path: value.path }) : refuse('"path" is a path on Studio’s disk.')
       const root = parseStudioFileRoot(value.root)
-      if (!root) return refuse('"root" is { kind: "boards" | "workspace", workspaceId }.')
+      if (!root) return refuse('"root" is { kind: "boards" | "workspace" | "store", workspaceId }.')
       if (!isStudioRelativePath(value.path)) return refuse('"path" is relative to its root, with "/" between parts.')
       return ok({ path: value.path, root })
     }

@@ -3,12 +3,17 @@
 //
 // Invoked as a PostToolUse hook. Reads Claude's JSON payload from stdin,
 // extracts the touched file path, and appends a single JSON line to the
-// session trace file under .sprintengine/knowledge-trace/. Silently no-ops when
-// the touched file is outside the configured knowledge root.
+// session trace file in the trace folder. Silently no-ops when the touched
+// file is outside the configured knowledge root.
 //
 // Args:
 //   --knowledge-root <relative-path>   Knowledge root, workspace-relative.
 //   --memory-root <relative-path>      Backward-compatible alias.
+//   --trace-dir <absolute-path>        Where the trace goes: the app's own data
+//                                      folder for this workspace. Absent (a
+//                                      registration an earlier build wrote),
+//                                      .sprintengine/knowledge-trace/ in the
+//                                      workspace.
 //
 // The script always exits 0 so a hook failure never breaks Claude.
 
@@ -37,6 +42,9 @@ function parseArgs(argv) {
     const a = argv[i]
     if (a === '--knowledge-root' || a === '--memory-root') {
       args.memoryRoot = argv[i + 1]
+      i += 1
+    } else if (a === '--trace-dir') {
+      args.traceDir = argv[i + 1]
       i += 1
     }
   }
@@ -136,7 +144,10 @@ async function main() {
     return
   }
 
-  const traceDir = resolve(process.cwd(), '.sprintengine', 'knowledge-trace')
+  const traceDir =
+    args.traceDir && isAbsolute(args.traceDir)
+      ? args.traceDir
+      : resolve(process.cwd(), '.sprintengine', 'knowledge-trace')
   await mkdir(traceDir, { recursive: true })
 
   const event = {

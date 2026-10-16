@@ -118,6 +118,17 @@ export function applyPromptCacheEvent(
   if (event.type === 'context_compacted' && previous) {
     return { ttl: previous.ttl, expiresAt: null, recacheTokens: null }
   }
+  // A `/compact` the CLI turned down for having nothing to compact says the
+  // session it holds is empty, whatever the last reading said it would cost
+  // to send: offering Compact again would only be turned down again.
+  if (
+    event.type === 'command_output' &&
+    previous &&
+    event.payload?.command === 'compact' &&
+    /not enough messages to compact/iu.test(String(event.payload?.output ?? ''))
+  ) {
+    return { ttl: previous.ttl, expiresAt: null, recacheTokens: null }
+  }
   return previous
 }
 

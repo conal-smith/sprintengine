@@ -235,6 +235,16 @@ Each degrades on a desktop without it to something that desktop already does:
 `hello` and `resolvePlan` are refused under their ids, and an unknown
 `permissionMode` member is dropped, so the preset's own mode runs.
 
+An `answerQuestion`'s answers are keyed by each question's whole text, which
+is how the CLI reads them back. The first version capped a key at 200
+characters, so a long question's answer was refused as `invalid_frame`. Since
+2026-10-16 a desktop accepts a key as long as an answer (20,000 characters),
+with the frame's total still the message limit. Only the validator widened:
+a client sends the same frame to either desktop, and an older one goes on
+refusing a long question as it always did. The first version's reader in
+`index.ts` is unchanged, since the phone carries it byte for byte; the wider
+rule is in `clientFrames.ts`, the server half.
+
 The initial `0.1.0` contract requires the `conversations` capability. Additive
 optional fields preserve that contract. Model switching is one such addition: its own
 `conversation-models` capability, a `models` catalog on a listed thread, the
@@ -245,7 +255,14 @@ The pictures a chat's steps show are another: the `conversation-images`
 capability names a plain `GET /tailnet/v1/conversation-image` beside the socket
 rather than a frame, so it changes neither the frame contract nor this package.
 A client that does not see it says the picture is on the other machine, and an
-older desktop answers the route 404. The machine each chat runs on (`host`),
+older desktop answers the route 404. The pictures a person sent with a message
+are the `conversation-message-images` capability (2026-10-16), on the same
+route: `attachment`, the `ref` an entry of a `user_message`'s `attachments`
+records, in place of `toolUseId`. Those entries (`{ id, mediaType, name?,
+byteLength, ref }`) were on the wire before it, an optional member with no
+capability; the capability only says the bytes can be fetched. A client that
+does not see it names the picture, and an older desktop answers the request
+400, since it names no `toolUseId`. The machine each chat runs on (`host`),
 its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
@@ -377,7 +394,15 @@ and `progress`. A Studio sends `call` only to a connection that offered a
 toolset, and the SDK sends `reply` only to a Studio that advertised the
 capability, so neither end is handed a frame type it does not know.
 `files-write` adds the owner-only `files.*` by root, which the canvas uses
-over a Studio's boards. `pull-requests` adds the owner-only `pullRequests.*`
+over a Studio's boards. The `store` root kind (2026-10-16), the project's
+store in the person's home where a Studio keeps the captures, recordings and
+transcripts older builds kept in `<project>/.sprintengine/`, is additive under
+it with no capability of its own: `files.roots` answers `store: true` where it
+is served, a Studio built before it leaves the member out and refuses the kind
+as `invalid_params`, and a client asks for it only where it is listed. An old
+client's read of `.sprintengine/…` under the `workspace` root that the folder
+no longer has is answered from the store, so a path it learned from an older
+Studio still finds its file. `pull-requests` adds the owner-only `pullRequests.*`
 methods and stream, and `pull-request-tool-calls` the one method a client that
 runs its own agents forwards their tool calls with, `pullRequests.noteToolCall`,
 and `pull-request-link` `pullRequests.link`, which records a pull request an

@@ -302,10 +302,12 @@ export async function clearIgnored(
   })
   if (!began) return { ok: false, message: 'Only a worktree that is ready to reuse can be cleared.' }
   try {
-    // Never the app's sidecar: it holds the history of chats that ran here,
-    // which a settled chat reopened on this slot reads again. `-e` with a
-    // negation takes the folder out of the ignored set for this run (a
-    // pathspec exclusion does not stop `clean` removing an ignored folder).
+    // Never the sidecar an older build wrote: until the store's one-time move
+    // has taken it (workspace-store-migration.ts), it holds the history of
+    // chats that ran here, which a settled chat reopened reads again. This
+    // build writes nothing there. `-e` with a negation takes the folder out of
+    // the ignored set for this run (a pathspec exclusion does not stop `clean`
+    // removing an ignored folder).
     const cleaned = await ctx.git(slot.path, ['clean', '-fdX', '--quiet', '-e', '!/.sprintengine/'])
     if (!cleaned.ok) return { ok: false, message: cleaned.message ?? 'git clean failed.' }
     ctx.log(`${slot.path}: ignored files cleared`)

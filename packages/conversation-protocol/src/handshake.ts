@@ -66,6 +66,14 @@ export const CONVERSATION_SEND_SKILLS_CAPABILITY = 'conversation-send-skills' as
  * mid-turn was.
  */
 export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as const
+/**
+ * The pictures a person sent with a message are served beside the step
+ * pictures `conversation-images` names: `GET conversation-image` takes
+ * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
+ * in place of `toolUseId`. Only a picture kept for that chat is served. A
+ * client without it names the picture instead of showing it.
+ */
+export const CONVERSATION_MESSAGE_IMAGES_CAPABILITY = 'conversation-message-images' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -84,6 +92,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_QUEUED_SENDS_CAPABILITY,
   CONVERSATION_SEND_SKILLS_CAPABILITY,
   CONVERSATION_STEER_SENDS_CAPABILITY,
+  CONVERSATION_MESSAGE_IMAGES_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

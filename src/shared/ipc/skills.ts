@@ -317,7 +317,7 @@ export type InstalledPluginRecord = {
   claudePluginKey: string
   skillDirNames: string[]
   /**
-   * The plugin's own directory under `.sprintengine/claude-plugins`, when its MCP
+   * The plugin's own directory under `claude-plugins` in the workspace's store, when its MCP
    * server runs out of one. Absent on a receipt from before plugin directories
    * existed, and on every plugin that needs none.
    */

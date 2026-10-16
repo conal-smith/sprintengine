@@ -55,8 +55,7 @@ function fakeOutputs(refuse?: RecordingFailure) {
       const file = { stem, bytes: 0, finished: null as number | null, discarded: false }
       files.push(file)
       const output: RecordingOutput = {
-        workspacePath: `.sprintengine/browser/recordings/${stem}.webm`,
-        path: `/Users/dev/app/.sprintengine/browser/recordings/${stem}.webm`,
+        path: `/Users/dev/.sprintengine/workspaces/app-0123456789abcdef/browser/recordings/${stem}.webm`,
         append: async (bytes) => void (file.bytes += bytes.length),
         finish: async (durationMs) => {
           file.finished = durationMs
@@ -125,7 +124,10 @@ test('start → chunks → stop: the person is shown it, and the file is finishe
   const begun = await recorder.start({ tabId: 't1', workspaceId: 'ws', owner: 'agent-1', maxSeconds: 30 })
   assert.ok(begun.ok)
   assert.equal(begun.recording.recordingId, 'rec-1')
-  assert.equal(begun.recording.workspacePath, `.sprintengine/browser/recordings/${out.files[0]!.stem}.webm`)
+  assert.equal(
+    begun.recording.path,
+    `/Users/dev/.sprintengine/workspaces/app-0123456789abcdef/browser/recordings/${out.files[0]!.stem}.webm`,
+  )
   assert.deepEqual(enc.starts[0], {
     recordingId: 'rec-1',
     tabId: 't1',

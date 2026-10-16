@@ -511,7 +511,8 @@ export function migratePersistedWorkspaceState(persisted: unknown, version: numb
     // a workspace type. Drop any persisted automations workspaces: their only
     // content was the locked control-center tab — every automation definition
     // and run history lives on disk under each project's
-    // `.sprintengine/automations/`, so nothing the user authored is lost. Window
+    // `.sprintengine/automations/` (now `legacy/automations/` in the project's
+    // store), so nothing the user authored is lost. Window
     // membership and the active-workspace pointer are reconciled against the
     // surviving workspaces by normalizeWorkspaceWindows during merge.
     migrationState.workspaces = (migrationState.workspaces ?? []).filter((ws) => ws.mode !== 'automations')

@@ -780,6 +780,19 @@ test('modelRegistry', async () => {
       'Atlas',
       'the name rides the tab config so the launch adopts it rather than drawing another',
     )
+    assert.equal(
+      (placed?.config as { launchPick?: unknown } | undefined)?.launchPick,
+      undefined,
+      'a plain + carries no engine, so the surface opens on the last one used',
+    )
+    const pickedId = addNewAgentTab(WS, 'Bran', undefined, { kind: 'conversation', cli: 'codex' })
+    const picked = allTabs(model).find((tab) => tab.id === pickedId)
+    assert.deepEqual(
+      (picked?.config as { launchPick?: unknown } | undefined)?.launchPick,
+      { kind: 'conversation', cli: 'codex' },
+      'a row of the + menu rides the tab, so its surface opens on that engine',
+    )
+    removeNewAgentTab(WS, pickedId!)
 
     // Retype in place: the node id survives, so the tab keeps its tabset and size.
     const before = model.getNodeById(tabId!)
