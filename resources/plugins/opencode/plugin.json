@@ -92,6 +92,10 @@
     "userPath": "{{home}}/.config/opencode/opencode.json",
     "format": "opencode"
   },
+  "launchIntegration": {
+    "$comment": "The agent-state plugin (by file:// URL), the MCP table and a launch skill's folder (skills.paths) in OPENCODE_CONFIG_CONTENT, merged with the host context's instructions. Measured against opencode 1.18.32 on 2026-10-16: a plugin named by URL loads beside the person's own with nothing installed next to it, `mcp` merges field by field and wins on the same id, and skills.paths folders are scanned for SKILL.md.",
+    "route": "opencode"
+  },
   "skillIntegration": {
     "support": "native",
     "harnessId": "opencode",

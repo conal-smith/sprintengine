@@ -14,6 +14,8 @@ import {
   type StudioLauncherRef,
 } from './integrations/launcher'
 import { hostIdForPath, recordIntegrationWrite } from './integrations/ledger'
+import { removeHooksDirIfOnlyOurs } from './agent-state'
+import { ensureWorkspaceStoreDir, workspaceStorePath } from './workspace-store'
 import { broadcastToAllWindows } from './window-broadcast'
 
 // =============================================================================
@@ -75,12 +77,66 @@ const states = new Map<string, WorkspaceState>()
 
 const HOOK_TAG = 'sprintengine-knowledge-activity'
 const HOOK_SCRIPT_REL = join('.sprintengine', 'hooks', 'knowledge-activity.mjs')
+// Where an earlier build's hook wrote its trace, and where a workspace on
+// another machine (WSL) still has it written: inside the workspace, beside the
+// registration that named it.
 const TRACE_DIR_REL = join('.sprintengine', 'knowledge-trace')
 const INSTALLED_RECORD_REL = join('.sprintengine', 'hooks', 'installed.json')
 const CLAUDE_LOCAL_SETTINGS_REL = join('.claude', 'settings.local.json')
 
+// A workspace on this machine keeps nothing of this feature in the repository
+// (owner ruling 2026-10-16): the opt-in and the trace live in the workspace's
+// store under the home (`workspace-store.ts`), and the hook rides the launch's
+// own `--settings` (`knowledgeActivityLaunchCommand`). An earlier build's
+// in-repository trace is moved into the store with the rest of `.sprintengine/`
+// (`workspace-store-migration.ts`).
+const OPT_IN_FILE = 'knowledge-activity.json'
+const TRACE_STORE_DIR = 'knowledge-trace'
+
+type OptIn = { memoryRelativeRoot: string; installedAt: string }
+
 function workspaceKey(workspaceRoot: string): string {
   return resolve(workspaceRoot)
+}
+
+function optInPath(workspaceRoot: string): string {
+  return workspaceStorePath(workspaceRoot, OPT_IN_FILE)
+}
+
+async function readOptIn(workspaceRoot: string): Promise<OptIn | null> {
+  try {
+    const parsed = JSON.parse(await readFile(optInPath(workspaceRoot), 'utf8')) as Partial<OptIn> | null
+    return typeof parsed?.memoryRelativeRoot === 'string' && parsed.memoryRelativeRoot.trim()
+      ? { memoryRelativeRoot: parsed.memoryRelativeRoot, installedAt: String(parsed.installedAt ?? '') }
+      : null
+  } catch {
+    // Absent or unreadable: not opted in.
+    return null
+  }
+}
+
+async function writeOptIn(workspaceRoot: string, optIn: OptIn | null): Promise<void> {
+  if (!optIn) {
+    await rm(optInPath(workspaceRoot), { force: true })
+    return
+  }
+  await ensureWorkspaceStoreDir(workspaceRoot)
+  await writeFileAtomically(optInPath(workspaceRoot), `${JSON.stringify(optIn, null, 2)}\n`)
+}
+
+/** Where this machine's hook writes a workspace's trace. */
+function launchTraceDir(workspaceRoot: string): string {
+  return workspaceStorePath(workspaceRoot, TRACE_STORE_DIR)
+}
+
+/** The trace folders a workspace's events are read from: this machine's, then the in-repository one. */
+function traceDirsFor(workspaceRoot: string): string[] {
+  const inRepository = resolve(workspaceRoot, TRACE_DIR_REL)
+  return hostIdForPath(workspaceRoot) === 'local' ? [launchTraceDir(workspaceRoot), inRepository] : [inRepository]
+}
+
+function liveTraceDir(workspaceRoot: string): string {
+  return traceDirsFor(workspaceRoot)[0]!
 }
 
 function getBundledHookScriptPath(): string | null {
@@ -243,6 +299,88 @@ export async function installMemoryActivityHook(
     return { ok: false, message: 'Knowledge activity hook script is missing from this build.' }
   }
 
+  // A workspace on another machine is read by a CLI there, which no launch
+  // here can hand a setting to: it keeps the registration in its own settings.
+  if (hostIdForPath(workspaceRoot) !== 'local') return installWorkspaceRegistration(workspaceRoot, memoryRelativeRoot)
+
+  try {
+    await writeOptIn(workspaceRoot, { memoryRelativeRoot, installedAt: new Date().toISOString() })
+    await removeWorkspaceRegistration(workspaceRoot)
+    await ensureWorkspaceStoreDir(workspaceRoot, TRACE_STORE_DIR)
+    const state = ensureWorkspaceState(workspaceRoot, memoryRelativeRoot)
+    state.isInstalled = true
+    return { ok: true, settingsPath: optInPath(workspaceRoot), hookScriptPath: sourceScript }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Failed to install knowledge activity hook.',
+    }
+  }
+}
+
+/**
+ * The hook command a Claude-family launch in `workspaceRoot` adds to its
+ * `--settings`, or null when the workspace has not opted in. A workspace an
+ * earlier build registered in its own `.claude/settings.local.json` is moved
+ * here on its first launch: its opt-in is recorded and that entry taken out.
+ */
+export async function knowledgeActivityLaunchCommand(workspaceRoot: string): Promise<string | null> {
+  if (!workspaceRoot?.trim() || hostIdForPath(workspaceRoot) !== 'local') return null
+  let entry = await readOptIn(workspaceRoot)
+  if (!entry) {
+    const legacy = await readLegacyInstalledRecord(workspaceRoot)
+    if (!legacy) return null
+    entry = { memoryRelativeRoot: legacy, installedAt: new Date().toISOString() }
+    await writeOptIn(workspaceRoot, entry)
+    await removeWorkspaceRegistration(workspaceRoot)
+  }
+  const traceDir = await ensureWorkspaceStoreDir(workspaceRoot, TRACE_STORE_DIR).catch(() =>
+    launchTraceDir(workspaceRoot),
+  )
+  return buildLaunchHookCommand(entry.memoryRelativeRoot, traceDir)
+}
+
+// The launcher when it is written (no Node on PATH assumed), else the hook
+// that ships with this build, which a launch-scoped setting may name: it
+// lives exactly as long as the sessions this build starts.
+function buildLaunchHookCommand(memoryRelativeRoot: string, traceDir: string): string | null {
+  const memoryRel = memoryRelativeRoot.split(sep).join('/')
+  const args = ['--knowledge-root', memoryRel, '--trace-dir', traceDir.split(sep).join('/')]
+  const launcher = usableLocalLauncherRef(homedir())
+  if (launcher) return buildLauncherCommand(launcher, 'knowledge-activity', args)
+  const script = getBundledHookScriptPath()
+  if (!script) return null
+  return `node "${script.split(sep).join('/')}" ${args.map((arg) => (arg.startsWith('--') ? arg : `"${arg}"`)).join(' ')}`
+}
+
+async function readLegacyInstalledRecord(workspaceRoot: string): Promise<string | null> {
+  const raw = await readFile(resolve(workspaceRoot, INSTALLED_RECORD_REL), 'utf8').catch(() => null)
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw) as { memoryRelativeRoot?: unknown; tag?: unknown }
+    return parsed.tag === HOOK_TAG && typeof parsed.memoryRelativeRoot === 'string' && parsed.memoryRelativeRoot.trim()
+      ? parsed.memoryRelativeRoot
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Take out what an earlier build registered inside the workspace: the hook entry, its record, its script copy. */
+async function removeWorkspaceRegistration(workspaceRoot: string): Promise<void> {
+  const settingsPath = resolve(workspaceRoot, CLAUDE_LOCAL_SETTINGS_REL)
+  if (existsSync(settingsPath)) await unmergeSprintEngineHook(settingsPath).catch(() => undefined)
+  await rm(resolve(workspaceRoot, INSTALLED_RECORD_REL), { force: true }).catch(() => undefined)
+  await rm(resolve(workspaceRoot, HOOK_SCRIPT_REL), { force: true }).catch(() => undefined)
+  await removeHooksDirIfOnlyOurs(resolve(workspaceRoot, '.sprintengine', 'hooks')).catch(() => undefined)
+}
+
+async function installWorkspaceRegistration(
+  workspaceRoot: string,
+  memoryRelativeRoot: string,
+): Promise<ActivityInstallResult> {
+  const sourceScript = getBundledHookScriptPath()
+  if (!sourceScript) return { ok: false, message: 'Knowledge activity hook script is missing from this build.' }
   try {
     const hookDir = resolve(workspaceRoot, '.sprintengine', 'hooks')
     await mkdir(hookDir, { recursive: true })
@@ -302,6 +440,7 @@ export async function uninstallMemoryActivityHook(workspaceRoot: string): Promis
   if (!workspaceRoot?.trim()) return { ok: false, message: 'Workspace root is required.' }
 
   try {
+    if (hostIdForPath(workspaceRoot) === 'local') await writeOptIn(workspaceRoot, null)
     const settingsPath = resolve(workspaceRoot, CLAUDE_LOCAL_SETTINGS_REL)
     if (existsSync(settingsPath)) await unmergeSprintEngineHook(settingsPath)
 
@@ -322,7 +461,8 @@ export async function uninstallMemoryActivityHook(workspaceRoot: string): Promis
 
 export async function isMemoryActivityInstalled(workspaceRoot: string): Promise<boolean> {
   if (!workspaceRoot?.trim()) return false
-  return existsSync(resolve(workspaceRoot, INSTALLED_RECORD_REL))
+  if (existsSync(resolve(workspaceRoot, INSTALLED_RECORD_REL))) return true
+  return hostIdForPath(workspaceRoot) === 'local' && (await readOptIn(workspaceRoot)) !== null
 }
 
 // =============================================================================
@@ -424,12 +564,13 @@ function processEventLine(state: WorkspaceState, sessionId: string, line: string
 
 async function tailSessionFile(
   state: WorkspaceState,
+  traceDir: string,
   fileName: string,
   options: { broadcastEvents: boolean } = { broadcastEvents: true },
 ): Promise<void> {
   if (!fileName.endsWith('.jsonl')) return
   const sessionId = fileName.replace(/\.jsonl$/u, '')
-  const filePath = resolve(state.workspaceRoot, TRACE_DIR_REL, fileName)
+  const filePath = join(traceDir, fileName)
   if (!existsSync(filePath)) return
 
   let session = state.sessions.get(sessionId)
@@ -447,20 +588,23 @@ async function tailSessionFile(
 }
 
 async function rebuildFromDisk(state: WorkspaceState): Promise<void> {
-  const traceDir = resolve(state.workspaceRoot, TRACE_DIR_REL)
-  if (!existsSync(traceDir)) return
-  let entries: string[] = []
-  try {
-    entries = await readdir(traceDir)
-  } catch {
-    return
-  }
-  // Replay every existing session so synapse counts match live state, but
-  // do NOT re-broadcast history as live pulses — the renderer will request
-  // a synapse snapshot once on connect.
-  const jsonlFiles = entries.filter((n) => n.endsWith('.jsonl')).sort()
-  for (const name of jsonlFiles) {
-    await tailSessionFile(state, name, { broadcastEvents: false })
+  // The in-repository folder an earlier build wrote is read too, so the
+  // history recorded before the trace moved still counts.
+  for (const traceDir of traceDirsFor(state.workspaceRoot).reverse()) {
+    if (!existsSync(traceDir)) continue
+    let entries: string[] = []
+    try {
+      entries = await readdir(traceDir)
+    } catch {
+      continue
+    }
+    // Replay every existing session so synapse counts match live state, but
+    // do NOT re-broadcast history as live pulses — the renderer will request
+    // a synapse snapshot once on connect.
+    const jsonlFiles = entries.filter((n) => n.endsWith('.jsonl')).sort()
+    for (const name of jsonlFiles) {
+      await tailSessionFile(state, traceDir, name, { broadcastEvents: false })
+    }
   }
 }
 
@@ -469,7 +613,12 @@ export async function startMemoryActivityWatcher(workspaceRoot: string, memoryRe
   const state = ensureWorkspaceState(workspaceRoot, memoryRelativeRoot)
   if (state.watcher) return
 
-  const traceDir = resolve(workspaceRoot, TRACE_DIR_REL)
+  // The store's, once any move into it has finished, so the replay below sees
+  // the history an earlier build kept in the repository.
+  const traceDir =
+    hostIdForPath(workspaceRoot) === 'local'
+      ? await ensureWorkspaceStoreDir(workspaceRoot, TRACE_STORE_DIR)
+      : liveTraceDir(workspaceRoot)
   await mkdir(traceDir, { recursive: true })
 
   await rebuildFromDisk(state)
@@ -481,7 +630,7 @@ export async function startMemoryActivityWatcher(workspaceRoot: string, memoryRe
   state.watcher = fsWatch(traceDir, { persistent: false }, (_event, fileName) => {
     if (!fileName) return
     const name = String(fileName)
-    void tailSessionFile(state, name).then(() => broadcastStatus(state))
+    void tailSessionFile(state, traceDir, name).then(() => broadcastStatus(state))
   })
 }
 

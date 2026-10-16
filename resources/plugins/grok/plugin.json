@@ -96,8 +96,14 @@
     "mode": "process-exit"
   },
   "mcpConfig": {
-    "path": "{{workspaceRoot}}/.mcp.json",
-    "format": "claude-code"
+    "$comment": "User-level, not the repository's .mcp.json: the Grok TUI takes no MCP flag, plugin directory or config overlay at launch (grok 1.0.41: --plugin-dir is on `grok agent` only, GROK_CONFIG carries no mcp_servers, GROK_HOME moves the whole home and its sign-in). ~/.grok/config.toml takes the same [mcp_servers.<id>] tables Codex does (command, args, env, enabled, url, headers; measured 2026-10-16: an unknown key is dropped with a log warning, only a TOML syntax error drops the file), so the codex writer's marked block is written there; the gateway in it is taken back out at quit.",
+    "path": "{{home}}/.grok/config.toml",
+    "userPath": "{{home}}/.grok/config.toml",
+    "format": "codex"
+  },
+  "launchIntegration": {
+    "$comment": "Grok has no launch-time skill folder either, so the skill a launch's prompt invokes is copied into ~/.grok/skills (a user-level skill folder grok 1.0.41 lists, measured 2026-10-16) while the app runs, with the managed manifest, and taken back out at quit.",
+    "userSkillsDir": ".grok/skills"
   },
   "skillIntegration": {
     "support": "native",
@@ -120,7 +126,7 @@
   },
   "agentStateSpec": {
     "$comment": "Grok Build ships Claude-style lifecycle hooks. Discovery is per-file: project hooks are standalone JSON files under .grok/hooks/, so we own our config file outright (owned-json). Project hooks only run once the folder is trusted — see the bypass_all $comment. VERIFIED 2026-09-09 against grok 1.0.13 (xAI's Grok Build TUI at /opt/homebrew/bin/grok — NOT the community `grok-cli`, whose hook engine fires only for its bash tool), by reading the hook reference embedded in the binary and by writing candidate .grok/hooks/*.json files and counting what `grok inspect` loaded. CONFIG spelling: the event names below are written PascalCase and grok loads them (15/15 in a probe file). It also accepts snake_case and Cursor camelCase, but NOT kebab-case or SCREAMING, and it silently skips names it does not know — so this is a fixed alias set, not case-insensitivity, and our PascalCase is inside it. PAYLOAD spelling differs from the config spelling: the documented stdin payload stamps \"hookEventName\": \"pre_tool_use\" (snake_case), while field NAMES are camelCase (hookEventName / sessionId / toolName / toolInput, each with a snake_case serde alias the shared reporter also reads). That mismatch was a real bug: the main process compared this manifest's PascalCase to the frame's snake_case EXACTLY and dropped every Grok frame, so a Grok agent never left `starting` until the stall watch flagged it. Fixed in resolveAgentStateEvent by canonical (case- and _/- insensitive) comparison, so the table below keeps grok's own written form and the registration emitter still writes it verbatim. Grok's documented Notification types are `idle_prompt`, `permission_prompt`, `task_complete`: `permission_prompt` below is CONFIRMED real, `elicitation_dialog` and `agent_needs_input` are harmless carry-over grok never sends, and `idle_prompt` stays off the list deliberately (a false needs-input parks a session forever; a false idle is recoverable). NOT verified live: no payload was captured from a running session — this machine is not signed in to Grok (`grok -p` exits \"Not signed in\"), so whether a file edit fires PreToolUse/PostToolUse, and the edit tool's name in a real payload, still rest on the embedded docs (which name grok's edit tool `search_replace`, aliased from Edit/Write/MultiEdit; Bash is `run_terminal_command`). Grok also ships events this table does not use yet: PostToolUseFailure, PermissionDenied, StopFailure, StopCancelled, SubagentStart, PreCompact, PostCompact.",
-    "registration": { "kind": "owned-json", "path": ".grok/hooks/sprintengine-agent-state.json" },
+    "registration": { "kind": "owned-json", "path": ".grok/hooks/sprintengine-agent-state.json", "scope": "user" },
     "events": [
       { "event": "SessionStart", "phase": "starting" },
       { "event": "UserPromptSubmit", "phase": "thinking" },

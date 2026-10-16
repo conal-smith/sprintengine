@@ -1,29 +1,53 @@
 # Agent launch isolation
 
-What the app writes into a repository when it launches an agent there, which
-CLI reads each file, and which of those writes have moved to a mechanism that
-reaches only the session the app launched.
+What the app hands an agent CLI it launches — its agent-state hook, its MCP
+gateway, the person's synced MCP servers, the skill a prompt invokes — which
+channel each one travels by, and what is still written anywhere a plain
+terminal's CLI would read it.
 
 Two rules drive everything below.
 
-1. **Nothing of the app's belongs in the repository.** A file the app writes
-   into a checkout shows up in `git status`, gets committed by accident, and
-   hands a colleague who never ran the app hook commands and absolute paths
-   that do not exist on their machine. Anything that genuinely has to live in
-   the checkout lives under the one app-owned directory, `.sprintengine/`, and
-   ignores itself where it is machine-specific.
+1. **Nothing of the app's belongs in the repository** (owner ruling
+   2026-10-16: nobody using Studio should have to add an entry to their
+   `.gitignore` and commit it). A file the app writes into a checkout shows up
+   in `git status`, gets committed by accident, and hands a colleague who never
+   ran the app hook commands and absolute paths that do not exist on their
+   machine. What the app hands a CLI comes from outside the project: a
+   per-launch flag or variable naming a file under the profile's userData
+   directory, or, where a CLI has no such channel, its user-level
+   configuration, written while the app runs and inert outside the app's
+   launches.
 2. **The app's hooks, skills and MCP gateway apply to the sessions the app
    launches, never to a CLI run from a plain terminal.** A file in the
    repository fails this by construction: every CLI started in that checkout
    reads it. A launch flag passes it, because the flag exists only on the
-   command line the app built.
+   command line the app built. Where only user-level configuration is left,
+   the hook does nothing without the launch's environment (the reporter exits
+   when `SPRINTENGINE_AGENT_ID` is unset), and the entry is taken back out when
+   the app quits.
 
-## The launch-scoped mechanism
+## Per CLI
 
-For the Claude-family CLIs (Claude Code, and the Z.AI and Kimi providers that
-run the same `claude` binary) the app materialises its own plugin once per
-build under the profile's userData directory
-(`src/main/agent-integration-home.ts`) and passes it at launch:
+| CLI                            | Agent-state hook                                                  | MCP gateway and synced servers                                            | Skill a prompt invokes                           |
+| ------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------ |
+| Claude Code, Z.AI, Kimi Claude | `--plugin-dir` (the app's plugin)                                 | gateway in the plugin's `.mcp.json`; synced servers `--mcp-config <file>` | `--plugin-dir` one-skill plugin                  |
+| Codex                          | `-c hooks.<Event>=[…]`                                            | `-c mcp_servers.<id>={…}`                                                 | copied into `~/.codex/skills` while the app runs |
+| OpenCode                       | `OPENCODE_CONFIG_CONTENT` `plugin` (a `file://` URL)              | `OPENCODE_CONFIG_CONTENT` `mcp`                                           | `OPENCODE_CONFIG_CONTENT` `skills.paths`         |
+| Cursor                         | `~/.cursor/hooks.json`, while the app runs                        | one more `--plugin-dir` (its `.mcp.json`)                                 | the same `--plugin-dir`                          |
+| Grok                           | `~/.grok/hooks/sprintengine-agent-state.json`, while the app runs | `~/.grok/config.toml` marked block; the gateway leaves at quit            | copied into `~/.grok/skills` while the app runs  |
+| Kimi Code                      | `~/.kimi-code/config.toml`, while the app runs                    | —                                                                         | —                                                |
+
+Each manifest says which per-launch channels its CLI takes
+(`launchIntegration` in `resources/plugins/<cli>/plugin.json`, with what was
+measured against which version), and `src/main/integrations/launch-integration.ts`
+builds them for one launch. A user-level registration is declared with
+`scope: "user"` on the manifest's `agentStateSpec`.
+
+### Claude Code and the CLIs on its binary
+
+The app materialises its own plugin once per build under the profile's
+userData directory (`src/main/agent-integration-home.ts`) and passes it at
+launch:
 
 - `--plugin-dir <userData>/agent-integration/<version>/sprintengine-studio`
   carries the agent-state hook (`hooks/hooks.json` and the reporter beside it),
@@ -32,18 +56,20 @@ build under the profile's userData directory
   Settings is applied to this copy in place, not by rebuilding it.
 - `--plugin-dir <userData>/agent-integration/<version>/launch-skills/<id>`,
   **only on the launch whose prompt invokes that skill**: `backlog`, for a
-  Backlog handoff (Hand to agent, `backlog.work`). It is a plugin holding that
-  one skill, so no other session sees it and nothing is written to the
-  repository. It is the only skill the
-  app ships (`resources/builtin-skills`). A `studio-skills` bundle holding it,
-  `debug` and seven general workflow skills was passed to every launch until
-  2026-09-28 and is gone; so is Debug Mode, the feature `debug` backed.
-- `--settings '<json>'` carries the status line, which no plugin can declare.
-
-Each is documented by Claude Code as applying to that session only and writing
-nothing to disk. The manifests declare them as `launchPlugins` and
-`launchSettings`
-(`resources/plugins/{claude-code,zai,kimi-claude}/plugin.json`).
+  Backlog handoff (Hand to agent, `backlog.work`). A skill a capability module
+  registers is written as a one-skill plugin of its own on demand, under
+  `<userData>/agent-integration/launch/`, and passed the same way.
+- `--mcp-config <userData>/agent-integration/launch/claude-mcp-<hash>.json`
+  carries the servers the person synced for this CLI. Measured against Claude
+  Code 2.1.296 on 2026-10-16: such a server starts with no approval prompt,
+  merges with the project's and the person's own, and wins over a same-named
+  one. The file is owner-only, because a server's environment can hold a
+  secret.
+- `--settings '<json>'` carries the status line, which no plugin can declare,
+  and the knowledge-activity hook when the workspace opted into it. A second
+  `--settings` replaces the first outright (measured on the same version), so
+  both ride one document; its hooks fire beside the project's and every
+  plugin's.
 
 A plugin skill is invoked by its bare name (`/backlog`) whenever no other command
 claims that name, and always as `/sprintengine-backlog:backlog`, so the invocations
@@ -53,25 +79,104 @@ expect.
 
 One predicate decides whether a launch carries the plugin:
 `launchCarriesAppPlugins(cli, host)` in `src/main/app-services.ts`. On this
-machine it is true when the platform takes the flag (not native Windows), the
-copy has been materialised, and the CLI's manifest declares `launchPlugins`. On
-a WSL machine it is true when the CLI declares `launchPlugins` and that
-distribution's helper has written its own copy, with Linux paths substituted
-into it (`src/main/hosts/wsl-plugin-copy.ts`). The launch flag, the agent-state
-installer and the MCP sync all ask this one question, so none of them can write
-a workspace copy of something the launch is also carrying, or skip one it is
-not.
+machine it is true when the copy has been materialised and the CLI's manifest
+declares `launchPlugins`; native Windows included, where the copy's hooks and
+status line run through the Studio launcher rather than `node`, as every hook
+the workspace install wrote there did. (Windows was held back when the flag
+arrived because the copy then shared substituted paths with WSL launches; a WSL
+launch has had its own copy since.) On a WSL machine it is true when the CLI
+declares `launchPlugins` and that distribution's helper has written its own
+copy, with Linux paths substituted into it (`src/main/hosts/wsl-plugin-copy.ts`).
+The launch flag, the agent-state installer and the MCP sync all ask this one
+question, so none of them can write a workspace copy of something the launch is
+also carrying, or skip one it is not. A build whose copy failed still installs
+into the workspace, which keeps agent state working.
+
+### Codex
+
+Measured against codex-cli 0.161.0 on 2026-10-16. The gateway and the synced
+servers go as `-c mcp_servers.<id>={…}` inline tables: `codex mcp list` shows
+them with their environment, and `required` is honoured. The gateway names the
+agent's ids and its launch token in `env_vars`, because Codex hands a server
+only the variables it names. The hook goes as one `-c hooks.<Event>=[…]` per
+registered event. Codex reviews such session-flag hooks like any hook that is
+not admin-managed: the TUI asks once (`Hooks need review`) and records the
+trust in `~/.codex/config.toml`, keyed to the command, so later launches with
+the same command run them unasked — the same review the repository
+registration this replaces needed, which on top loaded only in a trusted
+project. `--dangerously-bypass-hook-trust` would skip that review for every
+hook in the session, so it is not passed. `CODEX_HOME` would isolate
+everything but relocates the whole profile, credentials included, so it is not
+a route.
+
+Codex has no launch-time skill folder (no flag, no `-c` key adds one), so the
+skill a prompt invokes is copied into `~/.codex/skills/<id>` with the managed
+manifest, listed in the ledger, and taken back out at quit unless someone
+changed it. A skill of that name the person keeps there is theirs, and is what
+the launch runs.
+
+### OpenCode
+
+Measured against opencode 1.18.32 on 2026-10-16. One `OPENCODE_CONFIG_CONTENT`
+document, merged with the host context's `instructions` and with any the
+person exported themselves (`mergeProviderLaunchEnv`, one level deep): a
+`plugin` entry naming the agent-state plugin by `file://` URL loads beside the
+person's own with nothing installed next to it; `mcp` merges field by field
+with the project's and the person's tables and wins on the same id;
+`skills.paths` adds the skill's own folder. `OPENCODE_CONFIG_DIR` also works
+but runs a package install into the folder on every first use, so it is not
+used.
+
+### Cursor
+
+Measured against cursor-agent 2026.10.14 on 2026-10-16. The gateway, the synced
+servers and a launch skill ride one more `--plugin-dir`, beside the
+host-context plugin: a plugin's `.mcp.json` server starts with no
+server-approval dialog (a project `.cursor/mcp.json` one stops the start at
+one), and its `skills/<id>/SKILL.md` loads. The plugin folder is always named
+`sprintengine-studio`, because Cursor names a plugin's servers after it.
+
+The hook is not in the plugin: a plugin's `stop` and `beforeSubmitPrompt` hooks
+fire only when the person's or the project's own hooks file names the same
+event, and `stop` is what ends a turn. So it is merged into the user-level
+`~/.cursor/hooks.json` (whose `stop` and `beforeSubmitPrompt` fire in the
+interactive CLI, measured the same day), written at the first Cursor launch
+and taken back out when the app quits. In `-p` mode Cursor fires neither event
+from any source. The Cursor editor reads the same user-level file, so its
+agent runs the reporter too while the app is open, which exits at once without
+the launch's environment.
+
+### Grok
+
+The Grok TUI takes no MCP flag, plugin directory or config overlay at launch
+(grok 1.0.41: `--plugin-dir` is on `grok agent` only, `GROK_CONFIG` carries no
+`mcp_servers`, `GROK_HOME` moves the whole home and its sign-in). So:
+
+- the hook is the owned file `~/.grok/hooks/sprintengine-agent-state.json`
+  (grok lists user hooks as always trusted);
+- the gateway and the synced servers are the marked block in
+  `~/.grok/config.toml`, which takes the same `[mcp_servers.<id>]` tables Codex
+  does (an unknown key is dropped with a log warning; only a TOML syntax error
+  drops the file); the gateway leaves at quit;
+- the skill a prompt invokes is copied into `~/.grok/skills/<id>` as for Codex.
+
+A `grok` started from a plain terminal while the app runs sees the gateway and
+the hook; the hook reports nothing without the launch's environment.
+
+### Kimi Code
+
+Its only registration is user-scoped (`~/.kimi-code/config.toml`): written when
+a Kimi Code session is launched and taken back out when the app quits.
 
 ## What outlives the app
 
-Everything below that is still written into a repository or a CLI's user
-configuration can outlive the app: it is uninstalled, it moves, or an update
-prunes the version folder a command named. So none of it names the app
-directly any more.
+Everything still written into a CLI's user configuration can outlive the app:
+it is uninstalled, it moves, or it is killed before its quit runs. So none of
+it names the app directly.
 
 - **The launcher.** Every hook command and every MCP gateway entry runs
   `~/.sprintengine/bin/studio-run` (a POSIX `sh` script, run as `/bin/sh
-  <path> <target> …`) or, on Windows, `studio-run.cmd` beside it — inside a
+<path> <target> …`) or, on Windows, `studio-run.cmd` beside it — inside a
   WSL distribution, the same script under that distribution's home. The app
   rewrites a small pointer file beside it (`current`: the Node to run, and the
   directory holding `hooks/` and `automation/`) on every start, and a WSL
@@ -79,173 +184,110 @@ directly any more.
   launcher does the harmless thing: a hook drains its input and exits 0, and
   the MCP target answers `initialize` with a server that has no tools, which
   Claude Code and OpenCode report as connected rather than failed
-  (`src/main/integrations/launcher.ts`). Nothing is copied into a repository
-  for a hook to run any more; the reporter and the status-line forwarder that
-  ship with the app are what the launcher runs.
+  (`src/main/integrations/launcher.ts`).
 - **The ledger.** Every file, entry and piece of machine state the app writes
   outside userData — hook blocks, gateway entries, settings keys, plugin and
   skill copies, git excludes, worktree locks, tailnet shares, the protocol
   registration, the launcher — is recorded in `integration-ledger.json` in
   userData as it is written, with how our part is recognised
   (`src/main/integrations/ledger.ts`). A WSL distribution's entries are
-  mirrored into its own `~/.sprintengine/integration-ledger.json`. The first
-  start of a build that keeps a ledger scans the workspaces it knows (and their
-  worktrees) and the home for what an earlier build wrote
-  (`integration-scan.ts`), and every start moves any listed entry still in the
-  older form onto the launcher, in place (`integration-migrate.ts`).
-- **Kimi Code's user-level hook** is written when a Kimi Code session is
-  launched and taken back out when the app quits: it applies to every Kimi Code
-  session on the machine, and only sessions the app launched ever report
-  through it.
+  mirrored into its own `~/.sprintengine/integration-ledger.json`. Every quit
+  takes out what a launch writes again when it next needs it
+  (`SESSION_INTEGRATION_KINDS`).
+- **The launch files** (`<userData>/agent-integration/launch/`: the
+  `--mcp-config` documents, Cursor's launch plugin, OpenCode's agent-state
+  plugin) are content-addressed, so a resumed session finds what it was
+  launched with, and emptied at the next start.
 - **Connector worktrees' excludes** go into that worktree's own
   `config.worktree` (`core.excludesFile`, with `extensions.worktreeConfig` on),
   never the repository's shared `info/exclude`, which hid a real `.mcp.json` in
-  the main checkout. The pair an earlier build appended there is taken back
-  out (`src/main/integrations/worktree-exclude.ts`).
+  the main checkout (`src/main/integrations/worktree-exclude.ts`).
+
+## Taking out what earlier builds wrote
+
+Every start, before the first launch (which waits for it, for a bounded few
+seconds), takes out what earlier builds wrote into repositories for what a
+launch now carries itself (`cleanRepositoriesAtBoot` in
+`src/main/integrations/integration-boot.ts`): the ledger's entries, and once
+per clean-up version a fresh scan of the known checkouts and their worktrees
+for what the ledger never saw (`integration-scan.ts`). Only what the removal can
+prove is the app's goes — the marked TOML blocks, hook entries of the shape the
+app writes or carrying its tag, the gateway entry that runs the app's bridge,
+plugin and skill copies carrying its provenance marker — and nothing the
+repository has committed. A file the removal leaves empty is deleted when the
+app created it, or when the scan found it in a repository and git does not
+track it. A workspace's knowledge-activity opt-in is moved into the project's
+store first, so the choice survives. The pass is skipped while another Studio
+runs, since its sessions may still read those files.
+
+A launch also tidies the workspace it starts in, which reaches worktrees and
+folders that are not workspaces: the Claude-family gateway and its approval in
+`.mcp.json` / `.claude/settings.local.json`, Codex's managed blocks in
+`.codex/config.toml`, the gateway in `opencode.json` and `.cursor/mcp.json`,
+and the agent-state registration of the CLI being launched.
 
 ## Inventory
 
-Every path the main process writes inside a workspace on behalf of agent
-integration, before and after this change. "Launch-scoped" means the CLI
-receives the same thing from the command line the app built.
+Every path the main process writes for agent integration, and where it is now.
 
-### Written when a workspace is opened
+| Was                                                                                                                                                       | Read by                               | Now                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.claude/settings.local.json` → agent-state hooks, status line, `extraKnownMarketplaces`, `enabledPlugins`                                                | Claude family                         | `--plugin-dir` and `--settings`, every platform. Written only when this build's plugin copy failed.                                                                                                                                  |
+| `.claude/settings.local.json` → knowledge-activity hook; `.sprintengine/hooks/knowledge-activity.mjs`, `installed.json`; `.sprintengine/knowledge-trace/` | Claude family                         | `--settings`; the opt-in and the trace in the project's store (`~/.sprintengine/workspaces/<project>/`), the trace moved there with the rest of `.sprintengine/`. A workspace on a WSL machine keeps the in-repository registration. |
+| `.sprintengine/studio-plugin/`, `.sprintengine/hooks/agent-state.mjs`, `status-line.mjs`                                                                  | Claude family, every command-hook CLI | Not written (the launcher runs the shipped reporter); the plugin copy only when this build's failed.                                                                                                                                 |
+| `.mcp.json` → gateway; `enabledMcpjsonServers`                                                                                                            | Claude family, Grok                   | The Claude plugin's `.mcp.json`; Grok's `~/.grok/config.toml`.                                                                                                                                                                       |
+| `.mcp.json` → the person's synced servers                                                                                                                 | Claude family                         | `--mcp-config <file>`.                                                                                                                                                                                                               |
+| `.codex/config.toml` → MCP block, hooks block                                                                                                             | Codex                                 | `-c` overrides.                                                                                                                                                                                                                      |
+| `.cursor/mcp.json`, `.cursor/hooks.json`                                                                                                                  | Cursor                                | Launch `--plugin-dir`; `~/.cursor/hooks.json`.                                                                                                                                                                                       |
+| `opencode.json` → `mcp`; `.opencode/plugin/sprintengine-agent-state.js`                                                                                   | OpenCode                              | `OPENCODE_CONFIG_CONTENT`.                                                                                                                                                                                                           |
+| `.grok/hooks/sprintengine-agent-state.json`                                                                                                               | Grok                                  | `~/.grok/hooks/`.                                                                                                                                                                                                                    |
+| `.agents/skills/<id>`, `.claude/skills/<id>`, `.codex/skills/<id>`, `.opencode/skills/<id>`, `.grok/skills/<id>` (the skill a prompt invokes)             | each CLI                              | Per the table above; a launch with no route of its own (another machine) still fans it out.                                                                                                                                          |
+| `.sprintengine/claude-plugins/<id>` (a catalogue plugin's own files)                                                                                      | the servers it declares               | The project's store. A plugin installed there by an earlier build stays, since the MCP settings name its folder, and is still removed by Remove.                                                                                     |
+| `<worktree git dir>/sprintengine-exclude`                                                                                                                 | git                                   | Unchanged: per connector worktree, never the shared `info/exclude`.                                                                                                                                                                  |
 
-`src/main/studio-plugin-service.ts` → `src/main/skills/studio-plugin.ts`
-
-| Path | What it is for | Read by | Launch-scoped alternative | Now |
-|---|---|---|---|---|
-| `.sprintengine/studio-plugin/` | Materialised studio plugin (absolute paths substituted in) | Claude Code, via the two settings keys below | `--plugin-dir` | Written only when the launch does **not** carry the plugin; removed otherwise. The other harnesses' skill copies are taken from the bundled template, whose skills carry no tokens. |
-| `.claude/settings.local.json` → agent-state hook entries | Agent phase reporting | Claude Code, Z.AI, Kimi Claude | `--plugin-dir` (the plugin's `hooks/hooks.json`) | Removed when the launch carries the plugin (already true before this change); the removal now shares one implementation with the launch-time tidy. |
-| `.claude/settings.local.json` → `extraKnownMarketplaces` | Points Claude Code at the workspace plugin copy | Claude Code | `--plugin-dir` | Removed when the launch carries the plugin (already true). |
-| `.claude/settings.local.json` → `enabledPlugins` | Enables the workspace plugin copy | Claude Code | `--plugin-dir` | Removed when the launch carries the plugin. Written to the gitignored file; an earlier build wrote it into the committed `.claude/settings.json`, and the install takes that key back out. |
-| `.sprintengine/hooks/agent-state.mjs` | The reporter older hook entries ran | Every command-hook CLI in the workspace | The launcher (see above) | No longer written: every hook runs the launcher, which runs the reporter the app ships. A copy an earlier build left is removed once no registration in the checkout names it. |
-| `.claude/skills/studio-*` | Studio skills | Claude Code | `--plugin-dir` | Not copied, and earlier copies with our provenance removed, when the launch carries the plugin (already true). |
-| `.agents/skills/studio-*`, `.codex/skills/studio-*`, `.opencode/skills/studio-*`, `.grok/skills/studio-*` | Studio skills | Codex, OpenCode, Grok and any CLI that reads `.agents/skills` | None known; see Remaining | Only the skills the person opted into (none by default). A copy of any other, with our provenance and not committed, is removed on the next workspace pass. |
-
-The workspace install used to race the materialisation of the launch copy at
-startup: a workspace opened in that window was installed the old way — hook,
-settings keys, workspace plugin copy — and tidied again moments later. The
-service now waits for the copy to settle before it decides (`whenLaunchPluginsSettled`),
-so that window writes nothing. A build whose copy failed still installs the old
-way, which keeps agent state working.
-
-### Written when an agent is launched
-
-`src/main/terminal-runtime.ts`, spawn path, in the order it runs.
-
-| Path | What it is for | Read by | Launch-scoped alternative | Now |
-|---|---|---|---|---|
-| `.mcp.json` → `sprintengine-studio` | MCP gateway to the app | Claude Code, Z.AI, Kimi Claude, Grok | `--plugin-dir` (the plugin's `.mcp.json`) for the Claude family | **Not pinned** when the launch carries the plugin, and an entry an earlier launch pinned is removed (only one that runs the bundled bridge; anything else under that id is the repository's and stays). A file left empty is deleted. Servers the person configured for sync are still written: that is their configuration. |
-| `.claude/settings.local.json` → `enabledMcpjsonServers` | Pre-approval for the gateway in `.mcp.json` | Claude family | Not needed once the gateway comes from the plugin | Removed with the entry above; the file and `.claude/` are deleted when nothing else is in them. |
-| `.codex/config.toml` managed MCP block | MCP gateway | Codex | Possibly `-c mcp_servers.…`; see Remaining | Unchanged. |
-| `.cursor/mcp.json`, `opencode.json` | MCP gateway | Cursor, OpenCode | Possibly; see Remaining | Unchanged. |
-| `.agents/skills/<id>`, `.claude/skills/<id>`, `.codex/skills/<id>`, … | A bundled skill the prompt invokes (an attached skill, `backlog.work`'s `backlog`) — `builtin-skills.ts` `ensureSkillInstalled` | Each CLI's native skill directory | `--plugin-dir` (`launch-skills/<id>`, that launch only) for the Claude family | **Not copied at all** for a launch that carries that skill's plugin — the call answers `delivered-at-launch` and writes nothing for any harness. For every other CLI the fan-out still runs, but leaves out `.claude/skills` whenever the Claude-family launches carry the plugin, so a Backlog handoff on Codex no longer drops a Claude copy into the repository. Skills a capability module registers live in the module rather than in the plugin, and are copied everywhere as before. |
-| `.claude/settings.local.json` → agent-state hooks + status line; `.sprintengine/hooks/agent-state.mjs`; `.sprintengine/hooks/status-line.mjs` | Agent phase and context usage | Claude family | `--plugin-dir` + `--settings` | Not written when the launch carries the plugin (already true). **New:** the launch now also removes what an earlier build wrote, once per workspace per run, so an existing repository is cleaned on the next app-launched session rather than only when the workspace is next opened — which covers worktrees and other launch directories that are never opened as workspaces. |
-| `.codex/config.toml` hooks block | Agent phase | Codex | See Remaining | Unchanged. |
-| `.cursor/hooks.json` | Agent phase | Cursor | See Remaining | Unchanged. |
-| `.grok/hooks/sprintengine-agent-state.json` | Agent phase | Grok | See Remaining | Unchanged. |
-| `.opencode/plugin/sprintengine-agent-state.js` | Agent phase | OpenCode | See Remaining | Unchanged. |
-| `~/.kimi-code/config.toml` hooks block | Agent phase | Kimi Code | See Remaining | Written when a Kimi Code session launches and removed when the app quits; it runs the launcher, so one a crash left behind exits quietly. |
-| `.sprintengine/hooks/.gitignore` | Keeps the reporter copies out of `git status` | git | — | **New.** Written once (never over an existing file) wherever the app still copies a reporter into a workspace, the same self-ignore the backlog cache and browser captures already use. Removed with the directory when the last registration goes. |
-| `<worktree git dir>/sprintengine-exclude`, named by that worktree's `config.worktree` | Keeps `.mcp.json` / `.codex/config.toml` out of a connector worktree's git | git | — | Per worktree (connector launches only), never the shared `info/exclude`. |
-
-Nothing else the launch produces touches the repository. The host-context
-document every launch writes (and the one-session plugin directory Cursor
-receives it in) lives under `<userData>/host-context/`, and is removed when the
-session ends.
+The host-context document every launch writes (and the one-session plugin
+directory Cursor receives it in) lives under `<userData>/host-context/`, and is
+removed when the session ends.
 
 ### Not agent integration
 
-The app's own features keep their state under `.sprintengine/` already:
-worktrees, the backlog link cache, browser captures, conversation
-records, module storage and phone uploads. The caches ignore themselves. None
-of it is read by an agent CLI's configuration loader, so none of it carries the
-app's behaviour into a plain-terminal session.
+The app's own features keep their state out of the checkout: the backlog's
+config and link cache, browser captures and recordings, conversation records
+and module storage live in the project's store in the person's home,
+`~/.sprintengine/workspaces/<project>/` (`src/main/workspace-store.ts`), and
+an older build's `.sprintengine/` is moved there once
+(`src/main/workspace-store-migration.ts`). None of it is read by an agent
+CLI's configuration loader, so none of it carries the app's behaviour into a
+plain-terminal session.
 
 Writes a person asks for explicitly — installing a skill or plugin from the
 catalogue, attaching a skill to an agent, attaching a design system, syncing
 skills — land where the person asked. They are left alone here: they are a
 choice, not pollution.
 
-## What this change does, in short
-
-- The Claude-family launch whose prompt invokes a bundled skill carries that
-  one skill as a plugin directory, and the skill installer writes nothing for
-  it — nor `.claude/skills` for another CLI's launch while Claude launches are
-  handed it. Copies of the seven retired workflow skills an earlier build wrote
-  (untouched, with the app's managed marker, not committed) are removed by the
-  workspace pass.
-- The Claude-family launch takes the MCP gateway from the plugin, not from the
-  repository's `.mcp.json`, and removes the entry and approval an earlier launch
-  wrote. The agent CLI now travels in the session environment
-  (`SPRINTENGINE_AGENT_CLI`) so the gateway can still attribute the connection.
-- The launch-time agent-state installer tidies a stale Claude registration
-  instead of silently skipping it.
-- The shared reporter under `.sprintengine/hooks` is only removed when no other
-  CLI's registration in the workspace still names it.
-- The workspace plugin copy under `.sprintengine/studio-plugin` is not written,
-  and is removed, when the launch carries the plugin.
-- The workspace install waits for the launch copy before deciding, so startup no
-  longer writes the old arrangement for a moment.
-- `.sprintengine/hooks` ignores itself where the app still writes it.
-
-A Claude Code session the app launches on macOS or Linux therefore leaves no
-file in the repository, and a `claude` started from a plain terminal in the same
-checkout sees none of the app's hooks, skills or MCP server.
-
 ## Remaining
 
-Each of these still writes into the repository (or the home directory) because
-the CLI has no launch-scoped route the code can rely on today. Nothing below was
-changed; each entry says what the CLI would need to offer, or what has to be
-measured first.
-
-- **Codex.** Hooks go into `.codex/config.toml`, the gateway into the same file,
-  and skills into `.codex/skills` and `.agents/skills`. Codex already takes
-  `-c key=value` overrides at launch (the app passes `developer_instructions`
-  that way), so the gateway could plausibly move to `-c mcp_servers.<id>.…` and
-  the hooks to a `-c hooks…` override. Neither has been measured against the
-  interactive CLI, and a silent failure there would cost the session its agent
-  state, so the move waits on that measurement. `CODEX_HOME` would isolate
-  everything but relocates the whole profile, credentials included, so it is not
-  a route. Skills need a launch-time skill directory, which Codex does not offer.
-- **Cursor.** Hooks go into `.cursor/hooks.json` and the gateway into
-  `.cursor/mcp.json`. Cursor's CLI already takes `--plugin-dir` (the app packs
-  the host-context document as a one-session Cursor plugin), so if a Cursor
-  plugin can declare hooks and MCP servers, both could move into that same
-  directory. That needs measuring against the CLI before it can be relied on.
-- **OpenCode.** The agent-state plugin goes into `.opencode/plugin/`, the gateway
-  into `opencode.json` and skills into `.opencode/skills`. OpenCode already reads
-  `OPENCODE_CONFIG_CONTENT` from the launch environment (the app passes its
-  instructions that way); if that inline config honours `plugin` and `mcp`
-  entries, both could move there. Skills would need a configurable skill path.
-- **Grok.** Hooks go into `.grok/hooks/`, the gateway into `.mcp.json`, skills
-  into `.grok/skills`. Its manifest declares no plugin-directory, settings or
-  config-override flag; it would need one. Grok reads the same `.mcp.json` the
-  Claude family used to, so a Grok launch pins the gateway there again and the
-  next app-launched Claude session takes it back out; neither session is
-  affected, because each CLI reads the file as it starts.
-- **Kimi Code.** Its only registration is user-scoped
-  (`~/.kimi-code/config.toml`), so it applies to every Kimi Code session on the
-  machine. It would need a launch-time config file or override.
-- **Gemini.** No manifest ships under `resources/plugins`, so the app writes
-  nothing for it.
-- **Native Windows.** Claude-family launches there still use the workspace
-  install (and the gateway and skill copies). A WSL machine does not: its helper
-  holds a copy of its own inside the distribution.
-- **Bundled skills in WSL.** The skill installer does not yet ask which machine
-  a launch is on, so a skill-at-spawn launch in WSL still copies
-  the skill into `.claude/skills` beside the plugin's own.
-- **Chat mode.** The conversation runtime (the Agent SDK provider) still pins
-  the gateway into `.mcp.json` before a chat. The SDK takes MCP servers and
-  plugins as options, so this can move to a launch-scoped route without a CLI
-  change; it has not been done here.
-- **Skills a capability module registers** are copied into each CLI's native
-  directory for every CLI, Claude included, because they live in the module's
-  tree rather than in a launch skill plugin.
+- **WSL launches** keep the workspace writers for every CLI but the Claude
+  family: the per-launch channels above name files on this machine, and a
+  Linux CLI would need them written inside the distribution by its helper, as
+  the Claude plugin copy already is. The knowledge-activity hook of a
+  workspace inside a distribution stays in its settings for the same reason.
+- **Connector launches** keep writing their worktree's MCP config: the
+  connector-only server set is the isolation they promise, and the worktree's
+  own exclude keeps it out of git.
+- **Studio area skills for the other CLIs.** A skill the person opted into
+  (none by default) is still copied into `.agents/skills`, `.codex/skills`,
+  `.opencode/skills` and `.grok/skills` when a workspace is opened. OpenCode's
+  `skills.paths`, Cursor's launch plugin and the user-level copies above could
+  carry them instead.
+- **Servers an earlier sync wrote into `.mcp.json` and `opencode.json`.** They
+  carry no marker of the app's, so they cannot be told apart from the person's
+  own and stay; the launch's own copy of the same server wins.
 - **Copies an earlier build left in `.claude/skills`.** A bundled skill copied
   there by an earlier launch carries the same managed manifest as one copied
   when a person imports an existing agent configuration, so the two cannot be
-  told apart and neither is deleted. It still works, and takes the bare
-  invocation name ahead of the plugin's; deleting the directory by hand is safe.
+  told apart and neither is deleted. Deleting the directory by hand is safe.
+- **Chat mode.** The conversation runtime attaches a chat's skills through the
+  workspace skill installer (`conversation-skills.ts`).
+- **Gemini.** No manifest ships under `resources/plugins`, so the app writes
+  nothing for it.

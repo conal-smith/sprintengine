@@ -53,6 +53,7 @@
       { "spreadIf": "contextArgs" },
       { "spreadIf": "pluginDirArgs" },
       { "spreadIf": "launchSettingsArgs" },
+      { "spreadIf": "integrationArgs" },
       "--session-id",
       "{{sessionId}}",
       { "valueIf": "prompt", "value": "{{prompt}}" }
@@ -74,6 +75,7 @@
       { "spreadIf": "contextArgs" },
       { "spreadIf": "pluginDirArgs" },
       { "spreadIf": "launchSettingsArgs" },
+      { "spreadIf": "integrationArgs" },
       "--resume",
       "{{sessionId}}",
       { "valueIf": "prompt", "value": "{{prompt}}" }
@@ -105,6 +107,10 @@
   "mcpConfig": {
     "path": "{{workspaceRoot}}/.mcp.json",
     "format": "claude-code"
+  },
+  "launchIntegration": {
+    "$comment": "Runs the same `claude` binary as the claude-code runtime, so it takes the same --mcp-config and --settings channels; see that manifest for the measurement.",
+    "route": "claude"
   },
   "skillIntegration": {
     "support": "native",

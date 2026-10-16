@@ -38,12 +38,13 @@ resources/runtime/
 electron.vite.config.*.mjs
 
 # Agent CLI harness folders. Everything in them is written on whichever machine
-# runs the agent: harness settings (`enabledPlugins`, absolute socket and
-# Electron paths in `.cursor/`), skills copied in by the studio installer or
-# the harness's own plugin installs (each stamped with `installedAt`), and
-# agent-state hooks rendered from templates under resources/. None of it is
-# source, and ignoring the folders whole stops every new install from turning
-# up as untracked noise.
+# runs the agent: harness settings, permissions answered "always", and skills
+# or plugins a harness installs itself. The app no longer writes into them for
+# a session it launches (its hooks, MCP servers and skills reach the CLI from
+# the launch itself or from the CLI's user-level config;
+# docs/agent-launch-isolation.md), but an older build did, and the CLIs keep
+# their own per-project state here. None of it is source, and ignoring the
+# folders whole stops every new install from turning up as untracked noise.
 .claude/
 .cursor/
 .grok/
