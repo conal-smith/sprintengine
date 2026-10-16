@@ -387,7 +387,15 @@ and `progress`. A Studio sends `call` only to a connection that offered a
 toolset, and the SDK sends `reply` only to a Studio that advertised the
 capability, so neither end is handed a frame type it does not know.
 `files-write` adds the owner-only `files.*` by root, which the canvas uses
-over a Studio's boards. `pull-requests` adds the owner-only `pullRequests.*`
+over a Studio's boards. The `store` root kind (2026-10-16), the project's
+store in the person's home where a Studio keeps the captures, recordings and
+transcripts older builds kept in `<project>/.sprintengine/`, is additive under
+it with no capability of its own: `files.roots` answers `store: true` where it
+is served, a Studio built before it leaves the member out and refuses the kind
+as `invalid_params`, and a client asks for it only where it is listed. An old
+client's read of `.sprintengine/…` under the `workspace` root that the folder
+no longer has is answered from the store, so a path it learned from an older
+Studio still finds its file. `pull-requests` adds the owner-only `pullRequests.*`
 methods and stream, and `pull-request-tool-calls` the one method a client that
 runs its own agents forwards their tool calls with, `pullRequests.noteToolCall`,
 and `pull-request-link` `pullRequests.link`, which records a pull request an

@@ -31,7 +31,9 @@ export type WorkspaceMode = 'standard' | (string & {})
 //                 which spawns its guide into the workspace the door was opened
 //                 from, so the per-project background host has no producer left.
 //                 The row and the guide-terminal agent records nested in it go;
-//                 the review data on disk (`.sprintengine/review/`) is untouched.
+//                 the review data on disk (`.sprintengine/review/`) is untouched
+//                 (since 2026-10-16 the store's one-time move keeps it in the
+//                 project's store, under `legacy/review/`).
 //   `sprintengine` — 2026-09-16: the in-tree sprint engine was deleted outright.
 //                 Nothing registers the workspace type any more, so the row has
 //                 no surface to render; the run's own files under the project's
@@ -40,7 +42,8 @@ export type WorkspaceMode = 'standard' | (string & {})
 //                 agents, whose runs are ordinary chats, so the per-project
 //                 hidden host has no producer left. The row and the run agents
 //                 nested in it go; the definitions and run records on disk
-//                 (`.sprintengine/automations/`) are untouched.
+//                 (`.sprintengine/automations/`) are untouched (moved, like
+//                 review data, to the project's store, `legacy/automations/`).
 export const RETIRED_WORKSPACE_MODES: readonly string[] = [
   'roadmap',
   'multiloop',

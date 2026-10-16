@@ -41,6 +41,12 @@ scheduled-agent runs, all additive under host API 1.
   `watchBacklogItems` now throw without `backlog.read`, which the docs always
   asked for. The `listBacklogItems` doc no longer suggests writing an item's
   file: a module changes items through the host only.
+- **Workspace storage is out of the project.** Workspace-scoped keys live in
+  the project's store in the person's home
+  (`~/.sprintengine/workspaces/<project>/modules/<moduleId>/`), one per
+  project whichever checkout asks, instead of `<project>/.sprintengine/modules/`.
+  The app moves existing keys there once; a file git tracks stays in the
+  project and is no longer read. The API is unchanged.
 
 <!-- Shell surfaces, notifications and the renderer host. All additive under host API 1. -->
 

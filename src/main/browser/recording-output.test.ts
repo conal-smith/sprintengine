@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'vitest'
 
 import { agentPathOf, createWorkspaceRecordingOutputs } from './recording-output'
 import { readWebmDurationMs, withWebmDuration } from './webm-duration'
+import { workspaceStorePath } from '../workspace-store'
 
-// Where a recording lands, on a real folder: the workspace's own sidecar,
-// ignored by git, written as it arrives and finished with its length.
+// Where a recording lands, on a real folder: the project's store in the home
+// folder (the test setup's), never the project, written as it arrives and
+// finished with its length.
 
 const RECORDED = new Uint8Array(readFileSync(join(__dirname, '__fixtures__', 'media-recorder-vp9-160x120.webm')))
 
@@ -23,50 +25,28 @@ function workspace(): string {
   return dir
 }
 
-test('a recording is written into the workspace sidecar, ignored by git, and finished with its length', async () => {
+const recordings = (root: string) => workspaceStorePath(root, 'browser', 'recordings')
+
+test('a recording is written into the project’s store, not the project, and finished with its length', async () => {
   const root = workspace()
   const outputs = createWorkspaceRecordingOutputs({ resolveWorkspaceRoot: () => root })
   const created = await outputs.create({ workspaceId: 'ws', stem: 'recording-localhost-5173-20261004-090507' })
   assert.ok(created.ok)
   const { output } = created
-  assert.equal(output.workspacePath, '.sprintengine/browser/recordings/recording-localhost-5173-20261004-090507.webm')
-  assert.equal(
-    output.path,
-    join(root, '.sprintengine', 'browser', 'recordings', 'recording-localhost-5173-20261004-090507.webm'),
-  )
-  assert.equal(readFileSync(join(root, '.sprintengine', 'browser', '.gitignore'), 'utf8'), '*\n')
+  assert.equal(output.path, join(recordings(root), 'recording-localhost-5173-20261004-090507.webm'))
+  assert.deepEqual(readdirSync(root), [], 'nothing is written into the project')
 
   // Written as it arrives, under a name that says it is not done.
   await output.append(RECORDED.subarray(0, 4_000))
   await output.append(RECORDED.subarray(4_000))
   assert.equal(existsSync(output.path!), false)
-  assert.deepEqual(readdirSync(join(root, '.sprintengine', 'browser', 'recordings')), [
-    'recording-localhost-5173-20261004-090507.webm.part',
-  ])
+  assert.deepEqual(readdirSync(recordings(root)), ['recording-localhost-5173-20261004-090507.webm.part'])
 
   const done = await output.finish(1_000)
   const saved = new Uint8Array(readFileSync(output.path!))
   assert.equal(done.bytes, saved.length)
   assert.equal(readWebmDurationMs(saved), 1_000)
-  assert.deepEqual(readdirSync(join(root, '.sprintengine', 'browser', 'recordings')), [
-    'recording-localhost-5173-20261004-090507.webm',
-  ])
-})
-
-test('a sidecar folder the project made a link is refused, and nothing lands where it points', async () => {
-  // A cloned repository can commit `.sprintengine` itself, or the folder
-  // inside it, as a link to anywhere.
-  for (const linked of [['.sprintengine'], ['.sprintengine', 'browser']]) {
-    const root = workspace()
-    const elsewhere = workspace()
-    mkdirSync(join(root, ...linked.slice(0, -1)), { recursive: true })
-    symlinkSync(elsewhere, join(root, ...linked))
-    const outputs = createWorkspaceRecordingOutputs({ resolveWorkspaceRoot: () => root })
-    const created = await outputs.create({ workspaceId: 'ws', stem: 'recording' })
-    assert.equal(created.ok ? null : created.code, 'write_failed', linked.join('/'))
-    assert.match(created.ok ? '' : created.message, /is a link/)
-    assert.deepEqual(readdirSync(elsewhere), [], linked.join('/'))
-  }
+  assert.deepEqual(readdirSync(recordings(root)), ['recording-localhost-5173-20261004-090507.webm'])
 })
 
 test('bytes this edit does not understand are kept as they came', async () => {
@@ -97,7 +77,7 @@ test('a recording far longer than the header read is finished whole, byte for by
   assert.deepEqual(saved, withWebmDuration(whole, 61_000))
   assert.equal(done.bytes, saved.length)
   assert.equal(readWebmDurationMs(saved), 61_000)
-  assert.deepEqual(readdirSync(join(root, '.sprintengine', 'browser', 'recordings')), ['recording-long.webm'])
+  assert.deepEqual(readdirSync(recordings(root)), ['recording-long.webm'])
 })
 
 test('a second recording in the same second takes the next free name', async () => {
@@ -106,16 +86,16 @@ test('a second recording in the same second takes the next free name', async () 
   const first = await outputs.create({ workspaceId: 'ws', stem: 'recording-x' })
   const second = await outputs.create({ workspaceId: 'ws', stem: 'recording-x' })
   assert.ok(first.ok && second.ok)
-  assert.equal(second.output.workspacePath, '.sprintengine/browser/recordings/recording-x-2.webm')
+  assert.equal(second.output.path, join(recordings(root), 'recording-x-2.webm'))
 })
 
 test('two recordings that start together never share a file', async () => {
   const root = workspace()
   const outputs = createWorkspaceRecordingOutputs({ resolveWorkspaceRoot: () => root })
   const created = await Promise.all([1, 2, 3].map(() => outputs.create({ workspaceId: 'ws', stem: 'recording-x' })))
-  const names = created.map((result) => (result.ok ? result.output.workspacePath : result.code))
+  const names = created.map((result) => (result.ok ? result.output.path : result.code))
   assert.equal(new Set(names).size, 3, names.join(', '))
-  assert.deepEqual(readdirSync(join(root, '.sprintengine', 'browser', 'recordings')).sort(), [
+  assert.deepEqual(readdirSync(recordings(root)).sort(), [
     'recording-x-2.webm.part',
     'recording-x-3.webm.part',
     'recording-x.webm.part',
@@ -129,7 +109,7 @@ test('a discarded recording leaves nothing behind', async () => {
   assert.ok(created.ok)
   await created.output.append(new Uint8Array([1]))
   await created.output.discard()
-  assert.deepEqual(readdirSync(join(root, '.sprintengine', 'browser', 'recordings')), [])
+  assert.deepEqual(readdirSync(recordings(root)), [])
 })
 
 test('a workspace on an SSH machine is refused before anything is written, naming the machine', async () => {
@@ -156,8 +136,8 @@ test('a workspace with no folder here is refused', async () => {
 
 test('a WSL workspace’s file is named for the agent by its Linux path', () => {
   assert.equal(
-    agentPathOf('\\\\wsl.localhost\\Ubuntu\\home\\dev\\app\\.sprintengine\\browser\\recordings\\r.webm'),
-    '/home/dev/app/.sprintengine/browser/recordings/r.webm',
+    agentPathOf('\\\\wsl.localhost\\Ubuntu\\home\\dev\\.sprintengine\\workspaces\\app-0123456789abcdef\\r.webm'),
+    '/home/dev/.sprintengine/workspaces/app-0123456789abcdef/r.webm',
   )
   assert.equal(agentPathOf('/Users/dev/app/r.webm'), '/Users/dev/app/r.webm')
 })

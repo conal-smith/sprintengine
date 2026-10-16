@@ -142,8 +142,9 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
       out(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']),
       out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']),
-      // The app's own sidecar folder is not the person's work, so it is never
-      // counted among the changes the confirm step says stay behind.
+      // The sidecar folder an older build wrote is not the person's work, so
+      // it is never counted among the changes the confirm step says stay
+      // behind (this build keeps that state in the project's store instead).
       git(gitRoot, [
         'status',
         '--porcelain=v1',

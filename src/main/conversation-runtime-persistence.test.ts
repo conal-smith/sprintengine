@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStorePath } from './workspace-store'
 import { appendFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -104,7 +105,7 @@ async function withRuntime(
 }
 
 function transcriptFile(workspaceRoot: string): string {
-  return join(workspaceRoot, '.sprintengine', 'conversations', 'workspace', 'agent.jsonl')
+  return workspaceStorePath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
 }
 
 async function readLines(workspaceRoot: string): Promise<Record<string, unknown>[]> {

@@ -202,6 +202,7 @@ import {
 } from './server-supervisor/remote-core'
 import { anyWindowFocused, broadcastToAllWindows } from './window-broadcast'
 
+import { installWorkspaceStoreMigration } from './workspace-store-migration'
 // How long the quit gives the session integrations' removal. What it does not
 // reach stays listed, and the next quit takes it out.
 const QUIT_INTEGRATION_REMOVAL_BUDGET_MS = 5_000
@@ -752,6 +753,12 @@ export function createAppServices(
     resolveUserDataDir: () => app.getPath('userData'),
     logDiagnostic: (diagnostic) => {
       void writeDiagnosticLog({ ...diagnostic, source: 'workspace' })
+  // This process reads and writes project stores too (the backlog, the
+  // browser's captures, module storage), so it moves an older build's
+  // in-project state the first time it meets a folder that still has some,
+  // even when the core, which also moves every registered project at start,
+  // runs in a server process of its own (main/workspace-store.ts).
+  installWorkspaceStoreMigration({ log: (message) => console.info(`[workspace-store] ${message}`) })
     },
   })
 

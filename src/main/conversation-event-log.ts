@@ -1,6 +1,7 @@
 import { dirname } from 'path'
 import { openConfinedExistingFile } from './conversation-file-access'
 import { openConversationAppendFile } from './conversation-persistence'
+import { conversationConfinementRoot } from './workspace-store'
 
 import type { ConversationEvent } from '../shared/conversation-runtime'
 
@@ -424,7 +425,7 @@ async function openAppendStream(filePath: string, storageRoot = dirname(filePath
 
 async function endsMidLine(storageRoot: string, filePath: string, size: number): Promise<boolean> {
   if (size === 0) return false
-  const reader = await openConfinedExistingFile(storageRoot, filePath)
+  const reader = await openConfinedExistingFile(await conversationConfinementRoot(storageRoot, filePath), filePath)
   try {
     const last = Buffer.alloc(1)
     const { bytesRead } = await reader.read(last, 0, 1, size - 1)

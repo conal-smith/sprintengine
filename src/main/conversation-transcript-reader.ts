@@ -3,6 +3,7 @@ import type { FileHandle } from 'node:fs/promises'
 import { openConfinedExistingFile, readBoundedConversationFile } from './conversation-file-access'
 import { expandCoalescedDeltas } from './conversation-event-log'
 import { MAX_CONVERSATION_TRANSCRIPT_BYTES } from './conversation-persistence'
+import { conversationConfinementRoot } from './workspace-store'
 import { inferConversationToolKind } from '../shared/conversation/toolKind'
 import type { ConversationEvent, ConversationPage } from '../shared/conversation-runtime'
 
@@ -423,7 +424,7 @@ export class ConversationTranscriptReader {
     try {
       let file: FileHandle
       try {
-        file = await openConfinedExistingFile(root, path)
+        file = await openConfinedExistingFile(await conversationConfinementRoot(root, path), path)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return await work(null)
         throw error

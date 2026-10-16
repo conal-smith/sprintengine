@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStorePath } from '../workspace-store'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -91,13 +92,13 @@ test("a watch hears the module's own writes and deletes at once", async () => {
   }
 })
 
-test('a watch hears a change made outside the registry, such as a git pull', async () => {
+test('a watch hears a change made outside the registry, such as another window’s', async () => {
   await storage.set('decision-log', { key: 'decision.001', value: 'first', workspaceRoot })
   const changes: ModuleStorageChange[] = []
   const stop = storage.watch('decision-log', { workspaceRoot }, (change) => changes.push(change))
   try {
     await new Promise((resolve) => setTimeout(resolve, 50))
-    const folder = join(workspaceRoot, '.sprintengine', 'modules', 'decision-log')
+    const folder = workspaceStorePath(workspaceRoot, 'modules', 'decision-log')
     await writeFile(join(folder, 'decision.002.json'), '"pulled"')
     await rm(join(folder, 'decision.001.json'))
     await waitFor(() => changes.some((change) => change.keys.includes('decision.002')))

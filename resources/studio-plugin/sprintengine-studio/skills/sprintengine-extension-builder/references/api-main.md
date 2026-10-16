@@ -177,15 +177,15 @@ const saved = await storage.get({ key: 'state', workspaceRoot })   // { ok, valu
 await storage.set({ key: 'state', value: { count: 1 }, workspaceRoot })
 const { keys } = await storage.list({ workspaceRoot, prefix: 'decision.' })  // one record family
 const many = await storage.getMany({ keys, workspaceRoot })        // { ok, values } — unset keys are absent
-const stop = storage.watch({ workspaceRoot }, ({ keys }) => refresh(keys))  // own writes at once; a git pull within ~2 s
+const stop = storage.watch({ workspaceRoot }, ({ keys }) => refresh(keys))  // own writes at once; another window's within ~2 s
 ```
 
 Keys match `^[a-z0-9][a-z0-9._-]{0,63}$`. Omit `workspaceRoot` for the
-module's global store. The host decides where files go (the workspace's
-`.sprintengine/modules/<id>/`, or app data); never write your own files in
-the home folder or the workspace for module state. Workspace keys are plain
-files in the project: whether `.sprintengine/modules/<id>/` is committed is the
-project's call — say in your README which your data wants.
+module's global store. The host decides where files go (`modules/<id>/` in
+the project's store in the person's home, or app data); never write your own
+files in the home folder or the workspace for module state. Workspace keys are
+not in the project's folder, so they never show in its `git status` and do not
+travel with a clone.
 
 Past the 1 MB value limit (caches, indexes, blobs), use
 `host.getModuleDataDir()`: a directory of your own under the app's user data,

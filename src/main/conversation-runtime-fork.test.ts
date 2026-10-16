@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, test } from 'vitest'
 
 import { ConversationRuntime } from './conversation-runtime'
-import { workspaceSidecarPath } from './workspace-sidecar'
+import { workspaceStorePath } from './workspace-store'
 import type {
   ConversationMessage,
   ConversationProviderAdapter,
@@ -137,7 +137,7 @@ async function setup(options: Parameters<typeof forkingProvider>[1] & { transcri
   const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
   const forkKey = { ...key, agentId: 'fork' }
   if (options.transcript) {
-    const path = workspaceSidecarPath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
+    const path = workspaceStorePath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, options.transcript.map((line) => `${JSON.stringify(line)}\n`).join(''))
   }
@@ -436,7 +436,7 @@ test('a steered turn: the message that joined it forks before both, its own repl
 
 test('a fork’s steps open their details as the parent’s do', async () => {
   const t = await setup({ transcript: steeredTranscript() })
-  const detail = workspaceSidecarPath(t.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'tool-1.json')
+  const detail = workspaceStorePath(t.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'tool-1.json')
   await mkdir(dirname(detail), { recursive: true })
   await writeFile(detail, JSON.stringify({ input: {}, output: 'file text', status: 'ok', clipped: false }))
   assert.ok((await t.chat.runtime.forkAtTurn({ key: t.key, newAgentId: 'fork', side: 'assistant', turnId: 'z' })).ok)

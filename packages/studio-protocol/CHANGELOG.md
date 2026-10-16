@@ -4,6 +4,17 @@
 
 ### Added
 
+- **The project's store as a file root** (`files-write`, owners): a
+  `StudioFileRoot` may be `{ kind: 'store', workspaceId }`, the folder in the
+  person's home where Studio keeps a project's browser captures, recordings
+  and chat transcripts, which older builds kept in the project's
+  `.sprintengine/`. `files.roots` answers `store: true` where it is served; a
+  Studio built before it leaves the member out and refuses the kind, so a
+  client asks for it only where it is listed. A read of the workspace root's
+  `.sprintengine/…` that the folder no longer has is answered from the store,
+  so a client that learned such a path from an older Studio still finds the
+  file.
+
 - **A steered send** (`conversation-steer-sends`, in `welcome.conversation`):
   `conversation.send` may say `steer: true`, read by the conversation lane's
   own validator, and the message goes into the turn the conversation is

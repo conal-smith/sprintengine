@@ -1,5 +1,5 @@
 import type { FileHandle } from 'node:fs/promises'
-import { lstat, readdir, realpath } from 'node:fs/promises'
+import { lstat, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { openConfinedExistingFile } from './conversation-file-access'
 import {
@@ -9,7 +9,7 @@ import {
   removeConversationStorage,
   writeConversationStorage,
 } from './conversation-persistence'
-import { workspaceSidecarPath } from './workspace-sidecar'
+import { conversationConfinementRoot, workspaceStorePath, workspaceStoreReady } from './workspace-store'
 import { CONVERSATION_MAX_REPLY_PREVIEW } from '../../packages/conversation-protocol/src/public'
 import {
   readConversationMessageOrigin,
@@ -49,14 +49,14 @@ type ThreadFold = {
 // the chats a person works in; one that drops out is read whole once more.
 const MAX_CACHED_FOLDS = 64
 const FOLD_HEAD_BYTES = 512
-/** The folder (or file) name a chat's or agent's id is stored under in `.sprintengine/conversations/`. */
+/** The folder (or file) name a chat's or agent's id is stored under in its store's `conversations/`. */
 export const conversationStorageSegment = (value: string) => {
   const encoded = encodeURIComponent(value.trim().replace(/[\\/]/g, '-'))
   return encoded === '.' || encoded === '..' ? encoded.replace(/\./g, '%2E') : encoded
 }
 const segment = conversationStorageSegment
 const directory = (key: ConversationWorkspaceKey) =>
-  workspaceSidecarPath(key.workspaceRoot, 'conversations', segment(key.workspaceId))
+  workspaceStorePath(key.workspaceRoot, 'conversations', segment(key.workspaceId))
 export const conversationIndexTranscriptPath = (key: ConversationKey) =>
   join(directory(key), `${segment(key.agentId)}.jsonl`)
 const record = (value: unknown): Record<string, unknown> =>
@@ -293,8 +293,10 @@ function fileAgentId(file: string): string {
 
 async function safeDirectory(key: ConversationWorkspaceKey): Promise<boolean> {
   if (!key.workspaceRoot.trim() || !key.workspaceId.trim()) throw new Error('Workspace identity is required.')
-  let path = await realpath(key.workspaceRoot)
-  for (const part of ['.sprintengine', 'conversations', segment(key.workspaceId)]) {
+  // Waits out the store's one-time move, so a listing right after an upgrade
+  // reads the history it brings rather than an empty folder.
+  let path = await workspaceStoreReady(key.workspaceRoot)
+  for (const part of ['conversations', segment(key.workspaceId)]) {
     path = join(path, part)
     let value
     try {
@@ -304,7 +306,7 @@ async function safeDirectory(key: ConversationWorkspaceKey): Promise<boolean> {
       throw error
     }
     if (value.isSymbolicLink() || !value.isDirectory())
-      throw new Error('Conversation storage must be a real directory within the workspace.')
+      throw new Error("Conversation storage must be a real directory within the workspace's store.")
   }
   return true
 }
@@ -328,7 +330,7 @@ async function* readEvents(
 ): AsyncIterable<ConversationEvent> {
   const info = await fingerprint(path, '')
   if (!info) return
-  const file = await openConfinedExistingFile(root, path)
+  const file = await openConfinedExistingFile(await conversationConfinementRoot(root, path), path)
   try {
     const size = (await file.stat()).size
     for (const range of wholeFileRanges(size, maxBytes))
@@ -406,7 +408,7 @@ async function* guarded(events: AsyncIterable<ConversationEvent>, signal?: Abort
  * so a transcript past the read limit keeps being read from its two ends.
  */
 async function readThread(root: string, path: string, maxBytes: number, previous?: ThreadFold): Promise<ThreadFold> {
-  const file = await openConfinedExistingFile(root, path)
+  const file = await openConfinedExistingFile(await conversationConfinementRoot(root, path), path)
   try {
     const size = (await file.stat()).size
     const head = Buffer.alloc(Math.min(size, FOLD_HEAD_BYTES))
