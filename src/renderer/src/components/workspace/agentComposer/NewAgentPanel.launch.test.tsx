@@ -690,6 +690,17 @@ test('NewAgentPanel launch paths', async () => {
       view.unmount()
     })
 
+    await check('⏎ on an empty box opens no chat, and New chat stays up', async () => {
+      seedStore()
+      const view = await render({ initialSelection: { kind: 'conversation' } })
+      await pressEnter(view)
+      assert.equal(view.launches.length, 0, 'a chat opens on the message that starts it')
+      assert.equal(sendOf(view)?.hasAttribute('disabled'), true, 'the send waits for something to send')
+      await act(async () => typeIntoComposer(composerField(view.container), 'hi'))
+      assert.equal(sendOf(view)?.hasAttribute('disabled'), false)
+      view.unmount()
+    })
+
     await check('⌘⏎ where the panel cannot stay (a tab) is ⏎', async () => {
       seedStore()
       const view = await render({ initialSelection: { kind: 'conversation' } })

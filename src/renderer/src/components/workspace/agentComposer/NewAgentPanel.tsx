@@ -1646,6 +1646,7 @@ export default function NewAgentPanel({
     })
   }
 
+  const chatHasMessage = (text: string) => !isChatLaunch || text.trim() !== '' || images.length > 0 || files.length > 0
   const launch = (text: string, options: { stay?: boolean } = {}) => {
     if (!canLaunch || !extensionReady) return
     // Staying applies to a chat or agent started now, here or over SSH; a
@@ -1656,6 +1657,9 @@ export default function NewAgentPanel({
       void schedule(text)
       return
     }
+    // A chat opens on the message that starts it. With nothing to send, New
+    // chat stays where it is rather than opening a chat with nothing in it.
+    if (!chatHasMessage(text)) return
     if (pickedSsh) {
       if (sshFolderProblem) {
         showToast({ tone: 'warn', title: 'Which folder?', description: sshFolderProblem })
@@ -2546,7 +2550,7 @@ export default function NewAgentPanel({
                 <SendButton
                   size="sm"
                   onClick={() => launch(prompt)}
-                  disabled={!canLaunch || !extensionReady}
+                  disabled={!canLaunch || !extensionReady || !chatHasMessage(prompt)}
                   aria-label={isTerminalLaunch ? 'Open terminal' : 'Start agent'}
                   aria-keyshortcuts="Enter"
                   className="w-control-sm shrink-0 px-0"
