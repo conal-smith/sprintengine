@@ -251,12 +251,6 @@ export type NewAgentPanelProps = {
   /** Browse for a folder; `hostId` is the machine the dropdown stands on, so a WSL one opens in its home. */
   onBrowseProject?: (hostId?: ExecutionHostId) => void
   initialSelection: AgentComposerSelection
-  /**
-   * The engine the surface opens on when no draft or edit names one: the row of
-   * the tab strip's "+" the tab was opened for. An opening position, as the
-   * composer's own is; the first engine picked here replaces it.
-   */
-  initialEngine?: { cli: AgentCli; model: string | null; reasoning: string | null } | null
   /** The app-wide default a model row nobody has set still resolves to; the
    *  picker's footer writes per-row, so this is a fallback, never what it edits. */
   permissionPreset: CliPermissionPreset
@@ -435,7 +429,6 @@ export default function NewAgentPanel({
   onStartWithoutProject,
   onBrowseProject,
   initialSelection,
-  initialEngine: openingEngine,
   permissionPreset,
   onLaunch,
   launchesInBackground = false,
@@ -602,9 +595,7 @@ export default function NewAgentPanel({
     // a card's `Go` picker, which must not move this door's remembered engine
     // on its way past (item 2473). The panel opens standing on that row and
     // launches it; the first row picked here retires it.
-    initialEngine: editing
-      ? { cli: editing.cli, model: editing.cliModel, reasoning: null }
-      : (draft?.engine ?? openingEngine ?? null),
+    initialEngine: editing ? { cli: editing.cli, model: editing.cliModel, reasoning: null } : (draft?.engine ?? null),
   })
   const { selection } = composer
   const setLastNewChatAgent = useWorkspaceStore((s) => s.setLastNewChatAgent)
@@ -1655,6 +1646,7 @@ export default function NewAgentPanel({
     })
   }
 
+  const chatHasMessage = (text: string) => !isChatLaunch || text.trim() !== '' || images.length > 0 || files.length > 0
   const launch = (text: string, options: { stay?: boolean } = {}) => {
     if (!canLaunch || !extensionReady) return
     // Staying applies to a chat or agent started now, here or over SSH; a
@@ -1665,6 +1657,9 @@ export default function NewAgentPanel({
       void schedule(text)
       return
     }
+    // A chat opens on the message that starts it. With nothing to send, New
+    // chat stays where it is rather than opening a chat with nothing in it.
+    if (!chatHasMessage(text)) return
     if (pickedSsh) {
       if (sshFolderProblem) {
         showToast({ tone: 'warn', title: 'Which folder?', description: sshFolderProblem })
@@ -2555,7 +2550,7 @@ export default function NewAgentPanel({
                 <SendButton
                   size="sm"
                   onClick={() => launch(prompt)}
-                  disabled={!canLaunch || !extensionReady}
+                  disabled={!canLaunch || !extensionReady || !chatHasMessage(prompt)}
                   aria-label={isTerminalLaunch ? 'Open terminal' : 'Start agent'}
                   aria-keyshortcuts="Enter"
                   className="w-control-sm shrink-0 px-0"

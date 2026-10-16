@@ -201,7 +201,6 @@ import { terminateWorkspaceTerminals } from './workspaceTerminalTermination'
 import { clientSupports } from '../../clientCapabilities'
 import { WindowControls, paneStripOwnsCaptionCorner, windowCaptionReserve } from './WindowControls'
 import { WorkspaceIdentity } from './WorkspaceIdentity'
-import type { NewAgentTabPick } from './NewAgentTabMenu'
 import { WorkspaceActions, type SessionGroup, type SessionItem } from './WorkspaceActions'
 import {
   buildSidebarWorkspaceOrder,
@@ -4546,7 +4545,7 @@ export default function WorkspaceManager() {
   runComposerSpawnRef.current = runComposerSpawn
 
   const openNewAgentTab = useCallback(
-    (hostTabsetId?: string, pick?: NewAgentTabPick) => {
+    (hostTabsetId?: string) => {
       if (!canOpenNewAgentTab || !windowActiveWorkspaceId) return
       // Named now, not at spawn: the tab is a terminal-in-waiting and carries the
       // name the agent will take. The strip whose "+" was clicked is the host —
@@ -4556,7 +4555,7 @@ export default function WorkspaceManager() {
         useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === windowActiveWorkspaceId)?.agents ??
         {}
       const taken = Object.values(agents).map((agent) => agent.name)
-      addNewAgentTab(windowActiveWorkspaceId, pickRandomAgentName(taken), hostTabsetId, pick)
+      addNewAgentTab(windowActiveWorkspaceId, pickRandomAgentName(taken), hostTabsetId)
     },
     [canOpenNewAgentTab, windowActiveWorkspaceId],
   )
@@ -4565,13 +4564,12 @@ export default function WorkspaceManager() {
   // plus the typed prompt comes back here, and the spawn retypes `tabId` in
   // place so the terminal lands exactly where the surface was.
   const renderNewAgentPanel = useCallback(
-    (tabId: string, agentName?: string, pick?: NewAgentTabPick) => (
+    (tabId: string, agentName?: string) => (
       <React.Suspense fallback={null}>
         <NewAgentPanel
           workspaceId={windowActiveWorkspaceId ?? ''}
           conversationWorkspaceSupported={conversationSpawnEnabled}
-          initialSelection={pick ? { kind: pick.kind } : lastNewChatAgent}
-          initialEngine={pick && pick.kind !== 'terminal' ? { cli: pick.cli, model: null, reasoning: null } : null}
+          initialSelection={lastNewChatAgent}
           permissionPreset={agentSpawnPermissionPreset}
           onLaunch={({ prompt, images, files, ...confirm }) =>
             runComposerSpawnRef.current(confirm, { tabId, prompt, images, files, agentName })
