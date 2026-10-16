@@ -50,6 +50,7 @@ import {
   restoreRailWidthFractions,
   unregisterModel,
 } from '../../utils/modelRegistry'
+import { NewAgentTabMenu, type NewAgentTabPick } from './NewAgentTabMenu'
 import { TAB_DRAG_MIME, serializeTabDragPayload } from '../../utils/tabDragPayload'
 import { logPerfEvent } from '../../utils/perfDiagnostics'
 import { rememberClosedLayoutTab } from '../../utils/recentlyClosedTabs'
@@ -80,14 +81,12 @@ import { remotePaneTabLabel } from './remoteBand/remoteSessionsModel'
 import { shortMachineName } from '../remote/machineRowModel'
 import {
   ContextMenu,
-  IconButton,
   LoadingOverlay,
   MenuDivider,
   MenuItem,
   MenuSwatchRow,
   StatusDot,
   type Tone,
-  Tooltip,
   WorkingMark,
 } from '../ui'
 import {
@@ -107,10 +106,10 @@ interface Props {
   // passed so the tab lands in that panel rather than tiling a new one.
   // Absent → no plus: background layers and hosts that are not agent
   // workspaces (the Automations host) do not open one.
-  onNewAgentTab?: (hostTabsetId?: string) => void
+  onNewAgentTab?: (hostTabsetId?: string, pick?: NewAgentTabPick) => void
   // Renders the launch surface inside that tab. `tabId` is the node the spawn
   // retypes in place, so the terminal appears where the surface was.
-  renderNewAgentPanel?: (tabId: string, agentName?: string) => React.ReactNode
+  renderNewAgentPanel?: (tabId: string, agentName?: string, pick?: NewAgentTabPick) => React.ReactNode
 }
 
 // Count the live tabs in a model. A workspace whose last tab was closed leaves
@@ -708,8 +707,11 @@ function WorkspaceLayoutBody({
           // The tab already wears the name its agent will take; the surface
           // hands it back on launch so the spawn adopts it.
           return (
-            renderNewAgentPanelRef.current?.(node.getId(), (config as { agentName?: string } | undefined)?.agentName) ??
-            null
+            renderNewAgentPanelRef.current?.(
+              node.getId(),
+              (config as { agentName?: string } | undefined)?.agentName,
+              (config as { launchPick?: NewAgentTabPick } | undefined)?.launchPick,
+            ) ?? null
           )
         // A conversation on another machine, in the regular chat view. Core
         // chrome, not a module: tailnet remote control is a built-in opt-in
@@ -1652,25 +1654,7 @@ function WorkspaceLayoutBody({
       })
       if (!hostsAgents) return
       values.stickyButtons.push(
-        <Tooltip key="new-agent" content="New agent" placement="bottom">
-          {/* `GHOST_TONE.quiet` is this control's rest ink exactly —
-              `--text-disabled`, lifting on `--bg-hover` — which is what keeps a
-              sticky control from competing with the tab labels beside it. */}
-          <IconButton
-            tone="quiet"
-            aria-label="New agent"
-            onClick={(event) => {
-              // The strip's own click handler would select whatever tab sits
-              // under the button; this is a control, not a tab.
-              event.stopPropagation()
-              onNewAgentTab(tabSetNode.getId())
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="icon-xs">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-            </svg>
-          </IconButton>
-        </Tooltip>,
+        <NewAgentTabMenu key="new-agent" onPick={(pick) => onNewAgentTab(tabSetNode.getId(), pick)} />,
       )
     },
     [onNewAgentTab],

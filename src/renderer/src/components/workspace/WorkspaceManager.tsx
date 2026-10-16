@@ -201,13 +201,14 @@ import { terminateWorkspaceTerminals } from './workspaceTerminalTermination'
 import { clientSupports } from '../../clientCapabilities'
 import { WindowControls, paneStripOwnsCaptionCorner, windowCaptionReserve } from './WindowControls'
 import { WorkspaceIdentity } from './WorkspaceIdentity'
+import type { NewAgentTabPick } from './NewAgentTabMenu'
 import { WorkspaceActions, type SessionGroup, type SessionItem } from './WorkspaceActions'
 import {
   buildSidebarWorkspaceOrder,
   getSessionItems,
   getWorkspaceActivity,
-  newChatProjectOptionsOf,
   newChatInheritedScope,
+  newChatProjectOptionsOf,
   showsNoWorkspaceState,
   type WorkspaceActivity,
 } from './workspaceManagerHelpers'
@@ -2970,9 +2971,9 @@ export default function WorkspaceManager() {
   // the person is in at that moment (closing the last project from a
   // door, opening Settings before the CLI probe resolves) is not what an
   // auto-open may do. The panel simply waits under whatever is open.
-  const presentNewChatPanel = useCallback(
   const activeFolderPath = activeWorkspace?.folderPath ?? null
   const activeWorktreeRepoRoot = activeWorkspace?.worktree?.repoRoot ?? null
+  const presentNewChatPanel = useCallback(
     (
       folderPath?: string | null,
       connector?: AgentComposerConnector | null,
@@ -4545,7 +4546,7 @@ export default function WorkspaceManager() {
   runComposerSpawnRef.current = runComposerSpawn
 
   const openNewAgentTab = useCallback(
-    (hostTabsetId?: string) => {
+    (hostTabsetId?: string, pick?: NewAgentTabPick) => {
       if (!canOpenNewAgentTab || !windowActiveWorkspaceId) return
       // Named now, not at spawn: the tab is a terminal-in-waiting and carries the
       // name the agent will take. The strip whose "+" was clicked is the host —
@@ -4555,7 +4556,7 @@ export default function WorkspaceManager() {
         useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === windowActiveWorkspaceId)?.agents ??
         {}
       const taken = Object.values(agents).map((agent) => agent.name)
-      addNewAgentTab(windowActiveWorkspaceId, pickRandomAgentName(taken), hostTabsetId)
+      addNewAgentTab(windowActiveWorkspaceId, pickRandomAgentName(taken), hostTabsetId, pick)
     },
     [canOpenNewAgentTab, windowActiveWorkspaceId],
   )
@@ -4564,12 +4565,13 @@ export default function WorkspaceManager() {
   // plus the typed prompt comes back here, and the spawn retypes `tabId` in
   // place so the terminal lands exactly where the surface was.
   const renderNewAgentPanel = useCallback(
-    (tabId: string, agentName?: string) => (
+    (tabId: string, agentName?: string, pick?: NewAgentTabPick) => (
       <React.Suspense fallback={null}>
         <NewAgentPanel
           workspaceId={windowActiveWorkspaceId ?? ''}
           conversationWorkspaceSupported={conversationSpawnEnabled}
-          initialSelection={lastNewChatAgent}
+          initialSelection={pick ? { kind: pick.kind } : lastNewChatAgent}
+          initialEngine={pick && pick.kind !== 'terminal' ? { cli: pick.cli, model: null, reasoning: null } : null}
           permissionPreset={agentSpawnPermissionPreset}
           onLaunch={({ prompt, images, files, ...confirm }) =>
             runComposerSpawnRef.current(confirm, { tabId, prompt, images, files, agentName })

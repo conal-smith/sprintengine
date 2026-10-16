@@ -251,6 +251,12 @@ export type NewAgentPanelProps = {
   /** Browse for a folder; `hostId` is the machine the dropdown stands on, so a WSL one opens in its home. */
   onBrowseProject?: (hostId?: ExecutionHostId) => void
   initialSelection: AgentComposerSelection
+  /**
+   * The engine the surface opens on when no draft or edit names one: the row of
+   * the tab strip's "+" the tab was opened for. An opening position, as the
+   * composer's own is; the first engine picked here replaces it.
+   */
+  initialEngine?: { cli: AgentCli; model: string | null; reasoning: string | null } | null
   /** The app-wide default a model row nobody has set still resolves to; the
    *  picker's footer writes per-row, so this is a fallback, never what it edits. */
   permissionPreset: CliPermissionPreset
@@ -429,6 +435,7 @@ export default function NewAgentPanel({
   onStartWithoutProject,
   onBrowseProject,
   initialSelection,
+  initialEngine: openingEngine,
   permissionPreset,
   onLaunch,
   launchesInBackground = false,
@@ -595,7 +602,9 @@ export default function NewAgentPanel({
     // a card's `Go` picker, which must not move this door's remembered engine
     // on its way past (item 2473). The panel opens standing on that row and
     // launches it; the first row picked here retires it.
-    initialEngine: editing ? { cli: editing.cli, model: editing.cliModel, reasoning: null } : (draft?.engine ?? null),
+    initialEngine: editing
+      ? { cli: editing.cli, model: editing.cliModel, reasoning: null }
+      : (draft?.engine ?? openingEngine ?? null),
   })
   const { selection } = composer
   const setLastNewChatAgent = useWorkspaceStore((s) => s.setLastNewChatAgent)

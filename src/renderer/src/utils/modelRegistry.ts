@@ -567,7 +567,12 @@ export const NEW_AGENT_TAB_COMPONENT = 'new-agent'
  *
  * Returns the new tab's id, which the caller holds to retype it on spawn.
  */
-export function addNewAgentTab(workspaceId: string, agentName: string, hostTabsetId?: string): string | null {
+export function addNewAgentTab(
+  workspaceId: string,
+  agentName: string,
+  hostTabsetId?: string,
+  launchPick?: Record<string, unknown>,
+): string | null {
   const model = models.get(workspaceId)
   if (!model) return null
 
@@ -577,7 +582,8 @@ export function addNewAgentTab(workspaceId: string, agentName: string, hostTabse
     id: tabId,
     name: agentName,
     component: NEW_AGENT_TAB_COMPONENT,
-    config: { agentName },
+    // The engine the strip's "+" was clicked for, which the surface opens on.
+    config: { agentName, ...(launchPick ? { launchPick } : {}) },
   }
 
   const targetTabset = resolveNewAgentHostTabset(model, hostTabsetId)
