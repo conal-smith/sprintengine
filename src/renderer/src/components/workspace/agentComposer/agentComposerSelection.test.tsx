@@ -112,8 +112,8 @@ test('agentComposerSelection', async () => {
     )
     assert.match(
       managerSource,
-      /initialSelection=\{pick \? \{ kind: pick\.kind \} : lastNewChatAgent\}/,
-      'the in-workspace launcher reads the saved choice unless a row of the strip’s + named one',
+      /initialSelection=\{lastNewChatAgent\}/,
+      'the in-workspace launcher also reads the saved choice',
     )
   })
 
