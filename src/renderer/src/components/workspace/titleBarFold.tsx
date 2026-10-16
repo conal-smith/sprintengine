@@ -12,9 +12,9 @@
 // The ladder is the owner's order (2026-09-04), cheapest loss first:
 //
 //   0  everything inline
-//   1  project + branch keep their glyph and their ±lines, lose their WORDS
+//   1  the chips keep their glyph and their ±lines, lose their WORDS
 //   2  "Open" folds into the overflow menu
-//   3  project + branch fold into the overflow menu entirely
+//   3  the chips fold into the overflow menu entirely
 //
 // The right-hand glyph cluster (Sessions, Remote, Notifications, search) never
 // folds. It is app-level chrome that is the same at every width, and it is what
@@ -32,8 +32,9 @@ export type TitleBarFold = 0 | 1 | 2 | 3
 // space, two different answers.
 //
 // The steps are the cluster's own content budget: ~110px of window nav (plus
-// 78px of traffic-light gutter on macOS), then star + name + project + branch +
-// Open. Each threshold is the width below which the NEXT segment down the
+// 78px of traffic-light gutter on macOS), then star + name + branch + Open. The
+// steps were set when a project chip sat beside the branch too; without it the
+// ladder folds a little sooner than it has to, never later. Each threshold is the width below which the NEXT segment down the
 // ladder no longer fits beside a legible workspace name.
 const FOLD_STEPS: readonly { minWidth: number; fold: TitleBarFold }[] = [
   { minWidth: 700, fold: 0 },
