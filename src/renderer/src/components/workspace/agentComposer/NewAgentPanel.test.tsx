@@ -2676,6 +2676,26 @@ test('NewAgentPanel', async () => {
       )
     })
 
+    // A chat's worktree is how it is isolated, not a place the person chose:
+    // the chip names the project it was cut from, never the slot.
+    await check('the project chip names a worktree folder by its project, not the slot', async () => {
+      seedStore()
+      resetRememberedMachineForTests()
+      meshConnections = []
+      const view = await render({
+        folderPath: '/w/.sprintengine-worktrees/app/pool-01',
+        projectOptions: [{ path: '/w/app', label: 'app' }],
+        onSelectProject: () => {},
+        onBrowseProject: () => {},
+      })
+      await settle()
+      const trigger = view.container.querySelector<HTMLButtonElement>('[data-project-trigger="true"]')
+      assert.ok(trigger, 'the scope line carries the project chip')
+      assert.match(trigger!.textContent ?? '', /\bapp\b/u)
+      assert.doesNotMatch(trigger!.textContent ?? '', /pool-01/u)
+      view.unmount()
+    })
+
     // ── One colour per project, on the scope line ────────────────────────────
     // Owner ruling 2026-09-09, backlog item
     // `one-colour-per-project-on-the-folder-glyph`, decision 7: "I keep opening

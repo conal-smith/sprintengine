@@ -24,6 +24,7 @@ import { useProjectColor } from '../../../hooks/useProjectColors'
 import { projectColorKey } from '../../../utils/projectColor'
 import { resolveSkillMentionPrefix } from '../../../../../shared/skill-invocation'
 import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
+import { workspaceProjectRootOf } from '../../../../../shared/worktree-paths'
 import { composerTokenAt } from '../../../../../shared/conversation/composerTrigger'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import {
@@ -636,8 +637,11 @@ export default function NewAgentPanel({
   const projectLabel = React.useMemo(() => {
     const folder = workspaceRoot?.trim()
     if (!folder) return null
-    if (isProjectlessChatsRoot(folder)) return PROJECTLESS_CHATS_LABEL
-    return projectOptions?.find((option) => option.path === folder)?.label ?? basename(folder) ?? folder
+    // A worktree's folder (a pool slot, one New chat cut) is how the chat is
+    // isolated, not a place the person chose: it is labelled as its project.
+    const project = workspaceProjectRootOf({ folderPath: folder }) ?? folder
+    if (isProjectlessChatsRoot(project)) return PROJECTLESS_CHATS_LABEL
+    return projectOptions?.find((option) => option.path === project)?.label ?? basename(project) ?? project
   }, [projectOptions, workspaceRoot])
   // Can this surface change where the agent runs? True when the host gave us
   // any way to — a folder browser, or projects to switch between. Deliberately
