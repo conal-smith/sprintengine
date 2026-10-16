@@ -235,6 +235,16 @@ Each degrades on a desktop without it to something that desktop already does:
 `hello` and `resolvePlan` are refused under their ids, and an unknown
 `permissionMode` member is dropped, so the preset's own mode runs.
 
+An `answerQuestion`'s answers are keyed by each question's whole text, which
+is how the CLI reads them back. The first version capped a key at 200
+characters, so a long question's answer was refused as `invalid_frame`. Since
+2026-10-16 a desktop accepts a key as long as an answer (20,000 characters),
+with the frame's total still the message limit. Only the validator widened:
+a client sends the same frame to either desktop, and an older one goes on
+refusing a long question as it always did. The first version's reader in
+`index.ts` is unchanged, since the phone carries it byte for byte; the wider
+rule is in `clientFrames.ts`, the server half.
+
 The initial `0.1.0` contract requires the `conversations` capability. Additive
 optional fields preserve that contract. Model switching is one such addition: its own
 `conversation-models` capability, a `models` catalog on a listed thread, the
