@@ -546,6 +546,10 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * served under the type their first bytes say, and cached privately for a
    * day: a step's picture never changes, and a phone scrolling back through a
    * chat should not fetch it twice.
+   *
+   * `attachment` in place of `toolUseId` names a picture the person sent with
+   * a message instead (`conversation-message-images`), by the ref its
+   * `user_message` recorded, and is served the same way.
    */
   async function handleConversationImage(response: ServerResponse, device: TailnetDevice, url: URL): Promise<void> {
     if (!tailnetScopeGrantsAccess(new Set(device.scopes), 'conversation:read')) {
@@ -558,13 +562,21 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     const workspaceId = url.searchParams.get('workspaceId')?.trim() ?? ''
     const agentId = url.searchParams.get('agentId')?.trim() ?? ''
     const toolUseId = url.searchParams.get('toolUseId')?.trim() ?? ''
-    if (!workspaceId || !agentId || !toolUseId) {
+    const attachment = url.searchParams.get('attachment')?.trim() ?? ''
+    if (!workspaceId || !agentId || !toolUseId === !attachment) {
       writeJson(response, 400, {
-        error: { code: 'invalid_arguments', message: 'A picture is named by workspaceId, agentId and toolUseId.' },
+        error: {
+          code: 'invalid_arguments',
+          message: 'A picture is named by workspaceId, agentId and one of toolUseId or attachment.',
+        },
       })
       return
     }
     const key = conversations?.resolveKey(workspaceId, agentId) ?? null
+    if (attachment) {
+      await serveSentImage(response, key, attachment)
+      return
+    }
     const found = key && conversations?.toolImagePath ? await conversations.toolImagePath(key, toolUseId) : null
     if (!found || (!found.ok && found.code === 'unknown_conversation')) {
       writeJson(response, 404, {
@@ -608,6 +620,36 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       options.log?.(`tailnet conversation image failed: ${message(error)}`)
       response.destroy()
     }
+  }
+
+  /** A picture sent with one of a chat's messages, read whole from the attachment store (at most 5 MB). */
+  async function serveSentImage(
+    response: ServerResponse,
+    key: ReturnType<ConversationGatewayHost['resolveKey']>,
+    ref: string,
+  ): Promise<void> {
+    const conversations = options.conversations
+    const found = key && conversations?.sentImage ? await conversations.sentImage(key, ref) : null
+    if (!found || (!found.ok && found.code === 'unknown_conversation')) {
+      writeJson(response, 404, {
+        error: { code: 'unknown_conversation', message: 'No eligible conversation on this machine has that id.' },
+      })
+      return
+    }
+    if (!found.ok) {
+      writeJson(response, 404, {
+        error: { code: 'unknown_image', message: 'That picture is not one this conversation was sent.' },
+      })
+      return
+    }
+    if (response.headersSent || response.writableEnded) return
+    response.writeHead(200, {
+      'Content-Type': found.mediaType,
+      'Content-Length': found.bytes.length,
+      'Cache-Control': 'private, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    response.end(found.bytes)
   }
 
   async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {

@@ -363,6 +363,18 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   A paired desktop shows these under a remote chat's steps the same way; for a
   machine without the capability it still says the picture is on the other
   machine.
+- **Pictures a message carried.** A desktop that also advertises
+  `conversation-message-images` serves the pictures a person sent with a
+  message on the same route, named by `attachment`, the `ref` its
+  `user_message` recorded for each (`attachments`), in place of `toolUseId`.
+  The bytes come from this machine's attachment store, never from a path, and
+  only from the folder the store keeps for that chat (or for its live
+  session's folder), so a ref another chat recorded is `404 unknown_image`, as
+  one that is gone is. What is served is at most the 5 MB a sent picture may
+  be, under the type its first bytes say (PNG, JPEG, WebP or GIF), and cached
+  privately for a day. The phone draws them as thumbnails on the person's
+  message; it shows its own just-sent photos from the phone itself, and names
+  a picture it cannot fetch.
 
 ### Sync
 

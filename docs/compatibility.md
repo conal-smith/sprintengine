@@ -255,7 +255,14 @@ The pictures a chat's steps show are another: the `conversation-images`
 capability names a plain `GET /tailnet/v1/conversation-image` beside the socket
 rather than a frame, so it changes neither the frame contract nor this package.
 A client that does not see it says the picture is on the other machine, and an
-older desktop answers the route 404. The machine each chat runs on (`host`),
+older desktop answers the route 404. The pictures a person sent with a message
+are the `conversation-message-images` capability (2026-10-16), on the same
+route: `attachment`, the `ref` an entry of a `user_message`'s `attachments`
+records, in place of `toolUseId`. Those entries (`{ id, mediaType, name?,
+byteLength, ref }`) were on the wire before it, an optional member with no
+capability; the capability only says the bytes can be fetched. A client that
+does not see it names the picture, and an older desktop answers the request
+400, since it names no `toolUseId`. The machine each chat runs on (`host`),
 its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
