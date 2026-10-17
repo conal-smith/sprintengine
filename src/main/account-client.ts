@@ -77,6 +77,8 @@ export type AccountClientOptions = {
   now?: () => number
   log?: AccountClientLogger
   discoveryTimeoutMs?: number
+  /** How long a token or account-service request may take, its body included. */
+  requestTimeoutMs?: number
 }
 
 // A Clerk token carries no studio organisation; the account service reads
@@ -84,6 +86,11 @@ export type AccountClientOptions = {
 export const ORGANIZATION_HEADER = 'x-multiauth-organization'
 const IDENTITY_DISCOVERY_PATH = '/api/auth/identity'
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 3000
+// A refresh and a resume are shared by every caller that asks for the account
+// while one is in flight, so a request that never finishes holds all of them:
+// the account badge read "Checking account" until the platform's own fetch
+// gave up minutes later. Generous for a token round trip on a slow link.
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
 const ACCESS_TOKEN_REFRESH_MARGIN_MS = 60_000
 
 export class SprintEngineAccountClient {
@@ -112,6 +119,7 @@ export class SprintEngineAccountClient {
   private readonly now: () => number
   private readonly log: AccountClientLogger
   private readonly discoveryTimeoutMs: number
+  private readonly requestTimeoutMs: number
 
   constructor(options: AccountClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/u, '')
@@ -123,6 +131,7 @@ export class SprintEngineAccountClient {
     this.now = options.now ?? (() => Date.now())
     this.log = options.log ?? (() => {})
     this.discoveryTimeoutMs = options.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   }
 
   currentIdentity(): IdentityConfig | null {
@@ -445,7 +454,7 @@ export class SprintEngineAccountClient {
   }
 
   private async requestClerkToken(identity: ClerkIdentityConfig, body: URLSearchParams): Promise<unknown> {
-    const response = await this.fetchImpl(identity.tokenEndpoint, {
+    const { response, payload } = await this.fetchJson(identity.tokenEndpoint, {
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -453,7 +462,6 @@ export class SprintEngineAccountClient {
       },
       body: body.toString(),
     })
-    const payload = (await response.json().catch(() => ({}))) as unknown
 
     if (!response.ok) {
       throw new Error(readTokenErrorMessage(payload, `Clerk token request failed (${response.status}).`))
@@ -480,17 +488,44 @@ export class SprintEngineAccountClient {
       }
     }
 
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+    const { response, payload } = await this.fetchJson(`${this.baseUrl}${path}`, {
       ...init,
       headers,
     })
-    const payload = (await response.json().catch(() => ({}))) as unknown
 
     if (!response.ok) {
       throw new Error(readTokenErrorMessage(payload, 'Account service request failed.'))
     }
 
     return payload as T
+  }
+
+  // One request and its JSON body under `requestTimeoutMs`, and under the
+  // caller's own signal when it passes one. The deadline covers the body too:
+  // a response whose headers arrive and whose body never ends stalls in
+  // `json()`, not in `fetch`. A body that is not JSON reads as `{}`, as before;
+  // one the deadline cut off is an error, never an empty answer.
+  private async fetchJson(url: string, init: RequestInit): Promise<{ response: Response; payload: unknown }> {
+    const deadline = new AbortController()
+    const seconds = Math.round(this.requestTimeoutMs / 1000)
+    const expired = new Promise<never>((_, reject) => {
+      deadline.signal.addEventListener(
+        'abort',
+        () => reject(new Error(`${new URL(url).host} did not answer within ${seconds} s.`)),
+        { once: true },
+      )
+    })
+    // Settled only by the deadline, which may fire after both reads are done.
+    expired.catch(() => undefined)
+    const timer = setTimeout(() => deadline.abort(), this.requestTimeoutMs)
+    const signal = init.signal ? AbortSignal.any([init.signal, deadline.signal]) : deadline.signal
+    try {
+      const response = await Promise.race([this.fetchImpl(url, { ...init, signal }), expired])
+      const payload = (await Promise.race([response.json().catch(() => ({})), expired])) as unknown
+      return { response, payload }
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private async installSession(identity: IdentityConfig, tokenSet: TokenSet, generation: number): Promise<void> {

@@ -109,6 +109,13 @@ test('a plan is searched as its card shows it: the title once, then the body', (
   expect(segment).toEqual({ key: 'plan:r1', text: 'ship it build test' })
 })
 
+test('a follow-up Codex suggests is searched as its label, not the prompt behind it', () => {
+  const [segment] = chatFindSegments(
+    reply('t1', '- :codex-followup[Prepare print version]{prompt="Make a print-ready version of the report"}'),
+  )
+  expect(segment).toEqual({ key: 'reply:t1', text: 'prepare print version' })
+})
+
 test('the count stops at the cap and says there were more', () => {
   const rows = [reply('t1', 'x '.repeat(30)), reply('t2', 'x '.repeat(30))]
   const capped = findInChat(rows, query('x'), 40)
