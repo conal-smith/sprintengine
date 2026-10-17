@@ -271,6 +271,11 @@ async function openTurn() {
   const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
   const base = createMockConversationProvider({ steer: true })
   let end: () => void = () => undefined
+  // Settles once the held turn is waiting on `end`. Ending it before then
+  // left the turn waiting for good, which a fixed pause could not rule out
+  // on a loaded machine.
+  let holding: () => void = () => undefined
+  const held = new Promise<void>((resolve) => (holding = resolve))
   const adapter = {
     ...base,
     sendTurn: (input: Parameters<typeof base.sendTurn>[0]) =>
@@ -287,7 +292,11 @@ async function openTurn() {
           payload: { turnId: input.turnId },
         })
         yield event('turn_started')
-        if (input.message.startsWith('hold')) await new Promise<void>((resolve) => (end = resolve))
+        if (input.message.startsWith('hold'))
+          await new Promise<void>((resolve) => {
+            end = resolve
+            holding()
+          })
         yield event('turn_completed')
       })(),
   }
@@ -314,6 +323,7 @@ async function openTurn() {
     host,
     runtime,
     end: () => end(),
+    held,
     cleanup: async () => {
       await runtime.shutdown()
       await rm(workspaceRoot, { recursive: true, force: true })
@@ -329,7 +339,7 @@ test('a steer that can be neither taken nor held is sent again until its turn is
   })
   try {
     const running = chat.host.command(chat.key, 'phone', 'first', { kind: 'send', message: 'hold the turn' })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await chat.held
     const steer = { kind: 'send' as const, message: 'Keep it to one file', skills: ['review'], steer: true as const }
     // The provider takes no message now, and one with skills cannot be held:
     // busy, and busy again under the same id, never a refusal kept for it.

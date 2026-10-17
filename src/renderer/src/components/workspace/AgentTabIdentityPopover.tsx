@@ -53,6 +53,7 @@ export function AgentTabIdentityPopover({
   identity,
   children,
   lookupBranch = null,
+  lookupPullRequests = true,
 }: {
   identity: AgentTabIdentity
   children: React.ReactNode
@@ -64,6 +65,12 @@ export function AgentTabIdentityPopover({
    * again rather than being answered from the last branch's reading.
    */
   lookupBranch?: string | null
+  /**
+   * Whether opening the card asks main about this session's pull requests.
+   * Off for a chat on a paired machine: main holds no session for it, and the
+   * machine's own list already names them.
+   */
+  lookupPullRequests?: boolean
 }) {
   const anchorRef = useRef<HTMLSpanElement>(null)
   const tabButtonRef = useRef<HTMLElement | null>(null)
@@ -93,9 +100,9 @@ export function AgentTabIdentityPopover({
   // its tab is one ask rather than two, and neither anchor can drift into a
   // rate of its own.
   useEffect(() => {
-    if (!hover.open || !sessionId) return
+    if (!hover.open || !sessionId || !lookupPullRequests) return
     refreshPullRequestsForLine(sessionId, lookupBranch)
-  }, [hover.open, sessionId, lookupBranch])
+  }, [hover.open, sessionId, lookupBranch, lookupPullRequests])
 
   // Anchor the card to the tab button's bottom-left, computed at reveal so the
   // shell never flashes at 0,0 before positioning.
