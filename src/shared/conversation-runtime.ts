@@ -25,6 +25,8 @@ export type {
   ConversationCursor,
   ConversationEvent,
   ConversationEventType,
+  ConversationGoal,
+  ConversationGoalStatus,
   ConversationJsonValue,
   ConversationMessageOrigin,
   ConversationPage,
