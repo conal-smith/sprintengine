@@ -751,3 +751,95 @@ test('settling forces the child to end while its background agent works, and the
     assert.deepEqual(forced, [false, true])
   })
 })
+
+/** A stateful provider whose stream for the first message stops short of the turn's end. */
+function streamEndsEarlyProvider() {
+  let sends = 0
+  const base = echoProvider()
+  const provider = recordingProvider({
+    sessions: 'stateful',
+    sendTurn: (input) =>
+      ++sends === 1
+        ? [
+            runtimeEvent(input, 'turn_started', { turnId: input.turnId }),
+            runtimeEvent(input, 'content_delta', { turnId: input.turnId, text: 'Halfway' }),
+          ]
+        : base.sendTurn(input),
+  })
+  return { adapter: provider.adapter, sends: () => sends }
+}
+
+test('a stateful turn whose stream ends without finishing fails, and the chat takes the next message', async () => {
+  const provider = streamEndsEarlyProvider()
+  await withRuntime([provider.adapter], async ({ runtime, workspaceRoot }) => {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'echo-provider', modelId: 'model' })
+    assert.ok(started.ok)
+    const sessionId = started.session.sessionId
+    const first = await runtime.sendTurn({ sessionId, message: 'Go' })
+    assert.ok(first.ok)
+    assert.equal(first.session.status, 'failed')
+    const replayed = await runtime.readTranscript(key)
+    assert.ok(replayed.ok)
+    const failures = replayed.events.filter((event) => event.type === 'turn_failed')
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0]?.payload?.reason, 'provider')
+
+    const next = await runtime.sendTurn({ sessionId, message: 'Again' })
+    assert.ok(next.ok)
+    assert.equal(next.session.status, 'ready')
+    assert.equal(provider.sends(), 2)
+  })
+})
+
+test('a stateful turn that finishes is not failed when its stream ends', async () => {
+  const provider = recordingProvider({ sessions: 'stateful' })
+  await withRuntime([provider.adapter], async ({ runtime, workspaceRoot }) => {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'echo-provider', modelId: 'model' })
+    assert.ok(started.ok)
+    const sent = await runtime.sendTurn({ sessionId: started.session.sessionId, message: 'Go' })
+    assert.ok(sent.ok)
+    assert.equal(sent.session.status, 'ready')
+    const replayed = await runtime.readTranscript(key)
+    assert.ok(replayed.ok)
+    assert.ok(!replayed.events.some((event) => event.type === 'turn_failed'))
+    assert.equal(replayed.events.filter((event) => event.type === 'turn_completed').length, 1)
+  })
+})
+
+test('a stateful turn the person stopped ends as stopped, not as a stream that ended early', async () => {
+  const provider = recordingProvider({
+    sessions: 'stateful',
+    sendTurn: (input) =>
+      (async function* () {
+        yield runtimeEvent(input, 'turn_started', { turnId: input.turnId })
+        yield runtimeEvent(input, 'content_delta', { turnId: input.turnId, text: 'Working' })
+        // The provider answers Stop by ending its stream, with no end of its own.
+        await new Promise<void>((resolve) => input.signal?.addEventListener('abort', () => resolve()))
+      })(),
+    interrupt: () => [],
+  })
+  await withRuntime([provider.adapter], async ({ runtime, workspaceRoot }) => {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'echo-provider', modelId: 'model' })
+    assert.ok(started.ok)
+    const sessionId = started.session.sessionId
+    const running = runtime.sendTurn({ sessionId, message: 'Go' })
+    const summary = () => {
+      const listed = runtime.listSessions()
+      return listed.ok ? listed.sessions[0] : undefined
+    }
+    await until(() => summary()?.status === 'active')
+    assert.ok((await runtime.interrupt({ sessionId })).ok)
+    assert.ok((await running).ok)
+    assert.equal(summary()?.status, 'ready')
+    const replayed = await runtime.readTranscript(key)
+    assert.ok(replayed.ok)
+    const failures = replayed.events.filter((event) => event.type === 'turn_failed')
+    assert.deepEqual(
+      failures.map((event) => event.payload?.reason),
+      ['interrupted'],
+    )
+  })
+})
