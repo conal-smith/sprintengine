@@ -57,24 +57,27 @@ const MAX_SPENT_UPLOAD_REFS = 256
  */
 const IMAGE_PATH_TTL_MS = 10 * 60_000
 const MAX_IMAGE_PATHS = 256
-const wireCapabilities = (session: ConversationSessionSummary) =>
-  session.capabilities
+const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities'] | undefined) =>
+  capabilities
     ? {
-        images: session.capabilities.images,
-        approvals: session.capabilities.approvals,
-        questions: session.capabilities.questions,
-        planMode: session.capabilities.planMode,
-        interrupt: session.capabilities.interrupt,
-        checkpoints: session.capabilities.checkpoints === true,
-        ...(session.capabilities.permissionPresets
-          ? { permissionPresets: [...session.capabilities.permissionPresets] }
-          : {}),
-        ...(session.capabilities.permissionModes ? { permissionModes: [...session.capabilities.permissionModes] } : {}),
+        images: capabilities.images,
+        approvals: capabilities.approvals,
+        questions: capabilities.questions,
+        planMode: capabilities.planMode,
+        interrupt: capabilities.interrupt,
+        checkpoints: capabilities.checkpoints === true,
+        ...(capabilities.permissionPresets ? { permissionPresets: [...capabilities.permissionPresets] } : {}),
+        ...(capabilities.permissionModes ? { permissionModes: [...capabilities.permissionModes] } : {}),
         // Whether a `send` that says `steer` can go into the turn now running
         // (`conversation-steer-sends`); a client offers Steer only where it can.
-        steer: session.capabilities.steer === true,
+        steer: capabilities.steer === true,
       }
     : undefined
+
+const capabilitiesOf = (capabilities: ConversationSessionSummary['capabilities'] | undefined) => {
+  const wire = wireCapabilities(capabilities)
+  return wire ? { capabilities: wire } : {}
+}
 
 export async function readBoundedConversationUpload(path: string, expectedBytes: number): Promise<Buffer> {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 1 || expectedBytes > MAX_ATTACHMENT_BYTES)
@@ -698,7 +701,13 @@ export function createConversationGatewayHost(
             lastSeq: thread.lastSeq,
             ...permissionFor(key, sessions),
             ...(models ? { models } : {}),
-            ...(summary ? { sessionId: summary.sessionId, capabilities: wireCapabilities(summary) } : {}),
+            ...(summary ? { sessionId: summary.sessionId } : {}),
+            // What the chat can do, from its session when it has one and
+            // otherwise from its provider, as a chat here reads it before its
+            // first turn. A chat at rest used to be listed with none, so a
+            // client read it as taking no pictures, and a screenshot dropped
+            // into it went over as the path of a file on the other machine.
+            ...capabilitiesOf(summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
             ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt)),
             ...replyPreviewOf(sessions, thread.lastAssistantText),
           })
@@ -724,7 +733,7 @@ export function createConversationGatewayHost(
           ...permissionFor(summary, sessions),
           ...(models ? { models } : {}),
           sessionId: summary.sessionId,
-          capabilities: wireCapabilities(summary),
+          ...capabilitiesOf(summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
           ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary)),
           ...replyPreviewOf(sessions),
         })
