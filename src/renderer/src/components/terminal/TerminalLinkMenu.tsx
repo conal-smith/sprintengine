@@ -39,6 +39,8 @@ export type TerminalLinkMenuProps = {
   onClose: () => void
   /** Reports a failed action, anchored to the original click. */
   onError: (message: string) => void
+  /** Offer the system file manager's reveal under this label (see `TerminalLinkMenuOptions`). */
+  revealInSystemLabel?: string
 }
 
 // The caret hint, including its mount-tick retry, now lives in
@@ -53,8 +55,18 @@ function targetLabel(target: TerminalLinkTarget): string {
   return target.kind === 'url' ? target.url : target.resolvedPath
 }
 
-export function TerminalLinkMenu({ workspaceId, target, x, y, line, column, onClose, onError }: TerminalLinkMenuProps) {
-  const actions = terminalLinkActions(target)
+export function TerminalLinkMenu({
+  workspaceId,
+  target,
+  x,
+  y,
+  line,
+  column,
+  onClose,
+  onError,
+  revealInSystemLabel,
+}: TerminalLinkMenuProps) {
+  const actions = terminalLinkActions(target, { revealInSystemLabel })
 
   const run = useCallback(
     (action: TerminalLinkAction) => {
@@ -102,6 +114,11 @@ export function TerminalLinkMenu({ workspaceId, target, x, y, line, column, onCl
               // focus it, then latch the reveal as before.
               useWorkspaceStore.getState().openPaneTab(workspaceId, { kind: 'files' })
               dispatchFileReveal({ workspaceId, path: target.resolvedPath })
+              return
+            }
+            case 'reveal-system': {
+              if (target.kind !== 'file') return
+              await window.api.showItemInFolder(target.resolvedPath)
               return
             }
             case 'open-popout': {

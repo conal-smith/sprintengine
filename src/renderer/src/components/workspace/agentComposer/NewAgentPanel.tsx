@@ -91,6 +91,8 @@ import { drawSuggestions, newSuggestionSeed } from './suggestionBank'
 import { WorktreeChip } from './WorktreeChip'
 import { useNewChatWorktreeReservation } from './useNewChatWorktreeReservation'
 import { ScheduleFailureTray, ScheduleTag } from './schedule/SchedulePicker'
+import { ComposerTray } from '../../panels/agentChat/composerTray'
+import { PROMPT_STASH_COMMAND, usePromptStash } from '../../panels/agentChat/promptStashPicker'
 import { StartAsGlyph, startAsLabel, type StartAs } from './ComposerOptionsMenu'
 import { ComposerPlusMenu } from './ComposerPlusMenu'
 import { MachineScopePicker } from './MachineScopePicker'
@@ -1826,6 +1828,45 @@ export default function NewAgentPanel({
   const keyPlatform = platformKeybindingsFromApiPlatform(window.api.platform)
   const launchInBackgroundKeys = getEffectiveKeybindings(LAUNCH_IN_BACKGROUND_COMMAND, keybindingSettings)
   const withoutProjectKeys = getEffectiveKeybindings('chat.newWithoutProject', keybindingSettings)
+  // ⌘S sets the prompt aside, or on an empty box lists what was set aside —
+  // the same stash the chat composer keeps (agentChat/promptStashPicker.tsx).
+  // A picture comes back as a file of its own, saved again: the copy the
+  // prompt was first given may be a temporary one that is gone by now.
+  const stashPicker = usePromptStash({
+    stashKeys: getEffectiveKeybindings(PROMPT_STASH_COMMAND, keybindingSettings),
+    platform: keyPlatform,
+    content: () => ({ text: prompt, files, images }),
+    clear: () => {
+      setPrompt('')
+      setImages([])
+      setFiles([])
+      setAttachNote(null)
+    },
+    restore: async ({ prompt: stashed, images: stashedImages }) => {
+      let restoredImages: PromptImage[]
+      try {
+        restoredImages = await Promise.all(
+          stashedImages.map(async (image) => ({
+            ...image,
+            path: await window.api.saveDroppedImage({ mediaType: image.mediaType, dataBase64: image.dataBase64 }),
+          })),
+        )
+      } catch (error) {
+        setAttachNote(error instanceof Error ? error.message : 'Could not bring that prompt back.')
+        return false
+      }
+      // New chat has no mention cards: a mentioned file comes back as its path.
+      const mentioned = stashed.mentions.map((mention) => quotePath(mention.path)).join(' ')
+      const words = [stashed.text, mentioned].filter(Boolean).join(' ')
+      setPrompt((current) => [words, current].filter(Boolean).join('\n\n'))
+      setFiles((current) => [...new Set([...stashed.files, ...current])])
+      setImages((current) => [...restoredImages, ...current].slice(0, MAX_ATTACHMENTS_PER_TURN))
+      promptRef.current?.focus()
+      return true
+    },
+    acceptsImages: selection.kind !== 'terminal',
+    empty: prompt.trim() === '' && images.length === 0 && files.length === 0,
+  })
   const onPromptKeyDown = (event: ComposerKeyEvent) => {
     // A key in the real field is the person carrying on: an Enter held from
     // the static box no longer speaks for what the field now says.
@@ -1868,6 +1909,7 @@ export default function NewAgentPanel({
         return
       }
     }
+    if (stashPicker.handleKeyDown(event)) return
     // ⌘⏎ (or whatever the Shortcuts tab bound it to) starts the chat and
     // stays here. Resolved in this handler rather than by the window's
     // dispatcher so the menus above and an input method keep the key first.
@@ -2236,6 +2278,8 @@ export default function NewAgentPanel({
         {scheduled && lastRunFailure && !terminalUnavailable ? (
           <ScheduleFailureTray failure={lastRunFailure} onDismiss={() => setLastRunFailure(null)} />
         ) : null}
+        {/* The stash ⌘S opened on an empty box, behind the box it restores into. */}
+        {stashPicker.picker && !terminalUnavailable ? <ComposerTray>{stashPicker.picker}</ComposerTray> : null}
         <div
           // The box owns the visible border while the field inside it is the
           // tab stop, so the product's one focus ring lands on the box keyed to
@@ -2329,7 +2373,7 @@ export default function NewAgentPanel({
               placeholder={placeholder}
               disabled={isTerminalLaunch}
               adoptInput={bootComposer ? adoptBootInput : undefined}
-              contentAttributes={{ 'aria-label': 'What this agent should do' }}
+              contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
               className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
             />
           </div>

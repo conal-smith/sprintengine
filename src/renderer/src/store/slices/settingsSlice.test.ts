@@ -1552,3 +1552,17 @@ test('the follow-up setter stores the choice, and only a steer steers', () => {
   store.setFollowUpBehavior('sometimes' as unknown as 'queue')
   assert.equal(useWorkspaceStore.getState().appSettings.followUpBehavior, 'queue')
 })
+
+test('chats with an open pull request are kept from the idle rule unless the person turned it off', () => {
+  assert.equal(normalizeAppSettings(undefined, []).keepChatsWithOpenPullRequest, true, 'a new install keeps them')
+  assert.equal(
+    normalizeAppSettings({ settleOnPullRequestMerge: false } as Partial<AppSettings>, []).keepChatsWithOpenPullRequest,
+    true,
+    'a profile from before the setting keeps them',
+  )
+  assert.equal(
+    normalizeAppSettings({ keepChatsWithOpenPullRequest: false } as Partial<AppSettings>, [])
+      .keepChatsWithOpenPullRequest,
+    false,
+  )
+})
