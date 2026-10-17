@@ -88,7 +88,8 @@
       "!out/**/*.map",
       "!out/server/**",
       "!out/wsl-server/**",
-      "!out/web/**"
+      "!out/web/**",
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
     ],
     "asarUnpack": [
       "node_modules/@vscode/ripgrep-*/bin/**"
