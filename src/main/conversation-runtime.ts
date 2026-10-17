@@ -152,6 +152,9 @@ type RuntimeSession = ConversationSessionSummary & {
   idleAnnounced?: boolean
   // Spawned agents still running, by spawning tool call.
   runningSubagents: Map<string, ConversationSubagentStatusPayload>
+  // The tool call that first spawned each agent the chat has seen, by task:
+  // a provider started again resumes an agent in that lane.
+  subagentLanes: Map<string, string>
   workspaceRoot: string
   fileScope: string
   activeTurnId: string | null
@@ -730,8 +733,15 @@ export class ConversationRuntime {
       ...(input.mcpServers?.length ? { mcpServers: input.mcpServers } : {}),
       toolDetailPaths: new Set(),
       runningSubagents: new Map(),
+      subagentLanes: new Map(),
       providerTurn: null,
     }
+    // The agents' lanes come from the transcript's last page, below, and from
+    // what this run's earlier sessions of the chat saw, which can reach back
+    // further.
+    for (const stale of previous)
+      for (const [taskId, toolUseId] of stale.subagentLanes)
+        if (!session.subagentLanes.has(taskId)) session.subagentLanes.set(taskId, toolUseId)
     await this.initializeSequence(input)
     const previousTranscript = await this.readRecentTranscript(input)
     let fallbackHistory: ConversationMessage[] | undefined
@@ -766,6 +776,7 @@ export class ConversationRuntime {
           ...(resume?.at ? { resumeSessionAt: resume.at } : {}),
           ...(resume?.seedFromHistory ? { seedFromHistory: true } : {}),
           ...(session.history ? { fallbackHistory: session.history } : fallbackHistory ? { fallbackHistory } : {}),
+          ...(session.subagentLanes.size > 0 ? { knownSubagentLanes: Array.from(session.subagentLanes) } : {}),
           // Continuation channel: the adapter opens a mirror turn here when its
           // child resumes after a `result` (background subagents completing).
           onSessionEvent: (event) => this.enqueueContinuationEvent(session, event),
@@ -2486,6 +2497,8 @@ export class ConversationRuntime {
           ...status,
         })
       else if (status) session.runningSubagents.delete(status.toolUseId)
+      if (status?.taskId && !session.subagentLanes.has(status.taskId))
+        session.subagentLanes.set(status.taskId, status.toolUseId)
       session.backgroundAgents = Array.from(session.runningSubagents.values()).filter(
         (agent) => agent.background,
       ).length

@@ -8,6 +8,7 @@ import {
   resolveConversationPath,
 } from '../conversation-file-access'
 import { terminateCliChild } from './cli-child-process'
+import { cliProbeEnv } from '../cli-probe-env'
 import {
   CONVERSATION_IDENTITY_ENV_KEYS,
   cliHostSpawn,
@@ -664,14 +665,17 @@ export async function probeAcpConversationCommands(
     options.prepareWslTarget ?? prepareWslCliTarget,
   )
   const command = await (options.detect ?? (() => detectAcpCommand(profile, input.cliRuntimes)))()
-  const env = await (options.buildEnv ?? acpEnvironment)()
+  // Nobody asked for this start, so it runs as a check does (cli-probe-env.ts).
+  const probeEnv = cliProbeEnv(profile.cli)
+  const env = { ...(await (options.buildEnv ?? acpEnvironment)()), ...probeEnv }
   const sdk = await import('@agentclientprotocol/sdk')
+  const wslChild = wsl ? acpWslChild(wsl, profile) : null
   const target = cliHostSpawn({
     command,
     args: profile.argv,
     cwd: input.cwd,
     env,
-    wsl: wsl ? acpWslChild(wsl, profile) : null,
+    wsl: wslChild ? { ...wslChild, forwardEnv: [...wslChild.forwardEnv, ...Object.keys(probeEnv)] } : null,
   })
   const child = (options.spawnChild ?? spawn)(target.file, target.args, target.options)
   child.stderr.on('data', () => undefined)

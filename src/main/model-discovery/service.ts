@@ -28,6 +28,7 @@ import type {
   CliModelDiscoveryResult,
 } from '../../shared/ipc/cli-model-discovery'
 import { detectAgentCliAvailability } from '../cli-availability'
+import { cliProbeEnv } from '../cli-probe-env'
 import { runCliCommand } from '../cli-runtime-install'
 import { listPluginRegistryEntries } from '../plugin-registry-instance'
 import { CLI_MODEL_PROBES } from './probes'
@@ -61,6 +62,7 @@ export type CliModelDiscoveryDeps = {
     args: string[]
     hostId?: ExecutionHostId
     timeoutMs: number
+    setEnv?: Readonly<Record<string, string>>
   }) => Promise<ArgvRunOutcome>
   cache?: ModelDiscoveryCache
   now?: () => number
@@ -306,7 +308,8 @@ export async function discoverCliModels(
         binary,
         ...(hostId ? { hostId } : {}),
         timeoutMs,
-        runArgv: (args) => runArgv({ binary, args, ...(hostId ? { hostId } : {}), timeoutMs }),
+        runArgv: (args) =>
+          runArgv({ binary, args, ...(hostId ? { hostId } : {}), timeoutMs, setEnv: cliProbeEnv(cli.id) }),
       })
       if (!outcome.ok) return { cli: cli.id, catalog: null, error: outcome.error }
       // Every probe lists at least one model when it works, and the picker reads

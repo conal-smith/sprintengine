@@ -49,7 +49,7 @@ function echoProvider(options: { padding?: string } = {}): ConversationProviderA
 async function withRuntime(
   adapters: ConversationProviderAdapter[],
   body: (context: { runtime: ConversationRuntime; workspaceRoot: string }) => Promise<void>,
-  options: { now?: () => number } = {},
+  options: { now?: () => number; transcriptLimits?: { pageBytes: number } } = {},
 ): Promise<void> {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-conversation-lifecycle-'))
   const runtime = new ConversationRuntime({
@@ -60,6 +60,7 @@ async function withRuntime(
       resolveSecret: async () => ({ ok: false, message: 'unused' }),
     },
     ...(options.now ? { now: options.now } : {}),
+    ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}),
   })
   try {
     await body({ runtime, workspaceRoot })
@@ -529,6 +530,93 @@ test('only a stateful provider that replays history is handed it at start', asyn
     )
     assert.equal(resuming.starts.at(-1)?.fallbackHistory, undefined)
   })
+})
+
+/**
+ * A stateful provider whose first turn reports one agent under two calls: the
+ * one that spawned it, then the one that resumed it, as a transcript written
+ * before resumed agents were reported in their own lane records a resume.
+ */
+function agentLaneProvider() {
+  const base = echoProvider()
+  let turns = 0
+  return recordingProvider({
+    id: 'claude-agent',
+    sessions: 'stateful',
+    sendTurn: (input) => {
+      const lanes = turns++ === 0 ? ['toolu_agent', 'toolu_send'] : []
+      return [
+        runtimeEvent(input, 'turn_started', { turnId: input.turnId }),
+        ...lanes.map((toolUseId) =>
+          runtimeEvent(input, 'subagent_status', {
+            turnId: input.turnId,
+            toolUseId,
+            taskId: 'task_swift',
+            status: 'running',
+            background: true,
+          }),
+        ),
+        ...(base.sendTurn(input) as ConversationEvent[]).slice(1),
+      ]
+    },
+  })
+}
+
+test('a chat started again after a restart hands its provider the lane each agent started in', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-conversation-lifecycle-'))
+  const key = {
+    workspaceRoot,
+    workspaceId: 'workspace',
+    agentId: 'agent',
+    providerId: 'claude-agent',
+    modelId: 'model',
+  }
+  const runtimeWith = (provider: ReturnType<typeof agentLaneProvider>) =>
+    new ConversationRuntime({ adapters: [provider.adapter], getProviderById: () => undefined })
+  try {
+    const before = agentLaneProvider()
+    const first = runtimeWith(before)
+    try {
+      const started = await first.startSession(key)
+      assert.ok(started.ok)
+      assert.equal(before.starts[0]?.knownSubagentLanes, undefined, 'a new chat knows no agents')
+      assert.ok((await first.sendTurn({ sessionId: started.session.sessionId, message: 'Build the app' })).ok)
+    } finally {
+      await first.shutdown()
+    }
+
+    const after = agentLaneProvider()
+    const second = runtimeWith(after)
+    try {
+      assert.ok((await second.startSession(key)).ok)
+      assert.deepEqual(after.starts[0]?.knownSubagentLanes, [['task_swift', 'toolu_agent']])
+    } finally {
+      await second.shutdown()
+    }
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})
+
+test("a chat started again in the same run keeps the lanes its earlier session saw, past the transcript's last page", async () => {
+  const provider = agentLaneProvider()
+  await withRuntime(
+    [provider.adapter],
+    async ({ runtime, workspaceRoot }) => {
+      const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent', providerId: 'claude-agent' }
+      const first = await runtime.startSession({ ...key, modelId: 'model' })
+      assert.ok(first.ok)
+      const sessionId = first.session.sessionId
+      assert.ok((await runtime.sendTurn({ sessionId, message: 'Build the app' })).ok)
+      for (let index = 0; index < 4; index++)
+        assert.ok((await runtime.sendTurn({ sessionId, message: `Then ${index} ${'x'.repeat(1024)}` })).ok)
+      await runtime.stopSession({ sessionId })
+
+      assert.ok((await runtime.startSession({ ...key, modelId: 'model' })).ok)
+      assert.deepEqual(provider.starts.at(-1)?.knownSubagentLanes, [['task_swift', 'toolu_agent']])
+    },
+    { transcriptLimits: { pageBytes: 1024 } },
+  )
 })
 
 test('settling a chat whose session is still starting cancels the child being spawned', async () => {

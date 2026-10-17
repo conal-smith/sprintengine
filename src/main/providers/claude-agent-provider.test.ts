@@ -2705,6 +2705,51 @@ test('a Claude agent resumed by SendMessage in a later child reports to the lane
   assert.equal(finished[1]?.payload?.status, 'completed')
 })
 
+// The same agent after the app restarted: the session that spawned it is gone,
+// and only the lane the runtime read back from the transcript says where it ran.
+test('a Claude agent resumed by SendMessage after a restart reports to the lane the runtime knew it by', async () => {
+  const h = scriptedHarness()
+  try {
+    await h.adapter.startSession({ ...h.turn('turn_1'), knownSubagentLanes: [['task_swift', 'toolu_agent']] })
+    const first = reader((await h.adapter.sendTurn(h.turn('turn_1'))) as AsyncIterable<ConversationEvent>)
+    await promptsRead(h.prompts, 1)
+    h.emit(init)
+    h.emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'task_swift',
+      tool_use_id: 'toolu_send',
+      description: 'Build Swift macOS app',
+      task_type: 'local_agent',
+      subagent_type: 'general-purpose',
+      is_backgrounded: true,
+    })
+    h.emit({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task_swift',
+      tool_use_id: 'toolu_send',
+      status: 'completed',
+      summary: 'Built it.',
+    })
+    h.emit(success({ user_message_uuids: [h.uuidOf(0)] }))
+    await first.done
+
+    const statuses = first.events.filter((event) => event.type === 'subagent_status')
+    assert.deepEqual(
+      statuses.map((event) => [event.payload?.toolUseId, event.payload?.status, event.payload?.resumed]),
+      [
+        ['toolu_agent', 'running', true],
+        ['toolu_agent', 'completed', undefined],
+      ],
+    )
+    const answer = first.events.find((event) => event.type === 'tool_output' && event.payload?.backgroundResult)
+    assert.equal(answer?.payload?.toolUseId, 'toolu_agent', 'its answer lands in its own lane, not on SendMessage')
+  } finally {
+    await h.adapter.disposeAll()
+  }
+})
+
 // The order Claude Code streams one Monitor in: the call, the whole list of
 // background work (which can only say the task is a shell), then the task's
 // start, which links it to the call.
