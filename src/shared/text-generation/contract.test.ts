@@ -41,7 +41,7 @@ test('contract', async () => {
     )
     assert.deepEqual(
       resolveTextGenerationEngine({ enabled: true, engine: { cli: 'claude-code', model: '' } }, [], allInstalled),
-      { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' },
+      { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' },
       'an empty model means the backend default, and effort defaults to low',
     )
   })
@@ -54,7 +54,7 @@ test('contract', async () => {
         ['cursor', 'codex', 'claude-code'],
         installed,
       ),
-      { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' },
+      { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' },
     )
   })
 
@@ -74,7 +74,7 @@ test('contract', async () => {
   run('an unprobed CLI still counts as usable', () => {
     assert.deepEqual(
       resolveTextGenerationEngine({ enabled: true, engine: null }, ['claude-code'], () => undefined),
-      { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' },
+      { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' },
     )
   })
 

@@ -105,7 +105,7 @@ test("the model's title replaces exactly the heuristic name it was asked to repl
   // The engine the window would pick: the first supported CLI, at its cheap default.
   assert.deepEqual(requests[0], {
     prompt: PROMPT,
-    engine: { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' },
+    engine: { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' },
     cliRuntimes: { 'claude-code': { command: 'claude' } },
   })
   await answerAll()
@@ -241,7 +241,7 @@ test('a failure about the transport is tried once more, and a failed title is wr
   await answerAll()
   assert.equal(requests.length, 2)
   assert.equal(workspaces['ws-1']!.name, HEURISTIC)
-  assert.deepEqual(logged, ['claude-code · claude-haiku-4-5 · low: timeout — claude-code did not answer in time.'])
+  assert.deepEqual(logged, ['claude-code · claude-haiku-5-5 · low: timeout — claude-code did not answer in time.'])
 })
 
 test('after dispose it hears nothing, and a title still being written does not land', async () => {

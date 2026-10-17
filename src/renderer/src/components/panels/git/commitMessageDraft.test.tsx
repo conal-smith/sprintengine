@@ -280,7 +280,7 @@ test('the hook drafts with the stored style and engine, says it is working, and 
   assert.deepEqual(requests, [
     {
       repoRoot: '/Users/dev/app',
-      engine: { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' },
+      engine: { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' },
       draftId: (requests[0] as { draftId: string }).draftId,
       writingStyle: { mode: 'conventional', instructions: '' },
       cliRuntimes: useWorkspaceStore.getState().appSettings.cliRuntimes,
