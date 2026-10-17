@@ -8,6 +8,8 @@ import { toWslPath, wslToWindowsPath } from '../../shared/host-paths'
 import type {
   ConversationCliRuntimeOverrides,
   ConversationEvent,
+  ConversationGoal,
+  ConversationGoalStatus,
   ConversationMcpServer,
   ConversationPermissionPreset,
   ConversationSubagentState,
@@ -35,17 +37,29 @@ import { conversationCommandsFor, publishConversationCommands } from '../convers
 import { mcpServerStatusFor, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
 import {
-  CODEX_COMPACT_COMMAND,
+  CODEX_BUILT_IN_COMMANDS,
   codexCompactRequest,
   codexConversationCommands,
+  codexGoalRequest,
   codexListedSkills,
   codexSkillInputs,
+  type CodexGoalRequest,
   type CodexListedSkill,
 } from '../conversation-commands/codex'
 import type { ConversationCommand } from '../../shared/conversation/commands'
+import { CONVERSATION_GOAL_STATUS_WORDS } from '../../shared/conversation/goal'
 import { codexPlanInput, codexTool, codexToolResult } from './codex-items'
 import { saveToolResultImages, type SaveToolResultImages } from './tool-result-images'
-import type { ThreadForkParams, ThreadItem, TurnPlanUpdatedNotification } from './codex-protocol'
+import type {
+  ThreadForkParams,
+  ThreadGoalClearResponse,
+  ThreadGoalGetResponse,
+  ThreadGoalSetParams,
+  ThreadGoalSetResponse,
+  ThreadGoalUpdatedNotification,
+  ThreadItem,
+  TurnPlanUpdatedNotification,
+} from './codex-protocol'
 import {
   CONVERSATION_IDENTITY_ENV_KEYS,
   hostMachineName,
@@ -90,6 +104,12 @@ export const CODEX_RATE_LIMITS_READ_TIMEOUT_MS = 3_000
 // An app-server that never does is closed, so a hung turn can neither keep the
 // process alive nor refuse every later message as "already running a turn".
 export const CODEX_INTERRUPT_GRACE_MS = 10_000
+// How long a `/goal` turn waits for the turn Codex starts toward the goal it
+// was just given. Codex starts it at once; one it holds back (it is busy, or
+// turned the work down) comes as a turn of its own when it does start.
+export const CODEX_GOAL_TURN_WAIT_MS = 3_000
+// How long Stop waits for Codex to pause a goal before it interrupts anyway.
+const CODEX_GOAL_PAUSE_TIMEOUT_MS = 2_000
 
 // How long Codex waits for MCP servers before a thread's first request. It
 // leaves out any server still starting then, and its own default of 1 s is
@@ -157,6 +177,13 @@ type ActiveTurn = {
   usage: ConversationTurnUsage | null
   // A `/compact` turn: Codex runs it from `thread/compact/start`, not a prompt.
   compact: boolean
+  // A `/goal` turn: Codex is asked about its goal, not sent a prompt.
+  goal: boolean
+  // A turn Codex started by itself, working toward its goal, rather than one
+  // a message here started. It reaches the chat over the session channel.
+  selfStarted: boolean
+  // Stop's pause of a running goal, sent before the turn is interrupted.
+  pausing: Promise<void> | null
   // Notes already written this turn, so a failure Codex retries reads once.
   notes: Set<string>
   plans: number
@@ -210,6 +237,12 @@ type Session = {
   // How the signed-in account pays, from `account/read`: only a ChatGPT
   // sign-in has plan limits to read. Null until known.
   usageBilling?: 'subscription' | 'api' | null
+  // The thread's goal as Codex last said it: null for none, undefined until
+  // Codex has been asked (or for a Codex that has no goals).
+  goal?: ConversationGoal | null
+  // The turn that ended last here, which a turn Codex starts by itself right
+  // after it follows.
+  lastTurnId: string | null
   // The skills Codex listed for the chat's folder, latest asking first: what
   // a `$name` in a message is matched against at `turn/start`.
   skills?: Promise<CodexListedSkill[]>
@@ -320,7 +353,12 @@ export function createCodexConversationProvider(
     state.lastActivityAt = Date.now()
     const next = event(state, type, payload)
     if (state.turn && type === 'content_delta') state.turn.text += text(payload.text)
-    if (state.turn) state.turn.queue.push(next)
+    deliver(state, next)
+  }
+  // To the turn running, or outside one to the chat. A turn Codex started by
+  // itself has no send to read its events, which go to the chat as they come.
+  function deliver(state: Session, next: ConversationEvent) {
+    if (state.turn && !state.turn.selfStarted) state.turn.queue.push(next)
     else state.input.onSessionEvent?.(next)
   }
   /** `refused`: the message was turned away here, before Codex was asked anything. */
@@ -328,8 +366,9 @@ export function createCodexConversationProvider(
     if (!state.turn) return
     for (const requestId of state.pending.keys()) emit(state, 'approval_resolved', { requestId, approved: false })
     state.pending.clear()
-    if (!failure && !interrupted && !state.turn.cancelled && !state.turn.compact)
+    if (!failure && !interrupted && !state.turn.cancelled && !state.turn.compact && !state.turn.goal)
       state.history.push({ user: state.turn.message, assistant: state.turn.text })
+    state.lastTurnId = state.turn.id
     // Where the thread stood once this turn was over: the turn a fork made at
     // its end branches the thread through (`thread/fork`'s `lastTurnId`).
     const providerCursor =
@@ -350,13 +389,56 @@ export function createCodexConversationProvider(
     state.turn.settle()
     state.turn = null
   }
+  function newTurn(id: string, message: string, kind: { compact?: boolean; goal?: boolean; selfStarted?: boolean }) {
+    let settle = () => {}
+    const ended = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const turn: ActiveTurn = {
+      id,
+      cancelled: false,
+      interrupting: null,
+      watchdog: null,
+      ended,
+      settle,
+      nativeId: null,
+      queue: new EventQueue(),
+      textItems: new Set(),
+      textItem: null,
+      items: new Map(),
+      outputBytes: new Map(),
+      deferredApprovals: new Map(),
+      message,
+      text: '',
+      reply: '',
+      replyItem: null,
+      usage: null,
+      compact: kind.compact === true,
+      goal: kind.goal === true,
+      selfStarted: kind.selfStarted === true,
+      pausing: null,
+      notes: new Set(),
+      plans: 0,
+    }
+    return turn
+  }
+  // A turn Codex started by itself, the next one toward its goal, with no
+  // message here to start it. It is a turn of the chat like any other: it goes
+  // to the runtime over the session channel, which keeps the chat working
+  // until it ends and holds the person's next message until then. It names
+  // the turn it follows, which the runtime may still be closing.
+  function openSelfStartedTurn(state: Session, nativeId: string) {
+    if (!state.input.onSessionEvent) return
+    const turn = newTurn(`turn_${randomUUID()}`, '', { selfStarted: true })
+    turn.nativeId = nativeId || null
+    state.turn = turn
+    emit(state, 'turn_started', state.lastTurnId ? { follows: state.lastTurnId } : {})
+  }
   // Subagent progress belongs to the lane, not to whichever turn is open when
   // it arrives: a spawned agent can outlive the turn that launched it.
   function emitSessionEvent(state: Session, type: ConversationEvent['type'], payload: RecordValue) {
     state.lastActivityAt = Date.now()
-    const next = { ...event(state, type), payload }
-    if (state.turn) state.turn.queue.push(next)
-    else state.input.onSessionEvent?.(next)
+    deliver(state, { ...event(state, type), payload })
   }
   // A line in the turn about something Codex reported beside the reply: a
   // tool that could not run, a retried error, a warning. Said once per turn.
@@ -439,9 +521,131 @@ export function createCodexConversationProvider(
       await turn.interrupting
       return
     }
+    // A goal Codex is working toward is paused first: interrupted alone,
+    // Codex would start its next turn toward it as this one ends.
+    if (!turn.pausing && goalRunning(state, turn)) turn.pausing = pauseGoal(state)
+    if (turn.pausing) await turn.pausing
+    if (turn.interrupting) {
+      await turn.interrupting
+      return
+    }
     if (!turn.nativeId || !state.transport) return
     turn.interrupting = state.transport.request('turn/interrupt', { threadId: state.threadId, turnId: turn.nativeId })
     await turn.interrupting
+  }
+  // `/goal`, run as Codex's goal requests rather than sent as a prompt. Saying,
+  // pausing or clearing the goal ends the turn with a line on what happened.
+  // Setting or resuming one has Codex start on it at once, as a turn of its
+  // own: this turn takes that one up, and the turns Codex starts after it come
+  // as turns of their own (openSelfStartedTurn).
+  async function runGoal(state: Session, turn: ActiveTurn, goal: Exclude<CodexGoalRequest, { action: 'refuse' }>) {
+    const transport = state.transport!
+    const threadId = state.threadId!
+    const done = (line: string) => {
+      if (state.turn !== turn) return
+      note(state, line)
+      const started = turn.nativeId
+      finish(state)
+      // A turn Codex started by itself meanwhile goes on as one of its own.
+      if (started) openSelfStartedTurn(state, started)
+    }
+    try {
+      if (goal.action === 'clear') {
+        const answer = (await transport.request('thread/goal/clear', {
+          threadId,
+          origin: 'user',
+        })) as ThreadGoalClearResponse
+        noteGoal(state, null)
+        return done(answer?.cleared ? 'Goal cleared. Codex no longer works toward it.' : 'There was no goal to clear.')
+      }
+      let params: ThreadGoalSetParams
+      if (goal.action === 'set') params = { threadId, origin: 'user', objective: goal.objective, status: 'active' }
+      else {
+        const current = ((await transport.request('thread/goal/get', { threadId })) as ThreadGoalGetResponse)?.goal
+        noteGoal(state, current ?? null)
+        if (!current) return done('There is no goal in this chat. Send /goal and what Codex should achieve to set one.')
+        if (goal.action === 'show')
+          return done(`Goal: ${current.objective} (${CODEX_GOAL_STATUS_WORDS[current.status] ?? current.status})`)
+        if (goal.action === 'pause' && current.status !== 'active')
+          return done(
+            `The goal is not running (${CODEX_GOAL_STATUS_WORDS[current.status] ?? current.status}), so there is nothing to pause.`,
+          )
+        if (goal.action === 'resume' && current.status === 'active')
+          return done('Codex is already working toward the goal.')
+        params = { threadId, origin: 'user', status: goal.action === 'pause' ? 'paused' : 'active' }
+      }
+      const answer = (await transport.request('thread/goal/set', params)) as ThreadGoalSetResponse
+      if (answer?.goal) noteGoal(state, answer.goal)
+      if (state.turn !== turn) return
+      if (answer?.goal?.status !== 'active')
+        return done(
+          goal.action === 'pause'
+            ? 'Goal paused. Send /goal resume to carry on.'
+            : 'Codex has the goal but is not working toward it yet.',
+        )
+      if (turn.cancelled) {
+        await interrupt(state)
+        if (state.turn === turn && !turn.nativeId) finish(state, undefined, true)
+        return
+      }
+      // Codex's turn toward the goal, unless it started before Codex answered.
+      if (turn.nativeId) return
+      const timer = setTimeout(() => {
+        if (state.turn === turn && !turn.nativeId) done('Codex has the goal and starts on it as soon as it is free.')
+      }, CODEX_GOAL_TURN_WAIT_MS)
+      timer.unref?.()
+    } catch (error) {
+      if (state.turn !== turn) return
+      if (isUnknownMethodError(error)) {
+        state.goal = undefined
+        return finish(state, 'This version of Codex has no goals. Update Codex to use /goal.', false, true)
+      }
+      finish(state, error instanceof Error ? error.message : 'Codex could not change its goal.')
+    }
+  }
+  // The thread's goal as Codex says it. The chat is told when it changes, and
+  // the turn running gets a line when Codex moves the goal on by itself.
+  function noteGoal(state: Session, goal: ThreadGoalSetResponse['goal'] | null) {
+    const next: ConversationGoal | null = goal?.objective ? { objective: goal.objective, status: goal.status } : null
+    const previous = state.goal
+    if (previous !== undefined && previous?.objective === next?.objective && previous?.status === next?.status) return
+    state.goal = next
+    // A chat starts with no goal; only a change from that is news.
+    if (previous === undefined && !next) return
+    const moved =
+      previous && next && previous.objective === next.objective ? CODEX_GOAL_STATUS_NOTES[next.status] : undefined
+    if (moved) note(state, moved)
+    emitSessionEvent(state, 'session_updated', { goal: next })
+  }
+  // The goal a resumed thread already has, for the chat to show and for Stop
+  // to pause. A Codex without goals answers with an error, and has none.
+  async function readGoal(state: Session, transport: CodexRpcTransport) {
+    if (!state.threadId) return
+    const answer = (await transport
+      .request('thread/goal/get', { threadId: state.threadId })
+      .catch(() => null)) as ThreadGoalGetResponse | null
+    if (answer && state.transport === transport && state.goal === undefined) noteGoal(state, answer.goal ?? null)
+  }
+  // Whether stopping this turn leaves Codex a goal to carry on with. A goal
+  // not read yet is assumed running when Codex started the turn by itself.
+  function goalRunning(state: Session, turn: ActiveTurn): boolean {
+    return state.goal?.status === 'active' || (state.goal === undefined && turn.selfStarted)
+  }
+  // Pauses the thread's goal, giving up after a short wait: Stop goes on to
+  // interrupt either way, and a Codex that refuses has no goal to pause.
+  async function pauseGoal(state: Session): Promise<void> {
+    const transport = state.transport
+    if (!transport || !state.threadId) return
+    const params: ThreadGoalSetParams = { threadId: state.threadId, origin: 'user', status: 'paused' }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), CODEX_GOAL_PAUSE_TIMEOUT_MS)
+      timer.unref?.()
+    })
+    const answer = await Promise.race([transport.request('thread/goal/set', params).catch(() => null), timeout])
+    clearTimeout(timer)
+    const goal = record(answer).goal
+    if (goal) noteGoal(state, goal as ThreadGoalSetResponse['goal'])
   }
   // An MCP server (or an app Codex connects) asking the person's consent
   // before a tool runs. Approving sends the answer worked out now; one that
@@ -572,6 +776,19 @@ export function createCodexConversationProvider(
     }
     const method = message.method
     if (child) return onChildMessage(state, child, method, params)
+    // The goal as Codex keeps it, whichever turn moved it, or none.
+    if (method === 'thread/goal/updated') {
+      noteGoal(state, (params as unknown as ThreadGoalUpdatedNotification).goal)
+      return
+    }
+    if (method === 'thread/goal/cleared') {
+      noteGoal(state, null)
+      return
+    }
+    if (method === 'turn/started' && !turn) {
+      openSelfStartedTurn(state, text(record(params.turn).id))
+      return
+    }
     if (!turn) return
     if (method === 'turn/started') {
       turn.nativeId = text(record(params.turn).id) || turn.nativeId
@@ -1200,6 +1417,7 @@ export function createCodexConversationProvider(
         state.forkFrom = null
         void publishSkills(state)
         void refreshMcpServers(state)
+        void readGoal(state, transport)
         if (resumeLost || forkLost) state.replayHistory = true
         emit(state, 'session_updated', {
           providerSessionId: id,
@@ -1297,6 +1515,7 @@ export function createCodexConversationProvider(
         children: new Map(),
         failedServers: new Set(),
         wsl: null,
+        lastTurnId: null,
       }
       sessions.set(input.sessionId, state)
       // The app-server starts with the first turn, and its skills follow. Until
@@ -1308,7 +1527,7 @@ export function createCodexConversationProvider(
         publishConversationCommands({
           cli: 'codex',
           cwd: input.workspaceRoot,
-          commands: [CODEX_COMPACT_COMMAND],
+          commands: [...CODEX_BUILT_IN_COMMANDS],
           fetchedAt: 0,
         })
       return [event(state, 'session_started'), event(state, 'session_ready')]
@@ -1319,37 +1538,18 @@ export function createCodexConversationProvider(
       // A stopped turn Codex has not confirmed yet is over from the person's
       // side: wait for it (the watchdog bounds the wait) rather than refuse.
       if (state.turn?.cancelled) await state.turn.ended
+      // A turn Codex started by itself that this message was sent before the
+      // chat had taken up: the message joins it, since Codex lands a
+      // `turn/start` in the turn it is running, and this turn carries the rest
+      // of its events.
+      if (state.turn?.selfStarted) finish(state)
       if (state.turn) throw new Error('Codex is already running a turn.')
       if (input.mode === 'plan') throw new Error('This Codex connection does not support plan mode.')
       const compact = codexCompactRequest(input.message, input.attachments?.length ?? 0)
-      const queue = new EventQueue()
-      let settle = () => {}
-      const ended = new Promise<void>((resolve) => {
-        settle = resolve
-      })
-      state.turn = {
-        id: input.turnId,
-        cancelled: false,
-        interrupting: null,
-        watchdog: null,
-        ended,
-        settle,
-        nativeId: null,
-        queue,
-        textItems: new Set(),
-        textItem: null,
-        items: new Map(),
-        outputBytes: new Map(),
-        deferredApprovals: new Map(),
-        message: input.message,
-        text: '',
-        reply: '',
-        replyItem: null,
-        usage: null,
-        compact: compact !== null,
-        notes: new Set(),
-        plans: 0,
-      }
+      const goal = compact ? null : codexGoalRequest(input.message, input.attachments?.length ?? 0)
+      const turn = newTurn(input.turnId, input.message, { compact: compact !== null, goal: goal !== null })
+      const queue = turn.queue
+      state.turn = turn
       emit(state, 'turn_started')
       const abort = () => {
         void interrupt(state).catch((error: unknown) =>
@@ -1366,6 +1566,7 @@ export function createCodexConversationProvider(
               false,
               true,
             )
+          if (goal?.action === 'refuse') return finish(state, goal.message, false, true)
           // A thread that has not had a turn yet has nothing to summarise; a
           // fork's has the turns it was forked with.
           if (compact && !state.threadId && !state.forkFrom && !state.history.length)
@@ -1387,6 +1588,7 @@ export function createCodexConversationProvider(
             if (state.turn?.cancelled || input.signal?.aborted) await interrupt(state)
             return
           }
+          if (goal) return await runGoal(state, turn, goal)
           // Ask can inspect, never escalate an attempted write through approval.
           // This turn-only sandbox also overrides a remembered bypass preset.
           const policy: ReturnType<typeof codexPermissionPolicy> =
@@ -1609,7 +1811,10 @@ function withReplayedHistory(state: Session, message: string): string {
   if (!state.replayHistory) return message
   const prior = [
     ...(state.input.fallbackHistory ?? []).map((entry) => `${entry.role}: ${entry.content}`),
-    ...state.history.map((turn) => `User: ${turn.user}\nAssistant: ${turn.assistant}`),
+    // A turn Codex started by itself, toward its goal, had no message.
+    ...state.history.map((turn) =>
+      turn.user ? `User: ${turn.user}\nAssistant: ${turn.assistant}` : `Assistant: ${turn.assistant}`,
+    ),
   ].join('\n\n')
   return prior ? `Previous conversation:\n${prior}\n\nUser: ${message}` : message
 }
@@ -1767,6 +1972,27 @@ function isMissingThreadError(error: unknown): boolean {
     error instanceof CodexRpcError &&
     /not found|no rollout|no such thread|unknown thread|invalid thread id|does not exist/i.test(error.message)
   )
+}
+
+/**
+ * Codex's answer to a request it has no method for: a Codex from before goals
+ * names the request as an unknown variant of the ones it knows.
+ */
+function isUnknownMethodError(error: unknown): boolean {
+  return error instanceof CodexRpcError && /unknown variant|method not found|unknown method/i.test(error.message)
+}
+
+// A goal's state as a line of a turn says it.
+const CODEX_GOAL_STATUS_WORDS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(CONVERSATION_GOAL_STATUS_WORDS).map(([status, word]) => [status, word.toLowerCase()]),
+)
+
+// What the turn says when Codex moves the goal on by itself.
+const CODEX_GOAL_STATUS_NOTES: Readonly<Partial<Record<ConversationGoalStatus, string>>> = {
+  complete: 'Codex met the goal and stopped working toward it.',
+  blocked: 'Codex is blocked on the goal and stopped working toward it. Send /goal resume to try again.',
+  usageLimited: "Codex paused the goal at the plan's usage limit.",
+  budgetLimited: "Codex stopped at the goal's token budget.",
 }
 
 /** Codex's answer to `thread/resume` for a thread that was archived ("session … is archived"). */

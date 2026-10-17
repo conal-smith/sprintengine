@@ -71,6 +71,15 @@ sweep is the one that decides whether its child lives. Stop between turns is the
 same `interrupt` the wires already carry: a server built before it answers as
 it always did, that the session has no active turn, and the chat says so.
 
+So is `goal`: the goal a Codex chat keeps working toward by itself, which a
+`session_updated` event carries when it changes, and as null once there is
+none. A server built before it never sends it, and its chats have no goal to
+show. A client built before it skips the member, as it skips any it does not
+know; the turns Codex starts toward the goal reach it as `turn_started` with no
+`user_message` before them, which every client already takes for a turn an
+agent carried on with by itself. That event's `follows`, the turn it came
+straight after, is read by the desktop's own runtime and by nothing else.
+
 ## The support window
 
 Both integer wires accept **one version of slack**: the current version and the
