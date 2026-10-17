@@ -3,9 +3,8 @@ import React from 'react'
 import type { MeshConnection, MeshWorkspace, MeshWorkspaceCheckout } from '../../../../../shared/tailnet-mesh'
 import { useProjectColors } from '../../../hooks/useProjectColors'
 import { projectColorKey, resolveProjectColor, type ProjectColor } from '../../../utils/projectColor'
-import { FolderTypeIcon, GitBranchGlyph } from '../../AppIcons'
-import { ChipButton, Input, MENU_LIST_CLASS, MenuOption, Popover, WorktreeGlyph } from '../../ui'
-import { FrontTruncatedText } from '../../ui/FrontTruncatedText'
+import { FolderTypeIcon } from '../../AppIcons'
+import { ChipButton, Input, MENU_LIST_CLASS, MenuOption, Popover } from '../../ui'
 import { ChipCaretGlyph } from './agentSpawnShared'
 import { focusProjectSearch } from './ProjectSourceMenu'
 import type { RemoteProject } from './remoteProjects'
@@ -152,114 +151,6 @@ export function RemoteProjectPicker({
             </MenuOption>
           ))
         )}
-      </>
-    </Popover>
-  )
-}
-
-/** A folder's last segment, for a worktree that is on no branch. */
-function folderNameOf(path: string): string {
-  return (
-    path
-      .replace(/[\\/]+$/u, '')
-      .split(/[\\/]/u)
-      .pop() || path
-  )
-}
-
-/**
- * Where a New chat on a paired machine runs inside the picked project: the
- * project's own checkout, or one of the worktrees its repository already has
- * over there, as `workspace.checkout` listed them. It sits where the branch
- * does on the strip and reads as the branch the chat will be on. With the
- * Worktree chip on, the chat gets a worktree of its own cut from the
- * checkout, so it reads "from" that branch; picking an existing worktree
- * turns the chip off, because a chat runs in one place.
- */
-export function RemoteWorktreePicker({
-  machineName,
-  checkout,
-  picked,
-  newWorktree,
-  onPick,
-}: {
-  machineName: string
-  checkout: MeshWorkspaceCheckout
-  /** The existing worktree picked, by its path there; null for the project's own checkout. */
-  picked: string | null
-  /** The Worktree chip is on: the chat's worktree is cut from the checkout's branch. */
-  newWorktree: boolean
-  onPick: (path: string | null) => void
-}) {
-  const [open, setOpen] = React.useState(false)
-  const others = checkout.worktrees.filter((worktree) => !worktree.isMain)
-  const pickedWorktree = picked ? (others.find((worktree) => worktree.path === picked) ?? null) : null
-  const checkoutBranch = checkout.branch ?? checkout.defaultBranch ?? 'detached'
-  const label = pickedWorktree ? (pickedWorktree.branch ?? folderNameOf(pickedWorktree.path)) : checkoutBranch
-  const choose = (path: string | null) => {
-    onPick(path)
-    setOpen(false)
-  }
-  return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      ariaLabel={`Worktree on ${machineName}`}
-      popupRole="menu"
-      placement="bottom-start"
-      surfaceClassName={`w-[300px] ${MENU_LIST_CLASS}`}
-      // The one item on the strip that may shrink, as the branch it stands for.
-      className="min-w-0"
-      renderTrigger={({ ref, triggerProps, togglePopover }) => (
-        <ChipButton
-          ref={ref}
-          variant="raised"
-          onClick={togglePopover}
-          data-remote-worktree-trigger="true"
-          data-composer-branch={label}
-          {...triggerProps}
-        >
-          {pickedWorktree ? (
-            <WorktreeGlyph className="icon-xs shrink-0" />
-          ) : (
-            <GitBranchGlyph className="icon-xs shrink-0" />
-          )}
-          {newWorktree && !pickedWorktree ? <span className="shrink-0">from</span> : null}
-          <FrontTruncatedText text={label} className="font-mono" />
-          <ChipCaretGlyph />
-        </ChipButton>
-      )}
-    >
-      <>
-        <MenuOption
-          role="menuitemradio"
-          selected={!pickedWorktree}
-          stacked
-          data-remote-worktree-option="checkout"
-          onClick={() => choose(null)}
-          icon={<GitBranchGlyph className="mt-0.5 icon-xs shrink-0" />}
-        >
-          <span className="block truncate font-mono text-body font-medium">{checkoutBranch}</span>
-          <span className="block truncate text-micro text-[color:var(--text-subtle)]">
-            {newWorktree ? 'A new worktree, cut from the project’s checkout' : 'The project’s own checkout'}
-          </span>
-        </MenuOption>
-        {others.map((worktree) => (
-          <MenuOption
-            key={worktree.path}
-            role="menuitemradio"
-            selected={pickedWorktree?.path === worktree.path}
-            stacked
-            data-remote-worktree-option={worktree.path}
-            onClick={() => choose(worktree.path)}
-            icon={<WorktreeGlyph className="mt-0.5 icon-xs shrink-0" />}
-          >
-            <span className="block truncate font-mono text-body font-medium">
-              {worktree.branch ?? folderNameOf(worktree.path)}
-            </span>
-            <span className="block truncate font-mono text-micro text-[color:var(--text-subtle)]">{worktree.path}</span>
-          </MenuOption>
-        ))}
       </>
     </Popover>
   )

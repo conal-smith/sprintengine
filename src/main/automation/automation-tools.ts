@@ -1144,7 +1144,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
               type: 'string',
               description:
                 'The ref the new worktree branches from (a branch name from workspace.checkout, e.g. "main"). ' +
-                "Defaults to the workspace checkout's HEAD.",
+                'Leave it out: the worktree then branches from the default branch on origin, freshly fetched, ' +
+                'which is where every chat starts.',
             },
           },
           additionalProperties: false,

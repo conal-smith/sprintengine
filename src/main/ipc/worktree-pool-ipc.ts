@@ -8,10 +8,11 @@ import type {
   WorktreePoolSettings,
   WorktreePoolSnapshot,
 } from '../../shared/ipc/worktree-pool'
+import { dependencyInstallSettingFor } from '../../shared/ipc/worktree-pool'
 import { removeGitWorktree } from '../git'
 import { createWorktreeInventory, type WorktreeInventoryDeps } from '../worktree-pool/worktree-inventory'
 import type { DependencyInstaller } from '../worktree-pool/dependency-install'
-import type { WorktreePoolService } from '../worktree-pool/worktree-pool-service'
+import { catchUpResult, type WorktreePoolService } from '../worktree-pool/worktree-pool-service'
 import { broadcastToAllWindows } from '../window-broadcast'
 
 /**
@@ -53,6 +54,22 @@ export function registerWorktreePoolIpc(
         return isString(input.leaseId)
           ? pool.action({ kind: 'release', leaseId: input.leaseId })
           : { ok: false, message: 'No lease named.' }
+      }
+      if (input?.kind === 'catch-up') {
+        if (!isString(input.leaseId)) return { ok: false, message: 'No lease named.' }
+        const outcome = await pool.catchUp(input.leaseId)
+        // A move that changed the lockfile installs again, as a lease does,
+        // before the chat that waits on the catch-up starts in it.
+        if (outcome.kind === 'moved' && installer) {
+          await installer.prepare({
+            repoRoot: outcome.repoRoot,
+            path: outcome.path,
+            branch: outcome.branch,
+            setting: dependencyInstallSettingFor(await pool.getSettings(), outcome.repoRoot),
+            quiet: true,
+          })
+        }
+        return catchUpResult(outcome)
       }
       if (!input || !isString(input.repoRoot) || !isString(input.slotId)) {
         return { ok: false, message: 'No worktree named.' }

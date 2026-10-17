@@ -103,7 +103,7 @@ import {
   sortMachines,
   type MachineBrowseEntry,
 } from './newChatMachines'
-import { RemoteProjectPicker, RemoteWorktreePicker, type RemoteTargetState } from './RemoteProjectPicker'
+import { RemoteProjectPicker, type RemoteTargetState } from './RemoteProjectPicker'
 import { ComposerStrip } from './ComposerStrip'
 import { FrontTruncatedText } from '../../ui/FrontTruncatedText'
 import { ScheduledRuns } from './schedule/ScheduledRuns'
@@ -939,23 +939,6 @@ export default function NewAgentPanel({
       cancelled = true
     }
   }, [remoteConnectionId, remotePickedId])
-  // A worktree the picked remote project already has, picked to start the
-  // chat in. It belongs to the machine and project it was picked on, so
-  // another pick reads as the project's own checkout again, and it counts
-  // only while the checkout that machine served still lists it.
-  const [remoteWorktreePick, setRemoteWorktreePick] = React.useState<{
-    connectionId: string
-    workspaceId: string
-    path: string
-  } | null>(null)
-  const remoteExistingWorktree =
-    remoteWorktreePick &&
-    remoteWorktreePick.connectionId === remoteConnectionId &&
-    remoteWorktreePick.workspaceId === remotePickedId
-      ? (remoteTarget?.checkout?.worktrees.find(
-          (worktree) => !worktree.isMain && worktree.path === remoteWorktreePick.path,
-        ) ?? null)
-      : null
   const activeBranch = useWorkspaceStore((s) => {
     const ws = s.workspaces.find((w) => w.id === workspaceId)
     return ws ? (resolveWorkspaceWorktree(ws)?.branch ?? null) : null
@@ -1304,12 +1287,6 @@ export default function NewAgentPanel({
     (remoteCapabilities?.includes('new-chat-worktree') ?? false)
   // Its name, where that machine takes one; elsewhere it makes one up.
   const remoteWorktreeNameable = remoteCapabilities?.includes('new-chat-worktree-name') ?? false
-  // A worktree the project already has, where that machine starts a chat in one.
-  const remoteWorktreePickable =
-    !extensionMode &&
-    remoteTarget?.checkout?.git === true &&
-    (remoteCapabilities?.includes('new-chat-in-worktree') ?? false) &&
-    remoteTarget.checkout.worktrees.some((worktree) => !worktree.isMain)
   // Worktree is offered only inside a git repository, for an agent: absent,
   // not disabled. On this machine, a repository here; on a paired machine,
   // one there that said it cuts worktrees for a chat started from here. An
@@ -1320,22 +1297,6 @@ export default function NewAgentPanel({
   const worktreeOffered = remoteTarget
     ? remoteWorktreeOffered
     : !extensionMode && selection.kind !== 'terminal' && !pickedSsh && !projectless && workspaceIsGitRepo
-  // The Worktree chip and an existing remote worktree are two answers to one
-  // question, where the chat runs: turning the chip on puts the picked
-  // worktree back, and picking one turns the chip off.
-  const setWorktreeName = composer.setWorktreeName
-  const changeWorktreeName = (next: string | null) => {
-    if (next !== null) setRemoteWorktreePick(null)
-    setWorktreeName(next)
-  }
-  const pickRemoteWorktree = (path: string | null) => {
-    if (!remoteConnectionId || !remotePickedId || path === null) {
-      setRemoteWorktreePick(null)
-      return
-    }
-    setRemoteWorktreePick({ connectionId: remoteConnectionId, workspaceId: remotePickedId, path })
-    setWorktreeName(null)
-  }
   // The worktree a chat started here will run in is made while the person
   // types, so Enter finds it ready: Worktree on with no name typed (a name is
   // its own branch, made on Enter), for a chat that starts now. A paired
@@ -1695,8 +1656,6 @@ export default function NewAgentPanel({
     if (remoteTarget) {
       if (!remoteTarget.picked || !onLaunchRemote || remoteLaunching) return
       const confirm = buildLaunchConfirm(selection)
-      // The worktree the project already has, picked and still on offer.
-      const remoteRunsIn = remoteWorktreePickable ? remoteExistingWorktree : null
       if (confirm.kind !== 'conversation') return
       // Attached files are files on this disk, and a path here typed into
       // that machine's prompt names nothing there, so their chips refuse
@@ -1723,14 +1682,12 @@ export default function NewAgentPanel({
         cliModel: confirm.model ?? null,
         permissionPreset: effectivePreset,
         ...(remoteTakesEffort && confirm.reasoning ? { effort: confirm.reasoning } : {}),
-        branch: remoteRunsIn ? remoteRunsIn.branch : (remoteTarget.checkout?.branch ?? null),
-        // Where in the project it runs: a worktree cut for it (named only
-        // where the machine takes a name), or one the project already has.
+        branch: remoteTarget.checkout?.branch ?? null,
+        // A worktree cut for it from the default branch on origin, named only
+        // where the machine takes a name.
         ...(confirm.worktree
           ? { worktree: { kind: 'new' as const, name: remoteWorktreeNameable ? confirm.worktree.name.trim() : '' } }
-          : remoteRunsIn
-            ? { worktree: { kind: 'existing' as const, path: remoteRunsIn.path } }
-            : {}),
+          : {}),
         remoteRepository: remoteTarget.picked.repository,
         ...(images.length > 0 ? { images: images.map(remoteImage) } : {}),
         ...(confirm.skills?.length ? { skills: confirm.skills.map((skill) => skill.id) } : {}),
@@ -2109,17 +2066,21 @@ export default function NewAgentPanel({
   // the Worktree chip that sat on its row (owner ruling 2026-10-04).
   const machinePickerShown =
     (remoteSelectable && remoteMachines.length > 0) || localHosts.length > 1 || sshMachines.length > 0
-  // The branch the launch starts from: the remote project's as its machine
-  // read it, else this checkout's. An SSH machine's folder is typed, not read.
+  // The branch the launch runs on: the remote project's as its machine read
+  // it, else this checkout's. An SSH machine's folder is typed, not read.
   // An extension's folder is new, or the person's own: the project's branch
-  // says nothing about it.
-  const stripBranch = extensionMode
-    ? null
-    : remoteTarget
-      ? (remoteTarget.checkout?.branch ?? null)
-      : pickedSsh
-        ? null
-        : branch
+  // says nothing about it. A chat in a worktree of its own is on none of
+  // these: every worktree is cut from the default branch on origin, freshly
+  // fetched, wherever the checkout stands (owner ruling 2026-10-17), so there
+  // is no branch to pick it from and none to name.
+  const stripBranch =
+    extensionMode || (worktreeOffered && composer.worktreeName !== null)
+      ? null
+      : remoteTarget
+        ? (remoteTarget.checkout?.branch ?? null)
+        : pickedSsh
+          ? null
+          : branch
   const projectControl = extensionMode ? (
     <ExtensionFolderChip
       folder={extensionFolderShown}
@@ -2199,24 +2160,7 @@ export default function NewAgentPanel({
       <span className="min-w-0 truncate">{projectLabel}</span>
     </span>
   ) : null
-  // A paired machine's project with worktrees of its own: the branch is a
-  // picker of where in the project the chat runs, not a line.
-  const remoteWorktreePicker =
-    remoteTarget?.checkout && remoteWorktreePickable ? (
-      <RemoteWorktreePicker
-        machineName={remoteTarget.connection.machineName}
-        checkout={remoteTarget.checkout}
-        picked={remoteExistingWorktree?.path ?? null}
-        newWorktree={worktreeOffered && composer.worktreeName !== null}
-        onPick={pickRemoteWorktree}
-      />
-    ) : null
-  const stripShown =
-    machinePickerShown ||
-    projectControl !== null ||
-    worktreeOffered ||
-    Boolean(stripBranch) ||
-    remoteWorktreePicker !== null
+  const stripShown = machinePickerShown || projectControl !== null || worktreeOffered || Boolean(stripBranch)
 
   // The second line of the send's tooltip, where the door can stay: the chord
   // as this platform spells it, for the person who starts several in a row.
@@ -2621,19 +2565,17 @@ export default function NewAgentPanel({
               />
             ) : null}
             {projectControl}
-            {/* Worktree, then the branch it is cut from (or the launch runs
-                on): off until turned on or named. Set apart from the project
-                by the strip's spacing alone, with no rule between. */}
+            {/* Worktree, off until turned on or named, else the branch the
+                launch runs on. Set apart from the project by the strip's
+                spacing alone, with no rule between. */}
             {worktreeOffered ? (
               <WorktreeChip
                 name={composer.worktreeName}
-                onChange={changeWorktreeName}
+                onChange={composer.setWorktreeName}
                 nameable={!remoteTarget || remoteWorktreeNameable}
               />
             ) : null}
-            {remoteWorktreePicker ? (
-              remoteWorktreePicker
-            ) : stripBranch ? (
+            {stripBranch ? (
               // The one item on the strip that may shrink: it gives its front
               // away first, so the end of the name — the part that says what
               // the branch is for — is what stays.
@@ -2642,7 +2584,6 @@ export default function NewAgentPanel({
                 data-composer-branch={stripBranch}
               >
                 <GitBranchGlyph className="icon-xs shrink-0" />
-                {worktreeOffered && composer.worktreeName !== null ? <span className="shrink-0">from</span> : null}
                 <FrontTruncatedText text={stripBranch} className="font-mono" />
               </span>
             ) : null}

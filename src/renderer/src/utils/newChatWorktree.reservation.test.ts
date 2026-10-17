@@ -30,6 +30,7 @@ vi.mock('./diagnostics', () => ({
 }))
 
 const {
+  NEW_CHAT_RESERVATION_CATCH_UP_MS,
   NEW_CHAT_RESERVATION_FRESH_MS,
   hasNewChatWorktreeReservation,
   newChatWorktreeBranch,
@@ -46,9 +47,11 @@ const owners = new Set<string>()
 type Answer = { ok: true } | { ok: false; message: string }
 
 /** A pool that answers each lease when told to, numbering its leases. */
-function stubPool(options: { answer?: 'now' | 'later'; fail?: boolean } = {}) {
+function stubPool(options: { answer?: 'now' | 'later'; fail?: boolean; catchUp?: 'now' | 'later' } = {}) {
   const creates: GitWorktreeCreateInput[] = []
   const released: string[] = []
+  const caughtUp: string[] = []
+  const catchUps: Array<() => void> = []
   const settles: Array<(answer?: Answer) => void> = []
   ;(globalThis as { window?: unknown }).window = {
     api: {
@@ -65,12 +68,15 @@ function stubPool(options: { answer?: 'now' | 'later'; fail?: boolean } = {}) {
         return Promise.resolve(answer())
       },
       worktreePoolAction: async (input: { kind: string; leaseId: string }) => {
-        released.push(input.leaseId)
+        if (input.kind === 'catch-up') {
+          caughtUp.push(input.leaseId)
+          if (options.catchUp === 'later') await new Promise<void>((resolve) => catchUps.push(resolve))
+        } else released.push(input.leaseId)
         return { ok: true, message: null }
       },
     },
   }
-  return { creates, released, settles }
+  return { creates, released, caughtUp, catchUps, settles }
 }
 
 function reserve(owner: string, folder: string, hostId?: string | null) {
@@ -191,6 +197,46 @@ test('a reservation older than its freshness is given back, and the chat gets a 
   assert.deepEqual(pool.released, ['lease-1'])
   const made = await obtainNewChatWorktree('/Users/dev/app', '', null)
   assert.equal(made.ok && made.folderPath, '/pool/lease-2')
+})
+
+test('a reservation waiting on the person catches up to origin once a minute', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+  const pool = stubPool()
+  reserve('door', '/Users/dev/app')
+  await flush()
+  assert.deepEqual(pool.caughtUp, [], 'just made: already on the base its lease fetched')
+  vi.advanceTimersByTime(NEW_CHAT_RESERVATION_CATCH_UP_MS)
+  await flush()
+  assert.deepEqual(pool.caughtUp, ['lease-1'])
+  vi.advanceTimersByTime(NEW_CHAT_RESERVATION_CATCH_UP_MS)
+  await flush()
+  assert.deepEqual(pool.caughtUp, ['lease-1', 'lease-1'])
+
+  assert.equal(takeReadyNewChatWorktree('/Users/dev/app', '', null)?.folderPath, '/pool/lease-1', 'current: taken')
+  vi.advanceTimersByTime(5 * NEW_CHAT_RESERVATION_CATCH_UP_MS)
+  await flush()
+  assert.equal(pool.caughtUp.length, 2, 'a taken worktree is the chat’s: it is not moved again')
+})
+
+test('Enter on a reservation behind origin waits for it to catch up first', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  const pool = stubPool({ catchUp: 'later' })
+  reserve('door', '/Users/dev/app')
+  await flush()
+  vi.setSystemTime(Date.now() + NEW_CHAT_RESERVATION_CATCH_UP_MS + 1)
+  assert.equal(takeReadyNewChatWorktree('/Users/dev/app', '', null), null, 'not taken as made: it may be behind')
+  let done = false
+  const obtained = obtainNewChatWorktree('/Users/dev/app', '', null).then((made) => {
+    done = true
+    return made
+  })
+  await flush()
+  assert.deepEqual(pool.caughtUp, ['lease-1'], 'caught up on Enter')
+  assert.equal(done, false, 'and the chat waits for it')
+  pool.catchUps[0]!()
+  const made = await obtained
+  assert.equal(made.ok && made.folderPath, '/pool/lease-1', 'then starts in the same worktree')
+  assert.equal(pool.creates.length, 1, 'with no second one made')
 })
 
 test('a reservation that could not be made says nothing and is not asked for again there', async () => {
