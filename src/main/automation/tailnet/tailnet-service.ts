@@ -143,6 +143,8 @@ export type TailnetRemoteServiceOptions = {
   isMutation: (toolName: string) => boolean
   onToolCall?: (event: McpToolCallEvent) => void
   conversations?: ConversationGatewayHost
+  /** Shrinks an uploaded picture for the model; see the gateway's own option. */
+  downscaleUpload?: TailnetGatewayServerOptions['downscaleUpload']
   /**
    * The live-state push (remote-sessions-ux): fired on every observable change
    * — listener up/down, a pair request arriving or resolving, a device's
@@ -467,6 +469,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       // The files a device sends with a message, kept in Studio's own data
       // folder beside a browser's uploads, never in a project's folder.
       fileUploads: createTailnetFileUploads({ root: join(options.resolveUserDataDir(), TAILNET_UPLOADS_DIRNAME) }),
+      ...(options.downscaleUpload ? { downscaleUpload: options.downscaleUpload } : {}),
       onToolCall: options.onToolCall,
       onPairRequested: () => announcePairRequests(),
       onReverseGrant: (input) => {

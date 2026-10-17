@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
@@ -47,7 +47,12 @@ import {
   TAILNET_WS_TICKET_PATH,
 } from './tailnet-routes'
 import { openConversationImage } from './tailnet-conversation-images'
-import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENT_BYTES } from '../../../shared/conversation-attachments'
+import {
+  ATTACHABLE_IMAGE_TYPES,
+  MAX_ATTACHMENT_BYTES,
+  MAX_DOWNSCALED_UPLOAD_BYTES,
+} from '../../../shared/conversation-attachments'
+import type { ConversationImageDownscaler } from '../../conversation-image-downscale'
 import { MAX_TAILNET_FILE_BYTES, type TailnetFileUploads } from './tailnet-file-uploads'
 import {
   createResyncBackoff,
@@ -141,6 +146,15 @@ export type TailnetGatewayServerOptions = {
    */
   fileUploads?: TailnetFileUploads
   /**
+   * Shrinks a picture a device uploaded to the size the model takes, by the
+   * composer's rules (src/main/conversation-image-downscale.ts), before it is
+   * kept. Given, an upload may be up to MAX_DOWNSCALED_UPLOAD_BYTES and this
+   * machine advertises `conversation-image-downscale`; what is kept is still
+   * held to MAX_ATTACHMENT_BYTES. Absent (a server with no image codec), an
+   * upload is kept as it came, under MAX_ATTACHMENT_BYTES.
+   */
+  downscaleUpload?: ConversationImageDownscaler
+  /**
    * Fired when a peer asks to pair, so the surfaces that answer these
    * can refresh without polling. It carries no detail: a listener's job is to
    * go and read the requests, not to be told about one it has not authorised.
@@ -225,6 +239,13 @@ type ChangeKind = 'workspaces' | 'conversations'
 const TAILNET_CHANGE_PUSH_INTERVAL_MS = 1_000
 
 export function createTailnetGatewayServer(options: TailnetGatewayServerOptions): TailnetGatewayServer {
+  // What this machine says it can do: every capability, but shrinking an
+  // upload where nothing here can.
+  const capabilities: readonly string[] = options.downscaleUpload
+    ? TAILNET_CAPABILITIES
+    : TAILNET_CAPABILITIES.filter((capability) => capability !== 'conversation-image-downscale')
+  // The most an upload may be as it arrives.
+  const uploadCeiling = options.downscaleUpload ? MAX_DOWNSCALED_UPLOAD_BYTES : MAX_ATTACHMENT_BYTES
   const now = options.now ?? (() => Date.now())
   let server: Server | null = null
   let unsubscribeRevocations: (() => void) | null = null
@@ -512,9 +533,9 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
     // A declared length over the cap is refused before a byte is read.
     const declared = Number(request.headers['content-length'] ?? '')
-    if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
+    if (Number.isFinite(declared) && declared > uploadCeiling) {
       // Drained before the answer, not after: see `drainRefusedBody`.
-      if (await drainRefusedBody(request)) writeTooLarge(response, MAX_ATTACHMENT_BYTES)
+      if (await drainRefusedBody(request, uploadCeiling)) writeTooLarge(response, uploadCeiling)
       return
     }
     try {
@@ -529,14 +550,30 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         })
       }
       const uploadPath = join(await conversationUploadDirectory, randomUUID())
-      const written = await streamUploadToDisk(request, uploadPath, MAX_ATTACHMENT_BYTES)
+      const written = await streamUploadToDisk(request, uploadPath, uploadCeiling)
+      // Sized for the model here, on receipt, as the composer sizes what it
+      // stages: a phone's photo is several thousand pixels a side, and Claude
+      // refuses one over 2000 once a thread holds more than 20 images.
+      const kept = options.downscaleUpload
+        ? await shrinkUpload(uploadPath, written, mediaType, options.downscaleUpload)
+        : { bytes: written, mediaType }
+      if (kept.bytes > MAX_ATTACHMENT_BYTES) {
+        await rm(uploadPath, { force: true }).catch(() => {})
+        writeJson(response, 413, {
+          error: {
+            code: 'too_large',
+            message: `That picture is still over the ${Math.floor(MAX_ATTACHMENT_BYTES / (1024 * 1024))}MB limit after resizing.`,
+          },
+        })
+        return
+      }
       const uploadId = conversations.registerUpload?.({
         deviceId: device.id,
         sessionId,
         path: uploadPath,
         name,
-        mediaType,
-        bytes: written,
+        mediaType: kept.mediaType,
+        bytes: kept.bytes,
         dispose: () => {
           void rm(uploadPath, { force: true }).catch(() => {})
         },
@@ -550,7 +587,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     } catch (error) {
       if (error instanceof UploadTooLarge) {
         // Drained before the answer, not after: see `drainRefusedBody`.
-        if (await drainRefusedBody(request)) writeTooLarge(response, MAX_ATTACHMENT_BYTES)
+        if (await drainRefusedBody(request, uploadCeiling)) writeTooLarge(response, uploadCeiling)
         return
       }
       options.log?.(`tailnet upload failed: ${message(error)}`)
@@ -585,7 +622,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
     const declared = Number(request.headers['content-length'] ?? '')
     if (Number.isFinite(declared) && declared > MAX_TAILNET_FILE_BYTES) {
-      if (await drainRefusedBody(request, REFUSED_FILE_DRAIN_MAX_BYTES)) writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
+      if (await drainRefusedBody(request, MAX_TAILNET_FILE_BYTES)) writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
       return
     }
     let place: ReturnType<TailnetFileUploads['place']> | null = null
@@ -617,8 +654,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         // Pruned with the week's others instead.
       }
       if (error instanceof UploadTooLarge) {
-        if (await drainRefusedBody(request, REFUSED_FILE_DRAIN_MAX_BYTES))
-          writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
+        if (await drainRefusedBody(request, MAX_TAILNET_FILE_BYTES)) writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
         return
       }
       options.log?.(`tailnet file upload failed: ${message(error)}`)
@@ -765,7 +801,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       writeJson(response, 200, {
         product: STUDIO_MCP_SERVER_NAME,
         transportVersion: TAILNET_TRANSPORT_VERSION,
-        capabilities: [...TAILNET_CAPABILITIES],
+        capabilities: [...capabilities],
         protocolVersions: SUPPORTED_MCP_PROTOCOL_VERSIONS,
       })
       return
@@ -795,7 +831,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         // What it just paired with, in the exchange it already made: a client
         // learns the wire it is on without a second call to health.
         transportVersion: TAILNET_TRANSPORT_VERSION,
-        capabilities: [...TAILNET_CAPABILITIES],
+        capabilities: [...capabilities],
       })
       return
     }
@@ -843,7 +879,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         scopes: device.scopes,
         serverInfo: { name: options.serverName, version: options.serverVersion },
         transportVersion: TAILNET_TRANSPORT_VERSION,
-        capabilities: [...TAILNET_CAPABILITIES],
+        capabilities: [...capabilities],
         protocolVersions: SUPPORTED_MCP_PROTOCOL_VERSIONS,
       })
       return
@@ -1191,7 +1227,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         scopes: () => options.devices.listDevices().find((entry) => entry.id === currentDevice.id)?.scopes ?? null,
         host: options.conversations,
         // A `hello` names the conversation capabilities among what `health` and `identity` advertise.
-        capabilities: TAILNET_CAPABILITIES,
+        capabilities,
         onClosed: () => {
           if (registration.stream) conversationStreams.delete(registration.stream)
         },
@@ -1497,17 +1533,43 @@ function writePeerRefused(response: ServerResponse, refusal: { code: string; mes
   writeJson(response, 401, { error: { code: refusal.code, message: refusal.message } })
 }
 
-function writeTooLarge(response: ServerResponse, limitBytes: number): void {
+function writeTooLarge(response: ServerResponse, ceiling: number): void {
   writeJson(response, 413, {
     error: {
       code: 'too_large',
-      message: `That file is over the ${Math.floor(limitBytes / (1024 * 1024))}MB limit.`,
+      message: `That file is over the ${Math.floor(ceiling / (1024 * 1024))}MB limit.`,
     },
   })
 }
 
 /** A declared `type/subtype`, recorded as sent; anything else is recorded as bytes. */
 const MEDIA_TYPE_SHAPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u
+
+/**
+ * The upload at `path`, shrunk in place for the model, and what is kept: its
+ * size and type. One the downscaler leaves alone, or that cannot be read or
+ * rewritten, is kept as it came.
+ */
+async function shrinkUpload(
+  path: string,
+  bytes: number,
+  mediaType: string,
+  downscale: ConversationImageDownscaler,
+): Promise<{ bytes: number; mediaType: string }> {
+  const received = { bytes, mediaType }
+  try {
+    const original = await readFile(path)
+    if (original.byteLength !== bytes) return received
+    const shrunk = await downscale(original, mediaType)
+    if (shrunk.bytes === original || (shrunk.mediaType === mediaType && Buffer.from(shrunk.bytes).equals(original)))
+      return received
+    if (!ATTACHABLE_IMAGE_TYPES.includes(shrunk.mediaType as (typeof ATTACHABLE_IMAGE_TYPES)[number])) return received
+    await writeFile(path, shrunk.bytes)
+    return { bytes: shrunk.bytes.byteLength, mediaType: shrunk.mediaType }
+  } catch {
+    return received
+  }
+}
 
 function writeJson(response: ServerResponse, status: number, payload: Record<string, unknown>): void {
   // The catch-all 500 in the request handler can fire after a route already
@@ -1569,14 +1631,12 @@ function queryOf(url: string | undefined): URLSearchParams {
 }
 
 // How much of an already-refused body is read and thrown away before the
-// connection is cut instead, and how long that is given. Generous enough that
+// connection is cut instead, as a multiple of the ceiling it overshot, and how
+// long that is given. Generous enough that
 // an honest client which overshot the ceiling always gets its sentence (the
 // phone's own screenshot is megabytes, not gigabytes), small enough that a
-// client streaming without end is hung up on rather than served forever. A
-// file's ceiling is five times a picture's, so a file over it is given twice
-// its ceiling instead.
-const REFUSED_BODY_DRAIN_MAX_BYTES = 4 * MAX_ATTACHMENT_BYTES
-const REFUSED_FILE_DRAIN_MAX_BYTES = 2 * MAX_TAILNET_FILE_BYTES
+// client streaming without end is hung up on rather than served forever.
+const REFUSED_BODY_DRAIN_FACTOR = 4
 const REFUSED_BODY_DRAIN_MS = 15_000
 
 /**
@@ -1608,10 +1668,8 @@ const REFUSED_BODY_DRAIN_MS = 15_000
  *
  * @returns whether the body ended, and so whether an answer can still be sent.
  */
-async function drainRefusedBody(
-  request: IncomingMessage,
-  maxBytes: number = REFUSED_BODY_DRAIN_MAX_BYTES,
-): Promise<boolean> {
+async function drainRefusedBody(request: IncomingMessage, ceiling: number): Promise<boolean> {
+  const maxDiscarded = REFUSED_BODY_DRAIN_FACTOR * ceiling
   if (request.readableEnded || request.complete) return true
   return await new Promise<boolean>((resolve) => {
     let discarded = 0
@@ -1637,7 +1695,7 @@ async function drainRefusedBody(
     }
     const onData = (chunk: Buffer): void => {
       discarded += chunk.length
-      if (discarded > maxBytes) giveUp()
+      if (discarded > maxDiscarded) giveUp()
     }
     timer = setTimeout(giveUp, REFUSED_BODY_DRAIN_MS)
     // Never hold the process open for a body nobody is waiting on.

@@ -8,8 +8,9 @@ import { SHELL_BRIDGE_EVENTS, SHELL_BRIDGE_METHODS, type ShellBridge } from './s
 //
 // A shell that is not there (the channel closed, or it never answered) is a
 // failure of that call and nothing more: a seal rejects, a launch answers
-// `shell_unavailable`, a reveal answers false, a notice is dropped. Nothing
-// here retries; the caller already has a rule for each of those.
+// `shell_unavailable`, a reveal answers false, a notice is dropped, a picture
+// stays the size it was sent. Nothing here retries; the caller already has a
+// rule for each of those.
 
 /** How long a seal or an open may take: a keychain prompt on a locked Mac is answered by a person. */
 const CIPHER_TIMEOUT_MS = 120_000
@@ -22,6 +23,8 @@ const CIPHER_TIMEOUT_MS = 120_000
 const LAUNCH_TIMEOUT_MS = 120_000
 /** The launcher and plugin home are written at boot; past this, launches stop waiting for them. */
 const INTEGRATIONS_TIMEOUT_MS = 120_000
+/** A camera photo decodes and resizes in well under a second; past this the upload goes on unshrunk. */
+const IMAGE_DOWNSCALE_TIMEOUT_MS = 20_000
 
 export function createRemoteShellBridge(rpc: ControlRpc): ShellBridge {
   // One question, answered by the shell once its launcher and plugin home are
@@ -65,6 +68,25 @@ export function createRemoteShellBridge(rpc: ControlRpc): ShellBridge {
     },
     analytics(event) {
       rpc.emit(SHELL_BRIDGE_EVENTS.analytics, event)
+    },
+    images: {
+      // A shell that cannot answer leaves the picture as it was sent; the
+      // upload's own ceiling still decides whether it can be used.
+      async downscale(input, mediaType) {
+        const original = { bytes: input, mediaType }
+        const value = await rpc
+          .call<unknown>(
+            SHELL_BRIDGE_METHODS.imageDownscale,
+            { bytes: input, mediaType },
+            {
+              timeoutMs: IMAGE_DOWNSCALE_TIMEOUT_MS,
+            },
+          )
+          .catch(() => null)
+        const answer = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+        if (!(answer?.bytes instanceof Uint8Array) || typeof answer.mediaType !== 'string') return original
+        return { bytes: answer.bytes, mediaType: answer.mediaType }
+      },
     },
     integrationsReady() {
       integrations ??= rpc

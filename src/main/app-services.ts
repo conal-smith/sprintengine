@@ -41,6 +41,7 @@ import { MESH_EVENT_CHANNEL } from '../shared/tailnet-mesh'
 import { CANVAS_MODULE_DEFAULT_ENABLED } from '../shared/modules/manifest'
 import { createTailnetNotifier } from './tailnet-notifications'
 import { createInProcessShellBridge } from './shell-bridge'
+import { electronImageCodec } from './conversation-image-codec-electron'
 import { createShellReveal } from './shell-reveal'
 import { revealMainWindow } from './window-factory'
 import { createAutomationTools } from './automation/automation-tools'
@@ -285,6 +286,7 @@ export function createAppServices(
       if (isTelemetryEventName(event.name)) analytics.record(event.name, event.properties as TelemetryProperties)
     },
     integrationsReady: () => agentIntegrationReady,
+    imageCodec: electronImageCodec,
   })
   // Learn the default WSL distribution's name once, in the background, so a WSL
   // launch built later can name it with `-d` (Windows only; a no-op elsewhere).
@@ -1764,6 +1766,9 @@ export function createAppServices(
   const automationService = server
     ? null
     : createStudioGateway(core, {
+        // A picture a paired device uploads is sized for the model on receipt,
+        // with this process's own image codec.
+        downscaleUpload: (bytes, mediaType) => shellBridge.images.downscale(bytes, mediaType),
         // The live-state push (remote-sessions-ux): every window hears listener,
         // pairing, and connection changes the moment main does — the fix for pair
         // requests that could expire while only Settings, if open, would show them.

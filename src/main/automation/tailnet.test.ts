@@ -897,7 +897,12 @@ test('tailnet', async () => {
         'workspace-extensions',
         'new-chat-skills',
       ])
-      assert.deepEqual([...TAILNET_CAPABILITIES], body.capabilities)
+      // Every one the wire defines but shrinking an upload, which only a
+      // machine with an image codec advertises; this harness has none.
+      assert.deepEqual(
+        TAILNET_CAPABILITIES.filter((capability) => capability !== 'conversation-image-downscale'),
+        body.capabilities,
+      )
       // Nothing about this machine, its user, its workspaces, or its devices.
       assert.equal(JSON.stringify(body).includes('a-device-nobody-should-learn-about'), false)
     } finally {

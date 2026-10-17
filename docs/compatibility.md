@@ -269,7 +269,16 @@ they name a picture's, so neither the route's path nor any frame changed. The
 message records it in `files` (`{ path }`), a member `user_message` carried
 before for files dropped on the desktop. A client that does not see it offers
 pictures only; an older desktop refuses a file `415 invalid_media_type`, as it
-always did. The machine each chat runs on (`host`),
+always did. A file is kept as it came: `conversation-image-downscale`
+applies to pictures only. A desktop that shrinks an uploaded picture for the
+model on receipt advertises `conversation-image-downscale`
+(2026-10-17): its `POST /tailnet/v1/upload` takes up to 20 MB as the bytes
+arrive, where it took 5 MB, and keeps at most 5 MB, sized to its composer's
+1568px long edge. Nothing in the request or the answer changed shape. A client
+that does not see it holds its upload to 5 MB, as before, and an older desktop
+refuses a larger one `413 too_large`, as it always did. Only a desktop has the
+image codec, so a standalone Studio server leaves it out, and the Studio RPC,
+whose own uploads are kept as they came, never lists it. The machine each chat runs on (`host`),
 its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not

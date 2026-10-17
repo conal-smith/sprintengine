@@ -156,6 +156,12 @@ The desktop attaches it to the message by its path there, so the
 `user_message` lists it in `files` (`{ path }`). A client without it offers
 pictures only.
 
+`conversation-image-downscale` (`CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY`)
+names no frame either. A desktop that advertises it shrinks each picture
+uploaded for a chat to a 1568px long edge on receipt, so its upload route takes
+up to 20 MB as it arrives and keeps at most 5 MB. A client without it holds an
+upload to 5 MB itself.
+
 `ConversationCreateRequest` is what starting a conversation takes, with
 `allowedTools` — tools the chat may use without asking — beside the preset.
 Validate one with `parseConversationCreateRequest`. The tailnet lane does not
