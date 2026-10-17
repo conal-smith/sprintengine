@@ -9,6 +9,7 @@ import type {
   MeshQueuedMessage,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
+import { publishRemoteConversationList } from '../../workspace/remoteBand/remoteConversationFacts'
 import { ConversationChatBody } from '../AgentChatView'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
@@ -240,6 +241,8 @@ export default function RemoteConversationPanel({
       .meshConversationList(connectionId)
       .then((result) => {
         if (cancelled || !result.ok) return
+        // The pane's tab reads its mark, model and clock off this list too.
+        publishRemoteConversationList(connectionId, result.conversations)
         setListedAccess(result.access)
         setListedModelSwitch(result.modelSwitch === true)
         setPermissionModes(result.permissionModes === true)
