@@ -59,6 +59,7 @@ function shellBridge(): ShellBridge & { notices: unknown[] } {
     notify: (notice) => notices.push(notice),
     analytics: () => undefined,
     integrationsReady: async () => undefined,
+    images: { downscale: async (bytes, mediaType) => ({ bytes, mediaType }) },
   }
 }
 

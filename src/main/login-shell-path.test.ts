@@ -17,10 +17,11 @@ import {
   userShellProbeSupported,
   withUserShellPath,
   lastKnownLoginShellPath,
-  lastKnownLoginShellTrustEnv,
+  lastKnownLoginShellEnv,
   LOGIN_ENV_SENTINEL,
-  parseLoginShellTrustEnv,
-  withLoginShellTrustEnv,
+  LOGIN_SHELL_ENV_VARIABLES,
+  parseLoginShellEnv,
+  withLoginShellEnv,
   type LoginShellPathDescriptor,
   type LoginShellPathOutcome,
   sharedLoginShellPath,
@@ -310,11 +311,11 @@ test("the shell that answers for PATH also says which certificate trust the pers
     `${LOGIN_ENV_SENTINEL}AWS_SECRET_ACCESS_KEY=never-read`,
     `${LOGIN_ENV_SENTINEL}SSL_CERT_DIR=`,
   ].join('\n')
-  assert.deepEqual(parseLoginShellTrustEnv(stdout), {
+  assert.deepEqual(parseLoginShellEnv(stdout), {
     SSL_CERT_FILE: '/opt/homebrew/etc/ca-certificates/cert.pem',
     NODE_EXTRA_CA_CERTS: '/Users/dev/corp root.pem',
   })
-  assert.deepEqual(parseLoginShellTrustEnv(`${LOGIN_PATH_SENTINEL}/usr/bin\n`), {})
+  assert.deepEqual(parseLoginShellEnv(`${LOGIN_PATH_SENTINEL}/usr/bin\n`), {})
 })
 
 test.skipIf(process.platform === 'win32')(
@@ -326,19 +327,19 @@ test.skipIf(process.platform === 'win32')(
       env: { PATH: '/usr/bin:/bin', NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' },
     })
     assert.equal(parseLoginShellPath(stdout), '/usr/bin:/bin')
-    assert.deepEqual(parseLoginShellTrustEnv(stdout), { NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' })
+    assert.deepEqual(parseLoginShellEnv(stdout), { NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' })
   },
 )
 
 test('a spawn gets the trust variables it lacks, never in place of ones the app was started with', () => {
   const login = { SSL_CERT_FILE: '/opt/homebrew/etc/cert.pem', NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' }
-  assert.deepEqual(withLoginShellTrustEnv({ PATH: '/usr/bin', NODE_EXTRA_CA_CERTS: '/etc/mine.pem' }, login), {
+  assert.deepEqual(withLoginShellEnv({ PATH: '/usr/bin', NODE_EXTRA_CA_CERTS: '/etc/mine.pem' }, login), {
     PATH: '/usr/bin',
     SSL_CERT_FILE: '/opt/homebrew/etc/cert.pem',
     NODE_EXTRA_CA_CERTS: '/etc/mine.pem',
   })
   const untouched = { PATH: '/usr/bin' }
-  assert.equal(withLoginShellTrustEnv(untouched, {}), untouched)
+  assert.equal(withLoginShellEnv(untouched, {}), untouched)
 })
 
 test('the trust variables are kept with the PATH they came with, for the next synchronous spawn', async () => {
@@ -351,9 +352,69 @@ test('the trust variables are kept with the PATH they came with, for the next sy
     shell: () => '/bin/zsh',
   })
   await resolver.resolve({})
-  assert.deepEqual(lastKnownLoginShellTrustEnv(), { SSL_CERT_DIR: '/etc/corp/certs' })
+  assert.deepEqual(lastKnownLoginShellEnv(), { SSL_CERT_DIR: '/etc/corp/certs' })
   resolver.invalidate()
   const without = createLoginShellPathResolver({ run: async () => answered('/usr/bin'), shell: () => '/bin/zsh' })
   await without.resolve({})
-  assert.deepEqual(lastKnownLoginShellTrustEnv(), {}, 'a profile that stopped setting one stops passing it on')
+  assert.deepEqual(lastKnownLoginShellEnv(), {}, 'a profile that stopped setting one stops passing it on')
+})
+
+test("the shell that answers for PATH also says which provider settings the person's profile exports", () => {
+  const stdout = [
+    `${LOGIN_PATH_SENTINEL}/usr/bin`,
+    `${LOGIN_ENV_SENTINEL}CLAUDE_CODE_USE_BEDROCK=1`,
+    `${LOGIN_ENV_SENTINEL}AWS_PROFILE=acme-dev`,
+    `${LOGIN_ENV_SENTINEL}HTTPS_PROXY=http://proxy.example.com:8080`,
+    `${LOGIN_ENV_SENTINEL}no_proxy=localhost,.example.com`,
+    `${LOGIN_ENV_SENTINEL}OPENROUTER_API_KEY=sk-or-test`,
+    `${LOGIN_ENV_SENTINEL}ANTHROPIC_DEFAULT_SONNET_MODEL=acme-sonnet`,
+  ].join('\n')
+  assert.deepEqual(parseLoginShellEnv(stdout), {
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    AWS_PROFILE: 'acme-dev',
+    HTTPS_PROXY: 'http://proxy.example.com:8080',
+    no_proxy: 'localhost,.example.com',
+    OPENROUTER_API_KEY: 'sk-or-test',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'acme-sonnet',
+  })
+})
+
+test('the Anthropic auth a Claude chat strips is never read from the profile', () => {
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) {
+    assert.ok(!(LOGIN_SHELL_ENV_VARIABLES as readonly string[]).includes(name), name)
+  }
+  const stdout = [
+    `${LOGIN_PATH_SENTINEL}/usr/bin`,
+    `${LOGIN_ENV_SENTINEL}ANTHROPIC_API_KEY=sk-ant-never-read`,
+    `${LOGIN_ENV_SENTINEL}ANTHROPIC_AUTH_TOKEN=never-read`,
+    `${LOGIN_ENV_SENTINEL}ANTHROPIC_BASE_URL=https://proxy.example.com`,
+  ].join('\n')
+  assert.deepEqual(parseLoginShellEnv(stdout), {})
+})
+
+test.skipIf(process.platform === 'win32')('the probe script prints the provider settings a shell has set', () => {
+  const script = loginShellPathDescriptors(undefined)[0]!.args[1]!
+  const stdout = execFileSync('/bin/sh', ['-c', script], {
+    encoding: 'utf8',
+    env: {
+      PATH: '/usr/bin:/bin',
+      GEMINI_API_KEY: 'gm-test',
+      http_proxy: 'http://proxy.example.com:3128',
+      ANTHROPIC_API_KEY: 'sk-ant-never-read',
+    },
+  })
+  assert.deepEqual(parseLoginShellEnv(stdout), {
+    GEMINI_API_KEY: 'gm-test',
+    http_proxy: 'http://proxy.example.com:3128',
+  })
+})
+
+test('a spawn gets the provider settings it lacks, never in place of ones the app was started with', () => {
+  const login = { AWS_REGION: 'us-west-2', CLAUDE_CODE_USE_VERTEX: '1', GH_TOKEN: 'gh-from-profile' }
+  assert.deepEqual(withLoginShellEnv({ PATH: '/usr/bin', GH_TOKEN: 'gh-from-launch' }, login), {
+    PATH: '/usr/bin',
+    AWS_REGION: 'us-west-2',
+    CLAUDE_CODE_USE_VERTEX: '1',
+    GH_TOKEN: 'gh-from-launch',
+  })
 })

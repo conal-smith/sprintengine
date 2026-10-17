@@ -6,9 +6,33 @@ vi.mock('electron', () => ({
   Menu: { buildFromTemplate: (template: unknown) => template, setApplicationMenu: () => {} },
 }))
 
-const { createAppMenu, setAfterWindowZoom, zoomWindowContents } = await import('./app-menu')
+const { createAppMenu, setAfterWindowZoom, setChatWindowsForCloseChord, zoomWindowContents } =
+  await import('./app-menu')
 
-type Item = { label?: string; role?: string; accelerator?: string; submenu?: Item[] }
+type Item = {
+  label?: string
+  role?: string
+  accelerator?: string
+  submenu?: Item[]
+  click?: (item: unknown, win: Electron.BaseWindow | undefined, event: { triggeredByAccelerator?: boolean }) => void
+}
+
+function closeItem(platform: NodeJS.Platform): Item {
+  const file = (createAppMenu(platform) as unknown as Item[]).find((menu) => menu.label === 'File')!
+  return file.submenu!.find((item) => item.role === 'close' || item.label === 'Close Window')!
+}
+
+function fakeWindow(id: number): Electron.BaseWindow & { closed: number } {
+  const win = {
+    id,
+    closed: 0,
+    isDestroyed: () => false,
+    close: () => {
+      win.closed++
+    },
+  }
+  return win as unknown as Electron.BaseWindow & { closed: number }
+}
 
 test("the View menu's zoom keeps its roles' names and keys", () => {
   const view = (createAppMenu() as unknown as Item[]).find((menu) => menu.label === 'View')!
@@ -41,4 +65,49 @@ test("zooming a window steps its own zoom, then lets the browser pane put its pa
   } finally {
     setAfterWindowZoom(null)
   }
+})
+
+test('on Windows and Linux Ctrl+W leaves the last chat window open, and the menu item still closes it', () => {
+  const chat = fakeWindow(1)
+  setChatWindowsForCloseChord(() => [chat])
+  try {
+    for (const platform of ['win32', 'linux'] as const) {
+      const item = closeItem(platform)
+      expect({ label: item.label, role: item.role, accelerator: item.accelerator }).toEqual({
+        label: 'Close Window',
+        role: undefined,
+        accelerator: 'Ctrl+W',
+      })
+      item.click!(undefined, chat, { triggeredByAccelerator: true })
+      expect(chat.closed).toBe(0)
+    }
+    closeItem('win32').click!(undefined, chat, { triggeredByAccelerator: false })
+    expect(chat.closed).toBe(1)
+  } finally {
+    setChatWindowsForCloseChord(null)
+  }
+})
+
+test('Ctrl+W still closes a pop-out, and one of two chat windows', () => {
+  const chat = fakeWindow(1)
+  const popOut = fakeWindow(2)
+  const second = fakeWindow(3)
+  const open = [chat]
+  setChatWindowsForCloseChord(() => open)
+  try {
+    const item = closeItem('linux')
+    item.click!(undefined, popOut, { triggeredByAccelerator: true })
+    expect(popOut.closed).toBe(1)
+    open.push(second)
+    item.click!(undefined, second, { triggeredByAccelerator: true })
+    expect(second.closed).toBe(1)
+  } finally {
+    setChatWindowsForCloseChord(null)
+  }
+})
+
+test('on macOS the close item stays the role, whose Cmd+W leaves the app running', () => {
+  const item = closeItem('darwin')
+  expect(item.role).toBe('close')
+  expect(item.click).toBeUndefined()
 })

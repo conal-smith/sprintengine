@@ -34,6 +34,13 @@
   absent from a desktop built before they were listed;
   `parseConversationServerFrame` keeps each when it is a clock and leaves out
   anything else. The pinned files are unchanged.
+- **An uploaded picture is sized for the model by the desktop.**
+  `CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY` (`conversation-image-downscale`)
+  names a desktop that shrinks a picture uploaded for a chat on receipt, to the
+  1568px long edge its own composer sends, so its upload route takes up to
+  20 MB where it took 5 MB; what it keeps is still at most 5 MB. No frame
+  changed; a client without it keeps its upload under 5 MB itself. The pinned
+  files are unchanged.
 - **The pictures a person sent with a message can be fetched.**
   `CONVERSATION_MESSAGE_IMAGES_CAPABILITY` (`conversation-message-images`)
   names a desktop whose `GET /tailnet/v1/conversation-image` takes
