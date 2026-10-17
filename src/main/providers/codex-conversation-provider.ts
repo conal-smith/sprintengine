@@ -79,6 +79,17 @@ export const CODEX_RATE_LIMITS_READ_TIMEOUT_MS = 3_000
 // process alive nor refuse every later message as "already running a turn".
 export const CODEX_INTERRUPT_GRACE_MS = 10_000
 
+// How long Codex waits for MCP servers before a thread's first request. It
+// leaves out any server still starting then, and its own default of 1 s is
+// shorter than a cold `npx` or `uvx` server, or a stdio bridge into WSL, takes:
+// the first turn of a new chat ran without that server's tools, the app's own
+// gateway included. A server that never comes up now costs only that first
+// turn up to 10 s, not its full start timeout. Set for this process only, as
+// an override above the person's `config.toml`; a Codex that predates the key
+// ignores it.
+export const CODEX_MCP_STARTUP_GRACE_MS = 10_000
+const CODEX_MCP_STARTUP_GRACE_ARGS = ['-c', `mcp_optional_startup_grace_ms=${CODEX_MCP_STARTUP_GRACE_MS}`]
+
 class EventQueue implements AsyncIterable<ConversationEvent> {
   private values: ConversationEvent[] = []
   private wake?: () => void
@@ -1042,6 +1053,7 @@ export function createCodexConversationProvider(
         wsl: wsl ? codexWslChild(wsl) : null,
         args: [
           ...codexAppServerArgs(env.SPRINTENGINE_CODEX_APP_SERVER_ARGS),
+          ...CODEX_MCP_STARTUP_GRACE_ARGS,
           // The gateway and the session's own MCP servers, as config overrides
           // on top of the person's own `config.toml`, for this process only.
           // The gateway's override is merged into an entry a terminal launch
