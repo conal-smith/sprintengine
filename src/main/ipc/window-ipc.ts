@@ -8,7 +8,7 @@ import {
   type DockDiffRequest,
 } from './dock-diff'
 import { isCanvasWorkerWindow } from '../canvas/canvas-worker-window'
-import { safeExternalUrl } from './external-url'
+import { safeWindowExternalUrl } from './external-url'
 import { powerActivity } from '../power-activity'
 import type {
   AuxWindowKind,
@@ -146,7 +146,7 @@ export function registerWindowIpc(ipcMain: IpcMain, options: RegisterWindowIpcOp
   })
 
   ipcMain.handle('window:open-external', async (_event, url: unknown) => {
-    const safe = safeExternalUrl(url)
+    const safe = safeWindowExternalUrl(url)
     if (!safe.ok) return safe
     try {
       await shell.openExternal(safe.url)

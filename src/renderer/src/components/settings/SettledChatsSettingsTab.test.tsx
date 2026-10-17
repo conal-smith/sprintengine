@@ -9,8 +9,9 @@ const now = Date.now()
 const fixtures = vi.hoisted(() => ({
   state: {
     workspaces: [] as unknown[],
-    appSettings: { modules: undefined as unknown },
+    appSettings: { modules: undefined as unknown, keepChatsWithOpenPullRequest: true },
     setWorkspaceSettled: (() => {}) as (id: string, settled: boolean) => void,
+    setKeepChatsWithOpenPullRequest: (() => {}) as (enabled: boolean) => void,
   },
 }))
 vi.mock('../../store/workspaceStore', () => ({
@@ -171,4 +172,17 @@ test('a long list draws the most recent hundred and folds the rest', async () =>
   expect(more).toBeDefined()
   await act(async () => more!.click())
   expect(rows()).toHaveLength(130)
+})
+
+test('the page offers to keep chats with an open pull request, on, and turning it off says so', async () => {
+  const set: boolean[] = []
+  fixtures.state.setKeepChatsWithOpenPullRequest = (enabled) => void set.push(enabled)
+  await render()
+  const toggle = [...host.querySelectorAll<HTMLElement>('[role="switch"]')].find((element) => {
+    const label = document.getElementById(element.getAttribute('aria-labelledby') ?? '')
+    return label?.textContent === 'Keep chats with an open pull request'
+  })
+  expect(toggle?.getAttribute('aria-checked')).toBe('true')
+  await act(async () => toggle?.click())
+  expect(set).toEqual([false])
 })

@@ -114,3 +114,31 @@ test('a 401 and a lapsed login stay sign-in failures; a 403 needs the API error 
   expect(permissionDeniedReason('API Error: 403')).toBe('')
   expect(permissionDeniedReason('Request 403 timed out')).toBeUndefined()
 })
+
+// What a Codex start refused its folder by macOS reads as, hint and all.
+const PRIVACY =
+  'Codex process exited (1): Error: EPERM: operation not permitted, uv_cwd. macOS may be blocking access to this folder. Allow it in System Settings › Privacy & Security › Files and Folders.'
+
+test('a start macOS kept out of its folder leads with where to allow it, and offers the setting', () => {
+  const html = render(failedTurn(PRIVACY), chrome({ onOpenPrivacySettings: () => undefined, platform: 'darwin' }))
+  expect(html).toContain('macOS may be blocking access to this folder.')
+  expect(html).toContain('Open Privacy settings</button>')
+  expect(html).toContain('Retry</button>')
+  expect(html).not.toContain('Something went wrong while responding.')
+})
+
+test('where the setting is not this Mac’s to open, the hint stands without the button', () => {
+  const html = render(failedTurn(PRIVACY), chrome())
+  expect(html).toContain('macOS may be blocking access to this folder.')
+  expect(html).not.toContain('Open Privacy settings')
+})
+
+test('a privacy refusal is not mistaken for a lapsed login', () => {
+  const html = render(failedTurn(`${PRIVACY} Please run /login`), chrome({ onSignIn: async () => undefined }))
+  expect(html).not.toContain('Sign in</button>')
+})
+
+test('any other failure offers no Privacy settings', () => {
+  const html = render(failedTurn('network timeout'), chrome({ onOpenPrivacySettings: () => undefined }))
+  expect(html).not.toContain('Open Privacy settings')
+})

@@ -34,6 +34,7 @@ import { LocalServersRowMark } from './LocalServerMarks'
 import { useWorkspaceLocalServers, type WorkspaceLocalServers } from './useLocalServers'
 import {
   pullRequestsForRow,
+  pullRequestsRead,
   unwatchPullRequest,
   useConversationPullRequests,
   usePullRequestsByConversation,
@@ -847,7 +848,9 @@ function WorkspaceSidebar({
       now,
       busyIds,
       heldIds,
-      pullRequestsByWorkspaceId: conversationPullRequests,
+      // Absent until the list has been read once, so a launch's first tick
+      // does not take "not read yet" for "no open pull request".
+      pullRequestsByWorkspaceId: pullRequestsRead(conversationPullRequests) ? conversationPullRequests : undefined,
     })
     for (const id of settledNow) quietSettledWorkspace(id)
   }, [

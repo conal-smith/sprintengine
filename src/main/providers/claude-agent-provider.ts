@@ -81,6 +81,7 @@ import {
 import { isBackgroundLaunchAck, isSubagentStep } from '../../shared/conversation/subagents'
 export { summarizeToolInput } from '../../shared/conversation/approvalSummary'
 import { cliStderrSummary, LOOKUP_TOOL_KINDS } from '../../shared/conversation/permissionModes'
+import { withMacosPrivacyFolderHint } from '../../shared/conversation/macosPrivacyFolders'
 import { wslShareSafeDirectoryEnv } from '../git-run'
 import { resolveClaudeConfigDir } from '../claude-config-dir'
 import { ensureResumableTranscript, transcriptCheckNote } from './claude-transcript-integrity'
@@ -785,7 +786,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
           eventFor(state, 'turn_failed', {
             turnId: state.turn.turnId,
             reason: 'provider',
-            message: describeSpawnFailure(error, state.stderrTail),
+            message: describeSpawnFailure(error, state.stderrTail, state.workspaceRoot),
             ...providerCursorPayload(state),
           }),
         ])
@@ -799,7 +800,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
             eventFor(state, 'turn_failed', {
               turnId: state.turn.turnId,
               reason: 'provider',
-              message: describeSpawnFailure(null, state.stderrTail),
+              message: describeSpawnFailure(null, state.stderrTail, state.workspaceRoot),
               ...providerCursorPayload(state),
             }),
           ])
@@ -3604,10 +3605,22 @@ function extractResultText(content: unknown): string {
     .join('\n')
 }
 
-function describeSpawnFailure(error: unknown, stderrTail: string): string {
+/** Why the Claude Code child ended a turn it was in: its error, then the end of what it wrote on stderr. */
+export function describeSpawnFailure(
+  error: unknown,
+  stderrTail: string,
+  folder?: string | null,
+  machine: { platform: string; home: string } = { platform: process.platform, home: homedir() },
+): string {
   const base = error instanceof Error && error.message ? error.message : 'Claude Code exited unexpectedly.'
   const tail = cliStderrSummary(stderrTail)
-  return tail ? `${base} (${tail})` : base
+  // A project in Desktop, Documents, Downloads or iCloud Drive that macOS has
+  // not let the app into: the CLI dies with EPERM, and the fix is a setting.
+  return withMacosPrivacyFolderHint(tail ? `${base} (${tail})` : base, {
+    ...machine,
+    folder,
+    evidence: stderrTail,
+  })
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   buildUserMessageContent,
   CLAUDE_AGENT_PROVIDER_ID,
   CLAUDE_AGENT_SESSION_ENV_KEY,
+  describeSpawnFailure,
   createClaudeAgentProvider,
   mapSdkMessage,
   resultContextWindow,
@@ -4013,4 +4014,29 @@ test('an ask bypass would still have made is marked as one no mode answers', asy
   } finally {
     await h.adapter.disposeAll()
   }
+})
+
+test('a Claude Code start refused with EPERM in a folder macOS keeps private says where to allow it', () => {
+  const mac = { platform: 'darwin', home: '/Users/dev' }
+  const said = describeSpawnFailure(
+    null,
+    'Error: EPERM: operation not permitted, uv_cwd\n',
+    '/Users/dev/Desktop/app',
+    mac,
+  )
+  assert.match(said, /^Claude Code exited unexpectedly\. \(Error: EPERM: operation not permitted, uv_cwd\)/)
+  assert.match(said, /System Settings › Privacy & Security › Files and Folders\.$/)
+})
+
+test('a Claude Code failure that is not a privacy refusal says only what it said', () => {
+  const mac = { platform: 'darwin', home: '/Users/dev' }
+  assert.equal(
+    describeSpawnFailure(null, 'Error: EPERM: operation not permitted\n', '/Users/dev/code/app', mac),
+    'Claude Code exited unexpectedly. (Error: EPERM: operation not permitted)',
+  )
+  assert.equal(describeSpawnFailure(new Error('Not logged in.'), '', '/Users/dev/Documents/app', mac), 'Not logged in.')
+  assert.equal(
+    describeSpawnFailure(null, 'EPERM\n', '/home/dev/Documents/app', { platform: 'linux', home: '/home/dev' }),
+    'Claude Code exited unexpectedly. (EPERM)',
+  )
 })

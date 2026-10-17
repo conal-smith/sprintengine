@@ -157,3 +157,51 @@ test('useConversationPullRequests', async () => {
     loopback.drop()
   }
 })
+
+test('the list reads as unread until its first answer, an empty answer included', async () => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' })
+  const anyGlobal = globalThis as unknown as Record<string, unknown>
+  anyGlobal.window = dom.window
+  anyGlobal.document = dom.window.document
+  anyGlobal.navigator = dom.window.navigator
+  anyGlobal.HTMLElement = dom.window.HTMLElement
+  anyGlobal.Node = dom.window.Node
+  anyGlobal.IS_REACT_ACT_ENVIRONMENT = true
+  let answer!: () => void
+  const gate = new Promise<void>((resolve) => {
+    answer = resolve
+  })
+  const pullRequests: StudioPullRequests = {
+    list: async () => {
+      await gate
+      return { workspaces: {}, conversations: [] }
+    },
+    refresh: async () => ({ asked: true }),
+    noteWork: async () => undefined,
+    noteToolCall: async () => undefined,
+    link: async () => ({ ok: false, code: 'not_a_pull_request', message: 'not here' }),
+    onChanged: () => () => undefined,
+  }
+  const win = dom.window as unknown as { api: Record<string, unknown> }
+  win.api = {}
+  installStudioLoopback(win, { pullRequests })
+  const React = await import('react')
+  const { act } = React
+  const { createRoot } = await import('react-dom/client')
+  const { useConversationPullRequests, pullRequestsRead } = await import('./useConversationPullRequests')
+  let read = true
+  function Probe() {
+    read = pullRequestsRead(useConversationPullRequests(['ws-1']))
+    return null
+  }
+  const root = createRoot(document.createElement('div'))
+  await act(async () => root.render(React.createElement(Probe)))
+  try {
+    assert.equal(read, false, 'not read before the server answers')
+    await act(async () => answer())
+    await until(() => read, 'the empty answer')
+    assert.equal(read, true)
+  } finally {
+    await act(async () => root.unmount())
+  }
+})
