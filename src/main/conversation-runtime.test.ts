@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStorePath } from './workspace-store'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -1217,7 +1218,7 @@ test('conversation-runtime', async () => {
         messages: [],
       }
       // Simulate a previous app run's transcript carrying the provider cursor.
-      const dir = join(workspaceRoot, '.sprintengine', 'conversations', 'workspace')
+      const dir = workspaceStorePath(workspaceRoot, 'conversations', 'workspace')
       await mkdir(dir, { recursive: true })
       const priorEvents = [
         {
@@ -1281,7 +1282,7 @@ test('conversation-runtime', async () => {
         resumeSessionIds: [],
         messages: [],
       }
-      const dir = join(workspaceRoot, '.sprintengine', 'conversations', 'workspace')
+      const dir = workspaceStorePath(workspaceRoot, 'conversations', 'workspace')
       await mkdir(dir, { recursive: true })
       const cursor = (
         id: string,
@@ -1333,7 +1334,7 @@ test('conversation-runtime', async () => {
   async function testReadTranscriptClosesUnfinishedTurns(): Promise<void> {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-conversation-runtime-'))
     try {
-      const dir = join(workspaceRoot, '.sprintengine', 'conversations', 'workspace')
+      const dir = workspaceStorePath(workspaceRoot, 'conversations', 'workspace')
       await mkdir(dir, { recursive: true })
       const base = { sessionId: 'conv_x', workspaceId: 'workspace', agentId: 'agent', providerId: 'p', modelId: 'm' }
       const lines = [
@@ -2308,9 +2309,8 @@ test('conversation-runtime', async () => {
     agentId: string,
   ): Promise<Record<string, any>[]> {
     const content = await readFile(
-      join(
+      workspaceStorePath(
         workspaceRoot,
-        '.sprintengine',
         'conversations',
         encodeURIComponent(workspaceId.replace(/[\\/]/g, '-')),
         `${agentId}.jsonl`,

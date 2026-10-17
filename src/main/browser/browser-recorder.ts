@@ -80,9 +80,11 @@ export type RecordingEncoder = {
 
 /** Where one recording's bytes go. */
 export type RecordingOutput = {
-  /** The file relative to the workspace root, `/`-separated: how an agent finds it wherever it runs. */
-  workspacePath: string
-  /** The file as the agent's machine spells it, when Studio can say. */
+  /**
+   * The file, absolute, as the agent's machine spells it, when Studio can say:
+   * a recording is kept in the project's store in the person's home, not in
+   * the project, so no path relative to the project names it.
+   */
   path: string | null
   append(bytes: Uint8Array): Promise<void>
   /** Close the file, with its length written into it. */
@@ -102,7 +104,6 @@ export type FinishedRecording = {
   ok: true
   recordingId: string
   tabId: string
-  workspacePath: string
   path: string | null
   mimeType: string
   bytes: number
@@ -121,7 +122,6 @@ export type FinishedRecording = {
 export type ActiveRecording = {
   recordingId: string
   tabId: string
-  workspacePath: string
   path: string | null
   startedAt: string
   maxDurationMs: number
@@ -305,7 +305,6 @@ export function createBrowserRecorder(deps: BrowserRecorderDeps) {
       ok: true,
       recordingId: recording.id,
       tabId: recording.tabId,
-      workspacePath: recording.output.workspacePath,
       path: recording.output.path,
       mimeType: recording.mimeType,
       bytes,
@@ -333,7 +332,6 @@ export function createBrowserRecorder(deps: BrowserRecorderDeps) {
     return {
       recordingId: recording.id,
       tabId: recording.tabId,
-      workspacePath: recording.output.workspacePath,
       path: recording.output.path,
       startedAt: new Date(recording.startedAt).toISOString(),
       maxDurationMs: recording.maxDurationMs,

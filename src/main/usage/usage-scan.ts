@@ -20,7 +20,7 @@ import { basename, dirname, join, sep } from 'node:path'
 //   under `<data>/storage/message/<session>/`.
 // - Gemini CLI's chat recordings, `<home>/tmp/<project>/chats/session-*.json`.
 // - Grok's session updates, `<home>/sessions/<cwd>/<session>/updates.jsonl`.
-// - Studio's chat transcripts, `<root>/.sprintengine/conversations/<ws>/<agent>.jsonl`.
+// - Studio's chat transcripts, `<store>/conversations/<ws>/<agent>.jsonl` (workspace-store.ts).
 //   Their `turn_completed` events carry the turn's usage when the runtime
 //   reported it, the cost when it reported that, and the agent CLI session the
 //   turn ran (`providerCursor.sessionId`), which is the only link between a

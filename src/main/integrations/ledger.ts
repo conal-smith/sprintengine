@@ -93,6 +93,8 @@ type LedgerFile = {
   version: number
   /** When the first-run scan finished; absent until it has. */
   scannedAt?: string
+  /** The last repository clean-up a start ran (`cleanRepositoriesAtBoot`), by its version. */
+  cleanedVersion?: number
   entries: IntegrationLedgerEntry[]
 }
 
@@ -118,6 +120,7 @@ export function parseLedger(text: string | null): LedgerFile {
     return {
       version: LEDGER_VERSION,
       ...(typeof parsed.scannedAt === 'string' ? { scannedAt: parsed.scannedAt } : {}),
+      ...(typeof parsed.cleanedVersion === 'number' ? { cleanedVersion: parsed.cleanedVersion } : {}),
       entries: Array.isArray(parsed.entries) ? parsed.entries.filter(isEntry) : [],
     }
   } catch {
@@ -135,6 +138,8 @@ export type IntegrationLedger = {
   list: () => Promise<IntegrationLedgerEntry[]>
   scannedAt: () => Promise<string | null>
   markScanned: () => Promise<void>
+  cleanedVersion: () => Promise<number>
+  markCleaned: (version: number) => Promise<void>
   /** Settles once every queued write has reached disk. */
   flush: () => Promise<void>
 }
@@ -270,6 +275,12 @@ export function createIntegrationLedger(options: IntegrationLedgerOptions): Inte
       serialize(async () => {
         const file = await load()
         await save({ ...file, scannedAt: now().toISOString() }, new Set())
+      }),
+    cleanedVersion: () => serialize(async () => (await load()).cleanedVersion ?? 0),
+    markCleaned: (version) =>
+      serialize(async () => {
+        const file = await load()
+        await save({ ...file, cleanedVersion: version }, new Set())
       }),
     flush: () => serialize(async () => undefined),
   }

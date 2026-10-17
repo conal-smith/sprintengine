@@ -1,11 +1,12 @@
 import { mkdir, readFile, rmdir, stat, unlink } from 'fs/promises'
 import { homedir } from 'os'
-import { dirname, join } from 'path'
+import { dirname, join, resolve as resolvePath } from 'path'
 
 import { withConfigFileLock, writeFileAtomically } from './config-file-write'
 import { isLauncherMcpServer } from './integrations/launcher'
 import { hostIdForPath, recordIntegrationWrite } from './integrations/ledger'
 import { installedStudioPlatform } from '../server/platform/platform'
+import { isPathStrictlyInside } from './path-containment'
 import type {
   McpClientTarget,
   McpScope,
@@ -168,6 +169,10 @@ async function syncMcpConfig(input: McpSyncInput, context: SyncContext): Promise
   return { ok: true, targets, issues }
 }
 
+function isPathInside(root: string, path: string): boolean {
+  return isPathStrictlyInside(resolvePath(root), resolvePath(path))
+}
+
 function defaultUserDataDir(homeDir: () => string): string {
   // Node-only tests install no platform.
   const userData = installedStudioPlatform()?.paths.dataDir()
@@ -314,7 +319,11 @@ async function writeCodexConfig(
   resolved: string,
   target: McpSyncTarget,
 ): Promise<{ target: McpSyncTarget; issues: McpValidationIssue[] }> {
-  const { servers, knownServerIds, pruneUnlisted, client } = input
+  const { servers, knownServerIds, client } = input
+  // Pruning is for a connector worktree's own copy. A CLI whose config lives in
+  // the home (Grok's `~/.grok/config.toml`) holds the person's own servers
+  // there, which no connector launch may strip.
+  const pruneUnlisted = input.pruneUnlisted && isPathInside(input.workspaceRoot, resolved)
   const prepared = await prepareWritableConfigFile(resolved, client)
   if (!prepared.ok) return { target, issues: [prepared.issue] }
   // Connector-scoped write: drop every [mcp_servers.*] table the repo committed
@@ -924,6 +933,103 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// ── Servers a launch hands its CLI itself ───────────────────────────────────
+//
+// A CLI that takes its MCP servers on its own command line or environment is
+// handed the person's synced servers there, for that session (see
+// `integrations/launch-integration.ts`), instead of having them merged into a
+// file in the repository. The same validation the sync runs decides what goes:
+// a required server whose command is missing still stops the launch.
+
+export type LaunchMcpServers =
+  | { ok: true; servers: McpServerConfig[]; issues: McpValidationIssue[] }
+  | { ok: false; message: string; issues: McpValidationIssue[] }
+
+/**
+ * The person's servers for one launch of `client`: enabled, synced, and listed
+ * for that CLI. Scope does not narrow it — a launch-scoped server reaches that
+ * one session whichever config file the sync would have written it to.
+ */
+export async function resolveLaunchMcpServers(input: {
+  settings: McpSettings | undefined
+  client: McpClientTarget
+}): Promise<LaunchMcpServers> {
+  const settings = normalizeSettings(input.settings)
+  const issues: McpValidationIssue[] = []
+  if (!settings.syncEnabled) return { ok: true, servers: [], issues }
+  const servers = Object.values(settings.servers).filter(
+    (server) => server.enabled && server.clients.includes(input.client),
+  )
+  for (const server of servers) issues.push(...(await validateServer(server)))
+  const blocking = issues.find((issue) => issue.level === 'error')
+  if (blocking) return { ok: false, message: blocking.message, issues }
+  return { ok: true, servers, issues }
+}
+
+/** A Claude-format `{ "mcpServers": … }` document, as `--mcp-config` reads it. */
+export function claudeMcpConfigDocument(servers: readonly McpServerConfig[]): Record<string, unknown> {
+  return { mcpServers: Object.fromEntries(servers.map((server) => [server.id, toClaudeServer(server)])) }
+}
+
+/** OpenCode's `mcp` table entries, and what it cannot represent (an SSE server). */
+export function opencodeMcpEntries(servers: readonly McpServerConfig[]): {
+  entries: Record<string, unknown>
+  skipped: McpServerConfig[]
+} {
+  const entries: Record<string, unknown> = {}
+  const skipped: McpServerConfig[] = []
+  for (const server of servers) {
+    if (server.transport === 'sse') skipped.push(server)
+    else entries[server.id] = toOpencodeServer(server)
+  }
+  return { entries, skipped }
+}
+
+/**
+ * Servers as Codex `-c mcp_servers.<id>=<table>` overrides: one inline TOML
+ * table each, with the fields `renderCodexServer` writes into a config file.
+ * Codex reads an override's key as a dotted path, so an id with a dot in it
+ * cannot be named; it is left out and returned in `skipped`.
+ */
+export function codexMcpOverrideArgs(servers: readonly McpServerConfig[]): {
+  args: string[]
+  skipped: McpServerConfig[]
+} {
+  const args: string[] = []
+  const skipped: McpServerConfig[] = []
+  for (const server of servers) {
+    if (!/^[A-Za-z0-9_-]+$/.test(server.id)) {
+      skipped.push(server)
+      continue
+    }
+    const fields: Array<[string, string]> = []
+    const list = (values: readonly string[]) => `[${values.map(tomlString).join(', ')}]`
+    const table = (entries: ReadonlyArray<[string, string]>) =>
+      `{ ${entries.map(([key, value]) => `${tomlString(key)} = ${value}`).join(', ')} }`
+    if (server.transport === 'stdio') {
+      fields.push(['command', tomlString(server.command ?? '')])
+      if (server.args?.length) fields.push(['args', list(server.args)])
+      if (server.envVarNames?.length) fields.push(['env_vars', list(server.envVarNames)])
+      if (server.env && Object.keys(server.env).length > 0) {
+        fields.push(['env', table(Object.entries(server.env).map(([key, value]) => [key, tomlString(value)]))])
+      }
+    } else {
+      fields.push(['url', tomlString(server.url ?? '')])
+      if (server.envVarNames?.length) fields.push(['bearer_token_env_var', tomlString(server.envVarNames[0])])
+      const headers = Object.entries(server.headers ?? {}).filter(
+        ([key]) => !server.envVarNames?.length || key.toLowerCase() !== 'authorization',
+      )
+      if (headers.length > 0) {
+        fields.push(['http_headers', table(headers.map(([key, value]) => [key, tomlString(value)]))])
+      }
+    }
+    fields.push(['enabled', server.enabled ? 'true' : 'false'])
+    if (server.required) fields.push(['required', 'true'])
+    args.push('-c', `mcp_servers.${server.id}=${table(fields)}`)
+  }
+  return { args, skipped }
+}
+
 // ── The gateway a launch carries itself ─────────────────────────────────────
 
 /** The bridge every managed gateway entry runs, whichever build wrote it. */
@@ -999,6 +1105,87 @@ export async function removeManagedStudioGatewayFromClaudeWorkspace(workspaceRoo
   })
   if (settingsChanged) changed.push('.claude/settings.local.json')
   return changed
+}
+
+/**
+ * Take the sync's managed block back out of a workspace's `.codex/config.toml`,
+ * for a launch that hands Codex its servers as `-c` overrides. The whole block
+ * goes, not just the gateway: everything between its markers is what the sync
+ * rendered from the person's settings, and the launch now carries all of it.
+ * A file left empty is deleted when `mayDelete` allows it (git does not track
+ * it), with `.codex/` when nothing else is in it.
+ */
+export async function removeCodexManagedBlockFromWorkspace(
+  workspaceRoot: string,
+  mayDelete: (path: string) => Promise<boolean>,
+): Promise<boolean> {
+  const path = join(workspaceRoot, '.codex', 'config.toml')
+  return withConfigFileLock(path, async () => {
+    const raw = await readFile(path, 'utf8').catch(() => null)
+    if (raw === null || !raw.includes(MANAGED_START)) return false
+    const next = replaceManagedBlock(raw, '')
+    if (next === raw) return false
+    if (next.trim() === '' && (await mayDelete(path))) {
+      await unlink(path).catch(() => undefined)
+      await rmdir(dirname(path)).catch(() => undefined)
+    } else {
+      await writeFileAtomically(path, next)
+    }
+    return true
+  })
+}
+
+/**
+ * Take the gateway an earlier launch pinned out of a workspace's
+ * `.cursor/mcp.json`, for a launch that hands Cursor its servers in a plugin
+ * directory. Only an entry that runs the app's bridge; a file left with
+ * nothing in it is deleted when `mayDelete` allows, with `.cursor/` when empty.
+ */
+export async function removeCursorWorkspaceMcp(
+  workspaceRoot: string,
+  mayDelete: (path: string) => Promise<boolean>,
+): Promise<boolean> {
+  const path = join(workspaceRoot, '.cursor', 'mcp.json')
+  return withConfigFileLock(path, async () => {
+    const config = await readJsonObject(path)
+    if (!config || !isPlainRecord(config.mcpServers)) return false
+    if (!isManagedStudioGatewayEntry(config.mcpServers[STUDIO_MCP_SERVER_ID])) return false
+    const servers = { ...config.mcpServers }
+    delete servers[STUDIO_MCP_SERVER_ID]
+    const next = { ...config, mcpServers: servers }
+    const empty = Object.keys(servers).length === 0 && Object.keys(config).length === 1
+    if (empty && (await mayDelete(path))) {
+      await unlink(path).catch(() => undefined)
+      await rmdir(dirname(path)).catch(() => undefined)
+      return true
+    }
+    await writeFileAtomically(path, `${JSON.stringify(next, null, 2)}\n`)
+    return true
+  })
+}
+
+/**
+ * Take the gateway an earlier launch pinned out of a workspace's
+ * `opencode.json`, for a launch that hands OpenCode its servers in its config
+ * content. Only an entry that runs the app's bridge; a file left with nothing
+ * in it is deleted.
+ */
+export async function removeOpencodeGatewayFromWorkspace(workspaceRoot: string): Promise<boolean> {
+  const path = join(workspaceRoot, 'opencode.json')
+  return withConfigFileLock(path, async () => {
+    const config = await readJsonObject(path)
+    if (!config || !isPlainRecord(config.mcp)) return false
+    const entry = config.mcp[STUDIO_MCP_SERVER_ID]
+    if (!isPlainRecord(entry) || !Array.isArray(entry.command)) return false
+    const [command, ...args] = entry.command as unknown[]
+    const env = isPlainRecord(entry.environment) ? entry.environment : {}
+    if (!isManagedStudioGatewayEntry({ command, args, env })) return false
+    const servers = { ...config.mcp }
+    delete servers[STUDIO_MCP_SERVER_ID]
+    const next: Record<string, unknown> = { ...config, mcp: servers }
+    if (Object.keys(servers).length === 0) delete next.mcp
+    return writeOrRemoveJsonObject(path, next, [])
+  })
 }
 
 /**

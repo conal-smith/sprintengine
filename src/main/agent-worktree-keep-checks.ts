@@ -228,7 +228,12 @@ function isRebuildable(path: string): boolean {
 
 // --- What the app and the agent CLIs write ----------------------------------
 
-/** Where a chat's transcripts sit in the folder it works in (conversation-index.ts). */
+/**
+ * Where an older build kept a chat's transcripts, in the folder the chat
+ * worked in. A chat's history now lives in its project's store in the
+ * person's home (workspace-store.ts), which outlives every worktree; a
+ * worktree only holds one until the store's one-time move has taken it.
+ */
 const CONVERSATIONS_DIR = 'conversations'
 
 /** Whether a path `ignoredPathsAtRisk` returned is a chat's history rather than a file. */
@@ -262,12 +267,14 @@ export type IgnoredFilesOptions = {
 }
 
 /**
- * The transcript folders in a worktree's sidecar that belong to a chat still
- * on record. A chat's history lives in the folder it works in
- * (`.sprintengine/conversations/<chat>/`), and a settled chat's worktree is
- * given back (to the pool, or removed by the cleanup) while the chat stays,
- * to be checked out again when it is reopened (`chatWorktreeRestore.ts`).
- * Removing the worktree would take the chat's history with it.
+ * The transcript folders an older build left in a worktree's sidecar
+ * (`.sprintengine/conversations/<chat>/`) that belong to a chat still on
+ * record. A settled chat's worktree is given back (to the pool, or removed by
+ * the cleanup) while the chat stays, to be checked out again when it is
+ * reopened (`chatWorktreeRestore.ts`); until the store's one-time move has
+ * taken such a folder, removing the worktree would take the chat's history
+ * with it. Once moved there is nothing here, and the history no longer keeps
+ * the worktree.
  */
 async function transcriptsOnRecord(worktreeRoot: string, options: IgnoredFilesOptions): Promise<string[]> {
   const directory = join(toFilesystemPath(worktreeRoot), SIDECAR_DIR_NAME, CONVERSATIONS_DIR)
@@ -311,9 +318,10 @@ const MAX_WALKED_ENTRIES = 5_000
  * Whether an ignored path is only what the app itself, or an agent CLI it
  * launched, wrote into the worktree:
  *
- * - the app's sidecar folder (`.sprintengine/`): tool output, captures and
- *   caches written for the chats that ran here. Its transcripts are the one
- *   exception, checked on their own ({@link transcriptsOnRecord}).
+ * - the sidecar folder an older build wrote (`.sprintengine/`): tool output,
+ *   captures and caches written for the chats that ran here, which the store's
+ *   one-time move empties. Its transcripts are the one exception, checked on
+ *   their own ({@link transcriptsOnRecord}).
  * - the per-agent files every launch writes (`.mcp.json`, the CLIs' local
  *   approvals), which the pool deletes on every return anyway.
  * - the skills the app installs into each CLI's folder (`.claude/skills/<id>`

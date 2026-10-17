@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { copyFile, mkdir, readFile, readdir, rm, rmdir, writeFile } from 'fs/promises'
 import { homedir } from 'os'
-import { join, resolve, sep } from 'path'
+import { basename, dirname, join, resolve, sep } from 'path'
 import type { AgentPhase, AgentStateSource, SessionActivity } from '../shared/electron-api'
 import type { PluginAgentStateSpec } from '../shared/plugin-manifest'
 import { isAbsoluteObservedPath, MAX_OBSERVED_CWD_LENGTH } from '../shared/observed-checkout'
@@ -19,6 +19,7 @@ import {
   type StudioLauncherRef,
 } from './integrations/launcher'
 import { recordIntegrationWrite } from './integrations/ledger'
+import { runGitCommand } from './git-run'
 
 // =============================================================================
 // Authoritative agent state — pure core (no Electron deps, fully unit-testable)
@@ -1560,6 +1561,12 @@ export function buildLaunchStatusLineSetting(input: {
    * which this process cannot stat; the host installed it and vouches for it.
    */
   runtime?: AgentStateCommandRuntime
+  /**
+   * Run the forwarder through the Studio launcher instead of `node`: native
+   * Windows, where the CLI's shell is not known to find a Node and the
+   * launcher is what every hook there has run.
+   */
+  launcher?: StudioLauncherRef | null
 }): Record<string, unknown> | null {
   if (!input.scriptPath.trim()) return null
   if (!input.runtime && !existsSync(input.scriptPath)) return null
@@ -1575,7 +1582,9 @@ export function buildLaunchStatusLineSetting(input: {
   )
   if (resolved.kind !== 'write') return null
 
-  const command = buildStatusLineForwarderCommand(input.scriptPath, input.socketPath, resolved.wrapped, input.runtime)
+  const command = input.launcher
+    ? buildLauncherStatusLineCommand(input.launcher, input.socketPath, resolved.wrapped)
+    : buildStatusLineForwarderCommand(input.scriptPath, input.socketPath, resolved.wrapped, input.runtime)
   if (command.length > MAX_STATUS_LINE_RENDERED_COMMAND_LENGTH) return null
 
   // No `_sprintengine` bookkeeping here, unlike the install: nothing is written to
@@ -2192,10 +2201,12 @@ async function ensureWorkspaceHooksDirSelfIgnored(directory: string): Promise<vo
  * the scripts it named once nothing else there runs them. Returns the
  * workspace-relative paths it changed or deleted, for a diagnostic.
  *
- * Only the Claude settings kind is handled, because it is the only kind a CLI
- * with a launch-scoped alternative uses; every other kind is left exactly as it
- * is. Narrow about what it deletes, in the same way the installer is narrow
- * about what it replaces:
+ * The Claude settings kind is handled here; every other workspace kind (Codex's
+ * managed `config.toml` block, OpenCode's plugin file, Cursor's and Grok's hook
+ * files), now that those CLIs take the hook at launch or from user-level
+ * config, goes through `removeAgentStateRegistrationAt`, with a file it leaves
+ * empty deleted only while git does not track it. Narrow about what it deletes,
+ * in the same way the installer is narrow about what it replaces:
  *   - only hook entries and a status line this app wrote (tag or command shape)
  *     are removed, and a settings file that holds nothing of ours is not even
  *     rewritten, so a person's formatting survives;
@@ -2215,7 +2226,17 @@ export async function removeWorkspaceAgentStateRegistration(
   const changed: string[] = []
   const root = workspaceRoot?.trim() ?? ''
   if (root === '') return changed
-  if (registration.kind !== 'settings-json' || registration.scope === 'user') return changed
+  if (registration.scope === 'user') return changed
+  if (registration.kind !== 'settings-json') {
+    const path = resolveRegistrationPath(root, registration, homedir())
+    if (!existsSync(path)) return changed
+    const tracked = await gitTracksFile(dirname(path), basename(path))
+    const outcome = await removeAgentStateRegistrationAt(path, registration.kind, { deleteIfEmpty: !tracked }).catch(
+      () => 'skipped' as const,
+    )
+    if (outcome === 'removed') changed.push(registration.path)
+    return changed
+  }
 
   const settingsPath = resolveRegistrationPath(root, registration, homedir())
   // The same per-file lock the install and the MCP sync take for this file.
@@ -2266,6 +2287,16 @@ export async function removeWorkspaceAgentStateRegistration(
     await removeHooksDirIfOnlyOurs(resolve(root, AGENT_STATE_HOOK_SCRIPT_REL, '..'))
   }
   return changed
+}
+
+// Fails closed, like the quit removal's check: an answer other than "not a
+// repository" or an empty listing counts as tracked, and a tracked file is
+// only ever edited, never deleted.
+async function gitTracksFile(cwd: string, name: string): Promise<boolean> {
+  const result = await runGitCommand(cwd, ['ls-files', '--', name]).catch(() => null)
+  if (!result) return true
+  if (result.ok) return result.stdout.trim() !== ''
+  return !/not a git repository/iu.test(`${result.stderr}\n${result.message ?? ''}`)
 }
 
 async function removeIfPresent(path: string): Promise<boolean> {

@@ -195,7 +195,7 @@ import { TimelineRow, type TimelineChrome } from './agentChat/timelineRows'
 import { UnreadDivider } from './agentChat/turnMeta'
 import { editFromHereDraft, type EditFromHereDraft } from './agentChat/editFromHere'
 import { forkChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
-import { EmptyChatState, ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
+import { ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
 import { PendingFirstMessage } from './agentChat/pendingFirstMessage'
 import { withRequestedTurn, type RequestedTurnRowCache } from './agentChat/requestedTurnRow'
 import { ComposerActionButton, ComposerContextMenu, type ComposerMenuState } from './agentChat/composerControls'
@@ -3466,16 +3466,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   onSwitchModel={() => setModelMenuOpen(true)}
                   {...(binding.worktreeActions ? { worktreeActions: binding.worktreeActions } : {})}
                 />
-              ) : supportsTools ? (
-                <EmptyChatState
-                  assistantName={assistantName}
-                  onSuggestion={(text) => {
-                    setDraft(text)
-                    composerRef.current?.focus()
-                  }}
-                />
               ) : (
-                // Model providers are a plain chat — no tool contract to explain.
+                // A new chat starts from the New chat panel, which sends its
+                // first message; a chat with none yet only says so.
                 <div className="flex h-full items-center justify-center">
                   <p className="max-w-[280px] text-center text-meta leading-5 text-[color:var(--text-muted)]">
                     No messages yet. Send a prompt to start the conversation.

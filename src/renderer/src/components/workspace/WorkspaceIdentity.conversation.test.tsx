@@ -1,11 +1,12 @@
 import { JSDOM } from 'jsdom'
 import { expect, test } from 'vitest'
 
-// The title bar's branch chip and its two panel doors (the project toggles the
-// file explorer, the branch the Git panel) step aside while the agent followed
-// is a conversation: its composer strip says the branch and the changes and
-// opens both panels from there (owner ruling 2026-10-04). A terminal has no
-// strip, so with one followed the bar keeps everything it had.
+// The title bar's branch chip, its Git panel door, steps aside while the agent
+// followed is a conversation: its composer strip says the branch and the
+// changes and opens the panels from there (owner ruling 2026-10-04). A terminal
+// has no strip, so with one followed the bar keeps its branch chip. The project
+// is named by neither (owner ruling 2026-10-16): the sidebar and the composer's
+// context strip already say it.
 
 async function mountIdentity(
   runtime: 'conversation' | 'terminal',
@@ -90,10 +91,10 @@ async function mountIdentity(
   }
 }
 
-test('with a conversation followed, the title bar names the project and carries no branch, counts or panel doors', async () => {
+test('with a conversation followed, the title bar carries no project, branch, counts or panel doors', async () => {
   const bar = await mountIdentity('conversation')
   try {
-    expect(bar.host.textContent).toContain('project')
+    expect(bar.host.querySelector('[aria-label^="Toggle file explorer"]')).toBeNull()
     expect(bar.host.textContent).not.toContain('fix/cli-update-output')
     expect(bar.host.textContent).not.toContain('+3')
     expect(bar.labels().some((label) => label.startsWith('Toggle Git panel'))).toBe(false)
@@ -103,13 +104,13 @@ test('with a conversation followed, the title bar names the project and carries 
   }
 })
 
-test('with a terminal agent followed, the title bar keeps its branch chip, its counts and both panel doors', async () => {
+test('with a terminal agent followed, the title bar keeps its branch chip and counts, and names no project', async () => {
   const bar = await mountIdentity('terminal')
   try {
     expect(bar.host.textContent).toContain('fix/cli-update-output')
     expect(bar.host.textContent).toContain('+3')
     expect(bar.labels().some((label) => label.startsWith('Toggle Git panel, branch fix/cli-update-output'))).toBe(true)
-    expect(bar.labels()).toContain('Toggle file explorer, /Users/dev/project')
+    expect(bar.labels().some((label) => label.startsWith('Toggle file explorer'))).toBe(false)
   } finally {
     await bar.unmount()
   }

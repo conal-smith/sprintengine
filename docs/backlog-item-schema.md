@@ -10,9 +10,9 @@ writing the file; existing items are preferably mutated through the validated
 Durable app-written facts live in that same frontmatter: the star (`starred`,
 `highlight`) and the links an item declares (`pr`). What is left is
 volatile — resolved link status, the agent terminal holding an item — and lives
-in `backlog/cache/links.json` inside the app-owned workspace directory
-(`.sprintengine/`), which is gitignored, re-derivable, and merged over the file at scan
-time. It replaced the tracked `items.json`, which held both halves and rewrote
+in `backlog/cache/links.json` in the project's store in the person's home
+(`~/.sprintengine/workspaces/<project>/`), outside the project, re-derivable,
+and merged over the file at scan time. It replaced the tracked `items.json`, which held both halves and rewrote
 itself on every resolve tick.
 
 The app reads the frontmatter, the `# Title`, and mockup links in the body;

@@ -13,7 +13,6 @@ import { collectDanglingMockups } from '../utils/backlogMockups'
 import { formatBacklogDisplayId } from '../../../shared/backlog/item-id'
 import { normalizeProjectRootKey } from '../utils/projectKnowledge'
 import type { BacklogItemRecordInput } from '../../../shared/electron-api'
-import { sidecarRelativePath } from '../../../shared/workspace-sidecar'
 
 // Project-folder-keyed shared Backlog scan, modeled on the shared-subscription
 // pattern in useGitStatus: workspaces are grouped by folder, so several
@@ -172,7 +171,9 @@ function emit(subscription: BacklogScanSubscription): void {
 }
 
 function mergeMetadataError(scan: BacklogScanResult, message: string): BacklogScanResult {
-  const relativePath = sidecarRelativePath('backlog', 'items.json')
+  // The metadata is the app's, kept in the project's store rather than in a
+  // file of the project, so the error is filed under the backlog folder.
+  const relativePath = 'backlog/'
   const errors = [...scan.errors, { relativePath, message }]
   return scan.items.length > 0 ? { state: 'partial', items: scan.items, errors } : { state: 'error', items: [], errors }
 }
@@ -329,11 +330,11 @@ export function subscribeBacklogScan(
   }
 }
 
-// Re-scan one project's shared entry imperatively. Sidecar-only writes — star,
-// highlight, triage — land in `.sprintengine/backlog/items.json`, which sits
-// OUTSIDE the watched `backlog/` directory and therefore never trips the
-// filesystem watcher, so an explicit refresh is the only way those mutations
-// become visible. Coalesces with any in-flight scan.
+// Re-scan one project's shared entry imperatively. Metadata-only writes — the
+// link cache — land in the project's store in the person's home, OUTSIDE the
+// watched `backlog/` directory, and therefore never trip the filesystem
+// watcher, so an explicit refresh is the only way those mutations become
+// visible. Coalesces with any in-flight scan.
 function refreshSharedBacklogScan(folderPath: string | null): Promise<BacklogScanResult | null> {
   if (!folderPath) return Promise.resolve(null)
   return refreshSubscription(getSubscription(folderPath))

@@ -107,3 +107,19 @@ test('a terminal agent is compacted only at Claude Code’s own prompt, waiting 
   )
   assert.equal(terminalCompactBlocker({ ...idle, lastPrompt: { at: 50 }, lastKeyInputAt: 40 }), null)
 })
+
+test('a /compact turned down for having nothing to compact stops offering Compact', () => {
+  const warm = { ttl: '1h' as const, expiresAt: NOW - 1, recacheTokens: 574_000 }
+  const declined = { command: 'compact', output: 'Not enough messages to compact.' }
+  assert.deepEqual(applyPromptCacheEvent(warm, { type: 'command_output', createdAt: NOW, payload: declined }), {
+    ttl: '1h',
+    expiresAt: null,
+    recacheTokens: null,
+  })
+  // Another command's output, or another reply from /compact, changes nothing.
+  for (const payload of [
+    { command: 'context', output: 'Not enough messages to compact.' },
+    { command: 'compact', output: 'Compacted.' },
+  ])
+    assert.equal(applyPromptCacheEvent(warm, { type: 'command_output', createdAt: NOW, payload }), warm)
+})

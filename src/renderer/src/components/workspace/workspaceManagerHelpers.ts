@@ -4,7 +4,8 @@
 // every function takes its data via arguments.
 
 import { cliForConversationProvider } from '../../../../shared/conversation-harness'
-import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
+import { isProjectlessChatsRoot, projectlessScopeOf } from '../../../../shared/projectless-chats'
+import { workspaceProjectRootOf } from '../../../../shared/worktree-paths'
 import { isStarred } from '../../utils/highlight'
 import { findAgentSessionWorkspace, findAgentWorkspaceFollowingMoves } from '../../utils/agentLocation'
 import { sortWorkspacesByUserMessage, workspaceLastUserMessageAt } from '../../utils/workspaceRecency'
@@ -474,4 +475,27 @@ export function newChatProjectOptionsOf(
     else byKey.set(key, { path, label: path.split(/[\\/]/).filter(Boolean).pop() ?? path, lastUsedAt: usedAt })
   }
   return [...byKey.values()]
+}
+
+/**
+ * The folder a plain New chat opens on: the one it was handed, else the
+ * parked draft's, else the open chat's — always as the PROJECT. A chat in a
+ * worktree (a pool slot, or one New chat cut) runs in that worktree's folder,
+ * and inheriting it would put the next chat in the same checkout under a
+ * project label that reads `pool-01`. Worktrees are how a chat is isolated,
+ * not a place the person chose, so New chat goes back to the project the
+ * worktree was cut from; its own Worktree switch decides whether it gets one.
+ * A draft parked before this rule held a worktree path too, and maps the same
+ * way. A chat started without a project hands on "No project", never its own
+ * folder. A folder handed in on purpose is kept as given.
+ */
+export function newChatInheritedScope(
+  explicit: string | null | undefined,
+  parkedFolder: string | null | undefined,
+  active: { folderPath?: string | null; worktree?: { repoRoot?: string } | null } | null | undefined,
+): string | null {
+  if (explicit !== undefined) return projectlessScopeOf(explicit) ?? explicit
+  const inherited = parkedFolder ?? (active ? workspaceProjectRootOf(active) : null)
+  if (!inherited) return null
+  return projectlessScopeOf(inherited) ?? workspaceProjectRootOf({ folderPath: inherited }) ?? inherited
 }

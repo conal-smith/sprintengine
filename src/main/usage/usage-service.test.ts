@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStorePath } from '../workspace-store'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -174,7 +175,7 @@ test('without an injected runner the inline scan reads real logs', async () => {
   await usage.dispose()
 })
 
-test('Studio transcripts are read under the project folder and each chat worktree', () => {
+test('Studio transcripts are read from the project’s store, which a chat in a worktree writes to as well', () => {
   const dirs = studioDirs([
     {
       id: 'ws-1',
@@ -183,7 +184,7 @@ test('Studio transcripts are read under the project folder and each chat worktre
         chat: {
           name: 'Chat',
           runtimeKind: 'conversation',
-          execution: { mode: 'worktree', worktreeId: 'w', cwd: '/Users/dev/acme-wt' },
+          execution: { mode: 'worktree', worktreeId: 'w', cwd: '/Users/dev/.sprintengine-worktrees/acme/chat-1' },
         },
         term: {
           name: 'Term',
@@ -193,12 +194,17 @@ test('Studio transcripts are read under the project folder and each chat worktre
       },
     },
     { id: 'ws-2', folderPath: null },
+    { id: 'ws-3', folderPath: 'ssh://build-box/home/dev/acme' },
   ])
+  // One folder, listed with the worktree the chat runs in, where its usage was spent.
   assert.deepEqual(
     dirs.map((entry) => [entry.workspaceId, entry.root, entry.dir]),
     [
-      ['ws-1', '/Users/dev/acme', '/Users/dev/acme/.sprintengine/conversations/ws-1'],
-      ['ws-1', '/Users/dev/acme-wt', '/Users/dev/acme-wt/.sprintengine/conversations/ws-1'],
+      [
+        'ws-1',
+        '/Users/dev/.sprintengine-worktrees/acme/chat-1',
+        workspaceStorePath('/Users/dev/acme', 'conversations', 'ws-1'),
+      ],
     ],
   )
 })

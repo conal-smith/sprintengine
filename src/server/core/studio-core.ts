@@ -43,6 +43,7 @@ import { getSharedCredentialStore } from '../../main/secret-store'
 import { createWorkspaceRegistryService } from '../../main/workspace-registry-service'
 import { createWorkspaceRegistryStore } from '../../main/workspace-registry-store'
 import { createWorkspaceSyncService } from '../../main/workspace-sync-service'
+import { startWorkspaceStoreMigration } from '../../main/workspace-store-migration'
 import { knownCliAvailability } from '../../main/cli-availability'
 import { createChatTitler } from '../../main/text-generation/chat-titler'
 import { generateChatTitle } from '../../main/text-generation/text-generation-service'
@@ -245,6 +246,16 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     ...(options.resolveStudioMcpServer ? { resolveStudioMcpServer: options.resolveStudioMcpServer } : {}),
   })
   conversationRuntime.startIdleSweep(powerActivity)
+  // Each project's state lives in its store in the person's home, on the
+  // machine its chats run on (main/workspace-store.ts). An older build kept it
+  // in `<project>/.sprintengine/`: moved out the first time a folder reaches
+  // the store, and in the background, from the next turn of the loop, for
+  // every project the registry holds, so a chat's history is in place before
+  // anyone opens it.
+  startWorkspaceStoreMigration(
+    () => workspaceSyncService.getSnapshot().state.workspaces.map((workspace) => workspace.folderPath),
+    { log: (message) => console.info(`[workspace-store] ${message}`) },
+  )
   const wslServers =
     process.platform === 'win32' && options.wslServers
       ? options.wslServers({ readHostSettings: () => agentLaunchSettings.get().hosts })

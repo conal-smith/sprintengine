@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
+
+import { workspaceStorePath } from '../workspace-store'
 
 // The pane's session and its guest, reduced to what registering a tab and
 // routing a download touch.
@@ -71,13 +73,13 @@ function fixture() {
   return { root, manager, told, download, close: () => manager.unregister('t1') }
 }
 
-test('a download the agent’s tab sets off is saved to the workspace’s browser sidecar, with no dialog', () => {
+test('a download the agent’s tab sets off is saved to the project’s store, with no dialog', () => {
   const f = fixture()
   f.manager.noteAgentActivity('t1')
   const item = f.download('../report.csv')
-  const directory = join(f.root, '.sprintengine', 'browser', 'downloads')
+  const directory = workspaceStorePath(f.root, 'browser', 'downloads')
   expect(item.savedTo).toBe(join(directory, 'report.csv'))
-  expect(readFileSync(join(f.root, '.sprintengine', 'browser', '.gitignore'), 'utf8')).toBe('*\n')
+  expect(readdirSync(f.root)).toEqual([])
   item.finish('completed')
   expect(f.told).toEqual([
     { tabId: 't1', path: join(directory, 'report.csv'), state: 'started' },

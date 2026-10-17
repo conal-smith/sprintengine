@@ -915,19 +915,14 @@ export default function SettingsPanel({
             <>
               <div>What happens:</div>
               <ul className="mt-1 list-disc pl-5">
+                <li>Claude Code agents you start here get a hook that notes each knowledge file they read or edit</li>
                 <li>
-                  Add a hook to <span className="font-mono">.claude/settings.local.json</span> in the project folder
-                </li>
-                <li>
-                  Copy a hook script to <span className="font-mono">.sprintengine/hooks/</span>
-                </li>
-                <li>
-                  Record knowledge file touches to <span className="font-mono">.sprintengine/knowledge-trace/</span>
+                  The notes are kept in this project’s folder under{' '}
+                  <span className="font-mono">~/.sprintengine/workspaces/</span>
                 </li>
               </ul>
               <div className="mt-2">
-                Only files under your knowledge folder are recorded. Add{' '}
-                <span className="font-mono">.sprintengine/</span> to <span className="font-mono">.gitignore</span>.
+                Only files under your knowledge folder are recorded. Nothing is written into the project folder.
               </div>
             </>
           ),

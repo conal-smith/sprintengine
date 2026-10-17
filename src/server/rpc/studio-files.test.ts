@@ -34,11 +34,24 @@ function fixture() {
   const outside = join(base, 'elsewhere')
   mkdirSync(workspace, { recursive: true })
   mkdirSync(outside, { recursive: true })
+  const projectStore = join(base, 'home', '.sprintengine', 'workspaces', 'project-0123456789abcdef')
   const files = createStudioFiles({
-    resolveRoot: (root) => (root.workspaceId !== 'ws-1' ? null : root.kind === 'workspace' ? workspace : boards),
+    resolveRoot: (root) =>
+      root.workspaceId !== 'ws-1'
+        ? null
+        : root.kind === 'workspace'
+          ? workspace
+          : root.kind === 'store'
+            ? projectStore
+            : boards,
+    // As the Studio RPC maps it: `.sprintengine/<rest>` under the folder is `<rest>` in the store.
+    moved: (root, path) =>
+      root.kind === 'workspace' && path.startsWith('.sprintengine/')
+        ? { root: { kind: 'store', workspaceId: root.workspaceId }, path: path.slice('.sprintengine/'.length) }
+        : null,
     watchDebounceMs: 100,
   })
-  return { files, workspace, boards, outside }
+  return { files, workspace, boards, outside, projectStore }
 }
 
 async function until(check: () => boolean): Promise<void> {
@@ -117,8 +130,8 @@ test.skipIf(process.platform === 'win32')('a link out of the root is a path that
   // A root that is not here is not found.
   const unknown = await files.read({ kind: 'workspace', workspaceId: 'ws-9' }, 'x.excalidraw')
   assert.equal(unknown.ok ? null : unknown.code, 'not_found')
-  assert.deepEqual(files.roots('ws-1'), { workspace: true, boards: true })
-  assert.deepEqual(files.roots('ws-9'), { workspace: false, boards: false })
+  assert.deepEqual(files.roots('ws-1'), { workspace: true, boards: true, store: true })
+  assert.deepEqual(files.roots('ws-9'), { workspace: false, boards: false, store: false })
 })
 
 test.skipIf(process.platform === 'win32')(
@@ -236,12 +249,33 @@ test('a workspace on an SSH machine has no folder here; its board store under th
   const base = mkdtempSync(join(tmpdir(), 'studio-files-machine-'))
   directories.push(base)
   const files = createStudioFiles({
-    resolveRoot: (root) => (root.kind === 'workspace' ? 'ssh://m1/home/dev/repo' : join(base, 'boards')),
+    resolveRoot: (root) =>
+      root.kind === 'workspace' ? 'ssh://m1/home/dev/repo' : root.kind === 'store' ? null : join(base, 'boards'),
   })
-  assert.deepEqual(files.roots('ws-1'), { workspace: false, boards: true })
+  assert.deepEqual(files.roots('ws-1'), { workspace: false, boards: true, store: false })
   const read = await files.read(ws, 'arch.excalidraw')
   assert.equal(read.ok, false)
   assert.equal(read.ok ? null : read.code, 'not_found')
   const listed = await files.list(ws, '')
   assert.equal(listed.ok ? null : listed.code, 'not_found')
+})
+
+test('the project’s store is a root of its own, and a path an older Studio named in the folder is read from it', async () => {
+  const { files, workspace, projectStore } = fixture()
+  mkdirSync(join(projectStore, 'browser'), { recursive: true })
+  writeFileSync(join(projectStore, 'browser', 'shot.txt'), 'in the store')
+  const fromStore = await files.read({ kind: 'store', workspaceId: 'ws-1' }, 'browser/shot.txt')
+  assert.equal(fromStore.ok ? fromStore.text : fromStore.code, 'in the store')
+  // An old client still asks the folder for `.sprintengine/…`, which the move emptied.
+  const moved = await files.read(ws, '.sprintengine/browser/shot.txt')
+  assert.equal(moved.ok ? moved.text : moved.code, 'in the store')
+  const listed = await files.list(ws, '.sprintengine/browser')
+  assert.deepEqual(listed.ok ? listed.entries : listed.code, [{ name: 'shot.txt', kind: 'file' }])
+  // A file still in the folder (one git tracks, which the move leaves) is read from there.
+  mkdirSync(join(workspace, '.sprintengine', 'browser'), { recursive: true })
+  writeFileSync(join(workspace, '.sprintengine', 'browser', 'shot.txt'), 'in the folder')
+  const kept = await files.read(ws, '.sprintengine/browser/shot.txt')
+  assert.equal(kept.ok ? kept.text : kept.code, 'in the folder')
+  // The store root is in the protocol's vocabulary.
+  assert.ok(parseStudioMethodParams('files.read', { root: { kind: 'store', workspaceId: 'ws-1' }, path: 'a' }).ok)
 })

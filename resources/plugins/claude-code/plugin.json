@@ -91,6 +91,7 @@
       { "spreadIf": "contextArgs" },
       { "spreadIf": "pluginDirArgs" },
       { "spreadIf": "launchSettingsArgs" },
+      { "spreadIf": "integrationArgs" },
       "--session-id",
       "{{sessionId}}",
       { "valueIf": "prompt", "value": "{{prompt}}" }
@@ -105,6 +106,7 @@
       { "spreadIf": "contextArgs" },
       { "spreadIf": "pluginDirArgs" },
       { "spreadIf": "launchSettingsArgs" },
+      { "spreadIf": "integrationArgs" },
       "--resume",
       "{{sessionId}}",
       { "valueIf": "prompt", "value": "{{prompt}}" }
@@ -128,6 +130,10 @@
   "mcpConfig": {
     "path": "{{workspaceRoot}}/.mcp.json",
     "format": "claude-code"
+  },
+  "launchIntegration": {
+    "$comment": "The person's synced MCP servers ride `--mcp-config <file>` beside --plugin-dir, and the knowledge-activity hook joins the one --settings document. Measured against Claude Code 2.1.296 on 2026-10-16: a --mcp-config server starts with no approval prompt, merges with the project's and the person's servers and wins on the same id; --settings hooks fire beside the project's and every plugin's; a second --settings replaces the first outright, so everything goes in one.",
+    "route": "claude"
   },
   "skillIntegration": {
     "support": "native",

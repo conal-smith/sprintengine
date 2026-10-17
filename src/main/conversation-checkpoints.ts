@@ -23,6 +23,10 @@ const PREFIX = 'refs/sprintengine/checkpoints/'
 // Refs removed by one `update-ref --stdin`, and untracked files measured at once.
 const REF_BATCH = 1000
 const LSTAT_BATCH = 64
+// The folders older builds kept the app's state in, inside the checkout
+// (`.multi-code` before the rename). This build keeps it in the project's
+// store (workspace-store.ts), but one an older build left is still the app's,
+// never a turn's work.
 const SIDECARS = ['.sprintengine', '.multi-code']
 // The line a checkpoint's message records HEAD on, so a turn can tell its own
 // work from what a pull or rebase brought in (see `authoredPaths`).
