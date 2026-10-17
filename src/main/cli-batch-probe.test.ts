@@ -4,7 +4,7 @@
 
 import type { ExecutionHostId } from '../shared/execution-host'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, test } from 'vitest'
@@ -12,7 +12,7 @@ import { afterAll, beforeAll, beforeEach, test } from 'vitest'
 import type { AgentCli, CliDetectResult, CliRuntimeSettings } from '../shared/electron-api'
 import type { PluginRegistryListEntry } from '../shared/plugin-manifest'
 import { clearCliAvailabilityCache, detectAgentCliAvailability } from './cli-availability'
-import { buildBatchProbeDescriptor, detectCliBatch, parseBatchProbeOutput } from './cli-runtime-install'
+import { buildBatchProbeDescriptor, detectCli, detectCliBatch, parseBatchProbeOutput } from './cli-runtime-install'
 import { createPluginRegistry } from './plugin-registry'
 import { __resetPluginRegistryForTest, __setPluginRegistryForTest } from './plugin-registry-instance'
 import type { RunOutcome, SpawnDescriptor } from './process-run'
@@ -189,6 +189,38 @@ test('a WSL machine whose helper could not answer reports every CLI there as una
     assert.match(result.error ?? '', /no network to download Node\.js/u, 'an error, never "not installed"')
   }
 })
+
+test("the native batch runs Grok's `--version` with its self-updater off, and only a batch with Grok in it", async () => {
+  const envs: NodeJS.ProcessEnv[] = []
+  const env = { PATH: 'C:\\Windows\\System32' }
+  const deps = {
+    platform: 'win32' as NodeJS.Platform,
+    env,
+    run: async (_desc: SpawnDescriptor, runEnv: NodeJS.ProcessEnv) => {
+      envs.push(runEnv)
+      return outcome('')
+    },
+  }
+  await detectCliBatch([{ cli: 'cursor' }, { cli: 'grok' }], deps)
+  await detectCliBatch([{ cli: 'cursor' }], deps)
+  assert.equal(envs[0]?.GROK_DISABLE_AUTOUPDATER, '1')
+  assert.equal(envs[0]?.PATH, 'C:\\Windows\\System32')
+  assert.equal(envs[1]?.GROK_DISABLE_AUTOUPDATER, undefined)
+  assert.deepEqual(env, { PATH: 'C:\\Windows\\System32' }, "the caller's environment is left as it was")
+})
+
+test.skipIf(process.platform === 'win32')(
+  "Grok's `--version` on this machine runs with its self-updater off, whatever the caller's environment says",
+  async () => {
+    const grok = join(temp, 'grok')
+    writeFileSync(grok, '#!/bin/sh\necho "grok 1.0.$GROK_DISABLE_AUTOUPDATER"\n')
+    chmodSync(grok, 0o755)
+    const env = { PATH: process.env.PATH, GROK_DISABLE_AUTOUPDATER: '0' }
+    const result = await detectCli('grok', { command: grok }, env)
+    assert.equal(result.version, 'grok 1.0.1')
+    assert.equal(env.GROK_DISABLE_AUTOUPDATER, '0')
+  },
+)
 
 function entry(id: string): PluginRegistryListEntry {
   return {

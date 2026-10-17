@@ -1,3 +1,4 @@
+import { spawn, type SpawnOptions } from 'node:child_process'
 import { mkdtemp, writeFile, readFile, rm, symlink, mkdir, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1194,6 +1195,86 @@ test('ACP lists the commands an agent gives in its handshake without opening a s
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// Starts each child as asked, and keeps the environment it was given.
+function recordingSpawn(envs: NodeJS.ProcessEnv[]): typeof spawn {
+  return ((file: string, args: string[], options: SpawnOptions) => {
+    envs.push(options.env ?? {})
+    return spawn(file, args, options)
+  }) as unknown as typeof spawn
+}
+
+const shippedAcpProfile = (id: string) => ({
+  ...ACP_PROFILES.find((profile) => profile.id === id)!,
+  argv: ['-e', agent],
+  authenticate: undefined,
+})
+
+test("Grok's command-list handshake runs with its self-updater off, and leaves the caller's environment as it was", async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acp-probe-grok-'))
+  const envs: NodeJS.ProcessEnv[] = []
+  const callerEnv = { PATH: process.env.PATH, GROK_DISABLE_AUTOUPDATER: '0' }
+  try {
+    const commands = await probeAcpConversationCommands(
+      shippedAcpProfile('grok-agent'),
+      { cwd: root },
+      { detect: async () => process.execPath, buildEnv: async () => callerEnv, spawnChild: recordingSpawn(envs) },
+    )
+    expect(commands?.map((command) => command.name)).toEqual(['handshake'])
+    expect(envs[0]?.GROK_DISABLE_AUTOUPDATER).toBe('1')
+    expect(callerEnv.GROK_DISABLE_AUTOUPDATER).toBe('0')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a Grok chat the person starts keeps their environment, Grok's self-updater included", async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acp-grok-chat-'))
+  const envs: NodeJS.ProcessEnv[] = []
+  const provider = createAcpConversationProvider(shippedAcpProfile('grok-agent'), {
+    detect: async () => process.execPath,
+    buildEnv: async () => ({ PATH: process.env.PATH }),
+    spawnChild: recordingSpawn(envs),
+    startupTimeoutMs: 2000,
+  })
+  try {
+    await provider.startSession({
+      sessionId: 'session',
+      workspaceId: 'workspace',
+      agentId: 'agent',
+      providerId: 'grok-agent',
+      modelId: 'default',
+      workspaceRoot: root,
+    })
+    expect(envs).toHaveLength(1)
+    expect(envs[0]).not.toHaveProperty('GROK_DISABLE_AUTOUPDATER')
+  } finally {
+    provider.disposeAll?.()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+for (const id of ['cursor-agent', 'opencode-agent']) {
+  test(`${id}'s handshake is started with nothing of Grok's set`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-probe-other-'))
+    const envs: NodeJS.ProcessEnv[] = []
+    try {
+      await probeAcpConversationCommands(
+        shippedAcpProfile(id),
+        { cwd: root },
+        {
+          detect: async () => process.execPath,
+          buildEnv: async () => ({ PATH: process.env.PATH }),
+          spawnChild: recordingSpawn(envs),
+        },
+      )
+      expect(envs).toHaveLength(1)
+      expect(envs[0]).not.toHaveProperty('GROK_DISABLE_AUTOUPDATER')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
 
 test("ACP opens the session with the chat's own MCP servers, and refuses one the agent cannot reach", async () => {
   const start = async (env: Record<string, string>, mcpServers: ConversationMcpServer[]) => {

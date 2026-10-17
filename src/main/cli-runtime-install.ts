@@ -18,6 +18,7 @@ import { ansiPlainText } from '../shared/conversation/ansi'
 import { findExecutable, searchDirectories, sharedLoginShellPath } from './login-shell-path'
 import { forgetSharedGhLocation } from './github/gh'
 import { access, constants as fsConstants } from 'node:fs/promises'
+import { cliProbeEnv } from './cli-probe-env'
 
 // Exit code our probe scripts use to signal "binary not found on PATH" so we
 // can distinguish a missing CLI from a CLI that exists but whose --version
@@ -348,18 +349,25 @@ export async function runCliCommand(input: {
   hostId?: string | null
   timeoutMs: number
   env?: NodeJS.ProcessEnv
+  /** Variables set on top of that environment, on whichever machine runs the command. */
+  setEnv?: Readonly<Record<string, string>>
 }): Promise<CliCommandOutcome> {
   const target = resolveInstallPlatform(process.platform, input.hostId)
-  // A WSL machine runs it through its helper, with the person's login PATH.
+  const setEnv = Object.entries(input.setEnv ?? {})
+  // A WSL machine runs it through its helper, with the person's login PATH;
+  // `env` sets the variables there.
   if (target === 'wsl') {
+    const argv = [input.binary, ...input.args]
     return hostRegistry()
       .get(input.hostId)
-      .runCommand([input.binary, ...input.args], { timeoutMs: input.timeoutMs })
+      .runCommand(setEnv.length > 0 ? ['env', ...setEnv.map(([key, value]) => `${key}=${value}`), ...argv] : argv, {
+        timeoutMs: input.timeoutMs,
+      })
   }
   return runDescriptor(
     buildCommandDescriptor({ binary: input.binary, args: input.args, target }),
     undefined,
-    input.env ?? defaultProbeEnv(),
+    { ...(input.env ?? defaultProbeEnv()), ...input.setEnv },
     input.timeoutMs,
   )
 }
@@ -627,6 +635,12 @@ export async function detectCliBatch(
   })
 
   const env = deps.env ?? defaultProbeEnv()
+  // One PowerShell runs every native CLI's `--version`, so it carries what
+  // each of them is checked with; each variable is read by its own CLI alone.
+  const windowsEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...Object.fromEntries(windows.flatMap((item) => Object.entries(cliProbeEnv(requests[item.index].cli)))),
+  }
   const force = deps.force === true
   const detectOnHost =
     deps.detectOnHost ??
@@ -642,7 +656,7 @@ export async function detectCliBatch(
     ...(windows.length > 0
       ? [
           (async () => {
-            const answers = await runBatchGroup(windows, deps, env)
+            const answers = await runBatchGroup(windows, deps, windowsEnv)
             windows.forEach((item, position) => {
               results[item.index] = detectResult(
                 requests[item.index].cli,
@@ -748,7 +762,7 @@ export async function detectCli(
       binary,
       versionArgs,
       target,
-      env: env ?? defaultProbeEnv(),
+      env: { ...(env ?? defaultProbeEnv()), ...cliProbeEnv(cli) },
     })
     // On the host, a binary missing while no shell would say what PATH the
     // person has is a non-answer. Reported as an error, availability leaves it
