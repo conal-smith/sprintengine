@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  clampPaletteSelection,
   commandMatchesQuery,
   comparePaletteMatches,
   composeRestingPage,
@@ -12,6 +13,7 @@ import {
   PALETTE_SCORE,
   paletteGroupRank,
   scoreCommandMatch,
+  stepPaletteSelection,
   workspaceKeywordsFromDefinition,
   type PaletteCommandGroup,
   type PaletteRankable,
@@ -442,6 +444,29 @@ test('commandPaletteSearch', async () => {
         `${ordered[i].label} must not sort after ${ordered[i + 1].label}`,
       )
     }
+  })
+
+  run('clampPaletteSelection pulls a stale index back onto the rows on screen', () => {
+    // Arrowed to row 10 of a long list, then a three-row list arrived.
+    assert.equal(clampPaletteSelection(10, 3), 2)
+    assert.equal(clampPaletteSelection(1, 3), 1)
+    assert.equal(clampPaletteSelection(-1, 3), 0)
+    // Nothing on screen yet: the first row to arrive is the one highlighted.
+    assert.equal(clampPaletteSelection(4, 0), 0)
+    assert.equal(clampPaletteSelection(-1, 0), 0)
+  })
+
+  run('stepPaletteSelection moves from the highlighted row and stops at either end', () => {
+    assert.equal(stepPaletteSelection(0, 3, 1), 1)
+    assert.equal(stepPaletteSelection(2, 3, 1), 2)
+    assert.equal(stepPaletteSelection(0, 3, -1), 0)
+    // From a stale index the first ArrowUp lands on the row above the last
+    // one, not on a row that is no longer there.
+    assert.equal(stepPaletteSelection(10, 3, -1), 1)
+    assert.equal(stepPaletteSelection(10, 3, 1), 2)
+    // An empty list is a no-op, never -1.
+    assert.equal(stepPaletteSelection(0, 0, 1), 0)
+    assert.equal(stepPaletteSelection(0, 0, -1), 0)
   })
 
   console.log('commandPaletteSearch: all assertions passed')
