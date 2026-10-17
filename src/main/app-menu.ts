@@ -39,6 +39,31 @@ export function zoomWindowContents(contents: Electron.WebContents, step: 1 | -1 
   afterWindowZoom?.(contents)
 }
 
+// The chat windows open now, set by the lifecycle once windows exist.
+let listChatWindows: (() => readonly Electron.BaseWindow[]) | null = null
+
+/**
+ * Set once, by the lifecycle: the chat (workspace) windows open now. Ctrl+W
+ * reaches the menu only when the app had nothing of its own to close (no
+ * closable tab, or no chat open at all), and on Windows and Linux closing the
+ * last window quits the app. So the chord closes a pop-out, or one of two chat
+ * windows, but leaves the last chat window open.
+ */
+export function setChatWindowsForCloseChord(list: (() => readonly Electron.BaseWindow[]) | null): void {
+  listChatWindows = list
+}
+
+function closeChordKeeps(win: Electron.BaseWindow): boolean {
+  const chatWindows = listChatWindows?.().filter((candidate) => !candidate.isDestroyed()) ?? []
+  return chatWindows.length === 1 && chatWindows[0].id === win.id
+}
+
+function closeWindowFromMenu(win: Electron.BaseWindow | null, triggeredByAccelerator: boolean): void {
+  if (!win || win.isDestroyed()) return
+  if (triggeredByAccelerator && closeChordKeeps(win)) return
+  win.close()
+}
+
 function zoomFocusedWindow(win: Electron.BaseWindow | null, step: 1 | -1 | 0): void {
   if (!win || win.isDestroyed()) return
   const browserWindow = BrowserWindow.fromId(win.id)
@@ -81,7 +106,7 @@ export function registerAppMenuIpc(ipcMain: IpcMain): void {
   })
 }
 
-export function createAppMenu(): Menu {
+export function createAppMenu(platform: NodeJS.Platform = process.platform): Menu {
   return Menu.buildFromTemplate([
     {
       label: 'File',
@@ -92,7 +117,18 @@ export function createAppMenu(): Menu {
           click: (_, win) => sendMenuCommand(win ?? BrowserWindow.getFocusedWindow(), 'app.settings.open'),
         },
         { type: 'separator' },
-        { role: 'close' },
+        // On macOS Cmd+W closing the window leaves the app running, as every
+        // Mac app does, so the role stays. Elsewhere the item is the role's
+        // own label and key, but the key alone leaves the last chat window
+        // open; clicking the item still closes it.
+        platform === 'darwin'
+          ? { role: 'close' }
+          : {
+              label: 'Close Window',
+              accelerator: 'Ctrl+W',
+              click: (_, win, event) =>
+                closeWindowFromMenu(win ?? BrowserWindow.getFocusedWindow(), event.triggeredByAccelerator === true),
+            },
         // On macOS the first menu is the app menu, and Cmd+Q is only a key
         // because an item there carries it; without this item the chord did
         // nothing and quitting took the Dock or the tray. The quit it raises
