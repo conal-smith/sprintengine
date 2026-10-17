@@ -21,6 +21,14 @@ import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'nod
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openConfinedExistingFile, readBoundedConversationFile } from '../conversation-file-access'
+import {
+  projectCommandsFingerprint,
+  readProjectCommands,
+  stageProjectCommands,
+  STAGED_PLUGIN_PREFIX,
+  writeProjectCommandsPlugin,
+  type StagedProjectCommands,
+} from '../claude-project-commands'
 import { asRecord } from '../../shared/records'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
@@ -256,6 +264,9 @@ type SessionState = {
   // The per-child plugin directory that carries the attached skills; removed
   // with the child that loaded it.
   skillPluginDir: string | null
+  // The per-child plugin carrying the project's own `.claude/commands`, and
+  // which files it was written from; removed with the child that loaded it.
+  projectCommands: StagedProjectCommands | null
   mode?: 'default' | 'plan' | 'ask'
   reasoningEffort?: string
   onBeforeTool?: (name: string) => Promise<void>
@@ -646,6 +657,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.commandOutputTails = null
     if (state.skillPluginDir) removeSkillPlugin(state.skillPluginDir)
     state.skillPluginDir = null
+    if (state.projectCommands) removeSkillPlugin(state.projectCommands.dir)
+    state.projectCommands = null
     return hadChild
   }
 
@@ -976,13 +989,18 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     const skillPlugin = state.skillIds?.length
       ? await stageAttachedSkills(tempDir, state.workspaceRoot, state.skillIds)
       : null
+    // A project whose commands cannot be read starts its chat without them.
+    const projectCommands = await stageProjectCommands(tempDir, state.workspaceRoot).catch(() => null)
     try {
       assertSpawnWanted(state, generation)
     } catch (error) {
       if (skillPlugin) removeSkillPlugin(skillPlugin)
+      if (projectCommands) removeSkillPlugin(projectCommands.dir)
       throw error
     }
     state.skillPluginDir = skillPlugin
+    state.projectCommands = projectCommands
+    const plugins = [skillPlugin, projectCommands?.dir].filter((dir): dir is string => Boolean(dir))
     // A resume walks the session file back from its newest entry; a gap a
     // crash left in it would bring back only the messages after the gap. A
     // WSL machine's file is under its own Linux home, out of reach here.
@@ -1000,6 +1018,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       } catch (error) {
         if (skillPlugin) removeSkillPlugin(skillPlugin)
         state.skillPluginDir = null
+        if (projectCommands) removeSkillPlugin(projectCommands.dir)
+        state.projectCommands = null
         throw error
       }
     }
@@ -1033,7 +1053,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // commands on this machine as soon as the session starts. Omitting the option loads every source,
       // so the list is always explicit. What the project contributes that the
       // agent does need arrives another way: its CLAUDE.md through the system
-      // prompt above, and attached skills as a plugin of their own.
+      // prompt above, attached skills as a plugin of their own, and the
+      // project's `.claude/commands` as another (claude-project-commands.ts).
       settingSources: ['user'],
       // Which is also why the app's MCP gateway is passed here rather than
       // read from the workspace's `.mcp.json`: a project's MCP servers are
@@ -1045,9 +1066,11 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // Plain `--plugin-dir`, never `skipMcpDiscovery`: the SDK spells that
       // `--plugin-dir-no-mcp`, which a Claude Code older than the SDK does not
       // know, and the child exits on it. There is nothing to skip anyway: the
-      // staged plugin is written here with no `.mcp.json` and no `mcpServers`,
-      // so it can carry skills and nothing else.
-      ...(skillPlugin ? { plugins: [{ type: 'local', path: wslTarget ? toWslPath(skillPlugin) : skillPlugin }] } : {}),
+      // staged plugins are written here with no `.mcp.json` and no
+      // `mcpServers`, so they carry skills and commands and nothing else.
+      ...(plugins.length
+        ? { plugins: plugins.map((dir) => ({ type: 'local' as const, path: wslTarget ? toWslPath(dir) : dir })) }
+        : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
       env: withClaudeTaskTools(env),
       abortController: abort,
@@ -1260,6 +1283,41 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     }
   }
 
+  // A child reads the project's commands when it starts. Before each message
+  // the folder is read again, and a change is written into the child's staged
+  // plugin and reloaded, as /reload-plugins does in a terminal, so the next
+  // message runs the command as it now stands. A child started while the
+  // project had none has no plugin to reload, and one whose CLI does not
+  // reload, or does not answer, is replaced (resumed) instead, unless
+  // background work runs in it: then the change waits for the next message.
+  async function refreshProjectCommands(state: SessionState, waiting: string[]): Promise<void> {
+    const query = state.query
+    if (!query || state.spawning) return
+    const files = await readProjectCommands(state.workspaceRoot).catch(() => null)
+    if (!files || state.query !== query) return
+    const staged = state.projectCommands
+    const fingerprint = projectCommandsFingerprint(files)
+    if (staged ? staged.fingerprint === fingerprint : files.length === 0) return
+    if (staged && typeof query.reloadPlugins === 'function') {
+      try {
+        await writeProjectCommandsPlugin(staged.dir, files)
+        staged.fingerprint = fingerprint
+        if (state.query !== query) return
+        // Held (it would change the tool list a cached prompt depends on,
+        // which only the person's own plugins can do): the commands then
+        // arrive with the next child, as the person's plugin change does.
+        const reloaded = await answeredWithin(query.reloadPlugins({ holdOnCacheImpact: true }), childAnswerTimeoutMs, {
+          rejectAsUnanswered: true,
+        })
+        if (reloaded || state.query !== query) return
+      } catch {
+        // Not written: the child is replaced below, and stages them afresh.
+      }
+    }
+    if (backgroundWorkRunning(state)) waiting.push('the project’s changed commands')
+    else disposeChild(state)
+  }
+
   // Move the live child to another chat mode over the control channel rather
   // than respawning it, which costs a cold start, a re-read of the session
   // file, and any background agent it had running. False when only a respawn
@@ -1470,6 +1528,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         allowedTools: input.allowedTools,
         ...(input.mcpServers?.length ? { mcpServers: input.mcpServers } : {}),
         skillPluginDir: null,
+        projectCommands: null,
         onBeforeTool: input.onBeforeTool,
         providerSessionId: input.resumeSessionId?.trim() || null,
         lastChainUuid: null,
@@ -1566,6 +1625,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
             state.skillIds = skillIds
           }
         }
+        await refreshProjectCommands(state, waiting)
         await reconcilePresetWhileBusy(state)
         await ensureQuery(state)
         await leaveStrayPlanMode(state)
@@ -2046,14 +2106,10 @@ const ATTACHED_SKILLS_PLUGIN = 'attached-skills'
 // the user setting source still loads; only workspace skills are staged.
 const attachedSkillName = (id: string) => (id.includes(':') ? id : `${ATTACHED_SKILLS_PLUGIN}:${id}`)
 
-// Staged folders are named for the process that made them, so a sweep can
-// tell one a running app still uses from one a dead process left behind.
-const SKILL_PLUGIN_PREFIX = 'sprintengine-claude-skills-'
-
 async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skillIds: string[]): Promise<string | null> {
   skillIds = skillIds.filter((id) => !id.includes(':'))
   if (!skillIds.length) return null
-  const dir = await mkdtemp(join(tempDir, `${SKILL_PLUGIN_PREFIX}${process.pid}-`))
+  const dir = await mkdtemp(join(tempDir, `${STAGED_PLUGIN_PREFIX}${process.pid}-`))
   try {
     await mkdir(join(dir, '.claude-plugin'))
     await writeFile(
@@ -2083,12 +2139,12 @@ export async function sweepStaleSkillPlugins(tempDir: string): Promise<void> {
   const startedAt = Date.now() - process.uptime() * 1000
   const uid = process.getuid?.()
   for (const name of await readdir(tempDir)) {
-    if (!name.startsWith(SKILL_PLUGIN_PREFIX)) continue
+    if (!name.startsWith(STAGED_PLUGIN_PREFIX)) continue
     const path = join(tempDir, name)
     const info = await lstat(path).catch(() => null)
     if (!info?.isDirectory() || info.isSymbolicLink() || info.mtimeMs >= startedAt) continue
     if (uid !== undefined && info.uid !== uid) continue
-    const owner = /^(\d+)-/.exec(name.slice(SKILL_PLUGIN_PREFIX.length))?.[1]
+    const owner = /^(\d+)-/.exec(name.slice(STAGED_PLUGIN_PREFIX.length))?.[1]
     if (owner ? isRunning(Number(owner)) : Date.now() - info.mtimeMs < 24 * 60 * 60 * 1000) continue
     await rm(path, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -2999,6 +3055,14 @@ export function mapSdkMessage(
     case 'user': {
       const parentToolUseId = readParentToolUseId(message)
       const content = asRecord(message.message)?.content
+      // A slash command that stops before the model is asked, a `!` line of
+      // it refused by Claude Code's permission check above all, says why in a
+      // user message of the CLI's own making and nowhere else; the turn then
+      // ends with no reply. Claude Code 2.1.296 escapes the text as markup.
+      if (!parentToolUseId && typeof content === 'string' && /^\s*<local-command-stderr>/.test(content)) {
+        commandOutput(unescapeMarkup(stripLocalCommandTags(content)), undefined)
+        break
+      }
       if (!Array.isArray(content)) break
       // The structured result describes the message's one tool result; one
       // that answers several calls at once says nothing a task can be read from.
@@ -3507,6 +3571,12 @@ function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]
 // keeps it in; the output is what is between them.
 function stripLocalCommandTags(text: string): string {
   return text.replace(/<\/?local-command-(?:stdout|stderr)>/g, '')
+}
+
+const MARKUP_ENTITIES: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", amp: '&' }
+
+function unescapeMarkup(text: string): string {
+  return text.replace(/&(lt|gt|quot|apos|#39|amp);/g, (_, name: string) => MARKUP_ENTITIES[name]!)
 }
 
 function readString(value: unknown): string | undefined {
