@@ -712,6 +712,7 @@ export const defaultAppSettings = (): AppSettings => ({
   terminalIdleSuspendMinutes: DEFAULT_TERMINAL_IDLE_SUSPEND_MINUTES,
   terminalKeepRecentAlive: DEFAULT_TERMINAL_KEEP_RECENT_ALIVE,
   settleOnPullRequestMerge: true,
+  keepChatsWithOpenPullRequest: true,
   browserAutoFloatAgentPreview: true,
   // A message sent mid-turn waits for the turn, as every one did before the
   // choice: a steer is something a person asks for.
@@ -806,6 +807,9 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     terminalKeepRecentAlive: normalizeTerminalKeepRecentAlive(settings?.terminalKeepRecentAlive),
     settleOnPullRequestMerge:
       typeof settings?.settleOnPullRequestMerge === 'boolean' ? settings.settleOnPullRequestMerge : true,
+    // Only an explicit stored `false` lets the idle rule settle a chat whose
+    // pull request is still open: a profile from before the setting keeps them.
+    keepChatsWithOpenPullRequest: settings?.keepChatsWithOpenPullRequest !== false,
     // Only an explicit stored `false` turns the player off: it is the
     // feature's default, and an unreadable value should not hide an agent.
     browserAutoFloatAgentPreview: settings?.browserAutoFloatAgentPreview !== false,
@@ -1107,6 +1111,8 @@ export interface SettingsSliceActions {
   setTerminalIdleSuspendMinutes: (minutes: number) => void
   setTerminalKeepRecentAlive: (count: number) => void
   setSettleOnPullRequestMerge: (enabled: boolean) => void
+  /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
+  setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
@@ -1763,6 +1769,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
     setSettleOnPullRequestMerge: (enabled) =>
       set((state) => {
         state.appSettings.settleOnPullRequestMerge = enabled
+      }),
+
+    setKeepChatsWithOpenPullRequest: (enabled) =>
+      set((state) => {
+        state.appSettings.keepChatsWithOpenPullRequest = enabled === true
       }),
 
     setBrowserAutoFloatAgentPreview: (enabled) =>

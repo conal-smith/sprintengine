@@ -4,6 +4,7 @@ import { expect, test } from 'vitest'
 import {
   CodexRpcError,
   codexAppServerArgs,
+  codexStartupStderrLine,
   codexToolFailure,
   createCodexRpcTransport,
   type CodexRpcOptions,
@@ -208,4 +209,47 @@ test('an unterminated frame over the size limit closes the connection', async ()
   await new Promise((resolve) => setImmediate(resolve))
   expect(f.closed[0]?.message).toContain('size limit')
   expect(f.child.exitCode).toBe(0)
+})
+
+const tick = () => new Promise((resolve) => setImmediate(resolve))
+
+test('an exit before Codex answers carries the last line it wrote on stderr', async () => {
+  const f = fixture()
+  const request = f.transport.request('initialize', {})
+  f.child.stderr.write('starting up\n')
+  f.child.stderr.write('\u001b[31mError:\u001b[0m EPERM: operation not permitted, uv_cwd\n')
+  await tick()
+  f.child.emit('close', 1)
+  await expect(request).rejects.toThrow('Codex process exited (1): Error: EPERM: operation not permitted, uv_cwd.')
+  await tick()
+  expect(f.closed[0]?.message).toBe('Codex process exited (1): Error: EPERM: operation not permitted, uv_cwd.')
+})
+
+test('an exit once Codex has answered keeps stderr out of the reason', async () => {
+  const f = fixture()
+  const request = f.transport.request('initialize', {})
+  f.child.stdout.write('{"id":1,"result":{}}\n')
+  await request
+  f.child.stderr.write('Error: something it logged later\n')
+  await tick()
+  f.child.emit('close', 1)
+  await tick()
+  expect(f.closed[0]?.message).toBe('Codex process exited (1).')
+})
+
+test('a startup line that names a credential is never repeated', async () => {
+  const f = fixture()
+  const request = f.transport.request('initialize', {})
+  f.child.stderr.write('Error: could not read config\n')
+  f.child.stderr.write('Authorization: Bearer sk-live-123 refused\n')
+  await tick()
+  f.child.emit('close', 1)
+  await expect(request).rejects.toThrow('Codex process exited (1): Error: could not read config.')
+})
+
+test('a startup stderr line is cleaned and clipped', () => {
+  expect(codexStartupStderrLine('\u001b[2m  plain words  \u001b[0m')).toBe('plain words')
+  expect(codexStartupStderrLine('   ')).toBeNull()
+  expect(codexStartupStderrLine('api_key=abc')).toBeNull()
+  expect(codexStartupStderrLine('x'.repeat(400))).toHaveLength(300)
 })
