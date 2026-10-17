@@ -266,3 +266,105 @@ test('⌘S on a dirty buffer writes it and marks the tab clean', async () => {
   assert.equal(isDirty(workspaceId), false)
   assert.equal(getEditorBuffer(workspaceId, FILE), 'export const answer = 43\n')
 })
+
+const AGENT_EVENT: FileWatchEvent = { eventType: 'change', path: 'app.ts', paths: ['app.ts'] }
+
+/** The folder watch says app.ts changed; long enough for the debounce and the re-read. */
+async function agentTouchesFile(): Promise<void> {
+  const watcher = watchers.find((candidate) => candidate.path === `${ROOT}/src` && !candidate.stopped)
+  assert.ok(watcher, 'the file’s folder is watched')
+  await act(async () => watcher.cb(AGENT_EVENT))
+  await settle(250)
+}
+
+function noticeTitle(): string | null {
+  const notice = document.querySelector('[role="status"]')
+  return notice?.textContent ?? null
+}
+
+function button(label: string): HTMLButtonElement {
+  const found = Array.from(document.querySelectorAll('button')).find((candidate) => candidate.textContent === label)
+  assert.ok(found, `a "${label}" button`)
+  return found as HTMLButtonElement
+}
+
+test('a clean tab takes an agent’s edit as an edit over the changed lines, not a whole-file replace', async () => {
+  const { workspaceId, editor } = await mountEditor('line one\nline two\nline three\n')
+  disk.set(FILE, 'line one\nline 2\nline three\n')
+  await agentTouchesFile()
+
+  assert.equal(editor.text, 'line one\nline 2\nline three\n', 'the editor shows the new text')
+  assert.equal(getEditorBuffer(workspaceId, FILE), 'line one\nline 2\nline three\n')
+  assert.deepEqual(editor.edits, [[14, 17, '2']], 'one edit, over the word that changed')
+  assert.equal(editor.fullReplaces, 0, 'the wrapper never replaced the whole text, so the caret did not jump')
+  assert.equal(isDirty(workspaceId), false, 'a reload is not an unsaved edit')
+  assert.equal(noticeTitle(), null, 'and nothing to ask about')
+  assert.deepEqual(writes, [])
+})
+
+test('a dirty tab asks: Changed on disk, and Reload takes the version on disk', async () => {
+  const { workspaceId, editor } = await mountEditor('const a = 1\n')
+  await act(async () => editor.type('const a = 1 // mine\n'))
+  disk.set(FILE, 'const a = 2\n')
+  await agentTouchesFile()
+
+  assert.match(noticeTitle() ?? '', /Changed on disk/u)
+  assert.equal(editor.text, 'const a = 1 // mine\n', 'the person’s edits are untouched until they choose')
+  assert.equal(isDirty(workspaceId), true)
+
+  await act(async () => button('Reload').click())
+  await settle()
+  assert.equal(editor.text, 'const a = 2\n')
+  assert.equal(getEditorBuffer(workspaceId, FILE), 'const a = 2\n')
+  assert.equal(isDirty(workspaceId), false)
+  assert.equal(noticeTitle(), null)
+})
+
+test('Keep mine leaves the edits, and the next save writes them over the agent’s', async () => {
+  const { workspaceId, editor } = await mountEditor('const a = 1\n')
+  await act(async () => editor.type('const a = 1 // mine\n'))
+  disk.set(FILE, 'const a = 2\n')
+  await agentTouchesFile()
+
+  await act(async () => button('Keep mine').click())
+  await settle()
+  assert.equal(noticeTitle(), null, 'the notice goes')
+  assert.equal(editor.text, 'const a = 1 // mine\n')
+  assert.equal(isDirty(workspaceId), true, 'still unsaved')
+
+  await pressSave(editor)
+  assert.deepEqual(writes, [{ path: FILE, content: 'const a = 1 // mine\n' }])
+  assert.equal(isDirty(workspaceId), false)
+})
+
+test('the watch event a save causes is the tab’s own, even when typing went on after it', async () => {
+  const { workspaceId, editor } = await mountEditor('let n = 0\n')
+  await act(async () => editor.type('let n = 1\n'))
+  await pressSave(editor)
+  await act(async () => editor.type('let n = 1\nn++\n'))
+  await agentTouchesFile()
+
+  assert.equal(noticeTitle(), null, 'no notice for Studio’s own write')
+  assert.equal(editor.text, 'let n = 1\nn++\n', 'and nothing typed since is taken away')
+  assert.equal(isDirty(workspaceId), true)
+})
+
+test('a file deleted on disk says so and keeps the text', async () => {
+  const { workspaceId, editor } = await mountEditor('keep me\n')
+  disk.delete(FILE)
+  await agentTouchesFile()
+
+  assert.match(noticeTitle() ?? '', /Deleted on disk/u)
+  assert.equal(editor.text, 'keep me\n')
+  assert.equal(getEditorBuffer(workspaceId, FILE), 'keep me\n')
+})
+
+test('closing the tab closes the folder watch', async () => {
+  await mountEditor('x\n')
+  const watcher = watchers.find((candidate) => candidate.path === `${ROOT}/src`)
+  assert.ok(watcher && !watcher.stopped)
+  await act(async () => root?.unmount())
+  root = null
+  await settle()
+  assert.equal(watcher.stopped, true)
+})
