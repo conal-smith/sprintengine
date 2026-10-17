@@ -303,6 +303,9 @@ test('skillSourcesSeam', async () => {
   async function main(): Promise<void> {
     const workspaceRoot = temporaryDir('sprintengine-seam-skills-ws-')
     const userDataDir = temporaryDir('sprintengine-seam-skills-userdata-')
+    // Installs land in the home folder by default. This one is the test's own,
+    // so nothing here ever writes into the skills of the machine running it.
+    const homeDir = temporaryDir('sprintengine-seam-skills-home-')
 
     const { createSkillsService } = await import('../main/skills')
     const { createAgentCapabilityService, createFsSkillDirectoryReader, createWorkspaceSkillsService } =
@@ -326,6 +329,7 @@ test('skillSourcesSeam', async () => {
       // build ships, and everything below reads and installs from that.
       studioMarketplaceSeedRoot: () => join(process.cwd(), 'resources', STUDIO_MARKETPLACE_RESOURCE_DIR),
       github: { fetcher: (url) => fixtureFetch(url) },
+      homeDir,
     })
 
     // The real registrations, on the stub `electron` that wires `ipcMain.handle`
@@ -336,20 +340,21 @@ test('skillSourcesSeam', async () => {
     // registry is what "this machine has no CLI installed" resolves to.
     const capabilityWatcher = createCapabilityWatcher({ listPlugins: () => [], lookupManifest: () => undefined })
     registerWorkspaceSkillsIpc(ipcMain, {
-      workspaceSkills: createWorkspaceSkillsService(),
+      workspaceSkills: createWorkspaceSkillsService({ homeDir }),
       agentCapabilities: createAgentCapabilityService({
         reader: createFsSkillDirectoryReader(),
         listPlugins: () => [],
         lookupManifest: () => undefined,
         mcpResolver: createMcpServerResolver(),
         freshness: capabilityWatcher,
+        homeDir,
       }),
-      agentSkillInstaller: createAgentSkillInstaller({ listPlugins: () => [] }),
+      agentSkillInstaller: createAgentSkillInstaller({ listPlugins: () => [], homeDir }),
     })
     domWindow.api = withInertPreloadFallback({ platform: 'darwin', ...skillsApi, ...workspaceSkillsApi })
 
-    await testScanBrowseReadInstallSync(workspaceRoot)
-    await testCrossSourceCollisionKeepsItsOwnBytes()
+    await testScanBrowseReadInstallSync(workspaceRoot, homeDir)
+    await testCrossSourceCollisionKeepsItsOwnBytes(homeDir)
     await testRetiredSkillPacksDeepLinkStillOpensSkills()
 
     // Everything this suite did, across every source, stayed inside the two hosts
@@ -369,7 +374,7 @@ test('skillSourcesSeam', async () => {
 
   // --- 1932/1933/1934/1935: the chain, through the mounted surface -------------
 
-  async function testScanBrowseReadInstallSync(workspaceRoot: string): Promise<void> {
+  async function testScanBrowseReadInstallSync(workspaceRoot: string, homeDir: string): Promise<void> {
     const React = await import('react')
     const { act } = React
     const { createRoot } = await import('react-dom/client')
@@ -382,7 +387,7 @@ test('skillSourcesSeam', async () => {
     const api = domWindow.api as {
       skillsAddSource: (input: { repo: string }) => Promise<{ ok: boolean; message?: string }>
       skillsGetScan: (input: { sourceId: string }) => Promise<{ ok: boolean; scan: ScanResult }>
-      workspaceSkillsList: (input: { workspaceRoot: string }) => Promise<{
+      workspaceSkillsList: (input: { workspaceRoot: string; includeGlobal?: boolean }) => Promise<{
         ok: boolean
         skills: WorkspaceSkill[]
       }>
@@ -650,7 +655,9 @@ test('skillSourcesSeam', async () => {
     await click(buttonLabelledIn('mattpocock/skills', 'Install research'))
     await settleUntil('the research install', () => markup().includes('Installed 1 skill.'))
 
-    const installed = (harness: string, ...rest: string[]): string => join(workspaceRoot, harness, 'skills', ...rest)
+    // Install puts a skill where every agent reads it in every project: the
+    // home folder's harness directories, not the open workspace's.
+    const installed = (harness: string, ...rest: string[]): string => join(homeDir, harness, 'skills', ...rest)
     for (const harness of ['.claude', '.agents']) {
       for (const path of ['SKILL.md', 'LOGIC.md', 'UI.md', join('agents', 'openai.yaml')]) {
         assert.ok(
@@ -683,7 +690,7 @@ test('skillSourcesSeam', async () => {
 
     // The installed copy is the one the agent-facing inventory reads, so a skill
     // installed from a source is a skill an agent can be handed.
-    const inventory = await api.workspaceSkillsList({ workspaceRoot })
+    const inventory = await api.workspaceSkillsList({ workspaceRoot, includeGlobal: true })
     assert.ok(inventory.ok)
     const research = inventory.skills.find((skill) => skill.id === 'research')
     assert.ok(research, 'the installed skill is listed by the workspace inventory')
@@ -787,7 +794,11 @@ test('skillSourcesSeam', async () => {
    *  3. the user installs a mattpocock skill, mattpocock moves again, and that
    *     one *is* re-copied — the protection must not have closed the feature.
    */
-  async function testCrossSourceCollisionKeepsItsOwnBytes(): Promise<void> {
+  async function testCrossSourceCollisionKeepsItsOwnBytes(homeDir: string): Promise<void> {
+    // A sync refreshes the copies installed for every project too. The section
+    // above left its installs in this shared home; this one is about a
+    // workspace's copies alone, so it starts from an empty home.
+    for (const harness of ['.claude', '.agents']) rmSync(join(homeDir, harness), { recursive: true, force: true })
     const { skillDirName } = await import('../shared/skills')
     const { readSkillProvenance, SKILL_PROVENANCE_FILE } = await import('../main/skills/install')
 

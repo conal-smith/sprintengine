@@ -187,12 +187,10 @@ export function InstalledExtensionsInventory({
       setSkills({ status: 'unsupported' })
       return
     }
-    if (!workspaceRoot) {
-      setSkills({ status: 'unavailable', reason: 'Open a workspace to see the skills installed in it.' })
-      return
-    }
     try {
-      const result = await window.api.workspaceSkillsList({ workspaceRoot })
+      // The skills installed for every project are as much "installed" as the
+      // folder's: every agent reads them, with or without a folder open.
+      const result = await window.api.workspaceSkillsList({ workspaceRoot, includeGlobal: true })
       setSkills(result.ok ? { status: 'ok', value: result.skills } : { status: 'error', message: result.message })
     } catch (error) {
       setSkills({ status: 'error', message: errorMessage(error, 'Could not list installed skills.') })
