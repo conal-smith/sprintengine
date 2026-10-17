@@ -260,3 +260,43 @@ test('what the launch integration carries reaches the command line, the settings
     setLaunchPluginDirsResolver(null)
   }
 })
+
+test("an OpenCode terminal agent's permission rules join the integration's config document in the startup script too", () => {
+  const cwd = join(temp, 'workspace-opencode-rules')
+  mkdirSync(cwd, { recursive: true })
+  const mcp = { docs: { type: 'local', command: ['x'] } }
+  const config = withPlatform('darwin', () =>
+    getShellLaunchConfig(
+      cwd,
+      'sid-opencode-rules',
+      false,
+      'opencode',
+      undefined,
+      { opencode: { command: 'opencode' } },
+      'manual',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { kind: 'posix' },
+      { integration: { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp }) } } },
+    ),
+  )
+  try {
+    const script = config.startupScriptPath ? readFileSync(config.startupScriptPath, 'utf8') : ''
+    // The script exports the document after the login profile, so what it
+    // exports is what OpenCode reads: the rules and the MCP table together.
+    const exported = /export OPENCODE_CONFIG_CONTENT='([^']*)'/u.exec(script)?.[1]
+    assert.ok(exported, 'the startup script exports the config document')
+    for (const content of [JSON.parse(exported), JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')]) {
+      assert.deepEqual(content.mcp, mcp)
+      assert.equal(content.permission?.['*'], 'ask')
+      assert.equal(content.permission?.bash, 'ask')
+    }
+  } finally {
+    cleanupTerminalStartupScript(config.startupScriptPath)
+  }
+})
