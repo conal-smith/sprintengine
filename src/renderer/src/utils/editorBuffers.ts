@@ -4,6 +4,11 @@ type EditorBufferListener = () => void
 
 const buffers = new Map<string, string>()
 const listeners = new Map<string, Set<EditorBufferListener>>()
+// What each open file held on disk when the editor last read or wrote it. The
+// buffer is compared against it when the file changes on disk, to tell an
+// agent's edit from the editor's own save (utils/editorDiskSync.ts). Kept
+// beside the buffers so it follows them through a rename, a move and a close.
+const diskBaselines = new Map<string, string>()
 
 function bufferKey(workspaceId: string, path: string): string {
   return `${workspaceId}\u0000${path}`
@@ -28,8 +33,23 @@ export function setEditorBuffer(workspaceId: string, path: string, content: stri
   emit(workspaceId, path)
 }
 
+export function getEditorDiskBaseline(workspaceId: string, path: string): string | undefined {
+  return diskBaselines.get(bufferKey(workspaceId, path))
+}
+
+export function setEditorDiskBaseline(workspaceId: string, path: string, content: string): void {
+  diskBaselines.set(bufferKey(workspaceId, path), content)
+}
+
+function moveDiskBaseline(fromKey: string, toKey: string): void {
+  const baseline = diskBaselines.get(fromKey)
+  diskBaselines.delete(fromKey)
+  if (baseline !== undefined) diskBaselines.set(toKey, baseline)
+}
+
 export function deleteEditorBuffer(workspaceId: string, path: string): void {
   const key = bufferKey(workspaceId, path)
+  diskBaselines.delete(key)
   if (!buffers.delete(key)) return
   emit(workspaceId, path)
 }
@@ -48,6 +68,7 @@ export function remapEditorBuffers(workspaceId: string, fromPath: string, toPath
     const nextPath = `${toPath}${suffix}`
     buffers.delete(key)
     buffers.set(bufferKey(workspaceId, nextPath), content)
+    moveDiskBaseline(key, bufferKey(workspaceId, nextPath))
     emit(workspaceId, path)
     emit(workspaceId, nextPath)
   }
@@ -60,6 +81,7 @@ export function moveEditorBuffer(sourceWorkspaceId: string, destWorkspaceId: str
   const content = buffers.get(sourceKey) ?? ''
   buffers.delete(sourceKey)
   buffers.set(bufferKey(destWorkspaceId, path), content)
+  moveDiskBaseline(sourceKey, bufferKey(destWorkspaceId, path))
   emit(sourceWorkspaceId, path)
   emit(destWorkspaceId, path)
 }
@@ -69,6 +91,7 @@ export function removeEditorBuffersForPath(workspaceId: string, path: string): v
     const [bufferWorkspaceId, bufferPath] = key.split('\u0000')
     if (bufferWorkspaceId !== workspaceId || !bufferPath || !isPathOrChild(bufferPath, path)) continue
     buffers.delete(key)
+    diskBaselines.delete(key)
     emit(workspaceId, bufferPath)
   }
 }
