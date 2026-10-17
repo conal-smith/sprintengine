@@ -63,6 +63,7 @@ test('a hello is welcomed with the grant, the Studio capabilities and the conver
   assert.ok(welcome.t === 'welcome' && welcome.conversation.capabilities.includes('conversation-plans'))
   assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-images'))
   assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-message-images'))
+  assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-image-downscale'))
   const info = await request(c, 'i1', 'server.info')
   assert.equal(info.ok && (info.result as { grant: { clientId: string } }).grant.clientId, 'reader')
 })

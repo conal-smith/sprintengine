@@ -14,6 +14,7 @@ import {
   type ShellRevealTarget,
 } from '../server/shell-bridge/shell-bridge'
 import { createInProcessShellBridge } from './shell-bridge'
+import type { DecodedImage, ImageCodec } from './conversation-image-downscale'
 
 // The bridge's contract, run against both implementations: the shell's own
 // (what the server calls in process) and the remote one a server out of
@@ -48,6 +49,24 @@ function fakeSafeStorage() {
   }
 }
 
+// An image codec over text: `img:<w>x<h>` decodes at that size, and encodes as
+// `png:<w>x<h>` or `jpeg:<w>x<h>`, so a test reads what was drawn at what size.
+function textImage(width: number, height: number): DecodedImage {
+  return {
+    width,
+    height,
+    resize: (nextWidth, nextHeight) => textImage(nextWidth, nextHeight),
+    png: () => utf8Bytes(`png:${width}x${height}`),
+    jpeg: () => utf8Bytes(`jpeg:${width}x${height}`),
+  }
+}
+const textImageCodec: ImageCodec = {
+  decode(bytes) {
+    const match = /^img:(\d+)x(\d+)$/.exec(utf8Text(bytes))
+    return match ? textImage(Number(match[1]), Number(match[2])) : null
+  },
+}
+
 function shellHarness(): Harness & { shellBridge: ShellBridge } {
   const notices: StudioNotice[] = []
   const reveals: ShellRevealTarget[] = []
@@ -70,6 +89,7 @@ function shellHarness(): Harness & { shellBridge: ShellBridge } {
     notifier: { notify: (notice) => notices.push(notice) },
     analytics: (event) => events.push(event),
     integrationsReady: () => gate,
+    imageCodec: textImageCodec,
   })
   return {
     bridge: shellBridge,
@@ -206,6 +226,17 @@ for (const [name, make] of [
       assert.deepEqual(harness.events, [{ name: 'conversation.started', properties: { cli: 'claude' } }])
     })
 
+    test("a paired device's picture comes back sized for the model, and one the codec cannot read as it was", async () => {
+      const harness = make()
+      const shrunk = await harness.bridge.images.downscale(utf8Bytes('img:4032x3024'), 'image/jpeg')
+      assert.deepEqual(
+        { ...shrunk, bytes: utf8Text(shrunk.bytes) },
+        { bytes: 'jpeg:1568x1176', mediaType: 'image/jpeg' },
+      )
+      const unread = await harness.bridge.images.downscale(utf8Bytes('not an image'), 'image/webp')
+      assert.deepEqual({ ...unread, bytes: utf8Text(unread.bytes) }, { bytes: 'not an image', mediaType: 'image/webp' })
+    })
+
     test('launches wait for the integrations gate', async () => {
       const harness = make()
       let open = false
@@ -222,7 +253,7 @@ for (const [name, make] of [
 }
 
 describe('ShellBridge when the shell has gone', () => {
-  test('a seal fails, a launch says so, a reveal is false, and the integrations gate lets launches go', async () => {
+  test('a seal fails, a launch says so, a reveal is false, the integrations gate lets launches go, and a picture goes on unshrunk', async () => {
     const harness = remoteHarness()
     harness.cutShell()
     await assert.rejects(harness.bridge.cipher.seal(utf8Bytes('x')), /shell has gone/)
@@ -231,5 +262,7 @@ describe('ShellBridge when the shell has gone', () => {
     assert.equal(!launched.ok && launched.code, 'shell_unavailable')
     assert.equal(await harness.bridge.reveal.tab({ kind: 'app' }), false)
     await harness.bridge.integrationsReady()
+    const picture = await harness.bridge.images.downscale(utf8Bytes('img:4032x3024'), 'image/png')
+    assert.equal(utf8Text(picture.bytes), 'img:4032x3024', 'a picture stays the size it was sent')
   })
 })
