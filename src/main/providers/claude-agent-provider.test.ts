@@ -3496,6 +3496,30 @@ test('a local command reported only on its result, or as system output, still sh
   )
 })
 
+test('a slash command whose `!` line Claude Code refused says why instead of ending with nothing', async () => {
+  const refusal =
+    'Shell command permission check failed for pattern "!`touch out.txt &amp;&amp; echo done`": touch in ' +
+    "'/Users/dev/app/out.txt' needs approval."
+  const events = await commandTurn('/project:deploy', (h) => {
+    h.emit({
+      type: 'user',
+      parent_tool_use_id: null,
+      isReplay: true,
+      message: { role: 'user', content: `<local-command-stderr>${refusal}</local-command-stderr>` },
+    })
+    h.emit(success({ user_message_uuids: [h.uuidOf(0)], num_turns: 0 }))
+  })
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ['turn_started', 'command_output', 'turn_completed'],
+  )
+  assert.equal(
+    events[1]?.payload?.output,
+    'Shell command permission check failed for pattern "!`touch out.txt && echo done`": touch in ' +
+      "'/Users/dev/app/out.txt' needs approval.",
+  )
+})
+
 test('/compact still marks the compaction, and what it printed is left to that divider', async () => {
   const events = await commandTurn('/compact', (h) => {
     h.emit({
