@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
 import type { WebContents } from 'electron'
+import { JSDOM } from 'jsdom'
 import { CONSOLE_BUFFER_MAX, createBrowserControl, parseKeyChord } from './browser-control'
 import type { BrowserDownload } from './browser-manager'
 import { test } from 'vitest'
@@ -222,6 +223,52 @@ test('browser-control', async () => {
       assert.equal(parseKeyChord('Ctrl+Alt+Delete+Foo'), null)
       assert.equal(parseKeyChord(''), null)
       assert.equal(parseKeyChord('Hyperspace'), null)
+    })
+
+    await run('a snapshot says a secret field is filled and never prints what it holds', async () => {
+      const { wc, control } = fixture()
+      const dom = new JSDOM(
+        `<body>
+          <input aria-label="Email" value="dev@example.com">
+          <input aria-label="Password" type="password" value="hunter2-password">
+          <input aria-label="Shown password" autocomplete="current-password" value="shown-password">
+          <input aria-label="Code" autocomplete="one-time-code" value="424242">
+          <input aria-label="Card" autocomplete="billing cc-number" value="4111111111111111">
+          <input aria-label="CVC" autocomplete="cc-csc" value="737">
+          <input aria-label="PIN" style="-webkit-text-security: disc" value="9876">
+          <input aria-label="Empty password" type="password">
+        </body>`,
+        { runScripts: 'outside-only', pretendToBeVisual: true },
+      )
+      // jsdom lays nothing out; every element gets a box so the walker sees it.
+      dom.window.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 20 }) as DOMRect
+      // jsdom drops a style property it does not know; Chromium reports it.
+      const computed = dom.window.getComputedStyle.bind(dom.window)
+      dom.window.getComputedStyle = (el: Element) => {
+        const style = computed(el)
+        const masked = el.getAttribute('style')?.includes('-webkit-text-security: disc')
+        return new Proxy(style, {
+          get: (target, key) =>
+            key === 'getPropertyValue'
+              ? (name: string) =>
+                  name === '-webkit-text-security' ? (masked ? 'disc' : 'none') : target.getPropertyValue(name)
+              : Reflect.get(target, key),
+        })
+      }
+      wc.debugger.respond = (method, params) =>
+        method === 'Runtime.evaluate' ? evaluation(dom.window.eval(String(params?.expression))) : {}
+
+      const snapshot = await control.snapshot('t1')
+      assert.ok(snapshot.ok, snapshot.ok ? '' : snapshot.message)
+      const lineOf = (name: string) => snapshot.text.split('\n').find((line) => line.includes(`"${name}"`)) ?? ''
+      assert.match(lineOf('Email'), /value="dev@example\.com"/)
+      for (const name of ['Password', 'Shown password', 'Code', 'Card', 'CVC', 'PIN']) {
+        assert.match(lineOf(name), /value=hidden /, name)
+      }
+      assert.doesNotMatch(lineOf('Empty password'), /value=/)
+      for (const secret of ['hunter2-password', 'shown-password', '424242', '4111111111111111', '737', '9876']) {
+        assert.ok(!snapshot.text.includes(secret), `${secret} is not in the snapshot`)
+      }
     })
 
     await run('an unknown tab is no_tab; DevTools open refuses to attach', async () => {
