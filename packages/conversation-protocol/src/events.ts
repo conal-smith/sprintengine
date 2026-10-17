@@ -347,6 +347,26 @@ export type ConversationBackgroundTask = {
 }
 
 /**
+ * Where a session's goal stands. `active`: the agent is working toward it and
+ * starts its next turn by itself. `paused`: the person paused it. `blocked`:
+ * the agent cannot get further without them. `usageLimited` and
+ * `budgetLimited`: it stopped at a plan's limit or the goal's own budget.
+ * `complete`: the goal is met.
+ */
+export type ConversationGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete'
+
+/**
+ * A goal the session's agent keeps working toward by itself, turn after turn
+ * (Codex's `/goal`). A `session_updated` event carries it as `goal` when it
+ * changes, and `goal: null` once there is none. The turns the agent starts
+ * toward it are `turn_started` events with no `user_message` before them.
+ */
+export type ConversationGoal = {
+  objective: string
+  status: ConversationGoalStatus
+}
+
+/**
  * What an `approval_requested` event asks for. Each kind has its own answer:
  * a `tool` permission is resolved with an approval decision, a `question`
  * with its answers, a `plan` with approve or reject.

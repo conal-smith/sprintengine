@@ -5,6 +5,7 @@ import type { ConversationImageAttachment, ConversationStoredImageAttachment } f
 import type {
   ConversationApprovalKind,
   ConversationBackgroundTask,
+  ConversationGoal,
   ConversationQuestion,
   ConversationSessionStatus,
   ConversationEvent,
@@ -21,6 +22,7 @@ import { normalizeApiKeySource } from './apiKeySource.js'
 import { applyPromptCacheEvent, type PromptCacheReading } from './promptCache.js'
 import { isBackgroundLaunchAck, readSubagentStatus } from './subagents.js'
 import { readBackgroundTasks } from './backgroundTasks.js'
+import { readConversationGoal } from './goal.js'
 
 // ── Pure projection ─────────────────────────────────────────────────────────
 
@@ -309,6 +311,9 @@ export type ConversationProjection = {
   // The shells and monitors the session's process still runs after its turn
   // ended, as it last reported them: what the agent is waiting on.
   backgroundTasks: ConversationBackgroundTask[]
+  // The goal the agent keeps working toward by itself, as it last reported
+  // it; null for none.
+  goal: ConversationGoal | null
   // What each kind of agent this session can spawn is for, by type name
   // ('Explore', 'Plan', a custom agent), as the provider described them.
   agentTypes: Record<string, string>
@@ -639,6 +644,7 @@ export function projectConversation(
   let apiKeySource: string | null = null
   let sessionNotice: string | null = null
   let backgroundTasks: ConversationBackgroundTask[] = []
+  let goal: ConversationGoal | null = null
   const agentTypes: Record<string, string> = {}
   let promptCache: PromptCacheReading | null = null
   // Reverts still in effect, oldest first. Each covers the turns from its
@@ -735,8 +741,10 @@ export function projectConversation(
         // false-alarm the API-key banner after a restart).
         apiKeySource = null
         sessionNotice = null
-        // A new session's process runs nothing yet.
+        // A new session's process runs nothing yet, and says its goal again
+        // once it has read the thread's.
         backgroundTasks = []
+        goal = null
         break
       }
       case 'session_updated': {
@@ -747,6 +755,8 @@ export function projectConversation(
         const notice = readString(event.payload, 'notice')
         if (notice) sessionNotice = notice
         backgroundTasks = readBackgroundTasks(event.payload) ?? backgroundTasks
+        const reportedGoal = readConversationGoal(event.payload)
+        if (reportedGoal !== undefined) goal = reportedGoal
         if (Array.isArray(event.payload?.agents))
           for (const agent of event.payload.agents) {
             const name = readString(agent as Record<string, unknown>, 'name')
@@ -1273,6 +1283,7 @@ export function projectConversation(
     apiKeySource,
     sessionNotice,
     backgroundTasks,
+    goal,
     agentTypes,
     revertedAfterSeq: reverts.at(-1)?.afterSeq ?? null,
     promptCache,

@@ -306,3 +306,20 @@ test('an MCP step keeps the title and server name its provider reported, through
     { displayTitle?: string; serverName?: string } | undefined
   expect([tool?.displayTitle, tool?.serverName]).toEqual(['Search threads', 'Gmail'])
 })
+
+// The provider says the goal when it changes, and null once there is none; a
+// session that starts again says it again once it has read the thread's.
+test('the projection keeps the goal the session last reported, until it is cleared or a new session starts', () => {
+  const goal = { objective: 'make the parser tests pass', status: 'active' }
+  const reported = (events: ConversationEvent[]) => projectConversation(events).goal
+  const opened = [event('session_started', 0), event('session_updated', 10, { goal })]
+
+  expect(reported(opened)).toEqual(goal)
+  expect(reported([...opened, event('session_updated', 20, { notice: 'Model changed' })])).toEqual(goal)
+  expect(reported([...opened, event('session_updated', 20, { goal: { ...goal, status: 'paused' } })])).toEqual({
+    ...goal,
+    status: 'paused',
+  })
+  expect(reported([...opened, event('session_updated', 20, { goal: null })])).toBeNull()
+  expect(reported([...opened, event('session_started', 30)])).toBeNull()
+})
