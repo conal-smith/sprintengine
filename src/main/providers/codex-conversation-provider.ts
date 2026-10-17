@@ -32,7 +32,14 @@ import { explainCodexInitializeTimeout, isCodexInitializeTimeout } from './codex
 import { conversationCommandsFor, publishConversationCommands } from '../conversation-commands/registry'
 import { mcpServerStatusFor, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
-import { CODEX_COMPACT_COMMAND, codexCompactRequest, codexConversationCommands } from '../conversation-commands/codex'
+import {
+  CODEX_COMPACT_COMMAND,
+  codexCompactRequest,
+  codexConversationCommands,
+  codexListedSkills,
+  codexSkillInputs,
+  type CodexListedSkill,
+} from '../conversation-commands/codex'
 import type { ConversationCommand } from '../../shared/conversation/commands'
 import { codexPlanInput, codexTool, codexToolResult } from './codex-items'
 import { saveToolResultImages, type SaveToolResultImages } from './tool-result-images'
@@ -65,6 +72,9 @@ const positiveNumber = (value: unknown): number | undefined =>
 const PATCH_APPROVAL_WAIT_MS = 1_000
 // The longest subagent message a transcript event keeps.
 const CHILD_MESSAGE_CHARS = 32 * 1024
+// How long a turn that mentions a `$skill` waits for a skill listing still
+// being asked before it goes with the mentions as text alone.
+const SKILLS_WAIT_MS = 5_000
 // Who this app is to Codex. The experimental API is what Codex's own clients
 // run on, and the surface its newer items are reported through.
 const CODEX_INITIALIZE = {
@@ -198,6 +208,9 @@ type Session = {
   // How the signed-in account pays, from `account/read`: only a ChatGPT
   // sign-in has plan limits to read. Null until known.
   usageBilling?: 'subscription' | 'api' | null
+  // The skills Codex listed for the chat's folder, latest asking first: what
+  // a `$name` in a message is matched against at `turn/start`.
+  skills?: Promise<CodexListedSkill[]>
 }
 export type CodexConversationProviderOptions = {
   resolveExecutable?: (input: MockAdapterSessionInput) => Promise<string>
@@ -943,11 +956,18 @@ export function createCodexConversationProvider(
     // Codex is asked about the folder as it names it; the menu is keyed by the
     // folder as this machine does.
     const codexCwd = hostCwd(cwd, state.wsl)
+    const listing = transport.request('skills/list', {
+      cwds: [codexCwd],
+      ...(forceReload ? { forceReload } : {}),
+    })
+    // A turn starting while this is asked waits for it rather than sending
+    // its `$name` mentions as text alone.
+    state.skills = listing.then(
+      (listed) => codexListedSkills(listed, codexCwd),
+      () => [],
+    )
     try {
-      const listed = await transport.request('skills/list', {
-        cwds: [codexCwd],
-        ...(forceReload ? { forceReload } : {}),
-      })
+      const listed = await listing
       publishConversationCommands({ cli: 'codex', cwd, commands: codexConversationCommands(listed, codexCwd) })
     } catch (error) {
       if (state.transport !== transport) return
@@ -957,6 +977,21 @@ export function createCodexConversationProvider(
         commands: [],
         error: error instanceof Error ? error.message : 'Codex could not list its skills.',
       })
+    }
+  }
+  // The skills listed for the chat's folder, waiting a moment for a listing
+  // still being asked (the first turn's is asked as the thread starts). A
+  // listing slower than that leaves the turn's mentions as text.
+  async function listedSkillsSoon(state: Session): Promise<CodexListedSkill[]> {
+    if (!state.skills) return []
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<CodexListedSkill[]>((resolve) => {
+      timer = setTimeout(() => resolve([]), SKILLS_WAIT_MS)
+    })
+    try {
+      return await Promise.race([state.skills, late])
+    } finally {
+      clearTimeout(timer)
     }
   }
   // Codex's own account of each MCP server: whether it connected, whether it
@@ -1350,6 +1385,11 @@ export function createCodexConversationProvider(
           if (input.mode === 'ask' && !codexPermissionPolicy(state.input.permissionPreset).approvalPolicy)
             state.resetPolicy = true
           const seeding = state.replayHistory
+          // A `$name` Codex listed goes as the skill itself too, by its path;
+          // the text keeps the mention as typed.
+          const skills = input.message.includes('$')
+            ? codexSkillInputs(input.message, await listedSkillsSoon(state))
+            : []
           const result = record(
             await state.transport!.request('turn/start', {
               threadId: state.threadId,
@@ -1357,6 +1397,7 @@ export function createCodexConversationProvider(
               ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
               input: [
                 { type: 'text', text: withReplayedHistory(state, input.message), text_elements: [] },
+                ...skills,
                 ...(input.attachments ?? []).map((attachment) => ({
                   type: 'image',
                   url: `data:${attachment.mediaType};base64,${attachment.dataBase64}`,

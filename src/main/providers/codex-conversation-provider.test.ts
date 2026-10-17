@@ -1223,6 +1223,33 @@ test('Codex offers /compact as soon as a chat starts, and its skills once the ap
   expect(f.events.at(-1)?.type).toBe('turn_completed')
 })
 
+test('a $skill Codex listed goes to turn/start as the skill itself beside the text, an unknown one as text alone', async () => {
+  const path = '/workspace/skills/.codex/skills/release-notes/SKILL.md'
+  const f = fixture({
+    skills: { data: [{ cwd: '/workspace/skills', skills: [{ name: 'release-notes', path, enabled: true }] }] },
+  })
+  f.input.workspaceRoot = '/workspace/skills'
+  await f.adapter.startSession(f.input)
+  const message = 'Use $release-notes and $unknown for v2.'
+  const first = f.send(undefined, undefined, message)
+  await f.started
+  expect((f.calls.find((call) => call.method === 'turn/start')?.params as { input: unknown[] }).input).toEqual([
+    { type: 'text', text: message, text_elements: [] },
+    { type: 'skill', name: 'release-notes', path },
+  ])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await first
+
+  f.nextTurn()
+  const second = f.send(undefined, undefined, 'No skill: $unknown costs $5.')
+  await f.started
+  expect((f.calls.filter((call) => call.method === 'turn/start').at(-1)?.params as { input: unknown[] }).input).toEqual(
+    [{ type: 'text', text: 'No skill: $unknown costs $5.', text_elements: [] }],
+  )
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await second
+})
+
 test('/compact at the start of a message compacts the thread natively instead of sending it as a turn', async () => {
   const f = fixture()
   await f.adapter.startSession(f.input)
