@@ -20,6 +20,7 @@ import { DesignCanvas, type DesignCanvasTabId } from './DesignCanvas'
 import { NewDesignSystemScreen, type NewDesignSystemSource } from './NewDesignSystemScreen'
 import { DesignRail } from './DesignRail'
 import { ProjectScopePicker, type ProjectScopeOption } from '../../agentComposer/ProjectScopePicker'
+import { newChatProjectOptionsOf } from '../../workspaceManagerHelpers'
 import { StudioSkillSuggestion } from '../../../studioSkills/StudioSkillSuggestion'
 import {
   designFailureLine,
@@ -114,22 +115,16 @@ export default function DesignGlobalSurface(): JSX.Element {
   })
   const projectBundlePath = projectPath ? pathJoin(projectPath, ATTACHED_BUNDLE_DIRECTORY) : null
 
-  // The projects on offer: every open workspace's folder, deduped. The picker
-  // adds the app's recent folders itself, and Browse… covers a system living in
-  // a project that is not open at all.
-  const projectOptions = useMemo<ProjectScopeOption[]>(() => {
-    const seen = new Set<string>()
-    const options: ProjectScopeOption[] = []
-    for (const workspace of workspaces) {
-      const path = workspace.folderPath?.trim()
-      if (!path) continue
-      const key = path.replace(/\\/g, '/').replace(/\/+$/u, '').toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      options.push({ path, label: basenameOfPath(path) })
-    }
-    return options
-  }, [workspaces])
+  // The projects on offer: one per project open here, deduped. The picker adds
+  // the app's recent folders itself, and Browse… covers a system living in a
+  // project that is not open at all. A chat in a worktree (a pool slot,
+  // `chat-…`) offers the project it was cut from, never its worktree folder —
+  // the same list New chat offers — so the door lists projects, not one row
+  // per chat's checkout. Rail order, as before: the door has no "used last".
+  const projectOptions = useMemo<ProjectScopeOption[]>(
+    () => newChatProjectOptionsOf(workspaces).map(({ path, label }) => ({ path, label })),
+    [workspaces],
+  )
 
   // The persisted registry (item 2004): every folder the user has pointed at,
   // with the source state the main process probed for it. Ids are stable across

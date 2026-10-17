@@ -1552,6 +1552,44 @@ test('NewAgentPanel', async () => {
     )
 
     await check(
+      "a remote machine's project list holds its projects, never the worktrees its chats run in",
+      async () => {
+        seedStore()
+        resetRememberedMachineForTests()
+        meshConnections = [machine('m1', 'Air')]
+        meshBrowseAnswer = (id) => ({
+          connectionId: id,
+          reachable: true,
+          unreachableReason: null,
+          unauthorized: false,
+          scopes: [],
+          workspaces: [
+            workspace('w1', 'alpha', '/Users/dev/alpha'),
+            workspace('w2', 'slot', '/Users/dev/.sprintengine-worktrees/alpha/pool-01'),
+            workspace('w3', 'cut', '/Users/dev/.sprintengine-worktrees/alpha/chat-k_iq'),
+            // Open over there only through a worktree chat: still its project.
+            workspace('w4', 'cut', '/Users/dev/.sprintengine-worktrees/beta/chat-3kmu'),
+          ],
+          gaps: [],
+        })
+        const view = await remoteRender()
+        await settle()
+        await pickMachine(view, 'Air')
+        await click(buttonWithText(view.container, 'Choose a project'))
+        const projects = dom.window.document.querySelector('[role="menu"][aria-label="Project on Air"]')
+        assert.ok(projects, 'the remote project list opens')
+        const rows = [...projects!.querySelectorAll('[role="menuitemradio"]')].map((row) =>
+          [...row.querySelectorAll('span.block')].map((span) => span.textContent?.trim()),
+        )
+        assert.deepEqual(rows, [
+          ['alpha', '/Users/dev/alpha'],
+          ['beta', '/Users/dev/beta'],
+        ])
+        view.unmount()
+      },
+    )
+
+    await check(
       "on Windows this computer's machines lead the dropdown, a pick rides the launch, and a WSL folder picks its distribution",
       async () => {
         seedStore()
