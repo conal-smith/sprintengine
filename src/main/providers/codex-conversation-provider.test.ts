@@ -1737,13 +1737,21 @@ test('what Codex reports beside the reply is said in the turn, once', async () =
   ])
 })
 
+const GRACE = ['-c', 'mcp_optional_startup_grace_ms=10000']
+
 test('the handshake asks for the experimental API, and extra app-server arguments come from the environment', async () => {
   const f = fixture({ env: { SPRINTENGINE_CODEX_APP_SERVER_ARGS: `-c 'features.code_mode_host=false'` } })
   await runTurn(f, [])
   expect(f.calls.find((call) => call.method === 'initialize')?.params).toMatchObject({
     capabilities: { experimentalApi: true },
   })
-  expect(f.connection.args).toEqual(['-c', 'features.code_mode_host=false'])
+  expect(f.connection.args).toEqual(['-c', 'features.code_mode_host=false', ...GRACE])
+})
+
+test("Codex waits 10 s, not its own 1 s, for a new thread's MCP servers, so a cold npx server's tools are there from the first turn", async () => {
+  const f = fixture()
+  await runTurn(f, [])
+  expect(f.connection.args).toEqual(['-c', 'mcp_optional_startup_grace_ms=10000'])
 })
 
 test("a chat's own MCP servers reach Codex as config overrides for its app-server alone", async () => {
@@ -1766,6 +1774,7 @@ test("a chat's own MCP servers reach Codex as config overrides for its app-serve
   expect(f.connection.args).toEqual([
     '-c',
     'features.code_mode_host=false',
+    ...GRACE,
     '-c',
     'mcp_servers.railway={ "command" = "npx", "args" = ["-y", "@railway/mcp"], "env_vars" = ["RAILWAY_TOKEN"], "env" = { "RAILWAY_ENV" = "prod" } }',
   ])
@@ -1836,7 +1845,7 @@ test('a Codex chat whose gateway cannot be resolved still starts, with only its 
     },
   })
   await runTurn(f, [])
-  expect(f.connection.args).toEqual([])
+  expect(f.connection.args).toEqual(GRACE)
 })
 
 // A chat with the gateway is told to lease a worktree from the pool rather than

@@ -19,7 +19,7 @@ import { generateHeadlessText, type HeadlessTextRequest, type HeadlessTextResult
 // module, on the engine the person chose for Studio's text generation unless
 // the module names one.
 
-const CLAUDE = { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' }
+const CLAUDE = { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' }
 
 const envelope = (result: string, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
