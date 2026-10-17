@@ -284,6 +284,13 @@ its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
 send them (`docs/conversations.md`, "Machines and pull requests in the list").
+A listed chat's `backgroundWork` (2026-10-17: `{ agents, monitors }`, the
+background agents still running and the monitors that will wake its agent) is
+another, beside a `phase` left as the turn's own: the desktop's sidebar counts
+such a chat as working, but a phone of that date holds a plain send while the
+listed phase says `running`, so the phase could not carry it. An older phone
+ignores the member and shows the chat as finished, as before; a phone that
+reads it shows the chat working without holding sends.
 The context a chat has spent (`contextWindow` and `contextUsed` on a
 `usage_updated` event) is the same kind of member: a phone that does not read
 them shows no context ring, and one that does draws none for a desktop that
