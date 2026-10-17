@@ -53,6 +53,7 @@ import {
   MAX_DOWNSCALED_UPLOAD_BYTES,
 } from '../../../shared/conversation-attachments'
 import type { ConversationImageDownscaler } from '../../conversation-image-downscale'
+import { MAX_TAILNET_FILE_BYTES, type TailnetFileUploads } from './tailnet-file-uploads'
 import {
   createResyncBackoff,
   createTailnetConversationStream,
@@ -138,6 +139,12 @@ export type TailnetGatewayServerOptions = {
   devices: TailnetDeviceStore
   peers: TailnetPeerResolver
   conversations?: ConversationGatewayHost
+  /**
+   * Where a file a device sends with a message is kept (`upload?kind=file`):
+   * Studio's own store, never a project's folder. Without it this build
+   * refuses a file upload as unavailable; pictures are unaffected.
+   */
+  fileUploads?: TailnetFileUploads
   /**
    * Shrinks a picture a device uploaded to the size the model takes, by the
    * composer's rules (src/main/conversation-image-downscale.ts), before it is
@@ -396,7 +403,15 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     // Revocation must reach a device that is already mid-stream, not just its
     // next request: a live WebSocket would otherwise keep serving a device the
     // user just removed.
-    const unsubscribeRevoked = options.devices.onDeviceRevoked((deviceId) => closeStreamsFor(deviceId))
+    // The files a removed device sent go with it, as a removed browser's do.
+    const unsubscribeRevoked = options.devices.onDeviceRevoked((deviceId) => {
+      closeStreamsFor(deviceId)
+      try {
+        options.fileUploads?.forgetDevice(deviceId)
+      } catch (error) {
+        options.log?.(`tailnet uploads of a removed device were not removed: ${message(error)}`)
+      }
+    })
     // A narrowed grant reaches an open conversation socket the same way: it
     // re-reads the device and closes, or stops accepting commands. The RPC
     // stream needs no push: it re-reads the device on every message it answers.
@@ -457,6 +472,10 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * Streamed to disk with the ceiling enforced as the bytes arrive, so an
    * oversized upload is cut off mid-flight rather than buffered to discover
    * its size — and the part-written file is removed.
+   *
+   * `kind=file` is a file of any type instead (`conversation-message-files`),
+   * up to 25 MB, kept in Studio's own store rather than staged: the send that
+   * spends its id attaches it by path, and the agent reads it there.
    */
   async function handleUpload(
     request: IncomingMessage,
@@ -468,7 +487,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       writeJson(response, 403, {
         error: {
           code: 'tailnet_scope_required',
-          message: 'This device may read conversations but not attach images to them.',
+          message: 'This device may read conversations but not attach files to them.',
         },
       })
       return
@@ -496,6 +515,10 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       return
     }
     const mediaType = (headerOf(request, 'content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? ''
+    if (url.searchParams.get('kind') === 'file') {
+      await receiveFile(request, response, device, { sessionId, name, mediaType })
+      return
+    }
     if (!ATTACHABLE_IMAGE_TYPES.includes(mediaType as (typeof ATTACHABLE_IMAGE_TYPES)[number])) {
       writeJson(response, 415, {
         error: { code: 'invalid_media_type', message: 'Only PNG, JPEG, WebP and GIF images can be attached.' },
@@ -571,6 +594,70 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       // A staging directory removed underneath the app (a temp cleaner) is
       // made again on the next upload.
       if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') conversationUploadDirectory = null
+      writeJson(response, 500, { error: { code: 'internal_error', message: 'The file could not be written.' } })
+    }
+  }
+
+  /**
+   * One file of any type for a chat's next message, written where Studio keeps
+   * a device's files (tailnet-file-uploads.ts) under its own name made safe,
+   * and answered with an id only this device can spend on this chat, as a
+   * picture's is. The scope and the chat were checked by the caller. The type
+   * the device declared is recorded, never trusted to mean anything: no
+   * provider is handed these bytes, only their path.
+   */
+  async function receiveFile(
+    request: IncomingMessage,
+    response: ServerResponse,
+    device: TailnetDevice,
+    input: { sessionId: string; name: string; mediaType: string },
+  ): Promise<void> {
+    const conversations = options.conversations
+    const store = options.fileUploads
+    if (!conversations?.registerUpload || !store) {
+      writeJson(response, 501, {
+        error: { code: 'upload_unavailable', message: 'This build cannot receive files for a chat.' },
+      })
+      return
+    }
+    const declared = Number(request.headers['content-length'] ?? '')
+    if (Number.isFinite(declared) && declared > MAX_TAILNET_FILE_BYTES) {
+      if (await drainRefusedBody(request, MAX_TAILNET_FILE_BYTES)) writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
+      return
+    }
+    let place: ReturnType<TailnetFileUploads['place']> | null = null
+    try {
+      place = store.place(device.id, input.name)
+      const written = await streamUploadToDisk(request, place.path, MAX_TAILNET_FILE_BYTES)
+      const kept = place
+      const uploadId = conversations.registerUpload({
+        deviceId: device.id,
+        sessionId: input.sessionId,
+        path: kept.path,
+        name: kept.name,
+        mediaType: MEDIA_TYPE_SHAPE.test(input.mediaType) ? input.mediaType : 'application/octet-stream',
+        bytes: written,
+        kind: 'file',
+        dispose: () => {
+          try {
+            kept.remove()
+          } catch {
+            // Pruned with the week's others instead.
+          }
+        },
+      })
+      writeJson(response, 200, { uploadId, bytes: written, name: kept.name })
+    } catch (error) {
+      try {
+        place?.remove()
+      } catch {
+        // Pruned with the week's others instead.
+      }
+      if (error instanceof UploadTooLarge) {
+        if (await drainRefusedBody(request, MAX_TAILNET_FILE_BYTES)) writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
+        return
+      }
+      options.log?.(`tailnet file upload failed: ${message(error)}`)
       writeJson(response, 500, { error: { code: 'internal_error', message: 'The file could not be written.' } })
     }
   }
@@ -1454,6 +1541,9 @@ function writeTooLarge(response: ServerResponse, ceiling: number): void {
     },
   })
 }
+
+/** A declared `type/subtype`, recorded as sent; anything else is recorded as bytes. */
+const MEDIA_TYPE_SHAPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u
 
 /**
  * The upload at `path`, shrunk in place for the model, and what is kept: its
