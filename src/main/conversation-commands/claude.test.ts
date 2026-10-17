@@ -139,6 +139,7 @@ function fakeSdk(answer: () => Promise<unknown[]>, skills?: () => Promise<{ skil
   const deps: ClaudeCommandsProbeDeps = {
     resolveExecutable: async () => '/Users/dev/.local/bin/claude',
     env: () => ({ PATH: '/usr/bin', HOME: '/Users/dev' }),
+    managedMcpConfig: () => false,
     loadQuery: async () =>
       ((input: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
         session.options = input.options
@@ -180,6 +181,13 @@ test("the probe asks with a chat's settings and folder, no turn, no hooks and no
   // The input stream sends nothing, and ends once the probe is torn down.
   const iterator = (session.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]()
   expect(await iterator.next()).toEqual({ done: true, value: undefined })
+})
+
+test("the probe leaves strict MCP mode off beside an administrator's managed-mcp.json, which Claude would refuse", async () => {
+  const { deps, session } = fakeSdk(async () => FIXTURE.commands)
+  await probeClaudeConversationCommands({ cwd: '/Users/dev/app' }, { ...deps, managedMcpConfig: () => true })
+  expect(session.options).not.toHaveProperty('strictMcpConfig')
+  expect(session.options).toMatchObject({ settingSources: ['user'], settings: { disableAllHooks: true } })
 })
 
 test('a CLI that cannot say which rows are skills still lists every command', async () => {

@@ -39,7 +39,12 @@ import { getColorScheme } from './color-scheme-store'
 import { ensureManagedRuntimeShims, withManagedRuntimePath } from './managed-runtime'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, studioEnvEntry, withoutStudioEnv } from '../shared/studio-env'
 import { withoutInheritedSessionEnv } from './inherited-session-env'
-import { lastKnownLoginShellPath, withUserShellPath } from './login-shell-path'
+import {
+  lastKnownLoginShellPath,
+  lastKnownLoginShellTrustEnv,
+  withLoginShellTrustEnv,
+  withUserShellPath,
+} from './login-shell-path'
 import { isWindowsPath, toWslPath, wslToWindowsPath } from '../shared/host-paths'
 import { wslDistroArgs, wslDistroForPath, wslSessionPidFileCommand, wslSessionPidKey } from './hosts/wsl-distro'
 import type { HostLaunchFile, HostLaunchTarget } from './hosts/execution-host'
@@ -125,11 +130,15 @@ export function getTerminalEnv(): Record<string, string> {
   // The person's own PATH, not the one the app was started with: opened from
   // Finder or the Dock, that is launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, and
   // an agent's shell then has no Homebrew, no `/usr/local/bin` and no `npx`.
-  const userEnv = withUserShellPath(env, {
-    platform: process.platform,
-    loginPath: lastKnownLoginShellPath(),
-    exists: existsSync,
-  })
+  // Its certificate trust too, for the same reason: see LOGIN_SHELL_TRUST_VARIABLES.
+  const userEnv = withLoginShellTrustEnv(
+    withUserShellPath(env, {
+      platform: process.platform,
+      loginPath: lastKnownLoginShellPath(),
+      exists: existsSync,
+    }),
+    lastKnownLoginShellTrustEnv(),
+  )
 
   // Surface CLIs installed into the managed npm prefix (e.g. Codex) on PATH so
   // launched agent sessions can find them. The shims themselves stay out of the

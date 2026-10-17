@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +17,10 @@ import {
   userShellProbeSupported,
   withUserShellPath,
   lastKnownLoginShellPath,
+  lastKnownLoginShellTrustEnv,
+  LOGIN_ENV_SENTINEL,
+  parseLoginShellTrustEnv,
+  withLoginShellTrustEnv,
   type LoginShellPathDescriptor,
   type LoginShellPathOutcome,
   sharedLoginShellPath,
@@ -293,4 +298,62 @@ test('a shared lookup no shell answered is asked again by the next caller', asyn
   assert.equal(await sharedLoginShellPath().resolve({}), '/usr/local/bin:/usr/bin')
   // zsh then bash for the failure, zsh alone for the answer.
   assert.equal(runShell.mock.calls.length, 3)
+})
+
+test("the shell that answers for PATH also says which certificate trust the person's profile sets", () => {
+  const stdout = [
+    'Last login: Mon',
+    `${LOGIN_PATH_SENTINEL}/usr/bin`,
+    `${LOGIN_ENV_SENTINEL}SSL_CERT_FILE=/opt/homebrew/etc/ca-certificates/cert.pem`,
+    `${LOGIN_ENV_SENTINEL}NODE_EXTRA_CA_CERTS=/Users/dev/corp-root.pem`,
+    `${LOGIN_ENV_SENTINEL}NODE_EXTRA_CA_CERTS=/Users/dev/corp root.pem`,
+    `${LOGIN_ENV_SENTINEL}AWS_SECRET_ACCESS_KEY=never-read`,
+    `${LOGIN_ENV_SENTINEL}SSL_CERT_DIR=`,
+  ].join('\n')
+  assert.deepEqual(parseLoginShellTrustEnv(stdout), {
+    SSL_CERT_FILE: '/opt/homebrew/etc/ca-certificates/cert.pem',
+    NODE_EXTRA_CA_CERTS: '/Users/dev/corp root.pem',
+  })
+  assert.deepEqual(parseLoginShellTrustEnv(`${LOGIN_PATH_SENTINEL}/usr/bin\n`), {})
+})
+
+test.skipIf(process.platform === 'win32')(
+  'the probe script prints the trust variables a shell has set, and only those',
+  () => {
+    const script = loginShellPathDescriptors(undefined)[0]!.args[1]!
+    const stdout = execFileSync('/bin/sh', ['-c', script], {
+      encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin', NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' },
+    })
+    assert.equal(parseLoginShellPath(stdout), '/usr/bin:/bin')
+    assert.deepEqual(parseLoginShellTrustEnv(stdout), { NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' })
+  },
+)
+
+test('a spawn gets the trust variables it lacks, never in place of ones the app was started with', () => {
+  const login = { SSL_CERT_FILE: '/opt/homebrew/etc/cert.pem', NODE_EXTRA_CA_CERTS: '/Users/dev/corp-root.pem' }
+  assert.deepEqual(withLoginShellTrustEnv({ PATH: '/usr/bin', NODE_EXTRA_CA_CERTS: '/etc/mine.pem' }, login), {
+    PATH: '/usr/bin',
+    SSL_CERT_FILE: '/opt/homebrew/etc/cert.pem',
+    NODE_EXTRA_CA_CERTS: '/etc/mine.pem',
+  })
+  const untouched = { PATH: '/usr/bin' }
+  assert.equal(withLoginShellTrustEnv(untouched, {}), untouched)
+})
+
+test('the trust variables are kept with the PATH they came with, for the next synchronous spawn', async () => {
+  const resolver = createLoginShellPathResolver({
+    run: async () => ({
+      code: 0,
+      stdout: `\n${LOGIN_PATH_SENTINEL}/usr/bin\n${LOGIN_ENV_SENTINEL}SSL_CERT_DIR=/etc/corp/certs\n`,
+      timedOut: false,
+    }),
+    shell: () => '/bin/zsh',
+  })
+  await resolver.resolve({})
+  assert.deepEqual(lastKnownLoginShellTrustEnv(), { SSL_CERT_DIR: '/etc/corp/certs' })
+  resolver.invalidate()
+  const without = createLoginShellPathResolver({ run: async () => answered('/usr/bin'), shell: () => '/bin/zsh' })
+  await without.resolve({})
+  assert.deepEqual(lastKnownLoginShellTrustEnv(), {}, 'a profile that stopped setting one stops passing it on')
 })

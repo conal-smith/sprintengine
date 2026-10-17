@@ -60,6 +60,7 @@ import {
   codexMcpListInvocation,
   codexTextInvocation,
   codexTextPrompt,
+  readClaudeErrorResult,
   readClaudeStructuredStdout,
   readClaudeTextStdout,
   readCodexEnabledMcpServers,
@@ -68,6 +69,7 @@ import {
   type ClaudeTextAnswer,
 } from './backends'
 import { runCommand, type RunCommand } from './run-command'
+import { hasClaudeManagedMcpConfig } from '../claude-managed-mcp'
 
 export type TextGenerationServiceDeps = {
   detect?: (cli: string, runtime?: { command?: string; hostId?: ExecutionHostId }) => Promise<CliDetectResult>
@@ -76,6 +78,8 @@ export type TextGenerationServiceDeps = {
   /** Where scratch directories are made. Defaults to the OS temp dir. */
   scratchRoot?: string
   now?: () => number
+  /** Whether an administrator's `managed-mcp.json` is installed; read from disk by default. */
+  managedMcpConfig?: () => boolean
 }
 
 const SCRATCH_PREFIX = 'sprintengine-text-'
@@ -226,6 +230,7 @@ export async function generateHeadlessText(
           model,
           reasoning: request.engine.reasoning,
           ...(request.system ? { system: request.system } : {}),
+          managedMcpConfig: (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
         }),
         ...common,
         stdin: request.prompt,
@@ -233,6 +238,8 @@ export async function generateHeadlessText(
       const failure = runFailure(cli, outcome)
       if (failure) return failure
       answer = readClaudeTextStdout(outcome.stdout)
+      const reason = answer ? null : readClaudeErrorResult(outcome.stdout)
+      if (reason) return { ok: false, code: 'guardrail', message: `${cli} answered with an error: ${lastLine(reason)}` }
     }
     if (!answer) return { ok: false, code: 'guardrail', message: `${cli} returned no usable answer.` }
     return { ok: true, text: answer.text, usage: answer.usage, model: answer.model ?? model, ms: now() - startedAt }
@@ -286,6 +293,7 @@ async function runStructuredJob<T>(
       reasoning: engine.reasoning,
       schemaJson: JSON.stringify(job.schema),
       scratch,
+      managedMcpConfig: engine.cli !== 'codex' && (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
       listMcpServers: () =>
         listCodexMcpServers(binaryPath.path, run, {
           cwd: scratch,
@@ -305,7 +313,11 @@ async function runStructuredJob<T>(
     if (failure) return failure
     const value = job.read(await backend.readAnswer(outcome.stdout))
     if (value === null) {
-      return { ok: false, code: 'guardrail', message: `${engine.cli} returned no usable ${job.nothing}.` }
+      const reason = engine.cli === 'codex' ? null : readClaudeErrorResult(outcome.stdout)
+      const message = reason
+        ? `${engine.cli} answered with an error: ${lastLine(reason)}`
+        : `${engine.cli} returned no usable ${job.nothing}.`
+      return { ok: false, code: 'guardrail', message }
     }
     return { ok: true, value, ms: now() - startedAt }
   } catch (error) {
@@ -332,6 +344,7 @@ async function prepareBackend(
     reasoning: string | undefined
     schemaJson: string
     scratch: string
+    managedMcpConfig: boolean
     listMcpServers: () => Promise<string[]>
   },
 ): Promise<PreparedBackend> {
@@ -468,6 +481,12 @@ function runFailure(
   }
   if (outcome.timedOut) return { ok: false, code: 'timeout', message: `${cli} did not answer in time.` }
   if (outcome.code !== 0) {
+    // Claude's own reason is in its stdout envelope; stderr then carries at
+    // most a wrapper's notice, and a bare stdout fallback is the raw JSON.
+    const claudeReason = cli === 'codex' ? null : readClaudeErrorResult(outcome.stdout)
+    if (claudeReason) {
+      return { ok: false, code: 'transport', message: `${cli} exited ${outcome.code}: ${lastLine(claudeReason)}` }
+    }
     const detail = outcome.stderr.trim() || outcome.stdout.trim()
     return {
       ok: false,

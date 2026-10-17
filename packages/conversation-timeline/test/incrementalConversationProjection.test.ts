@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import type { ConversationEvent, ConversationEventType } from '../src/protocol.js'
 import { projectConversation } from '../src/conversationProjection.js'
-import { deriveConversationTimelineRows } from '../src/conversationTimeline.js'
+import { deriveConversationTimelineRows, retryLabel } from '../src/conversationTimeline.js'
 import {
   applyEvent,
   createConversationProjectionState,
@@ -405,6 +405,19 @@ test('a retry notice is the working line until the turn says anything else, in b
   ])
   const assistant = state.projection.entries.find((entry) => entry.kind === 'assistant')
   assert.equal(assistant?.kind === 'assistant' ? assistant.retry : 'missing', undefined)
+})
+
+test('a retry after a 403 says access was refused, not that the sign-in failed', () => {
+  const retry = { attempt: 1, maxAttempts: 10 }
+  assert.equal(
+    retryLabel({ ...retry, error: 'authentication_failed', status: 403 }),
+    'Access refused · retrying (1 of 10)…',
+  )
+  assert.equal(retryLabel({ ...retry, status: 403 }), 'Access refused · retrying (1 of 10)…')
+  assert.equal(
+    retryLabel({ ...retry, error: 'authentication_failed', status: 401 }),
+    'Couldn’t authenticate · retrying (1 of 10)…',
+  )
 })
 
 test('a compaction is the working line until the summary lands or the turn goes on, in both folds', () => {

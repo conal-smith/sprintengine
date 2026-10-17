@@ -2,12 +2,14 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test } from 'vitest'
 import type { TranscriptEntry } from './conversationProjection'
-import { isAuthShapedFailure, TurnErrorBlock, type TimelineChrome } from './timelineRows'
+import { isAuthShapedFailure, permissionDeniedReason, TurnErrorBlock, type TimelineChrome } from './timelineRows'
 
 type AssistantEntry = Extract<TranscriptEntry, { kind: 'assistant' }>
 
 // The failure Claude Code reports when its login lapsed and could not refresh.
 const EXPIRED = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+// What it reports for a 403, filed under the same authentication failure.
+const REFUSED = 'Failed to authenticate. API Error: 403 Your organization does not have access to this model.'
 
 const failedTurn = (failureDetail: string): AssistantEntry =>
   ({
@@ -78,4 +80,37 @@ test('the auth matcher reads real login failures and not words that merely conta
   expect(isAuthShapedFailure('Could not read src/authors.ts')).toBe(false)
   expect(isAuthShapedFailure('author')).toBe(false)
   expect(isAuthShapedFailure('Request 14010 timed out')).toBe(false)
+})
+
+test('a refusal of access says the provider’s reason and offers Retry, not Sign in', () => {
+  const html = render(failedTurn(REFUSED), chrome({ onSignIn: async () => undefined, cli: 'claude-code' }))
+  expect(html).not.toContain('Sign in')
+  expect(html).not.toContain('claude auth login')
+  expect(html).not.toContain('sign-in expired')
+  expect(html).toContain('Claude Code was refused access: Your organization does not have access to this model.')
+  expect(html).toContain('Retry</button>')
+  expect(html).toContain('Show details')
+
+  const json = render(
+    failedTurn('API Error: 403 {"type":"error","error":{"type":"permission_error","message":"Request not allowed"}}'),
+    chrome({ onSignIn: async () => undefined }),
+  )
+  expect(json).toContain('Claude Code was refused access: Request not allowed.')
+  expect(json).not.toContain('Sign in</button>')
+})
+
+test('a 401 and a lapsed login stay sign-in failures; a 403 needs the API error or refusal wording', () => {
+  const unauthorized = 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error"}}'
+  expect(isAuthShapedFailure(unauthorized)).toBe(true)
+  expect(permissionDeniedReason(unauthorized)).toBeUndefined()
+  expect(render(failedTurn(unauthorized), chrome({ onSignIn: async () => undefined }))).toContain('Sign in</button>')
+  expect(isAuthShapedFailure(EXPIRED)).toBe(true)
+  expect(permissionDeniedReason(EXPIRED)).toBeUndefined()
+
+  expect(isAuthShapedFailure(REFUSED)).toBe(false)
+  expect(permissionDeniedReason('HTTP 403 Forbidden: permission denied for project acme')).toBe(
+    'permission denied for project acme',
+  )
+  expect(permissionDeniedReason('API Error: 403')).toBe('')
+  expect(permissionDeniedReason('Request 403 timed out')).toBeUndefined()
 })
