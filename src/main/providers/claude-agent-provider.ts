@@ -77,6 +77,7 @@ import { withMacosPrivacyFolderHint } from '../../shared/conversation/macosPriva
 import { wslShareSafeDirectoryEnv } from '../git-run'
 import { resolveClaudeConfigDir } from '../claude-config-dir'
 import { ensureResumableTranscript, transcriptCheckNote } from './claude-transcript-integrity'
+import { claudeTaskOutputRoot, createClaudeCommandOutput, type ClaudeCommandOutput } from './claude-command-output'
 import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
 
@@ -160,6 +161,11 @@ export type ClaudeAgentProviderOptions = {
   childAnswerTimeoutMs?: number
   // And how long it has to answer the registration of its MCP servers.
   mcpRegistrationTimeoutMs?: number
+  // Where a local child writes its task output, from its environment; tests
+  // point it at their own folder. Null turns live command output off.
+  claudeTaskOutputRoot?: (env: Record<string, string>) => string | null
+  // How often a running command's output file is read. Tests shorten it.
+  commandOutputPollMs?: number
   // The app's own MCP gateway on the machine the child runs on, handed to
   // every child. Null or absent leaves it out.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
@@ -299,6 +305,10 @@ type SessionState = {
   // What the check of a resumed session's file found that the conversation
   // should be told, shown at the start of the turn that spawned the child.
   resumeNote: string | null
+  // The live child's running Bash commands, read from the files it writes
+  // their output to (claude-command-output.ts). Null for a child whose files
+  // this machine cannot read.
+  commandOutputTails?: ClaudeCommandOutput | null
   // The child being spawned, while it is; see ensureQuery.
   spawning: Promise<void> | null
   // Bumped when the session is stopped or its child disposed from outside
@@ -626,6 +636,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.cliSpawnMode = null
     state.childPid = null
     state.spawnedAt = null
+    state.commandOutputTails?.stopAll()
+    state.commandOutputTails = null
     if (state.skillPluginDir) removeSkillPlugin(state.skillPluginDir)
     state.skillPluginDir = null
     return hadChild
@@ -727,6 +739,10 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   async function pump(state: SessionState, q: Query): Promise<void> {
     try {
       for await (const message of q as AsyncIterable<Record<string, unknown>>) {
+        if (state.query !== q) return
+        // A command's last output goes out ahead of its result, which replaces it.
+        const commandEnded = state.commandOutputTails?.observe(message)
+        if (commandEnded) await commandEnded
         if (state.query !== q) return
         if (state.interruptedSendUuids.size > 0) {
           // A new child exchange has begun, so whatever the stopped one left
@@ -1095,6 +1111,36 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     }
     const q = sdkQuery({ prompt: inputQueue, options: queryOptions })
     state.query = q
+    // A child in WSL writes its files inside that machine; only a local
+    // child's are read here.
+    const taskOutputRoot = wslTarget ? null : (options.claudeTaskOutputRoot ?? claudeTaskOutputRoot)(env)
+    state.commandOutputTails?.stopAll()
+    state.commandOutputTails = taskOutputRoot
+      ? createClaudeCommandOutput({
+          root: taskOutputRoot,
+          cwd: state.workspaceRoot,
+          ...(options.commandOutputPollMs !== undefined ? { pollMs: options.commandOutputPollMs } : {}),
+          emit: (chunk) => {
+            // Only into the turn the command runs in: a partial step must not
+            // open a turn of its own.
+            const turn = openTurn(state)
+            if (state.query !== q || !turn) return
+            deliver(state, [
+              eventFor(state, 'tool_output', {
+                turnId: turn.turnId,
+                toolCallId: chunk.toolUseId,
+                toolUseId: chunk.toolUseId,
+                output: chunk.output,
+                outputMode: 'append',
+                totalBytes: chunk.totalBytes,
+                partial: true,
+                status: 'ok',
+                isError: false,
+              } satisfies ConversationToolOutputPayload),
+            ])
+          },
+        })
+      : null
     // A resumed child restores the session's saved cost total and reports it
     // in its first result; only what it adds from here is this turn's.
     state.queryCostUsd = savedCostUsd
