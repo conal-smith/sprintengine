@@ -67,7 +67,7 @@ createInterface({input:process.stdin}).on('line',async line=>{
  prompt=m.id;const text=p.prompt[0].text;
  if(text.startsWith('/')){if(text==='/refresh')update({sessionUpdate:'available_commands_update',availableCommands:[{name:'fresh',description:'Replaced list'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'ran '+text}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text.includes('inspect history')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});result(m.id,{stopReason:'end_turn'});return}
- if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,permission:process.env.OPENCODE_PERMISSION??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,permission:process.env.OPENCODE_PERMISSION??null,configContent:process.env.OPENCODE_CONFIG_CONTENT??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='crash')process.exit(2);
  // 'say <words>' answers with the words alone, as Cursor answers a turn its server connection broke.
  if(text.startsWith('say ')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:text.slice(4)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
@@ -154,7 +154,11 @@ async function fixture(
 }
 // A shipped profile whose CLI is the stand-in agent: the script path leads
 // every argv, so the agent receives exactly the flags the profile launches with.
-async function presetFixture(profileId: string, permissionPreset: ConversationPermissionPreset) {
+async function presetFixture(
+  profileId: string,
+  permissionPreset: ConversationPermissionPreset,
+  env: Record<string, string> = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'acp-preset-'))
   const support = await mkdtemp(join(tmpdir(), 'acp-preset-support-'))
   const script = join(support, 'agent.js')
@@ -174,7 +178,7 @@ async function presetFixture(profileId: string, permissionPreset: ConversationPe
     },
     {
       detect: async () => process.execPath,
-      buildEnv: async () => ({ PATH: process.env.PATH }),
+      buildEnv: async () => ({ PATH: process.env.PATH, ...env }),
       startupTimeoutMs: 2000,
     },
   )
@@ -205,7 +209,13 @@ async function launched(f: { provider: ReturnType<typeof createAcpConversationPr
     .filter((event) => event.type === 'content_delta')
     .map((event) => event.payload?.text)
     .join('')
-  return JSON.parse(text) as { argv: string[]; opened: string; model: string; permission: string | null }
+  return JSON.parse(text) as {
+    argv: string[]
+    opened: string
+    model: string
+    permission: string | null
+    configContent: string | null
+  }
 }
 async function turn(f: Awaited<ReturnType<typeof fixture>>, message: string) {
   const events: ConversationEvent[] = []
@@ -967,15 +977,43 @@ test("ACP launches each preset through the CLI's own switch, and Cursor offers n
   expect(auto).toMatchObject({ '*': 'ask', read: 'allow', edit: 'allow', bash: 'ask', external_directory: 'ask' })
 })
 
+test('every OpenCode preset carries its rule set in the config document OpenCode 2 reads, as well as in the variable 1.x reads', () => {
+  const opencode = ACP_PROFILES.find((entry) => entry.id === 'opencode-agent')!
+  for (const preset of ['manual', 'auto', 'bypass'] as const) {
+    const env = acpLaunchEnv(opencode, preset)
+    const content = JSON.parse(env.OPENCODE_CONFIG_CONTENT!) as { permission: Record<string, string> }
+    expect(content).toEqual({ permission: JSON.parse(env.OPENCODE_PERMISSION!) })
+    // Key order is the rule order: the wildcard still leads.
+    expect(Object.keys(content.permission)[0]).toBe('*')
+  }
+})
+
+test("an OpenCode chat's rules join the config document the person exports, and their own settings stay", async () => {
+  const f = await presetFixture('opencode-agent', 'manual', {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ theme: 'tokyonight', permission: { skill: 'allow', bash: 'allow' } }),
+  })
+  try {
+    const seen = await launched(f)
+    const content = JSON.parse(seen.configContent!) as { theme: string; permission: Record<string, string> }
+    expect(content.theme).toBe('tokyonight')
+    // The preset's rule for a tool it names replaces the person's; one it does not name is kept.
+    expect(content.permission).toMatchObject({ '*': 'ask', bash: 'ask', edit: 'ask', skill: 'allow' })
+    expect(JSON.parse(seen.permission!)).toMatchObject({ '*': 'ask', bash: 'ask' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('an OpenCode chat and an OpenCode terminal agent are held to the same rule set for each mode', async () => {
   const manifest = JSON.parse(
     await readFile(join(process.cwd(), 'resources/plugins/opencode/plugin.json'), 'utf8'),
   ) as { permissionPresets: Record<string, { env?: Record<string, string> }> }
   const opencode = ACP_PROFILES.find((entry) => entry.id === 'opencode-agent')!
   for (const preset of ['manual', 'auto'] as const)
-    expect(JSON.parse(manifest.permissionPresets[preset]!.env!.OPENCODE_PERMISSION!)).toEqual(
-      JSON.parse(acpLaunchEnv(opencode, preset).OPENCODE_PERMISSION!),
-    )
+    for (const name of ['OPENCODE_PERMISSION', 'OPENCODE_CONFIG_CONTENT'])
+      expect(JSON.parse(manifest.permissionPresets[preset]!.env![name]!)).toEqual(
+        JSON.parse(acpLaunchEnv(opencode, preset)[name]!),
+      )
 })
 
 test('Cursor refuses Manual with the reason, rather than running it as something looser', async () => {

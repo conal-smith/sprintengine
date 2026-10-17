@@ -61,6 +61,7 @@ test('agent-launch-render', async () => {
       testCodexTakesTheContextAsAnEscapedTomlOverride()
       testGrokTakesTheContextTextOnLaunchAndResume()
       testOpenCodeTakesTheContextThroughItsConfigEnv()
+      testOpenCodeContextAndPermissionRulesShareOneConfigDocument()
       testPromptFallbackCliRendersNoContextFlag()
       testCursorTakesTheContextAsAPluginDirOnLaunchAndResume()
       testAModuleHostContextSectionRidesTheDeclaredChannel()
@@ -1172,6 +1173,36 @@ test('agent-launch-render', async () => {
     })
     const parsed = JSON.parse(windows.env.OPENCODE_CONFIG_CONTENT) as { instructions: string[] }
     assert.deepEqual(parsed.instructions, [windowsFile])
+  }
+
+  // OpenCode 2 reads its permission rules only from the config document, which
+  // also carries the host context's instructions: both must arrive, on launch
+  // and on resume, and the variable 1.x reads still goes with them.
+  function testOpenCodeContextAndPermissionRulesShareOneConfigDocument(): void {
+    for (const resume of [false, true]) {
+      for (const [preset, edit] of [
+        ['manual', 'ask'],
+        ['auto', 'allow'],
+      ] as const) {
+        const out = renderAgentLaunchArgv({
+          cli: 'opencode',
+          sessionId: 'sid_ctx',
+          resume,
+          cliPermissionPreset: preset,
+          contextFile: HOST_CONTEXT_FILE,
+          contextText: HOST_CONTEXT_TEXT,
+        })
+        const content = JSON.parse(out.env.OPENCODE_CONFIG_CONTENT) as {
+          instructions: string[]
+          permission: Record<string, string>
+        }
+        assert.deepEqual(content.instructions, [HOST_CONTEXT_FILE], `${preset}: the context is kept`)
+        assert.equal(Object.keys(content.permission)[0], '*', `${preset}: the wildcard leads`)
+        assert.equal(content.permission.bash, 'ask', `${preset}: commands ask`)
+        assert.equal(content.permission.edit, edit, `${preset}: edits`)
+        assert.deepEqual(JSON.parse(out.env.OPENCODE_PERMISSION), content.permission, `${preset}: 1.x is told the same`)
+      }
+    }
   }
 
   // A CLI with no out-of-band channel declares `prompt`: main wraps the document
