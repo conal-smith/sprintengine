@@ -10,6 +10,7 @@ import {
   type ConversationWireModels,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
+import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
   ConversationKey,
@@ -270,6 +271,21 @@ const epoch = (value: number | null | undefined): value is number =>
 /** When the turn a live session is running began, left out between turns. */
 function turnStartOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'turnStartedAt'> {
   return epoch(summary?.turnStartedAt) ? { turnStartedAt: Math.trunc(summary.turnStartedAt) } : {}
+}
+
+/**
+ * What a live session still has working after its turn ended, from the same
+ * readings the desktop's sidebar counts it working by
+ * (`conversationSummaryPhase`): its background agents, and the background
+ * tasks that will wake its agent. Left out when there is neither. The listed
+ * `phase` stays the turn's own: a device that holds sends while a turn runs
+ * would otherwise hold them for as long as a background agent works.
+ */
+function backgroundWorkOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'backgroundWork'> {
+  if (!summary) return {}
+  const agents = wholeNumber(summary.backgroundAgents) ?? 0
+  const monitors = (summary.backgroundTasks ?? []).filter((task) => backgroundTasksWakeAgent([task])).length
+  return agents > 0 || monitors > 0 ? { backgroundWork: { agents, monitors } } : {}
 }
 
 /** A listed chat's lifecycle members, each left out when there is nothing true to say. */
@@ -705,6 +721,7 @@ export function createConversationGatewayHost(
             ...(models ? { models } : {}),
             ...(summary ? { sessionId: summary.sessionId, capabilities: wireCapabilities(summary) } : {}),
             ...turnStartOf(summary),
+            ...backgroundWorkOf(summary),
             ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt)),
             ...replyPreviewOf(sessions, thread.lastAssistantText),
           })
@@ -732,6 +749,7 @@ export function createConversationGatewayHost(
           sessionId: summary.sessionId,
           capabilities: wireCapabilities(summary),
           ...turnStartOf(summary),
+          ...backgroundWorkOf(summary),
           ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary)),
           ...replyPreviewOf(sessions),
         })

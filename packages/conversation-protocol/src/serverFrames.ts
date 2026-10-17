@@ -139,7 +139,22 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * repository, and on a detached HEAD.
    */
   branch?: string
+  /**
+   * What the chat still has working outside a turn: the agents it launched in
+   * the background that are still running (`agents`), and the background
+   * tasks that will wake its agent when they report (`monitors`: a monitor
+   * with a deadline, or a task the agent is told about when it ends). The
+   * desktop's own sidebar counts a chat that has either as working while its
+   * `phase` says the turn is over. `phase` is left as the turn's, so a client
+   * that holds sends while a turn runs does not hold them for these. Absent
+   * when nothing works in the background, and from a desktop built before it
+   * was listed.
+   */
+  backgroundWork?: ConversationBackgroundWork
 }
+
+/** A listed chat's background work (`ConversationThread.backgroundWork`). At least one count is above zero. */
+export type ConversationBackgroundWork = { agents: number; monitors: number }
 
 /** The most characters of a reply's opening a listed chat carries. */
 export const CONVERSATION_MAX_REPLY_PREVIEW = 240
@@ -334,6 +349,17 @@ function key(value: unknown): ConversationWireKey | null {
     : null
 }
 
+/**
+ * A listed chat's `backgroundWork`, or null: both counts whole and not
+ * negative, and one of them above zero. Anything else is left out, and the
+ * row reads as a chat with nothing working in the background.
+ */
+export function parseConversationBackgroundWork(value: unknown): ConversationBackgroundWork | null {
+  if (!record(value) || !integer(value.agents) || !integer(value.monitors)) return null
+  if (value.agents === 0 && value.monitors === 0) return null
+  return { agents: value.agents, monitors: value.monitors }
+}
+
 /** One listed conversation, or null. Capabilities absent or malformed read as unknown, not as refused. */
 function thread(value: unknown): ConversationThread | null {
   if (!record(value)) return null
@@ -369,6 +395,7 @@ function thread(value: unknown): ConversationThread | null {
     !/[\s\u0000-\u001f]/u.test(value.branch)
       ? value.branch
       : null
+  const backgroundWork = parseConversationBackgroundWork(value.backgroundWork)
   const lastAssistantText =
     typeof value.lastAssistantText === 'string' && value.lastAssistantText.trim()
       ? value.lastAssistantText.slice(0, CONVERSATION_MAX_REPLY_PREVIEW)
@@ -407,6 +434,7 @@ function thread(value: unknown): ConversationThread | null {
     ...(clock(value.visitRewoundAt) ? { visitRewoundAt: value.visitRewoundAt } : {}),
     ...(lastAssistantText ? { lastAssistantText } : {}),
     ...(branch ? { branch } : {}),
+    ...(backgroundWork ? { backgroundWork } : {}),
     ...(flags
       ? {
           capabilities: {
