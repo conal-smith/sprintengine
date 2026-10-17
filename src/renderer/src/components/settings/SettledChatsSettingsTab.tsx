@@ -32,6 +32,8 @@ export function SettledChatsSettingsTab({
   const setWorkspaceSettled = useWorkspaceStore((s) => s.setWorkspaceSettled)
   const settleOnMerge = useWorkspaceStore((s) => s.appSettings.settleOnPullRequestMerge)
   const setSettleOnMerge = useWorkspaceStore((s) => s.setSettleOnPullRequestMerge)
+  const keepWithOpenPr = useWorkspaceStore((s) => s.appSettings.keepChatsWithOpenPullRequest)
+  const setKeepWithOpenPr = useWorkspaceStore((s) => s.setKeepChatsWithOpenPullRequest)
   // One clock for the visit: "settled 3d ago" does not need to tick while the
   // page is open, and a timer here would re-render the list for nothing.
   const [now] = useState(() => Date.now())
@@ -78,6 +80,12 @@ export function SettledChatsSettingsTab({
           description="For chats with Auto-settle switched on from their menu: once every pull request is merged or closed, and at least one merged, the chat settles. Not if you wrote to it after the merge, and never while an agent in it is working. A settled chat's worktree is removed once its work is merged and clean, and checked out again from its branch when you come back."
           enabled={settleOnMerge}
           onChange={setSettleOnMerge}
+        />
+        <SettingToggle
+          label="Keep chats with an open pull request"
+          description="For chats with Auto-settle switched on from their menu: a chat whose pull request is still open, waiting on review or still a draft, does not settle after three days without activity. Settling when its pull requests merge is the setting above."
+          enabled={keepWithOpenPr}
+          onChange={setKeepWithOpenPr}
         />
       </SettingCard>
       {chats.length === 0 ? (

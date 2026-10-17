@@ -33,12 +33,17 @@ export { workspaceLastActiveAt } from './workspaceRecency'
 
 /**
  * What the rest rule reads besides the record and the clock: the chat's pull
- * requests (the Studio server's list for the workspace), and whether a merge
- * settles a chat at all (Settings ▸ Settled chats).
+ * requests (the Studio server's list for the workspace), whether a merge
+ * settles a chat at all, and whether an open pull request keeps it from the
+ * idle rule (both Settings ▸ Settled chats). `pullRequestsUnread` is the list
+ * not having been read yet, as on the first tick after a launch: with the
+ * keep on, "no pull requests" is then not known, so the idle rule waits.
  */
 export type AutoSettleContext = {
   pullRequests?: readonly BranchPullRequest[]
+  pullRequestsUnread?: boolean
   settleOnMerge?: boolean
+  keepWithOpenPullRequest?: boolean
 }
 
 // The one answer to "is this row resting?", and the two transitions below,
@@ -63,7 +68,8 @@ export { isSettledWorkspace }
  * module reports a run still in flight.
  *
  * Two ways in: three quiet days (counted from the wake, for a row that has
- * just come back from a snooze), or its pull requests landing
+ * just come back from a snooze), unless one of its pull requests is still open
+ * and Keep chats with an open pull request is on; or its pull requests landing
  * (`pullRequestsLanded`) when Settle on merge is on.
  */
 export function shouldAutoSettleWorkspace(workspace: Workspace, now: number, context: AutoSettleContext = {}): boolean {
@@ -85,8 +91,19 @@ export function shouldAutoSettleWorkspace(workspace: Workspace, now: number, con
   // for a week would otherwise wake already a week quiet and settle — its
   // terminals killed — on the very tick it came back to the list.
   const quietSince = Math.max(workspaceLastActiveAt(workspace), workspaceWokeAt(workspace, now) ?? 0)
-  if (now - quietSince >= WORKSPACE_AUTO_SETTLE_AFTER_MS) return true
+  if (now - quietSince >= WORKSPACE_AUTO_SETTLE_AFTER_MS && !keptForOpenPullRequest(context)) return true
   return context.settleOnMerge === true && pullRequestsLanded(workspace, context.pullRequests ?? [])
+}
+
+/**
+ * Whether the idle rule leaves a chat alone for its pull requests: one is
+ * still open (a draft, or one awaiting review), or the list has not been read
+ * yet and so might hold one. Only while the person has the keep on.
+ */
+function keptForOpenPullRequest(context: AutoSettleContext): boolean {
+  if (context.keepWithOpenPullRequest !== true) return false
+  if (context.pullRequestsUnread === true) return true
+  return (context.pullRequests ?? []).some((pr) => pr.state === 'open')
 }
 
 /**
