@@ -12,6 +12,10 @@ import { type ReasoningSegment, type TranscriptEntry, type TranscriptToolEntry }
 import { AttachmentThumbnail } from '../ComposerAttachmentStrip'
 import { ComposerFileChip } from './ComposerFileChip'
 import { clientSupports } from '../../../clientCapabilities'
+import {
+  hasMacosPrivacyFolderHint,
+  MACOS_PRIVACY_FOLDER_HINT,
+} from '../../../../../shared/conversation/macosPrivacyFolders'
 import { attachedFileName } from '../../../utils/attachedFiles'
 import { useConversationTransport } from './conversationTransport'
 import { StoredAttachmentThumbnail } from './storedAttachments'
@@ -134,6 +138,10 @@ export type TimelineChrome = {
   // cannot run it: another machine's chat, or a provider that signs in with a
   // key rather than the CLI's login.
   onSignIn?: () => Promise<void>
+  // Opens System Settings on Privacy & Security › Files and Folders, for a
+  // turn macOS kept out of its folder. Absent where that is not this Mac's
+  // setting to change: another machine's chat, a browser tab, not macOS.
+  onOpenPrivacySettings?: () => void
   // `window.api.platform`: on Windows the chat's login is the native CLI's,
   // which is not the one inside WSL.
   platform?: string
@@ -983,7 +991,11 @@ export function TurnErrorBlock({
   const [showDetails, setShowDetails] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
   const detail = entry.failureDetail ?? entry.failureReason
-  const authShaped = isAuthShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
+  // macOS refused the CLI its folder (Desktop, Documents, Downloads, iCloud
+  // Drive): the fix is a setting, not a sign-in, so it is said first.
+  const privacyBlocked =
+    hasMacosPrivacyFolderHint(entry.failureDetail) || hasMacosPrivacyFolderHint(entry.failureReason)
+  const authShaped = !privacyBlocked && isAuthShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
   const onSignIn = authShaped ? chrome.onSignIn : undefined
   const detailsId = useId()
   const kept = 'Your message is kept; retrying resumes the same conversation.'
@@ -999,7 +1011,9 @@ export function TurnErrorBlock({
     refusal === undefined
       ? undefined
       : `${chrome.assistantName} was refused access${refusal ? `: ${refusal}${/[.!?]$/.test(refusal) ? '' : '.'}` : '.'}`
-  const message: React.ReactNode = !authShaped ? (
+  const message: React.ReactNode = privacyBlocked ? (
+    `${MACOS_PRIVACY_FOLDER_HINT} ${kept}`
+  ) : !authShaped ? (
     `${refused ?? 'Something went wrong while responding.'} ${kept}`
   ) : onSignIn ? (
     `The session could not authenticate — usually a sign your sign-in expired. Sign in, then retry.${
@@ -1034,6 +1048,11 @@ export function TurnErrorBlock({
       </div>
       <p className="mb-2.5 mt-1 text-body leading-[1.55] text-[color:var(--text-muted)]">{message}</p>
       <div className="flex items-center gap-2">
+        {privacyBlocked && chrome.onOpenPrivacySettings ? (
+          <OutlineButton size="sm" onClick={chrome.onOpenPrivacySettings}>
+            Open Privacy settings
+          </OutlineButton>
+        ) : null}
         {onSignIn ? (
           <OutlineButton size="sm" onClick={signIn} disabled={signingIn}>
             Sign in

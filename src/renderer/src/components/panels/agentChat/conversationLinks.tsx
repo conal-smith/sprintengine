@@ -15,7 +15,8 @@ import { ConversationImage } from './ConversationImage'
 import { renderMarkdown } from '../../../utils/markdown'
 import { FOCUS_RING_CLASS } from '../../ui/tokens'
 import { useConversationTransport } from './conversationTransport'
-import { hostPlatform } from '../../../clientCapabilities'
+import { clientSupports, hostPlatform } from '../../../clientCapabilities'
+import { revealLabel } from '../../../utils/revealLabel'
 
 export type ConversationLinkContext = { workspaceId: string; cwd: string; workspaceRoot: string; agentId?: string }
 const LinkContext = createContext<ConversationLinkContext | null>(null)
@@ -242,6 +243,9 @@ export const ConversationFileLink = React.memo(function ConversationFileLink({
           column={target.col}
           onClose={() => setMenu(null)}
           onError={report}
+          // The link is a file on this disk (`localFiles` above), so the
+          // system's file manager can show it, as an attached file's card does.
+          revealInSystemLabel={clientSupports('reveal-in-folder') ? revealLabel(hostPlatform()) : undefined}
         />
       ) : null}
     </>

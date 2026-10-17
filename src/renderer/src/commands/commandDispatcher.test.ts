@@ -93,7 +93,9 @@ test('commandDispatcher', async () => {
     platform: 'linux',
     now: 20,
   })
-  assert.equal(result.kind, 'unmatched')
+  // Plain Ctrl+P is Go to file, a command of its own beside the palette.
+  assert.equal(result.kind, 'matched')
+  assert.equal(result.kind === 'matched' ? result.commandId : null, 'search.goToFile')
 
   result = dispatcher.resolve(key({ key: 'ArrowRight', code: 'ArrowRight', metaKey: true, altKey: true }), {
     activeScopes: ['global', 'workspace', 'workspace-navigation'],

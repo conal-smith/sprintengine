@@ -465,6 +465,13 @@ export type AppSettings = {
    */
   settleOnPullRequestMerge: boolean
   /**
+   * Keep a chat with an open pull request out of the three-quiet-days rule
+   * (Settings ▸ Settled chats), for chats with Auto-settle switched on. On by
+   * default: a pull request waiting on review is work still in flight, however
+   * long the chat itself has been quiet. Settle on merge is separate.
+   */
+  keepChatsWithOpenPullRequest: boolean
+  /**
    * Float the pane's browser over the workspace when an agent opens or drives
    * a page while the pane is closed, so the person sees what it is doing
    * without giving up the chat's width. On by default. Off, an agent's

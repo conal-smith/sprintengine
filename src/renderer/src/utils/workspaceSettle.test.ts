@@ -334,3 +334,63 @@ test('a chat that was never snoozed settles on its last activity, as before', ()
     'a snooze already cleared leaves nothing to count from',
   )
 })
+
+const pullRequest = (state: 'open' | 'merged' | 'closed', fields: { isDraft?: boolean; endedAt?: number } = {}) =>
+  ({
+    url: `https://github.com/acme/app/pull/${state}`,
+    repoKey: 'github.com/acme/app',
+    repoName: 'app',
+    number: 1,
+    title: '',
+    state,
+    isDraft: fields.isDraft ?? false,
+    openedAt: NOW - 20 * DAY,
+    stateAt: NOW - 10 * DAY,
+    ...(fields.endedAt !== undefined ? { endedAt: fields.endedAt } : {}),
+  }) as const
+
+// Ten quiet days: past the idle threshold whatever else is true.
+const idle = () => snoozable({ lastTerminalActivityAt: NOW - 10 * DAY })
+
+test('with the keep on, a quiet chat whose pull request is open stays', () => {
+  for (const open of [pullRequest('open'), pullRequest('open', { isDraft: true })])
+    assert.equal(shouldAutoSettleWorkspace(idle(), NOW, { pullRequests: [open], keepWithOpenPullRequest: true }), false)
+})
+
+test('with the keep on, a quiet chat whose pull requests all ended still settles on the idle rule', () => {
+  assert.equal(
+    shouldAutoSettleWorkspace(idle(), NOW, {
+      pullRequests: [pullRequest('closed', { endedAt: NOW - 9 * DAY })],
+      keepWithOpenPullRequest: true,
+    }),
+    true,
+  )
+  assert.equal(shouldAutoSettleWorkspace(idle(), NOW, { pullRequests: [], keepWithOpenPullRequest: true }), true)
+})
+
+test('with the keep off, an open pull request does not hold a quiet chat', () => {
+  assert.equal(
+    shouldAutoSettleWorkspace(idle(), NOW, { pullRequests: [pullRequest('open')], keepWithOpenPullRequest: false }),
+    true,
+  )
+})
+
+test('with the keep on, the idle rule waits for the pull requests to be read', () => {
+  assert.equal(
+    shouldAutoSettleWorkspace(idle(), NOW, { pullRequestsUnread: true, keepWithOpenPullRequest: true }),
+    false,
+  )
+  assert.equal(shouldAutoSettleWorkspace(idle(), NOW, { pullRequestsUnread: true }), true, 'keep off: as before')
+})
+
+test('settling on merge is unchanged by the keep', () => {
+  const recent = snoozable({ createdAt: NOW - 2 * DAY, lastUserMessageAt: NOW - DAY })
+  assert.equal(
+    shouldAutoSettleWorkspace(recent, NOW, {
+      pullRequests: [pullRequest('merged', { endedAt: NOW - 60_000 })],
+      settleOnMerge: true,
+      keepWithOpenPullRequest: true,
+    }),
+    true,
+  )
+})
