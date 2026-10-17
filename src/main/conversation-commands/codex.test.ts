@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { codexCompactRequest, codexConversationCommands, codexGoalRequest } from './codex'
+import { codexCompactRequest, codexConversationCommands, codexGoalRequest, codexListedSkills, codexSkillInputs } from './codex'
 
 const cwd = '/Users/dev/app'
 const listed = (skills: unknown[]) => ({ data: [{ cwd, skills, errors: [] }] })
@@ -85,4 +85,48 @@ test('/goal with images is refused, and a message that is not /goal is not one',
   expect(codexGoalRequest('/goal ship it', 1)).toMatchObject({ action: 'refuse' })
   expect(codexGoalRequest('/goals')).toBeNull()
   expect(codexGoalRequest('set a /goal')).toBeNull()
+})
+
+const SKILLS = codexListedSkills(
+  listed([
+    { name: 'deploy', description: 'Ship it', path: '/Users/dev/app/.codex/skills/deploy/SKILL.md', enabled: true },
+    { name: 'deploy.prod', description: 'Ship to prod', path: '/Users/dev/.codex/skills/prod/SKILL.md', enabled: true },
+    { name: 'acme:review', description: 'Review', path: '/Users/dev/.codex/skills/review/SKILL.md', enabled: true },
+    { name: 'off', description: 'Switched off', path: '/Users/dev/.codex/skills/off/SKILL.md', enabled: false },
+    { name: 'pathless', description: 'An older Codex that names no path' },
+  ]),
+  cwd,
+)
+
+test('a listed skill keeps the SKILL.md path Codex named it by', () => {
+  expect(SKILLS).toEqual([
+    { name: 'deploy', description: 'Ship it', path: '/Users/dev/app/.codex/skills/deploy/SKILL.md' },
+    { name: 'deploy.prod', description: 'Ship to prod', path: '/Users/dev/.codex/skills/prod/SKILL.md' },
+    { name: 'acme:review', description: 'Review', path: '/Users/dev/.codex/skills/review/SKILL.md' },
+    { name: 'pathless', description: 'An older Codex that names no path', path: null },
+  ])
+})
+
+test('a whole $name token in a message is the listed skill, by its path', () => {
+  expect(codexSkillInputs('Use $deploy, then ($acme:review).', SKILLS)).toEqual([
+    { type: 'skill', name: 'deploy', path: '/Users/dev/app/.codex/skills/deploy/SKILL.md' },
+    { type: 'skill', name: 'acme:review', path: '/Users/dev/.codex/skills/review/SKILL.md' },
+  ])
+})
+
+test('where two listed names fit, the longer one is the mention', () => {
+  expect(codexSkillInputs('$deploy.prod now', SKILLS).map((input) => input.name)).toEqual(['deploy.prod'])
+})
+
+test('a skill mentioned twice goes once', () => {
+  expect(codexSkillInputs('$deploy and $deploy again', SKILLS)).toHaveLength(1)
+})
+
+test('a $ inside a word, a longer name, an unknown name or a skill with no path stays text', () => {
+  expect(codexSkillInputs('cost US$deploy', SKILLS)).toEqual([])
+  expect(codexSkillInputs('$deploy-staging', SKILLS)).toEqual([])
+  expect(codexSkillInputs('$$deploy', SKILLS)).toEqual([])
+  expect(codexSkillInputs('echo $HOME and $off', SKILLS)).toEqual([])
+  expect(codexSkillInputs('$pathless', SKILLS)).toEqual([])
+  expect(codexSkillInputs('no mention at all', SKILLS)).toEqual([])
 })
