@@ -144,6 +144,10 @@ export type MockAdapterSessionInput = {
   // message the provider is sent carries `fallbackHistory` ahead of it, the
   // only context the new session gets.
   seedFromHistory?: boolean
+  // The tool call that first spawned each agent the chat has seen, by task, as
+  // its transcript and earlier sessions recorded them: an agent resumed after a
+  // restart goes on in the lane it started in.
+  knownSubagentLanes?: ReadonlyArray<readonly [taskId: string, toolUseId: string]>
   cliRuntimes?: ConversationCliRuntimeOverrides
   permissionPreset?: ConversationPermissionPreset
   // The CLI's own mode at that preset, when one other than its own is chosen.

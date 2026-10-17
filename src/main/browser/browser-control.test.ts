@@ -44,6 +44,8 @@ test('browser-control', async () => {
     debugger = new FakeDebugger()
     destroyed = false
     devTools = false
+    // Focused, where the debugger's key and text input already reach the page.
+    focusedFrame: object | null = {}
     isDestroyed() {
       return this.destroyed
     }
@@ -618,4 +620,55 @@ test('a tab whose page is destroyed is forgotten, though its debugger can no lon
   assert.deepEqual(control.actionsOf('t1'), [], 'the session is gone with its page')
   assert.equal(debuggerStub.listenerCount('message'), 0, 'its listeners were taken off the debugger it held')
   assert.equal(debuggerStub.listenerCount('detach'), 0)
+})
+
+test('typing into a page without focus never sends the debugger key or text input, which would land in the app', async () => {
+  const commands: string[] = []
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async (method: string, params?: Record<string, unknown>) => {
+      commands.push(method)
+      if (method !== 'Runtime.evaluate') return {}
+      // The cross-site-frame probe: the page's focus is in its own document.
+      return { result: { type: 'boolean', value: String(params?.expression).includes('activeElement') } }
+    },
+  })
+  const delivered: string[] = []
+  // The person is in the chat composer: the guest has no focused frame.
+  const wc = Object.assign(new EventEmitter(), {
+    debugger: debuggerStub,
+    focusedFrame: null,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+    insertText: async (text: string) => {
+      delivered.push(`text:${text}`)
+    },
+    sendInputEvent: (event: { type: string; keyCode: string }) => {
+      delivered.push(`${event.type}:${JSON.stringify(event.keyCode)}`)
+    },
+  })
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: () => () => {},
+    notePointer: () => {},
+  })
+
+  const typed = await control.type('t1', null, 'hello', { submit: true })
+  assert.equal(typed.ok, true)
+  assert.ok(!commands.includes('Input.insertText'))
+  assert.ok(!commands.includes('Input.dispatchKeyEvent'))
+  assert.deepEqual(delivered, ['text:hello', 'rawKeyDown:"Enter"', 'char:"\\r"', 'keyUp:"Enter"'])
 })
