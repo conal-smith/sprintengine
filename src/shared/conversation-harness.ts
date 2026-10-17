@@ -16,6 +16,7 @@ const CONVERSATION_PROVIDER_CLI: Readonly<Record<string, string>> = {
   'cursor-agent': 'cursor',
   'opencode-agent': 'opencode',
   'grok-agent': 'grok',
+  'kimi-code-agent': 'kimi-code',
 }
 
 // The permission presets a CLI's chat cannot be held to, with the reason its
@@ -30,6 +31,13 @@ const CONVERSATION_PERMISSION_PRESET_REFUSALS: Readonly<
   // are sent for approval, file edits in the workspace are applied directly,
   // and no flag makes it ask about them.
   cursor: { manual: 'Cursor edits files without asking, so it cannot ask before every change.' },
+  // Read off Kimi Code 0.42.0's permission policies: in its default mode a
+  // Write or Edit whose every file is inside a git project goes through
+  // without asking, and `kimi acp` takes no flag or variable that would make
+  // it ask (only a rule in the person's own config.toml can).
+  'kimi-code': {
+    manual: 'Kimi Code edits files in a git project without asking, so it cannot ask before every change.',
+  },
 }
 
 // The CLI's own permission modes a chat runs beside each preset's own, by the
@@ -42,6 +50,19 @@ const CONVERSATION_PERMISSION_MODES: Readonly<Record<string, readonly string[]>>
   'claude-code': ['acceptEdits', 'dontAsk'],
   codex: ['workspace'],
   grok: ['acceptEdits', 'dontAsk'],
+}
+
+// The CLI's own sign-in, for a chat whose CLI holds its own login rather than
+// a key Studio stores: what a terminal runs to renew it when a turn failed on
+// it. Each runs interactively — it opens a browser, and may wait for a code.
+const CONVERSATION_SIGN_IN: Readonly<Record<string, { name: string; args: readonly string[] }>> = {
+  'claude-code': { name: 'Claude Code', args: ['auth', 'login'] },
+  'kimi-code': { name: 'Kimi Code', args: ['login'] },
+}
+
+/** How a chat's CLI signs back in from a terminal, or null when Studio cannot open that for it. */
+export function conversationSignIn(cli: string | null | undefined): { name: string; args: readonly string[] } | null {
+  return (cli && Object.hasOwn(CONVERSATION_SIGN_IN, cli) && CONVERSATION_SIGN_IN[cli]) || null
 }
 
 /** The CLI's own modes its chat can run beside the presets' own. */

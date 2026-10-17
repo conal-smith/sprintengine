@@ -1058,7 +1058,7 @@ export type CompanionAgentSpec = {
   /**
    * Engine selection. `cli` takes the chat runtime id a conversation's `cli`
    * takes and `listChatRuntimes()` lists (`claude-code`, `codex`, `cursor`,
-   * `opencode`, `grok`), or the conversation provider id behind it
+   * `opencode`, `grok`, `kimi-code`), or the conversation provider id behind it
    * (`claude-agent`, `codex-agent`, …): both name the same engine, so one id
    * space covers chats and companions. Absent, Claude Code on `sonnet`; another
    * engine without a `model` runs its own default model. A runtime id needs

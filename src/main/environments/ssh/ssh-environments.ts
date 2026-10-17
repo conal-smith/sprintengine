@@ -136,6 +136,7 @@ const LOGIN_COMMANDS: Readonly<Record<string, string>> = {
   cursor: 'cursor-agent login',
   opencode: 'opencode auth login',
   gemini: 'gemini',
+  'kimi-code': 'kimi login',
 }
 
 /** The words for a CLI Studio cannot sign in without a terminal: the exact command, over the person's own SSH. */

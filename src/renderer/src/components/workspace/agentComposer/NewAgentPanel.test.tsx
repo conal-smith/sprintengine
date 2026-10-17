@@ -717,7 +717,7 @@ test('NewAgentPanel', async () => {
               },
               reasoningSelection: { levels: [{ id: 'low' }, { id: 'high' }] },
             },
-            { id: 'kimi-code', displayName: 'Kimi Code', source: 'bundled', version: 1, binary: 'kimi' },
+            { id: 'acme-cli', displayName: 'Acme CLI', source: 'bundled', version: 1, binary: 'acme' },
           ],
         })
         useWorkspaceStore.setState({
@@ -792,7 +792,7 @@ test('NewAgentPanel', async () => {
 
     await check('with no CLI that can run as a chat, Chat agent offers the install route', async () => {
       seedStore({
-        plugins: [{ id: 'kimi-code', displayName: 'Kimi Code', source: 'bundled', version: 1, binary: 'kimi' }],
+        plugins: [{ id: 'acme-cli', displayName: 'Acme CLI', source: 'bundled', version: 1, binary: 'acme' }],
       })
       const view = await render({ initialSelection: { kind: 'conversation' } })
       assert.ok(view.text().includes('No agent CLI on this machine can run as a chat.'))

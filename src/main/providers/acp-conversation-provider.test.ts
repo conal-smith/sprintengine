@@ -11,6 +11,8 @@ import {
   acpLaunchEnv,
   acpApprovalInput,
   acpMcpServers,
+  acpPresetSessionMode,
+  acpQuestionRequest,
   acpRawOutputText,
   acpRememberedToolCall,
   acpToolResultImages,
@@ -37,7 +39,7 @@ import { deriveTodoProgress } from '../../../packages/conversation-timeline/src/
 // permission and file requests. No installed CLI or network is needed in CI.
 const agent = `
 const { createInterface } = require('node:readline');
-let prompt, opened, serial=100, pending=new Map(), model='model-one';
+let prompt, opened, serial=100, pending=new Map(), model='model-one', mode=null;
 const send=value=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n');
 const result=(id,result)=>send({id,result});
 const update=update=>send({method:'session/update',params:{sessionId:'native',update}});
@@ -53,21 +55,26 @@ createInterface({input:process.stdin}).on('line',async line=>{
    opened=m.method;
    if(p.mcpServers?.length)require('node:fs').writeFileSync('mcp-servers.json',JSON.stringify(p.mcpServers));
    if(m.method==='session/load')update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'REPLAY SHOULD BE SUPPRESSED'}});
-   result(m.id,{...(m.method==='session/new'?{sessionId:'native'}:{}),modes:{currentModeId:'agent',availableModes:[{id:'agent',name:'Agent'},{id:'plan',name:'Plan'},{id:'ask',name:'Ask'}]},configOptions:[{id:'model',name:'Model',category:'model',type:'select',currentValue:'model-one',options:[{value:'model-one',name:'Model One'},{value:'model-two',name:'Model Two'}]}]});
+   // KIMI_MODES: Kimi Code's four session modes, which its presets are told as.
+   result(m.id,{...(m.method==='session/new'?{sessionId:'native'}:{}),modes:process.env.KIMI_MODES?{currentModeId:'default',availableModes:['default','plan','auto','yolo'].filter(id=>!process.env.KIMI_MODES.includes('-'+id)).map(id=>({id,name:id}))}:{currentModeId:'agent',availableModes:[{id:'agent',name:'Agent'},{id:'plan',name:'Plan'},{id:'ask',name:'Ask'}]},configOptions:[{id:'model',name:'Model',category:'model',type:'select',currentValue:'model-one',options:[{value:'model-one',name:'Model One'},{value:'model-two',name:'Model Two'}]}]});
    // Like Cursor and OpenCode: the command list follows the new session, outside any turn. STRAY
    // text goes first, so a test that has seen the list knows the text was read too.
    if(m.method==='session/new'){if(process.env.STRAY)update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'STRAY OUTSIDE A TURN'}});update({sessionUpdate:'available_commands_update',availableCommands:[{name:'review',description:'Review changes',input:{hint:'[commit|branch]'}},{name:'triage',description:'Sort the open issues. (builtin skill)'},{name:'changelog',description:'Draft a changelog entry. (global)'},{name:'always-approve',description:'Toggle approvals',input:{hint:'on|off'}},{name:'exit',description:'Leave'}]})}
    return;
  }
  if(m.method==='session/fork'){require('node:fs').writeFileSync('forked.json',JSON.stringify(p));return result(m.id,{sessionId:'branch-of-'+p.sessionId})}
- if(m.method==='session/set_mode')return result(m.id,{});
+ if(m.method==='session/set_mode'){mode=p.modeId;return result(m.id,{})}
  if(m.method==='session/set_config_option'){if(p.configId==='model')model=p.value;return result(m.id,{configOptions:[]})}
  if(m.method==='session/cancel'){if(process.env.IGNORE_CANCEL)return;if(prompt)result(prompt,{stopReason:'cancelled'});prompt=null;return}
  if(m.method!=='session/prompt')return result(m.id,{});
  prompt=m.id;const text=p.prompt[0].text;
  if(text.startsWith('/')){if(text==='/refresh')update({sessionUpdate:'available_commands_update',availableCommands:[{name:'fresh',description:'Replaced list'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'ran '+text}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text.includes('inspect history')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});result(m.id,{stopReason:'end_turn'});return}
- if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,permission:process.env.OPENCODE_PERMISSION??null,configContent:process.env.OPENCODE_CONFIG_CONTENT??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,mode,pid:process.pid,permission:process.env.OPENCODE_PERMISSION??null,configContent:process.env.OPENCODE_CONFIG_CONTENT??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // As Kimi Code asks its AskUserQuestion with no form support: a permission request, one option per answer.
+ if(text==='question'){const asked=await request('session/request_permission',{sessionId:'native',toolCall:{toolCallId:'1:ask',title:'AskUserQuestion',content:[{type:'content',content:{type:'text',text:'Which suite?'}}]},options:[{optionId:'q0_opt_0',name:'Unit',kind:'allow_once'},{optionId:'q0_opt_1',name:'End to end',kind:'allow_once'},{optionId:'q0_skip',name:'Skip',kind:'reject_once'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:asked.outcome?.optionId??asked.outcome?.outcome}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // A turn that waits on a permission request, and then says which mode the agent is in.
+ if(text==='wait then mode'){await request('session/request_permission',{sessionId:'native',toolCall:{toolCallId:'run',kind:'execute',title:'Bash',rawInput:{command:'make'}},options:[{kind:'allow_once',optionId:'allow',name:'Allow'},{kind:'reject_once',optionId:'deny',name:'Deny'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(mode)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='crash')process.exit(2);
  // 'say <words>' answers with the words alone, as Cursor answers a turn its server connection broke.
  if(text.startsWith('say ')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:text.slice(4)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
@@ -213,6 +220,8 @@ async function launched(f: { provider: ReturnType<typeof createAcpConversationPr
     argv: string[]
     opened: string
     model: string
+    mode: string | null
+    pid: number
     permission: string | null
     configContent: string | null
   }
@@ -1292,7 +1301,7 @@ test("a Grok chat the person starts keeps their environment, Grok's self-updater
   }
 })
 
-for (const id of ['cursor-agent', 'opencode-agent']) {
+for (const id of ['cursor-agent', 'opencode-agent', 'kimi-code-agent']) {
   test(`${id}'s handshake is started with nothing of Grok's set`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'acp-probe-other-'))
     const envs: NodeJS.ProcessEnv[] = []
@@ -1589,6 +1598,224 @@ test('an ACP session still owed its conversation is never branched: the fork is 
       cursor: null,
     })
     await expect(readFile(join(f.root, 'forked.json'), 'utf8')).rejects.toThrow()
+  } finally {
+    await f.cleanup()
+  }
+})
+
+const KIMI = { KIMI_MODES: '1' }
+
+test('Kimi Code runs No flag, Auto and Bypass as its own session modes, with no flag, and refuses Manual', () => {
+  const kimi = ACP_PROFILES.find((entry) => entry.id === 'kimi-code-agent')!
+  expect(kimi).toMatchObject({ cli: 'kimi-code', argv: ['acp'], images: true, planMode: true })
+  expect(createAcpConversationProvider(kimi).capabilities).toMatchObject({
+    permissionPresets: ['none', 'auto', 'bypass'],
+    permissionModes: [],
+    questions: true,
+  })
+  // `kimi acp` takes no permission flag and no variable for one.
+  for (const preset of ['none', 'auto', 'bypass'] as const) {
+    expect(acpLaunchArgv(kimi, preset)).toEqual(['acp'])
+    expect(acpLaunchEnv(kimi, preset)).toEqual({})
+  }
+  // Auto is Kimi's Ask When Needed (`yolo`), Bypass its Never Ask (`auto`).
+  expect(acpPresetSessionMode(kimi, 'none')).toBeUndefined()
+  expect(acpPresetSessionMode(kimi, 'auto')).toBe('yolo')
+  expect(acpPresetSessionMode(kimi, 'bypass')).toBe('auto')
+})
+
+test('Kimi Code refuses Manual with the reason, rather than running it as something looser', async () => {
+  const kimi = createAcpConversationProvider(
+    ACP_PROFILES.find((entry) => entry.id === 'kimi-code-agent')!,
+    {
+      detect: async () => process.execPath,
+      buildEnv: async () => ({}),
+    },
+  )
+  await expect(
+    kimi.startSession({
+      sessionId: 'manual',
+      workspaceId: 'workspace',
+      agentId: 'agent',
+      providerId: 'kimi-code-agent',
+      modelId: 'default',
+      workspaceRoot: tmpdir(),
+      permissionPreset: 'manual',
+    }),
+  ).rejects.toThrow('Kimi Code edits files in a git project without asking')
+})
+
+test("each Kimi Code turn puts the agent in its preset's session mode", async () => {
+  const f = await presetFixture('kimi-code-agent', 'auto', KIMI)
+  try {
+    expect(await launched(f)).toMatchObject({ mode: 'yolo' })
+  } finally {
+    await f.cleanup()
+  }
+  const none = await presetFixture('kimi-code-agent', 'none', KIMI)
+  try {
+    // No flag is the mode Kimi opened the session in.
+    expect(await launched(none)).toMatchObject({ mode: 'default' })
+  } finally {
+    await none.cleanup()
+  }
+})
+
+test("a Kimi Code chat's Plan turn runs in Kimi's plan mode, whatever the preset", async () => {
+  const f = await presetFixture('kimi-code-agent', 'bypass', KIMI)
+  try {
+    const events: ConversationEvent[] = []
+    for await (const event of await f.provider.sendTurn({
+      ...f.input,
+      turnId: 'plan',
+      requestId: 'request',
+      message: 'argv',
+      mode: 'plan',
+    }))
+      events.push(event)
+    const said = events.filter((event) => event.type === 'content_delta').map((event) => event.payload?.text)
+    expect(JSON.parse(said.join(''))).toMatchObject({ mode: 'plan' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a Kimi Code preset change between turns keeps the process and moves the session mode', async () => {
+  const f = await presetFixture('kimi-code-agent', 'none', KIMI)
+  try {
+    const first = await launched(f)
+    expect(await f.provider.setPermissionPreset?.({ ...f.input, permissionPreset: 'bypass' })).toEqual({ ok: true })
+    expect(f.provider.listLiveSessions?.()[0]).toMatchObject({ hasChildProcess: true })
+    expect(await launched(f)).toMatchObject({ pid: first.pid, mode: 'auto', opened: 'session/new' })
+    expect(await f.provider.setPermissionPreset?.({ ...f.input, permissionPreset: 'none' })).toEqual({ ok: true })
+    expect(await launched(f)).toMatchObject({ pid: first.pid, mode: 'default' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a Kimi Code preset change mid-turn moves the running turn to the new session mode', async () => {
+  const f = await presetFixture('kimi-code-agent', 'none', KIMI)
+  try {
+    const iterator = (
+      (await f.provider.sendTurn({
+        ...f.input,
+        turnId: 'slow',
+        requestId: 'request',
+        message: 'wait then mode',
+      })) as AsyncIterable<ConversationEvent>
+    )[Symbol.asyncIterator]()
+    let requestId = ''
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done) break
+      if (next.value.type === 'approval_requested') {
+        requestId = String(next.value.payload?.requestId)
+        break
+      }
+    }
+    // No "from your next message": the mode is the agent's now.
+    expect(await f.provider.setPermissionPreset?.({ ...f.input, permissionPreset: 'auto' })).toEqual({ ok: true })
+    await f.provider.resolveApproval({ ...f.input, turnId: 'slow', requestId, approved: true })
+    let said = ''
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done) break
+      if (next.value.type === 'content_delta') said += String(next.value.payload?.text ?? '')
+    }
+    expect(said).toBe('yolo')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a Kimi Code build without the mode a preset runs in fails the turn as a refused setting', async () => {
+  const f = await presetFixture('kimi-code-agent', 'auto', { KIMI_MODES: '-yolo' })
+  try {
+    const failed = (await turn(f as Awaited<ReturnType<typeof fixture>>, 'argv')).find(
+      (event) => event.type === 'turn_failed',
+    )
+    const message = String(failed?.payload?.message)
+    expect(message).toContain('yolo session mode')
+    // So the runtime starts the chat again with no preset, as for a refused flag.
+    expect(looksLikePermissionSettingRefusal(message)).toBe(true)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test("Kimi Code's AskUserQuestion is asked as a question and answered with the option the answer names", async () => {
+  const f = await presetFixture('kimi-code-agent', 'bypass', KIMI)
+  try {
+    const answer = async (respond: (requestId: string) => Parameters<typeof f.provider.resolveApproval>[0]) => {
+      const events: ConversationEvent[] = []
+      for await (const event of await f.provider.sendTurn({
+        ...f.input,
+        turnId: 'turn',
+        requestId: 'request',
+        message: 'question',
+      })) {
+        events.push(event)
+        if (event.type === 'approval_requested')
+          events.push(...(f.provider.resolveApproval(respond(String(event.payload?.requestId))) as ConversationEvent[]))
+      }
+      return events
+    }
+    const answered = await answer((requestId) => ({
+      ...f.input,
+      turnId: 'turn',
+      requestId,
+      approved: true,
+      answers: { 'Which suite?': 'End to end' },
+    }))
+    expect(answered.find((event) => event.type === 'approval_requested')?.payload).toMatchObject({
+      kind: 'question',
+      action: 'AskUserQuestion',
+      summary: 'Which suite?',
+      questions: [
+        { question: 'Which suite?', allowFreeText: false, options: [{ label: 'Unit' }, { label: 'End to end' }] },
+      ],
+    })
+    expect(answered.find((event) => event.type === 'approval_resolved')?.payload).toMatchObject({
+      approved: true,
+      answers: { 'Which suite?': 'End to end' },
+    })
+    expect(answered.find((event) => event.type === 'turn_completed')?.payload?.text).toBe('q0_opt_1')
+    // Declined, the question is skipped rather than answered with its first option.
+    const declined = await answer((requestId) => ({ ...f.input, turnId: 'turn', requestId, approved: false }))
+    expect(declined.find((event) => event.type === 'approval_resolved')?.payload).toMatchObject({ approved: false })
+    expect(declined.find((event) => event.type === 'turn_completed')?.payload?.text).toBe('q0_skip')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('only a permission request titled AskUserQuestion, with text and answers, is read as a question', () => {
+  const request = (title: string, text: string, kinds: Array<'allow_once' | 'reject_once'>) => ({
+    sessionId: 'native',
+    toolCall: {
+      toolCallId: 'call',
+      title,
+      content: text ? [{ type: 'content' as const, content: { type: 'text' as const, text } }] : [],
+    },
+    options: kinds.map((kind, index) => ({ optionId: `o${index}`, name: `Option ${index}`, kind })),
+  })
+  expect(acpQuestionRequest(request('AskUserQuestion', 'Which?', ['allow_once', 'reject_once']))).toEqual({
+    question: 'Which?',
+    multiSelect: false,
+    allowFreeText: false,
+    options: [{ label: 'Option 0' }],
+  })
+  expect(acpQuestionRequest(request('Bash', 'Which?', ['allow_once', 'reject_once']))).toBeNull()
+  expect(acpQuestionRequest(request('AskUserQuestion', '', ['allow_once']))).toBeNull()
+  expect(acpQuestionRequest(request('AskUserQuestion', 'Which?', ['reject_once']))).toBeNull()
+})
+
+test('another ACP agent asking with the same title gets a tool approval card', async () => {
+  const f = await presetFixture('grok-agent', 'none')
+  try {
+    const events = await turn(f as Awaited<ReturnType<typeof fixture>>, 'question')
+    expect(events.find((event) => event.type === 'approval_requested')?.payload).toMatchObject({ kind: 'tool' })
   } finally {
     await f.cleanup()
   }

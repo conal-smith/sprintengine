@@ -57,7 +57,7 @@ export type ModuleConversationEvent = {
  * wrote to the cache is `cacheWriteTokens`, so the four add up to everything
  * the turn sent and received. A member the provider cannot report is absent,
  * never zero: Claude Code and Codex report all four, an ACP agent (Cursor,
- * OpenCode, Grok) what its own protocol carries.
+ * OpenCode, Grok, Kimi Code) what its own protocol carries.
  */
 export type ModuleConversationTurnUsage = {
   inputTokens?: number
@@ -553,7 +553,7 @@ export type ModuleChatRuntimeOption = {
   /**
    * The chat runtime id: what `openChat`'s and `create`'s `cli`, a scheduled
    * agent's `cli` and a companion's `engine.cli` take (`claude-code`, `codex`,
-   * `cursor`, `opencode`, `grok`).
+   * `cursor`, `opencode`, `grok`, `kimi-code`).
    */
   id: string
   label: string

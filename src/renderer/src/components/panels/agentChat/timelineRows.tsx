@@ -159,6 +159,7 @@ const CLI_SIGN_IN_COMMAND: Readonly<Record<string, string>> = {
   cursor: 'agent login',
   opencode: 'opencode auth login',
   grok: 'grok login',
+  'kimi-code': 'kimi login',
 }
 
 // A message's actions (copy, clock, revert) rest hidden so a read-through is

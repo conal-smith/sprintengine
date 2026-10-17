@@ -1,15 +1,9 @@
 import { homedir } from 'node:os'
 import type { ConversationCliRuntimeOverrides, ConversationProviderSignInResult } from '../shared/conversation-runtime'
-import { cliForConversationProvider } from '../shared/conversation-harness'
+import { cliForConversationProvider, conversationSignIn } from '../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../shared/execution-host'
 import { argvToPosixShellCommand } from './agent-launch-render'
 import { detectCli } from './cli-runtime-install'
-
-// The CLI's own sign-in, per harness. Only a harness whose chat binds the
-// CLI's login (rather than a key Studio stores) is here.
-const SIGN_IN_ARGS: Partial<Record<string, string[]>> = {
-  'claude-code': ['auth', 'login'],
-}
 
 /**
  * The line a plain Studio terminal runs to sign a chat's CLI back in. It names
@@ -37,18 +31,19 @@ export async function resolveConversationSignIn(
   } = {},
 ): Promise<ConversationProviderSignInResult> {
   const cli = cliForConversationProvider(input.providerId)
-  const args = cli ? SIGN_IN_ARGS[cli] : undefined
-  if (!cli || !args) return { ok: false, message: 'This provider has no sign-in to run.' }
+  const signIn = conversationSignIn(cli)
+  if (!cli || !signIn) return { ok: false, message: 'This provider has no sign-in to run.' }
+  const args = [...signIn.args]
   const override = input.cliRuntimes?.[cli]
   const detection = await (deps.detect ?? detectCli)(cli, override)
   if (!detection.installed || !detection.resolvedPath) {
     return {
       ok: false,
-      message: 'Claude Code CLI is not installed. Install it (or set a command override in Settings) to sign in.',
+      message: `${signIn.name} CLI is not installed. Install it (or set a command override in Settings) to sign in.`,
     }
   }
   // A chat on a WSL machine signs in there: a terminal on that machine, in
-  // its home, running the `claude` the chat runs.
+  // its home, running the CLI the chat runs.
   if (isWslHostId(override?.hostId)) {
     const hostId = override.hostId
     const home = await (deps.wslHome ?? defaultWslHome)(hostId)
