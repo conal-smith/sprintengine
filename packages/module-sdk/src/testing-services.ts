@@ -2614,7 +2614,7 @@ export type FakeTextGeneration = {
 // The host's bounds and lane (main/text-generation/module-text-generation.ts in the app).
 const TEXT_CLIS: ReadonlySet<string> = new Set(['claude-code', 'codex'])
 const TEXT_DEFAULT_MODELS: Readonly<Record<string, string>> = {
-  'claude-code': 'claude-haiku-4-5',
+  'claude-code': 'claude-haiku-5-5',
   codex: 'gpt-5.6-luna',
 }
 const MAX_TEXT_PROMPT_CHARS = 400_000
