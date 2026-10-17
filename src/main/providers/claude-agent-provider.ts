@@ -330,7 +330,8 @@ type SessionState = {
   // The tool call that first spawned each agent this chat has seen, by task.
   // Kept across children: an agent resumed later (SendMessage, after the
   // child that ran it ended) reports under the resuming call, and its lane is
-  // still the one that spawned it.
+  // still the one that spawned it. Seeded from the ones the runtime knows, so
+  // that holds across a restart too.
   agentLanes: Map<string, string>
   // Shells, monitors and workflows the child runs, by task. The background
   // ones are what `session_updated` lists as `backgroundTasks`.
@@ -1446,7 +1447,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         textSeam: false,
         declinedToolUseIds: new Set(),
         subagents: new Map(),
-        agentLanes: new Map(),
+        agentLanes: new Map(input.knownSubagentLanes),
         tasks: new Map(),
         monitorCalls: new Map(),
         commandSkills: null,
