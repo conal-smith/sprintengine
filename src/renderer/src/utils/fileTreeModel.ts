@@ -88,6 +88,14 @@ export type FileTreeModel = {
 /** How long a burst of watch events is left to settle before the tree re-reads. */
 export const FILE_TREE_WATCH_DEBOUNCE_MS = 150
 
+// Above this many entries, a folder is first asked about as a whole. Git looks
+// every path it is given up in the index, so asking about each child costs the
+// folder's width times the repository's size — over a second for a wide build
+// folder in a large checkout — while one question about the folder costs one
+// lookup. Below it the per-child answer is already cheap, and the extra spawn a
+// "not ignored" folder pays would cost more than it saves.
+const WHOLE_FOLDER_IGNORE_CHECK_MIN_ENTRIES = 200
+
 type Holder = { model: FileTreeModel; refs: number; dispose: () => void }
 
 const registry = new Map<string, Holder>()
@@ -109,6 +117,13 @@ function toRepoRelative(repoRoot: string, absolutePath: string): string | null {
   const path = absolutePath.replace(/\\/g, '/')
   if (!path.startsWith(`${root}/`)) return null
   return path.slice(root.length + 1)
+}
+
+// Whether git would read a relative path as the literal path it is. A leading
+// `:` is pathspec magic and `*?[\` are pattern characters, so for those the
+// folder's answer would be about something else.
+function isLiteralGitPath(relative: string): boolean {
+  return !relative.startsWith(':') && !/[*?[\\]/.test(relative)
 }
 
 function createFileTreeModel(rootPath: string, api: FileTreeModelApi): Holder {
@@ -164,7 +179,8 @@ function createFileTreeModel(rootPath: string, api: FileTreeModelApi): Holder {
 
   // One `check-ignore` per folder, when its listing lands: the whole listing is
   // in hand exactly once, which keeps this to a single spawn per folder the
-  // person actually opens rather than one per row.
+  // person actually opens rather than one per row. A wide folder may cost a
+  // second one, when asking about the folder as a whole first did not settle it.
   const checkIgnoredDirectory = (dirPath: string, entries: FileTreeEntry[]) => {
     if (!repoRoot || !api.checkIgnored || entries.length === 0) return
     if (checkedDirectories.has(dirPath)) return
@@ -179,8 +195,31 @@ function createFileTreeModel(rootPath: string, api: FileTreeModelApi): Holder {
       if (relative) relativeByPath.set(relative, entry.path)
     }
     if (relativeByPath.size === 0) return
-    void api
-      .checkIgnored(repoRoot, [...relativeByPath.keys()])
+    // Everything under an ignored folder is ignored, so a folder opened inside
+    // one is answered from its parent without asking git at all.
+    if (snapshot.ignoredKeys.has(normalizePathKey(dirPath))) {
+      const next = new Set(snapshot.ignoredKeys)
+      for (const absolutePath of relativeByPath.values()) next.add(normalizePathKey(absolutePath))
+      setSnapshot({ ignoredKeys: next })
+      return
+    }
+    const root = repoRoot
+    const checkIgnored = api.checkIgnored
+    // Git calls a folder ignored only when nothing under it is tracked, so a
+    // "yes" for the folder holds for every child in it. The repo root has no
+    // relative path to ask about.
+    const folderRelative =
+      relativeByPath.size > WHOLE_FOLDER_IGNORE_CHECK_MIN_ENTRIES ? toRepoRelative(root, dirPath) : null
+    const folderToAsk = folderRelative && isLiteralGitPath(folderRelative) ? folderRelative : null
+    const ignoredChildren = async (): Promise<string[]> => {
+      if (folderToAsk) {
+        const folderIgnored = await checkIgnored(root, [folderToAsk])
+        if (folderIgnored.includes(folderToAsk)) return [...relativeByPath.keys()]
+        if (disposed || generation !== ignoreGeneration) return []
+      }
+      return checkIgnored(root, [...relativeByPath.keys()])
+    }
+    void ignoredChildren()
       .then((ignoredRelative) => {
         if (disposed || generation !== ignoreGeneration || ignoredRelative.length === 0) return
         const next = new Set(snapshot.ignoredKeys)
