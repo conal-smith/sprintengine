@@ -100,14 +100,17 @@ export const DEFAULT_TEXT_GENERATION_TIMEOUT_MS = 90_000
  * `low`, never the chat's own model, which is what makes a title cost a
  * fraction of a turn.
  *
- * Verified 2026-09-07 on this machine: `claude-haiku-4-5` through
- * `claude 2.1.263`, and `gpt-5.6-luna` through `codex-cli 0.153.3` on a
- * ChatGPT account (`gpt-5.1-codex-mini` is refused there).
+ * Verified 2026-10-15 on this machine: `claude-haiku-5-5` through
+ * `claude 2.1.296` with the title flags, and on 2026-09-07 `gpt-5.6-luna`
+ * through `codex-cli 0.153.3` on a ChatGPT account (`gpt-5.1-codex-mini` is
+ * refused there). Haiku 5.5 is a tenth of 4.5's price per token, and every
+ * title, commit message and PR draft runs on this default unless the person
+ * picked a model.
  */
 const TEXT_GENERATION_BACKENDS: Readonly<
   Record<string, { readonly defaultModel: string; readonly defaultReasoning: string }>
 > = {
-  'claude-code': { defaultModel: 'claude-haiku-4-5', defaultReasoning: 'low' },
+  'claude-code': { defaultModel: 'claude-haiku-5-5', defaultReasoning: 'low' },
   codex: { defaultModel: 'gpt-5.6-luna', defaultReasoning: 'low' },
 }
 

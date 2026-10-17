@@ -292,7 +292,7 @@ test('generatedWorkspaceTitle', async () => {
       )
       assert.deepEqual(
         resolveStoreTextGenerationEngine(),
-        { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' },
+        { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' },
         'uninstalling the remembered CLI does not leave the setting pointing at nothing',
       )
     })
