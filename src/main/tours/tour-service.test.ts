@@ -11,7 +11,7 @@ import type { TourCreateInput } from '../../shared/tours/tour-input'
 import type { Tour } from '../../shared/tours/tour-types'
 import type { TourChangedFile } from './tour-git'
 import { createTourService, TOUR_CHANNELS, type TourServiceDeps } from './tour-service'
-import { createTourStore, readStoredTour } from './tour-store'
+import { createTourStore, readStoredTour, type TourStore } from './tour-store'
 
 // The tour service with its world faked: git answers from a table, timers are
 // driven by hand, and the windows are two arrays of what was broadcast. The
@@ -37,9 +37,31 @@ const RETRY: TourFileSnapshot = {
 }
 
 const temps: string[] = []
-afterEach(() => {
+// Saves still being written. A phase event saves without anyone awaiting it,
+// so a test can end with a write still landing in its folder: removing the
+// folder under it fails (ENOTEMPTY) or leaves a file behind.
+const saving = new Set<Promise<void>>()
+afterEach(async () => {
+  while (saving.size > 0) await Promise.allSettled([...saving])
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+
+/** The real store in `dir`, its saves tracked so a test's folder is removed only once they have landed. */
+function trackedStore(dir: string): TourStore {
+  const store = createTourStore(dir)
+  return {
+    ...store,
+    save(tour) {
+      const saved = store.save(tour)
+      saving.add(saved)
+      void saved.then(
+        () => saving.delete(saved),
+        () => saving.delete(saved),
+      )
+      return saved
+    },
+  }
+}
 
 function session(partial: Partial<TerminalSessionSnapshot>): TerminalSessionSnapshot {
   return {
@@ -66,7 +88,7 @@ function harness(options: { focused?: boolean; files?: TourFileSnapshot[] } = {}
   let clock = 1_000
   let nextId = 0
   let terminals: TerminalSessionSnapshot[] = [session({})]
-  const store = createTourStore(dir)
+  const store = trackedStore(dir)
   const checkoutLookups: Array<{ workspaceId: string; agentId: string }> = []
 
   const deps: TourServiceDeps = {
