@@ -131,11 +131,11 @@ function homeFor(name: string): string {
   return home
 }
 
-const local = (shell: string | string[], home: string) => () => {
+const local = (shell: string | string[], home: string, binFirst?: string) => () => {
   const argv = typeof shell === 'string' ? [shell] : shell
   return spawn(argv[0]!, [...argv.slice(1), '-s'], {
     cwd: home,
-    env: { PATH: process.env.PATH, HOME: home },
+    env: { PATH: binFirst ? `${binFirst}:${process.env.PATH}` : process.env.PATH, HOME: home },
     stdio: 'pipe',
   })
 }
@@ -234,6 +234,57 @@ test.skipIf(!HAS_TAR)('two installs at once: the second waits for the first, and
   const results = await Promise.all([first, second])
   for (const result of results) assert.ok(result.stdout.includes(COMMITTED_MARKER), result.stdout + result.stderr)
 })
+
+// Stand-ins for `mkdir`, `find` and `mv` that run the real one and pause where
+// a loaded machine can preempt a shell: what each pauses on is in `pauses`.
+function slowTools(name: string, pauses: { afterLockMade?: number; beforeJudging?: number; afterLockMoved?: number }) {
+  const bin = join(temp, `slow-${name}`)
+  mkdirSync(bin, { recursive: true })
+  const real = (tool: string) => spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim()
+  const tool = (tool: string, body: string) => writeFileSync(join(bin, tool), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  if (pauses.afterLockMade)
+    tool(
+      'mkdir',
+      `'${real('mkdir')}' "$@" || exit\ncase "$1" in */.install.lock) sleep ${pauses.afterLockMade} ;; esac`,
+    )
+  if (pauses.beforeJudging)
+    tool(
+      'find',
+      `case " $* " in *'/.install.lock -prune -mmin +30 '*) sleep ${pauses.beforeJudging} ;; esac\nexec '${real('find')}' "$@"`,
+    )
+  if (pauses.afterLockMoved)
+    tool('mv', `'${real('mv')}' "$@" || exit\ncase "$1" in */.install.lock) sleep ${pauses.afterLockMoved} ;; esac`)
+  return bin
+}
+
+test.skipIf(!HAS_TAR)(
+  'two installs that both find the holder gone: the slower never takes the lock the faster has just made',
+  async () => {
+    const home = homeFor('stale-race')
+    const lock = join(home, REMOTE_DATA_REL, '.install.lock')
+    mkdirSync(lock, { recursive: true })
+    writeFileSync(join(lock, 'pid'), '99999999\n')
+    // Both read the dead holder's pid at once. The first acts on it sooner, makes
+    // its own lock, and is slow to write its pid in it; the second acts later,
+    // while the first's lock is still being made, and is slow after moving it.
+    const first = session(
+      local('sh', home, slowTools('first', { beforeJudging: 0.1, afterLockMade: 0.3 })),
+      script('r1'),
+      'install',
+      archive({ node: true, server: '0.4.0' }),
+    )
+    const second = session(
+      local('sh', home, slowTools('second', { beforeJudging: 0.25, afterLockMoved: 0.3 })),
+      script('r2'),
+      'install',
+      archive({ node: true, server: '0.4.0' }),
+    )
+    const results = await Promise.all([first, second])
+    for (const result of results) assert.ok(result.stdout.includes(COMMITTED_MARKER), result.stdout + result.stderr)
+    assert.ok(!existsSync(lock), 'the lock is let go')
+  },
+  30_000,
+)
 
 test.skipIf(!HAS_TAR)(
   'an older server tree a process still runs from is kept; one nothing runs from is pruned',
