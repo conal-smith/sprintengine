@@ -52,6 +52,19 @@ const CONVERSATION_PERMISSION_MODES: Readonly<Record<string, readonly string[]>>
   grok: ['acceptEdits', 'dontAsk'],
 }
 
+// The CLI's own sign-in, for a chat whose CLI holds its own login rather than
+// a key Studio stores: what a terminal runs to renew it when a turn failed on
+// it. Each runs interactively — it opens a browser, and may wait for a code.
+const CONVERSATION_SIGN_IN: Readonly<Record<string, { name: string; args: readonly string[] }>> = {
+  'claude-code': { name: 'Claude Code', args: ['auth', 'login'] },
+  'kimi-code': { name: 'Kimi Code', args: ['login'] },
+}
+
+/** How a chat's CLI signs back in from a terminal, or null when Studio cannot open that for it. */
+export function conversationSignIn(cli: string | null | undefined): { name: string; args: readonly string[] } | null {
+  return (cli && Object.hasOwn(CONVERSATION_SIGN_IN, cli) && CONVERSATION_SIGN_IN[cli]) || null
+}
+
 /** The CLI's own modes its chat can run beside the presets' own. */
 export function conversationPermissionModes(cli: string | null | undefined): readonly string[] {
   return (cli && CONVERSATION_PERMISSION_MODES[cli]) || []

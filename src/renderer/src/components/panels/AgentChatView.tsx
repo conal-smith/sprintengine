@@ -79,7 +79,11 @@ import {
   TruncatedText,
 } from '../ui'
 import type { WorkspaceSkill } from '../../../../shared/electron-api'
-import { CONVERSATION_DEFAULT_MODEL_ID, cliForConversationProvider } from '../../../../shared/conversation-harness'
+import {
+  CONVERSATION_DEFAULT_MODEL_ID,
+  cliForConversationProvider,
+  conversationSignIn,
+} from '../../../../shared/conversation-harness'
 import { isLooserCliPermissionPreset, parseCliPermissionPreset } from '../../../../shared/cli-permission-preset'
 import { parseCliPermissionModeId } from '../../../../shared/cli-permission-mode'
 import { pickRandomAgentName } from '../../../../shared/agent-names'
@@ -2304,8 +2308,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     void sendTurn(failedSend.text, failedSend.attachments, failedSend.metadata, fromDraft, rest !== null)
     setAttachments((current) => (current === failedSend.attachments ? [] : current))
   }
-  // Only this machine's Claude chat signs in through its CLI; a paired
-  // machine's chat would need signing in over there.
+  // Only this machine's chats on a CLI Studio can open a sign-in for (Claude
+  // Code, Kimi Code) sign in through it; a paired machine's chat would need
+  // signing in over there.
   // A chat on an SSH machine signs in there, whichever CLI it runs (phase 8).
   // With the SSH machines preview off, such a chat has nowhere to sign in:
   // this computer's CLI is not the one the chat runs.
@@ -2319,7 +2324,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     (!machineId || sshMachinesOn) &&
     (machineId
       ? cliForConversationProvider(conversation?.providerId)
-      : cliForConversationProvider(conversation?.providerId) === 'claude-code')
+      : conversationSignIn(cliForConversationProvider(conversation?.providerId)))
       ? conversation?.providerId
       : undefined
   const signIn = useCallback(async () => {
