@@ -188,6 +188,23 @@ test('a push that cannot count what the remote lacks pushes rather than calling 
   assert.equal(await git(origin, 'rev-parse', 'refs/heads/feature/marks'), await git(clone, 'rev-parse', 'HEAD'))
 })
 
+test('the push puts `--` before the remote, so a remote from the config is never read as an option', async () => {
+  const { clone, origin } = await checkout()
+  const { runGitCommand } = await import('./git-utils')
+  const pushes: string[][] = []
+  const creator = createPullRequestCreator({
+    listBranch: lookupOf(NONE).listBranch,
+    git: async (cwd, args, ...rest) => {
+      if (args[0] === 'push') pushes.push(args)
+      return runGitCommand(cwd, args, ...rest)
+    },
+  })
+  assert.deepEqual(await creator.push(clone), { ok: true, pushed: true })
+  assert.equal(pushes.length, 1)
+  assert.deepEqual(pushes[0]!.slice(-3), ['--', 'origin', 'HEAD:refs/heads/feature/marks'])
+  assert.equal(await git(origin, 'rev-parse', 'refs/heads/feature/marks'), await git(clone, 'rev-parse', 'HEAD'))
+})
+
 test('a branch cut from origin/main, and so tracking it, is pushed to its own name and never to main', async () => {
   const { clone, origin } = await checkout()
   await git(clone, 'push', '-q', origin, 'main')
