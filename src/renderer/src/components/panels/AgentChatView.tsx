@@ -161,6 +161,22 @@ import { pasteIntoComposer } from '../../utils/clipboardPasteBridge'
 
 /** ⌘⌥⏎ in the composer: send, then New chat (see the registry). */
 const SEND_AND_NEW_COMMAND = 'chat.sendAndNew'
+
+/** System Settings on Privacy & Security › Files and Folders; says so when it would not open. */
+function openMacosPrivacySettings(): void {
+  void window.api
+    .openExternal(MACOS_FILES_AND_FOLDERS_SETTINGS_URL)
+    .then((result) => {
+      if (!result.ok) showToast({ tone: 'error', title: 'System Settings did not open', description: result.message })
+    })
+    .catch((error: unknown) =>
+      showToast({
+        tone: 'error',
+        title: 'System Settings did not open',
+        description: error instanceof Error ? error.message : String(error),
+      }),
+    )
+}
 import { settleDisclosureResize, useStickToBottom } from './agentChat/useStickToBottom'
 import { ConversationRowFrame } from './agentChat/conversationRowFrame'
 import {
@@ -249,6 +265,7 @@ export type {
   UserTurn,
 } from './agentChat/conversationProjection'
 import { clientSupports, hostPlatform } from '../../clientCapabilities'
+import { MACOS_FILES_AND_FOLDERS_SETTINGS_URL } from '../../../../shared/conversation/macosPrivacyFolders'
 import { useFileDropTarget } from '../../hooks/useFileDropTarget'
 import { ComposerDropOverlay } from './agentChat/ComposerDropOverlay'
 
@@ -3036,6 +3053,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const forkFromHere = useCallback((target: ForkFromHereTarget) => forkRef.current(target), [])
   const onFork =
     operate && capabilities?.fork === true && typeof transport.fork === 'function' ? forkFromHere : undefined
+  // The Files and Folders setting is this Mac's, so only a chat that runs on
+  // it, in a window that can reach System Settings, offers to open it.
+  const onOpenPrivacySettings =
+    transport.kind === 'local' && !machineId && hostPlatform() === 'darwin' && clientSupports('reveal-in-folder')
+      ? openMacosPrivacySettings
+      : undefined
   const chrome: TimelineChrome =
     oldChrome &&
     oldChrome.assistantName === assistantName &&
@@ -3044,6 +3067,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     oldChrome.onRetry === retry &&
     oldChrome.retryDisabled === composerDisabled &&
     oldChrome.onSignIn === onSignIn &&
+    oldChrome.onOpenPrivacySettings === onOpenPrivacySettings &&
     oldChrome.checkpointsEnabled === (capabilities?.checkpoints === true) &&
     oldChrome.conversationRunning === projection.activeTurn &&
     oldChrome.checkpointSeqs === stableCheckpointSeqs &&
@@ -3058,6 +3082,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           onRetry: retry,
           retryDisabled: composerDisabled,
           onSignIn,
+          onOpenPrivacySettings,
           platform: hostPlatform(),
           checkpointsEnabled: capabilities?.checkpoints === true,
           conversationRunning: projection.activeTurn,
