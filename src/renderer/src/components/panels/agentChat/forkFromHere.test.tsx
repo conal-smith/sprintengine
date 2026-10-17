@@ -218,3 +218,19 @@ test('a fork is named after the chat it came from, numbered past the forks alrea
   expect(forkName('Atlas (fork)', ['Atlas', 'Atlas (fork)'])).toBe('Atlas (fork 2)')
   expect(forkName('Atlas (fork 2)', ['Atlas', 'Atlas (fork)', 'Atlas (fork 2)'])).toBe('Atlas (fork 3)')
 })
+
+test('a side question carried on in a new chat forks at the newest reply, with the question in the fork’s composer', async () => {
+  const t = setup()
+  await forkChat({
+    transport: t.transport,
+    key: t.key,
+    target: { side: 'assistant', turnId: 'turn_7', draft: { text: 'Which file is the parser in?' } },
+  })
+  const [asked] = t.forks
+  expect(asked).toMatchObject({ side: 'assistant', turnId: 'turn_7' })
+  expect(composerDraftStore().getState().read(WS, asked.newAgentId)).toMatchObject({
+    text: 'Which file is the parser in?',
+    skillIds: [],
+    files: [],
+  })
+})

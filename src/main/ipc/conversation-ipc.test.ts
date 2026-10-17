@@ -859,3 +859,69 @@ test('a backend that cannot stop one agent says so', async () => {
     { ok: false, message: 'Stopping one agent is unavailable.' },
   )
 })
+
+test('a side question reaches the runtime with its question and history, bounded and trimmed', async () => {
+  const asked: unknown[] = []
+  const ipc = registerWithRuntimeListeners({
+    askSideQuestion: async (input) => {
+      asked.push(input)
+      return { ok: true, answer: 'src/parse.ts' }
+    },
+  })
+  const ask = ipc.handlers.get('conversation:sessions:side-question')!
+  assert.deepEqual(
+    await ask(null, {
+      sessionId: 'conv_1',
+      requestId: ' side-1 ',
+      question: '  Which file?  ',
+      history: [{ question: 'What are we doing?', answer: 'Refactoring.' }],
+    }),
+    { ok: true, answer: 'src/parse.ts' },
+  )
+  assert.deepEqual(asked, [
+    {
+      sessionId: 'conv_1',
+      requestId: 'side-1',
+      question: 'Which file?',
+      history: [{ question: 'What are we doing?', answer: 'Refactoring.' }],
+    },
+  ])
+  assert.deepEqual(await ask(null, { sessionId: 'conv_1', requestId: 'side-2', question: '   ' }), {
+    ok: false,
+    message: 'A side question needs a question.',
+  })
+  assert.deepEqual(await ask(null, { sessionId: 'conv_1', question: 'Q' }), {
+    ok: false,
+    message: 'requestId is required.',
+  })
+  assert.deepEqual(
+    await ask(null, { sessionId: 'conv_1', requestId: 'side-3', question: 'Q', history: [{ question: 1 }] }),
+    {
+      ok: false,
+      message: 'history is invalid.',
+    },
+  )
+  assert.equal(asked.length, 1)
+})
+
+test('a side question is called off by its id, and a backend without side questions says so', async () => {
+  const cancelled: unknown[] = []
+  const ipc = registerWithRuntimeListeners({
+    cancelSideQuestion: async (input) => {
+      cancelled.push(input)
+      return { ok: true }
+    },
+  })
+  const cancel = ipc.handlers.get('conversation:sessions:cancel-side-question')!
+  assert.deepEqual(await cancel(null, { sessionId: 'conv_1', requestId: 'side-1' }), { ok: true })
+  assert.deepEqual(cancelled, [{ sessionId: 'conv_1', requestId: 'side-1' }])
+  const without = registerWithRuntimeListeners()
+  assert.deepEqual(
+    await without.handlers.get('conversation:sessions:side-question')!(null, {
+      sessionId: 'conv_1',
+      requestId: 'side-1',
+      question: 'Q',
+    }),
+    { ok: false, message: 'Side questions are unavailable.' },
+  )
+})

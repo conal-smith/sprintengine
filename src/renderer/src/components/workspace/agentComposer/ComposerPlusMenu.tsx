@@ -36,6 +36,8 @@ export type ComposerPlusMenuProps = {
    * Absent where the composer reads none, and the row is not drawn.
    */
   skills?: Omit<SkillsAndMcpsPickerProps, 'open' | 'onOpenChange' | 'renderTrigger' | 'placement'>
+  /** The side question row; absent where the chat answers none (and in New chat, which has nothing to ask about). */
+  sideQuestion?: ComposerOptionsProps['sideQuestion']
 }
 
 // Memoized: an open chat re-renders its composer row on every streamed token,
@@ -46,6 +48,7 @@ export const ComposerPlusMenu = React.memo(function ComposerPlusMenu({
   onAttach,
   schedule,
   skills,
+  sideQuestion,
 }: ComposerPlusMenuProps) {
   const [optionsOpen, setOptionsOpen] = React.useState(false)
   const [skillsOpen, setSkillsOpen] = React.useState(false)
@@ -118,6 +121,7 @@ export const ComposerPlusMenu = React.memo(function ComposerPlusMenu({
         onSkills={skills ? () => setSkillsOpen(true) : undefined}
         skillsCount={skillsCount}
         schedule={schedule}
+        sideQuestion={sideQuestion}
         close={() => {
           setOptionsOpen(false)
           triggerRef.current?.focus()

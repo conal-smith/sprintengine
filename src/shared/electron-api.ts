@@ -194,6 +194,9 @@ import type {
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationProvidersListInput,
@@ -1248,6 +1251,12 @@ export type ElectronApi = {
   conversationSessionMcpAction: (input: ConversationMcpServerActionInput) => Promise<ConversationMcpServerActionResult>
   /** Stop one agent a live chat spawned, by its lane, leaving the chat and its turn running. */
   conversationSessionStopSubagent: (input: ConversationStopSubagentInput) => Promise<ConversationSessionActionResult>
+  /** Ask a side question about a live chat, answered from its context and added to nothing. */
+  conversationSessionAskSideQuestion: (input: ConversationSideQuestionInput) => Promise<ConversationSideQuestionResult>
+  /** Call off a side question still being answered, by the id it was asked under. */
+  conversationSessionCancelSideQuestion: (
+    input: ConversationCancelSideQuestionInput,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>
   conversationSessionStop: (input: ConversationStopSessionInput) => Promise<ConversationSessionActionResult>
   // Settle and Snooze: end the chat's child process, keeping the session so the
   // next message respawns it.

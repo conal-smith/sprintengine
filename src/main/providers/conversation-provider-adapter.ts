@@ -7,7 +7,16 @@ import type {
   ConversationMcpServerAction,
   ConversationMcpServerActionResult,
   ConversationPermissionPreset,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
 } from '../../shared/conversation-runtime'
+
+/** A side question as the runtime hands it on: `signal` calls it off. */
+export type ConversationProviderSideQuestionInput = {
+  question: string
+  history: ConversationSideQuestionExchange[]
+  signal: AbortSignal
+}
 
 /** How far `disposeChildProcess` goes; see ConversationProviderAdapter. */
 export type ConversationDisposeOptions = { force?: boolean }
@@ -122,6 +131,15 @@ export type ConversationProviderAdapter = {
   // finished does. False when no such agent is running. An adapter that
   // implements this declares `capabilities.stopSubagent`.
   stopSubagent?(sessionId: string, toolUseId: string): Promise<boolean>
+  // Answer a side question from what the session's agent knows, adding
+  // nothing to it: the question and the answer reach neither the session's
+  // events nor the provider's own record of the conversation, and a turn the
+  // session is running carries on as it was. An adapter that implements this
+  // declares `capabilities.sideQuestion`.
+  askSideQuestion?(
+    sessionId: string,
+    input: ConversationProviderSideQuestionInput,
+  ): Promise<ConversationSideQuestionResult>
   disposeAll?(): void | Promise<void>
 }
 
