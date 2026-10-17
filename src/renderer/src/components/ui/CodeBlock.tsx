@@ -221,19 +221,9 @@ export function CodeBlock(props: CodeBlockProps) {
               </IconButton>
             </Tooltip>
           ) : null}
-          {props.drawing != null && !streaming ? (
-            <Tooltip content="Show source">
-              <IconButton
-                size="xs"
-                tone="subtle"
-                aria-label="Show source"
-                pressed={showSource}
-                onClick={() => setShowSource((value) => !value)}
-              >
-                <ViewSourceGlyph className="size-icon-xs" />
-              </IconButton>
-            </Tooltip>
-          ) : null}
+          {/* Wrap comes and goes with the source view, so it sits left of
+              Show source: the toggle keeps its place beside Copy, and a second
+              click on the same spot switches back. */}
           {drawn ? null : (
             <Tooltip content="Wrap lines">
               <IconButton
@@ -247,6 +237,19 @@ export function CodeBlock(props: CodeBlockProps) {
               </IconButton>
             </Tooltip>
           )}
+          {props.drawing != null && !streaming ? (
+            <Tooltip content="Show source">
+              <IconButton
+                size="xs"
+                tone="subtle"
+                aria-label="Show source"
+                pressed={showSource}
+                onClick={() => setShowSource((value) => !value)}
+              >
+                <ViewSourceGlyph className="size-icon-xs" />
+              </IconButton>
+            </Tooltip>
+          ) : null}
           <CopyGlyphButton text={code} label="Copy code" size="xs" tone="subtle" />
         </div>
       </div>
