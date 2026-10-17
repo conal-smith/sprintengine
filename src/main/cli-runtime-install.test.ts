@@ -9,6 +9,7 @@ import {
   createCliExecutableResolver,
   parseProbeOutput,
   resolveInstallPlatform,
+  runCliCommand,
   updateFailure,
 } from './cli-runtime-install'
 import { test } from 'vitest'
@@ -225,4 +226,18 @@ test('a failed update says what the command printed last, not only its exit code
   )
   // A command that printed nothing has only its code to give.
   assert.equal(updateFailure(1, '$ claude update\n'), 'Update command exited with code 1.')
+})
+
+test("a command's set variables reach it on top of its environment, which is left as it was", async () => {
+  const env = { ...process.env, GROK_DISABLE_AUTOUPDATER: '0' }
+  const outcome = await runCliCommand({
+    binary: process.execPath,
+    args: ['-e', 'process.stdout.write(String(process.env.GROK_DISABLE_AUTOUPDATER))'],
+    timeoutMs: 20_000,
+    env,
+    setEnv: { GROK_DISABLE_AUTOUPDATER: '1' },
+  })
+  assert.equal(outcome.code, 0, outcome.stderr)
+  assert.match(outcome.stdout, /1$/u)
+  assert.equal(env.GROK_DISABLE_AUTOUPDATER, '0')
 })

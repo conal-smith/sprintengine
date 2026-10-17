@@ -182,6 +182,22 @@ test("Grok's handshake commands for a folder on a WSL machine are asked of that 
   expect(decodedScript(spawned[0]!.args)).toContain('/home/dev/repo')
 })
 
+test("Grok's handshake on a WSL machine is started there with its self-updater off", async () => {
+  const spawned: Spawned[] = []
+  const grok = ACP_PROFILES.find((entry) => entry.cli === 'grok')!
+  await probeAcpConversationCommands(
+    grok,
+    { cwd: ROOT, cliRuntimes: { grok: { hostId: 'wsl:Ubuntu' } } },
+    {
+      prepareWslTarget: async () => WSL_TARGET,
+      detect: async () => '/home/dev/.local/bin/grok',
+      buildEnv: async () => ({}),
+      spawnChild: standInSpawn(spawned),
+    },
+  )
+  expect(decodedScript(spawned[0]!.args)).toContain('GROK_DISABLE_AUTOUPDATER=1')
+})
+
 // The stand-in in place of the script `wsl.exe` would run: it takes the
 // token from the first line of stdin, as that script does, and reports it.
 const agentWithToken = `
