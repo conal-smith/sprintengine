@@ -214,6 +214,38 @@ test('the list arrives in the sidebar’s order: last message first, the work cl
   )
 })
 
+test('each chat carries the key the sidebar orders it by, and a running turn when it began', async () => {
+  const host = hostFor({
+    threads: {
+      written: [indexed('agent-1', { updatedAt: 99_000 })],
+      fresh: [indexed('agent-1', { updatedAt: 5 })],
+      typed: [indexed('agent-1', { updatedAt: 6 })],
+    },
+    sessions: [session('written', 'agent-1', { phase: 'running', turnStartedAt: 7_000, updatedAt: 9_000 })],
+    records: {
+      written: { name: 'Written', createdAt: 1, lastUserMessageAt: 5_000 },
+      fresh: { name: 'Fresh', createdAt: 3_000 },
+      typed: { name: 'Typed', createdAt: 50, lastTerminalActivityAt: 70 },
+    },
+  })
+  const listed = JSON.parse(JSON.stringify(await host.list())) as Array<Record<string, unknown>>
+  assert.deepEqual(
+    listed.map((thread) => [thread.workspaceId, thread.recencyAt]),
+    [
+      ['written', 5_000],
+      ['fresh', 3_000],
+      ['typed', 70],
+    ],
+    'the chat never written to says when it was made, or last typed into, not when it last moved',
+  )
+  assert.equal(listed[0]?.turnStartedAt, 7_000)
+  assert.equal('turnStartedAt' in listed[1]!, false, 'nothing running, no start')
+  const parsed = parseConversationServerFrame({ type: 'sessions', requestId: 'list', sessions: listed })
+  assert.ok(parsed?.type === 'sessions')
+  assert.equal(parsed.sessions[0]?.recencyAt, 5_000, 'the client validator keeps it')
+  assert.equal(parsed.sessions[0]?.turnStartedAt, 7_000)
+})
+
 test('a failed record read lists the chats as an older desktop would, with nothing left out', async () => {
   const host = hostFor({
     threads: { chat: [indexed('agent-1')] },

@@ -29,7 +29,7 @@ import { defaultSlotGitRunner, type SlotGitRunner } from './slot-git'
 import { messageOf, type PoolContext, type PoolRuntime, type ResolvedRepo } from './pool-context'
 import { clearIgnored, enforceDiskLimit, evictOverLimit, evictSlot, measure } from './pool-eviction'
 import { heldAction } from './pool-held-actions'
-import { FETCH_FAILURE_BACKOFF_MS, FETCH_FRESH_MS, lease, reclaim } from './pool-lease'
+import { FETCH_FAILURE_BACKOFF_MS, FETCH_FRESH_MS, catchUp, lease, reclaim, type CatchUpOutcome } from './pool-lease'
 import { recoverPool } from './pool-recovery'
 import { release, returnUnused } from './pool-return'
 
@@ -263,6 +263,16 @@ export type WorktreePoolReturnInput = {
 }
 
 export type WorktreePoolService = ReturnType<typeof createWorktreePoolService>
+
+/** A lease's catch-up ({@link catchUp}), as a window's pool action answers it. */
+export function catchUpResult(outcome: CatchUpOutcome): WorktreePoolActionResult {
+  if (outcome.kind === 'moved') return { ok: true, message: outcome.note ?? `Moved to ${outcome.ref}.` }
+  if (outcome.kind === 'current') return { ok: true, message: outcome.note }
+  if (outcome.kind === 'worked-in') return { ok: true, message: 'Left as it is: it has been worked in.' }
+  if (outcome.kind === 'not-found') return { ok: false, message: 'No such lease.' }
+  if (outcome.kind === 'busy') return { ok: false, message: 'Another Studio is using this pool.' }
+  return { ok: false, message: outcome.message }
+}
 
 export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   const git = deps.git ?? defaultSlotGitRunner
@@ -553,6 +563,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
 
   async function action(input: WorktreePoolActionInput): Promise<WorktreePoolActionResult> {
     if (input.kind === 'release') return releaseAction(input.leaseId)
+    if (input.kind === 'catch-up') return catchUpResult(await catchUp(ctx, input.leaseId))
     const pool = await poolFor(input.repoRoot, false)
     if (!pool) return { ok: false, message: 'This repository has no worktree pool.' }
     if (!(await ready(pool))) return { ok: false, message: 'Another Studio is using this pool.' }
@@ -648,6 +659,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     lease: (input: WorktreePoolLeaseInput) => track(lease(ctx, input)),
     reclaim: (input: Parameters<typeof reclaim>[1]) => track(reclaim(ctx, input)),
     release: (leaseId: string) => track(release(ctx, leaseId)),
+    catchUp: (leaseId: string) => track(catchUp(ctx, leaseId)),
     returnUnused: (input: WorktreePoolReturnInput) => track(returnUnused(ctx, input)),
     leaseAt,
     action: (input: WorktreePoolActionInput) => track(action(input)),

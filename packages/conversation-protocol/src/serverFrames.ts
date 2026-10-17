@@ -82,6 +82,23 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    */
   lastUserMessageAt?: number
   /**
+   * The moment the desktop's own sidebar orders the chat by: `lastUserMessageAt`
+   * when a person has written to it, else when the chat was made there or
+   * last typed into in a terminal. A client that interleaves the list with
+   * rows of its own orders it by this, so the chat sits where it sits on the
+   * desktop it runs on; opening or settling nothing moves it. Absent from a
+   * desktop built before it was listed, where a client falls back to
+   * `lastUserMessageAt`, then `updatedAt`.
+   */
+  recencyAt?: number
+  /**
+   * When the turn the chat is running now began, for a "working for" count
+   * that does not restart when an approval resolves or the model changes, as
+   * `updatedAt` does. Absent while no turn runs, and from a desktop built
+   * before it was listed.
+   */
+  turnStartedAt?: number
+  /**
    * When the chat's agent last finished a turn, or failed one: read from the
    * chat's transcript, so it does not move on a rename, a model switch or a
    * session starting. Absent from a desktop built before it was listed, and
@@ -383,6 +400,8 @@ function thread(value: unknown): ConversationThread | null {
     // out, and the row reads as from a desktop that does not send it.
     ...(chatTitle ? { chatTitle } : {}),
     ...(clock(value.lastUserMessageAt) ? { lastUserMessageAt: value.lastUserMessageAt } : {}),
+    ...(clock(value.recencyAt) ? { recencyAt: value.recencyAt } : {}),
+    ...(clock(value.turnStartedAt) ? { turnStartedAt: value.turnStartedAt } : {}),
     ...(clock(value.lastTurnEndedAt) ? { lastTurnEndedAt: value.lastTurnEndedAt } : {}),
     ...(clock(value.lastVisitedAt) ? { lastVisitedAt: value.lastVisitedAt } : {}),
     ...(clock(value.visitRewoundAt) ? { visitRewoundAt: value.visitRewoundAt } : {}),
