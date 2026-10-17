@@ -2948,6 +2948,14 @@ export function mapSdkMessage(
     case 'user': {
       const parentToolUseId = readParentToolUseId(message)
       const content = asRecord(message.message)?.content
+      // A slash command that stops before the model is asked, a `!` line of
+      // it refused by Claude Code's permission check above all, says why in a
+      // user message of the CLI's own making and nowhere else; the turn then
+      // ends with no reply. Claude Code 2.1.296 escapes the text as markup.
+      if (!parentToolUseId && typeof content === 'string' && /^\s*<local-command-stderr>/.test(content)) {
+        commandOutput(unescapeMarkup(stripLocalCommandTags(content)), undefined)
+        break
+      }
       if (!Array.isArray(content)) break
       // The structured result describes the message's one tool result; one
       // that answers several calls at once says nothing a task can be read from.
@@ -3456,6 +3464,12 @@ function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]
 // keeps it in; the output is what is between them.
 function stripLocalCommandTags(text: string): string {
   return text.replace(/<\/?local-command-(?:stdout|stderr)>/g, '')
+}
+
+const MARKUP_ENTITIES: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", amp: '&' }
+
+function unescapeMarkup(text: string): string {
+  return text.replace(/&(lt|gt|quot|apos|#39|amp);/g, (_, name: string) => MARKUP_ENTITIES[name]!)
 }
 
 function readString(value: unknown): string | undefined {
