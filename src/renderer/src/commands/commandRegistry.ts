@@ -53,6 +53,22 @@ export const COMMAND_REGISTRY = [
     defaultKeybindings: ['Shift Shift'],
     handlerPath: { kind: 'workspace-manager', handler: 'setCommandPaletteOpen(true)' },
   }),
+  // Go to file. The same overlay `commandPalette.open` raises, opened on its
+  // Files tab, so the rows are file names in the project and a query is never
+  // ranked against chats or commands. ⌘P because that is the chord a person's
+  // hands already know for it from other editors; nothing else in the app or
+  // its modules binds it. Global and not allowed in an editable target, like
+  // ⌘⇧F: in the browser pane ⌘P stays the page's print (browser-manager's
+  // forwarded-chord table leaves it out on purpose), and off macOS Ctrl+P in
+  // a terminal is the shell's previous-command key.
+  command({
+    id: 'search.goToFile',
+    title: 'Go to file',
+    category: 'command_palette',
+    scopes: ['global'],
+    defaultKeybindings: ['Primary+P'],
+    handlerPath: { kind: 'workspace-manager', handler: 'setCommandPaletteOpen(true, "files")' },
+  }),
   // Find in Path. The same overlay `commandPalette.open` raises, opened filtered
   // to the file-backed groups — a snippet of code should not be ranked against
   // command and workspace rows. Global scope, like the palette itself: with no
