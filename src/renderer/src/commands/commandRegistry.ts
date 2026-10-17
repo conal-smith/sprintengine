@@ -149,6 +149,26 @@ export const COMMAND_REGISTRY = [
       action: 'composer onKeyDown -> submitComposer(), then chat.new',
     },
   }),
+  // Set the draft aside and clear the box, or, on an empty box, open the
+  // stash to bring one back (agentChat/promptStashPicker.tsx). ⌘S because a
+  // stash is the composer's save: the words are kept, just not here. Resolved
+  // in each composer's own keydown, after its pickers and an input method, so
+  // the window dispatcher's match runs nothing (context-bound), and ⌘S in the
+  // code editor stays the editor's save. The scopes put it in the Shortcuts
+  // tab, rebindable and checked for conflicts, for both composers.
+  command({
+    id: 'chat.stash',
+    title: 'Stash prompt, or open stashed prompts',
+    category: 'workspace',
+    scopes: ['workspace', 'new-chat'],
+    defaultKeybindings: ['Primary+S'],
+    allowInEditableTarget: true,
+    handlerPath: {
+      kind: 'context-bound',
+      owner: 'AgentChatView, NewAgentPanel',
+      action: 'composer onKeyDown -> usePromptStash().handleKeyDown',
+    },
+  }),
   // The chats waiting on the person, one press each: blocked on a question or
   // an approval first, then a failed turn, longest-waiting first within each —
   // the same chats the Home badge counts. J for "jump"; ⌘⇧J is spoken for

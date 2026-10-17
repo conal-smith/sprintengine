@@ -187,6 +187,7 @@ import { QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
 import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './agentChat/followUpDispatch'
 import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
+import { PROMPT_STASH_COMMAND, usePromptStash } from './agentChat/promptStashPicker'
 import { BackgroundTasksTrayRow } from './agentChat/backgroundTasksRow'
 import { WorktreeInstallTrayRow } from './agentChat/worktreeInstallRow'
 import { StudioConnectionNotice } from './agentChat/studioConnectionNotice'
@@ -2954,6 +2955,36 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       removeContextTrigger(range)
     },
   })
+  // ⌘S sets the draft aside, or on an empty box lists what was set aside
+  // (agentChat/promptStashPicker.tsx). A stashed prompt comes back ahead of
+  // anything typed since, the way "Edit from here" brings a message back.
+  const stashPicker = usePromptStash({
+    stashKeys: getEffectiveKeybindings(PROMPT_STASH_COMMAND, keybindingSettings),
+    platform: keyPlatform,
+    content: () => ({
+      text: draft,
+      files: draftMetadata.files,
+      mentions: draftMetadata.mentions,
+      images: attachments,
+    }),
+    clear: () => {
+      clearDraft()
+      setAttachments([])
+      detachRecall()
+    },
+    restore: ({ prompt, images }) => {
+      restoreDraftRef.current({
+        text: prompt.text,
+        files: prompt.files,
+        skills: [],
+        mentions: prompt.mentions,
+        attachments: images,
+      })
+      return true
+    },
+    acceptsImages: imagesEnabled,
+    empty: !draft.trim() && !attachments.length && !draftMetadata.files.length && !draftMetadata.mentions.length,
+  })
 
   const pendingApprovalEntries = shape.pendingApprovals
   const pendingApprovalEntry = pendingApprovalEntries[0]
@@ -3806,6 +3837,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   {composerError}
                 </ComposerTrayRow>
               ) : null}
+              {/* The stash ⌘S opened, against the box it restores into. */}
+              {stashPicker.picker}
             </ComposerTray>
 
             {/*
@@ -3872,7 +3905,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               <div className="px-5 pb-1 pt-4">
                 <ComposerField
                   ref={composerRef}
-                  contentAttributes={{ 'aria-label': `Message ${label}`, ...contextPicker.comboboxProps }}
+                  contentAttributes={{
+                    'aria-label': `Message ${label}`,
+                    ...contextPicker.comboboxProps,
+                    ...stashPicker.comboboxProps,
+                  }}
                   value={draft}
                   historyScope={`${workspaceId}\0${agentId}`}
                   onBlur={flushDraft}
@@ -3917,6 +3954,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing) return
                     if (contextPicker.handleKeyDown(event)) return
+                    if (stashPicker.handleKeyDown(event)) return
                     if (
                       event.key === 'Backspace' &&
                       event.currentTarget.selectionStart === 0 &&

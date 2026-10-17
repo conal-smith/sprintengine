@@ -221,3 +221,14 @@ test('Primary+P is bound to no other registry command', () => {
   const goToFile = getCommandDefinition('search.goToFile')!
   assert.deepEqual(findKeybindingConflicts(goToFile, COMMAND_REGISTRY), [])
 })
+
+test('Primary+S stashes from a composer and is resolved there, never by the window', () => {
+  const stash = getCommandDefinition('chat.stash')
+  assert.ok(stash, 'chat.stash is a registry command, so the Shortcuts tab lists and rebinds it')
+  assert.deepEqual(stash.defaultKeybindings, ['primary+s'])
+  assert.deepEqual(stash.scopes, ['workspace', 'new-chat'])
+  // Context-bound: the window dispatcher's match runs nothing, so ⌘S pressed
+  // in the code editor still reaches the editor's own save.
+  assert.equal(stash.handlerPath.kind, 'context-bound')
+  assert.deepEqual(findKeybindingConflicts(stash, COMMAND_REGISTRY), [])
+})

@@ -86,7 +86,7 @@ producer that needs a toast to stay says so with `autoDismissMs: false` (the
 app-update steps). (The shipped kit names the danger tone `error`; the class
 here follows the token grammar, `status.danger`.)
 
-**The action row, four consumers.** Owner ruling 2026-09-04: the CLI-update
+**The action row, five consumers.** Owner ruling 2026-09-04: the CLI-update
 toast ("Update available: Codex 0.153.3")
 carries `.ds-toast-actions` with **Settings** (ghost) and **Update** (primary),
 and `.ds-toast-glyph` — the agent CLI's icon — in place of the tone's mark. It
@@ -149,8 +149,19 @@ It may carry one button, never primary: an extension's toast is a report with a
 way onward ("Skill installed in acme/app", **Open**), not a question the app is
 asking. It runs on its tone's own timer like every report, pressing the button
 takes the toast down first, and the SDK documents that anything the person must
-find again belongs in the bell, so missing one loses nothing. These four are
-the only toasts in the system with buttons.
+find again belongs in the bell, so missing one loses nothing.
+
+**The action row's fifth consumer (2026-10-17).** ⌘S in a composer sets the
+draft aside in the prompt stash and clears the box, and says so: "Prompt
+stashed" (good mark), "⌘S in an empty box brings it back." as its
+description, and one **Undo** (ghost). This is the one Undo in a toast, and it
+is allowed here for the reason the rule above gives against the others: nothing
+rides the timer. The draft is not gone, it is in the stash, one ⌘S and one ↵
+away from the same box, so a toast that times out unpressed loses nothing. A
+second ⌘S replaces it in place, so Undo always means the latest stash, and the
+toast goes when the composer it would undo into does. When the stash could not
+be written to the device it says so in the description (warn mark) and keeps
+its Undo. These five are the only toasts in the system with buttons.
 
 **In a browser tab (2026-10-03).** A web tab has no installer: the server it
 talks to is updated, and the tab is a reload away from the new version. So the
