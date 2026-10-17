@@ -167,6 +167,8 @@ export type GitCommandResult = {
   stderr: string
   message: string | null
   pushedCommitCount?: number
+  /** Set when git was stopped at its deadline rather than failing on its own. */
+  timedOut?: true
 }
 
 export type GitWorktreeEntry = {
