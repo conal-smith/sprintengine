@@ -34,6 +34,12 @@ export function serveShellBridge(rpc: ControlRpc, bridge: ShellBridge): () => vo
       const target = revealTarget(params)
       return target ? bridge.reveal.tab(target) : false
     }),
+    rpc.handle(SHELL_BRIDGE_METHODS.imageDownscale, (params) => {
+      if (!isRecord(params) || !(params.bytes instanceof Uint8Array) || typeof params.mediaType !== 'string') {
+        throw new Error('A picture to shrink is its bytes and its media type.')
+      }
+      return bridge.images.downscale(params.bytes, params.mediaType)
+    }),
     rpc.handle(SHELL_BRIDGE_METHODS.integrationsReady, async () => {
       await bridge.integrationsReady()
       return true
