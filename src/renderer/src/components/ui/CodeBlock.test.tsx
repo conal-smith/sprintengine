@@ -157,3 +157,15 @@ test('a surface action sits in the header beside the block’s own', async () =>
   await mount({ code: 'x', language: 'ts', actions: <span data-testid="extra">extra</span> })
   expect(header().querySelector('[data-testid="extra"]')).not.toBeNull()
 })
+
+test('Show source keeps its place beside Copy in both views, so a second click switches back', async () => {
+  await mount({ code: 'graph TD; A-->B', language: 'mermaid', drawing: <svg /> })
+  const actionNames = () =>
+    Array.from(host!.querySelectorAll('.ds-code-block__actions button')).map((button) =>
+      button.getAttribute('aria-label'),
+    )
+  expect(actionNames().slice(-2)).toEqual(['Show source', 'Copy code'])
+  await act(async () => buttonNamed('Show source')!.click())
+  expect(buttonNamed('Wrap lines')).not.toBeNull()
+  expect(actionNames().slice(-2)).toEqual(['Show source', 'Copy code'])
+})

@@ -20,6 +20,25 @@ function isLocalPath(destination: string): boolean {
   return trimmed !== '' && !trimmed.startsWith('#') && !URL_SCHEME.test(trimmed)
 }
 
+/**
+ * The index of the last character of the code span whose opening backticks
+ * start at `index`, or of the backtick run itself when nothing closes it.
+ */
+export function codeSpanEnd(line: string, index: number): number {
+  let run = 1
+  while (line[index + run] === '`') run += 1
+  // A code span closes on a run of exactly the same length; without one
+  // the backticks are text.
+  let close = -1
+  for (let at = index + run; at < line.length && close === -1;) {
+    let length = 0
+    while (line[at + length] === '`') length += 1
+    if (length === run) close = at
+    at += Math.max(length, 1)
+  }
+  return close === -1 ? index + run - 1 : close + run - 1
+}
+
 function repairLine(line: string): string {
   const opens: number[] = []
   const insertAt: number[] = []
@@ -30,18 +49,7 @@ function repairLine(line: string): string {
       continue
     }
     if (char === '`') {
-      let run = 1
-      while (line[index + run] === '`') run += 1
-      // A code span closes on a run of exactly the same length; without one
-      // the backticks are text.
-      let close = -1
-      for (let at = index + run; at < line.length && close === -1;) {
-        let length = 0
-        while (line[at + length] === '`') length += 1
-        if (length === run) close = at
-        at += Math.max(length, 1)
-      }
-      index = close === -1 ? index + run - 1 : close + run - 1
+      index = codeSpanEnd(line, index)
       continue
     }
     if (char === '[') {

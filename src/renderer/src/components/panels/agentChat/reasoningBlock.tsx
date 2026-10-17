@@ -1,7 +1,7 @@
 // The model's reasoning, one quiet block per stretch of thinking, kept at the
 // point in the turn where it happened.
 
-import { memo, useId, useRef } from 'react'
+import { memo, useId, useLayoutEffect, useRef } from 'react'
 import { RowButton } from '../../ui'
 import { ConversationMarkdown, useConversationLinkContext } from './conversationLinks'
 import { useConversationDisclosure } from './conversationViewState'
@@ -18,7 +18,9 @@ export { reasoningPreview }
 // the answer. The header names how long the model thought and previews what
 // about; opened, the text reads as markdown inside a bounded scroll so a long
 // trace cannot push the conversation a screen down. While the model is still
-// thinking the header shimmers "Thinking" instead.
+// thinking the header shimmers "Thinking" instead, and an opened body follows
+// the new text down until the person scrolls up to read; back at the bottom,
+// it follows again.
 export const ReasoningBlock = memo(function ReasoningBlock({
   text,
   duration,
@@ -40,6 +42,13 @@ export const ReasoningBlock = memo(function ReasoningBlock({
     false,
   )
   const bodyId = useId()
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const atEndRef = useRef(true)
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (!live || !open || !body || !atEndRef.current) return
+    body.scrollTop = body.scrollHeight
+  }, [text, live, open])
   const label = live ? 'Thinking' : duration ? `Thought for ${duration}` : 'Thought'
   const preview = open ? '' : reasoningPreview(text)
   return (
@@ -51,7 +60,11 @@ export const ReasoningBlock = memo(function ReasoningBlock({
         className="group/tool-row text-meta"
         aria-expanded={open}
         aria-controls={open ? bodyId : undefined}
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          // A body opened afresh starts at the newest text.
+          if (!open) atEndRef.current = true
+          setOpen(!open)
+        }}
       >
         <span className="flex shrink-0 text-[color:var(--text-disabled)] group-hover/tool-row:text-[color:var(--text-subtle)]">
           <ThoughtGlyph />
@@ -81,7 +94,12 @@ export const ReasoningBlock = memo(function ReasoningBlock({
         // muted tone, so bold, code and lists still read as themselves without
         // the trace competing with the answer it led to.
         <div
+          ref={bodyRef}
           id={bodyId}
+          onScroll={(event) => {
+            const body = event.currentTarget
+            atEndRef.current = body.scrollHeight - body.scrollTop - body.clientHeight <= 4
+          }}
           className="mb-1 ml-3 mt-0.5 max-h-96 overflow-y-auto border-l border-[color:var(--border-subtle)] pl-3 text-[color:var(--text-muted)]"
         >
           <ConversationMarkdown text={text} streaming={live} tone="muted" />
