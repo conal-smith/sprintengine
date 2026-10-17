@@ -71,8 +71,12 @@ import {
 
 type EnforcedPreset = Exclude<ConversationPermissionPreset, 'none'>
 
-/** How a CLI is told one permission preset: launch argv in place of the plain one, environment on top, or both. */
-type AcpPresetLaunch = { argv?: string[]; env?: Record<string, string> }
+/**
+ * How a CLI is told one permission preset: launch argv in place of the plain
+ * one, environment on top, or one of the agent's own ACP session modes, which
+ * it is put in before each turn and the moment the preset changes.
+ */
+type AcpPresetLaunch = { argv?: string[]; env?: Record<string, string>; mode?: string }
 
 export type AcpProfile = {
   id: string
@@ -196,6 +200,35 @@ export const ACP_PROFILES: AcpProfile[] = [
     images: false,
     planMode: false,
   },
+  {
+    id: 'kimi-code-agent',
+    displayName: 'Kimi Code',
+    cli: 'kimi-code',
+    // `kimi acp` takes no permission flag and no variable for one. What it
+    // has are four ACP session modes, which are what each preset is told,
+    // over the protocol, before every turn. Read off Kimi Code 0.42.0's
+    // permission policies rather than its mode descriptions, which have the
+    // two looser ones the wrong way round:
+    //   default  reads, searches, web lookups and subagents run; a Write or
+    //            Edit inside a git project runs; everything else asks.
+    //   yolo     its "Ask When Needed" (`kimi --yolo`): routine edits and
+    //            commands run; a command its parser reads as dangerous, a
+    //            sensitive file, the git directory and the person's own ask
+    //            rules still ask. Its own Auto.
+    //   auto     its "Never Ask" (`kimi --auto`, the terminal agent's
+    //            Bypass): everything runs but what the person's own rules
+    //            deny, and it asks no questions.
+    // Manual has no mode: see conversationPermissionPresetRefusals.
+    argv: ['acp'],
+    presets: {
+      auto: { mode: 'yolo' },
+      bypass: { mode: 'auto' },
+    },
+    unsupported: conversationPermissionPresetRefusals('kimi-code'),
+    authHint: 'Run kimi login in a terminal.',
+    images: true,
+    planMode: true,
+  },
 ]
 
 const supportedPresets = (profile: AcpProfile): ConversationPermissionPreset[] => [
@@ -231,6 +264,30 @@ export function acpLaunchEnv(
   mode?: string,
 ): Record<string, string> {
   return presetLaunch(profile, preset, mode)?.env || {}
+}
+
+/** The agent's own session mode a preset (and the CLI's own mode at it) puts it in, if it is told one that way. */
+export function acpPresetSessionMode(
+  profile: AcpProfile,
+  preset: ConversationPermissionPreset = 'none',
+  mode?: string,
+): string | undefined {
+  return presetLaunch(profile, preset, mode)?.mode
+}
+
+// Whether two settings start the child the same way, so moving between them
+// only moves the agent's session mode and needs no new process.
+function sameAcpLaunch(
+  profile: AcpProfile,
+  from: { preset?: ConversationPermissionPreset; mode?: string },
+  to: { preset?: ConversationPermissionPreset; mode?: string },
+): boolean {
+  const launch = (setting: typeof from) =>
+    JSON.stringify([
+      acpLaunchArgv(profile, setting.preset, setting.mode),
+      acpLaunchEnv(profile, setting.preset, setting.mode),
+    ])
+  return launch(from) === launch(to)
 }
 
 /** Why a CLI cannot run a preset, or null when it can. */
@@ -939,6 +996,29 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       })
     }
   }
+  // The agent's session mode for a turn: the chat's own (Plan) when it chose
+  // one, else the mode the permission preset puts the agent in, else the one
+  // the agent opened the session in. Set before every turn, so a session
+  // reloaded in another mode, or switched from inside it, is put back.
+  const applySessionMode = async (state: State, turnMode: MockAdapterTurnInput['mode']) => {
+    const presetMode = acpPresetSessionMode(profile, state.input.permissionPreset, state.input.permissionMode)
+    if (!turnMode && !state.defaultMode && !presetMode) return
+    const desired = !turnMode || turnMode === 'default' ? (presetMode ?? state.defaultMode) : turnMode
+    // Worded as a refusal of the preset, so the runtime can start the chat
+    // again with no preset rather than leave it unable to answer.
+    if (desired && desired === presetMode && !state.modes.includes(desired))
+      throw new Error(
+        `The ${desired} session mode this permission preset runs in is not supported by this ${profile.displayName} build.`,
+      )
+    if (!desired || !state.modes.includes(desired)) throw new Error('This mode is unavailable from the ACP agent.')
+    if (state.modeConfigId)
+      await state.connection!.setSessionConfigOption({
+        sessionId: state.nativeId!,
+        configId: state.modeConfigId,
+        value: desired,
+      })
+    else await state.connection!.setSessionMode({ sessionId: state.nativeId!, modeId: desired })
+  }
   const environment = async (input: MockAdapterSessionInput): Promise<NodeJS.ProcessEnv> =>
     (options.buildEnv ?? acpEnvironment)(input)
   const ensure = async (state: State) => {
@@ -1369,18 +1449,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             })
             state.appliedModelId = state.input.modelId
           }
-          if (input.mode || state.defaultMode) {
-            const desired = !input.mode || input.mode === 'default' ? state.defaultMode : input.mode
-            if (!desired || !state.modes.includes(desired))
-              throw new Error('This mode is unavailable from the ACP agent.')
-            if (state.modeConfigId)
-              await state.connection!.setSessionConfigOption({
-                sessionId: state.nativeId!,
-                configId: state.modeConfigId,
-                value: desired,
-              })
-            else await state.connection!.setSessionMode({ sessionId: state.nativeId!, modeId: desired })
-          }
+          await applySessionMode(state, input.mode)
           await state.input.onBeforeTool?.('ACP agent turn')
           emit(state, 'turn_started', { providerSessionId: state.nativeId })
           // A slash command runs only from the start of the prompt, so the
@@ -1556,8 +1625,8 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           }
         : { ok: true }
     },
-    // The preset is a launch flag (or a launch environment), so the child is
-    // replaced: the next turn starts a new one under the new flags and reloads
+    // A preset that is a launch flag (or a launch environment) replaces the
+    // child: the next turn starts a new one under the new flags and reloads
     // this session. A turn already running finishes in the child it started
     // in, and the runtime answers what it still asks by the new mode.
     async setPermissionPreset(input) {
@@ -1565,9 +1634,26 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       if (!state) return { ok: false, message: 'ACP session is unavailable.' }
       const refused = presetRefusal(profile, input.permissionPreset)
       if (refused) return { ok: false, message: refused }
+      const before = { preset: state.input.permissionPreset, mode: state.input.permissionMode }
       state.input.permissionPreset = input.permissionPreset
       if (input.permissionMode) state.input.permissionMode = input.permissionMode
       else delete state.input.permissionMode
+      // A preset told as a session mode alone (Kimi Code's) keeps the process:
+      // the next turn sets the mode, and a turn running in the preset's mode
+      // (not Plan) is moved to it now, so its next tool call is decided by it.
+      if (
+        !state.relaunch &&
+        sameAcpLaunch(profile, before, { preset: input.permissionPreset, mode: input.permissionMode })
+      ) {
+        const turn = state.turn
+        if (!turn || !state.connection || !state.nativeId || (turn.mode && turn.mode !== 'default')) return { ok: true }
+        try {
+          await applySessionMode(state, turn.mode)
+          return { ok: true }
+        } catch {
+          return { ok: true, notice: `${profile.displayName} takes the new permissions from your next message.` }
+        }
+      }
       if (state.turn && (state.child || state.starting)) {
         state.relaunch = true
         return { ok: true, notice: `${profile.displayName} takes the new permissions from your next message.` }

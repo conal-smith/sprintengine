@@ -739,6 +739,7 @@ test("a chat in a WSL workspace runs that machine's CLI, whichever chat CLI it i
     'claude-code': { command: 'C:\\tools\\claude.exe', models: ['opus'] },
     codex: { command: 'codex' },
     'kimi-code': { command: 'kimi' },
+    'acme-cli': { command: 'acme' },
   }
   const hosts = {
     'wsl:Ubuntu': {
@@ -755,8 +756,9 @@ test("a chat in a WSL workspace runs that machine's CLI, whichever chat CLI it i
     cursor: { command: '/home/dev/.local/bin/cursor-agent', hostId: 'wsl:Ubuntu' },
     opencode: { command: '', hostId: 'wsl:Ubuntu' },
     grok: { command: '', hostId: 'wsl:Ubuntu' },
+    'kimi-code': { command: '', hostId: 'wsl:Ubuntu' },
     // A CLI with no chat runtime is a terminal's business, and left alone.
-    'kimi-code': { command: 'kimi' },
+    'acme-cli': { command: 'acme' },
   })
   // No override on that machine: its own PATH finds `claude`.
   assert.deepEqual(conversationCliRuntimesFor(cliRuntimes, 'wsl:Debian', hosts as never)?.['claude-code'], {

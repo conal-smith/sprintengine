@@ -16,6 +16,7 @@ const CONVERSATION_PROVIDER_CLI: Readonly<Record<string, string>> = {
   'cursor-agent': 'cursor',
   'opencode-agent': 'opencode',
   'grok-agent': 'grok',
+  'kimi-code-agent': 'kimi-code',
 }
 
 // The permission presets a CLI's chat cannot be held to, with the reason its
@@ -30,6 +31,13 @@ const CONVERSATION_PERMISSION_PRESET_REFUSALS: Readonly<
   // are sent for approval, file edits in the workspace are applied directly,
   // and no flag makes it ask about them.
   cursor: { manual: 'Cursor edits files without asking, so it cannot ask before every change.' },
+  // Read off Kimi Code 0.42.0's permission policies: in its default mode a
+  // Write or Edit whose every file is inside a git project goes through
+  // without asking, and `kimi acp` takes no flag or variable that would make
+  // it ask (only a rule in the person's own config.toml can).
+  'kimi-code': {
+    manual: 'Kimi Code edits files in a git project without asking, so it cannot ask before every change.',
+  },
 }
 
 // The CLI's own permission modes a chat runs beside each preset's own, by the

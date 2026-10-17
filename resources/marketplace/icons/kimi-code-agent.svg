@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="SprintEngine marketplace seed icon">
+  <rect width="128" height="128" rx="22" fill="#101820"/>
+  <g transform="translate(64 64) scale(7) translate(-12 -12)" fill="none" stroke="#e6e9ee" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.25 7.75V16.25M15 7.75L9.25 13.25M11.6 11L15 16.25"/>
+  </g>
+</svg>

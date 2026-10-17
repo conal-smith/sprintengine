@@ -1,4 +1,4 @@
-// An ACP chat (Cursor, OpenCode, Grok) is handed the app's MCP gateway when its
+// An ACP chat (Cursor, OpenCode, Grok, Kimi Code) is handed the app's MCP gateway when its
 // session opens, beside the session's own servers, with its own gateway token
 // bound to the chat. The agent's environment names no conversation, so the
 // token rides on the gateway's entry, in the protocol on the child's stdin; a

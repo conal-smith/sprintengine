@@ -15,8 +15,9 @@ send. Claude chats load attached skills natively. Codex, Cursor, Grok and
 OpenCode chats are told to run the skill by name, the way each CLI's own picker
 would (`$name` for Codex, `/name` for Cursor and Grok, its skill tool by name
 for OpenCode), once, on the turn it is attached; the skill is copied into the
-folder that CLI reads first if it is not there. Only a provider with no CLI
-behind it is sent the SKILL.md as instructions. The composer's Skills & MCPs
+folder that CLI reads first if it is not there. A provider with no CLI behind
+it, and Kimi Code, whose skill folders Studio does not install into, is sent the
+SKILL.md as instructions. The composer's Skills & MCPs
 picker also lists the MCP servers the chat's CLI is configured with, with the
 connection each last reported. A file dropped, picked or pasted from the computer into a chat that runs
 on it is a card: the send carries it beside the words (`files` on the send and
@@ -141,12 +142,12 @@ cards and Revert stay with the original chat, whose checkpoints they are.
 The fork is offered while the chat is idle, on this machine (a paired
 machine's chat is not forked from here), wherever the runtime can be forked:
 
-| Runtime                     | How the fork continues                                                                                                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code                 | Its first message branches Claude's own session at the point (`resumeSessionAt` with `forkSession`). A point Claude recorded nothing at (a reply a queued message joined) cannot be forked. |
-| Codex                       | Its first message branches the thread through the turn forked at (`thread/fork` with `lastTurnId`).                                                                                         |
-| Cursor, Grok, OpenCode      | At the newest reply, an agent that offers `session/fork` branches its running session; anywhere else, a new session whose first message carries the conversation so far as text.            |
-| API-key (OpenAI-compatible) | The conversation is replayed from the copy each turn, as for any chat on it.                                                                                                                |
+| Runtime                           | How the fork continues                                                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code                       | Its first message branches Claude's own session at the point (`resumeSessionAt` with `forkSession`). A point Claude recorded nothing at (a reply a queued message joined) cannot be forked. |
+| Codex                             | Its first message branches the thread through the turn forked at (`thread/fork` with `lastTurnId`).                                                                                         |
+| Cursor, Grok, Kimi Code, OpenCode | At the newest reply, an agent that offers `session/fork` branches its running session; anywhere else, a new session whose first message carries the conversation so far as text.            |
+| API-key (OpenAI-compatible)       | The conversation is replayed from the copy each turn, as for any chat on it.                                                                                                                |
 
 Codex falls back to the conversation as text too, for a chat from before turns
 recorded their Codex turn, and when it cannot branch the thread at that turn
@@ -176,12 +177,21 @@ Each mode reaches each chat runtime its own way. No flag sends none of these.
 | Cursor      | `--force`                                 | `--auto-review` (its classifier)                                                                                         | Not offered: Cursor edits files without asking                      | Launch flag: the child is replaced at the end of the running turn                                                  |
 | Grok        | `--always-approve`                        | `--permission-mode auto` (its classifier)                                                                                | `--permission-mode default`                                         | Launch flag, as Cursor; its own `/always-approve` and `/auto` commands are refused under a stricter mode           |
 | OpenCode    | `OPENCODE_PERMISSION` allowing everything | A rule set asking for everything but reads, listings and edits                                                           | The same rule set asking for edits too                              | Launch environment, as Cursor                                                                                      |
+| Kimi Code   | Its `auto` session mode (Never Ask)       | Its `yolo` session mode (Ask When Needed: dangerous commands, sensitive files and the git directory still ask)           | Not offered: Kimi Code edits files in a git project without asking  | Its ACP session mode, set before every turn and live mid-reply; no new process                                     |
 
 A CLI's other modes reach a chat the same ways: Claude Code's Accept edits and
 Don't ask as SDK `acceptEdits` and `dontAsk` (Don't ask adds no card of its
 own), Grok's as `--permission-mode acceptEdits` and `dontAsk`, and Codex's
 Default as `on-request` in the `workspaceWrite` sandbox with the person, not the
 reviewer, answering what leaves it.
+
+`kimi acp` takes no permission flag, so a Kimi Code chat is told its level as
+one of Kimi's own ACP session modes. Read off Kimi Code 0.42.0's permission
+policies, its `yolo` is the Ask When Needed of `kimi --yolo` and its `auto` the
+Never Ask of `kimi --auto`, the other way round from the descriptions its ACP
+server gives them. Its menu lists the modes its terminal manifest names (Auto,
+which is Never Ask, at Bypass, and No flag); Auto runs `yolo` for a caller that
+names it.
 
 Claude's Auto is its own classifier mode, `auto`, as Grok's is, Cursor's its
 auto-review and Codex's its auto-review (owner ruling 2026-10-01): someone who
@@ -221,7 +231,7 @@ sandbox against a malicious process repeatedly replacing directory ancestors.
 ### Chats on a WSL machine
 
 On Windows, every chat runtime runs on a WSL machine as well as on This PC
-(owner ruling 2026-10-01): Claude Code, Codex, Cursor, Grok and OpenCode alike.
+(owner ruling 2026-10-01): Claude Code, Codex, Cursor, Grok, Kimi Code and OpenCode alike.
 A chat in a workspace on a WSL machine runs each CLI from that distribution,
 with the command set for it there (or the one its PATH finds), the way a
 terminal agent there does (`conversationCliRuntimesForHost`).
@@ -304,7 +314,7 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   device, runs at it where the chat's provider runs that level: Claude Code's
   chat runs all five of its levels and Codex's runs low to xhigh, so Codex's
   `max` and `ultra` run at its default. A CLI that declares no levels (Cursor,
-  OpenCode, Grok) ignores it. A desktop that advertises `cli-runtime-catalog`
+  OpenCode, Grok, Kimi Code) ignores it. A desktop that advertises `cli-runtime-catalog`
   answers each CLI on `cli.runtime.list` with a `catalog`: whether it can run as
   a chat (`conversational`), its provider line (`providerLabel`, naming the CLI
   a hosted runtime rides), and `models`, the rows this machine's model picker
