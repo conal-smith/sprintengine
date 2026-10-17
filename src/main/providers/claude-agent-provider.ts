@@ -100,6 +100,7 @@ import type {
   ConversationMcpServer,
   ConversationPermissionPreset,
   ConversationQuestion,
+  ConversationSideQuestionResult,
   ConversationSubagentMessagePayload,
   ConversationSubagentState,
   ConversationSubagentStatusPayload,
@@ -125,6 +126,7 @@ import type {
   MockAdapterTurnInput,
   ConversationProviderSteerResult,
   ConversationDisposeOptions,
+  ConversationProviderSideQuestionInput,
 } from './conversation-provider-adapter'
 
 export const CLAUDE_AGENT_PROVIDER_ID = 'claude-agent'
@@ -177,6 +179,10 @@ export type ClaudeAgentProviderAdapter = ConversationProviderAdapter & {
   disposeChildProcess(sessionId: string, options?: ConversationDisposeOptions): boolean
   stopBackgroundTasks(sessionId: string): Promise<boolean>
   stopSubagent(sessionId: string, toolUseId: string): Promise<boolean>
+  askSideQuestion(
+    sessionId: string,
+    input: ConversationProviderSideQuestionInput,
+  ): Promise<ConversationSideQuestionResult>
   disposeAll(): Promise<void>
   setPermissionPreset(input: MockAdapterPermissionInput): Promise<ConversationProviderPermissionResult>
   setModel(input: MockAdapterModelInput): Promise<ConversationProviderPermissionResult>
@@ -1444,6 +1450,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       rewind: true,
       fork: true,
       stopSubagent: true,
+      sideQuestion: true,
     },
     sessions: 'stateful',
     acceptsMcpServers: true,
@@ -1966,6 +1973,47 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       return answeredWithin(q.stopTask(agent.taskId), childAnswerTimeoutMs, { rejectAsUnanswered: true })
     },
 
+    // A side question is Claude Code's own /btw, asked over the control
+    // channel: the child answers it in one reply from the conversation it
+    // holds, refuses it every tool, writes nothing to its session file, and
+    // goes on with a turn it is running. A live child is asked as it is, under
+    // whatever preset it runs, since the answer runs nothing; one is started
+    // (resuming the session, as a message would) only when the chat has none.
+    // The cost joins the child's running total, so the next turn's result
+    // reports it once. Called off by the signal, which the SDK passes on.
+    async askSideQuestion(
+      sessionId: string,
+      input: ConversationProviderSideQuestionInput,
+    ): Promise<ConversationSideQuestionResult> {
+      const state = sessions.get(sessionId)
+      if (!state) return { ok: false, message: 'Conversation session is invalid.' }
+      try {
+        if (!state.query) await ensureQuery(state)
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : 'Claude Code could not be started.' }
+      }
+      const q = state.query as SideQuestionQuery | null
+      if (!q) return { ok: false, message: 'Claude Code is not running for this chat.' }
+      if (typeof q.askSideQuestion !== 'function') return { ok: false, message: SIDE_QUESTION_UNSUPPORTED }
+      state.lastActivityAt = now()
+      try {
+        const answer = await q.askSideQuestion(input.question, {
+          signal: input.signal,
+          ...(input.history.length
+            ? { history: input.history.map((entry) => ({ question: entry.question, response: entry.answer })) }
+            : {}),
+        })
+        const text = typeof answer?.response === 'string' ? answer.response.trim() : ''
+        return text ? { ok: true, answer: text } : { ok: false, message: 'Claude Code gave no answer to that.' }
+      } catch (error) {
+        if (state.query !== q) return { ok: false, message: 'Claude Code stopped before it answered.' }
+        const message = error instanceof Error ? error.message : String(error)
+        return { ok: false, message: /unsupported|not supported/i.test(message) ? SIDE_QUESTION_UNSUPPORTED : message }
+      } finally {
+        state.lastActivityAt = now()
+      }
+    },
+
     disposeChildProcess(sessionId: string, _options?: ConversationDisposeOptions): boolean {
       const state = sessions.get(sessionId)
       if (!state) return false
@@ -2123,6 +2171,18 @@ function waitingNotice(waiting: string[]): string {
   const list = waiting.length > 1 ? `${waiting.slice(0, -1).join(', ')} and ${waiting.at(-1)}` : waiting[0]!
   return `${list[0]!.toUpperCase()}${list.slice(1)} will apply to your messages once the background work in this chat finishes.`
 }
+
+// The SDK's `askSideQuestion`, which its typings do not declare yet: the
+// question, the side questions before it as `{ question, response }`, and an
+// abort signal; null when it was called off.
+type SideQuestionQuery = Query & {
+  askSideQuestion?(
+    question: string,
+    options?: { history?: Array<{ question: string; response: string }>; signal?: AbortSignal },
+  ): Promise<{ response: string | null; synthetic?: boolean } | null>
+}
+
+const SIDE_QUESTION_UNSUPPORTED = 'This version of Claude Code cannot answer side questions. Update it to ask one.'
 
 /**
  * Whether `promise` settled within `ms`. A rejection counts as an answer

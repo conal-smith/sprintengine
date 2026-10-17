@@ -280,3 +280,13 @@ test('a stop for one of a chat’s agents goes to the server the chat runs on', 
   await router.stopSubagent({ sessionId: there.session.sessionId, toolUseId: 'toolu_agent' })
   assert.equal(remote.calls.at(-1)?.member, 'stopSubagent')
 })
+
+test('a side question, and calling it off, go to the server the chat runs on', async () => {
+  const { router, remote } = setup()
+  const there = await router.startSession(start('ws-linux', '\\\\wsl.localhost\\Ubuntu\\home\\dev\\repo'))
+  assert.ok(there.ok)
+  await router.askSideQuestion({ sessionId: there.session.sessionId, requestId: 'side-1', question: 'Why?' })
+  assert.equal(remote.calls.at(-1)?.member, 'askSideQuestion')
+  await router.cancelSideQuestion({ sessionId: there.session.sessionId, requestId: 'side-1' })
+  assert.equal(remote.calls.at(-1)?.member, 'cancelSideQuestion')
+})

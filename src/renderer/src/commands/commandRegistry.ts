@@ -340,6 +340,20 @@ export const COMMAND_REGISTRY = [
     availability: ['activeWorkspace'],
     handlerPath: { kind: 'panel-event', eventId: 'chat.quoteSelection' },
   }),
+  // Ask the focused chat a side question that stays out of it. B for "by the
+  // way", Claude Code's own /btw. Not ⌘⇧/: macOS takes that chord for the
+  // Help menu's search before the window sees it. From the composer too,
+  // where the person is when the question comes to them.
+  command({
+    id: 'chat.sideQuestion',
+    title: 'Ask a side question',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: ['Primary+Shift+B'],
+    availability: ['activeWorkspace'],
+    allowInEditableTarget: true,
+    handlerPath: { kind: 'panel-event', eventId: 'chat.sideQuestion' },
+  }),
   command({
     id: 'workspace.close',
     title: 'Close workspace',
