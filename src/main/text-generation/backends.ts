@@ -19,6 +19,12 @@ export type ClaudeInvocationInput = {
   reasoning?: string | undefined
   /** The output schema, already serialised. */
   schemaJson: string
+  /**
+   * An administrator's `managed-mcp.json` is installed. Claude refuses
+   * `--strict-mcp-config` beside it, and the file already keeps the person's
+   * own MCP servers out, so the flag is left off.
+   */
+  managedMcpConfig?: boolean
 }
 
 // `claude -p` with `--json-schema` returns a JSON envelope carrying the
@@ -44,7 +50,7 @@ export function claudeChatTitleInvocation(input: ClaudeInvocationInput): ChatTit
       '--tools',
       '',
       '--disable-slash-commands',
-      '--strict-mcp-config',
+      ...(input.managedMcpConfig ? [] : ['--strict-mcp-config']),
     ],
   }
 }
@@ -84,12 +90,38 @@ export function readClaudeStructuredStdout(stdout: string): unknown {
   return envelope.result ?? null
 }
 
+/**
+ * The CLI's own reason in a failed `claude -p --output-format json` call: the
+ * `result` of an `is_error` envelope, in either shape the stdout comes in
+ * (one object, or verbose mode's array with the result last). Claude writes
+ * its reason there, not to stderr, so stderr on a failed call holds at most a
+ * wrapper's notice and the reason would otherwise be lost. Null when stdout is
+ * not such an envelope or it gives no reason.
+ */
+export function readClaudeErrorResult(stdout: string): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    return null
+  }
+  const entries = Array.isArray(parsed) ? parsed : [parsed]
+  const envelope = entries.findLast((entry): entry is Record<string, unknown> =>
+    Boolean(entry && typeof entry === 'object' && (entry as { type?: unknown }).type === 'result'),
+  )
+  if (!envelope || envelope.is_error !== true) return null
+  const reason = typeof envelope.result === 'string' ? envelope.result.trim() : ''
+  return reason || null
+}
+
 export type ClaudeTextInvocationInput = {
   binaryPath: string
   model: string
   reasoning?: string | undefined
   /** The system prompt the call runs under instead of Claude Code's own. */
   system?: string
+  /** As on {@link ClaudeInvocationInput}. */
+  managedMcpConfig?: boolean
 }
 
 // `claude -p` for free text: the same doors shut as for a title (no tools, so
@@ -113,7 +145,7 @@ export function claudeTextInvocation(input: ClaudeTextInvocationInput): ChatTitl
       '--tools',
       '',
       '--disable-slash-commands',
-      '--strict-mcp-config',
+      ...(input.managedMcpConfig ? [] : ['--strict-mcp-config']),
     ],
   }
 }

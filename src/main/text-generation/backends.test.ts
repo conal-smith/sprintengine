@@ -5,6 +5,7 @@ import {
   codexMcpListInvocation,
   codexTextInvocation,
   readClaudeChatTitleStdout,
+  readClaudeErrorResult,
   readCodexChatTitleOutput,
   readCodexEnabledMcpServers,
 } from './backends'
@@ -30,6 +31,27 @@ test('backends', async () => {
     assert.ok(args.includes('--disable-slash-commands'))
     assert.ok(args.includes('--strict-mcp-config'))
     assert.equal(args[args.indexOf('--settings') + 1], '{"disableAllHooks":true}')
+  })
+
+  run("claude leaves strict MCP mode off beside an administrator's managed-mcp.json, and every other door shut", () => {
+    const { args } = claudeChatTitleInvocation({
+      binaryPath: 'claude',
+      model: 'fable',
+      schemaJson: '{}',
+      managedMcpConfig: true,
+    })
+    assert.ok(!args.includes('--strict-mcp-config'))
+    assert.ok(args.includes('--disable-slash-commands'))
+    assert.equal(args[args.indexOf('--tools') + 1], '')
+  })
+
+  run("claude's own reason is read from an error envelope, in either shape, and from nothing else", () => {
+    const failed = { type: 'result', is_error: true, result: ' Credit balance is too low ' }
+    assert.equal(readClaudeErrorResult(JSON.stringify(failed)), 'Credit balance is too low')
+    assert.equal(readClaudeErrorResult(JSON.stringify([{ type: 'system' }, failed])), 'Credit balance is too low')
+    assert.equal(readClaudeErrorResult(JSON.stringify({ ...failed, is_error: false })), null)
+    assert.equal(readClaudeErrorResult(JSON.stringify({ ...failed, result: '' })), null)
+    assert.equal(readClaudeErrorResult('error: unknown option'), null)
   })
 
   run('claude passes no effort flag when none is chosen', () => {

@@ -49,6 +49,7 @@ test('text-generation-service', async () => {
         let tick = 0
         return () => (tick += 1000)
       })(),
+      managedMcpConfig: () => false,
       ...overrides,
       runs,
     }
@@ -70,6 +71,16 @@ test('text-generation-service', async () => {
     )
     assert.deepEqual(result, { ok: false, code: 'unsupported', message: 'cursor has no text generation backend.' })
     assert.equal(probed, false)
+  })
+
+  run("a Claude title leaves strict MCP mode off beside an administrator's managed-mcp.json", async () => {
+    const strict = deps()
+    await generateChatTitle({ prompt: 'x', engine: claudeEngine }, strict)
+    assert.ok(strict.runs[0]!.args.includes('--strict-mcp-config'))
+    const managed = deps({ managedMcpConfig: () => true })
+    const result = await generateChatTitle({ prompt: 'x', engine: claudeEngine }, managed)
+    assert.equal(result.ok && result.value, 'Sidebar flicker on switch')
+    assert.ok(!managed.runs[0]!.args.includes('--strict-mcp-config'))
   })
 
   run('an empty model is refused', async () => {
@@ -244,7 +255,31 @@ test('text-generation-service', async () => {
       { prompt: 'x', engine: claudeEngine },
       deps({ run: async () => ok(JSON.stringify({ type: 'result', is_error: true, result: 'rate limited' })) }),
     )
-    assert.equal(!errored.ok && errored.code, 'guardrail')
+    assert.deepEqual(errored, {
+      ok: false,
+      code: 'guardrail',
+      message: 'claude-code answered with an error: rate limited',
+    })
+  })
+
+  run("a failed Claude call says the CLI's own reason, not a wrapper's notice or the raw envelope", async () => {
+    const envelope = JSON.stringify({
+      type: 'result',
+      is_error: true,
+      result: 'There is an issue with the selected model (claude-nope). It may not exist or you may not have access.',
+    })
+    const reason =
+      'claude-code exited 1: There is an issue with the selected model (claude-nope). It may not exist or you may not have access.'
+    const withNotice = await generateChatTitle(
+      { prompt: 'x', engine: claudeEngine },
+      deps({ run: async () => ok(envelope, { code: 1, stderr: 'npm notice: a new version is available' }) }),
+    )
+    assert.deepEqual(withNotice, { ok: false, code: 'transport', message: reason })
+    const verbose = await generateChatTitle(
+      { prompt: 'x', engine: claudeEngine },
+      deps({ run: async () => ok(`[{"type":"system"},${envelope}]`, { code: 1 }) }),
+    )
+    assert.deepEqual(verbose, { ok: false, code: 'transport', message: reason })
   })
 
   async function main(): Promise<void> {

@@ -175,6 +175,9 @@ export function retryLabel(retry: Pick<TurnRetry, 'attempt' | 'maxAttempts' | 'e
 }
 
 function retryReason({ error, status }: Pick<TurnRetry, 'error' | 'status'>): string {
+  // A 403 is a refusal, not a lapsed sign-in, though a provider may file it
+  // under authentication_failed: signing in again would not change it.
+  if (status === 403) return 'Access refused'
   switch (error) {
     case 'authentication_failed':
       return 'Couldn’t authenticate'
@@ -187,7 +190,7 @@ function retryReason({ error, status }: Pick<TurnRetry, 'error' | 'status'>): st
     case 'billing_error':
       return 'Billing problem'
   }
-  if (status === 401 || status === 403) return 'Couldn’t authenticate'
+  if (status === 401) return 'Couldn’t authenticate'
   if (status === 429) return 'Rate limited'
   if (status === 529) return 'Service overloaded'
   // No response at all: the request never reached the service.
