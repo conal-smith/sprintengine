@@ -100,9 +100,12 @@ export async function pushGitBranch(repoRoot: string): Promise<GitCommandResult>
           ? namesake
           : branch.upstream
         const pushedCommitCount = await countCommitsToPush(repoRoot, counted)
+        // `--` so the remote, read from the repository's config, is never
+        // taken for an option, whatever slipped past the push target's check.
         const result = await runGitCommand(repoRoot, [
           'push',
           ...(target.setUpstream ? ['-u'] : []),
+          '--',
           target.remote,
           `HEAD:refs/heads/${currentBranch}`,
         ])
@@ -199,6 +202,10 @@ export async function switchGitBranch(repoRoot: string, branchName: string): Pro
   if (!trimmedBranch) {
     return { ok: false, stdout: '', stderr: '', message: 'Choose a branch.' }
   }
+  // The name arrives over IPC and goes to git as an argument; a dash-led one
+  // would be read as an option, as it would for the other branch actions.
+  const invalid = validateRefName(trimmedBranch, 'branch')
+  if (invalid) return invalid
 
   return runGitCommand(repoRoot, ['switch', trimmedBranch])
 }

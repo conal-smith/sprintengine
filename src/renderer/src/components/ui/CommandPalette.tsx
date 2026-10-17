@@ -10,11 +10,13 @@ import { isCommandEnabled, isCommandIdEnabled, type CommandAvailabilityContext }
 import type { CommandScope, ModuleCommandContext } from '../../commands/types'
 import { getRendererHost, selectModuleEnabled } from '../../modules'
 import {
+  clampPaletteSelection,
   commandMatchesQuery,
   composeRestingPage,
   groupInScope,
   orderPaletteCommands,
   PALETTE_SCOPE_ORDER,
+  stepPaletteSelection,
   workspaceSearchKeywords,
   workspaceSwitchRowId,
   type PaletteCommandGroup,
@@ -1294,10 +1296,18 @@ export default function CommandPalette({
     return map
   }, [visible])
 
+  // The rows can change under the highlight without a keystroke: disk search
+  // keeps the previous query's rows up through its pause, and its answer can be
+  // shorter than the list the person has just arrowed down. The highlight is
+  // pulled back onto the list, and the pulled-back index is what is kept, so a
+  // list that grows again does not jump the highlight to the row that was lost.
+  const highlighted = clampPaletteSelection(selected, visible.length)
+  if (highlighted !== selected) setSelected(highlighted)
+
   // Keep the highlighted row in view as the selection moves by keyboard.
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [selected])
+  }, [highlighted])
 
   const handleKey = (event: React.KeyboardEvent) => {
     if (isImeKey(event)) return
@@ -1309,14 +1319,14 @@ export default function CommandPalette({
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setSelected((current) => Math.min(current + 1, visible.length - 1))
+      setSelected((current) => stepPaletteSelection(current, visible.length, 1))
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setSelected((current) => Math.max(current - 1, 0))
+      setSelected((current) => stepPaletteSelection(current, visible.length, -1))
     }
     if (event.key === 'Enter') {
-      if (!actionBusy) visible[selected]?.run()
+      if (!actionBusy) visible[highlighted]?.run()
     }
     if (event.key === 'Backspace' && !query) {
       // Backspace at an empty query steps back one state: out of the "which
@@ -1371,7 +1381,11 @@ export default function CommandPalette({
   }
 
   const activeOptionId =
-    scope === 'skills' ? skillsActiveOptionId : visible[selected] ? `palette-option-${visible[selected].id}` : undefined
+    scope === 'skills'
+      ? skillsActiveOptionId
+      : visible[highlighted]
+        ? `palette-option-${visible[highlighted].id}`
+        : undefined
   // One id per scope, so the strip's `aria-controls` and the combobox's both
   // resolve to the list that is showing — the results ARE the tab's panel.
   const resultsId = `command-palette-panel-${scope}`
@@ -1530,7 +1544,7 @@ export default function CommandPalette({
                     </div>
                     {group.items.map((command, position) => {
                       const index = flatIndexById.get(command.id) ?? -1
-                      const isSelected = index === selected
+                      const isSelected = index === highlighted
                       const textHit = group.key === 'content' && command.path !== undefined
                       // A text hit sits under its file, the way a search tool
                       // lists them: one heading per file — its kind glyph, its

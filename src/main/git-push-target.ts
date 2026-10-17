@@ -44,6 +44,17 @@ export async function gitPushTarget(
   for (const key of [`branch.${branch}.pushRemote`, 'remote.pushDefault']) {
     const named = await out(gitRoot, ['config', '--get', key])
     if (!named) continue
+    // The setting comes from the repository's own config, which may have
+    // arrived with the folder or been written by an agent, and the remote it
+    // names is handed to `git push` as an argument. A value that starts with a
+    // dash would be read there as an option (`--receive-pack=<program>` runs
+    // that program), and no remote or URL a person means starts with one.
+    if (named.startsWith('-')) {
+      return {
+        ok: false,
+        message: `Git is set to push this branch to “${named}” (${key}), which is not a remote name or address. Change the setting, then push again.`,
+      }
+    }
     // A URL in the setting is a remote too, for git.
     if ((await out(gitRoot, ['remote', 'get-url', '--push', named])) || /[:/]/u.test(named)) {
       return { ok: true, remote: named, setUpstream: false }

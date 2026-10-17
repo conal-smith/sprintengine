@@ -421,6 +421,10 @@ export function SkillPickerPopover({
     if (isImeKey(event)) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
+      // Nothing to move to while the skills are still loading. Stepping anyway
+      // stored -1, which no clamp lifts, so the list arrived with nothing
+      // highlighted and Enter did nothing.
+      if (groups.flat.length === 0) return
       setActiveIndex(Math.min(clampedActive + 1, groups.flat.length - 1))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()

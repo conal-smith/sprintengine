@@ -19,9 +19,18 @@ import {
   renameGitBranch,
   resetGitBranchToCommit,
   revertGitCommit,
+  switchGitBranch,
 } from './git-branch-actions'
 import { getGitOperationInProgress } from './git-status'
-import { test } from 'vitest'
+import { runGitCommand } from './git-utils'
+import { test, vi } from 'vitest'
+
+// Every action still runs the real git; the wrapper only lets a test read the
+// arguments one was given.
+vi.mock('./git-utils', async (original) => {
+  const actual = await original<typeof import('./git-utils')>()
+  return { ...actual, runGitCommand: vi.fn(actual.runGitCommand) }
+})
 
 test('git-branch-actions', async () => {
   const suiteRun = main()
@@ -579,6 +588,36 @@ test('Push sends a branch cut from origin/main to its own name, never to main, a
       rmSync(root, { force: true, recursive: true })
     }
   }
+})
+
+test('Push puts `--` before the remote, so a remote from the config is never read as an option', async () => {
+  const { root, origin, clone, run } = pushFixture()
+  try {
+    run(clone, ['switch', '-q', '-c', 'feature/marks', '--track', 'origin/main'])
+    writeFileSync(join(clone, 'marks.txt'), 'marks\n')
+    run(clone, ['add', 'marks.txt'])
+    run(clone, ['commit', '-qm', 'marks'])
+    vi.mocked(runGitCommand).mockClear()
+
+    const pushed = await pushGitBranch(clone)
+    assert.equal(pushed.ok, true, pushed.message ?? pushed.stderr)
+    const pushes = vi
+      .mocked(runGitCommand)
+      .mock.calls.map(([, args]) => args)
+      .filter((args) => args[0] === 'push')
+    assert.deepEqual(pushes, [['push', '-u', '--', 'origin', 'HEAD:refs/heads/feature/marks']])
+    assert.equal(run(origin, ['rev-parse', 'refs/heads/feature/marks']), run(clone, ['rev-parse', 'HEAD']))
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('Switch refuses a branch name that starts with a dash before git sees it', async () => {
+  vi.mocked(runGitCommand).mockClear()
+  const refused = await switchGitBranch('/Users/dev/acme', '-x')
+  assert.equal(refused.ok, false)
+  assert.equal(refused.message, 'Branch names cannot start with a dash.')
+  assert.equal(vi.mocked(runGitCommand).mock.calls.length, 0, 'git was not run')
 })
 
 test('Push keeps an upstream someone chose, and their push.default upstream still pushes to it', async () => {
