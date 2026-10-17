@@ -49,6 +49,19 @@ import {
 import { startColumnResizeDrag } from '../workspace/columnResizeDrag'
 import { splitTreePath } from '../../utils/fileTreeEntries'
 import { isLetterKey } from '../../utils/keyboard'
+import {
+  applyDiskContentToEditor,
+  classifyDiskChange,
+  oneAtATime,
+  readFileOnDisk,
+  unseenDiskContent,
+} from '../../utils/editorDiskSync'
+import { watchFileOnDisk } from '../../utils/fileDiskWatch'
+import {
+  EditorDiskNotice,
+  overwriteOnDiskConfirmation,
+  type EditorDiskNoticeState,
+} from '../panels/editor/EditorDiskNotice'
 
 // Match EditorPanel: above this size the rendered preview is disabled and the
 // file falls back to the Monaco source view so a huge document can't hang the
@@ -62,6 +75,8 @@ const EXTERNAL_WINDOW_LANDING_SCOPE = 'external-editor'
 // edited in place; `saved` is the on-disk baseline used to derive the dirty dot.
 type FileTab = ExternalFileTab
 type FileBuffer = ExternalFileBuffer
+
+type DiskNotice = EditorDiskNoticeState
 
 type IncomingFile = {
   filePath: string
@@ -157,6 +172,107 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
   useEffect(() => onEditorLandingQueued(landActive), [landActive])
   const buffersRef = useRef<Record<string, FileBuffer>>({})
   buffersRef.current = buffers
+  const [diskNotices, setDiskNotices] = useState<Record<string, DiskNotice>>({})
+  const setDiskNotice = useCallback((path: string, notice: DiskNotice | null) => {
+    setDiskNotices((prev) => {
+      if (!notice) {
+        if (!(path in prev)) return prev
+        const next = { ...prev }
+        delete next[path]
+        return next
+      }
+      return { ...prev, [path]: notice }
+    })
+  }, [])
+
+  // Puts what is on disk into a tab: into the editor first when the tab is on
+  // screen, as an edit over just the lines that changed (caret, scroll and undo
+  // survive it), then into the buffer as both the text and its saved baseline.
+  const takeDiskContent = useCallback(
+    (path: string, content: string) => {
+      const editor = editorRef.current
+      if (editor && activePathRef.current === path) applyDiskContentToEditor(editor, content)
+      setBuffers((prev) => {
+        const current = prev[path]
+        if (!current || current.kind !== 'text') return prev
+        return { ...prev, [path]: { ...current, value: content, saved: content } }
+      })
+      setDiskNotice(path, null)
+    },
+    [setDiskNotice],
+  )
+
+  // One tab against the file on disk, after its folder watch said it may have
+  // changed. `saved` is the baseline: what the tab last read or wrote.
+  const syncTabWithDisk = useCallback(
+    async (path: string) => {
+      const read = await readFileOnDisk(window.api, path)
+      const buffer = buffersRef.current[path]
+      if (!tabsRef.current.some((tab) => tab.path === path)) return
+      if (!buffer || buffer.kind !== 'text' || buffer.loading || buffer.error) return
+      if (read.kind === 'unreadable') return
+      if (read.kind === 'missing') {
+        setDiskNotice(path, { kind: 'deleted' })
+        return
+      }
+      const change = classifyDiskChange({
+        disk: read.content,
+        buffer: buffer.value,
+        baseline: buffer.saved,
+        dirty: isDirty(buffer),
+      })
+      if (change === 'reload') {
+        takeDiskContent(path, read.content)
+        return
+      }
+      if (change === 'conflict') {
+        setDiskNotice(path, { kind: 'changed', content: read.content })
+        return
+      }
+      if (change === 'in-sync') {
+        setBuffers((prev) => {
+          const current = prev[path]
+          if (!current || current.kind !== 'text') return prev
+          return { ...prev, [path]: { ...current, saved: read.content } }
+        })
+      }
+      setDiskNotice(path, null)
+    },
+    [setDiskNotice, takeDiskContent],
+  )
+  const syncTabWithDiskRef = useRef(syncTabWithDisk)
+  syncTabWithDiskRef.current = syncTabWithDisk
+
+  // Every text tab watches its file, through the folder watch it shares with
+  // the other tabs in that folder; a closed tab stops. A folder that cannot be
+  // watched (an SSH machine's) leaves its tabs as they were.
+  const diskWatchesRef = useRef(new Map<string, () => void>())
+  useEffect(() => {
+    const watches = diskWatchesRef.current
+    const wanted = new Set(tabs.filter((tab) => tab.kind === 'text').map((tab) => tab.path))
+    for (const [path, stop] of watches) {
+      if (wanted.has(path)) continue
+      stop()
+      watches.delete(path)
+    }
+    for (const path of wanted) {
+      if (watches.has(path)) continue
+      watches.set(
+        path,
+        watchFileOnDisk(
+          path,
+          oneAtATime(() => syncTabWithDiskRef.current(path)),
+        ),
+      )
+    }
+  }, [tabs])
+  useEffect(() => {
+    const watches = diskWatchesRef.current
+    return () => {
+      for (const stop of watches.values()) stop()
+      watches.clear()
+    }
+  }, [])
 
   const loadBuffer = useCallback((tab: FileTab) => {
     setBuffers((prev) => ({ ...prev, [tab.path]: createExternalFileLoadingBuffer(tab.kind) }))
@@ -285,48 +401,77 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
     }
   }, [activePath, isMarkdown])
 
-  const closeTab = useCallback((path: string) => {
-    setTabs((prev) => {
-      const next = prev.filter((tab) => tab.path !== path)
-      if (next.length === 0) {
-        void window.api.windowClose()
-        return prev
-      }
-      setActivePath((current) => {
-        if (current !== path) return current
-        const closedIndex = prev.findIndex((tab) => tab.path === path)
-        const neighbor = next[Math.min(closedIndex, next.length - 1)]
-        return neighbor?.path ?? null
+  const closeTab = useCallback(
+    (path: string) => {
+      setTabs((prev) => {
+        const next = prev.filter((tab) => tab.path !== path)
+        if (next.length === 0) {
+          void window.api.windowClose()
+          return prev
+        }
+        setActivePath((current) => {
+          if (current !== path) return current
+          const closedIndex = prev.findIndex((tab) => tab.path === path)
+          const neighbor = next[Math.min(closedIndex, next.length - 1)]
+          return neighbor?.path ?? null
+        })
+        return next
       })
-      return next
-    })
-    setBuffers((prev) => {
-      const next = { ...prev }
-      delete next[path]
-      return next
-    })
-  }, [])
+      setBuffers((prev) => {
+        const next = { ...prev }
+        delete next[path]
+        return next
+      })
+      setDiskNotice(path, null)
+    },
+    [setDiskNotice],
+  )
 
-  const saveBuffer = useCallback(async (path: string): Promise<void> => {
-    const buffer = buffersRef.current[path]
-    if (!buffer || buffer.kind !== 'text' || buffer.loading || !isDirty(buffer)) return
-    const value = buffer.value
-    try {
-      await window.api.writefile(path, value)
+  // Answers whether the tab is saved now: false when the person kept the
+  // version on disk instead, or the write failed.
+  const saveBuffer = useCallback(
+    async (path: string): Promise<boolean> => {
+      const before = buffersRef.current[path]
+      if (!before || before.kind !== 'text' || before.loading || !isDirty(before)) return true
+      // A file that changed on disk since this tab last read or wrote it, which
+      // the watch has not reported yet or cannot (an SSH machine's folder), is
+      // not written over without asking.
+      const unseen = unseenDiskContent(await readFileOnDisk(window.api, path), before.saved, before.value)
+      if (unseen !== null) {
+        const tab = tabsRef.current.find((candidate) => candidate.path === path)
+        const overwrite = await confirmDialog(overwriteOnDiskConfirmation(tab?.name ?? path))
+        if (!overwrite) {
+          setDiskNotice(path, { kind: 'changed', content: unseen })
+          return false
+        }
+      }
+      const buffer = buffersRef.current[path]
+      if (!buffer || buffer.kind !== 'text' || buffer.loading) return false
+      const value = buffer.value
+      const previousSaved = buffer.saved
+      // The baseline moves before the write, so the watch event the write itself
+      // causes reads as this tab's own save and not as someone else's edit.
       setBuffers((prev) => {
         const current = prev[path]
-        if (!current) return prev
+        if (!current || current.kind !== 'text') return prev
         return { ...prev, [path]: { ...current, saved: value } }
       })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setBuffers((prev) => {
-        const current = prev[path]
-        if (!current) return prev
-        return { ...prev, [path]: { ...current, error: message } }
-      })
-    }
-  }, [])
+      try {
+        await window.api.writefile(path, value)
+        setDiskNotice(path, null)
+        return true
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setBuffers((prev) => {
+          const current = prev[path]
+          if (!current || current.kind !== 'text') return prev
+          return { ...prev, [path]: { ...current, saved: previousSaved, error: message } }
+        })
+        return false
+      }
+    },
+    [confirmDialog, setDiskNotice],
+  )
 
   const saveActive = useCallback(() => {
     if (activePath) void saveBuffer(activePath)
@@ -336,7 +481,9 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
     if (!activeTab) return
     // Persist pending edits before docking so the workspace tab (which reloads
     // from disk) reflects them — docking moves the file, it does not discard work.
-    await saveBuffer(activeTab.path)
+    // Not saved (the person kept the version on disk, or the write failed):
+    // the docked tab would read disk and the edits here would be lost.
+    if (!(await saveBuffer(activeTab.path))) return
     await window.api.dockFileToWorkspace({
       workspaceId: activeTab.workspaceId,
       path: activeTab.path,
@@ -528,69 +675,97 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
             </div>
           </aside>
         ) : null}
-        <div ref={contentRef} tabIndex={-1} className="relative min-h-0 min-w-0 flex-1 outline-none">
-          {isMarkdown && activeTextBuffer ? (
-            <div className="absolute right-3 top-3 z-10">
-              <Tooltip
-                content={
-                  markdownPreviewTooLarge
-                    ? 'Markdown preview disabled for large files'
-                    : showPreview
-                      ? 'Edit Markdown source'
-                      : 'Preview Markdown'
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {activePath && diskNotices[activePath] ? (
+            <EditorDiskNotice
+              notice={diskNotices[activePath]}
+              onReload={() => {
+                const path = activePath
+                void readFileOnDisk(window.api, path).then((read) => {
+                  if (read.kind === 'content') takeDiskContent(path, read.content)
+                  else if (read.kind === 'missing') setDiskNotice(path, { kind: 'deleted' })
+                })
+              }}
+              onKeepMine={() => {
+                // What is on disk becomes the baseline: the notice goes, the
+                // tab stays unsaved, and the next save overwrites on purpose.
+                const notice = diskNotices[activePath]
+                const path = activePath
+                if (notice?.kind === 'changed') {
+                  setBuffers((prev) => {
+                    const current = prev[path]
+                    if (!current || current.kind !== 'text') return prev
+                    return { ...prev, [path]: { ...current, saved: notice.content } }
+                  })
                 }
-                placement="bottom"
-              >
-                <IconButton
-                  aria-label={showPreview ? 'Edit Markdown source' : 'Preview Markdown'}
-                  onClick={() => setMarkdownMode((mode) => (mode === 'preview' ? 'source' : 'preview'))}
-                  disabled={markdownPreviewTooLarge}
-                  className="border border-[color:var(--border-default)] bg-[color:var(--bg-surface-raised)]"
-                >
-                  {showPreview ? (
-                    <svg viewBox="0 0 16 16" className="icon-sm" fill="none" aria-hidden="true">
-                      <path
-                        d="M2.5 11.75L2.5 13.5h1.75L12 5.75 10.25 4 2.5 11.75z"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                        strokeLinejoin="round"
-                      />
-                      <path d="M9.25 5L11 6.75" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 16 16" className="icon-sm" fill="none" aria-hidden="true">
-                      <path
-                        d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4S1.5 8 1.5 8z"
-                        stroke="currentColor"
-                        strokeWidth="1.4"
-                        strokeLinejoin="round"
-                      />
-                      <circle cx="8" cy="8" r="1.75" stroke="currentColor" strokeWidth="1.4" />
-                    </svg>
-                  )}
-                </IconButton>
-              </Tooltip>
-            </div>
+                setDiskNotice(path, null)
+              }}
+            />
           ) : null}
-          {renderBody(
-            activeTab,
-            activeBuffer,
-            activePath,
-            setBuffers,
-            showPreview,
-            monacoTheme,
-            codeFontFamily,
-            (editor) => {
-              editorRef.current = editor
-              editor.onDidDispose(() => {
-                if (editorRef.current === editor) editorRef.current = null
-              })
-              editor.onKeyDown(() => {
-                lastKeyAtRef.current = Date.now()
-              })
-              landActive()
-            },
-          )}
+          <div ref={contentRef} tabIndex={-1} className="relative min-h-0 min-w-0 flex-1 outline-none">
+            {isMarkdown && activeTextBuffer ? (
+              <div className="absolute right-3 top-3 z-10">
+                <Tooltip
+                  content={
+                    markdownPreviewTooLarge
+                      ? 'Markdown preview disabled for large files'
+                      : showPreview
+                        ? 'Edit Markdown source'
+                        : 'Preview Markdown'
+                  }
+                  placement="bottom"
+                >
+                  <IconButton
+                    aria-label={showPreview ? 'Edit Markdown source' : 'Preview Markdown'}
+                    onClick={() => setMarkdownMode((mode) => (mode === 'preview' ? 'source' : 'preview'))}
+                    disabled={markdownPreviewTooLarge}
+                    className="border border-[color:var(--border-default)] bg-[color:var(--bg-surface-raised)]"
+                  >
+                    {showPreview ? (
+                      <svg viewBox="0 0 16 16" className="icon-sm" fill="none" aria-hidden="true">
+                        <path
+                          d="M2.5 11.75L2.5 13.5h1.75L12 5.75 10.25 4 2.5 11.75z"
+                          stroke="currentColor"
+                          strokeWidth="1.4"
+                          strokeLinejoin="round"
+                        />
+                        <path d="M9.25 5L11 6.75" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 16 16" className="icon-sm" fill="none" aria-hidden="true">
+                        <path
+                          d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4S1.5 8 1.5 8z"
+                          stroke="currentColor"
+                          strokeWidth="1.4"
+                          strokeLinejoin="round"
+                        />
+                        <circle cx="8" cy="8" r="1.75" stroke="currentColor" strokeWidth="1.4" />
+                      </svg>
+                    )}
+                  </IconButton>
+                </Tooltip>
+              </div>
+            ) : null}
+            {renderBody(
+              activeTab,
+              activeBuffer,
+              activePath,
+              setBuffers,
+              showPreview,
+              monacoTheme,
+              codeFontFamily,
+              (editor) => {
+                editorRef.current = editor
+                editor.onDidDispose(() => {
+                  if (editorRef.current === editor) editorRef.current = null
+                })
+                editor.onKeyDown(() => {
+                  lastKeyAtRef.current = Date.now()
+                })
+                landActive()
+              },
+            )}
+          </div>
         </div>
       </div>
     </div>
