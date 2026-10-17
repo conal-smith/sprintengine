@@ -45,6 +45,19 @@ const PATHSPEC_CHARS = 24_000
 // turn's "before" for a CRLF file, so its diff would show every line and
 // revert would write LF. The inode it does not know makes git read the file.
 const SNAPSHOT_CONFIG = ['-c', 'core.splitIndex=false', '-c', 'core.fsmonitor=false', '-c', 'core.checkStat=default']
+// A snapshot's `git add` writes only the throwaway index (its lock is in the
+// same temp folder, removed after) and loose objects git prunes on its own, so
+// stopping a stuck one leaves the repository as it was. A minute is far past
+// what a working add needs, and short of holding a turn's first edit for ever.
+const SNAPSHOT_ADD_TIMEOUT_MS = 60_000
+// A repository where capturing keeps failing, or takes this long, is left
+// alone for a while: the "pre" capture holds the agent's first edit and the
+// "post" one the turn's end, every turn. The pause doubles each time it comes
+// back without a success in between, up to the cap.
+const SLOW_CAPTURE_MS = 20_000
+const FAILURES_BEFORE_PAUSE = 2
+const PAUSE_MS = 10 * 60_000
+const MAX_PAUSE_MS = 80 * 60_000
 const IDENTITY = {
   GIT_AUTHOR_NAME: 'SprintEngine Studio',
   GIT_AUTHOR_EMAIL: 'studio@example.com',
@@ -52,8 +65,16 @@ const IDENTITY = {
   GIT_COMMITTER_EMAIL: 'studio@example.com',
 }
 
+/** A git command stopped at its deadline; never worth a second try in the same capture. */
+class CheckpointGitTimeout extends Error {}
+
+type CaptureTrouble = { failures: number; pauses: number; pausedUntil: number }
+
 /** Hidden git objects use an isolated index; only an explicit revert alters files. */
 export class ConversationCheckpoints {
+  // Per repository root, in memory: a restart tries every repository afresh.
+  private readonly trouble = new Map<string, CaptureTrouble>()
+
   constructor(private readonly limits = { bytes: 200 * 1024 * 1024, files: 50_000 }) {}
 
   async available(cwd: string): Promise<boolean> {
@@ -65,8 +86,32 @@ export class ConversationCheckpoints {
   }
 
   async capture(key: ConversationKey, turnSeq: number, point: 'pre' | 'post'): Promise<ConversationCheckpointResult> {
+    let root: string
     try {
-      const root = await this.root(key.workspaceRoot)
+      root = await this.root(key.workspaceRoot)
+    } catch (error) {
+      return { ok: false, message: errorMessage(error, CHECKPOINT_FAILED) }
+    }
+    const trouble = this.trouble.get(root)
+    if (trouble && Date.now() < trouble.pausedUntil)
+      return {
+        ok: false,
+        skipped: true,
+        message: 'Checkpoints paused: capturing in this repository keeps failing or is slow.',
+      }
+    const started = Date.now()
+    const result = await this.captureIn(root, key, turnSeq, point)
+    this.noteCapture(root, result, Date.now() - started)
+    return result
+  }
+
+  private async captureIn(
+    root: string,
+    key: ConversationKey,
+    turnSeq: number,
+    point: 'pre' | 'post',
+  ): Promise<ConversationCheckpointResult> {
+    try {
       const guard = await this.checkSize(root)
       if (guard) return { ok: false, skipped: true, message: guard }
       const ref = this.ref(key, turnSeq, point)
@@ -77,6 +122,33 @@ export class ConversationCheckpoints {
     } catch (error) {
       return { ok: false, message: errorMessage(error, CHECKPOINT_FAILED) }
     }
+  }
+
+  /**
+   * A quick success clears the root's record. A slow capture pauses at once,
+   * whatever it answered; a failure pauses once it is the second in a row (a
+   * size skip is neither). A failure after a pause has run out pauses again,
+   * for twice as long.
+   */
+  private noteCapture(root: string, result: ConversationCheckpointResult, elapsedMs: number): void {
+    const slow = elapsedMs >= SLOW_CAPTURE_MS
+    const failed = !result.ok && !result.skipped
+    if (!slow && !failed) {
+      if (result.ok) this.trouble.delete(root)
+      return
+    }
+    const trouble = this.trouble.get(root) ?? { failures: 0, pauses: 0, pausedUntil: 0 }
+    trouble.failures = failed ? trouble.failures + 1 : 0
+    if (slow || trouble.failures >= FAILURES_BEFORE_PAUSE) {
+      const pauseMs = Math.min(PAUSE_MS * 2 ** trouble.pauses, MAX_PAUSE_MS)
+      trouble.pausedUntil = Date.now() + pauseMs
+      trouble.pauses++
+      console.warn(
+        `[conversation-checkpoints] checkpoints paused for ${pauseMs / 60_000} min in ${root}: ` +
+          (slow ? `a capture took ${Math.round(elapsedMs / 1000)} s` : `${trouble.failures} captures failed in a row`),
+      )
+    }
+    this.trouble.set(root, trouble)
   }
 
   async getTurnDiff(input: ConversationTurnDiffInput): Promise<ConversationTurnDiffResult> {
@@ -383,9 +455,11 @@ export class ConversationCheckpoints {
       if (await this.seedIndex(root, index)) {
         try {
           return await this.snapshot(root, env, include)
-        } catch {
+        } catch (error) {
           // A copied index can carry state a throwaway one cannot use (a split
-          // or sparse index); rebuild from HEAD instead.
+          // or sparse index); rebuild from HEAD instead. An add that ran out
+          // of time would only run out again.
+          if (error instanceof CheckpointGitTimeout) throw error
           await rm(index, { force: true })
         }
       }
@@ -454,10 +528,13 @@ export class ConversationCheckpoints {
       )
         excludes.push(`:(exclude)${sidecar}`)
     const add = (more: string[] = []) =>
-      this.git(root, [...SNAPSHOT_CONFIG, 'add', '-A', '--', '.', ...excludes, ...more], env)
+      this.git(root, [...SNAPSHOT_CONFIG, 'add', '-A', '--', '.', ...excludes, ...more], env, undefined, {
+        timeoutMs: SNAPSHOT_ADD_TIMEOUT_MS,
+      })
     try {
       await add()
     } catch (error) {
+      if (error instanceof CheckpointGitTimeout) throw error
       // A repository with no commit in a folder of the work tree (an agent ran
       // `git init` there) cannot be recorded as a submodule, and `git add`
       // refuses the whole add for it ("does not have a commit checked out").
@@ -478,6 +555,7 @@ export class ConversationCheckpoints {
           [...SNAPSHOT_CONFIG, 'add', '-f', '--pathspec-from-file=-', '--pathspec-file-nul'],
           { ...env, GIT_LITERAL_PATHSPECS: '1' },
           extra.join('\0') + '\0',
+          { timeoutMs: SNAPSHOT_ADD_TIMEOUT_MS },
         )
     }
     return (await this.git(root, ['write-tree'], env)).trim()
@@ -587,9 +665,18 @@ export class ConversationCheckpoints {
     })
   }
 
-  private async git(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: string): Promise<string> {
-    const result = await runGitCommand(cwd, args, env, { ...(stdin !== undefined ? { stdin } : {}) })
-    if (!result.ok) throw new Error(result.message || result.stderr || 'Checkpoint git operation failed.')
+  private async git(
+    cwd: string,
+    args: string[],
+    env?: NodeJS.ProcessEnv,
+    stdin?: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<string> {
+    const result = await runGitCommand(cwd, args, env, { ...(stdin !== undefined ? { stdin } : {}), ...options })
+    if (!result.ok) {
+      const message = result.message || result.stderr || 'Checkpoint git operation failed.'
+      throw result.timedOut ? new CheckpointGitTimeout(message) : new Error(message)
+    }
     return result.stdout
   }
 }
