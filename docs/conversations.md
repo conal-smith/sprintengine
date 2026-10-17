@@ -161,6 +161,28 @@ keeps its point across a restart until its first message is sent. Until then a
 Claude or Codex fork has no CLI session of its own, so Continue in terminal
 waits for that first message.
 
+### Side question
+
+**Side question**, in the composer's "+" or on ⌘⇧B (Ctrl+Shift+B), opens a
+drawer to ask something about the chat without adding it to the chat. Typing
+`/btw` and a question in the composer asks it the same way. The agent answers
+from the conversation so far, in one reply and with no tools, so it can change
+nothing. The question and the answer stay out of the transcript, the chat's
+history, the sidebar and the phone. A turn the chat is running goes on
+undisturbed, and so does its queue. Follow-ups in the same drawer see the side
+questions before them. Closing the drawer lets the whole aside go, and calls
+off a question still being answered. **Continue in a new chat** forks the chat
+at its newest reply, as Fork from here does, with the last question waiting in
+the fork's composer. It is offered once no turn runs.
+
+It is Claude Code's own `/btw`, asked over the SDK (`askSideQuestion`), and is
+offered for Claude chats on this machine, a WSL server's or an SSH machine's.
+A Claude Code that has no side questions says so in the drawer. Its cost joins
+the session's running total, so the chat's next turn reports it; Claude Code
+writes no request for it to its session log. Codex, the ACP runtimes and a
+paired machine's chat do not offer it, and there `/btw` goes to the CLI as
+before.
+
 ## Installed CLI providers
 
 Claude and Codex use their native headless interfaces. ACP providers share an

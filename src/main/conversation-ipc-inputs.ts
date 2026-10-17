@@ -9,6 +9,9 @@ import type {
   ConversationMcpServerAction,
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionInput,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
   ConversationTranscriptInput,
@@ -291,6 +294,60 @@ export function parseStopSubagentInput(
   const toolUseId = isRecord(input) && typeof input.toolUseId === 'string' ? input.toolUseId.trim() : ''
   if (!toolUseId || toolUseId.length > 200) return { ok: false, message: 'toolUseId is required.' }
   return { ok: true, input: { sessionId: session.input.sessionId, toolUseId } }
+}
+
+// A side question is a message's worth of text, and an aside holds a handful
+// of them: enough room for a long one pasted in, not for a transcript.
+const SIDE_QUESTION_MAX_CHARS = 20_000
+const SIDE_ANSWER_MAX_CHARS = 100_000
+const SIDE_QUESTION_HISTORY_MAX = 20
+
+function parseSideQuestionRequestId(input: Record<string, unknown>): string | null {
+  const requestId = typeof input.requestId === 'string' ? input.requestId.trim() : ''
+  return requestId && requestId.length <= 200 ? requestId : null
+}
+
+export function parseSideQuestionInput(
+  input: unknown,
+): { ok: true; input: ConversationSideQuestionInput } | { ok: false; message: string } {
+  const session = parseSessionIdInput(input)
+  if (!session.ok) return session
+  const record = input as Record<string, unknown>
+  const requestId = parseSideQuestionRequestId(record)
+  if (!requestId) return { ok: false, message: 'requestId is required.' }
+  const question = typeof record.question === 'string' ? record.question.trim() : ''
+  if (!question) return { ok: false, message: 'A side question needs a question.' }
+  if (question.length > SIDE_QUESTION_MAX_CHARS) return { ok: false, message: 'That side question is too long.' }
+  const history: ConversationSideQuestionExchange[] = []
+  if (record.history !== undefined) {
+    if (!Array.isArray(record.history) || record.history.length > SIDE_QUESTION_HISTORY_MAX)
+      return { ok: false, message: 'history is invalid.' }
+    for (const entry of record.history) {
+      if (
+        !isRecord(entry) ||
+        typeof entry.question !== 'string' ||
+        typeof entry.answer !== 'string' ||
+        entry.question.length > SIDE_QUESTION_MAX_CHARS ||
+        entry.answer.length > SIDE_ANSWER_MAX_CHARS
+      )
+        return { ok: false, message: 'history is invalid.' }
+      history.push({ question: entry.question, answer: entry.answer })
+    }
+  }
+  return {
+    ok: true,
+    input: { sessionId: session.input.sessionId, requestId, question, ...(history.length ? { history } : {}) },
+  }
+}
+
+export function parseCancelSideQuestionInput(
+  input: unknown,
+): { ok: true; input: ConversationCancelSideQuestionInput } | { ok: false; message: string } {
+  const session = parseSessionIdInput(input)
+  if (!session.ok) return session
+  const requestId = parseSideQuestionRequestId(input as Record<string, unknown>)
+  if (!requestId) return { ok: false, message: 'requestId is required.' }
+  return { ok: true, input: { sessionId: session.input.sessionId, requestId } }
 }
 
 export function parseRespondToRequestInput(

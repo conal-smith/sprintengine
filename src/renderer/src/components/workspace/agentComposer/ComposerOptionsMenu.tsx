@@ -63,6 +63,11 @@ export type ComposerOptionsProps = {
    * reason it cannot be picked now, said as its hint.
    */
   schedule?: { on: boolean; disabled: string | null; onToggle: () => void }
+  /**
+   * Ask the open chat a side question that stays out of it; absent where it
+   * answers none. `shortcut` is the chord that does the same, said on the row.
+   */
+  sideQuestion?: { onAsk: () => void; shortcut?: string | null }
   close: () => void
 }
 
@@ -75,6 +80,7 @@ export function ComposerOptions({
   onSkills,
   skillsCount,
   schedule,
+  sideQuestion,
   close,
 }: ComposerOptionsProps): React.JSX.Element {
   const plainShell = startAs === 'terminal'
@@ -139,6 +145,21 @@ export function ComposerOptions({
           }}
         >
           Skills, plugins &amp; MCPs
+        </MenuItem>
+      ) : null}
+      {sideQuestion ? (
+        <MenuItem
+          icon={<ConversationGlyph className="icon-sm shrink-0 text-[color:var(--text-muted)]" />}
+          shortcut={sideQuestion.shortcut ?? undefined}
+          data-composer-side-question="true"
+          onClick={() => {
+            // The menu hands focus back to the "+" as it closes; the drawer
+            // takes it from there once it opens.
+            close()
+            sideQuestion.onAsk()
+          }}
+        >
+          Side question
         </MenuItem>
       ) : null}
       {schedule ? (

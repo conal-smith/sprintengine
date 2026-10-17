@@ -245,3 +245,10 @@ test('a list for another folder does not re-render a chat reading this one', asy
   await hook.act(async () => push(catalog([{ name: 'review', source: 'cli' }])))
   expect(hook.renders()).toBeGreaterThan(before)
 })
+
+test('Studio lists /btw only for a chat that answers side questions', () => {
+  const names = (sideQuestion: boolean) =>
+    studioAppCommands({ model: true, effort: false, sideQuestion }).map((command) => command.name)
+  expect(names(true)).toContain('btw')
+  expect(names(false)).not.toContain('btw')
+})

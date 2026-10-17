@@ -22,6 +22,8 @@ export type MountedChatView = {
   openFind?: () => void
   /** Set a quote into the composer where its caret is, and put the keyboard there. */
   insertQuote?: (text: string) => void
+  /** Open the side question drawer (`chat.sideQuestion`); absent where the chat cannot answer one. */
+  openSideQuestion?: () => void
 }
 const mountedChatViews: MountedChatView[] = []
 export const MODEL_PICKER_TOGGLE_COMMAND = 'chat.modelPicker.toggle'
@@ -29,6 +31,7 @@ const CHAT_FIND_COMMAND = 'chat.find'
 const RESUME_IN_TERMINAL_COMMAND = 'chat.resumeInTerminal'
 const REPLAY_COMMAND = 'chat.replay.start'
 const RESTART_SESSION_COMMAND = 'chat.restartSession'
+export const SIDE_QUESTION_COMMAND = 'chat.sideQuestion'
 
 /**
  * Answer `chat.modelPicker.toggle` (⌘⇧M, or the palette row) with ONE chat
@@ -91,6 +94,14 @@ function onModelPickerPanelCommand(event: Event): void {
         .reverse()
         .find((view) => view.workspaceId === useWorkspaceStore.getState().activeWorkspaceId)
     responder?.restartSession?.()
+  }
+  if (detail?.id === SIDE_QUESTION_COMMAND) {
+    const responder =
+      mountedChatViews.find((view) => view.isFocused()) ??
+      [...mountedChatViews]
+        .reverse()
+        .find((view) => view.workspaceId === useWorkspaceStore.getState().activeWorkspaceId)
+    responder?.openSideQuestion?.()
   }
   // From the keyboard the shell only takes ⌘F inside a chat
   // (`shellTakesChordFrom`), so the focused view answers; from the palette,
