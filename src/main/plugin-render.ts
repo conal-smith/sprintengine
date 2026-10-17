@@ -16,6 +16,7 @@ import type {
   PluginRenderContext,
   PluginRenderedCommand,
 } from '../shared/plugin-manifest'
+import { mergeJsonEnv } from './json-env-value'
 
 // Render a plugin manifest into a concrete spawnable command.
 //
@@ -112,12 +113,14 @@ function renderArgvSpec(
   // so a manifest declaring `contextInjection.env` adds nothing to a launch with
   // nothing to say. Resume renders it too: env is not argv, and a resumed
   // session has to be re-told.
-  const env = {
-    ...renderEnv(launchSpec.env, variables),
-    ...renderEnv(contextEnvSpec(manifest, context), variables),
-    // A preset told through the CLI's configuration rides the same record.
-    ...resolvePermissionPreset(manifest, context.permissionPreset)?.env,
-  }
+  // A preset told through the CLI's configuration rides the same record. The
+  // three may name one variable that is a whole config document (OpenCode's
+  // OPENCODE_CONFIG_CONTENT carries the context's `instructions` and the
+  // preset's `permission`), so a JSON value joins the one before it.
+  const env = mergeJsonEnv(
+    mergeJsonEnv(renderEnv(launchSpec.env, variables), renderEnv(contextEnvSpec(manifest, context), variables)),
+    resolvePermissionPreset(manifest, context.permissionPreset)?.env,
+  )
   return { argv, cwd, env }
 }
 
