@@ -16,6 +16,7 @@ import { pullRequestRepository, type BranchPullRequest } from '../../../../../sh
 import type { Workspace } from '../../../types/workspace'
 import { workspaceLastUserMessageAt } from '../../../utils/workspaceRecency'
 import type { Tone } from '../../ui'
+import type { RowRecency } from '../stableRowSlices'
 import { meshMachinePhase, type MeshMachinePhase } from '../../remote/machineRowModel'
 
 // The sidebar's Remote band (remote-sessions-in-the-sidebar): the sessions
@@ -113,9 +114,11 @@ export type RemoteSessionRow = {
   /** The workspace here whose pane is attached to this session, when one is. */
   attachedWorkspaceId: string | null
   /**
-   * Where the row sits: when the person last wrote to the chat, else when
-   * the machine last saw it move (`lastUserMessageAt ?? updatedAt`). The same
-   * rule as a local row's, so a remote row stays put until someone speaks.
+   * Where the row sits: where its machine's own sidebar sits it
+   * (`recencyAt`), which is when the person last wrote to the chat, else when
+   * it was made or typed into there. A machine from before it said so gives
+   * `lastUserMessageAt ?? updatedAt`. The same rule as a local row's, so a
+   * remote row stays put until someone speaks.
    */
   recencyAt: number
   /** When a person last wrote to the chat, from any device, as its machine records it; null if never. */
@@ -345,9 +348,11 @@ function remoteChatRowOf(
     replyPreview: conversation.lastAssistantText ?? null,
     branch: conversation.branch ?? null,
     pullRequests: branchPullRequestsOfWire(conversation.pullRequests ?? []),
-    since: conversation.updatedAt,
+    // A working chat counts from when its turn began, where its machine says;
+    // `updatedAt` also moves when an approval resolves or the model changes.
+    since: presence === 'running' ? (conversation.turnStartedAt ?? conversation.updatedAt) : conversation.updatedAt,
     attachedWorkspaceId: attached?.id ?? null,
-    recencyAt: conversation.lastUserMessageAt ?? conversation.updatedAt,
+    recencyAt: conversation.recencyAt ?? conversation.lastUserMessageAt ?? conversation.updatedAt,
     lastUserMessageAt: conversation.lastUserMessageAt ?? null,
     lastTurnEndedAt: conversation.lastTurnEndedAt ?? null,
     lastVisitedAt: conversation.lastVisitedAt ?? null,
@@ -580,11 +585,51 @@ export type ChatListEntry =
  * `updatedAt`: an agent working does not move a row.
  */
 export function chatRecencyOf(attached: ReadonlyMap<string, RemoteConversation>): (workspace: Workspace) => number {
-  return (workspace) =>
-    Math.max(
-      workspaceLastUserMessageAt(workspace),
-      ...(attached.get(workspace.id)?.agents ?? []).map((agent) => agent.lastUserMessageAt ?? 0),
-    )
+  return (workspace) => {
+    const agents = attached.get(workspace.id)?.agents ?? []
+    // A chat opened here from a paired machine was MADE here at the click,
+    // and that is not when anyone last wrote to it: it sits where its machine
+    // sits it (`recencyAt`), as it did before it was opened, and moves only
+    // when someone writes to it (owner ruling 2026-10-17: a remote chat is
+    // ordered exactly as a local one). Only when that machine has said
+    // nothing yet does the creation here stand in.
+    if (workspace.remoteOrigin) {
+      const remote = Math.max(workspace.lastUserMessageAt ?? 0, ...agents.map((agent) => agent.recencyAt))
+      return remote > 0 ? remote : workspaceLastUserMessageAt(workspace)
+    }
+    return Math.max(workspaceLastUserMessageAt(workspace), ...agents.map((agent) => agent.lastUserMessageAt ?? 0))
+  }
+}
+
+/**
+ * The clocks a row here that is a chat on a paired machine draws: its own,
+ * which only hear of what happened here, and its machine's, which hear of
+ * everything. Without the machine's, an opened remote chat had no idle time
+ * at all, since its agent's turns end over there.
+ */
+export function remoteRowRecency(local: RowRecency | undefined, conversation: RemoteConversation): RowRecency {
+  const agents = conversation.agents
+  const latest = (values: Array<number | null | undefined>): number | null => {
+    const known = values.filter((value): value is number => typeof value === 'number' && value > 0)
+    return known.length > 0 ? Math.max(...known) : null
+  }
+  const working = conversation.activity === 'working'
+  const workingAgents = agents.filter((agent) => agent.activity === 'working')
+  return {
+    hasRunning: (local?.hasRunning ?? false) || working,
+    idleSince: working
+      ? (local?.idleSince ?? null)
+      : latest([local?.idleSince, ...agents.map((agent) => agent.lastTurnEndedAt ?? agent.since)]),
+    lastInputAt: latest([local?.lastInputAt, ...agents.map((agent) => agent.lastUserMessageAt)]),
+    workingSince:
+      local?.workingSince ??
+      (working
+        ? workingAgents.reduce<number | null>(
+            (earliest, agent) => (agent.since === null ? earliest : Math.min(earliest ?? agent.since, agent.since)),
+            null,
+          )
+        : null),
+  }
 }
 
 /** Rows here, most recently written to first by `recencyOf`; ties keep the order they came in. */
@@ -736,7 +781,8 @@ export function attachedConversations(
 /**
  * The rows here, opened from a paired machine's chats, whose chat that
  * machine has since settled — on the phone, on that machine, or from another
- * desktop — and the settle each would follow.
+ * desktop — and the settle each would follow; and the rows resting because
+ * they followed one, whose chat that machine has since brought back.
  *
  * A row here is a window onto the chat, and a chat that has come to rest over
  * there has nothing left to show; left alone it stays on the rail as a pane
@@ -752,17 +798,27 @@ export function remoteRestToFollow(input: {
   workspaces: readonly Workspace[]
   browses: ReadonlyMap<string, RemoteBrowseEntry>
   followed: ReadonlyMap<string, number>
-}): Array<{ workspaceId: string; settledAt: number }> {
-  const due: Array<{ workspaceId: string; settledAt: number }> = []
+}): Array<{ workspaceId: string; settledAt: number; settled: boolean }> {
+  const due: Array<{ workspaceId: string; settledAt: number; settled: boolean }> = []
   for (const workspace of input.workspaces) {
     const origin = workspace.remoteOrigin
     if (!origin) continue
     const entry = input.browses.get(origin.connectionId)
-    if (entry?.lifecycle !== true) continue
-    const remote = entry.browse?.workspaces.find((candidate) => candidate.id === origin.workspaceId)
-    if (typeof remote?.settledAt !== 'number') continue
-    if (input.followed.get(workspace.id) === remote.settledAt) continue
-    due.push({ workspaceId: workspace.id, settledAt: remote.settledAt })
+    if (entry?.lifecycle !== true || !entry.browse) continue
+    const remote = entry.browse.workspaces.find((candidate) => candidate.id === origin.workspaceId)
+    if (!remote) continue
+    if (typeof remote.settledAt === 'number') {
+      if (input.followed.get(workspace.id) === remote.settledAt) continue
+      due.push({ workspaceId: workspace.id, settledAt: remote.settledAt, settled: true })
+      continue
+    }
+    // Brought back over there (owner ruling 2026-10-17: a chat's rest is the
+    // same on every device): a row here that rests because it followed that
+    // machine's settle comes back with it. One a person settled here, which
+    // the machine was asked to settle too, is not this row's to undo unless
+    // the machine has since said the chat is back.
+    const followedAt = input.followed.get(workspace.id)
+    if (followedAt !== undefined) due.push({ workspaceId: workspace.id, settledAt: followedAt, settled: false })
   }
   return due
 }
