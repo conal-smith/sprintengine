@@ -1,12 +1,18 @@
-// The active workspace's identity cluster — star toggle, name, project
-// (folder-name) chip, and branch chip — hoisted out of the retired 48px WorkspaceTopBar
+// The active workspace's identity cluster — star toggle, name and branch
+// chip — hoisted out of the retired 48px WorkspaceTopBar
 // row into the merged AppTitleBar title strip (it fills the title bar's centre
 // slot). It is a display surface, not a control group, so it sits outside the
 // top-bar-group cap (the TopBar inventory lives in
 // scripts/lint-panel-composition.mjs).
 //
-// The star, project, and branch segments are interactive (toggle starred /
-// toggle Files / toggle Git) and opt out of the title strip's drag region with
+// The project is not named here (owner ruling 2026-10-16): the sidebar files
+// every chat under its project and the composer's context strip names it under
+// the prompt, so a third saying in the title bar was clutter — and once it
+// stopped opening Files while a chat was followed, an inert one, with no
+// tooltip when folded to its glyph.
+//
+// The star and branch segments are interactive (toggle starred / toggle Git)
+// and opt out of the title strip's drag region with
 // `app-no-drag`; the name keeps its sidebar-toggle role (or degrades to a
 // draggable span) to preserve the window grab area.
 
@@ -86,8 +92,9 @@ import {
   ZedMark,
 } from '../brand/EditorMarks'
 
-// Folder glyph for the project chip. Same stroke idiom as GitBranchGlyph
-// (1.3px round strokes on a 16px box) so the two identity chips read as a set.
+// Folder glyph for a paired machine's project and the Finder target. Same
+// stroke idiom as GitBranchGlyph (1.3px round strokes on a 16px box) so the
+// identity chips read as a set.
 function FolderGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" className={className} fill="none">
@@ -399,8 +406,7 @@ export function WorkspaceIdentity({
   // branch and its uncommitted files rather than the worktree's — which is why the
   // count stayed stuck on main's dirty files across branch switches. Resolve the
   // worktree first and probe its `gitRoot`; regular workspaces have no worktree and
-  // fall back to `folderPath` unchanged. The folder-path segment still opens the
-  // file explorer rooted at `folderPath` — only the git probes move to the worktree.
+  // fall back to `folderPath` unchanged.
   //
   // And since sidebar-lists-every-terminal, the chip follows the FOCUSED
   // AGENT: an agent that moved into a worktree of its own is what the chip
@@ -467,21 +473,16 @@ export function WorkspaceIdentity({
         : null,
     files: gitFiles,
   })
-  // The header identity segments double as panel shortcuts: the folder path
-  // toggles the file explorer and the branch toggles the Git panel — same
-  // open/close-on-second-click semantics as the Backlog panel switch. Only
+  // The branch chip doubles as a panel shortcut: it toggles the Git panel —
+  // same open/close-on-second-click semantics as the Backlog panel switch. Only
   // offered when the owning capability module is enabled, so we never offer a
   // click that resolves to nothing.
-  const filesPanelEnabled = selectModuleEnabled(moduleOverrides, 'dev-tools') && !followingConversation
   const gitPanelEnabled = selectModuleEnabled(moduleOverrides, 'git')
   // The branch chip, inline or folded: not while a conversation is followed.
   const branchChipShown = branchIsRepo && !followingConversation
-  // Files and Git are workspace-pane tabs (browser-pane epic): the chips keep
-  // their open/close-on-second-click semantics against the pane record.
+  // Git is a workspace-pane tab (browser-pane epic): the chip keeps its
+  // open/close-on-second-click semantics against the pane record.
   const togglePaneKind = useWorkspaceStore((s) => s.togglePaneKind)
-  const toggleFilesPanel = React.useCallback(() => {
-    if (activeWorkspaceId) togglePaneKind(activeWorkspaceId, 'files')
-  }, [activeWorkspaceId, togglePaneKind])
   const toggleGitPanel = React.useCallback(() => {
     if (activeWorkspaceId) togglePaneKind(activeWorkspaceId, 'git')
   }, [activeWorkspaceId, togglePaneKind])
@@ -508,14 +509,8 @@ export function WorkspaceIdentity({
   // workspace's colour stays legible without chroming the whole strip.
   const highlightHex = activeWorkspace.highlight?.color ? getHighlightSwatch(activeWorkspace.highlight.color).hex : null
 
-  // Show the project's folder name, not the full absolute path — the path was
-  // the strip's biggest source of clutter and its only meaningful part is the
-  // basename. The full path still rides the chip's tooltip, and the reveal-Files
-  // affordance is preserved. Handles POSIX and Windows separators and trailing
-  // slashes; falls back to the whole string if there is no separator.
   // The checkout an external editor should open is `gitProbePath` — the one
-  // the branch chip above describes. Distinct from `folderPath` below, which
-  // stays the project root because the Files panel is rooted there.
+  // the branch chip above describes.
   // Drawn once for both spellings of this control (the Git-panel button and the
   // read-only span when the panel module is off), so they can never drift.
   const gitCountBadge = gitHasCounts && gitMarks ? <ChangeCountBadge marks={gitMarks} className="ml-0.5" /> : null
@@ -536,36 +531,19 @@ export function WorkspaceIdentity({
 
   const openPath = gitProbePath
 
-  const folderPath = activeWorkspace.folderPath
-  const projectName = folderPath
-    ? (() => {
-        const trimmed = folderPath.replace(/[\\/]+$/, '')
-        const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-        return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || trimmed
-      })()
-    : null
-
   // The ladder, read once. Each flag is "this segment is still on the strip".
   const showChipWords = fold < 1
   const openInline = fold < 2
   const chipsInline = fold < 3
 
   // Everything the ladder has taken off the strip, in the order it left. A row
-  // here does exactly what the segment it replaces did — the project row toggles
-  // Files, the branch row toggles Git — so folding changes where a control is,
+  // here does exactly what the segment it replaces did — the branch row toggles
+  // Git — so folding changes where a control is,
   // never what it does. The branch row spells its ±lines out in words: a menu
   // row has the width the chip did not, and this is the one place the count can
   // be read rather than glanced at.
   const overflowItems: OverflowMenuItem[] = []
   if (!chipsInline) {
-    if (folderPath && filesPanelEnabled && projectName) {
-      overflowItems.push({
-        id: 'identity-files',
-        label: `Files — ${projectName}`,
-        icon: <FolderGlyph className="icon-xs shrink-0 text-[color:var(--text-subtle)]" />,
-        onSelect: toggleFilesPanel,
-      })
-    }
     if (branchChipShown && gitPanelEnabled) {
       const branchRowLabel = branchName ?? 'detached'
       overflowItems.push({
@@ -601,22 +579,22 @@ export function WorkspaceIdentity({
     <div className="flex min-w-0 items-center gap-2 overflow-hidden">
       {/*
        * Truncation priority is encoded in flex-shrink factors so the workspace
-       * name — the primary identity — yields last: the folder path (shrink-100)
-       * collapses first, then the branch (shrink-10), and the name (default
+       * name — the primary identity — yields last: a paired machine's project
+       * (shrink-100) collapses first, then the branch (shrink-10), and the name (default
        * shrink-1) keeps its content until the others are exhausted. Each segment
        * grows to its full content when the bar has room; cropping only kicks in
        * as the cluster approaches the right-side controls.
        *
        * The name also carries a `min-w-[7ch]` floor so identity never fully
        * collapses at the 800px window minimum (or the 600px detached width) under
-       * a full control load: path and branch still yield to nothing first, but the
+       * a full control load: the other segments still yield first, but the
        * name keeps a few legible characters instead of shrinking to a single glyph.
        * The floor is only reachable because the right-side controls condense first
        * (WorkspaceActions View→icon-only, win/linux menu bar→hamburger).
        */}
       {/*
-       * The name is an interactive chip (same hover treatment as the project and
-       * branch chips) that toggles the sidebar — open when collapsed, close when
+       * The name is an interactive chip (same hover treatment as the branch
+       * chip) that toggles the sidebar — open when collapsed, close when
        * open. When no toggle handler is supplied it degrades to a plain draggable
        * span so the window keeps a grab area and other mount sites still work.
        */}
@@ -691,21 +669,19 @@ export function WorkspaceIdentity({
         </Tooltip>
       </span>
       {/*
-       * Metadata group: project (folder basename) + branch read as one quiet,
+       * Metadata: the branch (and a paired machine's project) read as a quiet,
        * muted cluster beside the bold name. Separation is spacing only (the
-       * cluster's gap) — no separator dots, so the three segments read as evenly
-       * spaced peers rather than one dot sitting between only the first pair.
-       * Both segments are subtle chips (hover fill, not a resting border) and opt
-       * out of the drag region so they stay clickable.
+       * cluster's gap) — no separator dots. The branch is a subtle chip (hover
+       * fill, not a resting border) and opts out of the drag region so it stays
+       * clickable.
        *
-       * At fold 1 they keep the glyph and the ±lines and drop the WORDS — the
-       * tooltip was already carrying the full path and the full branch name, so
-       * nothing needs a new home yet. At fold 3 they leave the strip entirely
-       * for the overflow menu below.
+       * At fold 1 the chips keep the glyph and the ±lines and drop the WORDS —
+       * the tooltip already carries the full branch name, so nothing needs a new
+       * home yet. At fold 3 they leave the strip entirely for the overflow menu
+       * below.
        */}
-      {/* A chat that lives on a paired machine has no local folder to chip, so
-          its project over there takes that seat, in the folder chip's own
-          shape, followed by the machine's mark: the glyph the sidebar row and
+      {/* A chat that lives on a paired machine names its project over there —
+          the one fact the sidebar's local project groups cannot say — followed by the machine's mark: the glyph the sidebar row and
           the tab wear, in the machine's colour, named on hover (owner,
           2026-10-08: no tailnet address in the strip, and no second saying of
           the chat's own title, which is all the remote workspace's name is). */}
@@ -742,32 +718,11 @@ export function WorkspaceIdentity({
           />
         </span>
       ) : null}
-      {chipsInline && folderPath ? (
-        filesPanelEnabled ? (
-          <Tooltip content={folderPath} placement="bottom" wrapperClassName="flex min-w-0 shrink-[100]">
-            <GhostButton
-              size="inline"
-              onClick={toggleFilesPanel}
-              aria-label={`Toggle file explorer, ${folderPath}`}
-              className="app-no-drag min-w-0"
-            >
-              <FolderGlyph className="icon-xs shrink-0 text-[color:var(--text-subtle)]" />
-              {showChipWords ? <span className="min-w-0 truncate">{projectName}</span> : null}
-            </GhostButton>
-          </Tooltip>
-        ) : (
-          // The twin takes the control's gap so the two chips keep one rhythm.
-          <span className="flex min-w-0 shrink-[100] items-center gap-1.5 text-meta text-[color:var(--text-muted)]">
-            <FolderGlyph className="icon-xs shrink-0 text-[color:var(--text-subtle)]" />
-            {showChipWords ? <span className="min-w-0 truncate">{projectName}</span> : null}
-          </span>
-        )
-      ) : null}
       {chipsInline && branchChipShown ? (
         gitPanelEnabled ? (
           <Tooltip content={branchTooltip} placement="bottom" wrapperClassName="flex min-w-0 shrink-[10]">
-            {/* The same inline ghost the files chip takes; the tone's
-                `--text-muted` rest ink is the one this chip already spelled. */}
+            {/* The inline ghost; the tone's `--text-muted` rest ink is the one
+                this chip already spelled. */}
             <GhostButton
               size="inline"
               onClick={toggleGitPanel}

@@ -9,8 +9,11 @@ import {
   type StudioRpcServiceOptions,
 } from '../../main/studio-rpc/studio-rpc-service'
 import { canvasBoardStoreDir } from '../../main/canvas/canvas-board-store'
+import { workspaceStoreRoot } from '../../main/workspace-store'
+import { storePathOfLegacy } from '../../main/workspace-store-migration'
 import { createStudioFiles } from '../rpc/studio-files'
 import { isMachinePath } from '../../shared/machine-paths'
+import { SIDECAR_DIR_NAME } from '../../shared/workspace-sidecar'
 import type { StudioCore } from './studio-core'
 import type { StudioGateway } from './studio-gateway'
 
@@ -44,8 +47,10 @@ export function createStudioRpc(
     audit: () => gateway.gatewayAudit(),
     tools: gateway.clientTools,
     forgetToolApprovals: (toolsets) => core.approvalRules.forgetGatewayToolsets(toolsets),
-    // A workspace's folder, and the board store Studio keeps for it under its
-    // data directory: the canvas reads and writes its boards through these.
+    // A workspace's folder, the board store Studio keeps for it under its
+    // data directory (the canvas reads and writes its boards through these),
+    // and its project's store in the person's home, where its captures,
+    // recordings and transcripts are.
     files: createStudioFiles({
       resolveRoot: (root) => {
         const folder = core.workspaceSyncService
@@ -53,9 +58,25 @@ export function createStudioRpc(
           .state.workspaces.find((workspace) => workspace.id === root.workspaceId)?.folderPath
         if (!folder) return null
         // A folder on an SSH machine (`ssh://…`) is not on this disk, so it is
-        // no root here; its board store, kept under the data directory, is.
+        // no root here, and neither is its project's store, which is on that
+        // machine; its board store, kept under the data directory, is.
         if (root.kind === 'workspace') return isMachinePath(folder) ? null : folder
+        if (root.kind === 'store') {
+          try {
+            return workspaceStoreRoot(folder)
+          } catch {
+            return null
+          }
+        }
         return canvasBoardStoreDir(core.platform.paths.dataDir(), folder)
+      },
+      // A client that learned `.sprintengine/browser/…` from an older Studio
+      // still reads the file, from the store the move put it in.
+      moved: (root, path) => {
+        if (root.kind !== 'workspace') return null
+        const [first, ...rest] = path.split('/')
+        const inStore = first === SIDECAR_DIR_NAME ? storePathOfLegacy(rest) : null
+        return inStore ? { root: { kind: 'store', workspaceId: root.workspaceId }, path: inStore.join('/') } : null
       },
     }),
     // What the conversations' branches have on GitHub, which every client

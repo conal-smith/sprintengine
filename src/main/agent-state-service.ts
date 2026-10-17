@@ -257,7 +257,12 @@ export function createAgentStateService(options: AgentStateServiceOptions) {
   async function installForWorkspace(
     workspaceRoot: string,
     cli: string,
-    execution: { pathStyle?: TerminalPathStyle; hostId?: string; integration?: HostAgentIntegration | null } = {},
+    execution: {
+      pathStyle?: TerminalPathStyle
+      hostId?: string
+      integration?: HostAgentIntegration | null
+      launchCarriesHook?: boolean
+    } = {},
   ): Promise<void> {
     const root = workspaceRoot.trim()
     if (!root) return
@@ -273,7 +278,13 @@ export function createAgentStateService(options: AgentStateServiceOptions) {
     // window, before the copy landed) installed into still holds that
     // registration, which would now fire beside the launch's own for every
     // event and stay in the person's repository. It is taken out instead.
-    if (options.resolveLaunchInjectsPlugins?.(cli, execution.hostId, execution.integration)) {
+    // `launchCarriesHook` is the same answer for a CLI whose hook rides its own
+    // per-launch flags or environment rather than a plugin directory (Codex's
+    // `-c hooks…`, OpenCode's config content).
+    if (
+      execution.launchCarriesHook === true ||
+      options.resolveLaunchInjectsPlugins?.(cli, execution.hostId, execution.integration)
+    ) {
       await tidyWorkspaceRegistration(root, spec)
       return
     }
@@ -284,6 +295,7 @@ export function createAgentStateService(options: AgentStateServiceOptions) {
     // that would be byte-identical anyway.
     const pathStyle = execution.pathStyle ?? (process.platform === 'win32' ? 'windows' : 'posix')
     const userScoped = spec.registration.scope === 'user'
+    if (userScoped && pathStyle !== 'wsl') await tidyWorkspaceRegistration(root, spec)
     const integration = pathStyle === 'wsl' ? execution.integration : null
     if (pathStyle === 'wsl' && !integration) {
       // The launch waits for the helper before it gets here; without it there
@@ -357,8 +369,15 @@ export function createAgentStateService(options: AgentStateServiceOptions) {
   // Take a launch-injected CLI's workspace registration back out, once per
   // (target file, workspace) per app run. Serialized on the SAME chain the
   // installs use, because both read-modify-write one settings file.
+  //
+  // A user-scoped spec tidies the same path inside the workspace: Cursor's
+  // `.cursor/hooks.json` and Grok's hook file were the repository's before they
+  // moved to the home, and every worktree an earlier build launched in still
+  // holds its copy.
   async function tidyWorkspaceRegistration(root: string, spec: PluginAgentStateSpec): Promise<void> {
-    if (spec.registration.kind !== 'settings-json' || spec.registration.scope === 'user') return
+    if (spec.registration.scope === 'user') {
+      spec = { ...spec, registration: { ...spec.registration, scope: 'workspace' } }
+    }
     const chainKey = `${spec.registration.path}::${root}`
     if (tidied.has(chainKey)) return
     const prior = installChains.get(chainKey) ?? Promise.resolve()

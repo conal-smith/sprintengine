@@ -30,7 +30,13 @@ import { DEFAULT_AGENT_SPAWN_PERMISSION_PRESET } from '../../../shared/launch-se
 import { parseCliPermissionModeId } from '../../../shared/cli-permission-mode'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
 import { openConfinedExistingFile } from '../../conversation-file-access'
-import { conversationImageFileOf, conversationImagePathOf } from './tailnet-conversation-images'
+import {
+  conversationImageFileOf,
+  conversationImagePathOf,
+  sniffConversationImage,
+  type ConversationImageMediaType,
+} from './tailnet-conversation-images'
+import { ConversationAttachmentStore } from '../../conversation-attachment-store'
 import {
   ATTACHABLE_IMAGE_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -120,6 +126,13 @@ export type ConversationGatewayHost = {
    * step, or the step shows no picture.
    */
   toolImagePath?(key: ConversationKey, toolUseId: string): Promise<ConversationToolImagePath>
+  /**
+   * A picture the person sent with one of the chat's messages, by the `ref`
+   * its `user_message` recorded. Read only from this machine's attachment
+   * store, and only from the chat's own folder there: a ref naming another
+   * chat's picture is `unknown_image`, as one that is gone is.
+   */
+  sentImage?(key: ConversationKey, ref: string): Promise<ConversationSentImage>
   registerUpload?(input: {
     deviceId: string
     sessionId: string
@@ -175,6 +188,10 @@ function relay(
 
 export type ConversationToolImagePath =
   { ok: true; path: string } | { ok: false; code: 'unknown_conversation' | 'unknown_image' }
+
+export type ConversationSentImage =
+  | { ok: true; mediaType: ConversationImageMediaType; bytes: Buffer }
+  | { ok: false; code: 'unknown_conversation' | 'unknown_image' }
 
 /**
  * How a command ended. `code` names a refusal the wire has a word for (a model
@@ -791,6 +808,30 @@ export function createConversationGatewayHost(
         },
       )
       return found
+    },
+    async sentImage(key, ref) {
+      const live = sessionFor(key)
+      if (!live && !(await threadFor(key))) return { ok: false, code: 'unknown_conversation' }
+      // The store keeps each chat's pictures in a folder named from the chat
+      // itself, so the folder is the authorisation: a ref is served only from
+      // this chat's own, or from its live session's where that session runs in
+      // another folder (a New chat's pool worktree). The store then refuses
+      // anything that is not exactly a name it chose.
+      const sessionRoot =
+        live && typeof runtime.sessionWorkspaceRoot === 'function' ? runtime.sessionWorkspaceRoot(live.sessionId) : null
+      const folders = new Set([
+        ConversationAttachmentStore.folderFor(key),
+        ...(sessionRoot ? [ConversationAttachmentStore.folderFor({ ...key, workspaceRoot: sessionRoot })] : []),
+      ])
+      const slash = ref.indexOf('/')
+      if (slash < 0 || !folders.has(ref.slice(0, slash))) return { ok: false, code: 'unknown_image' }
+      const read = await runtime.readAttachment(ref).catch(() => null)
+      if (!read?.ok) return { ok: false, code: 'unknown_image' }
+      const bytes = Buffer.from(read.dataBase64, 'base64')
+      // The store wrote it under the sender's own cap; its first bytes, not its
+      // name, say what it is served as.
+      const mediaType = bytes.length <= MAX_ATTACHMENT_BYTES ? sniffConversationImage(bytes.subarray(0, 12)) : null
+      return mediaType ? { ok: true, mediaType, bytes } : { ok: false, code: 'unknown_image' }
     },
     registerUpload(input) {
       for (const [id, entry] of uploads) if (Date.now() - entry.at > UPLOAD_TTL_MS) discardUpload(id)

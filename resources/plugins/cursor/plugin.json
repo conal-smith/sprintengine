@@ -52,6 +52,7 @@
       { "spreadIf": "permissionArgs" },
       { "spreadIf": "modelArgs" },
       { "spreadIf": "contextArgs" },
+      { "spreadIf": "integrationArgs" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
   },
@@ -63,6 +64,7 @@
       { "spreadIf": "permissionArgs" },
       { "spreadIf": "modelArgs" },
       { "spreadIf": "contextArgs" },
+      { "spreadIf": "integrationArgs" },
       "--continue",
       { "valueIf": "sessionId", "value": "--resume" },
       { "valueIf": "sessionId", "value": "{{sessionId}}" }
@@ -88,9 +90,13 @@
     "path": "{{workspaceRoot}}/.cursor/mcp.json",
     "format": "claude-code"
   },
+  "launchIntegration": {
+    "$comment": "The gateway, the person's synced MCP servers and a launch skill ride one more --plugin-dir (rendered into integrationArgs) instead of .cursor/mcp.json and .cursor/skills. Measured against cursor-agent 2026.10.14 on 2026-10-16: a plugin's .mcp.json server starts with no server-approval dialog (a project .cursor/mcp.json one stops the start at one), the flag is repeatable beside the host-context plugin, and skills/<id>/SKILL.md loads. The agent-state hook is NOT in the plugin: a plugin's stop and beforeSubmitPrompt hooks fire only when the person's or the project's own hooks file names the same event, so it is registered in the user-level ~/.cursor/hooks.json instead (agentStateSpec).",
+    "route": "cursor"
+  },
   "agentStateSpec": {
     "$comment": "Cursor's CLI ships lifecycle hooks (2026-01-16 CLI update): project-level .cursor/hooks.json in the flat {version, hooks: {<event>: [{command}]}} shape, camelCase event names, snake_case stdin payload with hook_event_name/conversation_id/transcript_path base fields (conversation_id is the resume chat id; the shared reporter forwards it as the session id). awaiting_input is DELIBERATELY unsupported: Cursor has no Notification/PermissionRequest-style event — its permission flow consults beforeShellExecution/beforeMCPExecution hooks, which fire on every tool run and whose empty-stdout response semantics are unverified, so registering a reporter there risks interfering with approvals rather than observing them. Until verified against a real install (rides kimi-cursor-e2e-verification), a Cursor permission prompt reads as its last working phase and the stall watchdog is the backstop. stop's payload carries status completed|aborted|error — all three end the turn (idle+turnEnd), and error/aborted additionally flag the turn FAILED via failureWhen, so an automation run whose Cursor turn crashes or is interrupted finalizes as failed instead of opening a PR from unfinished work. Agent changelists: Cursor's postToolUse payload carries no file edit, so afterFileEdit is registered too (phase thinking, mid-turn) — it is the only event that names the file and its old/new strings, from which the reporter locates the changed line ranges. Payload shape READ OFF the shipped cursor-agent 2026.09.08 bundle: the base payload is {hook_event_name, session_id (falling back to conversation_id), cursor_version, workspace_roots:[workspacePath], user_email, transcript_path} and afterFileEdit adds file_path plus edits[] whose {old_string, new_string} are one hunk's '-' and '+' lines joined — no context, so a hunk that only DELETES has an empty new_string and cannot be located, which costs that call its line ranges and leaves a file-level claim. Not verified end-to-end (cursor-agent refuses headless without an account: \"Not logged in\").",
-    "registration": { "kind": "flat-hooks-json", "path": ".cursor/hooks.json" },
+    "registration": { "kind": "flat-hooks-json", "path": ".cursor/hooks.json", "scope": "user" },
     "events": [
       { "event": "sessionStart", "phase": "starting" },
       { "event": "beforeSubmitPrompt", "phase": "thinking" },

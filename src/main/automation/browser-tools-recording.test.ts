@@ -86,13 +86,12 @@ function harness(options: { refuseOutput?: boolean } = {}) {
             ok: false,
             code: 'recording_unavailable',
             message:
-              'Recordings are saved into the workspace, and Studio cannot write files into a workspace on build-box yet.',
+              'Recordings are kept on the machine a workspace is on, and Studio cannot write files on build-box yet.',
           }
         : {
             ok: true,
             output: {
-              workspacePath: `.sprintengine/browser/recordings/${stem}.webm`,
-              path: `/Users/dev/app/.sprintengine/browser/recordings/${stem}.webm`,
+              path: `/Users/dev/.sprintengine/workspaces/app-0123456789abcdef/browser/recordings/${stem}.webm`,
               append: async () => undefined,
               finish: async () => ({ bytes: 40 }),
               discard: async () => undefined,
@@ -172,7 +171,11 @@ for (const through of ['direct', 'the shell'] as const) {
     assert.equal(recording.recordingId, 'rec-1')
     assert.equal(recording.tabId, 't1')
     assert.equal(recording.maxDurationMs, 20_000)
-    assert.match(recording.workspacePath, /^\.sprintengine\/browser\/recordings\/recording-localhost-5173-.*\.webm$/)
+    assert.match(
+      recording.path,
+      /^\/Users\/dev\/\.sprintengine\/workspaces\/app-0123456789abcdef\/browser\/recordings\/recording-localhost-5173-.*\.webm$/,
+    )
+    assert.equal(recording.workspacePath, undefined, 'no path relative to the project names a file kept outside it')
     assert.deepEqual(h.starts[0]?.cursor, true)
     // The pane is brought forward on the recorded tab.
     assert.deepEqual(h.openRequests, [{ workspaceId: 'ws-1', tabId: 't1' }])
@@ -194,7 +197,6 @@ for (const through of ['direct', 'the shell'] as const) {
     assert.equal(saved.durationMs, 2_500)
     assert.equal(saved.stopReason, 'stopped')
     assert.equal(saved.mimeType, 'video/webm;codecs=vp9')
-    assert.equal(saved.workspacePath, recording.workspacePath)
     assert.equal(saved.path, recording.path)
     assert.equal(saved.cursor, true)
 

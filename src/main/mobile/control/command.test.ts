@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStorePath } from '../../workspace-store'
 import { standIn } from '../../../../tests/stand-in'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -269,7 +270,7 @@ test('command', async () => {
     assert.equal(updated.fields.criticality, 'high')
     assert.equal(updated.body, body, 'backlog.update must preserve the document body')
     await assert.rejects(
-      () => readFile(join(workspaceRoot, '.sprintengine', 'backlog', 'cache', 'links.json'), 'utf8'),
+      () => readFile(workspaceStorePath(workspaceRoot, 'backlog', 'cache', 'links.json'), 'utf8'),
       /ENOENT/,
       'backlog.update must not write the link cache for lifecycle/triage',
     )
@@ -307,7 +308,7 @@ test('command', async () => {
 
   async function readBacklogStoreItems(workspaceRoot: string): Promise<BacklogStoreItem[]> {
     const store = JSON.parse(
-      await readFile(join(workspaceRoot, '.sprintengine', 'backlog', 'cache', 'links.json'), 'utf8'),
+      await readFile(workspaceStorePath(workspaceRoot, 'backlog', 'cache', 'links.json'), 'utf8'),
     ) as { items: BacklogStoreItem[] }
     return store.items
   }
@@ -357,7 +358,7 @@ test('command', async () => {
     )
 
     const store = JSON.parse(
-      await readFile(join(workspaceRoot, '.sprintengine', 'backlog', 'cache', 'links.json'), 'utf8'),
+      await readFile(workspaceStorePath(workspaceRoot, 'backlog', 'cache', 'links.json'), 'utf8'),
     ) as {
       items: Array<{
         id: string

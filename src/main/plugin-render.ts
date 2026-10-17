@@ -429,6 +429,14 @@ function buildVariableScope(
   }
   scope.set('pluginDirArgs', pluginDirArgs)
 
+  // `integrationArgs`: passed through as main rendered them, launch and resume
+  // alike (a resumed session needs its MCP servers and hooks as much as a fresh
+  // one). Empty for every launch that has none.
+  scope.set(
+    'integrationArgs',
+    (context.integrationArgs ?? []).filter((arg) => typeof arg === 'string'),
+  )
+
   return scope
 }
 

@@ -15,6 +15,7 @@ import { ConversationRuntime } from './conversation-runtime'
 import { ConversationIndex } from './conversation-index'
 import type { ConversationEvent } from '../shared/conversation-runtime'
 import { createMockConversationProvider } from './providers/mock-conversation-provider'
+import { workspaceStorePath } from './workspace-store'
 
 vi.mock('node:fs/promises', async (original) => {
   const actual = await original<typeof import('node:fs/promises')>()
@@ -78,7 +79,7 @@ test('receipt links refuse command execution and transcript links refuse replay'
     const started = await runtime.startSession({ ...key, providerId: adapter.id, modelId: adapter.listModels()[0] })
     expect(started.ok).toBe(true)
     if (!started.ok) throw new Error('Session failed to start')
-    const folder = join(f.root, '.sprintengine/conversations/workspace')
+    const folder = workspaceStorePath(f.root, 'conversations', 'workspace')
     const outside = join(f.outside, 'receipt.json')
     await writeFile(outside, '[]')
     await symlink(outside, join(folder, 'agent.receipts.json'))
@@ -184,7 +185,7 @@ test('exclusive creation refuses an existing file and append refuses external li
 test('oversized detail files fail before allocating their contents and oversized transcripts still open', async () => {
   const f = await fixture()
   try {
-    const folder = join(f.root, '.sprintengine/conversations/workspace')
+    const folder = workspaceStorePath(f.root, 'conversations', 'workspace')
     await mkdir(join(folder, 'agent.tools'), { recursive: true })
     for (const [path, size] of [
       [join(folder, 'agent.tools/large.json'), 6 * 1024 * 1024],

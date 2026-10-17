@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { connect, createServer, type Server } from 'node:net'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -219,13 +219,36 @@ test('agent-state-service', async () => {
     await installSvc.installForWorkspace(workspaceRoot, 'codex')
     assert.equal(resolveCalls, 2)
 
-    // Grok in the SAME workspace shares the claude/codex stdin reporter but
-    // writes a standalone JSON config into .grok/hooks/, not the claude JSON or
-    // codex TOML targets.
+    // Grok shares the claude/codex stdin reporter but writes a standalone JSON
+    // config into the home's .grok/hooks/ (the TUI takes no hook at launch), and
+    // takes back out the copy an earlier build wrote into the workspace.
+    await mkdir(join(workspaceRoot, '.grok', 'hooks'), { recursive: true })
+    await writeFile(
+      join(workspaceRoot, '.grok', 'hooks', 'sprintengine-agent-state.json'),
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  type: 'command',
+                  command: "/bin/sh '/Users/dev/.sprintengine/bin/studio-run' agent-state --socket '/x.sock'",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      'utf8',
+    )
     await installSvc.installForWorkspace(workspaceRoot, 'grok')
     assert.equal(resolveCalls, 3)
+    assert.ok(
+      !existsSync(join(workspaceRoot, '.grok', 'hooks', 'sprintengine-agent-state.json')),
+      'the workspace copy an earlier build wrote is removed',
+    )
     const grokHooksConfig = JSON.parse(
-      await readFile(join(workspaceRoot, '.grok', 'hooks', 'sprintengine-agent-state.json'), 'utf8'),
+      await readFile(join(testHome, '.grok', 'hooks', 'sprintengine-agent-state.json'), 'utf8'),
     ) as { hooks?: Record<string, unknown> }
     assert.ok(grokHooksConfig.hooks?.SessionStart, 'grok reporter hook not installed')
     assert.ok(!grokHooksConfig.hooks?.PreToolUse, 'PreToolUse must not be installed for grok (trimmed)')

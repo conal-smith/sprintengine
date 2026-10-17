@@ -174,7 +174,9 @@ test('read-path', async () => {
       homeDir: () => join(temp, 'home'),
     })
 
-    const sharing = ['claude-code', 'grok', 'kimi-claude', 'zai']
+    // Grok left this file for its own ~/.grok/config.toml when the app stopped
+    // writing the gateway into repositories.
+    const sharing = ['claude-code', 'kimi-claude', 'zai']
     const targets = sharing.map((pluginId): McpConfigTarget => {
       const spec = manifests.get(pluginId)?.mcpConfig
       assert.ok(spec, `${pluginId} declares an mcpConfig`)
@@ -183,9 +185,9 @@ test('read-path', async () => {
     })
 
     const resolved = await resolver.resolve({ workspaceRoot, targets })
-    assert.equal(reads.length, 1, 'four CLIs sharing one file read it once')
+    assert.equal(reads.length, 1, 'three CLIs sharing one file read it once')
     assert.equal(reads[0], join(workspaceRoot, '.mcp.json'))
-    assert.deepEqual([...resolved.keys()].sort(), [...sharing].sort(), 'four attributions')
+    assert.deepEqual([...resolved.keys()].sort(), [...sharing].sort(), 'three attributions')
     for (const pluginId of sharing) {
       const entry = resolved.get(pluginId)
       assert.ok(entry)

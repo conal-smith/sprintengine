@@ -38,12 +38,13 @@ resources/runtime/
 electron.vite.config.*.mjs
 
 # Agent CLI harness folders. Everything in them is written on whichever machine
-# runs the agent: harness settings (`enabledPlugins`, absolute socket and
-# Electron paths in `.cursor/`), skills copied in by the studio installer or
-# the harness's own plugin installs (each stamped with `installedAt`), and
-# agent-state hooks rendered from templates under resources/. None of it is
-# source, and ignoring the folders whole stops every new install from turning
-# up as untracked noise.
+# runs the agent: harness settings, permissions answered "always", and skills
+# or plugins a harness installs itself. The app no longer writes into them for
+# a session it launches (its hooks, MCP servers and skills reach the CLI from
+# the launch itself or from the CLI's user-level config;
+# docs/agent-launch-isolation.md), but an older build did, and the CLIs keep
+# their own per-project state here. None of it is source, and ignoring the
+# folders whole stops every new install from turning up as untracked noise.
 .claude/
 .cursor/
 .grok/
@@ -55,23 +56,19 @@ electron.vite.config.*.mjs
 # a source file, not a generated workspace config.
 !resources/studio-plugin/**/.mcp.json
 
-# Everything the app writes into a workspace's own sidecar directory — this
-# checkout's included, because the app is developed in the app. All of it is
-# runtime state: the backlog link cache (resolved link statuses, the agent
-# terminal holding an item, module metadata bound to a live session — every
-# value re-derived from the world, so deleting it costs a lookup and never
-# data); the scratch files Debug Mode left (retired); browser tab screenshots
-# and element crops; captured conversation transcripts and review state;
-# automation runtime state.
+# Legacy: the sidecar directory older builds of the app wrote into every
+# workspace, this checkout's included, because the app is developed in the
+# app. This build keeps that state in the project's store in the person's home
+# (`~/.sprintengine/workspaces/<project>/`, src/main/workspace-store.ts) and
+# moves an existing sidecar there once, so that state no longer lands here. The
+# line stays because an older build run against this checkout still writes it.
 #
-# `backlog/config.json` is in here too, and is NOT an exception. It carries the
-# `MC` item-key prefix, so it reads like project configuration, but the app
-# rewrites it as it runs and a clone gets its own on first run — tracking it
-# published one machine's live state, which is the same mistake
-# `backlog/items.json` made before it.
-# No exceptions: a re-include here only holds a door open for
-# a workspace's live runtime state to be committed by someone who added a file
-# and saw git offer it.
+# All of it was runtime state: the backlog link cache, the backlog config
+# (`backlog/config.json` carries the `MC` item-key prefix, so it reads like
+# project configuration, but the app rewrites it as it runs and a clone gets
+# its own on first run), browser captures, conversation transcripts, review and
+# automation state. No exceptions: a re-include here only holds a door open
+# for a workspace's live runtime state to be committed.
 .sprintengine/
 
 # Editor directories and files

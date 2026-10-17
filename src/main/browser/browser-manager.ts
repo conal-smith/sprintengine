@@ -42,7 +42,7 @@ import {
 import { listProcListeners } from '../../server/web/preview-ports'
 import { safeExternalUrl } from '../ipc/external-url'
 import { parsePsTree, type ProcRow } from '../terminal-subtree-probe'
-import { ensureSidecarDirNoLinks, ensureSidecarDirNoLinksSync } from '../workspace-sidecar'
+import { ensureWorkspaceStoreDir, ensureWorkspaceStoreDirSync } from '../workspace-store'
 import { createAgentDownloads, type AgentDownloadItem } from './agent-downloads'
 
 // The embedded browser's main-process half (browser-pane epic). The renderer
@@ -508,9 +508,10 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
 
   /**
    * A download from a tab the agent is driving is saved to the workspace's
-   * browser sidecar without a dialog (agent-downloads.ts). Anything else —
-   * the person's own download, a tab with no workspace folder, a sidecar
-   * that cannot be made — returns without a path, and Chromium asks.
+   * store (`browser/downloads/`, workspace-store.ts) without a dialog
+   * (agent-downloads.ts). Anything else — the person's own download, a tab
+   * with no workspace folder, a folder that cannot be made — returns without
+   * a path, and Chromium asks.
    */
   function saveAgentDownload(item: AgentDownloadItem, wc: WebContents | undefined): void {
     const tab = [...tabs.values()].find((candidate) => candidate.wc === wc)
@@ -519,7 +520,7 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
     if (!workspaceRoot || !isAbsolute(workspaceRoot) || !existsSync(workspaceRoot)) return
     let directory: string
     try {
-      directory = ensureSidecarDirNoLinksSync(resolve(workspaceRoot), 'browser', 'downloads')
+      directory = ensureWorkspaceStoreDirSync(resolve(workspaceRoot), 'browser', 'downloads')
     } catch {
       return
     }
@@ -1033,7 +1034,7 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       return true
     },
 
-    /** PNG of the page (or a crop of it) into the workspace's `.sprintengine/browser/`. */
+    /** PNG of the page (or a crop of it) into the workspace store's `browser/`. */
     async captureScreenshot(input: BrowserCaptureInput): Promise<BrowserScreenshotResult> {
       const tab = requireTab(input.tabId)
       if (!tab) return { ok: false, message: 'This browser tab is gone.' }
@@ -1057,10 +1058,9 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
           image = full.crop(crop)
         }
         const size = image.getSize()
-        // The folder ignores itself, so a project that does not list it in
-        // its own .gitignore still never sees screenshots in `git status`;
-        // and it is never made or written through a link the project holds.
-        const directory = await ensureSidecarDirNoLinks(resolve(workspaceRoot), 'browser')
+        // In the store in the person's home, never in the project: a capture
+        // is the app's, and in the project it was one more file to ignore.
+        const directory = await ensureWorkspaceStoreDir(resolve(workspaceRoot), 'browser')
         const file = await writeCaptureFile(directory, `${input.kind}-${hostSlug(tab.state.url)}`, image.toPNG())
         return { ok: true, path: file, width: size.width, height: size.height }
       } catch (error) {

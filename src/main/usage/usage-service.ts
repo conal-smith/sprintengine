@@ -16,7 +16,7 @@ import type {
 import { resolveClaudeConfigDir } from '../claude-config-dir'
 import { codexHomeDir } from '../conversation-import/codex-sessions'
 import { conversationStorageSegment } from '../conversation-index'
-import { workspaceSidecarPath } from '../workspace-sidecar'
+import { workspaceStorePath } from '../workspace-store'
 import { aggregateUsage } from './usage-aggregate'
 import { createPricingStore, type PricingStore } from './usage-pricing'
 import { buildUsageReport } from './usage-report'
@@ -365,9 +365,10 @@ export function opencodeDataDir(home: string, env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * Where each open workspace keeps its chat transcripts: the project folder,
- * and the worktree each chat working in one runs in, since a chat's
- * transcript is stored under the root it runs in.
+ * Where each open workspace keeps its chat transcripts: its project's store,
+ * which a chat working in a worktree of the project writes to as well. The
+ * root a folder is listed with is where its chat runs, the worktree when one
+ * of its agents runs in one, since that is the folder its usage was spent in.
  */
 export function studioDirs(workspaces: readonly UsageServiceWorkspace[]): UsageStudioDir[] {
   const dirs = new Map<string, UsageStudioDir>()
@@ -380,7 +381,13 @@ export function studioDirs(workspaces: readonly UsageServiceWorkspace[]): UsageS
       if (root) roots.add(root)
     }
     for (const root of roots) {
-      const dir = workspaceSidecarPath(root, 'conversations', conversationStorageSegment(workspace.id))
+      let dir: string
+      try {
+        dir = workspaceStorePath(root, 'conversations', conversationStorageSegment(workspace.id))
+      } catch {
+        // A folder on an SSH machine: its chats' usage is that machine's.
+        continue
+      }
       dirs.set(dir, { dir, workspaceId: workspace.id, root })
     }
   }

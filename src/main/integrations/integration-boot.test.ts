@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { test } from 'vitest'
 
 import { runGitCommand } from '../git-utils'
-import { prepareStudioIntegrations } from './integration-boot'
+import { cleanRepositoriesAtBoot, prepareStudioIntegrations, REPOSITORY_CLEANUP_VERSION } from './integration-boot'
 import {
   migrateCodexGatewayBlock,
   migrateGatewayServer,
@@ -366,4 +366,54 @@ test('the scan reaches the worktrees of a repository it was pointed at', async (
     found.some((entry) => entry.kind === 'mcp-gateway' && entry.path.startsWith(worktree)),
     'the worktree was read',
   )
+})
+
+test('a start takes out what earlier launches wrote into a repository, and leaves what the project committed', async () => {
+  const { root, repo } = await legacyWorld()
+  const launcher = "/bin/sh '/Users/dev/.sprintengine/bin/studio-run' agent-state --socket '/tmp/s.sock'"
+  // An earlier build's per-CLI registrations, none of them in the ledger.
+  await write(join(repo, '.cursor', 'hooks.json'), { version: 1, hooks: { stop: [{ command: launcher }] } })
+  await write(join(repo, '.grok', 'hooks', 'sprintengine-agent-state.json'), {
+    hooks: { Stop: [{ hooks: [{ type: 'command', command: launcher }] }] },
+  })
+  await write(
+    join(repo, '.opencode', 'plugin', 'sprintengine-agent-state.js'),
+    'const s = process.env.SPRINTENGINE_AGENT_STATE_SOCKET\n',
+  )
+  // The person's own file in the same folder stays.
+  await write(join(repo, '.cursor', 'rules', 'style.mdc'), 'be brief\n')
+  // A committed `.mcp.json` whose gateway the project chose to keep.
+  const committedGateway = {
+    mcpServers: {
+      'sprintengine-studio': { command: '/bin/sh', args: ['/Users/dev/.sprintengine/bin/studio-run', 'mcp'] },
+    },
+  }
+  await write(join(repo, '.mcp.json'), committedGateway)
+  for (const args of [
+    ['add', '-f', '.mcp.json'],
+    ['-c', 'user.email=dev@example.com', '-c', 'user.name=dev', 'commit', '-q', '-m', 'mcp'],
+  ]) {
+    assert.ok((await runGitCommand(repo, args)).ok)
+  }
+
+  const ledger = createIntegrationLedger({ path: join(root, 'userData', 'integration-ledger.json') })
+  const report = await cleanRepositoriesAtBoot({
+    ledger,
+    listRoots: () => [{ path: repo, hostId: 'local' }],
+  })
+  assert.ok(report.removed > 0, JSON.stringify(report.outcomes, null, 2))
+  assert.equal(existsSync(join(repo, '.cursor', 'hooks.json')), false)
+  assert.equal(existsSync(join(repo, '.cursor', 'rules', 'style.mdc')), true)
+  assert.equal(existsSync(join(repo, '.grok')), false, 'an emptied folder the app made goes too')
+  assert.equal(existsSync(join(repo, '.opencode', 'plugin', 'sprintengine-agent-state.js')), false)
+  const settings = await json(join(repo, '.claude', 'settings.local.json'))
+  assert.deepEqual(settings.permissions, { allow: ['Bash(ls:*)'] }, 'the person’s own settings stay')
+  assert.equal(JSON.stringify(settings).includes('sprintengine-agent-state'), false)
+  assert.deepEqual(await json(join(repo, '.mcp.json')), committedGateway, 'a committed entry is the project’s')
+
+  // The scan ran once: a second start reads only the ledger.
+  assert.equal(await ledger.cleanedVersion(), REPOSITORY_CLEANUP_VERSION)
+  await write(join(repo, '.cursor', 'hooks.json'), { version: 1, hooks: { stop: [{ command: launcher }] } })
+  await cleanRepositoriesAtBoot({ ledger, listRoots: () => [{ path: repo, hostId: 'local' }] })
+  assert.equal(existsSync(join(repo, '.cursor', 'hooks.json')), true, 'an unlisted file is not looked for again')
 })

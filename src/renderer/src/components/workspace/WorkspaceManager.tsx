@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioServerBanner } from '../studioServer/StudioServerBanner'
 import { hostIdForFolder, isWslHostId, LOCAL_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
-import {
-  isProjectlessChatsRoot,
-  projectlessScopeOf,
-  PROJECTLESS_CHATS_LABEL,
-} from '../../../../shared/projectless-chats'
+import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../shared/projectless-chats'
 import { nanoid } from 'nanoid'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -210,6 +206,7 @@ import {
   buildSidebarWorkspaceOrder,
   getSessionItems,
   getWorkspaceActivity,
+  newChatInheritedScope,
   newChatProjectOptionsOf,
   showsNoWorkspaceState,
   type WorkspaceActivity,
@@ -2973,6 +2970,8 @@ export default function WorkspaceManager() {
   // the person is in at that moment (closing the last project from a
   // door, opening Settings before the CLI probe resolves) is not what an
   // auto-open may do. The panel simply waits under whatever is open.
+  const activeFolderPath = activeWorkspace?.folderPath ?? null
+  const activeWorktreeRepoRoot = activeWorkspace?.worktree?.repoRoot ?? null
   const presentNewChatPanel = useCallback(
     (
       folderPath?: string | null,
@@ -2988,11 +2987,11 @@ export default function WorkspaceManager() {
         clearNewChatDraft(workspaceWindowId)
         parked = null
       }
-      const inherited =
-        folderPath === undefined ? (parked?.folderPath ?? activeWorkspace?.folderPath ?? null) : folderPath
-      // A chat started without a project hands New chat "No project", never
-      // its own folder: the next chat gets a folder of its own too.
-      const resolved = projectlessScopeOf(inherited) ?? inherited
+      // Always a project, never the open chat's worktree (newChatInheritedScope).
+      const resolved = newChatInheritedScope(folderPath, parked?.folderPath, {
+        folderPath: activeFolderPath,
+        worktree: activeWorktreeRepoRoot ? { repoRoot: activeWorktreeRepoRoot } : null,
+      })
       rescopeNewChatDraft(workspaceWindowId, resolved)
       setNewChatPanelState({
         folderPath: resolved,
@@ -3001,7 +3000,7 @@ export default function WorkspaceManager() {
         forcedSelection,
       })
     },
-    [activeWorkspace?.folderPath, workspaceWindowId],
+    [activeFolderPath, activeWorktreeRepoRoot, workspaceWindowId],
   )
   presentNewChatPanelRef.current = presentNewChatPanel
   const openNewChatPanel = useCallback(

@@ -39,6 +39,8 @@ import {
   syncMaterialisedStudioSkills,
   type StudioPluginTokens,
 } from './skills/studio-plugin'
+import { buildLauncherHookCommand } from './agent-state'
+import type { StudioLauncherRef } from './integrations/launcher'
 
 /** The directory under userData that holds every version's copy. */
 export const AGENT_INTEGRATION_DIR = 'agent-integration'
@@ -74,8 +76,10 @@ const MARKER_FILE = '.installed.json'
  * `studio-skills` bundle; one plugin per bundled skill under `launch-skills/`
  * (a copy from layout 2 still holds the retired bundle, so it is rebuilt).
  * 4: no `launch-skills/debug`, retired with Debug Mode.
+ * 5: the hook commands may run the Studio launcher (`hookLauncher`), and the
+ * marker records which form a copy was written with.
  */
-export const AGENT_INTEGRATION_LAYOUT = 4
+export const AGENT_INTEGRATION_LAYOUT = 5
 
 /** The version-keyed root. Sibling versions coexist; see `prune`. */
 export function agentIntegrationRoot(userDataDir: string, version: string): string {
@@ -132,26 +136,35 @@ export async function writeLaunchSkillPlugins(root: string, sourceRoot: string):
   for (const entry of entries) {
     if (!entry.isDirectory() || !existsSync(join(sourceRoot, entry.name, 'SKILL.md'))) continue
     const dir = launchSkillPluginDir(root, entry.name)
-    await rm(dir, { recursive: true, force: true })
-    await mkdir(join(dir, '.claude-plugin'), { recursive: true })
-    await writeFile(
-      join(dir, '.claude-plugin', 'plugin.json'),
-      `${JSON.stringify(
-        {
-          name: launchSkillPluginName(entry.name),
-          description: `The ${entry.name} skill, for the one SprintEngine Studio launch that invokes it.`,
-          version: '1.0.0',
-          author: { name: 'SprintEngine Studio' },
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    )
-    await cp(join(sourceRoot, entry.name), join(dir, 'skills', entry.name), { recursive: true })
+    await writeSkillPlugin(dir, entry.name, join(sourceRoot, entry.name))
     written[entry.name] = dir
   }
   return written
+}
+
+/**
+ * Write `dir` as a plugin holding the one skill at `sourceDir`. Also how a
+ * module's skill reaches the one launch that invokes it: built on demand, since
+ * it ships in the module rather than in this build's copy.
+ */
+export async function writeSkillPlugin(dir: string, skillId: string, sourceDir: string): Promise<void> {
+  await rm(dir, { recursive: true, force: true })
+  await mkdir(join(dir, '.claude-plugin'), { recursive: true })
+  await writeFile(
+    join(dir, '.claude-plugin', 'plugin.json'),
+    `${JSON.stringify(
+      {
+        name: launchSkillPluginName(skillId),
+        description: `The ${skillId} skill, for the one SprintEngine Studio launch that invokes it.`,
+        version: '1.0.0',
+        author: { name: 'SprintEngine Studio' },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+  await cp(sourceDir, join(dir, 'skills', skillId), { recursive: true })
 }
 
 /** The one-skill plugins a finished copy holds, by skill id. */
@@ -204,6 +217,13 @@ export type EnsureAgentIntegrationHomeOptions = {
    * wants one falls back to the workspace install.
    */
   launchSkillsSourceRoot?: string | null
+  /**
+   * Run the copy's hooks through this launcher rather than `node <reporter>`.
+   * Passed on native Windows, where nothing says the shell a CLI runs its hooks
+   * in finds a Node, and where every hook the workspace install wrote has run
+   * the launcher. Absent or null: the reporter beside the hooks, by `node`.
+   */
+  hookLauncher?: StudioLauncherRef | null
 }
 
 /**
@@ -238,7 +258,8 @@ export async function ensureAgentIntegrationHome(
     skillPluginDirs: {},
     version: template.version,
   }
-  if (await isUsable(root, template.version)) {
+  const hookRunner = options.hookLauncher ? `launcher:${options.hookLauncher.path}` : 'node'
+  if (await isUsable(root, template.version, hookRunner)) {
     home.skillPluginDirs = await listLaunchSkillPlugins(root)
     // Every call, not only a fresh copy's: a copy written by an earlier run
     // carries whatever that run chose (and one from before the opt-in, every
@@ -268,6 +289,14 @@ export async function ensureAgentIntegrationHome(
     return { ok: false, message: `The agent-state reporter could not be copied: ${describe(error)}` }
   }
 
+  if (options.hookLauncher) {
+    try {
+      await pointHooksAtLauncher(root, options.hookLauncher, options.tokens.agentStateSocketPath)
+    } catch (error) {
+      return { ok: false, message: `The agent-state hooks could not be written: ${describe(error)}` }
+    }
+  }
+
   // Best-effort, and deliberately after the reporter: the launch names this
   // script in its `--settings` status line, which is how the app reads context
   // usage, cost and lines changed. A build that shipped none simply sends no
@@ -284,8 +313,22 @@ export async function ensureAgentIntegrationHome(
     home.skillPluginDirs = await writeLaunchSkillPlugins(root, options.launchSkillsSourceRoot).catch(() => ({}))
   }
 
-  await writeMarker(root, template.version)
+  await writeMarker(root, template.version, hookRunner)
   return { ok: true, home }
+}
+
+/** Rewrite every command in the copy's `hooks/hooks.json` as the launcher's `agent-state` target. */
+async function pointHooksAtLauncher(root: string, launcher: StudioLauncherRef, socketPath: string): Promise<void> {
+  const path = join(root, STUDIO_PLUGIN_ID, 'hooks', 'hooks.json')
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as { hooks?: Record<string, unknown> }
+  const command = buildLauncherHookCommand(launcher, 'agent-state', socketPath)
+  for (const blocks of Object.values(parsed.hooks ?? {})) {
+    if (!Array.isArray(blocks)) continue
+    for (const block of blocks as Array<{ hooks?: Array<{ command?: unknown }> }>) {
+      for (const hook of block.hooks ?? []) if (typeof hook.command === 'string') hook.command = command
+    }
+  }
+  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
 }
 
 /**
@@ -307,23 +350,27 @@ export async function pruneAgentIntegrationHomes(userDataDir: string, keepVersio
 }
 
 /** A copy is usable when its marker names the version this build ships. */
-async function isUsable(root: string, version: string): Promise<boolean> {
+async function isUsable(root: string, version: string, hookRunner: string): Promise<boolean> {
   const raw = await readFile(join(root, MARKER_FILE), 'utf8').catch(() => null)
   if (raw === null) return false
   try {
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false
     const marker = parsed as Record<string, unknown>
-    return marker.version === version && marker.layout === AGENT_INTEGRATION_LAYOUT
+    return (
+      marker.version === version &&
+      marker.layout === AGENT_INTEGRATION_LAYOUT &&
+      (marker.hookRunner ?? 'node') === hookRunner
+    )
   } catch {
     return false
   }
 }
 
-async function writeMarker(root: string, version: string): Promise<void> {
+async function writeMarker(root: string, version: string, hookRunner: string): Promise<void> {
   const path = join(root, MARKER_FILE)
   const temp = `${path}.${process.pid}.tmp`
-  const body = `${JSON.stringify({ plugin: STUDIO_PLUGIN_ID, version, layout: AGENT_INTEGRATION_LAYOUT, installedAt: new Date().toISOString() }, null, 2)}\n`
+  const body = `${JSON.stringify({ plugin: STUDIO_PLUGIN_ID, version, layout: AGENT_INTEGRATION_LAYOUT, hookRunner, installedAt: new Date().toISOString() }, null, 2)}\n`
   await writeFile(temp, body, 'utf8')
   await rename(temp, path)
 }

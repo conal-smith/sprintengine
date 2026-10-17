@@ -12,8 +12,8 @@ import { MODULE_DATA_DIRECTORY } from '../module-host/module-storage'
 // for the next module to take that id, which would start with the keys and
 // data the person gave this one. Trust is revoked by whoever removed the folder.
 //
-// Storage a module kept inside a workspace (`.sprintengine/modules/<id>`) is
-// the project's, and stays with it.
+// Storage a module kept for a project (`modules/<id>` in the project's store,
+// workspace-store.ts) is the project's, and stays with it.
 export async function forgetModules(userData: string, moduleIds: readonly string[]): Promise<void> {
   const ids = moduleIds.filter(isModuleIdSegment)
   if (ids.length === 0) return

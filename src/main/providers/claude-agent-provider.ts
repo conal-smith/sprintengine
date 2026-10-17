@@ -17,7 +17,7 @@ import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTask
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openConfinedExistingFile, readBoundedConversationFile } from '../conversation-file-access'
 import { asRecord } from '../../shared/records'
@@ -73,6 +73,8 @@ import { isBackgroundLaunchAck, isSubagentStep } from '../../shared/conversation
 export { summarizeToolInput } from '../../shared/conversation/approvalSummary'
 import { cliStderrSummary, LOOKUP_TOOL_KINDS } from '../../shared/conversation/permissionModes'
 import { wslShareSafeDirectoryEnv } from '../git-run'
+import { resolveClaudeConfigDir } from '../claude-config-dir'
+import { ensureResumableTranscript, transcriptCheckNote } from './claude-transcript-integrity'
 import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
 
@@ -292,6 +294,9 @@ type SessionState = {
   // The SDK reports cost as a running total for the life of one query() call;
   // the total already attributed to earlier turns of the live child.
   queryCostUsd: number
+  // What the check of a resumed session's file found that the conversation
+  // should be told, shown at the start of the turn that spawned the child.
+  resumeNote: string | null
   // The child being spawned, while it is; see ensureQuery.
   spawning: Promise<void> | null
   // Bumped when the session is stopped or its child disposed from outside
@@ -953,6 +958,26 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       throw error
     }
     state.skillPluginDir = skillPlugin
+    // A resume walks the session file back from its newest entry; a gap a
+    // crash left in it would bring back only the messages after the gap. A
+    // WSL machine's file is under its own Linux home, out of reach here.
+    let savedCostUsd = 0
+    if (state.providerSessionId && !wslTarget) {
+      const check = await ensureResumableTranscript(
+        resolveClaudeConfigDir(homedir(), env),
+        state.workspaceRoot,
+        state.providerSessionId,
+      )
+      state.resumeNote = transcriptCheckNote(check)
+      if ((check.kind === 'ok' || check.kind === 'repaired') && check.savedCostUsd) savedCostUsd = check.savedCostUsd
+      try {
+        assertSpawnWanted(state, generation)
+      } catch (error) {
+        if (skillPlugin) removeSkillPlugin(skillPlugin)
+        state.skillPluginDir = null
+        throw error
+      }
+    }
     const inputQueue = new PushStream<SDKUserMessage>()
     const abort = new AbortController()
     const permissionMode = nativePermissionMode(state, state.mode)
@@ -1067,7 +1092,9 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     }
     const q = sdkQuery({ prompt: inputQueue, options: queryOptions })
     state.query = q
-    state.queryCostUsd = 0
+    // A resumed child restores the session's saved cost total and reports it
+    // in its first result; only what it adds from here is this turn's.
+    state.queryCostUsd = savedCostUsd
     state.childPreset = state.permissionPreset
     state.childMode = ownSdkMode(state)
     state.inputQueue = inputQueue
@@ -1410,6 +1437,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         lastActivityAt: now(),
         stderrTail: '',
         queryCostUsd: 0,
+        resumeNote: null,
         spawning: null,
         spawnGeneration: 0,
         pendingSendUuids: new Set(),
@@ -1507,6 +1535,12 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.turn = turn
       state.lastActivityAt = now()
       for (const pendingEvent of state.pendingSessionEvents.splice(0)) turn.queue.push(pendingEvent)
+      if (state.resumeNote) {
+        turn.queue.push(
+          eventFor(state, 'command_output', { turnId: input.turnId, adapterNote: true, output: state.resumeNote }),
+        )
+        state.resumeNote = null
+      }
       if (waiting.length > 0)
         turn.queue.push(
           eventFor(state, 'session_updated', {

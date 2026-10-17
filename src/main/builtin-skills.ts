@@ -202,6 +202,12 @@ export async function writeManagedSkillManifest(input: {
   )
 }
 
+/** The managed manifest a copy this installer wrote carries, or null for any other directory. */
+export async function readManagedSkillManifest(directory: string): Promise<ManagedSkillManifest | null> {
+  const manifest = await readJson<ManagedSkillManifest>(join(directory, MANAGED_SKILL_MANIFEST_FILE))
+  return manifest?.source === 'sprintengine-builtin' && typeof manifest.id === 'string' ? manifest : null
+}
+
 export function findBuiltinSkill(skillId: string): BuiltinSkill | null {
   return BUILTIN_SKILLS.find((skill) => skill.id === skillId) ?? null
 }
