@@ -410,6 +410,21 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   privately for a day. The phone draws them as thumbnails on the person's
   message; it shows its own just-sent photos from the phone itself, and names
   a picture it cannot fetch.
+- **Files a message carries.** A desktop that advertises
+  `conversation-message-files` takes a file of any type on the upload route
+  with `kind=file`, from a device with `conversation:operate`, for a chat it
+  lists: at most 25 MB (`413 too_large`, naming the limit), under its own name
+  made one safe path segment. It is written into Studio's data folder,
+  `tailnet-uploads/<device>/<upload>/<name>`, never into the project, and
+  answered `{ uploadId, bytes, name }`. A `send` naming that id in
+  `uploadIds` attaches the file to the message by that path, as a file
+  dropped into the desktop's composer is: the agent is told where it is, and
+  the `user_message` records it in `files`, which every view draws as a card.
+  Pictures and files go in the same `uploadIds`, each spent as what it was
+  uploaded as. The id is the uploading device's alone and goes with the send;
+  the file stays, for the agent to read in a later turn, and is removed a
+  week on, or with the device when it is removed. One never sent goes when its
+  id expires, after an hour.
 
 ### Sync
 

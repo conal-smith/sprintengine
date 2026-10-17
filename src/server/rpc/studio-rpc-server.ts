@@ -45,11 +45,12 @@ import type {
 
 /**
  * The conversation capabilities the socket serves: every one the contract
- * defines, but the four that describe the tailnet lane's own transport — a
+ * defines, but the five that describe the tailnet lane's own transport — a
  * picture route beside its WebSocket, the sent pictures that route also
- * serves, the upload route's shrinking of a picture on receipt (this socket's
- * own uploads are kept as they came), and a `hello` frame on it, which here is
- * the connection's own handshake — `conversation-lifecycle`, whose
+ * serves, the files its upload route takes, the upload route's shrinking of a
+ * picture on receipt (this socket's own uploads are kept as they came), and a
+ * `hello` frame on it, which here is the connection's own handshake —
+ * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
  * `conversation-queued-sends`, whose `queued` frames its conversation topic
  * does not carry.
@@ -58,6 +59,7 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
   (capability) =>
     capability !== 'conversation-images' &&
     capability !== 'conversation-message-images' &&
+    capability !== 'conversation-message-files' &&
     capability !== 'conversation-image-downscale' &&
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
