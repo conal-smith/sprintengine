@@ -2,7 +2,7 @@ import type { WorktreePoolHeldReason } from '../../shared/ipc/worktree-pool'
 import { comparablePath } from '../../shared/host-paths'
 import { agentWorktreeLockOwner } from '../agent-worktree-lock'
 import { pathExists } from '../git-utils'
-import { parseGitWorktreePorcelain } from '../git-worktree-list'
+import { parseGitWorktreePorcelain, runGitWorktreeListPorcelain } from '../git-worktree-list'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import type { SlotRecord } from './pool-store'
 import { type PoolContext, type PoolRuntime, messageOf } from './pool-context'
@@ -23,7 +23,7 @@ export async function lockReasonOf(
   pool: PoolRuntime,
   path: string,
 ): Promise<string | null | undefined> {
-  const listed = await ctx.git(pool.record.repoRoot, ['worktree', 'list', '--porcelain', '-z'])
+  const listed = await runGitWorktreeListPorcelain(ctx.git, pool.record.repoRoot)
   if (!listed.ok) return undefined
   const entry = parseGitWorktreePorcelain(listed.stdout).find(
     (candidate) => comparablePath(candidate.path) === comparablePath(path),

@@ -5,7 +5,7 @@ import { comparablePath } from '../../shared/host-paths'
 import { pathInside } from '../agent-worktree-keep-checks'
 import type { GitWorktreeEntry } from '../git'
 import { pathExists } from '../git-utils'
-import { parseGitWorktreePorcelain } from '../git-worktree-list'
+import { parseGitWorktreePorcelain, runGitWorktreeListPorcelain } from '../git-worktree-list'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import type { SlotRecord } from './pool-store'
 import { hasSlotMarker } from './slot-git'
@@ -29,7 +29,7 @@ const SLOT_NAME = /^pool-(\d{2,})$/u
  */
 export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<void> {
   const record = pool.record
-  const listed = await ctx.git(record.repoRoot, ['worktree', 'list', '--porcelain', '-z'])
+  const listed = await runGitWorktreeListPorcelain(ctx.git, record.repoRoot)
   if (!listed.ok) throw new Error(`git worktree list failed: ${tail(listed.message) ?? 'no reason given'}`)
   const registered = new Map<string, GitWorktreeEntry>()
   for (const entry of parseGitWorktreePorcelain(listed.stdout)) registered.set(comparablePath(entry.path), entry)
