@@ -54,3 +54,18 @@ test('prose, other commands and a chat with no CLI are sent as typed', () => {
   expect(composerAppCommand('/Users/dev/app', chat)).toBeNull()
   expect(composerAppCommand('/model', { ...chat, cli: null })).toBeNull()
 })
+
+test('/btw asks a side question where the chat answers them, and is the CLI’s elsewhere', () => {
+  const answers = { ...chat, sideQuestion: true }
+  expect(composerAppCommand('/btw which file is the parser in?', answers)).toEqual({
+    kind: 'sideQuestion',
+    question: 'which file is the parser in?',
+  })
+  expect(composerAppCommand('/btw', answers)).toEqual({ kind: 'sideQuestion' })
+  expect(composerAppCommand('/BTW why?', answers)).toEqual({ kind: 'sideQuestion', question: 'why?' })
+  expect(composerAppCommand('/btw why?', { ...answers, attachments: 1 })).toEqual({
+    kind: 'refuse',
+    notice: 'A side question takes words only. Remove the attachments to ask it.',
+  })
+  expect(composerAppCommand('/btw why?', chat)).toBeNull()
+})

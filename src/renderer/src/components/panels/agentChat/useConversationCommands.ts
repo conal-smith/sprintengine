@@ -125,6 +125,7 @@ export function studioAppCommands(input: {
   model: boolean
   effort: boolean
   terminal?: boolean
+  sideQuestion?: boolean
 }): ConversationCommand[] {
   return [
     ...(input.model
@@ -135,6 +136,9 @@ export function studioAppCommands(input: {
       : []),
     ...(input.terminal
       ? [{ name: 'terminal', description: 'Continue this conversation in a terminal', source: 'app' as const }]
+      : []),
+    ...(input.sideQuestion
+      ? [{ name: 'btw', description: 'Ask a side question that stays out of the chat', source: 'app' as const }]
       : []),
   ]
 }
