@@ -5,130 +5,16 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 
 import type { FileWatchEvent } from '../../../../shared/ipc/filesystem'
+import { fakeMonaco as fake, type FakeMonacoEditor as FakeEditor } from '../../../../../tests/fake-monaco-editor'
 import type { LayoutTemplate } from '../../types/workspace'
 
 // The docked editor against a file on disk that something else changes: an
 // agent's edit reloads a clean tab, asks before it touches a dirty one, and
 // ⌘S never writes back a copy older than what is there.
-//
-// Monaco needs a canvas and workers, so the wrapper is stood in for by an
-// editor over a plain string. It behaves like `@monaco-editor/react` where
-// that matters here: a `value` prop that differs from the model replaces the
-// whole text (and fires no onChange), a person typing fires onChange.
 
-type Listener = () => void
-type FakeEditor = {
-  text: string
-  /** Whole-text replacements the wrapper made from the `value` prop. */
-  fullReplaces: number
-  /** Edits pushed onto the model, as [start offset, end offset, text]. */
-  edits: Array<[number, number, string]>
-  commands: Array<{ keybinding: number; run: () => unknown }>
-  type(next: string): void
-}
-
-const fake = vi.hoisted(() => ({
-  editors: [] as FakeEditor[],
-  KEY_S: 49,
-  CTRL_CMD: 2048,
-}))
-
-vi.mock('@monaco-editor/react', async () => {
-  const ReactModule = await import('react')
-  type Props = {
-    value?: string
-    onChange?: (value: string | undefined) => void
-    onMount?: (editor: unknown, monaco: unknown) => void
-  }
-  const disposable = { dispose() {} }
-  function createEditor(initial: string, onUserChange: (value: string) => void) {
-    const contentListeners = new Set<Listener>()
-    const fire = () => contentListeners.forEach((listener) => listener())
-    const offsetAt = (text: string, lineNumber: number, column: number): number => {
-      const lines = text.split('\n')
-      let offset = 0
-      for (let line = 1; line < lineNumber; line++) offset += lines[line - 1].length + 1
-      return offset + column - 1
-    }
-    const editor: FakeEditor & Record<string, unknown> = {
-      text: initial,
-      fullReplaces: 0,
-      edits: [],
-      commands: [],
-      type(next: string) {
-        editor.text = next
-        fire()
-        onUserChange(next)
-      },
-      getModel: () => model,
-      getSelections: () => [],
-      getScrollTop: () => 0,
-      getScrollLeft: () => 0,
-      setScrollTop() {},
-      setScrollLeft() {},
-      getLayoutInfo: () => ({ height: 0 }),
-      onDidLayoutChange: () => disposable,
-      onKeyDown: () => disposable,
-      onDidFocusEditorText: () => disposable,
-      onDidDispose: () => disposable,
-      createDecorationsCollection: () => ({ clear() {}, set() {} }),
-      addCommand(keybinding: number, run: () => unknown) {
-        editor.commands.push({ keybinding, run })
-      },
-    }
-    const model = {
-      getValue: () => editor.text,
-      getPositionAt(offset: number) {
-        const before = editor.text.slice(0, offset).split('\n')
-        return { lineNumber: before.length, column: before[before.length - 1].length + 1 }
-      },
-      pushStackElement() {},
-      pushEditOperations(
-        _selections: unknown,
-        operations: Array<{
-          range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }
-          text: string
-        }>,
-      ) {
-        for (const { range, text } of operations) {
-          const start = offsetAt(editor.text, range.startLineNumber, range.startColumn)
-          const end = offsetAt(editor.text, range.endLineNumber, range.endColumn)
-          editor.edits.push([start, end, text])
-          editor.text = editor.text.slice(0, start) + text + editor.text.slice(end)
-        }
-        // The real wrapper calls onChange for any model edit it did not make.
-        fire()
-        onUserChange(editor.text)
-        return null
-      },
-    }
-    return editor
-  }
-
-  function FakeMonacoEditor(props: Props) {
-    const editorRef = ReactModule.useRef<FakeEditor | null>(null)
-    const propsRef = ReactModule.useRef(props)
-    propsRef.current = props
-    ReactModule.useEffect(() => {
-      const editor = createEditor(props.value ?? '', (value) => propsRef.current.onChange?.(value))
-      editorRef.current = editor
-      fake.editors.push(editor)
-      props.onMount?.(editor, {
-        KeyMod: { CtrlCmd: fake.CTRL_CMD },
-        KeyCode: { KeyS: fake.KEY_S },
-        editor: { remeasureFonts() {} },
-      })
-    }, [])
-    ReactModule.useEffect(() => {
-      const editor = editorRef.current
-      if (!editor || props.value === undefined || props.value === editor.text) return
-      editor.text = props.value
-      editor.fullReplaces += 1
-    }, [props.value])
-    return ReactModule.createElement('div', { 'data-fake-monaco': '' })
-  }
-  return { default: FakeMonacoEditor }
-})
+// Monaco is the jsdom stand-in (tests/fake-monaco-editor.ts): an editor over
+// a plain string that answers a new `value` prop the way the wrapper does.
+vi.mock('@monaco-editor/react', () => import('../../../../../tests/fake-monaco-editor'))
 
 const ROOT = '/Users/dev/acme'
 const FILE = `${ROOT}/src/app.ts`

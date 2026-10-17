@@ -15,7 +15,13 @@ import {
   setEditorDiskBaseline,
   subscribeEditorBuffer,
 } from '../../utils/editorBuffers'
-import { applyDiskContentToEditor, classifyDiskChange, readFileOnDisk, type DiskRead } from '../../utils/editorDiskSync'
+import {
+  applyDiskContentToEditor,
+  classifyDiskChange,
+  oneAtATime,
+  readFileOnDisk,
+  type DiskRead,
+} from '../../utils/editorDiskSync'
 import { watchFileOnDisk } from '../../utils/fileDiskWatch'
 import { removeFileTabsForPath } from '../../utils/modelRegistry'
 import { EDITOR_FOCUS_EVENT } from '../../utils/editorFocus'
@@ -29,18 +35,8 @@ import {
 import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
-import {
-  ContextMenu,
-  EmptyState,
-  GhostButton,
-  IconButton,
-  InlineNotice,
-  MenuDivider,
-  MenuItem,
-  OutlineButton,
-  Spinner,
-  Tooltip,
-} from '../ui'
+import { ContextMenu, EmptyState, IconButton, InlineNotice, MenuDivider, MenuItem, Spinner, Tooltip } from '../ui'
+import { EditorDiskNotice, type EditorDiskNoticeState } from './editor/EditorDiskNotice'
 
 // The editor's three non-content states, each in its own kit idiom so a failed
 // read never renders like an empty pane (principles.md → Accessibility;
@@ -80,7 +76,7 @@ type EditorMenuState = { x: number; y: number; hasSelection: boolean; canCloseOt
 
 // What the file on disk did that the person has to know about: changed under
 // unsaved edits (holding what it changed to), or gone.
-type DiskNotice = { path: string; kind: 'changed'; content: string } | { path: string; kind: 'deleted' }
+type DiskNotice = EditorDiskNoticeState & { path: string }
 
 // The chord Monaco already binds for its clipboard and select-all actions.
 // Read per render, never once at module load: preload publishes `window.api`
@@ -428,27 +424,12 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
     if (!watchesDisk || !activeFilePath) return
     const path = activeFilePath
     let disposed = false
-    let reading = false
-    let readAgain = false
-    const check = async (): Promise<void> => {
-      if (reading) {
-        readAgain = true
-        return
-      }
-      reading = true
-      try {
-        do {
-          readAgain = false
-          const read = await readFileOnDisk(window.api, path)
-          if (disposed) return
-          applyDiskReadRef.current(path, read)
-        } while (readAgain && !disposed)
-      } finally {
-        reading = false
-      }
-    }
-    const stop = watchFileOnDisk(path, () => void check())
-    void check()
+    const check = oneAtATime(async () => {
+      const read = await readFileOnDisk(window.api, path)
+      if (!disposed) applyDiskReadRef.current(path, read)
+    })
+    const stop = watchFileOnDisk(path, check)
+    check()
     return () => {
       disposed = true
       stop()
@@ -822,31 +803,11 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
   return (
     <div className="flex flex-col h-full bg-[color:var(--bg-app)]">
       {visibleDiskNotice ? (
-        <div className="shrink-0 px-3 pt-2 pb-1">
-          {visibleDiskNotice.kind === 'changed' ? (
-            <InlineNotice
-              tone="warn"
-              title="Changed on disk"
-              hint="This file changed on disk while it had unsaved edits here. Reload takes the version on disk; Keep mine keeps yours, and the next save writes it over the other."
-              action={
-                <>
-                  <OutlineButton size="xs" onClick={() => void reloadFromDisk(visibleDiskNotice.path)}>
-                    Reload
-                  </OutlineButton>
-                  <GhostButton size="xs" onClick={() => keepMine(visibleDiskNotice)}>
-                    Keep mine
-                  </GhostButton>
-                </>
-              }
-            />
-          ) : (
-            <InlineNotice
-              tone="warn"
-              title="Deleted on disk"
-              hint="The file is gone from disk. It stays open here, and saving writes it back."
-            />
-          )}
-        </div>
+        <EditorDiskNotice
+          notice={visibleDiskNotice}
+          onReload={() => void reloadFromDisk(visibleDiskNotice.path)}
+          onKeepMine={() => keepMine(visibleDiskNotice)}
+        />
       ) : null}
       <div className="relative flex-1 overflow-hidden">
         {markdownModeToggle}

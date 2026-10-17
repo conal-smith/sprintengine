@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { applyDiskContentToEditor, changedSpan, classifyDiskChange, readFileOnDisk } from './editorDiskSync'
+import { applyDiskContentToEditor, changedSpan, classifyDiskChange, oneAtATime, readFileOnDisk } from './editorDiskSync'
 
 test('the tab’s own save reads as in sync', () => {
   assert.equal(classifyDiskChange({ disk: 'b', buffer: 'b', baseline: 'b', dirty: false }), 'in-sync')
@@ -89,4 +89,32 @@ test('a read tells a deleted file from one that is only unreadable', async () =>
   assert.deepEqual(busy, { kind: 'unreadable' })
   const read = await readFileOnDisk({ readfile: async () => 'text' }, '/Users/dev/acme/a.ts')
   assert.deepEqual(read, { kind: 'content', content: 'text' })
+})
+
+test('checks run one at a time, with one more after for anything asked meanwhile', async () => {
+  let inFlight = 0
+  let most = 0
+  let runs = 0
+  let release: (() => void) | null = null
+  const check = oneAtATime(async () => {
+    runs++
+    inFlight++
+    most = Math.max(most, inFlight)
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    inFlight--
+  })
+  check()
+  check()
+  check()
+  await Promise.resolve()
+  assert.equal(runs, 1)
+  release!()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(runs, 2, 'the two asked while the first ran fold into one')
+  release!()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(runs, 2)
+  assert.equal(most, 1, 'never two at once')
 })

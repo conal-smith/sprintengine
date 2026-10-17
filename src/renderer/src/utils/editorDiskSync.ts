@@ -147,3 +147,29 @@ export function applyDiskContentToEditor(editor: DiskReloadEditor, next: string)
   editor.setScrollLeft(scrollLeft)
   return true
 }
+
+/**
+ * `check`, run one at a time: a call while one is in flight runs it once more
+ * after, never alongside, so two reads of the same file cannot land out of
+ * order.
+ */
+export function oneAtATime(check: () => Promise<void>): () => void {
+  let running = false
+  let again = false
+  const run = async (): Promise<void> => {
+    if (running) {
+      again = true
+      return
+    }
+    running = true
+    try {
+      do {
+        again = false
+        await check()
+      } while (again)
+    } finally {
+      running = false
+    }
+  }
+  return () => void run().catch(() => {})
+}
