@@ -92,6 +92,11 @@ test('gateway lists closed history and resumes concurrent sends once, under the 
     const closed = (await f.host.list())[0]
     assert.equal(closed.sessionId, undefined)
     assert.equal(closed.permissionPreset, 'none', 'a stopped session still names the preset it had')
+    assert.equal(
+      closed.capabilities?.images,
+      true,
+      'a chat at rest names what its provider can do, so a client takes a picture for it',
+    )
     const start = vi.spyOn(f.runtime, 'startSession')
     const results = await Promise.all(
       ['one', 'two'].map((commandId) => f.host.command(f.key, 'phone', commandId, { kind: 'send', message: '/tools' })),
@@ -122,6 +127,7 @@ test('a conversation this app has not run since it started lists and resumes on 
     const listed = (await f.host.list())[0]
     assert.equal(listed.sessionId, undefined)
     assert.equal(listed.permissionPreset, 'none', 'the default answers for a conversation with no session on record')
+    assert.equal(listed.capabilities?.images, true, 'and what its provider can do, with no session in memory')
     assert.deepEqual(f.defaults.at(-1), { workspaceId: 'workspace', agentId: 'agent' })
     const start = vi.spyOn(f.runtime, 'startSession')
     assert.equal((await f.host.command(f.key, 'phone', 'send', { kind: 'send', message: '/tools' })).ok, true)

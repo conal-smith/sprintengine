@@ -71,6 +71,60 @@ test('remoteProjects', async () => {
     )
   })
 
+  check('a chat in an app-made worktree files under its project, never as a row of its own', () => {
+    // The owner's list: real projects buried under `pool-01`, `chat-k_iq`, …
+    // — the worktrees chats over there run in, each listed as a project.
+    const projects = remoteProjectsOf([
+      chat('w9', 'plain', '/Users/dev/app', repo('app')),
+      chat('w1', 'pool', '/Users/dev/.sprintengine-worktrees/app/pool-01', repo('app')),
+      chat('w2', 'cut', '/Users/dev/.sprintengine-worktrees/app/chat-k_iq', repo('app')),
+      chat('w3', 'named', '/Users/dev/.sprintengine-worktrees/app/hidden-tool-calls', repo('app')),
+      chat('w4', 'other', '/Users/dev/toolbox'),
+    ])
+    assert.deepEqual(
+      projects.map((project) => [project.name, project.folderPath]),
+      [
+        ['app', '/Users/dev/app'],
+        ['toolbox', '/Users/dev/toolbox'],
+      ],
+    )
+    assert.equal(projects[0]!.conversationCount, 4, 'the worktree chats count toward their project')
+    assert.equal(
+      projects[0]!.workspaceId,
+      'w9',
+      "the chat in the project's own folder answers for it, over a lower-id worktree chat",
+    )
+  })
+
+  check('a project open there only through worktree chats is still listed, as the project', () => {
+    const workspaces = [
+      chat('w5', 'cut', '/Users/dev/.sprintengine-worktrees/site/chat-3kmu', repo('site')),
+      chat('w2', 'pool', '/Users/dev/.sprintengine-worktrees/site/pool-02', null),
+    ]
+    const projects = remoteProjectsOf(workspaces)
+    assert.equal(projects.length, 1)
+    assert.equal(projects[0]!.name, 'site')
+    assert.equal(projects[0]!.folderPath, '/Users/dev/site')
+    assert.equal(projects[0]!.workspaceId, 'w2', 'lowest id seats it, as for any other project')
+    assert.equal(projects[0]!.repository?.canonicalKey, 'github.com/acme/site')
+    assert.equal(
+      remoteProjectOfWorkspace(projects, workspaces, 'w5')?.folderPath,
+      '/Users/dev/site',
+      "a worktree chat's id resolves to its project",
+    )
+  })
+
+  check('the chats started without a project are not a project', () => {
+    const projects = remoteProjectsOf([
+      chat('w1', 'loose', '/Users/dev/.sprintengine/chats/2026-10-10-hello-ab12cd34'),
+      chat('w2', 'plain', '/Users/dev/app'),
+    ])
+    assert.deepEqual(
+      projects.map((project) => project.folderPath),
+      ['/Users/dev/app'],
+    )
+  })
+
   check('trailing slashes, backslashes and case are one folder', () => {
     const projects = remoteProjectsOf([
       chat('w1', 'a', '/srv/app/'),
