@@ -20,6 +20,7 @@ import {
   classifyDiskChange,
   oneAtATime,
   readFileOnDisk,
+  unseenDiskContent,
   type DiskRead,
 } from '../../utils/editorDiskSync'
 import { watchFileOnDisk } from '../../utils/fileDiskWatch'
@@ -35,8 +36,18 @@ import {
 import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
-import { ContextMenu, EmptyState, IconButton, InlineNotice, MenuDivider, MenuItem, Spinner, Tooltip } from '../ui'
-import { EditorDiskNotice, type EditorDiskNoticeState } from './editor/EditorDiskNotice'
+import {
+  ContextMenu,
+  EmptyState,
+  IconButton,
+  InlineNotice,
+  MenuDivider,
+  MenuItem,
+  Spinner,
+  Tooltip,
+  useConfirmDialog,
+} from '../ui'
+import { EditorDiskNotice, overwriteOnDiskConfirmation, type EditorDiskNoticeState } from './editor/EditorDiskNotice'
 
 // The editor's three non-content states, each in its own kit idiom so a failed
 // read never renders like an empty pane (principles.md → Accessibility;
@@ -108,6 +119,11 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
   const markFileClean = useWorkspaceStore((s) => s.markFileClean)
   const closeFile = useWorkspaceStore((s) => s.closeFile)
   const { repoRoot, status: gitStatus, refresh: refreshGitStatus } = useGitStatus(folderPath)
+  const { confirm } = useConfirmDialog()
+  // The save command is bound once, at mount; it asks through whatever the
+  // provider hands out now.
+  const confirmRef = useRef(confirm)
+  confirmRef.current = confirm
 
   const openFiles = editorState?.openFiles ?? []
   const activeFilePath = filePath ?? editorState?.activeFilePath ?? null
@@ -310,6 +326,21 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
       // back would put the old version over theirs, so ⌘S on it does nothing.
       if (!file.isDirty) return
       if (!hasEditorBuffer(workspaceId, file.path) && typeof file.content !== 'string') return
+      // A file that changed on disk since this tab last read or wrote it — and
+      // the watch has not said so yet, or cannot (an SSH machine's folder) —
+      // is not written over without asking.
+      const unseen = unseenDiskContent(
+        await readFileOnDisk(window.api, file.path),
+        getEditorDiskBaseline(workspaceId, file.path),
+        getEditorBuffer(workspaceId, file.path, file.content ?? ''),
+      )
+      if (unseen !== null) {
+        const overwrite = await confirmRef.current(overwriteOnDiskConfirmation(file.name))
+        if (!overwrite) {
+          setDiskNotice({ path: file.path, kind: 'changed', content: unseen })
+          return
+        }
+      }
       const content = getEditorBuffer(workspaceId, file.path, file.content ?? '')
       // The baseline moves before the write, so the watch event the write
       // itself causes reads as this tab's own save and not as someone's edit.

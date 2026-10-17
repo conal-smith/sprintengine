@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { applyDiskContentToEditor, changedSpan, classifyDiskChange, oneAtATime, readFileOnDisk } from './editorDiskSync'
+import {
+  applyDiskContentToEditor,
+  changedSpan,
+  classifyDiskChange,
+  oneAtATime,
+  readFileOnDisk,
+  unseenDiskContent,
+} from './editorDiskSync'
 
 test('the tab’s own save reads as in sync', () => {
   assert.equal(classifyDiskChange({ disk: 'b', buffer: 'b', baseline: 'b', dirty: false }), 'in-sync')
@@ -117,4 +124,14 @@ test('checks run one at a time, with one more after for anything asked meanwhile
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(runs, 2)
   assert.equal(most, 1, 'never two at once')
+})
+
+test('a save asks only about a version on disk the tab never saw', () => {
+  const onDisk = (content: string) => ({ kind: 'content' as const, content })
+  assert.equal(unseenDiskContent(onDisk('agent'), 'opened', 'mine'), 'agent')
+  assert.equal(unseenDiskContent(onDisk('opened'), 'opened', 'mine'), null, 'disk still holds what the tab read')
+  assert.equal(unseenDiskContent(onDisk('mine'), 'opened', 'mine'), null, 'disk already holds what it would write')
+  assert.equal(unseenDiskContent(onDisk('agent'), undefined, 'mine'), null, 'no baseline, nothing to compare')
+  assert.equal(unseenDiskContent({ kind: 'missing' }, 'opened', 'mine'), null, 'a deleted file is written back')
+  assert.equal(unseenDiskContent({ kind: 'unreadable' }, 'opened', 'mine'), null)
 })

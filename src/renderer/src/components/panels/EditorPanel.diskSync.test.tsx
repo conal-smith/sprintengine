@@ -254,3 +254,34 @@ test('closing the tab closes the folder watch', async () => {
   await settle()
   assert.equal(watcher.stopped, true)
 })
+
+test('a save over a version on disk the tab never showed asks first', async () => {
+  const { workspaceId, editor } = await mountEditor('v1\n')
+  await act(async () => editor.type('v1 mine\n'))
+  // Changed on disk with no watch event to say so — as in an SSH machine's
+  // folder, which main does not watch.
+  disk.set(FILE, 'v2 agent\n')
+  const save = editor.commands.find((command) => command.keybinding === (fake.CTRL_CMD | fake.KEY_S))
+  assert.ok(save)
+
+  await act(async () => {
+    void save.run()
+  })
+  await settle()
+  assert.ok(button('Overwrite'), 'the save asks')
+  await act(async () => button('Cancel').click())
+  await settle()
+  assert.deepEqual(writes, [], 'cancelled: nothing written')
+  assert.equal(disk.get(FILE), 'v2 agent\n')
+  assert.match(noticeTitle() ?? '', /Changed on disk/u, 'and the tab says why')
+  assert.equal(isDirty(workspaceId), true)
+
+  await act(async () => {
+    void save.run()
+  })
+  await settle()
+  await act(async () => button('Overwrite').click())
+  await settle()
+  assert.deepEqual(writes, [{ path: FILE, content: 'v1 mine\n' }], 'confirmed: written on purpose')
+  assert.equal(isDirty(workspaceId), false)
+})

@@ -46,3 +46,13 @@ export function EditorDiskNotice({
     </div>
   )
 }
+
+/** The question a save asks before it writes over a version on disk the tab never showed. */
+export function overwriteOnDiskConfirmation(fileName: string) {
+  return {
+    title: `Overwrite ${fileName}?`,
+    body: 'It changed on disk after it was opened here, perhaps by an agent. Saving replaces that version with yours.',
+    confirmLabel: 'Overwrite',
+    tone: 'danger' as const,
+  }
+}

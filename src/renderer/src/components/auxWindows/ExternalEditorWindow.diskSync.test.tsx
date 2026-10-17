@@ -192,3 +192,38 @@ test('⌘S on a clean tab writes nothing', async () => {
   assert.deepEqual(writes, [])
   assert.equal(disk.get(FILE), 'n = 9\n')
 })
+
+test('a save over a version on disk the tab never showed asks first, and docking waits for it', async () => {
+  const editor = await openWindow('v1\n')
+  await act(async () => editor.type('v1 mine\n'))
+  disk.set(FILE, 'v2 agent\n')
+
+  await pressSave()
+  await act(async () => button('Cancel').click())
+  await settle()
+  assert.deepEqual(writes, [])
+  assert.match(notice() ?? '', /Changed on disk/u)
+
+  const docked: string[] = []
+  const api = window.api as unknown as Record<string, unknown>
+  const previousDock = api.dockFileToWorkspace
+  api.dockFileToWorkspace = async ({ path }: { path: string }) => {
+    docked.push(path)
+  }
+  try {
+    await act(async () => button('Dock into workspace').click())
+    await settle()
+    await act(async () => button('Cancel').click())
+    await settle()
+    assert.deepEqual(docked, [], 'not docked over edits that were not saved')
+    assert.deepEqual(writes, [])
+  } finally {
+    api.dockFileToWorkspace = previousDock
+  }
+
+  await pressSave()
+  await act(async () => button('Overwrite').click())
+  await settle()
+  assert.deepEqual(writes, [{ path: FILE, content: 'v1 mine\n' }])
+  assert.equal(unsavedMark(), false)
+})

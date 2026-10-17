@@ -173,3 +173,15 @@ export function oneAtATime(check: () => Promise<void>): () => void {
   }
   return () => void run().catch(() => {})
 }
+
+/**
+ * What a save would overwrite that the tab never saw: the text on disk, when it
+ * moved since the tab last read or wrote it and is not what the tab is about to
+ * write anyway. Null when saving loses nothing — and when the tab never
+ * recorded a baseline, since then there is nothing to tell an edit apart from.
+ */
+export function unseenDiskContent(read: DiskRead, baseline: string | undefined, buffer: string): string | null {
+  if (read.kind !== 'content' || baseline === undefined) return null
+  if (read.content === baseline || read.content === buffer) return null
+  return read.content
+}

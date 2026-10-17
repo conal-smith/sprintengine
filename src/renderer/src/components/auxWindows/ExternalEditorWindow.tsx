@@ -49,9 +49,19 @@ import {
 import { startColumnResizeDrag } from '../workspace/columnResizeDrag'
 import { splitTreePath } from '../../utils/fileTreeEntries'
 import { isLetterKey } from '../../utils/keyboard'
-import { applyDiskContentToEditor, classifyDiskChange, oneAtATime, readFileOnDisk } from '../../utils/editorDiskSync'
+import {
+  applyDiskContentToEditor,
+  classifyDiskChange,
+  oneAtATime,
+  readFileOnDisk,
+  unseenDiskContent,
+} from '../../utils/editorDiskSync'
 import { watchFileOnDisk } from '../../utils/fileDiskWatch'
-import { EditorDiskNotice, type EditorDiskNoticeState } from '../panels/editor/EditorDiskNotice'
+import {
+  EditorDiskNotice,
+  overwriteOnDiskConfirmation,
+  type EditorDiskNoticeState,
+} from '../panels/editor/EditorDiskNotice'
 
 // Match EditorPanel: above this size the rendered preview is disabled and the
 // file falls back to the Monaco source view so a huge document can't hang the
@@ -417,10 +427,26 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
     [setDiskNotice],
   )
 
+  // Answers whether the tab is saved now: false when the person kept the
+  // version on disk instead, or the write failed.
   const saveBuffer = useCallback(
-    async (path: string): Promise<void> => {
+    async (path: string): Promise<boolean> => {
+      const before = buffersRef.current[path]
+      if (!before || before.kind !== 'text' || before.loading || !isDirty(before)) return true
+      // A file that changed on disk since this tab last read or wrote it, which
+      // the watch has not reported yet or cannot (an SSH machine's folder), is
+      // not written over without asking.
+      const unseen = unseenDiskContent(await readFileOnDisk(window.api, path), before.saved, before.value)
+      if (unseen !== null) {
+        const tab = tabsRef.current.find((candidate) => candidate.path === path)
+        const overwrite = await confirmDialog(overwriteOnDiskConfirmation(tab?.name ?? path))
+        if (!overwrite) {
+          setDiskNotice(path, { kind: 'changed', content: unseen })
+          return false
+        }
+      }
       const buffer = buffersRef.current[path]
-      if (!buffer || buffer.kind !== 'text' || buffer.loading || !isDirty(buffer)) return
+      if (!buffer || buffer.kind !== 'text' || buffer.loading) return false
       const value = buffer.value
       const previousSaved = buffer.saved
       // The baseline moves before the write, so the watch event the write itself
@@ -433,6 +459,7 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
       try {
         await window.api.writefile(path, value)
         setDiskNotice(path, null)
+        return true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         setBuffers((prev) => {
@@ -440,9 +467,10 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
           if (!current || current.kind !== 'text') return prev
           return { ...prev, [path]: { ...current, saved: previousSaved, error: message } }
         })
+        return false
       }
     },
-    [setDiskNotice],
+    [confirmDialog, setDiskNotice],
   )
 
   const saveActive = useCallback(() => {
@@ -453,7 +481,9 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
     if (!activeTab) return
     // Persist pending edits before docking so the workspace tab (which reloads
     // from disk) reflects them — docking moves the file, it does not discard work.
-    await saveBuffer(activeTab.path)
+    // Not saved (the person kept the version on disk, or the write failed):
+    // the docked tab would read disk and the edits here would be lost.
+    if (!(await saveBuffer(activeTab.path))) return
     await window.api.dockFileToWorkspace({
       workspaceId: activeTab.workspaceId,
       path: activeTab.path,
