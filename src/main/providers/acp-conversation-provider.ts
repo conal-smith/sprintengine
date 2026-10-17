@@ -8,6 +8,8 @@ import {
   resolveConversationPath,
 } from '../conversation-file-access'
 import { terminateCliChild } from './cli-child-process'
+import { cliProbeEnv } from '../cli-probe-env'
+import { mergeJsonEnvValue } from '../json-env-value'
 import {
   CONVERSATION_IDENTITY_ENV_KEYS,
   cliHostSpawn,
@@ -104,30 +106,43 @@ export type AcpProfile = {
 
 // OpenCode's permission rule set for a preset. `opencode acp` takes no
 // permission flag (`--auto` belongs to the TUI and `run`), but its
-// configuration takes a rule set from OPENCODE_PERMISSION, merged over the
-// person's own, and the last matching rule wins. So the wildcard comes first
-// and every tool OpenCode names follows it, each overriding the person's rule
-// for the same tool; reads, searches, listings and the to-do list run, and
-// `external_directory` (anything outside the project) asks.
+// configuration takes a rule set, merged over the person's own, and the last
+// matching rule wins. So the wildcard comes first and every tool OpenCode
+// names follows it, each overriding the person's rule for the same tool;
+// reads, searches, listings and the to-do list run, and `external_directory`
+// (anything outside the project) asks.
 function opencodePermission(edit: 'allow' | 'ask'): Record<string, string> {
+  return opencodeRules({
+    '*': 'ask',
+    read: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    list: 'allow',
+    lsp: 'allow',
+    todoread: 'allow',
+    todowrite: 'allow',
+    edit,
+    bash: 'ask',
+    task: 'ask',
+    webfetch: 'ask',
+    websearch: 'ask',
+    codesearch: 'ask',
+    external_directory: 'ask',
+  })
+}
+
+// The two ways OpenCode takes that rule set. 1.x reads OPENCODE_PERMISSION;
+// 2.x no longer does (the variable is gone from its binary, and a Manual chat
+// on 2.0.32 ran a shell command without asking), but it reads `permission`
+// from the OPENCODE_CONFIG_CONTENT document, which 1.x reads too, merged over
+// the person's own configuration, and maps 1.x's `bash` and `task` onto its
+// `shell` and `subagent`. Measured live against 1.18.32 and 2.0.32 on
+// 2026-10-17. The document is merged with whatever else says to it (the
+// person's own export), never replaced: see the launch below.
+function opencodeRules(rules: Record<string, string>): Record<string, string> {
   return {
-    OPENCODE_PERMISSION: JSON.stringify({
-      '*': 'ask',
-      read: 'allow',
-      glob: 'allow',
-      grep: 'allow',
-      list: 'allow',
-      lsp: 'allow',
-      todoread: 'allow',
-      todowrite: 'allow',
-      edit,
-      bash: 'ask',
-      task: 'ask',
-      webfetch: 'ask',
-      websearch: 'ask',
-      codesearch: 'ask',
-      external_directory: 'ask',
-    }),
+    OPENCODE_PERMISSION: JSON.stringify(rules),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: rules }),
   }
 }
 
@@ -161,7 +176,7 @@ export const ACP_PROFILES: AcpProfile[] = [
       manual: { env: opencodePermission('ask') },
       auto: { env: opencodePermission('allow') },
       // A wildcard allow is what `--auto` does for the TUI.
-      bypass: { env: { OPENCODE_PERMISSION: JSON.stringify({ '*': 'allow' }) } },
+      bypass: { env: opencodeRules({ '*': 'allow' }) },
     },
     authHint: 'Run opencode auth login in a terminal and configure a working model.',
     images: true,
@@ -664,14 +679,17 @@ export async function probeAcpConversationCommands(
     options.prepareWslTarget ?? prepareWslCliTarget,
   )
   const command = await (options.detect ?? (() => detectAcpCommand(profile, input.cliRuntimes)))()
-  const env = await (options.buildEnv ?? acpEnvironment)()
+  // Nobody asked for this start, so it runs as a check does (cli-probe-env.ts).
+  const probeEnv = cliProbeEnv(profile.cli)
+  const env = { ...(await (options.buildEnv ?? acpEnvironment)()), ...probeEnv }
   const sdk = await import('@agentclientprotocol/sdk')
+  const wslChild = wsl ? acpWslChild(wsl, profile) : null
   const target = cliHostSpawn({
     command,
     args: profile.argv,
     cwd: input.cwd,
     env,
-    wsl: wsl ? acpWslChild(wsl, profile) : null,
+    wsl: wslChild ? { ...wslChild, forwardEnv: [...wslChild.forwardEnv, ...Object.keys(probeEnv)] } : null,
   })
   const child = (options.spawnChild ?? spawn)(target.file, target.args, target.options)
   child.stderr.on('data', () => undefined)
@@ -950,7 +968,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       if (state.closed) throw new Error('Conversation was stopped during startup.')
       const command = await (options.detect ?? ((input) => detectAcpCommand(profile, input.cliRuntimes)))(state.input)
       const env = await environment(state.input)
-      Object.assign(env, acpLaunchEnv(profile, state.input.permissionPreset, state.input.permissionMode))
+      // A JSON document the preset sets (OpenCode's config content) joins the
+      // person's own rather than replacing it. In WSL the chat is handed the
+      // preset's variables alone, nothing of this PC's (acpWslChild).
+      for (const [key, value] of Object.entries(
+        acpLaunchEnv(profile, state.input.permissionPreset, state.input.permissionMode),
+      ))
+        env[key] = wsl ? value : mergeJsonEnvValue(env[key], value)
       const hostId = state.input.cliRuntimes?.[profile.cli]?.hostId
       const gateway = await options.resolveStudioMcpServer?.({ ...(hostId ? { hostId } : {}) }).catch(() => null)
       if (state.closed) throw new Error('Conversation was stopped during startup.')

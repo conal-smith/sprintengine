@@ -78,7 +78,7 @@ export function paletteGroupRank(group: PaletteCommandGroup): number {
  * same list narrowed to one question each: `actions` is what the product can
  * DO (commands and the launcher's verbs), `skills` is every skill and plugin
  * in every source (the terminal star opens here), `files` is file names
- * (Go to file), `text` is text in files (⌘⇧F, Search project contents — so a
+ * (Go to file, ⌘P), `text` is text in files (⌘⇧F, Search project contents — so a
  * snippet of code is never ranked against a file name or a command row), and
  * `conversations` is the chats and workspaces the sidebar lists, found by
  * title and folder.
@@ -136,6 +136,26 @@ export function clampPaletteSelection(selected: number, rowCount: number): numbe
  *  from the row that is highlighted rather than from one that has gone. */
 export function stepPaletteSelection(selected: number, rowCount: number, step: number): number {
   return clampPaletteSelection(clampPaletteSelection(selected, rowCount) + step, rowCount)
+}
+
+/**
+ * The scope a palette-raising command opens the overlay on, or null for a
+ * command that does not raise the palette. ⌘K and Shift Shift open the
+ * launcher; ⌘P opens Go to file, because a person who knows the file's name
+ * wants file rows and nothing else; ⌘⇧F opens the project's text.
+ */
+export function paletteScopeForCommand(commandId: string): PaletteScope | null {
+  switch (commandId) {
+    case 'commandPalette.open':
+    case 'search.everywhere':
+      return 'all'
+    case 'search.goToFile':
+      return 'files'
+    case 'search.files.open':
+      return 'text'
+    default:
+      return null
+  }
 }
 
 // ── The resting page ─────────────────────────────────────────────────────────

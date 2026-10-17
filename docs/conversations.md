@@ -160,6 +160,28 @@ keeps its point across a restart until its first message is sent. Until then a
 Claude or Codex fork has no CLI session of its own, so Continue in terminal
 waits for that first message.
 
+### Side question
+
+**Side question**, in the composer's "+" or on ⌘⇧B (Ctrl+Shift+B), opens a
+drawer to ask something about the chat without adding it to the chat. Typing
+`/btw` and a question in the composer asks it the same way. The agent answers
+from the conversation so far, in one reply and with no tools, so it can change
+nothing. The question and the answer stay out of the transcript, the chat's
+history, the sidebar and the phone. A turn the chat is running goes on
+undisturbed, and so does its queue. Follow-ups in the same drawer see the side
+questions before them. Closing the drawer lets the whole aside go, and calls
+off a question still being answered. **Continue in a new chat** forks the chat
+at its newest reply, as Fork from here does, with the last question waiting in
+the fork's composer. It is offered once no turn runs.
+
+It is Claude Code's own `/btw`, asked over the SDK (`askSideQuestion`), and is
+offered for Claude chats on this machine, a WSL server's or an SSH machine's.
+A Claude Code that has no side questions says so in the drawer. Its cost joins
+the session's running total, so the chat's next turn reports it; Claude Code
+writes no request for it to its session log. Codex, the ACP runtimes and a
+paired machine's chat do not offer it, and there `/btw` goes to the CLI as
+before.
+
 ## Installed CLI providers
 
 Claude and Codex use their native headless interfaces. ACP providers share an
@@ -348,6 +370,19 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   At most 16 images of 5 MB each per turn, as JPEG, PNG, GIF or WebP, on a live
   image-capable session. An accepted send removes its staged files; unused ones
   expire after an hour.
+- **Pictures sized for the model.** A desktop that advertises
+  `conversation-image-downscale` shrinks each uploaded picture on receipt by
+  the rules its own composer uses (`src/shared/conversation-attachments.ts`):
+  to a 1568px long edge, kept a JPEG if it was one and a PNG otherwise, a JPEG
+  only when the PNG is still over 5 MB, and byte for byte when it already
+  fits. So the route takes an upload of up to 20 MB as it arrives, and what is
+  kept is still at most 5 MB (`413 too_large` either way, saying which). A
+  picture its codec cannot read (Electron's `nativeImage` reads PNG and JPEG)
+  is kept as it came, under the same 5 MB. Without the shrinking a phone's
+  photo reached Claude full size, and Claude refuses an image over 2000px a
+  side once a thread holds more than 20. Only a desktop has the codec: a
+  standalone Studio server does not advertise the capability, and keeps the
+  5 MB upload ceiling. A client that does not see it keeps its own 5 MB check.
 - **Pictures a step shows.** A desktop that advertises the `conversation-images`
   capability serves the picture a step made (Codex's `GenerateImage`) or looked
   at (a file read of a picture) at `GET /tailnet/v1/conversation-image`, named
@@ -375,6 +410,21 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   privately for a day. The phone draws them as thumbnails on the person's
   message; it shows its own just-sent photos from the phone itself, and names
   a picture it cannot fetch.
+- **Files a message carries.** A desktop that advertises
+  `conversation-message-files` takes a file of any type on the upload route
+  with `kind=file`, from a device with `conversation:operate`, for a chat it
+  lists: at most 25 MB (`413 too_large`, naming the limit), under its own name
+  made one safe path segment. It is written into Studio's data folder,
+  `tailnet-uploads/<device>/<upload>/<name>`, never into the project, and
+  answered `{ uploadId, bytes, name }`. A `send` naming that id in
+  `uploadIds` attaches the file to the message by that path, as a file
+  dropped into the desktop's composer is: the agent is told where it is, and
+  the `user_message` records it in `files`, which every view draws as a card.
+  Pictures and files go in the same `uploadIds`, each spent as what it was
+  uploaded as. The id is the uploading device's alone and goes with the send;
+  the file stays, for the agent to read in a later turn, and is removed a
+  week on, or with the device when it is removed. One never sent goes when its
+  id expires, after an hour.
 
 ### Sync
 

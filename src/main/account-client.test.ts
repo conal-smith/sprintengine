@@ -491,3 +491,53 @@ test('account-client', async () => {
 
   await suiteRun
 })
+
+test('a token request whose body never ends gives up at its deadline, and the next resume asks afresh', async () => {
+  const store = (value: string | null): SecureRefreshTokenStore => ({
+    readRefreshToken: async () => value,
+    writeRefreshToken: async (token) => void (value = token),
+    clearRefreshToken: async () => void (value = null),
+  })
+  let marker: IdentityMarker | null = { provider: 'multiauth' }
+  let stalled = true
+  let refreshes = 0
+  const account = new SprintEngineAccountClient({
+    baseUrl: 'https://account.example',
+    clientId: 'sprintengine-desktop',
+    refreshTokenStores: { multiauth: store('ma_rt_1'), clerk: store(null) },
+    identityMarker: {
+      read: async () => marker,
+      write: async (next) => void (marker = next),
+      clear: async () => void (marker = null),
+    },
+    env: {},
+    requestTimeoutMs: 50,
+    fetch: async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/auth/refresh')) {
+        refreshes += 1
+        if (stalled) {
+          // Headers, then an opening brace, then nothing: the shape of a
+          // proxy that holds the connection open.
+          const body = new ReadableStream<Uint8Array>({
+            start: (controller) => controller.enqueue(new TextEncoder().encode('{')),
+          })
+          return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        return Response.json({ accessToken: 'ma_at_2', refreshToken: 'ma_rt_2', tokenType: 'Bearer', expiresIn: 600 })
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Response.json({ user: { id: 'usr_1', email: 'dev@example.com', displayName: 'Dev', avatarUrl: null } })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    },
+  })
+
+  await assert.rejects(account.resumeStoredSession(), /account\.example did not answer within 0 s/u)
+  assert.equal(account.currentIdentity(), null)
+
+  stalled = false
+  await account.resumeStoredSession()
+  assert.equal(account.currentIdentity()?.provider, 'multiauth')
+  assert.equal(refreshes, 2, 'the stalled request was let go, not shared with the next caller')
+})

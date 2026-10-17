@@ -34,6 +34,7 @@ import { LocalServersRowMark } from './LocalServerMarks'
 import { useWorkspaceLocalServers, type WorkspaceLocalServers } from './useLocalServers'
 import {
   pullRequestsForRow,
+  pullRequestsRead,
   unwatchPullRequest,
   useConversationPullRequests,
   usePullRequestsByConversation,
@@ -103,11 +104,13 @@ import {
   remoteRestToFollow,
   unattachedConversations,
   chatRecencyOf,
+  remoteRowRecency,
   interleaveChats,
   sortChatsByRecency,
   type RemoteConversation,
   type RemoteSessionOpenSpec,
 } from './remoteBand/remoteSessionsModel'
+import { recencyEqual, stableRecord } from './stableRowSlices'
 import { formatRelativeMs, formatRelativeMsAgo, relativeFromNow } from '../../utils/relativeTime'
 import { deriveWorkspaceRunGlyph } from '../../utils/workspaceRunGlyph'
 import { workspaceProjectRoot } from '../../utils/workspaceWorktree'
@@ -845,7 +848,9 @@ function WorkspaceSidebar({
       now,
       busyIds,
       heldIds,
-      pullRequestsByWorkspaceId: conversationPullRequests,
+      // Absent until the list has been read once, so a launch's first tick
+      // does not take "not read yet" for "no open pull request".
+      pullRequestsByWorkspaceId: pullRequestsRead(conversationPullRequests) ? conversationPullRequests : undefined,
     })
     for (const id of settledNow) quietSettledWorkspace(id)
   }, [
@@ -1308,6 +1313,19 @@ function WorkspaceSidebar({
   )
   // When each row here was last written to, on whichever machine it runs on.
   const chatRecency = useMemo(() => chatRecencyOf(remoteConversationByWorkspace), [remoteConversationByWorkspace])
+  // The clocks each row draws: a row that is a paired machine's chat reads
+  // that machine's too, so it says when it went idle as a local row does.
+  const rowRecencyRef = useRef<Record<string, TerminalRecency> | null>(null)
+  const rowRecencyByWorkspaceId = useMemo(() => {
+    if (remoteConversationByWorkspace.size === 0) return terminalRecencyByWorkspaceId
+    const map: Record<string, TerminalRecency> = { ...terminalRecencyByWorkspaceId }
+    for (const [workspaceId, conversation] of remoteConversationByWorkspace) {
+      map[workspaceId] = remoteRowRecency(map[workspaceId], conversation)
+    }
+    const stable = stableRecord(map, rowRecencyRef.current, recencyEqual)
+    rowRecencyRef.current = stable
+    return stable
+  }, [terminalRecencyByWorkspaceId, remoteConversationByWorkspace])
   // Settle a chat on a paired machine: its machine owns the chat's rest, so
   // the row goes now and the machine is asked; a refusal brings it back with
   // the machine's own words.
@@ -1440,21 +1458,33 @@ function WorkspaceSidebar({
       remoteLifecycleWritable(remoteBrowses.get(workspace.remoteOrigin!.connectionId)),
     [remoteBrowses],
   )
+  // Un-settling goes the same way: the machine is asked to bring the chat
+  // back, so every device that lists it lists it again, and the row here comes
+  // back once it has said yes. A machine that keeps no rest has nothing to
+  // ask, and the row rests or comes back here alone.
   const settleOpenedRemote = useCallback(
-    (workspace: Workspace) => {
+    (workspace: Workspace, settled = true) => {
       const origin = workspace.remoteOrigin
       const settle = window.api?.meshSettleConversation
-      if (!origin || typeof settle !== 'function') return
+      const here = () => (settled ? settleWorkspaceById(workspace.id) : setWorkspaceSettled(workspace.id, false))
+      if (!origin || typeof settle !== 'function' || !remoteKeepsRest(workspace)) {
+        here()
+        return
+      }
       const refused = (message: string) =>
-        showToast({ tone: 'error', title: `${workspace.name} was not settled`, description: message })
-      void settle({ connectionId: origin.connectionId, workspaceId: origin.workspaceId })
+        showToast({
+          tone: 'error',
+          title: settled ? `${workspace.name} was not settled` : `${workspace.name} was not brought back`,
+          description: message,
+        })
+      void settle({ connectionId: origin.connectionId, workspaceId: origin.workspaceId, settled })
         .then((answer) => {
-          if (answer.ok) settleWorkspaceById(workspace.id)
+          if (answer.ok) here()
           else refused(answer.message)
         })
         .catch((error: unknown) => refused(error instanceof Error ? error.message : String(error)))
     },
-    [settleWorkspaceById],
+    [settleWorkspaceById, setWorkspaceSettled, remoteKeepsRest],
   )
   // …and one its machine settled without asking here — on the phone, on that
   // machine, from another desktop. Its browse says the chat is resting, and
@@ -1469,14 +1499,24 @@ function WorkspaceSidebar({
     const followed = followedRemoteRest.current
     const due = remoteRestToFollow({ workspaces: railWorkspaces, browses: remoteBrowses, followed })
     if (due.length === 0) return
-    for (const { workspaceId, settledAt } of due) {
-      followed.set(workspaceId, settledAt)
+    let changed = false
+    for (const { workspaceId, settledAt, settled } of due) {
       const workspace = railWorkspaces.find((candidate) => candidate.id === workspaceId)
-      if (!workspace || isSettledWorkspace(workspace)) continue
-      if (useWorkspaceStore.getState().speaksForWorkspace(workspaceId)) settleWorkspaceById(workspaceId)
+      if (!workspace) continue
+      // Followed by the window that routes the row, and recorded only once it
+      // has been: a window that merely saw the browse first must not mark it
+      // done for the one that acts on it.
+      if (isSettledWorkspace(workspace) !== settled) {
+        if (!useWorkspaceStore.getState().speaksForWorkspace(workspaceId)) continue
+        if (settled) settleWorkspaceById(workspaceId)
+        else setWorkspaceSettled(workspaceId, false)
+      }
+      if (settled) followed.set(workspaceId, settledAt)
+      else followed.delete(workspaceId)
+      changed = true
     }
-    storeFollowedRests(followedRemoteRestsToKeep(followed, railWorkspaces))
-  }, [railWorkspaces, remoteBrowses, settleWorkspaceById])
+    if (changed) storeFollowedRests(followedRemoteRestsToKeep(followed, railWorkspaces))
+  }, [railWorkspaces, remoteBrowses, settleWorkspaceById, setWorkspaceSettled])
 
   // Which project header a remote conversation files under. The same rule the
   // remote-born WORKSPACES follow (`groupKeyOf` + `resolveGroups`): this disk's
@@ -1853,8 +1893,10 @@ function WorkspaceSidebar({
     const workspace = workspaceById.get(id)
     if (!workspace || id !== activeWorkspaceId) return
     const step = chatSettleStep(workspace, rowIsWorking(id))
-    if (step === 'restore') setWorkspaceSettled(id, false)
-    else if (step === 'settle-remote') settleOpenedRemote(workspace)
+    if (step === 'restore') {
+      if (workspace.remoteOrigin) settleOpenedRemote(workspace, false)
+      else setWorkspaceSettled(id, false)
+    } else if (step === 'settle-remote') settleOpenedRemote(workspace)
     else if (step === 'settle') settleWorkspaceById(id)
     else
       showToast({
@@ -2346,7 +2388,7 @@ function WorkspaceSidebar({
         // conflicting selected state.
         active={!globalSurfaceActive && workspace.id === activeWorkspaceId}
         activity={activityByWorkspaceId[workspace.id] ?? 'idle'}
-        recency={terminalRecencyByWorkspaceId[workspace.id]}
+        recency={rowRecencyByWorkspaceId[workspace.id]}
         wokeAt={wokeAtOf(workspace)}
         unseenDoneMark={unseenDoneIds.has(workspace.id)}
         resident={residentWorkspaceIds.has(workspace.id)}
@@ -3337,7 +3379,7 @@ function WorkspaceSidebar({
               return
             }
             if (action === 'toggle-settle') {
-              if (workspace.remoteOrigin) settleOpenedRemote(workspace)
+              if (workspace.remoteOrigin) settleOpenedRemote(workspace, !isSettledWorkspace(workspace))
               else if (isSettledWorkspace(workspace)) setWorkspaceSettled(workspace.id, false)
               else settleWorkspaceById(workspace.id)
               setContextMenu(null)
@@ -3622,7 +3664,7 @@ type WorkspaceRowHandlers = {
   handleClose: (workspaceId: WorkspaceId) => void
   setWorkspaceSnoozed: (workspaceId: WorkspaceId, until: number | null) => void
   settleWorkspaceById: (workspaceId: WorkspaceId) => void
-  settleOpenedRemote: (workspace: Workspace) => void
+  settleOpenedRemote: (workspace: Workspace, settled?: boolean) => void
   setWorkspaceSettled: (workspaceId: WorkspaceId, settled: boolean) => void
   openPaneTab: ReturnType<typeof useWorkspaceStore.getState>['openPaneTab']
   setRovingKey: (key: string) => void
@@ -4062,7 +4104,8 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             <IconButton
               onClick={(event) => {
                 event.stopPropagation()
-                setWorkspaceSettled(workspace.id, false)
+                if (workspace.remoteOrigin) settleOpenedRemote(workspace, false)
+                else setWorkspaceSettled(workspace.id, false)
               }}
               tone="quiet"
               aria-label={`Un-settle ${workspace.name}`}

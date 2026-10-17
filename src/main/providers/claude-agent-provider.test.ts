@@ -10,6 +10,7 @@ import {
   buildUserMessageContent,
   CLAUDE_AGENT_PROVIDER_ID,
   CLAUDE_AGENT_SESSION_ENV_KEY,
+  describeSpawnFailure,
   createClaudeAgentProvider,
   mapSdkMessage,
   resultContextWindow,
@@ -2705,6 +2706,51 @@ test('a Claude agent resumed by SendMessage in a later child reports to the lane
   assert.equal(finished[1]?.payload?.status, 'completed')
 })
 
+// The same agent after the app restarted: the session that spawned it is gone,
+// and only the lane the runtime read back from the transcript says where it ran.
+test('a Claude agent resumed by SendMessage after a restart reports to the lane the runtime knew it by', async () => {
+  const h = scriptedHarness()
+  try {
+    await h.adapter.startSession({ ...h.turn('turn_1'), knownSubagentLanes: [['task_swift', 'toolu_agent']] })
+    const first = reader((await h.adapter.sendTurn(h.turn('turn_1'))) as AsyncIterable<ConversationEvent>)
+    await promptsRead(h.prompts, 1)
+    h.emit(init)
+    h.emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'task_swift',
+      tool_use_id: 'toolu_send',
+      description: 'Build Swift macOS app',
+      task_type: 'local_agent',
+      subagent_type: 'general-purpose',
+      is_backgrounded: true,
+    })
+    h.emit({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task_swift',
+      tool_use_id: 'toolu_send',
+      status: 'completed',
+      summary: 'Built it.',
+    })
+    h.emit(success({ user_message_uuids: [h.uuidOf(0)] }))
+    await first.done
+
+    const statuses = first.events.filter((event) => event.type === 'subagent_status')
+    assert.deepEqual(
+      statuses.map((event) => [event.payload?.toolUseId, event.payload?.status, event.payload?.resumed]),
+      [
+        ['toolu_agent', 'running', true],
+        ['toolu_agent', 'completed', undefined],
+      ],
+    )
+    const answer = first.events.find((event) => event.type === 'tool_output' && event.payload?.backgroundResult)
+    assert.equal(answer?.payload?.toolUseId, 'toolu_agent', 'its answer lands in its own lane, not on SendMessage')
+  } finally {
+    await h.adapter.disposeAll()
+  }
+})
+
 // The order Claude Code streams one Monitor in: the call, the whole list of
 // background work (which can only say the task is a shell), then the task's
 // start, which links it to the call.
@@ -3450,6 +3496,30 @@ test('a local command reported only on its result, or as system output, still sh
   )
 })
 
+test('a slash command whose `!` line Claude Code refused says why instead of ending with nothing', async () => {
+  const refusal =
+    'Shell command permission check failed for pattern "!`touch out.txt &amp;&amp; echo done`": touch in ' +
+    "'/Users/dev/app/out.txt' needs approval."
+  const events = await commandTurn('/project:deploy', (h) => {
+    h.emit({
+      type: 'user',
+      parent_tool_use_id: null,
+      isReplay: true,
+      message: { role: 'user', content: `<local-command-stderr>${refusal}</local-command-stderr>` },
+    })
+    h.emit(success({ user_message_uuids: [h.uuidOf(0)], num_turns: 0 }))
+  })
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ['turn_started', 'command_output', 'turn_completed'],
+  )
+  assert.equal(
+    events[1]?.payload?.output,
+    'Shell command permission check failed for pattern "!`touch out.txt && echo done`": touch in ' +
+      "'/Users/dev/app/out.txt' needs approval.",
+  )
+})
+
 test('/compact still marks the compaction, and what it printed is left to that divider', async () => {
   const events = await commandTurn('/compact', (h) => {
     h.emit({
@@ -3944,4 +4014,29 @@ test('an ask bypass would still have made is marked as one no mode answers', asy
   } finally {
     await h.adapter.disposeAll()
   }
+})
+
+test('a Claude Code start refused with EPERM in a folder macOS keeps private says where to allow it', () => {
+  const mac = { platform: 'darwin', home: '/Users/dev' }
+  const said = describeSpawnFailure(
+    null,
+    'Error: EPERM: operation not permitted, uv_cwd\n',
+    '/Users/dev/Desktop/app',
+    mac,
+  )
+  assert.match(said, /^Claude Code exited unexpectedly\. \(Error: EPERM: operation not permitted, uv_cwd\)/)
+  assert.match(said, /System Settings › Privacy & Security › Files and Folders\.$/)
+})
+
+test('a Claude Code failure that is not a privacy refusal says only what it said', () => {
+  const mac = { platform: 'darwin', home: '/Users/dev' }
+  assert.equal(
+    describeSpawnFailure(null, 'Error: EPERM: operation not permitted\n', '/Users/dev/code/app', mac),
+    'Claude Code exited unexpectedly. (Error: EPERM: operation not permitted)',
+  )
+  assert.equal(describeSpawnFailure(new Error('Not logged in.'), '', '/Users/dev/Documents/app', mac), 'Not logged in.')
+  assert.equal(
+    describeSpawnFailure(null, 'EPERM\n', '/home/dev/Documents/app', { platform: 'linux', home: '/home/dev' }),
+    'Claude Code exited unexpectedly. (EPERM)',
+  )
 })

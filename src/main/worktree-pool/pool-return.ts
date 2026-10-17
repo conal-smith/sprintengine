@@ -18,7 +18,7 @@ import { evictOverLimit, measureSlot, enforceDiskLimit } from './pool-eviction'
 
 /** Returning a slot (worktree-pool-service.ts): one lease at a time, or every leased slot nothing uses any more. */
 
-function findLease(ctx: PoolContext, leaseId: string): { pool: PoolRuntime; slot: SlotRecord } | null {
+export function findLease(ctx: PoolContext, leaseId: string): { pool: PoolRuntime; slot: SlotRecord } | null {
   for (const pool of ctx.pools.values()) {
     const slot = pool.record.slots.find((candidate) => candidate.lease?.leaseId === leaseId)
     if (slot) return { pool, slot }

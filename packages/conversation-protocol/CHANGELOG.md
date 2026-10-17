@@ -13,6 +13,41 @@
 
 ### Added
 
+- **A listed chat says what it still has working after its turn.**
+  `backgroundWork` is an optional member of `ConversationThread`,
+  `ConversationBackgroundWork` (`{ agents, monitors }`): the background agents
+  the chat launched that are still running, and the background tasks that will
+  wake its agent (a monitor with a deadline, or a task it is told about when it
+  ends). The desktop's own sidebar counts such a chat as working; its `phase`
+  stays the turn's, so a client that holds sends while a turn runs does not
+  hold them for background work. Absent when nothing works in the background,
+  and from a desktop built before it was listed.
+  `parseConversationServerFrame` keeps it when both counts are whole and one
+  is above zero, and leaves it out otherwise (`parseConversationBackgroundWork`).
+  The pinned files are unchanged.
+- **A listed chat says where the desktop's sidebar orders it, and when its
+  turn began.** `recencyAt` and `turnStartedAt` are optional members of
+  `ConversationThread`. `recencyAt` is the moment the desktop's own sidebar
+  sorts the chat by: `lastUserMessageAt` when a person has written to it, else
+  when the chat was made or last typed into there, which `lastUserMessageAt`
+  alone could not say. `turnStartedAt` is when the running turn began. Both are
+  absent from a desktop built before they were listed;
+  `parseConversationServerFrame` keeps each when it is a clock and leaves out
+  anything else. The pinned files are unchanged.
+- **A message can carry files, not only pictures.**
+  `CONVERSATION_MESSAGE_FILES_CAPABILITY` (`conversation-message-files`) names
+  a desktop whose upload route takes `kind=file`: a file of any type, which a
+  `send` names in `uploadIds` as it names a picture and which the message then
+  carries by its path on that desktop (`files` on the `user_message`). No
+  frame changed; a client without it offers pictures only. The pinned files
+  are unchanged.
+- **An uploaded picture is sized for the model by the desktop.**
+  `CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY` (`conversation-image-downscale`)
+  names a desktop that shrinks a picture uploaded for a chat on receipt, to the
+  1568px long edge its own composer sends, so its upload route takes up to
+  20 MB where it took 5 MB; what it keeps is still at most 5 MB. No frame
+  changed; a client without it keeps its upload under 5 MB itself. The pinned
+  files are unchanged.
 - **The pictures a person sent with a message can be fetched.**
   `CONVERSATION_MESSAGE_IMAGES_CAPABILITY` (`conversation-message-images`)
   names a desktop whose `GET /tailnet/v1/conversation-image` takes

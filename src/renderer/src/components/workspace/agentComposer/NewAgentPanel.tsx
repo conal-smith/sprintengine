@@ -42,7 +42,11 @@ import {
 import { workspaceRunsHere } from '../../../utils/attachedFiles'
 import { ComposerAttachmentStrip } from '../../panels/ComposerAttachmentStrip'
 import { ComposerDropOverlay } from '../../panels/agentChat/ComposerDropOverlay'
-import { attachmentRejection, MAX_ATTACHMENTS_PER_TURN } from '../../panels/agentChat/imageAttachments'
+import {
+  attachmentRejection,
+  MAX_ATTACHMENTS_PER_TURN,
+  readImageAttachment,
+} from '../../panels/agentChat/imageAttachments'
 import { ComposerField, type ComposerFieldHandle, type ComposerKeyEvent } from '../../panels/agentChat/ComposerField'
 import { basename, pathJoin } from '../../../utils/paths'
 import { resolveWorkspaceWorktree } from '../../../utils/workspaceWorktree'
@@ -87,6 +91,8 @@ import { drawSuggestions, newSuggestionSeed } from './suggestionBank'
 import { WorktreeChip } from './WorktreeChip'
 import { useNewChatWorktreeReservation } from './useNewChatWorktreeReservation'
 import { ScheduleFailureTray, ScheduleTag } from './schedule/SchedulePicker'
+import { ComposerTray } from '../../panels/agentChat/composerTray'
+import { PROMPT_STASH_COMMAND, usePromptStash } from '../../panels/agentChat/promptStashPicker'
 import { StartAsGlyph, startAsLabel, type StartAs } from './ComposerOptionsMenu'
 import { ComposerPlusMenu } from './ComposerPlusMenu'
 import { MachineScopePicker } from './MachineScopePicker'
@@ -103,7 +109,7 @@ import {
   sortMachines,
   type MachineBrowseEntry,
 } from './newChatMachines'
-import { RemoteProjectPicker, RemoteWorktreePicker, type RemoteTargetState } from './RemoteProjectPicker'
+import { RemoteProjectPicker, type RemoteTargetState } from './RemoteProjectPicker'
 import { ComposerStrip } from './ComposerStrip'
 import { FrontTruncatedText } from '../../ui/FrontTruncatedText'
 import { ScheduledRuns } from './schedule/ScheduledRuns'
@@ -939,23 +945,6 @@ export default function NewAgentPanel({
       cancelled = true
     }
   }, [remoteConnectionId, remotePickedId])
-  // A worktree the picked remote project already has, picked to start the
-  // chat in. It belongs to the machine and project it was picked on, so
-  // another pick reads as the project's own checkout again, and it counts
-  // only while the checkout that machine served still lists it.
-  const [remoteWorktreePick, setRemoteWorktreePick] = React.useState<{
-    connectionId: string
-    workspaceId: string
-    path: string
-  } | null>(null)
-  const remoteExistingWorktree =
-    remoteWorktreePick &&
-    remoteWorktreePick.connectionId === remoteConnectionId &&
-    remoteWorktreePick.workspaceId === remotePickedId
-      ? (remoteTarget?.checkout?.worktrees.find(
-          (worktree) => !worktree.isMain && worktree.path === remoteWorktreePick.path,
-        ) ?? null)
-      : null
   const activeBranch = useWorkspaceStore((s) => {
     const ws = s.workspaces.find((w) => w.id === workspaceId)
     return ws ? (resolveWorkspaceWorktree(ws)?.branch ?? null) : null
@@ -1095,22 +1084,21 @@ export default function NewAgentPanel({
       const existingPath = window.api.getPathForFile(file)
       setAttachingCount((count) => count + 1)
       try {
-        const { mediaType, dataBase64 } = await readFileAsBase64(file)
-        const path = existingPath || (await window.api.saveDroppedImage({ mediaType, dataBase64 }))
+        // The bytes a paired machine is sent, read the way the chat's own
+        // composer reads an image: shrunk to the edge a vision model uses.
+        // Claude refuses an image over 2000px a side once a thread holds more
+        // than 20, and from then on every turn of that chat fails.
+        const attachment = await readImageAttachment(file, file.name)
+        // The file a chat on this computer reads is the one dropped, or the
+        // image as it came, saved; it is shrunk when that chat reads it.
+        const path = existingPath || (await window.api.saveDroppedImage(await readFileAsBase64(file)))
         // The slice holds the cap under overlapping batches (a paste landing
         // while a drop is still reading); the check above already said why.
         setImages((current) =>
-          [
-            ...current,
-            {
-              id: `${Date.now()}-${current.length}-${file.name}`,
-              mediaType,
-              dataBase64,
-              byteLength: file.size,
-              ...(file.name ? { name: file.name } : {}),
-              path,
-            },
-          ].slice(0, MAX_ATTACHMENTS_PER_TURN),
+          [...current, { ...attachment, id: `${Date.now()}-${current.length}-${file.name}`, path }].slice(
+            0,
+            MAX_ATTACHMENTS_PER_TURN,
+          ),
         )
       } catch (error) {
         // Shown verbatim under the box.
@@ -1304,12 +1292,6 @@ export default function NewAgentPanel({
     (remoteCapabilities?.includes('new-chat-worktree') ?? false)
   // Its name, where that machine takes one; elsewhere it makes one up.
   const remoteWorktreeNameable = remoteCapabilities?.includes('new-chat-worktree-name') ?? false
-  // A worktree the project already has, where that machine starts a chat in one.
-  const remoteWorktreePickable =
-    !extensionMode &&
-    remoteTarget?.checkout?.git === true &&
-    (remoteCapabilities?.includes('new-chat-in-worktree') ?? false) &&
-    remoteTarget.checkout.worktrees.some((worktree) => !worktree.isMain)
   // Worktree is offered only inside a git repository, for an agent: absent,
   // not disabled. On this machine, a repository here; on a paired machine,
   // one there that said it cuts worktrees for a chat started from here. An
@@ -1320,22 +1302,6 @@ export default function NewAgentPanel({
   const worktreeOffered = remoteTarget
     ? remoteWorktreeOffered
     : !extensionMode && selection.kind !== 'terminal' && !pickedSsh && !projectless && workspaceIsGitRepo
-  // The Worktree chip and an existing remote worktree are two answers to one
-  // question, where the chat runs: turning the chip on puts the picked
-  // worktree back, and picking one turns the chip off.
-  const setWorktreeName = composer.setWorktreeName
-  const changeWorktreeName = (next: string | null) => {
-    if (next !== null) setRemoteWorktreePick(null)
-    setWorktreeName(next)
-  }
-  const pickRemoteWorktree = (path: string | null) => {
-    if (!remoteConnectionId || !remotePickedId || path === null) {
-      setRemoteWorktreePick(null)
-      return
-    }
-    setRemoteWorktreePick({ connectionId: remoteConnectionId, workspaceId: remotePickedId, path })
-    setWorktreeName(null)
-  }
   // The worktree a chat started here will run in is made while the person
   // types, so Enter finds it ready: Worktree on with no name typed (a name is
   // its own branch, made on Enter), for a chat that starts now. A paired
@@ -1695,8 +1661,6 @@ export default function NewAgentPanel({
     if (remoteTarget) {
       if (!remoteTarget.picked || !onLaunchRemote || remoteLaunching) return
       const confirm = buildLaunchConfirm(selection)
-      // The worktree the project already has, picked and still on offer.
-      const remoteRunsIn = remoteWorktreePickable ? remoteExistingWorktree : null
       if (confirm.kind !== 'conversation') return
       // Attached files are files on this disk, and a path here typed into
       // that machine's prompt names nothing there, so their chips refuse
@@ -1723,14 +1687,12 @@ export default function NewAgentPanel({
         cliModel: confirm.model ?? null,
         permissionPreset: effectivePreset,
         ...(remoteTakesEffort && confirm.reasoning ? { effort: confirm.reasoning } : {}),
-        branch: remoteRunsIn ? remoteRunsIn.branch : (remoteTarget.checkout?.branch ?? null),
-        // Where in the project it runs: a worktree cut for it (named only
-        // where the machine takes a name), or one the project already has.
+        branch: remoteTarget.checkout?.branch ?? null,
+        // A worktree cut for it from the default branch on origin, named only
+        // where the machine takes a name.
         ...(confirm.worktree
           ? { worktree: { kind: 'new' as const, name: remoteWorktreeNameable ? confirm.worktree.name.trim() : '' } }
-          : remoteRunsIn
-            ? { worktree: { kind: 'existing' as const, path: remoteRunsIn.path } }
-            : {}),
+          : {}),
         remoteRepository: remoteTarget.picked.repository,
         ...(images.length > 0 ? { images: images.map(remoteImage) } : {}),
         ...(confirm.skills?.length ? { skills: confirm.skills.map((skill) => skill.id) } : {}),
@@ -1866,6 +1828,45 @@ export default function NewAgentPanel({
   const keyPlatform = platformKeybindingsFromApiPlatform(window.api.platform)
   const launchInBackgroundKeys = getEffectiveKeybindings(LAUNCH_IN_BACKGROUND_COMMAND, keybindingSettings)
   const withoutProjectKeys = getEffectiveKeybindings('chat.newWithoutProject', keybindingSettings)
+  // ⌘S sets the prompt aside, or on an empty box lists what was set aside —
+  // the same stash the chat composer keeps (agentChat/promptStashPicker.tsx).
+  // A picture comes back as a file of its own, saved again: the copy the
+  // prompt was first given may be a temporary one that is gone by now.
+  const stashPicker = usePromptStash({
+    stashKeys: getEffectiveKeybindings(PROMPT_STASH_COMMAND, keybindingSettings),
+    platform: keyPlatform,
+    content: () => ({ text: prompt, files, images }),
+    clear: () => {
+      setPrompt('')
+      setImages([])
+      setFiles([])
+      setAttachNote(null)
+    },
+    restore: async ({ prompt: stashed, images: stashedImages }) => {
+      let restoredImages: PromptImage[]
+      try {
+        restoredImages = await Promise.all(
+          stashedImages.map(async (image) => ({
+            ...image,
+            path: await window.api.saveDroppedImage({ mediaType: image.mediaType, dataBase64: image.dataBase64 }),
+          })),
+        )
+      } catch (error) {
+        setAttachNote(error instanceof Error ? error.message : 'Could not bring that prompt back.')
+        return false
+      }
+      // New chat has no mention cards: a mentioned file comes back as its path.
+      const mentioned = stashed.mentions.map((mention) => quotePath(mention.path)).join(' ')
+      const words = [stashed.text, mentioned].filter(Boolean).join(' ')
+      setPrompt((current) => [words, current].filter(Boolean).join('\n\n'))
+      setFiles((current) => [...new Set([...stashed.files, ...current])])
+      setImages((current) => [...restoredImages, ...current].slice(0, MAX_ATTACHMENTS_PER_TURN))
+      promptRef.current?.focus()
+      return true
+    },
+    acceptsImages: selection.kind !== 'terminal',
+    empty: prompt.trim() === '' && images.length === 0 && files.length === 0,
+  })
   const onPromptKeyDown = (event: ComposerKeyEvent) => {
     // A key in the real field is the person carrying on: an Enter held from
     // the static box no longer speaks for what the field now says.
@@ -1908,6 +1909,7 @@ export default function NewAgentPanel({
         return
       }
     }
+    if (stashPicker.handleKeyDown(event)) return
     // ⌘⏎ (or whatever the Shortcuts tab bound it to) starts the chat and
     // stays here. Resolved in this handler rather than by the window's
     // dispatcher so the menus above and an input method keep the key first.
@@ -2109,17 +2111,21 @@ export default function NewAgentPanel({
   // the Worktree chip that sat on its row (owner ruling 2026-10-04).
   const machinePickerShown =
     (remoteSelectable && remoteMachines.length > 0) || localHosts.length > 1 || sshMachines.length > 0
-  // The branch the launch starts from: the remote project's as its machine
-  // read it, else this checkout's. An SSH machine's folder is typed, not read.
+  // The branch the launch runs on: the remote project's as its machine read
+  // it, else this checkout's. An SSH machine's folder is typed, not read.
   // An extension's folder is new, or the person's own: the project's branch
-  // says nothing about it.
-  const stripBranch = extensionMode
-    ? null
-    : remoteTarget
-      ? (remoteTarget.checkout?.branch ?? null)
-      : pickedSsh
-        ? null
-        : branch
+  // says nothing about it. A chat in a worktree of its own is on none of
+  // these: every worktree is cut from the default branch on origin, freshly
+  // fetched, wherever the checkout stands (owner ruling 2026-10-17), so there
+  // is no branch to pick it from and none to name.
+  const stripBranch =
+    extensionMode || (worktreeOffered && composer.worktreeName !== null)
+      ? null
+      : remoteTarget
+        ? (remoteTarget.checkout?.branch ?? null)
+        : pickedSsh
+          ? null
+          : branch
   const projectControl = extensionMode ? (
     <ExtensionFolderChip
       folder={extensionFolderShown}
@@ -2199,24 +2205,7 @@ export default function NewAgentPanel({
       <span className="min-w-0 truncate">{projectLabel}</span>
     </span>
   ) : null
-  // A paired machine's project with worktrees of its own: the branch is a
-  // picker of where in the project the chat runs, not a line.
-  const remoteWorktreePicker =
-    remoteTarget?.checkout && remoteWorktreePickable ? (
-      <RemoteWorktreePicker
-        machineName={remoteTarget.connection.machineName}
-        checkout={remoteTarget.checkout}
-        picked={remoteExistingWorktree?.path ?? null}
-        newWorktree={worktreeOffered && composer.worktreeName !== null}
-        onPick={pickRemoteWorktree}
-      />
-    ) : null
-  const stripShown =
-    machinePickerShown ||
-    projectControl !== null ||
-    worktreeOffered ||
-    Boolean(stripBranch) ||
-    remoteWorktreePicker !== null
+  const stripShown = machinePickerShown || projectControl !== null || worktreeOffered || Boolean(stripBranch)
 
   // The second line of the send's tooltip, where the door can stay: the chord
   // as this platform spells it, for the person who starts several in a row.
@@ -2289,6 +2278,8 @@ export default function NewAgentPanel({
         {scheduled && lastRunFailure && !terminalUnavailable ? (
           <ScheduleFailureTray failure={lastRunFailure} onDismiss={() => setLastRunFailure(null)} />
         ) : null}
+        {/* The stash ⌘S opened on an empty box, behind the box it restores into. */}
+        {stashPicker.picker && !terminalUnavailable ? <ComposerTray>{stashPicker.picker}</ComposerTray> : null}
         <div
           // The box owns the visible border while the field inside it is the
           // tab stop, so the product's one focus ring lands on the box keyed to
@@ -2382,7 +2373,7 @@ export default function NewAgentPanel({
               placeholder={placeholder}
               disabled={isTerminalLaunch}
               adoptInput={bootComposer ? adoptBootInput : undefined}
-              contentAttributes={{ 'aria-label': 'What this agent should do' }}
+              contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
               className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
             />
           </div>
@@ -2621,19 +2612,17 @@ export default function NewAgentPanel({
               />
             ) : null}
             {projectControl}
-            {/* Worktree, then the branch it is cut from (or the launch runs
-                on): off until turned on or named. Set apart from the project
-                by the strip's spacing alone, with no rule between. */}
+            {/* Worktree, off until turned on or named, else the branch the
+                launch runs on. Set apart from the project by the strip's
+                spacing alone, with no rule between. */}
             {worktreeOffered ? (
               <WorktreeChip
                 name={composer.worktreeName}
-                onChange={changeWorktreeName}
+                onChange={composer.setWorktreeName}
                 nameable={!remoteTarget || remoteWorktreeNameable}
               />
             ) : null}
-            {remoteWorktreePicker ? (
-              remoteWorktreePicker
-            ) : stripBranch ? (
+            {stripBranch ? (
               // The one item on the strip that may shrink: it gives its front
               // away first, so the end of the name — the part that says what
               // the branch is for — is what stays.
@@ -2642,7 +2631,6 @@ export default function NewAgentPanel({
                 data-composer-branch={stripBranch}
               >
                 <GitBranchGlyph className="icon-xs shrink-0" />
-                {worktreeOffered && composer.worktreeName !== null ? <span className="shrink-0">from</span> : null}
                 <FrontTruncatedText text={stripBranch} className="font-mono" />
               </span>
             ) : null}

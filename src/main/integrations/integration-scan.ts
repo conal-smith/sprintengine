@@ -27,6 +27,7 @@ import {
 import { resolveClaudeConfigDir } from '../claude-config-dir'
 import type { GitCommandResult } from '../git'
 import { runGitCommand } from '../git-utils'
+import { runGitWorktreeListPorcelain } from '../git-worktree-list'
 import {
   CLAUDE_GATEWAY_MARKER,
   CODEX_GATEWAY_MARKER,
@@ -324,7 +325,7 @@ export async function scanGitIntegrations(
   if (sharedText !== null && withoutLegacySharedPair(sharedText) !== null) {
     found.push({ kind: 'git-exclude', path: sharedExclude, marker: 'legacy-shared-pair', repo: root.path, ...base })
   }
-  const listing = await runGit(root.path, ['worktree', 'list', '--porcelain', '-z'])
+  const listing = await runGitWorktreeListPorcelain(runGit, root.path)
   const worktrees: string[] = []
   if (listing.ok) {
     let current: string | null = null

@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import type { McpConnectionContext, McpToolRegistration } from '../../../shared/modules/mcp-tools'
 import {
   normalizeTailnetScopes,
@@ -27,6 +29,7 @@ import { createTailnetPeerResolver, type TailnetPeerIdentity, type TailnetPeerRe
 import { createTailnetPeerScanner, type TailnetPeerScanner } from './tailnet-peers'
 import { readTailnetSettings, writeTailnetSettings, type TailnetSettings } from './tailnet-settings'
 import type { ConversationGatewayHost } from './tailnet-conversation-host'
+import { createTailnetFileUploads, TAILNET_UPLOADS_DIRNAME } from './tailnet-file-uploads'
 import type { McpToolCallEvent } from '../mcp-dispatch'
 
 // Lifecycle for tailnet remote control: settings, paired devices, and the
@@ -140,6 +143,8 @@ export type TailnetRemoteServiceOptions = {
   isMutation: (toolName: string) => boolean
   onToolCall?: (event: McpToolCallEvent) => void
   conversations?: ConversationGatewayHost
+  /** Shrinks an uploaded picture for the model; see the gateway's own option. */
+  downscaleUpload?: TailnetGatewayServerOptions['downscaleUpload']
   /**
    * The live-state push (remote-sessions-ux): fired on every observable change
    * — listener up/down, a pair request arriving or resolving, a device's
@@ -461,6 +466,10 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       devices,
       peers,
       conversations: options.conversations,
+      // The files a device sends with a message, kept in Studio's own data
+      // folder beside a browser's uploads, never in a project's folder.
+      fileUploads: createTailnetFileUploads({ root: join(options.resolveUserDataDir(), TAILNET_UPLOADS_DIRNAME) }),
+      ...(options.downscaleUpload ? { downscaleUpload: options.downscaleUpload } : {}),
       onToolCall: options.onToolCall,
       onPairRequested: () => announcePairRequests(),
       onReverseGrant: (input) => {

@@ -30,6 +30,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { writeFileAtomically } from '../config-file-write'
 import type { GitCommandResult } from '../git'
 import { runGitCommand } from '../git-utils'
+import { runGitWorktreeListPorcelain } from '../git-worktree-list'
 import { hostIdForPath, recordIntegrationWrite } from './ledger'
 
 type RunGit = (cwd: string, args: string[]) => Promise<GitCommandResult>
@@ -220,7 +221,7 @@ async function sharedHasLegacyPair(sharedExclude: string): Promise<boolean> {
 
 /** Every linked worktree of the repository (the main checkout, listed first, excluded). */
 async function linkedWorktrees(worktreePath: string, runGit: RunGit): Promise<string[]> {
-  const listing = await runGit(worktreePath, ['worktree', 'list', '--porcelain', '-z'])
+  const listing = await runGitWorktreeListPorcelain(runGit, worktreePath)
   if (!listing.ok) return []
   const paths = listing.stdout
     .split('\0')

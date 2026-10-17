@@ -317,6 +317,8 @@ export interface WorkspaceStore
   setTerminalIdleSuspendMinutes: (minutes: number) => void
   setTerminalKeepRecentAlive: (count: number) => void
   setSettleOnPullRequestMerge: (enabled: boolean) => void
+  /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
+  setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   /** What Enter does in a chat whose agent is working: queue the message, or steer the turn with it. */
   setFollowUpBehavior: (behavior: FollowUpBehavior) => void

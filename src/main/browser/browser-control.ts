@@ -4,6 +4,7 @@ import type { WebContents } from 'electron'
 
 import type { BrowserPointerEvent } from '../../shared/browser'
 import type { BrowserDownload } from './browser-manager'
+import { sendPageInput } from './guest-input'
 
 // The agent's hands on a browser tab (browser-pane epic, child 6). One
 // in-process DevTools-protocol session per tab, shared with the appearance
@@ -690,12 +691,16 @@ export function createBrowserControl(manager: BrowserControlManager) {
     )
   }
 
-  /** Synthetic input, bracketed so the manager's human-epoch does not count it. */
+  /**
+   * Synthetic input, bracketed so the manager's human-epoch does not count it.
+   * Keys and text reach the page even when the app, not the page, has focus
+   * (guest-input.ts).
+   */
   async function input(s: Session, method: string, params: Record<string, unknown>): Promise<void> {
     stopIfAbandoned()
     manager.noteAgentInput(s.tabId, 1)
     try {
-      await s.dbg.sendCommand(method, params)
+      await sendPageInput(s.wc, s.dbg, method, params)
     } finally {
       manager.noteAgentInput(s.tabId, -1)
     }

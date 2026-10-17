@@ -33,6 +33,9 @@ import type {
   ConversationStartSessionResult,
   ConversationStopSessionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationSuspendSessionInput,
   ConversationTranscriptInput,
   ConversationTranscriptResult,
@@ -152,6 +155,15 @@ type RuntimeSession = ConversationSessionSummary & {
   idleAnnounced?: boolean
   // Spawned agents still running, by spawning tool call.
   runningSubagents: Map<string, ConversationSubagentStatusPayload>
+  // Side questions being answered now, and when the last one ended. Neither
+  // moves `updatedAt`, which is the chat saying something; the idle sweep
+  // reads them beside it, so a child a side question started or is using is
+  // not ended under it.
+  sideQuestionsOpen?: number
+  sideQuestionAt?: number
+  // The tool call that first spawned each agent the chat has seen, by task:
+  // a provider started again resumes an agent in that lane.
+  subagentLanes: Map<string, string>
   workspaceRoot: string
   fileScope: string
   activeTurnId: string | null
@@ -376,6 +388,8 @@ function commandIdConflict(): ConversationSessionActionResult {
  * starts the chat's session again, which resumes it from its transcript, as
  * an app that restarts does.
  */
+const sideQuestionKey = (sessionId: string, requestId: string) => `${sessionId}\u0000${requestId}`
+
 function sessionNotFound(): ConversationSessionActionResult {
   return { ok: false, code: CONVERSATION_SESSION_NOT_FOUND, message: 'Conversation session is invalid.' }
 }
@@ -430,6 +444,8 @@ export class ConversationRuntime {
   // the ones the chat it was forked from was running with. Held for this run
   // only, as a session's own are; they are never written down.
   private readonly forkedMcpServers = new Map<string, ConversationMcpServer[]>()
+  // The side questions being answered, by session and the caller's request id.
+  private readonly sideQuestions = new Map<string, AbortController>()
   private readonly sequenceInitializations = new Map<string, Promise<void>>()
   private readonly listeners = new Set<ConversationRuntimeListener>()
   private readonly idleListeners = new Set<(summary: ConversationSessionSummary) => void>()
@@ -730,8 +746,15 @@ export class ConversationRuntime {
       ...(input.mcpServers?.length ? { mcpServers: input.mcpServers } : {}),
       toolDetailPaths: new Set(),
       runningSubagents: new Map(),
+      subagentLanes: new Map(),
       providerTurn: null,
     }
+    // The agents' lanes come from the transcript's last page, below, and from
+    // what this run's earlier sessions of the chat saw, which can reach back
+    // further.
+    for (const stale of previous)
+      for (const [taskId, toolUseId] of stale.subagentLanes)
+        if (!session.subagentLanes.has(taskId)) session.subagentLanes.set(taskId, toolUseId)
     await this.initializeSequence(input)
     const previousTranscript = await this.readRecentTranscript(input)
     let fallbackHistory: ConversationMessage[] | undefined
@@ -766,6 +789,7 @@ export class ConversationRuntime {
           ...(resume?.at ? { resumeSessionAt: resume.at } : {}),
           ...(resume?.seedFromHistory ? { seedFromHistory: true } : {}),
           ...(session.history ? { fallbackHistory: session.history } : fallbackHistory ? { fallbackHistory } : {}),
+          ...(session.subagentLanes.size > 0 ? { knownSubagentLanes: Array.from(session.subagentLanes) } : {}),
           // Continuation channel: the adapter opens a mirror turn here when its
           // child resumes after a `result` (background subagents completing).
           onSessionEvent: (event) => this.enqueueContinuationEvent(session, event),
@@ -1059,13 +1083,37 @@ export class ConversationRuntime {
         // A steer may have moved the stream on to a later turn; the stream's
         // end is that turn's.
         const ownTurnId = providerTurn.turnId
-        const currentSession = this.sessions.get(input.sessionId)
+        const ownsTurn = (current: RuntimeSession | undefined): current is RuntimeSession =>
+          !!current &&
+          current.status !== 'stopped' &&
+          current.activeTurnId === ownTurnId &&
+          !current.canceledTurnIds.has(ownTurnId)
+        let currentSession = this.sessions.get(input.sessionId)
+        // A stateful adapter whose stream ended with no end to the turn and no
+        // card left open: nothing is running it any more, so it fails here.
+        // Leaving it active locked the chat behind a turn nothing was running —
+        // no Send, and a Stop with nothing to stop.
         if (
-          currentSession &&
-          currentSession.status !== 'stopped' &&
-          currentSession.activeTurnId === ownTurnId &&
-          !currentSession.canceledTurnIds.has(ownTurnId)
+          ownsTurn(currentSession) &&
+          currentSession.stateful &&
+          !emitted.completed &&
+          !emitted.failed &&
+          emitted.approvalsRequested <= emitted.approvalsResolved
         ) {
+          const ended = await this.emit(
+            currentSession,
+            this.eventForSession(currentSession, 'turn_failed', {
+              turnId: ownTurnId,
+              reason: 'provider',
+              message: "The agent's stream ended before the turn finished.",
+            }),
+            { turnId: ownTurnId },
+          )
+          if (ended) emitted.failed = true
+          // A Stop that landed while the failure waited to be written settles the turn itself.
+          currentSession = this.sessions.get(input.sessionId)
+        }
+        if (ownsTurn(currentSession)) {
           this.applyTurnState(currentSession, emitted, requestId)
           currentSession.activeTurnAbort = null
           // Record only a cleanly completed turn (no failure) into history, so a
@@ -1706,6 +1754,54 @@ export class ConversationRuntime {
     return { ok: true, session: this.toSummary(session) }
   }
 
+  /**
+   * A side question about the chat, answered from what its agent knows and
+   * added to nothing: no event is written or published for it, so it reaches
+   * neither the transcript, the history, the sidebar nor the phone, and a
+   * turn the chat is running goes on as it was. Asked again under the same
+   * `requestId` while one is out, it is refused; `cancelSideQuestion` calls
+   * it off, and it then answers `cancelled`.
+   */
+  async askSideQuestion(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult> {
+    const session = this.sessions.get(input.sessionId)
+    if (!session) return sessionNotFound() as ConversationSideQuestionResult
+    if (session.status === 'stopped') return { ok: false, message: 'Conversation session is stopped.' }
+    const adapter = this.getAdapterForProviderId(session.providerId)
+    if (!adapter?.askSideQuestion || session.capabilities?.sideQuestion !== true)
+      return { ok: false, message: 'This chat cannot answer a side question.' }
+    const key = sideQuestionKey(input.sessionId, input.requestId)
+    if (this.sideQuestions.has(key)) return { ok: false, message: 'That side question is already being answered.' }
+    const abort = new AbortController()
+    this.sideQuestions.set(key, abort)
+    session.sideQuestionsOpen = (session.sideQuestionsOpen ?? 0) + 1
+    const cancelled = { ok: false, cancelled: true, message: 'The side question was called off.' } as const
+    try {
+      const result = await adapter.askSideQuestion(session.sessionId, {
+        question: input.question,
+        history: input.history ?? [],
+        signal: abort.signal,
+      })
+      return abort.signal.aborted ? cancelled : result
+    } catch (error) {
+      if (abort.signal.aborted) return cancelled
+      return { ok: false, message: error instanceof Error ? error.message : 'The side question was not answered.' }
+    } finally {
+      this.sideQuestions.delete(key)
+      session.sideQuestionsOpen = Math.max(0, (session.sideQuestionsOpen ?? 1) - 1)
+      session.sideQuestionAt = this.now()
+    }
+  }
+
+  /** Call off a side question being answered; one already answered, or never asked, is nothing to call off. */
+  async cancelSideQuestion(
+    input: ConversationCancelSideQuestionInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const abort = this.sideQuestions.get(sideQuestionKey(input.sessionId, input.requestId))
+    if (!abort) return { ok: false, message: 'That side question is not being answered.' }
+    abort.abort()
+    return { ok: true }
+  }
+
   async stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
     if (input.commandId)
       return this.runCommand(
@@ -1980,7 +2076,8 @@ export class ConversationRuntime {
     const disposed: string[] = []
     for (const session of this.sessions.values()) {
       if (isSessionBusy(session) || session.runningSubagents.size > 0 || session.backgroundTasks) continue
-      if (now - session.updatedAt < this.idleThresholdMs) continue
+      if (session.sideQuestionsOpen) continue
+      if (now - Math.max(session.updatedAt, session.sideQuestionAt ?? 0) < this.idleThresholdMs) continue
       // An idle chat does not hold a file handle open for the rest of the run;
       // its next event reopens the stream.
       void this.eventLog.close(this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId))
@@ -2462,6 +2559,8 @@ export class ConversationRuntime {
           ...status,
         })
       else if (status) session.runningSubagents.delete(status.toolUseId)
+      if (status?.taskId && !session.subagentLanes.has(status.taskId))
+        session.subagentLanes.set(status.taskId, status.toolUseId)
       session.backgroundAgents = Array.from(session.runningSubagents.values()).filter(
         (agent) => agent.background,
       ).length

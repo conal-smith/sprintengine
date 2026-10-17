@@ -206,7 +206,7 @@
     },
     {
       "name": "agent.launch",
-      "sha256": "aa65aefb0fdae44ebc8916c1862e97657f9870f0bd7a45c7c9d1dfe52ad182ce"
+      "sha256": "dbdb3c3e10ce14ecde814cd55d6be041e0e3817a67d58f895bfe6dcb264a0c5d"
     },
     {
       "name": "agent.status",
@@ -528,7 +528,7 @@
     },
     {
       "name": "agent.launch",
-      "sha256": "aa65aefb0fdae44ebc8916c1862e97657f9870f0bd7a45c7c9d1dfe52ad182ce"
+      "sha256": "dbdb3c3e10ce14ecde814cd55d6be041e0e3817a67d58f895bfe6dcb264a0c5d"
     },
     {
       "name": "agent.status",

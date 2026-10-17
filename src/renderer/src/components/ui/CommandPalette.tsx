@@ -705,6 +705,7 @@ export default function CommandPalette({
             {
               id: 'go-to-file',
               label: 'Go to file',
+              shortcut: shortcutFor('search.goToFile'),
               mark: { kind: 'go-to-file' as const },
               group: 'actions' as const,
               run: () => selectScope('files'),

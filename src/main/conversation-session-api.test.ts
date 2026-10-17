@@ -1299,6 +1299,30 @@ test('appended tool output streams a tail preview, coalesces in the transcript a
   }
 })
 
+test('a whole final output after appended partial output replaces what streamed', async () => {
+  // Claude's shape: the running command's output read from its file as it is
+  // written, then the tool result with all of it.
+  const f = await fixture(
+    streamingToolAdapter(['PASS a.test.ts\n', 'PASS b'], {
+      output: 'PASS a.test.ts\nPASS b.test.ts\n',
+      isError: false,
+    }),
+  )
+  try {
+    const events: ConversationEvent[] = []
+    f.runtime.onEvent((value) => events.push(value))
+    await f.runtime.sendTurn({ sessionId: f.sessionId, message: 'test' })
+    const final = events.filter((value) => value.type === 'tool_output').at(-1)!
+    assert.equal(final.payload?.partial, undefined)
+    assert.equal(final.payload?.preview, 'PASS a.test.ts\nPASS b.test.ts\n', 'the result, not the stream plus it')
+    const detail = await f.runtime.getToolDetail({ ...f.key, toolUseId: 'cmd' })
+    assert.ok(detail.ok)
+    assert.equal(detail.detail.output, 'PASS a.test.ts\nPASS b.test.ts\n')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('streamed tool output past the detail budget keeps its head and newest tail', async () => {
   const chunks = ['first-line\n', ...Array.from({ length: 7 }, () => 'x'.repeat(1024 * 1024)), '\nlast-line']
   const f = await fixture(streamingToolAdapter(chunks, { output: '', outputMode: 'append' }))

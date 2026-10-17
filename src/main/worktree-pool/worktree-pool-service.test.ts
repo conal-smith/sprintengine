@@ -427,6 +427,45 @@ test('a lease given back by the window that took it is returned at once, with no
   })
 })
 
+test('a lease nobody has worked in catches up to origin/main as it is now', async () => {
+  const harness = makeService()
+  const leased = await lease(harness, 'typing')
+  const pushed = await pushToOrigin('later.txt', 'pushed while the person typed\n')
+  const caught = await harness.service.action({ kind: 'catch-up', leaseId: leased.leaseId })
+  assert.equal(caught.ok, true, caught.message ?? '')
+  assert.equal(await git(leased.path, 'rev-parse', 'HEAD'), pushed, 'on the commit origin has now')
+  assert.equal(await git(leased.path, 'branch', '--show-current'), leased.branch, 'still on its own branch')
+  assert.equal(await git(leased.path, 'status', '--porcelain'), '', 'and clean')
+  assert.equal((await slotAt(harness, leased.slotId)).baseSha, pushed, 'the slot records its new base')
+
+  const again = await harness.service.action({ kind: 'catch-up', leaseId: leased.leaseId })
+  assert.deepEqual(again, { ok: true, message: null }, 'already current: nothing moves')
+})
+
+test('a lease someone has worked in is never moved by a catch-up', async () => {
+  const harness = makeService()
+  const edited = await lease(harness, 'edited')
+  const committed = await lease(harness, 'committed')
+  await writeFile(join(edited.path, 'README.md'), '# edited\n')
+  await writeFile(join(committed.path, 'mine.txt'), 'work\n')
+  await git(committed.path, 'add', '.')
+  await git(committed.path, 'commit', '-q', '-m', 'work of its own')
+  const own = await git(committed.path, 'rev-parse', 'HEAD')
+  await pushToOrigin('later.txt', 'pushed meanwhile\n')
+
+  for (const leased of [edited, committed]) {
+    const caught = await harness.service.action({ kind: 'catch-up', leaseId: leased.leaseId })
+    assert.deepEqual(caught, { ok: true, message: 'Left as it is: it has been worked in.' })
+  }
+  assert.equal(await git(edited.path, 'rev-parse', 'HEAD'), edited.baseSha, 'the edited one stays at its base')
+  assert.equal(await readFile(join(edited.path, 'README.md'), 'utf8'), '# edited\n', 'with its edit')
+  assert.equal(await git(committed.path, 'rev-parse', 'HEAD'), own, 'the committed one keeps its commit')
+  assert.deepEqual(await harness.service.action({ kind: 'catch-up', leaseId: 'no-such-lease' }), {
+    ok: false,
+    message: 'No such lease.',
+  })
+})
+
 test('a dirty return is held and locked, untouched until a person stashes', async () => {
   const harness = makeService()
   const leased = await lease(harness, 'dirty')

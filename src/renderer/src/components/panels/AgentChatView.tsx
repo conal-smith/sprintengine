@@ -161,6 +161,22 @@ import { pasteIntoComposer } from '../../utils/clipboardPasteBridge'
 
 /** ⌘⌥⏎ in the composer: send, then New chat (see the registry). */
 const SEND_AND_NEW_COMMAND = 'chat.sendAndNew'
+
+/** System Settings on Privacy & Security › Files and Folders; says so when it would not open. */
+function openMacosPrivacySettings(): void {
+  void window.api
+    .openExternal(MACOS_FILES_AND_FOLDERS_SETTINGS_URL)
+    .then((result) => {
+      if (!result.ok) showToast({ tone: 'error', title: 'System Settings did not open', description: result.message })
+    })
+    .catch((error: unknown) =>
+      showToast({
+        tone: 'error',
+        title: 'System Settings did not open',
+        description: error instanceof Error ? error.message : String(error),
+      }),
+    )
+}
 import { settleDisclosureResize, useStickToBottom } from './agentChat/useStickToBottom'
 import { ConversationRowFrame } from './agentChat/conversationRowFrame'
 import {
@@ -187,6 +203,7 @@ import { QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
 import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './agentChat/followUpDispatch'
 import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
+import { PROMPT_STASH_COMMAND, usePromptStash } from './agentChat/promptStashPicker'
 import { BackgroundTasksTrayRow } from './agentChat/backgroundTasksRow'
 import { WorktreeInstallTrayRow } from './agentChat/worktreeInstallRow'
 import { StudioConnectionNotice } from './agentChat/studioConnectionNotice'
@@ -195,6 +212,7 @@ import { TimelineRow, type TimelineChrome } from './agentChat/timelineRows'
 import { UnreadDivider } from './agentChat/turnMeta'
 import { editFromHereDraft, type EditFromHereDraft } from './agentChat/editFromHere'
 import { forkChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
+import { SideQuestionDrawer, useSideQuestion, type SideQuestionApi } from './agentChat/sideQuestion'
 import { ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
 import { PendingFirstMessage } from './agentChat/pendingFirstMessage'
 import { withRequestedTurn, type RequestedTurnRowCache } from './agentChat/requestedTurnRow'
@@ -248,6 +266,7 @@ export type {
   UserTurn,
 } from './agentChat/conversationProjection'
 import { clientSupports, hostPlatform } from '../../clientCapabilities'
+import { MACOS_FILES_AND_FOLDERS_SETTINGS_URL } from '../../../../shared/conversation/macosPrivacyFolders'
 import { useFileDropTarget } from '../../hooks/useFileDropTarget'
 import { ComposerDropOverlay } from './agentChat/ComposerDropOverlay'
 
@@ -284,7 +303,11 @@ export {
   resolvePermissionMode,
   resolvePermissionPreset,
 } from './agentChat/chatPermissions'
-import { MODEL_PICKER_TOGGLE_COMMAND, registerMountedChatView } from './agentChat/mountedChatViews'
+import {
+  MODEL_PICKER_TOGGLE_COMMAND,
+  registerMountedChatView,
+  SIDE_QUESTION_COMMAND,
+} from './agentChat/mountedChatViews'
 import { useChatFind } from './agentChat/useChatFind'
 import { FindBar } from '../find/FindBar'
 export {
@@ -2002,6 +2025,59 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     [stopSubagentEnabled, sessionId, transport, forgetLostSession],
   )
 
+  // A side question (sideQuestion.tsx), asked of the chat's session — started
+  // first when this view holds none, as a send starts it — and kept out of the
+  // chat. The session a question went to is remembered by its id, so closing
+  // the drawer calls it off there; one closed before its session started is
+  // never asked.
+  const sideQuestionEnabled =
+    operate &&
+    capabilities?.sideQuestion === true &&
+    typeof transport.askSideQuestion === 'function' &&
+    typeof transport.cancelSideQuestion === 'function'
+  // Held across the API's renewals: starting the session for a question
+  // renews it, and the drawer's close must still find where that one went.
+  const sideQuestionsAsked = useRef(new Map<string, string>())
+  const sideQuestionsCalledOff = useRef(new Set<string>())
+  const sideQuestionApi = useMemo<SideQuestionApi | null>(() => {
+    if (!sideQuestionEnabled) return null
+    const askedOf = sideQuestionsAsked.current
+    const calledOff = sideQuestionsCalledOff.current
+    return {
+      async ask({ requestId, question, history }) {
+        const started = await ensureSession()
+        if (calledOff.delete(requestId))
+          return { ok: false, cancelled: true, message: 'The side question was called off.' }
+        if (!started) return { ok: false, message: 'The chat could not be started to answer it.' }
+        askedOf.set(requestId, started)
+        try {
+          const result = await transport.askSideQuestion!({
+            sessionId: started,
+            requestId,
+            question,
+            ...(history.length ? { history } : {}),
+          })
+          if (!result.ok && !result.cancelled && forgetLostSession(result))
+            return { ok: false, message: 'The chat’s session ended. Ask again to start it.' }
+          return result
+        } finally {
+          askedOf.delete(requestId)
+        }
+      },
+      cancel(requestId) {
+        const asked = askedOf.get(requestId)
+        if (!asked) {
+          calledOff.add(requestId)
+          return
+        }
+        void transport.cancelSideQuestion!({ sessionId: asked, requestId }).catch(() => undefined)
+      },
+    }
+  }, [sideQuestionEnabled, ensureSession, transport, forgetLostSession])
+  const sideQuestion = useSideQuestion(sideQuestionApi)
+  // Whether it opened: a chat with no reply yet has nothing to ask about.
+  const openSideQuestionRef = useRef<(question?: string) => boolean>(() => false)
+
   // Send a queued message into the running turn (a steer). It skips sendTurn's
   // `pending` latch on purpose: that latch belongs to the send whose turn is
   // running, which settles only when this one takes the turn over. The bubble
@@ -2672,11 +2748,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         },
         restartSession: () => void restartSessionRef.current(),
         openFind: openChatFind,
+        openSideQuestion: () => openSideQuestionRef.current(),
       }),
     [workspaceId, agentId, stepTurn, openChatFind],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]
+    if (!keybinding) return null
+    const platform = window.api.platform === 'darwin' ? 'darwin' : window.api.platform === 'win32' ? 'windows' : 'linux'
+    return renderKeybinding(keybinding, platform)
+  }, [keybindingSettings])
+  const sideQuestionShortcutLabel = useMemo(() => {
+    const keybinding = getEffectiveKeybindings(SIDE_QUESTION_COMMAND, keybindingSettings)[0]
     if (!keybinding) return null
     const platform = window.api.platform === 'darwin' ? 'darwin' : window.api.platform === 'win32' ? 'windows' : 'linux'
     return renderKeybinding(keybinding, platform)
@@ -2733,10 +2816,20 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       models: chatCliOption?.modelSelection?.options ?? [],
       efforts: capabilities?.reasoningEfforts ?? [],
       attachments: attachmentCount,
+      sideQuestion: sideQuestionApi !== null,
     })
     if (!action) return false
     if (action.kind === 'refuse') {
       setPermissionNotice(action.notice)
+      return true
+    }
+    if (action.kind === 'sideQuestion') {
+      if (!openSideQuestionRef.current(action.question)) {
+        setPermissionNotice('A side question asks about the chat so far. Send the chat a message first.')
+        return true
+      }
+      clearDraft()
+      setCommandHint(null)
       return true
     }
     clearDraft()
@@ -2866,8 +2959,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         model: Boolean(chatCli),
         effort: Boolean(capabilities?.reasoningEfforts?.length),
         terminal: resumesInTerminal,
+        sideQuestion: sideQuestionApi !== null,
       }),
-    [chatCli, capabilities?.reasoningEfforts?.length, resumesInTerminal],
+    [chatCli, capabilities?.reasoningEfforts?.length, resumesInTerminal, sideQuestionApi],
   )
   const conversationCommands = useConversationCommands(
     chatCli,
@@ -2918,6 +3012,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         removeContextTrigger(range)
         if (command.name === 'effort') cycleEffortRef.current()
         if (command.name === 'terminal') resumeInTerminalRef.current()
+        if (command.name === 'btw' && !openSideQuestionRef.current())
+          setPermissionNotice('A side question asks about the chat so far. Send the chat a message first.')
         return
       }
       // Everything else is text the CLI expands when the message goes out —
@@ -2953,6 +3049,36 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       }))
       removeContextTrigger(range)
     },
+  })
+  // ⌘S sets the draft aside, or on an empty box lists what was set aside
+  // (agentChat/promptStashPicker.tsx). A stashed prompt comes back ahead of
+  // anything typed since, the way "Edit from here" brings a message back.
+  const stashPicker = usePromptStash({
+    stashKeys: getEffectiveKeybindings(PROMPT_STASH_COMMAND, keybindingSettings),
+    platform: keyPlatform,
+    content: () => ({
+      text: draft,
+      files: draftMetadata.files,
+      mentions: draftMetadata.mentions,
+      images: attachments,
+    }),
+    clear: () => {
+      clearDraft()
+      setAttachments([])
+      detachRecall()
+    },
+    restore: ({ prompt, images }) => {
+      restoreDraftRef.current({
+        text: prompt.text,
+        files: prompt.files,
+        skills: [],
+        mentions: prompt.mentions,
+        attachments: images,
+      })
+      return true
+    },
+    acceptsImages: imagesEnabled,
+    empty: !draft.trim() && !attachments.length && !draftMetadata.files.length && !draftMetadata.mentions.length,
   })
 
   const pendingApprovalEntries = shape.pendingApprovals
@@ -3005,6 +3131,33 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const forkFromHere = useCallback((target: ForkFromHereTarget) => forkRef.current(target), [])
   const onFork =
     operate && capabilities?.fork === true && typeof transport.fork === 'function' ? forkFromHere : undefined
+  // The Files and Folders setting is this Mac's, so only a chat that runs on
+  // it, in a window that can reach System Settings, offers to open it.
+  const onOpenPrivacySettings =
+    transport.kind === 'local' && !machineId && hostPlatform() === 'darwin' && clientSupports('reveal-in-folder')
+      ? openMacosPrivacySettings
+      : undefined
+  // A side question is offered once the chat has a reply to ask about, and
+  // carried on in a chat of its own where the chat can be forked here: from
+  // its newest reply, once no turn runs, as Fork from here is.
+  const sideQuestionOffered = sideQuestionApi !== null && latestTurnId !== undefined
+  openSideQuestionRef.current = (question) => {
+    if (!sideQuestionOffered) return false
+    sideQuestion.show(question)
+    return true
+  }
+  const sideQuestionMenuRow = useMemo(
+    () => ({ onAsk: () => void openSideQuestionRef.current(), shortcut: sideQuestionShortcutLabel }),
+    [sideQuestionShortcutLabel],
+  )
+  const continueSideQuestion =
+    onFork && latestTurnId
+      ? {
+          disabled: projection.activeTurn ? 'Available once the chat’s turn ends' : null,
+          onContinue: (question: string) =>
+            forkFromHere({ side: 'assistant', turnId: latestTurnId, draft: { text: question } }),
+        }
+      : undefined
   const chrome: TimelineChrome =
     oldChrome &&
     oldChrome.assistantName === assistantName &&
@@ -3013,6 +3166,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     oldChrome.onRetry === retry &&
     oldChrome.retryDisabled === composerDisabled &&
     oldChrome.onSignIn === onSignIn &&
+    oldChrome.onOpenPrivacySettings === onOpenPrivacySettings &&
     oldChrome.checkpointsEnabled === (capabilities?.checkpoints === true) &&
     oldChrome.conversationRunning === projection.activeTurn &&
     oldChrome.checkpointSeqs === stableCheckpointSeqs &&
@@ -3027,6 +3181,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           onRetry: retry,
           retryDisabled: composerDisabled,
           onSignIn,
+          onOpenPrivacySettings,
           platform: hostPlatform(),
           checkpointsEnabled: capabilities?.checkpoints === true,
           conversationRunning: projection.activeTurn,
@@ -3430,6 +3585,14 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               inputRef={chatFind.inputRef}
             />
           ) : null}
+          {sideQuestionApi ? (
+            <SideQuestionDrawer
+              state={sideQuestion}
+              chatName={agent?.name || 'this chat'}
+              shortcut={sideQuestionShortcutLabel}
+              continueInChat={continueSideQuestion}
+            />
+          ) : null}
           <div
             ref={transcriptRef}
             // Under a replay the live chat keeps running, out of reach.
@@ -3806,6 +3969,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   {composerError}
                 </ComposerTrayRow>
               ) : null}
+              {/* The stash ⌘S opened, against the box it restores into. */}
+              {stashPicker.picker}
             </ComposerTray>
 
             {/*
@@ -3872,7 +4037,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               <div className="px-5 pb-1 pt-4">
                 <ComposerField
                   ref={composerRef}
-                  contentAttributes={{ 'aria-label': `Message ${label}`, ...contextPicker.comboboxProps }}
+                  contentAttributes={{
+                    'aria-label': `Message ${label}`,
+                    ...contextPicker.comboboxProps,
+                    ...stashPicker.comboboxProps,
+                  }}
                   value={draft}
                   historyScope={`${workspaceId}\0${agentId}`}
                   onBlur={flushDraft}
@@ -3917,6 +4086,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing) return
                     if (contextPicker.handleKeyDown(event)) return
+                    if (stashPicker.handleKeyDown(event)) return
                     if (
                       event.key === 'Backspace' &&
                       event.currentTarget.selectionStart === 0 &&
@@ -3997,12 +4167,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     onFiles={onPickedFiles}
                   />
                 ) : null}
-                {imagesEnabled || filesEnabled || supportsSkills || scheduleOption ? (
+                {imagesEnabled || filesEnabled || supportsSkills || scheduleOption || sideQuestionOffered ? (
                   <ComposerPlusMenu
                     placement="top-start"
                     onAttach={imagesEnabled || filesEnabled ? openFilePicker : undefined}
                     schedule={scheduleOption}
                     skills={plusMenuSkills}
+                    sideQuestion={sideQuestionOffered ? sideQuestionMenuRow : undefined}
                   />
                 ) : null}
                 {/* The tags: when the message is to go, then each skill attached to the next turn. */}

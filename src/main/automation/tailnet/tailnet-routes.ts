@@ -175,6 +175,18 @@ export const TAILNET_CAPABILITIES = [
   // picture this machine kept for that chat. A client without it names the
   // picture instead. CONVERSATION_MESSAGE_IMAGES_CAPABILITY.
   'conversation-message-images',
+  // Files of any type with a message (2026-10-17): `upload?kind=file` takes
+  // one up to 25 MB, kept in Studio's own store, and the `send` that spends
+  // its id attaches it to the message by path (`files` on its
+  // `user_message`). A client without it offers pictures only.
+  // CONVERSATION_MESSAGE_FILES_CAPABILITY.
+  'conversation-message-files',
+  // A picture uploaded for a chat is sized for the model on receipt
+  // (2026-10-17): this machine shrinks it to the composer's 1568px long edge,
+  // so the upload route takes one up to 20MB, where it took 5MB. A client
+  // that does not see it keeps its own 5MB check. A server with no image
+  // codec does not advertise it. CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY.
+  'conversation-image-downscale',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

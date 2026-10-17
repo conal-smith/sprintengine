@@ -32,6 +32,9 @@ import type {
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
@@ -164,6 +167,14 @@ type ConversationIpcRenderer = {
     input: ConversationStopSubagentInput,
   ): Promise<ConversationSessionActionResult>
   invoke(
+    channel: 'conversation:sessions:side-question',
+    input: ConversationSideQuestionInput,
+  ): Promise<ConversationSideQuestionResult>
+  invoke(
+    channel: 'conversation:sessions:cancel-side-question',
+    input: ConversationCancelSideQuestionInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }>
+  invoke(
     channel: 'conversation:sessions:stop',
     input: ConversationStopSessionInput,
   ): Promise<ConversationSessionActionResult>
@@ -266,6 +277,13 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     ): Promise<ConversationMcpServerActionResult> => renderer.invoke('conversation:sessions:mcp-action', input),
     conversationSessionStopSubagent: (input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult> =>
       renderer.invoke('conversation:sessions:stop-subagent', input),
+    conversationSessionAskSideQuestion: (
+      input: ConversationSideQuestionInput,
+    ): Promise<ConversationSideQuestionResult> => renderer.invoke('conversation:sessions:side-question', input),
+    conversationSessionCancelSideQuestion: (
+      input: ConversationCancelSideQuestionInput,
+    ): Promise<{ ok: true } | { ok: false; message: string }> =>
+      renderer.invoke('conversation:sessions:cancel-side-question', input),
     conversationSessionStop: (input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> =>
       renderer.invoke('conversation:sessions:stop', input),
     conversationSessionSuspend: (input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult> =>
@@ -361,6 +379,8 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     | 'conversationSessionSetModel'
     | 'conversationSessionMcpAction'
     | 'conversationSessionStopSubagent'
+    | 'conversationSessionAskSideQuestion'
+    | 'conversationSessionCancelSideQuestion'
     | 'conversationSessionStop'
     | 'conversationSessionSuspend'
     | 'conversationSessionTerminalHandoff'

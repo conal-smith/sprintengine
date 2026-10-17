@@ -13,6 +13,8 @@ export type ComposerAppCommand =
   | { kind: 'model'; model?: string }
   /** Set `effort` when named; step to the next one when not. */
   | { kind: 'effort'; effort?: string }
+  /** Ask `question` as a side question, kept out of the chat; without one, open the drawer to type it. */
+  | { kind: 'sideQuestion'; question?: string }
   /** Not sent: say why, and keep the draft so nothing typed is lost. */
   | { kind: 'refuse'; notice: string }
 
@@ -27,6 +29,8 @@ export function composerAppCommand(
     /** The efforts the chat's provider takes; empty when it has no effort control. */
     efforts: readonly string[]
     attachments: number
+    /** The chat answers side questions, so `/btw` is Studio's. */
+    sideQuestion?: boolean
   },
 ): ComposerAppCommand | null {
   const match = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/u.exec(text.trim())
@@ -47,6 +51,14 @@ export function composerAppCommand(
     return effort
       ? { kind: 'effort', effort }
       : { kind: 'refuse', notice: `Effort is one of ${chat.efforts.join(', ')}.` }
+  }
+  // Claude Code's /btw asks a side question in a terminal, and a headless child
+  // answers it as a turn saying it is not available: one that costs a turn and
+  // stays in the chat. Where the chat answers side questions, Studio asks it.
+  if (name === 'btw' && chat.sideQuestion) {
+    if (chat.attachments > 0)
+      return { kind: 'refuse', notice: 'A side question takes words only. Remove the attachments to ask it.' }
+    return argument ? { kind: 'sideQuestion', question: argument } : { kind: 'sideQuestion' }
   }
   if (CLEARS_CONVERSATION.has(name))
     return {

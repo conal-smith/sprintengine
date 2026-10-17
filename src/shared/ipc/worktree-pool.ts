@@ -181,6 +181,12 @@ export type WorktreePoolActionInput =
    * The same return a sweep makes, so a slot with changes is held, not reset.
    */
   | { kind: 'release'; leaseId: string }
+  /**
+   * Bring a lease nobody has worked in yet to the default branch as origin has
+   * it now: the worktree a New chat made while the person typed, before the
+   * chat starts in it. One that has been worked in is left as it is.
+   */
+  | { kind: 'catch-up'; leaseId: string }
 
 export type WorktreePoolActionResult = { ok: true; message: string | null } | { ok: false; message: string }
 

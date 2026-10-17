@@ -30,6 +30,7 @@ export type TerminalLinkActionId =
   | 'open-editor'
   | 'open-popout'
   | 'reveal-files'
+  | 'reveal-system'
   | 'copy-path'
   | 'open-url'
   | 'copy-url'
@@ -91,11 +92,25 @@ export function isHtmlPath(resolvedPath: string): boolean {
   return /\.html?$/iu.test(basename(resolvedPath))
 }
 
+export type TerminalLinkMenuOptions = {
+  /**
+   * The system file manager's reveal, by the name the platform gives it
+   * ("Reveal in Finder", "Show in Explorer"). Offered only where the path is
+   * on this computer and the shell can open the file manager: a chat's file
+   * on this disk, never a terminal's on an SSH machine or a browser tab's.
+   */
+  revealInSystemLabel?: string
+}
+
 /**
  * The ordered menu for a clicked link. Every list ends with the "locate" group
- * (`Reveal in Files` / `Copy path`), which is the only group a directory gets.
+ * (`Reveal in Files`, the system file manager where offered, `Copy path`),
+ * which is the only group a directory gets.
  */
-export function terminalLinkActions(target: TerminalLinkTarget): TerminalLinkAction[] {
+export function terminalLinkActions(
+  target: TerminalLinkTarget,
+  options: TerminalLinkMenuOptions = {},
+): TerminalLinkAction[] {
   if (target.kind === 'url') {
     return [
       { id: 'open-url', label: 'Open in browser' },
@@ -105,12 +120,13 @@ export function terminalLinkActions(target: TerminalLinkTarget): TerminalLinkAct
 
   const locate: TerminalLinkAction[] = [
     { id: 'reveal-files', label: 'Reveal in Files', startsGroup: true },
+    ...(options.revealInSystemLabel ? [{ id: 'reveal-system' as const, label: options.revealInSystemLabel }] : []),
     { id: 'copy-path', label: 'Copy path' },
   ]
 
   // A directory has no content to render — reveal and copy are all it can do.
   if (target.isDirectory) {
-    return [{ ...locate[0], startsGroup: false }, locate[1]]
+    return [{ ...locate[0], startsGroup: false }, ...locate.slice(1)]
   }
 
   const open: TerminalLinkAction[] = [

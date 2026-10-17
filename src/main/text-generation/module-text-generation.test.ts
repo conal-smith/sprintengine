@@ -19,7 +19,7 @@ import { generateHeadlessText, type HeadlessTextRequest, type HeadlessTextResult
 // module, on the engine the person chose for Studio's text generation unless
 // the module names one.
 
-const CLAUDE = { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' }
+const CLAUDE = { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' }
 
 const envelope = (result: string, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -80,6 +80,13 @@ test('the free-text call shuts every door a title does, with the system prompt a
   expect(claudeTextInvocation({ binaryPath: '/bin/claude', model: 'haiku', reasoning: 'low' }).args).toContain(
     '--effort',
   )
+})
+
+test("the Claude call leaves strict MCP mode off beside an administrator's managed-mcp.json, which Claude would refuse", () => {
+  const args = claudeTextInvocation({ binaryPath: '/bin/claude', model: 'haiku', managedMcpConfig: true }).args
+  expect(args).not.toContain('--strict-mcp-config')
+  expect(args).toContain('--disable-slash-commands')
+  expect(args[args.indexOf('--tools') + 1]).toBe('')
 })
 
 test('the Codex call writes its last message to a file and reports its usage as JSON events', () => {

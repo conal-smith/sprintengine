@@ -34,6 +34,19 @@ import { watchWindowStudio, windowStudioClient, windowStudioState } from '../../
 export type ConversationPullRequests = Readonly<Record<string, readonly BranchPullRequest[]>>
 
 const NONE: ConversationPullRequests = {}
+// Asked, and there is nobody to ask: a window whose Studio does not serve pull
+// requests. Not `NONE`, so the answer reads as given (nothing is known, and
+// nothing will be) rather than as still on its way.
+const UNSERVED: ConversationPullRequests = {}
+
+/**
+ * Whether the hook's answer is in, for a decision that must not be taken on
+ * "no pull requests" before the list has been read: the rest sweep, which
+ * keeps a chat with an open pull request, on its first tick after a launch.
+ */
+export function pullRequestsRead(value: ConversationPullRequests): boolean {
+  return value !== NONE
+}
 
 /**
  * One ask per changed set, coalesced across a burst. Several pull requests can
@@ -85,7 +98,11 @@ export function useConversationPullRequests(workspaceIds: readonly string[]): Co
       return
     }
     const client = await pullRequestClient()
-    if (!client) return
+    if (!client) {
+      if (aliveRef.current && asked === latestRef.current)
+        setByWorkspace((current) => (current === NONE ? UNSERVED : current))
+      return
+    }
     try {
       const answer: Record<string, BranchPullRequest[]> = {}
       for (let start = 0; start < ids.length; start += STUDIO_PULL_REQUESTS_MAX_IDS) {
@@ -98,9 +115,11 @@ export function useConversationPullRequests(workspaceIds: readonly string[]): Co
       // Replace rather than merge. The answer is the whole truth for the ids
       // asked about, and merging would keep a conversation's marks alive after
       // its row left the list — which is how a stale count survives a filter.
-      // A workspace whose marks read the same keeps its list, so one pull
+      // The first answer always lands, an empty one included: it is what
+      // tells `pullRequestsRead` the list has been read. After that a
+      // workspace whose marks read the same keeps its list, so one pull
       // request moving re-renders its own row and not every memoized row.
-      setByWorkspace((current) => reuseUnchangedLists(current, answer))
+      setByWorkspace((current) => (current === NONE ? answer : reuseUnchangedLists(current, answer)))
     } catch {
       // A read that reached nobody leaves what is on screen alone. A mark must
       // never blink out because one request failed (the record's own rule).

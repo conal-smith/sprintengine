@@ -49,7 +49,7 @@ function echoProvider(options: { padding?: string } = {}): ConversationProviderA
 async function withRuntime(
   adapters: ConversationProviderAdapter[],
   body: (context: { runtime: ConversationRuntime; workspaceRoot: string }) => Promise<void>,
-  options: { now?: () => number } = {},
+  options: { now?: () => number; transcriptLimits?: { pageBytes: number } } = {},
 ): Promise<void> {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-conversation-lifecycle-'))
   const runtime = new ConversationRuntime({
@@ -60,6 +60,7 @@ async function withRuntime(
       resolveSecret: async () => ({ ok: false, message: 'unused' }),
     },
     ...(options.now ? { now: options.now } : {}),
+    ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}),
   })
   try {
     await body({ runtime, workspaceRoot })
@@ -531,6 +532,93 @@ test('only a stateful provider that replays history is handed it at start', asyn
   })
 })
 
+/**
+ * A stateful provider whose first turn reports one agent under two calls: the
+ * one that spawned it, then the one that resumed it, as a transcript written
+ * before resumed agents were reported in their own lane records a resume.
+ */
+function agentLaneProvider() {
+  const base = echoProvider()
+  let turns = 0
+  return recordingProvider({
+    id: 'claude-agent',
+    sessions: 'stateful',
+    sendTurn: (input) => {
+      const lanes = turns++ === 0 ? ['toolu_agent', 'toolu_send'] : []
+      return [
+        runtimeEvent(input, 'turn_started', { turnId: input.turnId }),
+        ...lanes.map((toolUseId) =>
+          runtimeEvent(input, 'subagent_status', {
+            turnId: input.turnId,
+            toolUseId,
+            taskId: 'task_swift',
+            status: 'running',
+            background: true,
+          }),
+        ),
+        ...(base.sendTurn(input) as ConversationEvent[]).slice(1),
+      ]
+    },
+  })
+}
+
+test('a chat started again after a restart hands its provider the lane each agent started in', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-conversation-lifecycle-'))
+  const key = {
+    workspaceRoot,
+    workspaceId: 'workspace',
+    agentId: 'agent',
+    providerId: 'claude-agent',
+    modelId: 'model',
+  }
+  const runtimeWith = (provider: ReturnType<typeof agentLaneProvider>) =>
+    new ConversationRuntime({ adapters: [provider.adapter], getProviderById: () => undefined })
+  try {
+    const before = agentLaneProvider()
+    const first = runtimeWith(before)
+    try {
+      const started = await first.startSession(key)
+      assert.ok(started.ok)
+      assert.equal(before.starts[0]?.knownSubagentLanes, undefined, 'a new chat knows no agents')
+      assert.ok((await first.sendTurn({ sessionId: started.session.sessionId, message: 'Build the app' })).ok)
+    } finally {
+      await first.shutdown()
+    }
+
+    const after = agentLaneProvider()
+    const second = runtimeWith(after)
+    try {
+      assert.ok((await second.startSession(key)).ok)
+      assert.deepEqual(after.starts[0]?.knownSubagentLanes, [['task_swift', 'toolu_agent']])
+    } finally {
+      await second.shutdown()
+    }
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})
+
+test("a chat started again in the same run keeps the lanes its earlier session saw, past the transcript's last page", async () => {
+  const provider = agentLaneProvider()
+  await withRuntime(
+    [provider.adapter],
+    async ({ runtime, workspaceRoot }) => {
+      const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent', providerId: 'claude-agent' }
+      const first = await runtime.startSession({ ...key, modelId: 'model' })
+      assert.ok(first.ok)
+      const sessionId = first.session.sessionId
+      assert.ok((await runtime.sendTurn({ sessionId, message: 'Build the app' })).ok)
+      for (let index = 0; index < 4; index++)
+        assert.ok((await runtime.sendTurn({ sessionId, message: `Then ${index} ${'x'.repeat(1024)}` })).ok)
+      await runtime.stopSession({ sessionId })
+
+      assert.ok((await runtime.startSession({ ...key, modelId: 'model' })).ok)
+      assert.deepEqual(provider.starts.at(-1)?.knownSubagentLanes, [['task_swift', 'toolu_agent']])
+    },
+    { transcriptLimits: { pageBytes: 1024 } },
+  )
+})
+
 test('settling a chat whose session is still starting cancels the child being spawned', async () => {
   let release!: () => void
   const spawning = new Promise<void>((resolve) => (release = resolve))
@@ -661,5 +749,97 @@ test('settling forces the child to end while its background agent works, and the
     assert.deepEqual(runtime.sweepIdleSessions(Date.now() + 10 * 60_000), [sessionId])
     assert.ok((await runtime.suspendSession({ sessionId })).ok)
     assert.deepEqual(forced, [false, true])
+  })
+})
+
+/** A stateful provider whose stream for the first message stops short of the turn's end. */
+function streamEndsEarlyProvider() {
+  let sends = 0
+  const base = echoProvider()
+  const provider = recordingProvider({
+    sessions: 'stateful',
+    sendTurn: (input) =>
+      ++sends === 1
+        ? [
+            runtimeEvent(input, 'turn_started', { turnId: input.turnId }),
+            runtimeEvent(input, 'content_delta', { turnId: input.turnId, text: 'Halfway' }),
+          ]
+        : base.sendTurn(input),
+  })
+  return { adapter: provider.adapter, sends: () => sends }
+}
+
+test('a stateful turn whose stream ends without finishing fails, and the chat takes the next message', async () => {
+  const provider = streamEndsEarlyProvider()
+  await withRuntime([provider.adapter], async ({ runtime, workspaceRoot }) => {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'echo-provider', modelId: 'model' })
+    assert.ok(started.ok)
+    const sessionId = started.session.sessionId
+    const first = await runtime.sendTurn({ sessionId, message: 'Go' })
+    assert.ok(first.ok)
+    assert.equal(first.session.status, 'failed')
+    const replayed = await runtime.readTranscript(key)
+    assert.ok(replayed.ok)
+    const failures = replayed.events.filter((event) => event.type === 'turn_failed')
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0]?.payload?.reason, 'provider')
+
+    const next = await runtime.sendTurn({ sessionId, message: 'Again' })
+    assert.ok(next.ok)
+    assert.equal(next.session.status, 'ready')
+    assert.equal(provider.sends(), 2)
+  })
+})
+
+test('a stateful turn that finishes is not failed when its stream ends', async () => {
+  const provider = recordingProvider({ sessions: 'stateful' })
+  await withRuntime([provider.adapter], async ({ runtime, workspaceRoot }) => {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'echo-provider', modelId: 'model' })
+    assert.ok(started.ok)
+    const sent = await runtime.sendTurn({ sessionId: started.session.sessionId, message: 'Go' })
+    assert.ok(sent.ok)
+    assert.equal(sent.session.status, 'ready')
+    const replayed = await runtime.readTranscript(key)
+    assert.ok(replayed.ok)
+    assert.ok(!replayed.events.some((event) => event.type === 'turn_failed'))
+    assert.equal(replayed.events.filter((event) => event.type === 'turn_completed').length, 1)
+  })
+})
+
+test('a stateful turn the person stopped ends as stopped, not as a stream that ended early', async () => {
+  const provider = recordingProvider({
+    sessions: 'stateful',
+    sendTurn: (input) =>
+      (async function* () {
+        yield runtimeEvent(input, 'turn_started', { turnId: input.turnId })
+        yield runtimeEvent(input, 'content_delta', { turnId: input.turnId, text: 'Working' })
+        // The provider answers Stop by ending its stream, with no end of its own.
+        await new Promise<void>((resolve) => input.signal?.addEventListener('abort', () => resolve()))
+      })(),
+    interrupt: () => [],
+  })
+  await withRuntime([provider.adapter], async ({ runtime, workspaceRoot }) => {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'echo-provider', modelId: 'model' })
+    assert.ok(started.ok)
+    const sessionId = started.session.sessionId
+    const running = runtime.sendTurn({ sessionId, message: 'Go' })
+    const summary = () => {
+      const listed = runtime.listSessions()
+      return listed.ok ? listed.sessions[0] : undefined
+    }
+    await until(() => summary()?.status === 'active')
+    assert.ok((await runtime.interrupt({ sessionId })).ok)
+    assert.ok((await running).ok)
+    assert.equal(summary()?.status, 'ready')
+    const replayed = await runtime.readTranscript(key)
+    assert.ok(replayed.ok)
+    const failures = replayed.events.filter((event) => event.type === 'turn_failed')
+    assert.deepEqual(
+      failures.map((event) => event.payload?.reason),
+      ['interrupted'],
+    )
   })
 })
