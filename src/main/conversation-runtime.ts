@@ -2508,7 +2508,10 @@ export class ConversationRuntime {
     // launched agent's notice, a resume after a usage limit) is not, and
     // neither moves the clock nor becomes the chat's first or last words.
     const fromPerson = event.type === 'user_message' && !readConversationMessageOrigin(event.payload?.origin)
-    if (event.type === 'user_message' && !fromPerson) {
+    // A turn the agent started straight after the last one (Codex working
+    // toward its goal) has a reply of its own, with no message to start it.
+    const followsTurn = event.type === 'turn_started' && typeof event.payload?.follows === 'string'
+    if ((event.type === 'user_message' && !fromPerson) || followsTurn) {
       session.lastAssistantText = ''
       session.lastAssistantTail = ''
     }
@@ -2755,6 +2758,23 @@ export class ConversationRuntime {
     // pendingRequestId path. A concurrently-completing sendTurn will see its own
     // turnId no longer active and skip its post-loop reset, so this stands.
     if (event.type === 'turn_started' && turnId && turnId !== session.activeTurnId) {
+      // A turn the agent starts the moment the one before it ended (Codex
+      // carrying on toward its goal) names that turn. When that is a send
+      // still letting go of the session, its end is already on the way: the
+      // new turn waits for it, rather than being taken for a race it lost.
+      const follows = typeof event.payload?.follows === 'string' ? event.payload.follows : null
+      const before = session.providerTurn
+      if (
+        follows &&
+        before &&
+        !before.continuation &&
+        session.activeTurnId === follows &&
+        before.streamTurnId === follows
+      ) {
+        await before.ended
+        const current = this.sessions.get(session.sessionId)
+        if (current !== session || current.status === 'stopped') return
+      }
       // A live turn owns the session. The continuation raced a send that the
       // busy guard could not see yet (the channel is serialized off the send
       // path), and the adapter has since taken the turn over — so this mirror

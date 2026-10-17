@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { expect, test, vi } from 'vitest'
 import {
+  CODEX_GOAL_TURN_WAIT_MS,
   CODEX_INTERRUPT_GRACE_MS,
   createCodexConversationProvider,
   codexPermissionPolicy,
@@ -51,6 +52,8 @@ function fixture(
     rateLimits?: () => unknown
     // The answer to `config/read`.
     configRead?: () => unknown
+    // The answer to `thread/goal/set`, `get` and `clear`.
+    goal?: (method: string, params: unknown) => unknown
   } = {},
 ) {
   let connection!: CodexRpcOptions
@@ -96,6 +99,10 @@ function fixture(
             resolveStarted()
             return {}
           }
+          if (method.startsWith('thread/goal/')) {
+            if (method === 'thread/goal/set') resolveStarted()
+            return setup.goal ? setup.goal(method, params) : method === 'thread/goal/get' ? { goal: null } : {}
+          }
           if (method === 'turn/interrupt' && !setup.silentInterrupt)
             await options.onMessage({
               method: 'turn/completed',
@@ -122,6 +129,9 @@ function fixture(
     permissionPreset: 'none' as ConversationPermissionPreset,
   }
   const events: ConversationEvent[] = []
+  // What reaches the chat outside a send: the turns Codex starts by itself.
+  const sessionEvents: ConversationEvent[] = []
+  Object.assign(input, { onSessionEvent: (event: ConversationEvent) => sessionEvents.push(event) })
   const send = async (reasoningEffort?: string, mode?: 'default' | 'ask' | 'plan', message = 'Make a change.') => {
     for await (const event of (await adapter.sendTurn({
       ...input,
@@ -138,6 +148,7 @@ function fixture(
     adapter,
     input,
     events,
+    sessionEvents,
     send,
     get started() {
       return started
@@ -1071,7 +1082,12 @@ test('a thread archived in Codex is unarchived and resumed, keeping its id', asy
   await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
   await done
   const threadCalls = f.calls.filter((call) => call.method.startsWith('thread/'))
-  expect(threadCalls.map((call) => call.method)).toEqual(['thread/resume', 'thread/unarchive', 'thread/resume'])
+  expect(threadCalls.map((call) => call.method)).toEqual([
+    'thread/resume',
+    'thread/unarchive',
+    'thread/resume',
+    'thread/goal/get',
+  ])
   expect(threadCalls[1]?.params).toEqual({ threadId: 'archived-thread' })
   const update = f.events.find((event) => event.type === 'session_updated')
   expect(update?.payload?.providerSessionId).toBe('archived-thread')
@@ -1098,7 +1114,7 @@ test('an archived thread Codex will not unarchive continues in a new thread with
   await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
   await done
   const methods = f.calls.map((call) => call.method).filter((method) => method.startsWith('thread/'))
-  expect(methods).toEqual(['thread/resume', 'thread/unarchive', 'thread/start'])
+  expect(methods).toEqual(['thread/resume', 'thread/unarchive', 'thread/start', 'thread/goal/get'])
   const update = f.events.find((event) => event.type === 'session_updated')
   expect(update?.payload?.providerSessionId).toBe('native-thread')
   expect(String(update?.payload?.notice)).toContain('could not be resumed')
@@ -1229,7 +1245,7 @@ test('a model switch rides the next turn without a reconnect, and the running tu
 
 const names = (cwd: string) => conversationCommandsFor('codex', cwd).commands.map((command) => command.name)
 
-test('Codex offers /compact as soon as a chat starts, and its skills once the app-server connects', async () => {
+test('Codex offers /compact and /goal as soon as a chat starts, and its skills once the app-server connects', async () => {
   const skills = {
     data: [
       { cwd: '/workspace/skills', skills: [{ name: 'release-notes', description: 'Release notes', enabled: true }] },
@@ -1238,13 +1254,13 @@ test('Codex offers /compact as soon as a chat starts, and its skills once the ap
   const f = fixture({ skills })
   f.input.workspaceRoot = '/workspace/skills'
   await f.adapter.startSession(f.input)
-  expect(names('/workspace/skills')).toEqual(['compact'])
+  expect(names('/workspace/skills')).toEqual(['compact', 'goal'])
   // A stand-in, not an answer: the folder's skills are still due to be asked for.
   expect(conversationCommandsFor('codex', '/workspace/skills').fetchedAt).toBe(0)
   const done = f.send()
   await f.started
-  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'release-notes'])
-  expect(conversationCommandsFor('codex', '/workspace/skills').commands[1]).toMatchObject({
+  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'goal', 'release-notes'])
+  expect(conversationCommandsFor('codex', '/workspace/skills').commands[2]).toMatchObject({
     insertText: '$release-notes ',
     source: 'skill',
   })
@@ -1254,7 +1270,7 @@ test('Codex offers /compact as soon as a chat starts, and its skills once the ap
   // A change on disk is announced outside any turn, and the list is read again from disk.
   skills.data[0].skills.push({ name: 'changelog', description: 'Changelogs', enabled: true })
   await f.message({ method: 'skills/changed', params: {} })
-  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'release-notes', 'changelog'])
+  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'goal', 'release-notes', 'changelog'])
   expect(f.calls.filter((call) => call.method === 'skills/list').at(-1)?.params).toEqual({
     cwds: ['/workspace/skills'],
     forceReload: true,
@@ -1345,8 +1361,8 @@ test('Codex lists a folder before any chat there has started from an app-server 
       }),
     },
   )
-  expect(commands.map((command) => command.name)).toEqual(['compact', 'release-notes'])
-  expect(names('/workspace/probe')).toEqual(['compact', 'release-notes'])
+  expect(commands.map((command) => command.name)).toEqual(['compact', 'goal', 'release-notes'])
+  expect(names('/workspace/probe')).toEqual(['compact', 'goal', 'release-notes'])
   expect(calls).toEqual(['initialize', 'initialized', 'skills/list'])
   expect(closed).toBe(true)
 })
@@ -2183,4 +2199,273 @@ test('a turn that fails for another reason is no limit hit', async () => {
   await done
   stop()
   expect(hits).toEqual([])
+})
+
+// A thread goal as Codex reports it.
+const codexGoal = (objective: string, status = 'active') => ({
+  threadId: 'native-thread',
+  objective,
+  status,
+  tokenBudget: null,
+  tokensUsed: 0,
+  timeUsedSeconds: 0,
+  createdAt: 1,
+  updatedAt: 1,
+})
+
+// A Codex that keeps one goal, and answers the goal requests as Codex does.
+function goalCodex(initial: ReturnType<typeof codexGoal> | null = null) {
+  let goal = initial
+  return {
+    get goal() {
+      return goal
+    },
+    answer(method: string, params: unknown) {
+      const asked = params as { objective?: string; status?: string }
+      if (method === 'thread/goal/get') return { goal }
+      if (method === 'thread/goal/clear') {
+        const cleared = goal !== null
+        goal = null
+        return { cleared }
+      }
+      goal = { ...(goal ?? codexGoal('')), ...(asked.objective ? { objective: asked.objective } : {}) }
+      if (asked.status) goal.status = asked.status
+      return { goal }
+    },
+  }
+}
+
+// Connects the chat with one ordinary turn, so later turns find the thread.
+async function connected(f: ReturnType<typeof fixture>) {
+  await f.adapter.startSession(f.input)
+  const first = f.send()
+  await f.started
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'native-turn', status: 'completed' } } })
+  await first
+  f.nextTurn()
+  f.events.length = 0
+  f.sessionEvents.length = 0
+}
+
+// Codex starting a turn of its own toward the goal, and saying something in it.
+async function codexCarriesOn(f: ReturnType<typeof fixture>, nativeId: string, said: string) {
+  await f.message({ method: 'turn/started', params: { threadId: 'native-thread', turn: { id: nativeId } } })
+  await f.message({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'native-thread', itemId: `${nativeId}-msg`, delta: said },
+  })
+}
+
+test('/goal and an objective sets the goal Codex works toward, and the turn shows its first turn on it', async () => {
+  const codex = goalCodex()
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  const done = f.send(undefined, undefined, '/goal make the parser tests pass')
+  await f.started
+  expect(f.calls.find((call) => call.method === 'thread/goal/set')?.params).toEqual({
+    threadId: 'native-thread',
+    origin: 'user',
+    objective: 'make the parser tests pass',
+    status: 'active',
+  })
+  await codexCarriesOn(f, 'goal-turn-1', 'Running the parser tests.')
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-1', status: 'completed' } } })
+  await done
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+  expect(f.events.map((event) => [event.type, event.payload?.turnId])).toEqual([
+    ['turn_started', 'turn'],
+    ['session_updated', undefined],
+    ['content_delta', 'turn'],
+    ['turn_completed', 'turn'],
+  ])
+  expect(f.events[1]?.payload).toEqual({ goal: { objective: 'make the parser tests pass', status: 'active' } })
+  expect(f.events.at(-1)?.payload).toMatchObject({ text: 'Running the parser tests.' })
+})
+
+test('the turns Codex starts by itself toward the goal reach the chat as turns of their own', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await codexCarriesOn(f, 'goal-turn-2', 'Two tests still fail.')
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-2', status: 'completed' } } })
+  await codexCarriesOn(f, 'goal-turn-3', 'All pass now.')
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-3', status: 'completed' } } })
+  const turns = f.sessionEvents.filter((event) => event.type === 'turn_started')
+  expect(turns).toHaveLength(2)
+  const [second, third] = turns.map((event) => event.payload?.turnId as string)
+  expect(second).not.toBe(third)
+  // Each names the turn it follows, which the runtime may still be closing.
+  expect(turns[0]?.payload?.follows).toBe('turn')
+  expect(turns[1]?.payload?.follows).toBe(second)
+  expect(
+    f.sessionEvents
+      .filter((event) => event.type !== 'session_updated')
+      .map((event) => [event.type, event.payload?.turnId === second ? 'second' : 'third', event.payload?.text]),
+  ).toEqual([
+    ['turn_started', 'second', undefined],
+    ['content_delta', 'second', 'Two tests still fail.'],
+    ['turn_completed', 'second', 'Two tests still fail.'],
+    ['turn_started', 'third', undefined],
+    ['content_delta', 'third', 'All pass now.'],
+    ['turn_completed', 'third', 'All pass now.'],
+  ])
+  expect(f.events).toEqual([])
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+})
+
+test('Stop on a turn toward the goal pauses the goal before it interrupts, so Codex starts no next turn', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await codexCarriesOn(f, 'goal-turn-2', 'Working on it.')
+  await f.adapter.interrupt(f.input)
+  const asked = f.calls.filter((call) => call.method === 'thread/goal/set' || call.method === 'turn/interrupt')
+  expect(asked).toEqual([
+    { method: 'thread/goal/set', params: { threadId: 'native-thread', origin: 'user', status: 'paused' } },
+    { method: 'turn/interrupt', params: { threadId: 'native-thread', turnId: 'goal-turn-2' } },
+  ])
+  expect(codex.goal?.status).toBe('paused')
+  expect(f.sessionEvents.at(-1)).toMatchObject({ type: 'turn_completed', payload: { interrupted: true } })
+  expect(f.sessionEvents.find((event) => event.type === 'session_updated' && event.payload?.goal)?.payload).toEqual({
+    goal: { objective: 'make the parser tests pass', status: 'paused' },
+  })
+})
+
+test('Stop on a message turn pauses a running goal too, and with no goal only interrupts', async () => {
+  const codex = goalCodex(codexGoal('keep the docs current'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  const done = f.send(undefined, undefined, 'Also fix the typo.')
+  await f.started
+  await f.adapter.interrupt(f.input)
+  await done
+  expect(f.calls.filter((call) => call.method === 'thread/goal/set').map((call) => call.params)).toEqual([
+    { threadId: 'native-thread', origin: 'user', status: 'paused' },
+  ])
+
+  const plain = fixture()
+  await connected(plain)
+  const sent = plain.send()
+  await plain.started
+  await plain.adapter.interrupt(plain.input)
+  await sent
+  expect(plain.calls.some((call) => call.method === 'thread/goal/set')).toBe(false)
+  expect(plain.calls.at(-1)?.method).toBe('turn/interrupt')
+})
+
+test('a goal Codex clears tells the chat there is none any more', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await f.message({ method: 'thread/goal/cleared', params: { threadId: 'native-thread' } })
+  expect(f.sessionEvents.filter((event) => event.type === 'session_updated').map((event) => event.payload)).toEqual([
+    { goal: null },
+  ])
+})
+
+test('a resumed thread with a goal shows it, and Codex marking it met says so in the turn', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await f.adapter.startSession(f.input)
+  const done = f.send()
+  await f.started
+  await expect
+    .poll(() => f.events.find((event) => event.type === 'session_updated' && event.payload?.goal)?.payload)
+    .toEqual({ goal: { objective: 'make the parser tests pass', status: 'active' } })
+  await f.message({
+    method: 'thread/goal/updated',
+    params: {
+      threadId: 'native-thread',
+      turnId: 'native-turn',
+      goal: codexGoal('make the parser tests pass', 'complete'),
+    },
+  })
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'native-turn', status: 'completed' } } })
+  await done
+  expect(f.events.find((event) => event.type === 'command_output')?.payload).toMatchObject({
+    output: 'Codex met the goal and stopped working toward it.',
+    adapterNote: true,
+  })
+  expect(f.events.filter((event) => event.type === 'session_updated' && event.payload?.goal).at(-1)?.payload).toEqual({
+    goal: { objective: 'make the parser tests pass', status: 'complete' },
+  })
+})
+
+test('/goal alone says the goal, /goal pause pauses it and /goal clear clears it, each without a prompt', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  const said = async (message: string) => {
+    f.events.length = 0
+    await f.send(undefined, undefined, message)
+    expect(f.events.at(-1)?.type).toBe('turn_completed')
+    return f.events.find((event) => event.type === 'command_output')?.payload?.output
+  }
+  expect(await said('/goal')).toBe('Goal: make the parser tests pass (working)')
+  expect(await said('/goal pause')).toBe('Goal paused. Send /goal resume to carry on.')
+  expect(codex.goal?.status).toBe('paused')
+  expect(await said('/goal pause')).toBe('The goal is not running (paused), so there is nothing to pause.')
+  expect(await said('/goal clear')).toBe('Goal cleared. Codex no longer works toward it.')
+  expect(codex.goal).toBeNull()
+  expect(await said('/goal')).toBe(
+    'There is no goal in this chat. Send /goal and what Codex should achieve to set one.',
+  )
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+})
+
+test('a Codex without goals answers /goal with a message and is not sent it as text', async () => {
+  const f = fixture({
+    goal: () => {
+      throw new CodexRpcError('Invalid request: unknown variant `thread/goal/set`, expected one of `initialize`')
+    },
+  })
+  await connected(f)
+  await f.send(undefined, undefined, '/goal make the parser tests pass')
+  expect(f.events.at(-1)).toMatchObject({
+    type: 'turn_failed',
+    payload: { message: 'This version of Codex has no goals. Update Codex to use /goal.', refused: true },
+  })
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+})
+
+test('a goal Codex does not start on at once ends the /goal turn, and its turn comes on its own later', async () => {
+  vi.useFakeTimers()
+  try {
+    const codex = goalCodex()
+    const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+    await connected(f)
+    const done = f.send(undefined, undefined, '/goal make the parser tests pass')
+    await vi.advanceTimersByTimeAsync(CODEX_GOAL_TURN_WAIT_MS)
+    await done
+    expect(f.events.at(-1)?.type).toBe('turn_completed')
+    expect(f.events.find((event) => event.type === 'command_output')?.payload?.output).toBe(
+      'Codex has the goal and starts on it as soon as it is free.',
+    )
+    await codexCarriesOn(f, 'goal-turn-1', 'Starting.')
+    expect(f.sessionEvents.find((event) => event.type === 'turn_started')?.payload?.follows).toBe('turn')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('a message sent before the chat took up a turn Codex started by itself joins that turn', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await codexCarriesOn(f, 'goal-turn-2', 'Looking.')
+  const done = f.send(undefined, undefined, 'Also check the lexer.')
+  await f.started
+  // Its own turn is over here; the message's turn carries Codex's from now on.
+  expect(f.sessionEvents.at(-1)?.type).toBe('turn_completed')
+  await f.message({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'native-thread', itemId: 'goal-turn-2-msg-2', delta: 'The lexer is fine.' },
+  })
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-2', status: 'completed' } } })
+  await done
+  expect(f.events.map((event) => [event.type, event.payload?.turnId])).toEqual([
+    ['turn_started', 'turn'],
+    ['content_delta', 'turn'],
+    ['turn_completed', 'turn'],
+  ])
 })
