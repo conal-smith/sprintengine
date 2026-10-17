@@ -14,7 +14,7 @@ import type {
   WorkspaceSkill,
   WorkspaceSkillSource,
 } from '../../../../shared/electron-api'
-import { builtinInstallsIntoHarness } from '../../../../shared/skills'
+import { builtinInstallsIntoHarness, skillDirName } from '../../../../shared/skills'
 import { ensureSkillForAgent } from '../../utils/skillInvocation'
 import { Badge } from './Badge'
 import { Popover, type PopoverPlacement, type PopoverProps } from './Popover'
@@ -25,15 +25,19 @@ import { StarGlyph } from './StarGlyph'
 import { TruncatedText } from './TruncatedText'
 import { isImeKey } from '../../utils/imeKey'
 
-// One inventory, every door: the searchable workspace-skill list behind the
-// composer Skills chip, the `/` and `$` type-aheads, the terminal panel-header
-// action and the agent composer's "+ Skill" attachment. Rows show the real
-// SKILL.md name with its description on the same line and a source badge at
-// the far edge (one row per skill,
-// the description beside the name rather than under it, so twelve skills fit
-// in the height six used to), grouped installed-first; a bundled skill not yet
-// installed installs inline on pick, then behaves identically. Picking NEVER
-// auto-sends — callers prefill their input and keep the caret.
+// One inventory, every door: the searchable skill list behind the composer
+// Skills chip, the `/` and `$` type-aheads, the terminal panel-header action
+// and the agent composer's "+ Skill" attachment. Rows show the real SKILL.md
+// name with its description on the same line and a source badge at the far
+// edge (one row per skill, the description beside the name rather than under
+// it, so twelve skills fit in the height six used to), grouped installed-first.
+//
+// Installed means what the agent can reach: the open folder's skills and the
+// ones installed for every project in the home folder, so a chat with no
+// folder still has its skills. Available means everything the person could
+// have — the skills the app ships and every skill in their added sources — and
+// picking one installs it for every project, then behaves identically. Picking
+// NEVER auto-sends — callers prefill their input and keep the caret.
 
 const SOURCE_LABEL: Record<WorkspaceSkillSource, string> = {
   builtin: 'Built-in',
@@ -48,6 +52,13 @@ type SkillInventoryState = {
 }
 
 type LoadedInventory = { skills: WorkspaceSkill[]; error: string | null }
+
+/**
+ * A row the picker can install on pick. A skill from an added source carries
+ * where it is read from, because its row id is the directory it installs as
+ * and the source names it by its path inside the repository.
+ */
+type PickerSkill = WorkspaceSkill & { fromSource?: { sourceId: string; skillId: string } }
 
 type AgentSkillRow = Extract<AgentCapabilitiesResult, { ok: true }>['skills'][number]
 
@@ -75,13 +86,13 @@ function reachableRow(skill: AgentSkillRow, harnessId: string): WorkspaceSkill {
 // conversation provider, or a scheduled automation that installs into a per-run
 // worktree — there is no harness to ask about, and the workspace-wide inventory
 // is the honest answer.
-async function loadInventory(workspaceRoot: string, pluginId: string | null): Promise<LoadedInventory> {
+async function loadInventory(workspaceRoot: string | null, pluginId: string | null): Promise<LoadedInventory> {
   if (!pluginId) {
-    const result = await window.api.workspaceSkillsList({ workspaceRoot })
+    const result = await window.api.workspaceSkillsList({ workspaceRoot, includeGlobal: true })
     return result.ok ? { skills: result.skills, error: null } : { skills: [], error: result.message }
   }
 
-  const capabilities = await window.api.agentCapabilities({ workspaceRoot, pluginId })
+  const capabilities = await window.api.agentCapabilities({ workspaceRoot, pluginId, includeGlobal: true })
   if (!capabilities.ok) return { skills: [], error: capabilities.message }
   if (capabilities.support === 'unsupported') {
     return { skills: [], error: 'This agent does not read workspace skills.' }
@@ -110,6 +121,83 @@ async function loadInventory(workspaceRoot: string, pluginId: string | null): Pr
   return { skills: [...reachable, ...available], error: null }
 }
 
+/**
+ * Every skill in the person's added sources, as rows to install. Only what is
+ * already on this machine is read — the bundled sources, folders, and the
+ * repositories whose scan is cached. A repository nobody has opened yet is a
+ * network read and stays in Extensions, where reading it is asked for.
+ */
+async function loadSourceSkills(): Promise<PickerSkill[]> {
+  if (typeof window.api.skillsListSources !== 'function' || typeof window.api.skillsGetScan !== 'function') return []
+  const listed = await window.api.skillsListSources()
+  if (!listed.ok) return []
+  const readable = listed.sources.filter((source) => source.kind !== 'github' || source.scannedAt !== '')
+  const scans = await Promise.all(
+    readable.map((source) =>
+      window.api
+        .skillsGetScan({ sourceId: source.id })
+        .then((result) => (result.ok ? { sourceId: source.id, skills: result.scan.skills } : null))
+        .catch(() => null),
+    ),
+  )
+  const rows: PickerSkill[] = []
+  for (const scan of scans) {
+    if (!scan) continue
+    for (const skill of scan.skills) {
+      rows.push({
+        id: skillDirName(skill.id),
+        name: skill.name,
+        ...(skill.description ? { description: skill.description } : {}),
+        source: 'custom',
+        harnesses: [],
+        installState: 'available',
+        sourceId: scan.sourceId,
+        fromSource: { sourceId: scan.sourceId, skillId: skill.id },
+      })
+    }
+  }
+  return rows
+}
+
+/**
+ * The installed inventory with every source skill not already in it appended
+ * as available. One row per directory name: that is what an install writes and
+ * what an agent invokes, so two sources shipping the same name are one choice
+ * — the first source's — and a skill already installed is never offered again.
+ */
+function withSourceSkills(skills: readonly WorkspaceSkill[], fromSources: readonly PickerSkill[]): PickerSkill[] {
+  const taken = new Set(skills.map((skill) => skill.id))
+  const offered: PickerSkill[] = []
+  for (const skill of fromSources) {
+    if (taken.has(skill.id)) continue
+    taken.add(skill.id)
+    offered.push(skill)
+  }
+  return [...skills, ...offered.sort((a, b) => a.name.localeCompare(b.name))]
+}
+
+// The picker's list: what is installed and what could be. Source skills load
+// beside the inventory and never hold it up — a source that cannot be read
+// only means fewer rows to install.
+function usePickerSkills(workspaceRoot: string | null, pluginId: string | null, active: boolean) {
+  const inventory = useWorkspaceSkills(workspaceRoot, pluginId, active)
+  const [fromSources, setFromSources] = useState<PickerSkill[]>([])
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    loadSourceSkills()
+      .then((rows) => {
+        if (!cancelled) setFromSources(rows)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [active])
+  const skills = useMemo(() => withSourceSkills(inventory.skills, fromSources), [inventory.skills, fromSources])
+  return { ...inventory, skills }
+}
+
 // Loads the inventory when `active` flips true (each open refetches — installs
 // and removals elsewhere must show up on the next open).
 export function useWorkspaceSkills(
@@ -123,10 +211,6 @@ export function useWorkspaceSkills(
   const [state, setState] = useState<SkillInventoryState>({ skills: [], loading: active, error: null })
   useEffect(() => {
     if (!active) return
-    if (!workspaceRoot) {
-      setState({ skills: [], loading: false, error: 'Open a project folder to use skills.' })
-      return
-    }
     let cancelled = false
     setState((prev) => ({ ...prev, loading: true, error: null }))
     loadInventory(workspaceRoot, pluginId)
@@ -159,12 +243,12 @@ function matchesQuery(skill: WorkspaceSkill, normalized: string): boolean {
 }
 
 type SkillGroups = {
-  installed: WorkspaceSkill[]
-  available: WorkspaceSkill[]
-  flat: WorkspaceSkill[]
+  installed: PickerSkill[]
+  available: PickerSkill[]
+  flat: PickerSkill[]
 }
 
-function groupSkills(skills: WorkspaceSkill[], query: string): SkillGroups {
+function groupSkills(skills: PickerSkill[], query: string): SkillGroups {
   const normalized = query.trim().toLowerCase()
   const matched = skills.filter((skill) => matchesQuery(skill, normalized))
   const installed = matched.filter((skill) => skill.installState !== 'available')
@@ -295,12 +379,12 @@ function SkillList({
   if (groups.flat.length === 0) {
     return (
       <div className="px-2.5 py-3 text-meta text-[color:var(--text-muted)]" role="status">
-        {query.trim() ? `No skills match “${query.trim()}”` : 'No skills in this workspace yet'}
+        {query.trim() ? `No skills match “${query.trim()}”` : 'No skills yet'}
       </div>
     )
   }
 
-  const renderGroup = (label: string, skills: WorkspaceSkill[], offset: number) =>
+  const renderGroup = (label: string, skills: PickerSkill[], offset: number) =>
     skills.length > 0 ? (
       <div className="py-0.5">
         <div className={`${MENU_GROUP_LABEL_CLASS} pb-0.5 pt-1.5`}>{label}</div>
@@ -322,42 +406,50 @@ function SkillList({
     // full-bleed, per the menu spec — a horizontal inset here is what forced
     // the nested-card fill the spec rules out.
     <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
-      {renderGroup('In this workspace', groups.installed, 0)}
+      {renderGroup('Installed', groups.installed, 0)}
       {renderGroup('Available to install', groups.available, groups.installed.length)}
     </div>
   )
 }
 
-// Shared pick pipeline: available entries ensure-install first (busy row),
-// then hand the skill — flipped to installed — to the caller.
-function usePickWithInstall(
-  workspaceRoot: string | null,
-  onPick: (skill: WorkspaceSkill) => void,
-  onError: (message: string) => void,
-) {
+// Shared pick pipeline: available entries install first (busy row) — for every
+// project, so the skill is there in the next chat too — then hand the skill,
+// flipped to installed, to the caller.
+function usePickWithInstall(onPick: (skill: WorkspaceSkill) => void, onError: (message: string) => void) {
   const [installingId, setInstallingId] = useState<string | null>(null)
   const pick = useCallback(
-    async (skill: WorkspaceSkill) => {
-      if (skill.installState !== 'available') {
-        onPick(skill)
+    async (skill: PickerSkill) => {
+      const { fromSource, ...row } = skill
+      if (row.installState !== 'available') {
+        onPick(row)
         return
       }
-      if (!workspaceRoot) {
-        onError('Open a project folder to install skills.')
-        return
-      }
-      setInstallingId(skill.id)
-      const result = await ensureSkillForAgent({ workspaceRoot, skill })
+      setInstallingId(row.id)
+      const result = fromSource
+        ? await installFromSource(fromSource)
+        : await ensureSkillForAgent({ workspaceRoot: null, skill: row })
       setInstallingId(null)
       if (!result.ok) {
         onError(result.message)
         return
       }
-      onPick({ ...skill, installState: 'installed' })
+      onPick({ ...row, installState: 'installed' })
     },
-    [onError, onPick, workspaceRoot],
+    [onError, onPick],
   )
   return { installingId, pick }
+}
+
+async function installFromSource(from: {
+  sourceId: string
+  skillId: string
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const result = await window.api.skillsInstall({ sourceId: from.sourceId, skillId: from.skillId, scope: 'global' })
+    return result.ok ? { ok: true } : { ok: false, message: result.message }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : 'Unable to install the skill.' }
+  }
 }
 
 export type SkillPickerPopoverProps = {
@@ -399,21 +491,17 @@ export function SkillPickerPopover({
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const [actionError, setActionError] = useState<string | null>(null)
-  const inventory = useWorkspaceSkills(workspaceRoot, pluginId, open)
+  const inventory = usePickerSkills(workspaceRoot, pluginId, open)
   const visibleSkills = useMemo(
     () => (filterSkill ? inventory.skills.filter(filterSkill) : inventory.skills),
     [inventory.skills, filterSkill],
   )
   const groups = useMemo(() => groupSkills(visibleSkills, query), [visibleSkills, query])
 
-  const { installingId, pick } = usePickWithInstall(
-    workspaceRoot,
-    (skill) => {
-      onOpenChange(false)
-      onPick(skill)
-    },
-    setActionError,
-  )
+  const { installingId, pick } = usePickWithInstall((skill) => {
+    onOpenChange(false)
+    onPick(skill)
+  }, setActionError)
 
   const clampedActive = Math.min(activeIndex, Math.max(0, groups.flat.length - 1))
 
@@ -501,8 +589,7 @@ export function SkillPickerPopover({
           onActiveIndexChange={setActiveIndex}
         />
         {onManageSkills ? (
-          <div className="flex items-center border-t border-[color:var(--border-subtle)] px-2.5 py-1.5">
-            <span className="flex-1 text-micro text-[color:var(--text-subtle)]">↑↓ choose · ⏎ use</span>
+          <div className="flex items-center justify-end border-t border-[color:var(--border-subtle)] px-2.5 py-1.5">
             <button
               type="button"
               onClick={() => {
@@ -572,11 +659,11 @@ export const InlineSkillPicker = forwardRef<
 >(function InlineSkillPicker({ workspaceRoot, pluginId = null, query, onPick, onMatchCountChange, onDismiss }, ref) {
   const [activeIndex, setActiveIndex] = useState(0)
   const [actionError, setActionError] = useState<string | null>(null)
-  const inventory = useWorkspaceSkills(workspaceRoot, pluginId, true)
+  const inventory = usePickerSkills(workspaceRoot, pluginId, true)
   const groups = useMemo(() => groupSkills(inventory.skills, query), [inventory.skills, query])
   const clampedActive = Math.min(activeIndex, Math.max(0, groups.flat.length - 1))
 
-  const { installingId, pick } = usePickWithInstall(workspaceRoot, onPick, setActionError)
+  const { installingId, pick } = usePickWithInstall(onPick, setActionError)
 
   // Reset the highlight whenever typing changes the filter.
   useEffect(() => {
@@ -686,12 +773,6 @@ export const InlineSkillPicker = forwardRef<
             onPick={(skill) => void pick(skill)}
             onActiveIndexChange={setActiveIndex}
           />
-          <div className="flex items-center gap-2 border-t border-[color:var(--border-subtle)] px-2.5 py-1.5 text-micro text-[color:var(--text-subtle)]">
-            <span>↑↓ choose · ⏎ use · esc dismiss</span>
-            <span className="ml-auto tabular-nums">
-              {groups.flat.length} of {inventory.skills.length} skills
-            </span>
-          </div>
         </div>
       </Popover>
     </div>

@@ -142,7 +142,8 @@ export function hasInstalledNativeSkillTarget(
 // CLIs re-read a skills directory only on restart. `utils/useSkillInAgent.ts`
 // turns it into the invocation's native/plain decision and the restart notice.
 export async function ensureSkillForAgent(input: {
-  workspaceRoot: string
+  /** Null attaches it for every project, in the home folder's harness directories. */
+  workspaceRoot: string | null
   skill: Pick<WorkspaceSkill, 'id'>
 }): Promise<{ ok: true; targets: AgentSkillTarget[] } | { ok: false; message: string }> {
   const { workspaceRoot, skill } = input

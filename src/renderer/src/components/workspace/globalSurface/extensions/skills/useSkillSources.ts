@@ -1,8 +1,9 @@
 // The Skills surface's reads: the source list, one cached scan per source, and
-// which skill directories the active workspace already holds.
+// which skill directories are already installed — for every project, and in
+// the active workspace when one is open.
 //
 // Sources are app-level, so the list and the scans do not depend on a
-// workspace; installed state does, and reloads when the workspace changes.
+// workspace; installed state partly does, and reloads when the workspace changes.
 // Every read reports its own outcome — a scan that failed stays an error on
 // that one source rather than blanking the rail or reading as zero skills.
 
@@ -45,7 +46,7 @@ export type SkillSourcesState = {
    * calls for the tab it is showing. A source already in hand costs nothing.
    */
   ensureScan: (sourceId: string) => void
-  /** Re-read the workspace's installed skills (after an install). */
+  /** Re-read the installed skills (after an install). */
   refreshInstalled: () => void
   /** Take a synced source's refreshed scan, which sync already returned. */
   applySync: (source: SkillSource, scan: ScanResult) => void
@@ -202,11 +203,6 @@ export function useSkillSources(workspaceRoot: string | null): SkillSourcesState
   }, [workspaceRoot, installedNonce])
 
   useEffect(() => {
-    if (!workspaceRoot) {
-      setInstalledDirNames(new Set())
-      setInstalledRead({ status: 'unavailable' })
-      return
-    }
     if (typeof window.api.workspaceSkillsList !== 'function') {
       setInstalledRead({ status: 'error', message: MISSING_API_MESSAGE })
       return
@@ -214,7 +210,9 @@ export function useSkillSources(workspaceRoot: string | null): SkillSourcesState
     let cancelled = false
     setInstalledRead({ status: 'loading' })
     void window.api
-      .workspaceSkillsList({ workspaceRoot })
+      // Installs land in the home folder by default, so a skill installed for
+      // every project is installed here too — with or without a folder open.
+      .workspaceSkillsList({ workspaceRoot, includeGlobal: true })
       .then((result) => {
         if (cancelled) return
         if (!result.ok) {

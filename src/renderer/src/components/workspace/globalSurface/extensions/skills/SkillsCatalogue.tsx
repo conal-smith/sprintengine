@@ -23,12 +23,12 @@ import {
   type ScannedPlugin,
   type SkillSource,
 } from '../../../../../../../shared/skills'
-import { GhostButton, InlineNotice, Spinner, StatusDot, TruncatedText } from '../../../../ui'
+import { GhostButton, InlineNotice, Spinner, StatusDot, Tooltip, TruncatedText } from '../../../../ui'
 import { ExtensionIcon } from '../../../../ui/ExtensionIcon'
 import { ConnectorRow } from '../../../../panels/ConnectorsPanel/ConnectorRow'
 import { InstalledExtensionsInventory } from '../../../../panels/ConnectorsPanel/InstalledExtensionsInventory'
 import { useWorkspaceStore } from '../../../../../store/workspaceStore'
-import type { WorkspaceSkill } from '../../../../../../../shared/electron-api'
+import type { SkillInstallScope, WorkspaceSkill } from '../../../../../../../shared/electron-api'
 import {
   CatalogueHead,
   CatalogueSurface,
@@ -218,8 +218,10 @@ export function SkillsCatalogue({
   const installSkill = useCallback(
     // Reports whether the skill landed, so the page's one "Install and use"
     // action can go on to hand it to an agent — and stop when it did not.
-    async (source: SkillSource, skillId: string): Promise<boolean> => {
-      if (!workspaceRoot) return false
+    // `global` (the default) installs for every agent in every chat and
+    // project; `workspace` installs into the open folder only.
+    async (source: SkillSource, skillId: string, scope: SkillInstallScope = 'global'): Promise<boolean> => {
+      if (scope === 'workspace' && !workspaceRoot) return false
       if (typeof window.api.skillsInstall !== 'function') {
         setReport({ sourceId: source.id, outcome: null, error: MISSING_API_MESSAGE })
         return false
@@ -227,7 +229,7 @@ export function SkillsCatalogue({
       setInstalling(skillId)
       setReport(null)
       try {
-        const result = await window.api.skillsInstall({ sourceId: source.id, skillId, workspaceRoot })
+        const result = await window.api.skillsInstall({ sourceId: source.id, skillId, workspaceRoot, scope })
         setReport(
           result.ok
             ? { sourceId: source.id, outcome: summarizeInstallRun(1, []), error: null }
@@ -258,7 +260,6 @@ export function SkillsCatalogue({
   // never leave the row looking gone.
   const removeSkill = useCallback(
     async (dirName: string): Promise<void> => {
-      if (!workspaceRoot) return
       setSkillMessage(null)
       try {
         const result = await window.api.skillsUninstall({ workspaceRoot, dirName })
@@ -398,10 +399,22 @@ export function SkillsCatalogue({
           actions={
             item.installed ? (
               <span className="pr-1 text-meta font-medium text-[color:var(--accent-primary)]">Installed</span>
+            ) : installing !== null && installing !== item.skillId ? (
+              // A disabled Install says why rather than leaving a blocked cursor to guess at.
+              <Tooltip content="Another skill is installing — this one can install when it finishes.">
+                <GhostButton
+                  size="sm"
+                  disabled
+                  className="border border-[color:var(--border-default)]"
+                  aria-label={`Install ${item.name}`}
+                >
+                  Install
+                </GhostButton>
+              </Tooltip>
             ) : (
               <GhostButton
                 size="sm"
-                disabled={!workspaceRoot || installing !== null}
+                disabled={installing !== null}
                 onClick={() => rowSource && void installSkill(rowSource, item.skillId)}
                 className="border border-[color:var(--border-default)]"
                 aria-label={`Install ${item.name}`}
@@ -413,7 +426,7 @@ export function SkillsCatalogue({
         />
       )
     },
-    [installSkill, installing, openSkill, pluginsBySource, sourceById, workspaceRoot],
+    [installSkill, installing, openSkill, pluginsBySource, sourceById],
   )
 
   // A report belongs to the source it happened on. Under a search the rows of
@@ -427,8 +440,8 @@ export function SkillsCatalogue({
       name="Installed"
       stateLine={
         workspaceRoot
-          ? 'The skills installed in this workspace, grouped by where they came from.'
-          : 'Open a workspace to see the skills installed in it — a skill installs into a workspace, not into the app.'
+          ? 'The skills installed for every project and in this one, grouped by where they came from.'
+          : 'The skills installed for every project, grouped by where they came from.'
       }
     />
   ) : activeSource ? (
@@ -566,9 +579,10 @@ export function SkillsCatalogue({
         skill={opened}
         installed={sources.installedDirNames.has(skillDirName(opened.id))}
         installing={installing !== null}
-        availability={deriveInstallAvailability(workspaceRoot, 1)}
+        availability={deriveInstallAvailability(1)}
         workspaceRoot={workspaceRoot}
         onInstall={() => void installSkill(openSource, opened.id)}
+        onInstallInWorkspace={workspaceRoot ? () => void installSkill(openSource, opened.id, 'workspace') : undefined}
         onInstallForUse={() => installSkill(openSource, opened.id)}
         onRemove={
           sources.installedDirNames.has(skillDirName(opened.id))

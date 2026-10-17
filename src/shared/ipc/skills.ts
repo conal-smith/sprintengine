@@ -36,7 +36,13 @@ export type WorkspaceSkill = {
 }
 
 export type WorkspaceSkillsListInput = {
-  workspaceRoot: string
+  /** Null lists only what is installed for every project (needs `includeGlobal`). */
+  workspaceRoot: string | null
+  /**
+   * Also list the skills installed in the home folder's harness directories —
+   * the copies every agent reads in every project, with or without a folder.
+   */
+  includeGlobal?: boolean
 }
 
 export type WorkspaceSkillsListResult = { ok: true; skills: WorkspaceSkill[] } | { ok: false; message: string }
@@ -74,7 +80,8 @@ export type AgentSkillTarget = {
 }
 
 export type AgentSkillWriteInput = {
-  workspaceRoot: string
+  /** Null writes into the home folder's harness directories, for every project. */
+  workspaceRoot: string | null
   skillId: string
 }
 
@@ -158,10 +165,31 @@ export type SkillReadFileInput = { sourceId: string; skillId: string; path: stri
 
 export type SkillReadFileResult = { ok: true; path: string; content: string } | { ok: false; message: string }
 
-export type SkillInstallInput = { sourceId: string; skillId: string; workspaceRoot: string }
+/**
+ * Where an install lands. `global` is the home folder's harness directories,
+ * which every agent reads in every chat and project; `workspace` is the open
+ * folder's, which only agents working in that folder read.
+ */
+export type SkillInstallScope = 'global' | 'workspace'
+
+export type SkillInstallInput = {
+  sourceId: string
+  skillId: string
+  /** Required for a `workspace` install; ignored for a `global` one. */
+  workspaceRoot?: string | null
+  /** Omitted means `workspace` when a folder is given, else `global`. */
+  scope?: SkillInstallScope
+}
 
 export type SkillInstallOutcome =
-  | { ok: true; dirName: string; harnesses: SkillHarness[]; paths: string[]; fileCount: number }
+  | {
+      ok: true
+      dirName: string
+      harnesses: SkillHarness[]
+      paths: string[]
+      fileCount: number
+      scope: SkillInstallScope
+    }
   | { ok: false; message: string }
 
 /**
@@ -169,7 +197,15 @@ export type SkillInstallOutcome =
  * source that has since been removed is still a directory in the workspace, and
  * the user must still be able to take it back out.
  */
-export type SkillUninstallInput = { workspaceRoot: string; dirName: string }
+export type SkillUninstallInput = {
+  /**
+   * The folder whose copy also goes. Null takes out only the copy installed
+   * for every project; the global copy is always swept, because a Remove that
+   * left an agent still reading the skill would not be a removal.
+   */
+  workspaceRoot: string | null
+  dirName: string
+}
 
 export type SkillUninstallOutcome =
   { ok: true; dirName: string; removedPaths: string[] } | { ok: false; message: string }

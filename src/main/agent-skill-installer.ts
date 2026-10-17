@@ -25,6 +25,7 @@
 
 import { existsSync } from 'fs'
 import { readFile, rm, stat, writeFile } from 'fs/promises'
+import { homedir } from 'os'
 import { join, resolve } from 'path'
 
 import type {
@@ -107,6 +108,8 @@ export type AgentSkillInstallerOptions = {
    * renders what it was told can claim an install that failed.
    */
   invalidate?: (workspaceRoot: string, harnessId: string) => void
+  /** Where a write with no workspace lands: the home folder every project's agents read. */
+  homeDir?: string
 }
 
 export function createFsSkillCopyIo(): SkillCopyIo {
@@ -173,15 +176,34 @@ export function createAgentSkillInstaller(options: AgentSkillInstallerOptions = 
   const builtinSourceRoot = options.builtinSourceRoot ?? builtinSkillSourceRoot
   const io = options.io ?? createFsSkillCopyIo()
   const invalidate = options.invalidate ?? ((): void => {})
+  const homeDir = (): string => options.homeDir ?? homedir()
 
   return {
     async attach({ workspaceRoot, skillId }): Promise<AgentSkillWriteResult> {
-      const request = validate(workspaceRoot, skillId)
+      const request = validate(workspaceRoot?.trim() || homeDir(), skillId)
       if (!request.ok) return request
 
       const builtin = findBuiltinSkill(skillId)
       const availability = await detectAvailability()
-      const declared = harnessTargets(listPlugins(), request.root, skillId)
+      let root = request.root
+      let declared = harnessTargets(listPlugins(), root, skillId)
+      // Where the bytes may be *read* from is every declared harness, not only
+      // the ones being written: a skill sitting in the directory of a CLI the
+      // user has since uninstalled is still the copy to spread.
+      let origin = await resolveOrigin({ io, builtin, builtinSourceRoot, targets: declared, skillId })
+      // A skill installed for every project lives in the home folder, and the
+      // CLIs already read it from there. Spreading it stays there too, rather
+      // than copying a global skill into one folder.
+      const home = resolve(homeDir())
+      if (!origin && root !== home) {
+        const homeDeclared = harnessTargets(listPlugins(), home, skillId)
+        const homeOrigin = await resolveOrigin({ io, builtin, builtinSourceRoot, targets: homeDeclared, skillId })
+        if (homeOrigin) {
+          root = home
+          declared = homeDeclared
+          origin = homeOrigin
+        }
+      }
       const targets = declared
         .map((target) => ({
           ...target,
@@ -191,15 +213,10 @@ export function createAgentSkillInstaller(options: AgentSkillInstallerOptions = 
         }))
         .filter((target) => target.pluginIds.length > 0 && allowsHarness(builtin, target.harnessId))
       if (targets.length === 0) return { ok: false, message: NO_TARGET_MESSAGE }
-
-      // Where the bytes may be *read* from is every declared harness, not only
-      // the ones being written: a skill sitting in the directory of a CLI the
-      // user has since uninstalled is still the copy to spread.
-      const origin = await resolveOrigin({ io, builtin, builtinSourceRoot, targets: declared, skillId })
       if (!origin) {
         return {
           ok: false,
-          message: `Nothing to attach: ${skillId} is not a built-in skill and is not installed in this workspace.`,
+          message: `Nothing to attach: ${skillId} is not a built-in skill and is not installed for this workspace or every project.`,
         }
       }
 
@@ -210,12 +227,12 @@ export function createAgentSkillInstaller(options: AgentSkillInstallerOptions = 
         if (outcome.status === 'written') changed.add(target.harnessId)
         outcomes.push(outcome)
       }
-      for (const harnessId of changed) invalidate(request.root, harnessId)
+      for (const harnessId of changed) invalidate(root, harnessId)
       return { ok: true, skillId, targets: outcomes }
     },
 
     async remove({ workspaceRoot, skillId }): Promise<AgentSkillWriteResult> {
-      const request = validate(workspaceRoot, skillId)
+      const request = validate(workspaceRoot?.trim() || homeDir(), skillId)
       if (!request.ok) return request
 
       // Every declared harness, not only the installed ones: a copy written
