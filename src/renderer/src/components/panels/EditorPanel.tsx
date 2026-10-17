@@ -274,6 +274,10 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
       const file = ws?.editorState?.openFiles.find((f) => f.path === pathToSave)
       if (!file) return
       if (isImageFile(file.path || file.name)) return
+      // A clean buffer is what was read off disk, and by now perhaps older than
+      // what is there: an agent may have rewritten the file since. Writing it
+      // back would put the old version over theirs, so ⌘S on it does nothing.
+      if (!file.isDirty) return
       if (!hasEditorBuffer(workspaceId, file.path) && typeof file.content !== 'string') return
       await window.api.writefile(file.path, getEditorBuffer(workspaceId, file.path, file.content ?? ''))
       markFileClean(workspaceId, file.path)
