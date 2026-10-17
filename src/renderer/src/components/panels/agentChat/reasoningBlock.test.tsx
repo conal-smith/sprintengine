@@ -1,4 +1,7 @@
-import { expect, test } from 'vitest'
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, expect, test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ReasoningBlock, reasoningPreview } from './reasoningBlock'
 import { partitionWorkTimeline, WorkTimeline } from './timelineRows'
@@ -58,4 +61,60 @@ test('reasoning splits the work timeline where it happened, ahead of the prose t
   expect(first).toBeLessThan(group)
   expect(group).toBeLessThan(second)
   expect(second).toBeLessThan(prose)
+})
+
+let root: Root | null = null
+let host: HTMLElement | null = null
+
+afterEach(async () => {
+  await act(async () => root?.unmount())
+  host?.remove()
+  root = null
+  host = null
+})
+
+// jsdom lays nothing out, so the opened body is given a 100px window onto
+// text 10px tall per character; scrollTop itself is jsdom's own.
+async function openLive(disclosureId: string, text: string) {
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+  const render = (next: string, live = true) =>
+    act(async () => root!.render(<ReasoningBlock text={next} live={live} disclosureId={disclosureId} />))
+  await render(text)
+  await act(async () => host!.querySelector('button')!.click())
+  const body = host.querySelector<HTMLElement>('[aria-expanded="true"] + div')!
+  Object.defineProperty(body, 'scrollHeight', { get: () => (body.textContent ?? '').length * 10 })
+  Object.defineProperty(body, 'clientHeight', { get: () => 100 })
+  return { body, render }
+}
+
+test('an opened body follows live reasoning down as it grows past the bottom', async () => {
+  const { body, render } = await openLive('follow', 'a'.repeat(20))
+  await render('a'.repeat(40))
+  expect(body.scrollTop).toBe(400)
+  await render('a'.repeat(60))
+  expect(body.scrollTop).toBe(600)
+})
+
+test('scrolling up to read stops the follow until the person is back at the bottom', async () => {
+  const { body, render } = await openLive('scrolled', 'a'.repeat(20))
+  await render('a'.repeat(40))
+  body.scrollTop = 120
+  await act(async () => body.dispatchEvent(new Event('scroll')))
+  await render('a'.repeat(60))
+  expect(body.scrollTop).toBe(120)
+
+  body.scrollTop = 500
+  await act(async () => body.dispatchEvent(new Event('scroll')))
+  await render('a'.repeat(80))
+  expect(body.scrollTop).toBe(800)
+})
+
+test('settled reasoning is left where the person put it', async () => {
+  const { body, render } = await openLive('settled', 'a'.repeat(20))
+  body.scrollTop = 0
+  await render('a'.repeat(60), false)
+  expect(body.scrollTop).toBe(0)
 })

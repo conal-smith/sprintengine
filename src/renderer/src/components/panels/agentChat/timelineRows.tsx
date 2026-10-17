@@ -47,6 +47,7 @@ import { formatStepDuration } from './stepDuration'
 import { useLiveRowMotion } from './liveVisibility'
 import { formatMessageDateTime, formatMessageTime, LiveElapsed } from './liveElapsed'
 import { useClockFormat } from '../../../utils/clockFormat'
+import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
 import { ReasoningBlock } from './reasoningBlock'
 import { CompactionDivider, TurnMeta } from './turnMeta'
 import { CommandOutputRow } from './commandOutputRow'
@@ -549,10 +550,12 @@ export function AssistantTurnBlock({
 
 // The reply as it was written: the prose between steps and the final text,
 // in order. Reasoning, steps and decisions are how it got there, not what it
-// said, so they stay out. Built when it is copied, not on every render.
+// said, so they stay out. A follow-up Codex suggests is its label, as the page
+// shows it. Built when it is copied, not on every render.
 function replyText(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): string {
   return [...(entry.intermediateText?.map((part) => part.text) ?? []), entry.text]
     .filter((part) => part.trim())
+    .map(showCodexFollowupLabels)
     .join('\n\n')
 }
 

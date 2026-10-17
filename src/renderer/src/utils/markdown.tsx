@@ -21,6 +21,7 @@ import {
 } from './markdownHeadingIds'
 import { DisplayMath, InlineMath, isMathLanguage, remarkMathDelimiters } from './markdownMath'
 import { remarkUserText } from './markdownUserText'
+import { showCodexFollowupLabels } from './markdownCodexFollowups'
 import { repairMarkdownFileLinks } from './markdownFileLinks'
 import { keepInsightLineBreaks } from './markdownInsight'
 import { remarkWindowsPaths } from './markdownWindowsPaths'
@@ -98,8 +99,9 @@ type MarkdownRenderOptions = {
   /**
    * The text is an agent's reply: a local file link written without the `>`
    * that closes its destination is closed before the parse
-   * (`markdownFileLinks.ts`), and a ★ Insight block keeps the line breaks it
-   * was written with (`markdownInsight.ts`). Off for a document, which renders
+   * (`markdownFileLinks.ts`), a ★ Insight block keeps the line breaks it was
+   * written with (`markdownInsight.ts`), and a follow-up Codex suggests reads as
+   * its label (`markdownCodexFollowups.ts`). Off for a document, which renders
    * as written.
    */
   repairFileLinks?: boolean
@@ -914,7 +916,10 @@ function MarkdownRenderer({
 }): React.ReactNode {
   const { lineChanges, links, density, renderText, renderLink, renderImage, codeBlock, math, inPageLinks } = options
   const source = React.useMemo(
-    () => (options.repairFileLinks ? keepInsightLineBreaks(repairMarkdownFileLinks(markdown)) : markdown),
+    () =>
+      options.repairFileLinks
+        ? keepInsightLineBreaks(repairMarkdownFileLinks(showCodexFollowupLabels(markdown)))
+        : markdown,
     [markdown, options.repairFileLinks],
   )
   // Component types must outlive a streamed source update: recreating them

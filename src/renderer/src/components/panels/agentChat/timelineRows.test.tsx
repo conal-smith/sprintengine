@@ -139,6 +139,19 @@ test('copying a reply copies its prose between steps and its final text, in orde
   expect(written).toEqual(['Reading the test first.\n\nAll green.'])
 })
 
+test('a copied reply holds a follow-up Codex suggests as its label, as the page shows it', async () => {
+  const view = await mount(
+    <AssistantTurnBlock
+      entry={assistant({ text: 'Next:\n\n- :codex-followup[Prepare print version]{prompt="Make it print-ready"}' })}
+      tools={[]}
+      decisions={[]}
+      chrome={chrome}
+    />,
+  )
+  await click(button(view, 'Copy reply'))
+  expect(written).toEqual(['Next:\n\n- Prepare print version'])
+})
+
 test('a failed turn with nothing written offers no reply to copy', async () => {
   const view = await mount(
     <AssistantTurnBlock entry={assistant({ text: '', status: 'failed' })} tools={[]} decisions={[]} chrome={chrome} />,

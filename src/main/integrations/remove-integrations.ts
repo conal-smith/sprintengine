@@ -33,6 +33,7 @@ import { agentWorktreeLockOwner } from '../agent-worktree-lock'
 import { withConfigFileLock, writeFileAtomically } from '../config-file-write'
 import type { GitCommandResult } from '../git'
 import { runGitCommand } from '../git-utils'
+import { runGitWorktreeListPorcelain } from '../git-worktree-list'
 import {
   isManagedStudioGatewayEntry,
   removeCodexManagedServers,
@@ -521,7 +522,7 @@ async function turnOffWorktreeConfigIfUnused(worktree: string, runGit: RunGit): 
 async function removeWorktreeLock(entry: IntegrationLedgerEntry, runGit: RunGit): Promise<Result> {
   const repo = entry.repo
   if (!repo || !existsSync(repo)) return skip('The repository is gone.')
-  const listing = await runGit(repo, ['worktree', 'list', '--porcelain', '-z'])
+  const listing = await runGitWorktreeListPorcelain(runGit, repo)
   if (!listing.ok) return { status: 'failed', reason: listing.message ?? 'git could not list the worktrees.' }
   const records = listing.stdout.split('\0\0')
   const target = entry.path.split('\\').join('/')
