@@ -9,12 +9,15 @@ const now = Date.now()
 const fixtures = vi.hoisted(() => ({
   state: {
     workspaces: [] as unknown[],
-    appSettings: { modules: undefined as unknown },
+    appSettings: { modules: undefined as unknown, keepChatsWithOpenPullRequest: true },
     setWorkspaceSettled: (() => {}) as (id: string, settled: boolean) => void,
+    setKeepChatsWithOpenPullRequest: (() => {}) as (enabled: boolean) => void,
   },
 }))
 vi.mock('../../store/workspaceStore', () => ({
-  useWorkspaceStore: (select: (state: typeof fixtures.state) => unknown) => select(fixtures.state),
+  useWorkspaceStore: Object.assign((select: (state: typeof fixtures.state) => unknown) => select(fixtures.state), {
+    getState: () => fixtures.state,
+  }),
 }))
 
 const { SettledChatsSettingsTab } = await import('./SettledChatsSettingsTab')
@@ -86,6 +89,44 @@ test('Un-settle puts a chat back, and Open leaves Settings for it', async () => 
   expect(opened).toEqual(['w3'])
 })
 
+test('a chat opened from a paired machine is brought back there first, then here', async () => {
+  const asked: unknown[] = []
+  let answer: (value: { ok: true; workspaceId: string; settledAt: null }) => void = () => {}
+  const workspaces = fixtures.state.workspaces as Array<Record<string, unknown>>
+  workspaces[1] = {
+    ...workspaces[1],
+    remoteOrigin: {
+      connectionId: 'c1',
+      machineName: 'mac-mini',
+      workspaceId: 'remote-w2',
+      workspaceName: 'Fix the login banner',
+      workspaceRoot: '/Users/dev/app',
+      sessionId: 'remote-w2:agent-1',
+    },
+  }
+  const previous = (window as { api?: unknown }).api
+  ;(window as { api?: unknown }).api = {
+    meshSettleConversation: (input: unknown) => {
+      asked.push(input)
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    },
+  }
+  try {
+    await render()
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Un-settle Fix the login banner"]')?.click(),
+    )
+    expect(asked).toEqual([{ connectionId: 'c1', workspaceId: 'remote-w2', settled: false }])
+    expect(unsettled).toEqual([])
+    await act(async () => answer({ ok: true, workspaceId: 'remote-w2', settledAt: null }))
+    expect(unsettled).toEqual(['w2'])
+  } finally {
+    ;(window as { api?: unknown }).api = previous
+  }
+})
+
 test('with nothing settled, the page says how a chat gets here', async () => {
   fixtures.state.workspaces = [{ id: 'w1', name: 'Still going', mode: 'standard', folderPath: '/a', createdAt: now }]
   await render()
@@ -131,4 +172,17 @@ test('a long list draws the most recent hundred and folds the rest', async () =>
   expect(more).toBeDefined()
   await act(async () => more!.click())
   expect(rows()).toHaveLength(130)
+})
+
+test('the page offers to keep chats with an open pull request, on, and turning it off says so', async () => {
+  const set: boolean[] = []
+  fixtures.state.setKeepChatsWithOpenPullRequest = (enabled) => void set.push(enabled)
+  await render()
+  const toggle = [...host.querySelectorAll<HTMLElement>('[role="switch"]')].find((element) => {
+    const label = document.getElementById(element.getAttribute('aria-labelledby') ?? '')
+    return label?.textContent === 'Keep chats with an open pull request'
+  })
+  expect(toggle?.getAttribute('aria-checked')).toBe('true')
+  await act(async () => toggle?.click())
+  expect(set).toEqual([false])
 })

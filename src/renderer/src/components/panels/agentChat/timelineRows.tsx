@@ -12,6 +12,10 @@ import { type ReasoningSegment, type TranscriptEntry, type TranscriptToolEntry }
 import { AttachmentThumbnail } from '../ComposerAttachmentStrip'
 import { ComposerFileChip } from './ComposerFileChip'
 import { clientSupports } from '../../../clientCapabilities'
+import {
+  hasMacosPrivacyFolderHint,
+  MACOS_PRIVACY_FOLDER_HINT,
+} from '../../../../../shared/conversation/macosPrivacyFolders'
 import { attachedFileName } from '../../../utils/attachedFiles'
 import { useConversationTransport } from './conversationTransport'
 import { StoredAttachmentThumbnail } from './storedAttachments'
@@ -47,6 +51,7 @@ import { formatStepDuration } from './stepDuration'
 import { useLiveRowMotion } from './liveVisibility'
 import { formatMessageDateTime, formatMessageTime, LiveElapsed } from './liveElapsed'
 import { useClockFormat } from '../../../utils/clockFormat'
+import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
 import { ReasoningBlock } from './reasoningBlock'
 import { CompactionDivider, TurnMeta } from './turnMeta'
 import { CommandOutputRow } from './commandOutputRow'
@@ -72,11 +77,42 @@ import { withoutStudioNoticePrefix } from '../../../../../shared/studio-notice'
 
 // Auth-shaped turn failures get a sign-in action in the error block. Whole
 // words and stems, so a path or message that merely contains "author" or a
-// number with 401 in it is not read as a lapsed login.
+// number with 401 in it is not read as a lapsed login. A refusal of access is
+// not one either, though the Claude CLI files a 403 as an authentication
+// failure: signing in again cannot grant what the account is not allowed.
 export function isAuthShapedFailure(reason: string | undefined): boolean {
   return Boolean(
-    reason && /authenticat|unauthori[sz]ed|\bauth\b|log ?in|oauth|credential|\b401\b|expired|api key/i.test(reason),
+    reason &&
+    permissionDeniedReason(reason) === undefined &&
+    /authenticat|unauthori[sz]ed|\bauth\b|log ?in|oauth|credential|\b401\b|expired|api key/i.test(reason),
   )
+}
+
+// The provider's own reason for refusing access ("Your organization does not
+// have access to this model."), read from after the 403; empty when it gave
+// none, undefined when the failure is not a refusal. A JSON error body gives
+// its message. A bare 403 elsewhere in the text counts only beside wording
+// that says access was refused.
+const REFUSAL_WORDING =
+  /permission|forbidden|(?:does not|doesn['’]t|do not|don['’]t) have access|access (?:is )?denied|not allowed/i
+export function permissionDeniedReason(text: string | undefined): string | undefined {
+  if (!text) return undefined
+  const status = /API Error:\s*403\b/i.exec(text) ?? (REFUSAL_WORDING.test(text) ? /\b403\b/.exec(text) : null)
+  if (!status) return undefined
+  const rest = text
+    .slice(status.index + status[0].length)
+    .replace(/^[\s:–—-]*(?:forbidden\b[\s:–—-]*)?/i, '')
+    .trim()
+  if (rest.startsWith('{')) {
+    try {
+      const body = JSON.parse(rest) as { message?: unknown; error?: { message?: unknown } }
+      const message = body.error?.message ?? body.message
+      if (typeof message === 'string') return message.trim()
+    } catch {
+      // Not JSON after all: the text reads as it came.
+    }
+  }
+  return rest
 }
 
 // Chrome the timeline rows need from the component: who is speaking, how to
@@ -102,6 +138,10 @@ export type TimelineChrome = {
   // cannot run it: another machine's chat, or a provider that signs in with a
   // key rather than the CLI's login.
   onSignIn?: () => Promise<void>
+  // Opens System Settings on Privacy & Security › Files and Folders, for a
+  // turn macOS kept out of its folder. Absent where that is not this Mac's
+  // setting to change: another machine's chat, a browser tab, not macOS.
+  onOpenPrivacySettings?: () => void
   // `window.api.platform`: on Windows the chat's login is the native CLI's,
   // which is not the one inside WSL.
   platform?: string
@@ -518,10 +558,12 @@ export function AssistantTurnBlock({
 
 // The reply as it was written: the prose between steps and the final text,
 // in order. Reasoning, steps and decisions are how it got there, not what it
-// said, so they stay out. Built when it is copied, not on every render.
+// said, so they stay out. A follow-up Codex suggests is its label, as the page
+// shows it. Built when it is copied, not on every render.
 function replyText(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): string {
   return [...(entry.intermediateText?.map((part) => part.text) ?? []), entry.text]
     .filter((part) => part.trim())
+    .map(showCodexFollowupLabels)
     .join('\n\n')
 }
 
@@ -949,7 +991,11 @@ export function TurnErrorBlock({
   const [showDetails, setShowDetails] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
   const detail = entry.failureDetail ?? entry.failureReason
-  const authShaped = isAuthShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
+  // macOS refused the CLI its folder (Desktop, Documents, Downloads, iCloud
+  // Drive): the fix is a setting, not a sign-in, so it is said first.
+  const privacyBlocked =
+    hasMacosPrivacyFolderHint(entry.failureDetail) || hasMacosPrivacyFolderHint(entry.failureReason)
+  const authShaped = !privacyBlocked && isAuthShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
   const onSignIn = authShaped ? chrome.onSignIn : undefined
   const detailsId = useId()
   const kept = 'Your message is kept; retrying resumes the same conversation.'
@@ -958,8 +1004,17 @@ export function TurnErrorBlock({
   // A provider with no known command is told to sign in, not given another
   // CLI's command that would do nothing for it.
   const command = chrome.cli ? CLI_SIGN_IN_COMMAND[chrome.cli] : undefined
-  const message: React.ReactNode = !authShaped ? (
-    `Something went wrong while responding. ${kept}`
+  // A refusal says the provider's own reason up front rather than under
+  // Details: it is what the person has to take to whoever grants access.
+  const refusal = permissionDeniedReason(entry.failureDetail) ?? permissionDeniedReason(entry.failureReason)
+  const refused =
+    refusal === undefined
+      ? undefined
+      : `${chrome.assistantName} was refused access${refusal ? `: ${refusal}${/[.!?]$/.test(refusal) ? '' : '.'}` : '.'}`
+  const message: React.ReactNode = privacyBlocked ? (
+    `${MACOS_PRIVACY_FOLDER_HINT} ${kept}`
+  ) : !authShaped ? (
+    `${refused ?? 'Something went wrong while responding.'} ${kept}`
   ) : onSignIn ? (
     `The session could not authenticate — usually a sign your sign-in expired. Sign in, then retry.${
       chrome.platform === 'win32'
@@ -993,6 +1048,11 @@ export function TurnErrorBlock({
       </div>
       <p className="mb-2.5 mt-1 text-body leading-[1.55] text-[color:var(--text-muted)]">{message}</p>
       <div className="flex items-center gap-2">
+        {privacyBlocked && chrome.onOpenPrivacySettings ? (
+          <OutlineButton size="sm" onClick={chrome.onOpenPrivacySettings}>
+            Open Privacy settings
+          </OutlineButton>
+        ) : null}
         {onSignIn ? (
           <OutlineButton size="sm" onClick={signIn} disabled={signingIn}>
             Sign in

@@ -204,3 +204,135 @@ test('two spellings of one root share one model; a different case is a different
   b.release()
   c.release()
 })
+
+// A checkout with wide folders, for the ignore checks: `git check-ignore` is
+// asked about every path it is handed, so how many it is handed is the cost.
+const WIDE_ROOT = '/Users/dev/wide'
+const WIDE_COUNT = 300
+
+function wideListing(prefix: string, count: number) {
+  return Array.from({ length: count }, (_, index) => ({ name: `${prefix}${index}.js`, isDir: false }))
+}
+
+const WIDE_DISK: Record<string, { name: string; isDir: boolean }[]> = {
+  [WIDE_ROOT]: [
+    { name: 'build', isDir: true },
+    { name: 'generated', isDir: true },
+    { name: 'out[1]', isDir: true },
+    { name: 'scripts', isDir: true },
+    { name: 'vendor', isDir: true },
+  ],
+  [`${WIDE_ROOT}/build`]: wideListing('chunk-', WIDE_COUNT),
+  [`${WIDE_ROOT}/generated`]: wideListing('model-', WIDE_COUNT),
+  [`${WIDE_ROOT}/out[1]`]: wideListing('part-', WIDE_COUNT),
+  [`${WIDE_ROOT}/scripts`]: [
+    { name: 'bundle.js', isDir: false },
+    { name: 'release.js', isDir: false },
+  ],
+  [`${WIDE_ROOT}/vendor`]: [{ name: 'lib', isDir: true }],
+  [`${WIDE_ROOT}/vendor/lib`]: [
+    { name: 'a.js', isDir: false },
+    { name: 'b.js', isDir: false },
+  ],
+}
+
+// `ignored` is what git would answer yes to; every question is recorded.
+function ignoreApi(ignored: Set<string>) {
+  const calls: string[][] = []
+  const api: FileTreeModelApi = {
+    readdir: async (path) => {
+      const listing = WIDE_DISK[path]
+      if (!listing) throw new Error(`ENOENT: ${path}`)
+      return listing
+    },
+    watchPath: async () => async () => {},
+    checkIgnored: async (_repoRoot, relativePaths) => {
+      calls.push([...relativePaths])
+      return relativePaths.filter((path) => ignored.has(path))
+    },
+  }
+  return { api, calls, ignored }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+// List the root, then open `folder`; `calls` keeps only what opening it asked.
+// `answeredLate` are paths git says yes to only after the root's own answer is
+// in, as when a folder is opened before its parent's question has come back.
+async function openFolder(fake: ReturnType<typeof ignoreApi>, folder: string, answeredLate: string[] = []) {
+  const held = acquireFileTreeModel(WIDE_ROOT, fake.api)
+  held.model.setRepoRoot(WIDE_ROOT)
+  await held.model.ensureLoaded(WIDE_ROOT)
+  await settle()
+  for (const path of answeredLate) fake.ignored.add(path)
+  fake.calls.length = 0
+  await held.model.ensureLoaded(`${WIDE_ROOT}/${folder}`)
+  await settle()
+  return held
+}
+
+function ignoredIn(keys: ReadonlySet<string>, folder: string): number {
+  return [...keys].filter((key) => key.startsWith(`${WIDE_ROOT}/${folder}/`.toLowerCase())).length
+}
+
+test('a wide ignored folder is asked about once, as a whole, and every child is marked', async () => {
+  const fake = ignoreApi(new Set())
+  const { model, release } = await openFolder(fake, 'build', ['build'])
+  try {
+    assert.deepEqual(fake.calls, [['build']], 'one question, naming the folder alone')
+    assert.equal(ignoredIn(model.getSnapshot().ignoredKeys, 'build'), WIDE_COUNT, 'and every child reads as ignored')
+  } finally {
+    release()
+  }
+})
+
+test('a wide folder git does not ignore falls back to asking about each child', async () => {
+  const fake = ignoreApi(new Set(['generated/model-7.js']))
+  const { model, release } = await openFolder(fake, 'generated')
+  try {
+    assert.equal(fake.calls.length, 2)
+    assert.deepEqual(fake.calls[0], ['generated'], 'the folder first')
+    assert.equal(fake.calls[1].length, WIDE_COUNT, 'then every child')
+    assert.ok(model.getSnapshot().ignoredKeys.has(`${WIDE_ROOT}/generated/model-7.js`.toLowerCase()))
+    assert.equal(ignoredIn(model.getSnapshot().ignoredKeys, 'generated'), 1, 'and only what git named is marked')
+  } finally {
+    release()
+  }
+})
+
+test('a wide folder whose name git would read as a pattern is asked about child by child', async () => {
+  const fake = ignoreApi(new Set())
+  const { release } = await openFolder(fake, 'out[1]', ['out[1]'])
+  try {
+    assert.equal(fake.calls.length, 1, 'no question about the folder itself')
+    assert.equal(fake.calls[0].length, WIDE_COUNT)
+  } finally {
+    release()
+  }
+})
+
+test('a narrow folder is asked about child by child, in one call', async () => {
+  const fake = ignoreApi(new Set(['scripts/release.js']))
+  const { model, release } = await openFolder(fake, 'scripts')
+  try {
+    assert.deepEqual(fake.calls, [['scripts/bundle.js', 'scripts/release.js']], 'nothing asked about the folder alone')
+    assert.ok(model.getSnapshot().ignoredKeys.has(`${WIDE_ROOT}/scripts/release.js`.toLowerCase()))
+    assert.ok(!model.getSnapshot().ignoredKeys.has(`${WIDE_ROOT}/scripts/bundle.js`.toLowerCase()))
+  } finally {
+    release()
+  }
+})
+
+test('a folder opened inside an ignored folder is answered from its parent, without asking git', async () => {
+  const fake = ignoreApi(new Set(['vendor', 'vendor/lib']))
+  const { model, release } = await openFolder(fake, 'vendor')
+  try {
+    fake.calls.length = 0
+    await model.ensureLoaded(`${WIDE_ROOT}/vendor/lib`)
+    await settle()
+    assert.deepEqual(fake.calls, [], 'git is not asked again')
+    assert.equal(ignoredIn(model.getSnapshot().ignoredKeys, 'vendor/lib'), 2, 'and both files read as ignored')
+  } finally {
+    release()
+  }
+})

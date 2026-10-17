@@ -74,6 +74,21 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as
  * client without it names the picture instead of showing it.
  */
 export const CONVERSATION_MESSAGE_IMAGES_CAPABILITY = 'conversation-message-images' as const
+/**
+ * A message may carry files of any type, not only pictures: the upload route
+ * beside the socket takes `kind=file`, and a `send` naming that upload's id
+ * in `uploadIds` attaches the file to the message by its path on the desktop,
+ * which the `user_message` records in `files`. No frame changed. A client
+ * without it offers pictures only.
+ */
+export const CONVERSATION_MESSAGE_FILES_CAPABILITY = 'conversation-message-files' as const
+/**
+ * A picture uploaded for a chat (`POST upload`) is shrunk by the desktop on
+ * receipt to the long edge its own composer sends (1568px), so the route takes
+ * one up to 20MB as it arrives; what is kept is still at most 5MB. A client
+ * without it keeps its upload under 5MB itself.
+ */
+export const CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY = 'conversation-image-downscale' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -93,6 +108,8 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_SEND_SKILLS_CAPABILITY,
   CONVERSATION_STEER_SENDS_CAPABILITY,
   CONVERSATION_MESSAGE_IMAGES_CAPABILITY,
+  CONVERSATION_MESSAGE_FILES_CAPABILITY,
+  CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

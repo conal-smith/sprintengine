@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { safeExternalUrl } from './external-url'
+import { safeExternalUrl, safeWindowExternalUrl } from './external-url'
 import { test } from 'vitest'
 
 test('external-url', async () => {
@@ -40,4 +40,19 @@ test('external-url', async () => {
   }
 
   main()
+})
+
+test('a window may open System Settings on Files and Folders, on macOS, and nothing else of its kind', () => {
+  const settings = 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders'
+  assert.deepEqual(safeWindowExternalUrl(settings, 'darwin'), { ok: true, url: settings })
+  assert.equal(safeWindowExternalUrl(settings, 'linux').ok, false)
+  assert.equal(safeWindowExternalUrl('x-apple.systempreferences:com.apple.preference.security', 'darwin').ok, false)
+  assert.equal(safeWindowExternalUrl(`${settings}&more`, 'darwin').ok, false)
+  assert.equal(safeWindowExternalUrl('file:///etc/passwd', 'darwin').ok, false)
+  assert.deepEqual(safeWindowExternalUrl('https://example.com', 'darwin'), { ok: true, url: 'https://example.com' })
+})
+
+test('a browser tab opened in the system browser still refuses the settings link', () => {
+  const settings = 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders'
+  assert.equal(safeExternalUrl(settings).ok, false)
 })

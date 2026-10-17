@@ -7,6 +7,9 @@
 - `formatStepDuration` moves up to hours from an hour on ("6h 59m 50s"),
   where it read "419m 50s".
 
+- `retryLabel` reads a 403 as "Access refused", where it read "Couldn’t
+  authenticate", whatever category the provider filed it under.
+
 ### Added
 
 - The projection carries `backgroundTasks`: the shells, monitors and workflows

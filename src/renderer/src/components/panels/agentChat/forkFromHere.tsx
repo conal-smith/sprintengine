@@ -25,7 +25,9 @@ type UserEntry = Extract<TranscriptEntry, { kind: 'user' }>
 
 /** Where to fork: after a reply's turn, or before one of the person's messages, which the fork's composer gets back. */
 export type ForkFromHereTarget =
-  | { side: 'assistant'; turnId: string }
+  // `draft`: words for the fork's composer, ready to send there (a side
+  // question carried on in a chat of its own).
+  | { side: 'assistant'; turnId: string; draft?: { text: string } }
   | {
       side: 'user'
       turnSeq: number
@@ -217,7 +219,12 @@ export async function forkChat(input: {
   if (target.side === 'user') {
     composerDraftStore().getState().put(key.workspaceId, agentId, target.draft)
     if (target.attachments?.length) holdForkedAttachments(key.workspaceId, agentId, target.attachments)
-  }
+  } else if (target.draft?.text.trim())
+    composerDraftStore().getState().put(key.workspaceId, agentId, {
+      text: target.draft.text,
+      skillIds: [],
+      mentions: [],
+    })
   placeSpawnedAgentTab(key.workspaceId, agentId, name, { afterAgentId: key.agentId })
   showToast({ tone: 'neutral', title: `Forked into ${name}. Both chats work in the same files.` })
 }

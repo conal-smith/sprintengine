@@ -46,7 +46,7 @@ type GatewayToolsOptions = Parameters<typeof createStudioGatewayTools>[0]
 
 export type StudioGatewayOptions = Pick<
   Parameters<typeof createAutomationService>[0],
-  'onTailnetEvent' | 'onMeshEvent' | 'hasWindow'
+  'onTailnetEvent' | 'onMeshEvent' | 'hasWindow' | 'downscaleUpload'
 > & {
   /**
    * The gateway's app tools, given the core's own: the desktop places them
@@ -195,6 +195,7 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
     ...(options.onTailnetEvent ? { onTailnetEvent: options.onTailnetEvent } : {}),
     ...(options.onMeshEvent ? { onMeshEvent: options.onMeshEvent } : {}),
     ...(options.hasWindow ? { hasWindow: options.hasWindow } : {}),
+    ...(options.downscaleUpload ? { downscaleUpload: options.downscaleUpload } : {}),
     // The tailnet lane advertises `conversation-lifecycle`, so its list is
     // the one that keeps the capability's promise.
     resolveConversationHost: () => core.createConversationHost({ lifecycleList: true }),

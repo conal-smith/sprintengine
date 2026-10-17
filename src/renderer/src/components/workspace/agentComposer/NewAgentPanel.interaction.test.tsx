@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { JSDOM } from 'jsdom'
+import { standInImageDecoding } from '../../../../../../tests/image-decoding'
 import { composerDisabled, composerField, composerText, typeIntoComposer } from '../../../../../../tests/composer-field'
 import { test, vi } from 'vitest'
 
@@ -54,6 +55,7 @@ test('NewAgentPanel interaction', async () => {
   anyGlobal.KeyboardEvent = dom.window.KeyboardEvent
   anyGlobal.FileReader = dom.window.FileReader
   anyGlobal.File = dom.window.File
+  standInImageDecoding(dom.window)
   anyGlobal.getComputedStyle = dom.window.getComputedStyle
   anyGlobal.IS_REACT_ACT_ENVIRONMENT = true
   class ResizeObserverStub {

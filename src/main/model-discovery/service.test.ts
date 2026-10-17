@@ -258,6 +258,26 @@ test('the probe gets the detected path and runs on the machine the CLI runtime n
   assert.deepEqual(seen, [{ binary: '/Users/dev/.local/bin/codex', hostId: 'wsl:Ubuntu', args: ['debug', 'models'] }])
 })
 
+test("the Grok probe runs with Grok's self-updater off; another CLI's probe gets nothing set", async () => {
+  const h = harness()
+  const seen: Record<string, Readonly<Record<string, string>> | undefined> = {}
+  const argvProbe = (cli: string): CliModelProbe => ({
+    source: 'argv-probe',
+    run: async (context) => {
+      await context.runArgv(['models'])
+      return [{ id: `${cli}-model` }]
+    },
+  })
+  h.deps.probes = { codex: argvProbe('codex'), grok: argvProbe('grok') }
+  h.deps.runArgv = async (input) => {
+    seen[input.binary] = input.setEnv
+    return { code: 0, stdout: '', stderr: '', timedOut: false }
+  }
+  await discoverCliModels({ clis: ['codex', 'grok'] }, h.deps)
+  assert.deepEqual(seen['/Users/dev/.grok/bin/grok'], { GROK_DISABLE_AUTOUPDATER: '1' })
+  assert.deepEqual(seen['/Users/dev/.local/bin/codex'], {})
+})
+
 test('two overlapping passes share one probe of a CLI', async () => {
   const h = harness()
   let release: () => void = () => {}

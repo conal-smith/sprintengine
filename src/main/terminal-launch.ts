@@ -39,7 +39,13 @@ import { getColorScheme } from './color-scheme-store'
 import { ensureManagedRuntimeShims, withManagedRuntimePath } from './managed-runtime'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, studioEnvEntry, withoutStudioEnv } from '../shared/studio-env'
 import { withoutInheritedSessionEnv } from './inherited-session-env'
-import { lastKnownLoginShellPath, withUserShellPath } from './login-shell-path'
+import { mergeJsonEnvValue } from './json-env-value'
+import {
+  lastKnownLoginShellPath,
+  lastKnownLoginShellEnv,
+  withLoginShellEnv,
+  withUserShellPath,
+} from './login-shell-path'
 import { isWindowsPath, toWslPath, wslToWindowsPath } from '../shared/host-paths'
 import { wslDistroArgs, wslDistroForPath, wslSessionPidFileCommand, wslSessionPidKey } from './hosts/wsl-distro'
 import type { HostLaunchFile, HostLaunchTarget } from './hosts/execution-host'
@@ -125,11 +131,16 @@ export function getTerminalEnv(): Record<string, string> {
   // The person's own PATH, not the one the app was started with: opened from
   // Finder or the Dock, that is launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, and
   // an agent's shell then has no Homebrew, no `/usr/local/bin` and no `npx`.
-  const userEnv = withUserShellPath(env, {
-    platform: process.platform,
-    loginPath: lastKnownLoginShellPath(),
-    exists: existsSync,
-  })
+  // Its certificate trust and provider settings too, for the same reason: see
+  // LOGIN_SHELL_ENV_VARIABLES.
+  const userEnv = withLoginShellEnv(
+    withUserShellPath(env, {
+      platform: process.platform,
+      loginPath: lastKnownLoginShellPath(),
+      exists: existsSync,
+    }),
+    lastKnownLoginShellEnv(),
+  )
 
   // Surface CLIs installed into the managed npm prefix (e.g. Codex) on PATH so
   // launched agent sessions can find them. The shims themselves stay out of the
@@ -451,42 +462,12 @@ export function mergeProviderLaunchEnv(
   return next
 }
 
-/**
- * `next` merged over `existing` when both are JSON objects, else `next`.
- *
- * One level deep: arrays concatenate and objects merge key by key, which is
- * what "add my entry to your list" needs and all this channel is for — the
- * app's MCP servers join a person's own `mcp` table rather than replacing it.
- * Anything that does not parse — the overwhelming majority of env values —
- * takes the plain replacement path, so this is invisible to every other
- * manifest.
- */
-function mergeJsonEnvValue(existing: string | undefined, next: string): string {
-  if (!existing) return next
-  const left = parseJsonObject(existing)
-  const right = parseJsonObject(next)
-  if (!left || !right) return next
-  const merged: Record<string, unknown> = { ...left }
-  for (const [key, value] of Object.entries(right)) {
-    const previous = merged[key]
-    if (Array.isArray(previous) && Array.isArray(value)) merged[key] = [...previous, ...value]
-    else if (isPlainJsonObject(previous) && isPlainJsonObject(value)) merged[key] = { ...previous, ...value }
-    else merged[key] = value
-  }
-  return JSON.stringify(merged)
-}
-
-function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
-  } catch {
-    return null
-  }
+/** The manifest's variables, each with the value the launch's environment ended up with. */
+function mergedLaunchExports(
+  providerLaunchEnv: Record<string, string>,
+  env: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(Object.entries(providerLaunchEnv).map(([key, value]) => [key, env[key] ?? value]))
 }
 
 /**
@@ -1744,8 +1725,23 @@ export function getShellLaunchConfig(
 
   const shellPath = getPosixShellPath()
   const shellName = shellPath.split(/[\\/]/).at(-1)
+  const env = mergeProviderLaunchEnv(
+    mergeProviderLaunchEnv(
+      {
+        ...getTerminalEnv(),
+        ...managedMcpEnv,
+      },
+      providerLaunchEnv,
+    ),
+    integration?.env,
+  )
   const launchCommand = [
-    buildLaunchShellBootstrap(managedMcpEnv, providerLaunchEnv),
+    // The script re-exports the manifest's variables after the login profile,
+    // and with the values the launch merged: OpenCode's config document is
+    // said to by the person, the host context, a permission preset and the
+    // launch integration at once, and exporting only the manifest's share
+    // would drop the integration's MCP table and agent-state plugin.
+    buildLaunchShellBootstrap(managedMcpEnv, mergedLaunchExports(providerLaunchEnv, env)),
     buildAgentLaunchCommand(
       cli,
       sessionId,
@@ -1774,16 +1770,7 @@ export function getShellLaunchConfig(
     command: shellPath,
     args: isLoginShell(shellName) ? ['-l', startupScriptPath] : [startupScriptPath],
     cwd,
-    env: mergeProviderLaunchEnv(
-      mergeProviderLaunchEnv(
-        {
-          ...getTerminalEnv(),
-          ...managedMcpEnv,
-        },
-        providerLaunchEnv,
-      ),
-      integration?.env,
-    ),
+    env,
     pathStyle: 'posix',
     startupScriptPath,
     ...(hostContextPath ? { hostContextPath } : {}),

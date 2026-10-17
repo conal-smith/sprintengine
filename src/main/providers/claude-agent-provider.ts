@@ -14,12 +14,21 @@
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
 import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
+import { spawnClaudeLocalProcess } from './claude-local-process'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openConfinedExistingFile, readBoundedConversationFile } from '../conversation-file-access'
+import {
+  projectCommandsFingerprint,
+  readProjectCommands,
+  stageProjectCommands,
+  STAGED_PLUGIN_PREFIX,
+  writeProjectCommandsPlugin,
+  type StagedProjectCommands,
+} from '../claude-project-commands'
 import { asRecord } from '../../shared/records'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
@@ -72,9 +81,11 @@ import {
 import { isBackgroundLaunchAck, isSubagentStep } from '../../shared/conversation/subagents'
 export { summarizeToolInput } from '../../shared/conversation/approvalSummary'
 import { cliStderrSummary, LOOKUP_TOOL_KINDS } from '../../shared/conversation/permissionModes'
+import { withMacosPrivacyFolderHint } from '../../shared/conversation/macosPrivacyFolders'
 import { wslShareSafeDirectoryEnv } from '../git-run'
 import { resolveClaudeConfigDir } from '../claude-config-dir'
 import { ensureResumableTranscript, transcriptCheckNote } from './claude-transcript-integrity'
+import { claudeTaskOutputRoot, createClaudeCommandOutput, type ClaudeCommandOutput } from './claude-command-output'
 import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
 
@@ -97,6 +108,7 @@ import type {
   ConversationMcpServer,
   ConversationPermissionPreset,
   ConversationQuestion,
+  ConversationSideQuestionResult,
   ConversationSubagentMessagePayload,
   ConversationSubagentState,
   ConversationSubagentStatusPayload,
@@ -122,6 +134,7 @@ import type {
   MockAdapterTurnInput,
   ConversationProviderSteerResult,
   ConversationDisposeOptions,
+  ConversationProviderSideQuestionInput,
 } from './conversation-provider-adapter'
 
 export const CLAUDE_AGENT_PROVIDER_ID = 'claude-agent'
@@ -158,6 +171,11 @@ export type ClaudeAgentProviderOptions = {
   childAnswerTimeoutMs?: number
   // And how long it has to answer the registration of its MCP servers.
   mcpRegistrationTimeoutMs?: number
+  // Where a local child writes its task output, from its environment; tests
+  // point it at their own folder. Null turns live command output off.
+  claudeTaskOutputRoot?: (env: Record<string, string>) => string | null
+  // How often a running command's output file is read. Tests shorten it.
+  commandOutputPollMs?: number
   // The app's own MCP gateway on the machine the child runs on, handed to
   // every child. Null or absent leaves it out.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
@@ -169,6 +187,10 @@ export type ClaudeAgentProviderAdapter = ConversationProviderAdapter & {
   disposeChildProcess(sessionId: string, options?: ConversationDisposeOptions): boolean
   stopBackgroundTasks(sessionId: string): Promise<boolean>
   stopSubagent(sessionId: string, toolUseId: string): Promise<boolean>
+  askSideQuestion(
+    sessionId: string,
+    input: ConversationProviderSideQuestionInput,
+  ): Promise<ConversationSideQuestionResult>
   disposeAll(): Promise<void>
   setPermissionPreset(input: MockAdapterPermissionInput): Promise<ConversationProviderPermissionResult>
   setModel(input: MockAdapterModelInput): Promise<ConversationProviderPermissionResult>
@@ -242,6 +264,9 @@ type SessionState = {
   // The per-child plugin directory that carries the attached skills; removed
   // with the child that loaded it.
   skillPluginDir: string | null
+  // The per-child plugin carrying the project's own `.claude/commands`, and
+  // which files it was written from; removed with the child that loaded it.
+  projectCommands: StagedProjectCommands | null
   mode?: 'default' | 'plan' | 'ask'
   reasoningEffort?: string
   onBeforeTool?: (name: string) => Promise<void>
@@ -297,6 +322,10 @@ type SessionState = {
   // What the check of a resumed session's file found that the conversation
   // should be told, shown at the start of the turn that spawned the child.
   resumeNote: string | null
+  // The live child's running Bash commands, read from the files it writes
+  // their output to (claude-command-output.ts). Null for a child whose files
+  // this machine cannot read.
+  commandOutputTails?: ClaudeCommandOutput | null
   // The child being spawned, while it is; see ensureQuery.
   spawning: Promise<void> | null
   // Bumped when the session is stopped or its child disposed from outside
@@ -329,7 +358,8 @@ type SessionState = {
   // The tool call that first spawned each agent this chat has seen, by task.
   // Kept across children: an agent resumed later (SendMessage, after the
   // child that ran it ended) reports under the resuming call, and its lane is
-  // still the one that spawned it.
+  // still the one that spawned it. Seeded from the ones the runtime knows, so
+  // that holds across a restart too.
   agentLanes: Map<string, string>
   // Shells, monitors and workflows the child runs, by task. The background
   // ones are what `session_updated` lists as `backgroundTasks`.
@@ -623,8 +653,12 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.cliSpawnMode = null
     state.childPid = null
     state.spawnedAt = null
+    state.commandOutputTails?.stopAll()
+    state.commandOutputTails = null
     if (state.skillPluginDir) removeSkillPlugin(state.skillPluginDir)
     state.skillPluginDir = null
+    if (state.projectCommands) removeSkillPlugin(state.projectCommands.dir)
+    state.projectCommands = null
     return hadChild
   }
 
@@ -725,6 +759,10 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     try {
       for await (const message of q as AsyncIterable<Record<string, unknown>>) {
         if (state.query !== q) return
+        // A command's last output goes out ahead of its result, which replaces it.
+        const commandEnded = state.commandOutputTails?.observe(message)
+        if (commandEnded) await commandEnded
+        if (state.query !== q) return
         if (state.interruptedSendUuids.size > 0) {
           // A new child exchange has begun, so whatever the stopped one left
           // unsaid will not come any more: an older CLI that ends an
@@ -770,7 +808,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
           eventFor(state, 'turn_failed', {
             turnId: state.turn.turnId,
             reason: 'provider',
-            message: describeSpawnFailure(error, state.stderrTail),
+            message: describeSpawnFailure(error, state.stderrTail, state.workspaceRoot),
             ...providerCursorPayload(state),
           }),
         ])
@@ -784,7 +822,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
             eventFor(state, 'turn_failed', {
               turnId: state.turn.turnId,
               reason: 'provider',
-              message: describeSpawnFailure(null, state.stderrTail),
+              message: describeSpawnFailure(null, state.stderrTail, state.workspaceRoot),
               ...providerCursorPayload(state),
             }),
           ])
@@ -951,13 +989,18 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     const skillPlugin = state.skillIds?.length
       ? await stageAttachedSkills(tempDir, state.workspaceRoot, state.skillIds)
       : null
+    // A project whose commands cannot be read starts its chat without them.
+    const projectCommands = await stageProjectCommands(tempDir, state.workspaceRoot).catch(() => null)
     try {
       assertSpawnWanted(state, generation)
     } catch (error) {
       if (skillPlugin) removeSkillPlugin(skillPlugin)
+      if (projectCommands) removeSkillPlugin(projectCommands.dir)
       throw error
     }
     state.skillPluginDir = skillPlugin
+    state.projectCommands = projectCommands
+    const plugins = [skillPlugin, projectCommands?.dir].filter((dir): dir is string => Boolean(dir))
     // A resume walks the session file back from its newest entry; a gap a
     // crash left in it would bring back only the messages after the gap. A
     // WSL machine's file is under its own Linux home, out of reach here.
@@ -975,6 +1018,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       } catch (error) {
         if (skillPlugin) removeSkillPlugin(skillPlugin)
         state.skillPluginDir = null
+        if (projectCommands) removeSkillPlugin(projectCommands.dir)
+        state.projectCommands = null
         throw error
       }
     }
@@ -1008,7 +1053,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // commands on this machine as soon as the session starts. Omitting the option loads every source,
       // so the list is always explicit. What the project contributes that the
       // agent does need arrives another way: its CLAUDE.md through the system
-      // prompt above, and attached skills as a plugin of their own.
+      // prompt above, attached skills as a plugin of their own, and the
+      // project's `.claude/commands` as another (claude-project-commands.ts).
       settingSources: ['user'],
       // Which is also why the app's MCP gateway is passed here rather than
       // read from the workspace's `.mcp.json`: a project's MCP servers are
@@ -1020,9 +1066,11 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // Plain `--plugin-dir`, never `skipMcpDiscovery`: the SDK spells that
       // `--plugin-dir-no-mcp`, which a Claude Code older than the SDK does not
       // know, and the child exits on it. There is nothing to skip anyway: the
-      // staged plugin is written here with no `.mcp.json` and no `mcpServers`,
-      // so it can carry skills and nothing else.
-      ...(skillPlugin ? { plugins: [{ type: 'local', path: wslTarget ? toWslPath(skillPlugin) : skillPlugin }] } : {}),
+      // staged plugins are written here with no `.mcp.json` and no
+      // `mcpServers`, so they carry skills and commands and nothing else.
+      ...(plugins.length
+        ? { plugins: plugins.map((dir) => ({ type: 'local' as const, path: wslTarget ? toWslPath(dir) : dir })) }
+        : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
       env: withClaudeTaskTools(env),
       abortController: abort,
@@ -1092,6 +1140,36 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     }
     const q = sdkQuery({ prompt: inputQueue, options: queryOptions })
     state.query = q
+    // A child in WSL writes its files inside that machine; only a local
+    // child's are read here.
+    const taskOutputRoot = wslTarget ? null : (options.claudeTaskOutputRoot ?? claudeTaskOutputRoot)(env)
+    state.commandOutputTails?.stopAll()
+    state.commandOutputTails = taskOutputRoot
+      ? createClaudeCommandOutput({
+          root: taskOutputRoot,
+          cwd: state.workspaceRoot,
+          ...(options.commandOutputPollMs !== undefined ? { pollMs: options.commandOutputPollMs } : {}),
+          emit: (chunk) => {
+            // Only into the turn the command runs in: a partial step must not
+            // open a turn of its own.
+            const turn = openTurn(state)
+            if (state.query !== q || !turn) return
+            deliver(state, [
+              eventFor(state, 'tool_output', {
+                turnId: turn.turnId,
+                toolCallId: chunk.toolUseId,
+                toolUseId: chunk.toolUseId,
+                output: chunk.output,
+                outputMode: 'append',
+                totalBytes: chunk.totalBytes,
+                partial: true,
+                status: 'ok',
+                isError: false,
+              } satisfies ConversationToolOutputPayload),
+            ])
+          },
+        })
+      : null
     // A resumed child restores the session's saved cost total and reports it
     // in its first result; only what it adds from here is this turn's.
     state.queryCostUsd = savedCostUsd
@@ -1203,6 +1281,41 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       disposeChild(state)
       await ensureQuery(state)
     }
+  }
+
+  // A child reads the project's commands when it starts. Before each message
+  // the folder is read again, and a change is written into the child's staged
+  // plugin and reloaded, as /reload-plugins does in a terminal, so the next
+  // message runs the command as it now stands. A child started while the
+  // project had none has no plugin to reload, and one whose CLI does not
+  // reload, or does not answer, is replaced (resumed) instead, unless
+  // background work runs in it: then the change waits for the next message.
+  async function refreshProjectCommands(state: SessionState, waiting: string[]): Promise<void> {
+    const query = state.query
+    if (!query || state.spawning) return
+    const files = await readProjectCommands(state.workspaceRoot).catch(() => null)
+    if (!files || state.query !== query) return
+    const staged = state.projectCommands
+    const fingerprint = projectCommandsFingerprint(files)
+    if (staged ? staged.fingerprint === fingerprint : files.length === 0) return
+    if (staged && typeof query.reloadPlugins === 'function') {
+      try {
+        await writeProjectCommandsPlugin(staged.dir, files)
+        staged.fingerprint = fingerprint
+        if (state.query !== query) return
+        // Held (it would change the tool list a cached prompt depends on,
+        // which only the person's own plugins can do): the commands then
+        // arrive with the next child, as the person's plugin change does.
+        const reloaded = await answeredWithin(query.reloadPlugins({ holdOnCacheImpact: true }), childAnswerTimeoutMs, {
+          rejectAsUnanswered: true,
+        })
+        if (reloaded || state.query !== query) return
+      } catch {
+        // Not written: the child is replaced below, and stages them afresh.
+      }
+    }
+    if (backgroundWorkRunning(state)) waiting.push('the project’s changed commands')
+    else disposeChild(state)
   }
 
   // Move the live child to another chat mode over the control channel rather
@@ -1395,6 +1508,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       rewind: true,
       fork: true,
       stopSubagent: true,
+      sideQuestion: true,
     },
     sessions: 'stateful',
     acceptsMcpServers: true,
@@ -1414,6 +1528,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         allowedTools: input.allowedTools,
         ...(input.mcpServers?.length ? { mcpServers: input.mcpServers } : {}),
         skillPluginDir: null,
+        projectCommands: null,
         onBeforeTool: input.onBeforeTool,
         providerSessionId: input.resumeSessionId?.trim() || null,
         lastChainUuid: null,
@@ -1445,7 +1560,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         textSeam: false,
         declinedToolUseIds: new Set(),
         subagents: new Map(),
-        agentLanes: new Map(),
+        agentLanes: new Map(input.knownSubagentLanes),
         tasks: new Map(),
         monitorCalls: new Map(),
         commandSkills: null,
@@ -1510,6 +1625,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
             state.skillIds = skillIds
           }
         }
+        await refreshProjectCommands(state, waiting)
         await reconcilePresetWhileBusy(state)
         await ensureQuery(state)
         await leaveStrayPlanMode(state)
@@ -1917,6 +2033,47 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       return answeredWithin(q.stopTask(agent.taskId), childAnswerTimeoutMs, { rejectAsUnanswered: true })
     },
 
+    // A side question is Claude Code's own /btw, asked over the control
+    // channel: the child answers it in one reply from the conversation it
+    // holds, refuses it every tool, writes nothing to its session file, and
+    // goes on with a turn it is running. A live child is asked as it is, under
+    // whatever preset it runs, since the answer runs nothing; one is started
+    // (resuming the session, as a message would) only when the chat has none.
+    // The cost joins the child's running total, so the next turn's result
+    // reports it once. Called off by the signal, which the SDK passes on.
+    async askSideQuestion(
+      sessionId: string,
+      input: ConversationProviderSideQuestionInput,
+    ): Promise<ConversationSideQuestionResult> {
+      const state = sessions.get(sessionId)
+      if (!state) return { ok: false, message: 'Conversation session is invalid.' }
+      try {
+        if (!state.query) await ensureQuery(state)
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : 'Claude Code could not be started.' }
+      }
+      const q = state.query as SideQuestionQuery | null
+      if (!q) return { ok: false, message: 'Claude Code is not running for this chat.' }
+      if (typeof q.askSideQuestion !== 'function') return { ok: false, message: SIDE_QUESTION_UNSUPPORTED }
+      state.lastActivityAt = now()
+      try {
+        const answer = await q.askSideQuestion(input.question, {
+          signal: input.signal,
+          ...(input.history.length
+            ? { history: input.history.map((entry) => ({ question: entry.question, response: entry.answer })) }
+            : {}),
+        })
+        const text = typeof answer?.response === 'string' ? answer.response.trim() : ''
+        return text ? { ok: true, answer: text } : { ok: false, message: 'Claude Code gave no answer to that.' }
+      } catch (error) {
+        if (state.query !== q) return { ok: false, message: 'Claude Code stopped before it answered.' }
+        const message = error instanceof Error ? error.message : String(error)
+        return { ok: false, message: /unsupported|not supported/i.test(message) ? SIDE_QUESTION_UNSUPPORTED : message }
+      } finally {
+        state.lastActivityAt = now()
+      }
+    },
+
     disposeChildProcess(sessionId: string, _options?: ConversationDisposeOptions): boolean {
       const state = sessions.get(sessionId)
       if (!state) return false
@@ -1949,14 +2106,10 @@ const ATTACHED_SKILLS_PLUGIN = 'attached-skills'
 // the user setting source still loads; only workspace skills are staged.
 const attachedSkillName = (id: string) => (id.includes(':') ? id : `${ATTACHED_SKILLS_PLUGIN}:${id}`)
 
-// Staged folders are named for the process that made them, so a sweep can
-// tell one a running app still uses from one a dead process left behind.
-const SKILL_PLUGIN_PREFIX = 'sprintengine-claude-skills-'
-
 async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skillIds: string[]): Promise<string | null> {
   skillIds = skillIds.filter((id) => !id.includes(':'))
   if (!skillIds.length) return null
-  const dir = await mkdtemp(join(tempDir, `${SKILL_PLUGIN_PREFIX}${process.pid}-`))
+  const dir = await mkdtemp(join(tempDir, `${STAGED_PLUGIN_PREFIX}${process.pid}-`))
   try {
     await mkdir(join(dir, '.claude-plugin'))
     await writeFile(
@@ -1986,12 +2139,12 @@ export async function sweepStaleSkillPlugins(tempDir: string): Promise<void> {
   const startedAt = Date.now() - process.uptime() * 1000
   const uid = process.getuid?.()
   for (const name of await readdir(tempDir)) {
-    if (!name.startsWith(SKILL_PLUGIN_PREFIX)) continue
+    if (!name.startsWith(STAGED_PLUGIN_PREFIX)) continue
     const path = join(tempDir, name)
     const info = await lstat(path).catch(() => null)
     if (!info?.isDirectory() || info.isSymbolicLink() || info.mtimeMs >= startedAt) continue
     if (uid !== undefined && info.uid !== uid) continue
-    const owner = /^(\d+)-/.exec(name.slice(SKILL_PLUGIN_PREFIX.length))?.[1]
+    const owner = /^(\d+)-/.exec(name.slice(STAGED_PLUGIN_PREFIX.length))?.[1]
     if (owner ? isRunning(Number(owner)) : Date.now() - info.mtimeMs < 24 * 60 * 60 * 1000) continue
     await rm(path, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -2074,6 +2227,18 @@ function waitingNotice(waiting: string[]): string {
   const list = waiting.length > 1 ? `${waiting.slice(0, -1).join(', ')} and ${waiting.at(-1)}` : waiting[0]!
   return `${list[0]!.toUpperCase()}${list.slice(1)} will apply to your messages once the background work in this chat finishes.`
 }
+
+// The SDK's `askSideQuestion`, which its typings do not declare yet: the
+// question, the side questions before it as `{ question, response }`, and an
+// abort signal; null when it was called off.
+type SideQuestionQuery = Query & {
+  askSideQuestion?(
+    question: string,
+    options?: { history?: Array<{ question: string; response: string }>; signal?: AbortSignal },
+  ): Promise<{ response: string | null; synthetic?: boolean } | null>
+}
+
+const SIDE_QUESTION_UNSUPPORTED = 'This version of Claude Code cannot answer side questions. Update it to ask one.'
 
 /**
  * Whether `promise` settled within `ms`. A rejection counts as an answer
@@ -2308,12 +2473,10 @@ function spawnLocalChild(spawnInput: SpawnOptions): ChildProcess {
   const launch = localLaunchToken(launchIdentityOfEnv(env))
   let child: ChildProcess
   try {
-    child = spawn(spawnInput.command, spawnInput.args, {
+    child = spawnClaudeLocalProcess(spawnInput.command, spawnInput.args, {
       cwd: spawnInput.cwd,
       env: claudeLocalChildEnv(env, launch?.token ?? null, spawnInput.cwd),
-      stdio: ['pipe', 'pipe', 'pipe'],
       signal: spawnInput.signal,
-      windowsHide: true,
     })
   } catch (error) {
     launch?.revoke()
@@ -2892,6 +3055,14 @@ export function mapSdkMessage(
     case 'user': {
       const parentToolUseId = readParentToolUseId(message)
       const content = asRecord(message.message)?.content
+      // A slash command that stops before the model is asked, a `!` line of
+      // it refused by Claude Code's permission check above all, says why in a
+      // user message of the CLI's own making and nowhere else; the turn then
+      // ends with no reply. Claude Code 2.1.296 escapes the text as markup.
+      if (!parentToolUseId && typeof content === 'string' && /^\s*<local-command-stderr>/.test(content)) {
+        commandOutput(unescapeMarkup(stripLocalCommandTags(content)), undefined)
+        break
+      }
       if (!Array.isArray(content)) break
       // The structured result describes the message's one tool result; one
       // that answers several calls at once says nothing a task can be read from.
@@ -3402,6 +3573,12 @@ function stripLocalCommandTags(text: string): string {
   return text.replace(/<\/?local-command-(?:stdout|stderr)>/g, '')
 }
 
+const MARKUP_ENTITIES: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", amp: '&' }
+
+function unescapeMarkup(text: string): string {
+  return text.replace(/&(lt|gt|quot|apos|#39|amp);/g, (_, name: string) => MARKUP_ENTITIES[name]!)
+}
+
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
@@ -3534,10 +3711,22 @@ function extractResultText(content: unknown): string {
     .join('\n')
 }
 
-function describeSpawnFailure(error: unknown, stderrTail: string): string {
+/** Why the Claude Code child ended a turn it was in: its error, then the end of what it wrote on stderr. */
+export function describeSpawnFailure(
+  error: unknown,
+  stderrTail: string,
+  folder?: string | null,
+  machine: { platform: string; home: string } = { platform: process.platform, home: homedir() },
+): string {
   const base = error instanceof Error && error.message ? error.message : 'Claude Code exited unexpectedly.'
   const tail = cliStderrSummary(stderrTail)
-  return tail ? `${base} (${tail})` : base
+  // A project in Desktop, Documents, Downloads or iCloud Drive that macOS has
+  // not let the app into: the CLI dies with EPERM, and the fix is a setting.
+  return withMacosPrivacyFolderHint(tail ? `${base} (${tail})` : base, {
+    ...machine,
+    folder,
+    evidence: stderrTail,
+  })
 }
 
 /**

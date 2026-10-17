@@ -40,6 +40,12 @@ function fixture(
     resolveStudioMcpServer?: CodexConversationProviderOptions['resolveStudioMcpServer']
     // Codex never answers `initialize`.
     initializeTimesOut?: boolean
+    // Codex exits before it answers `initialize`, with this error.
+    initializeError?: string
+    // The machine the chat's `codex` runs on, and the folder it runs in.
+    platform?: NodeJS.Platform
+    homeDir?: string
+    workspaceRoot?: string
     readCodexLogBytes?: CodexConversationProviderOptions['readCodexLogBytes']
     // The answer to `account/rateLimits/read`.
     rateLimits?: () => unknown
@@ -61,6 +67,8 @@ function fixture(
     saveGeneratedImage: setup.saveGeneratedImage,
     ...(setup.resolveStudioMcpServer ? { resolveStudioMcpServer: setup.resolveStudioMcpServer } : {}),
     ...(setup.readCodexLogBytes ? { readCodexLogBytes: setup.readCodexLogBytes } : {}),
+    ...(setup.platform ? { platform: setup.platform } : {}),
+    ...(setup.homeDir ? { homeDir: setup.homeDir } : {}),
     createTransport(options) {
       connection = options
       transports.created++
@@ -69,6 +77,7 @@ function fixture(
         async request(method, params) {
           calls.push({ method, params })
           if (method === 'initialize' && setup.initializeTimesOut) throw new Error('Codex initialize timed out.')
+          if (method === 'initialize' && setup.initializeError) throw new Error(setup.initializeError)
           if (method === 'account/read')
             return setup.account ?? { requiresOpenaiAuth: true, account: { type: 'chatgpt' } }
           if (method === 'thread/resume' && setup.resume) return setup.resume(params)
@@ -109,7 +118,7 @@ function fixture(
     agentId: 'agent',
     providerId: 'codex-agent',
     modelId: 'gpt-6-sol',
-    workspaceRoot: '/workspace/app',
+    workspaceRoot: setup.workspaceRoot ?? '/workspace/app',
     permissionPreset: 'none' as ConversationPermissionPreset,
   }
   const events: ConversationEvent[] = []
@@ -1143,6 +1152,36 @@ test('a start Codex never answers says what to run, and names a large log databa
   expect(asked).toEqual([null])
 })
 
+const EPERM_EXIT = 'Codex process exited (1): Error: EPERM: operation not permitted, uv_cwd.'
+
+test('a start refused with EPERM in a folder macOS keeps private says where to allow it', async () => {
+  const f = fixture({
+    initializeError: EPERM_EXIT,
+    platform: 'darwin',
+    homeDir: '/Users/dev',
+    workspaceRoot: '/Users/dev/Documents/app',
+  })
+  await f.adapter.startSession(f.input)
+  await f.send()
+  const words = JSON.stringify((f.events.at(-1) as ConversationEvent).payload)
+  expect(words).toContain('EPERM: operation not permitted')
+  expect(words).toContain('System Settings › Privacy & Security › Files and Folders')
+})
+
+test('the same refusal off macOS, or in a folder macOS does not keep, says only what Codex said', async () => {
+  for (const setup of [
+    { platform: 'linux' as const, homeDir: '/home/dev', workspaceRoot: '/home/dev/Documents/app' },
+    { platform: 'darwin' as const, homeDir: '/Users/dev', workspaceRoot: '/Users/dev/code/app' },
+  ]) {
+    const f = fixture({ initializeError: EPERM_EXIT, ...setup })
+    await f.adapter.startSession(f.input)
+    await f.send()
+    const words = JSON.stringify((f.events.at(-1) as ConversationEvent).payload)
+    expect(words).toContain('EPERM')
+    expect(words).not.toContain('Privacy & Security')
+  }
+})
+
 test('a start Codex never answers with a small log database names only what to run', async () => {
   const f = fixture({ initializeTimesOut: true, readCodexLogBytes: async () => 40 * 1024 ** 2 })
   await f.adapter.startSession(f.input)
@@ -1221,6 +1260,33 @@ test('Codex offers /compact as soon as a chat starts, and its skills once the ap
     forceReload: true,
   })
   expect(f.events.at(-1)?.type).toBe('turn_completed')
+})
+
+test('a $skill Codex listed goes to turn/start as the skill itself beside the text, an unknown one as text alone', async () => {
+  const path = '/workspace/skills/.codex/skills/release-notes/SKILL.md'
+  const f = fixture({
+    skills: { data: [{ cwd: '/workspace/skills', skills: [{ name: 'release-notes', path, enabled: true }] }] },
+  })
+  f.input.workspaceRoot = '/workspace/skills'
+  await f.adapter.startSession(f.input)
+  const message = 'Use $release-notes and $unknown for v2.'
+  const first = f.send(undefined, undefined, message)
+  await f.started
+  expect((f.calls.find((call) => call.method === 'turn/start')?.params as { input: unknown[] }).input).toEqual([
+    { type: 'text', text: message, text_elements: [] },
+    { type: 'skill', name: 'release-notes', path },
+  ])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await first
+
+  f.nextTurn()
+  const second = f.send(undefined, undefined, 'No skill: $unknown costs $5.')
+  await f.started
+  expect((f.calls.filter((call) => call.method === 'turn/start').at(-1)?.params as { input: unknown[] }).input).toEqual(
+    [{ type: 'text', text: 'No skill: $unknown costs $5.', text_elements: [] }],
+  )
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await second
 })
 
 test('/compact at the start of a message compacts the thread natively instead of sending it as a turn', async () => {
@@ -1737,13 +1803,21 @@ test('what Codex reports beside the reply is said in the turn, once', async () =
   ])
 })
 
+const GRACE = ['-c', 'mcp_optional_startup_grace_ms=10000']
+
 test('the handshake asks for the experimental API, and extra app-server arguments come from the environment', async () => {
   const f = fixture({ env: { SPRINTENGINE_CODEX_APP_SERVER_ARGS: `-c 'features.code_mode_host=false'` } })
   await runTurn(f, [])
   expect(f.calls.find((call) => call.method === 'initialize')?.params).toMatchObject({
     capabilities: { experimentalApi: true },
   })
-  expect(f.connection.args).toEqual(['-c', 'features.code_mode_host=false'])
+  expect(f.connection.args).toEqual(['-c', 'features.code_mode_host=false', ...GRACE])
+})
+
+test("Codex waits 10 s, not its own 1 s, for a new thread's MCP servers, so a cold npx server's tools are there from the first turn", async () => {
+  const f = fixture()
+  await runTurn(f, [])
+  expect(f.connection.args).toEqual(['-c', 'mcp_optional_startup_grace_ms=10000'])
 })
 
 test("a chat's own MCP servers reach Codex as config overrides for its app-server alone", async () => {
@@ -1766,6 +1840,7 @@ test("a chat's own MCP servers reach Codex as config overrides for its app-serve
   expect(f.connection.args).toEqual([
     '-c',
     'features.code_mode_host=false',
+    ...GRACE,
     '-c',
     'mcp_servers.railway={ "command" = "npx", "args" = ["-y", "@railway/mcp"], "env_vars" = ["RAILWAY_TOKEN"], "env" = { "RAILWAY_ENV" = "prod" } }',
   ])
@@ -1836,7 +1911,7 @@ test('a Codex chat whose gateway cannot be resolved still starts, with only its 
     },
   })
   await runTurn(f, [])
-  expect(f.connection.args).toEqual([])
+  expect(f.connection.args).toEqual(GRACE)
 })
 
 // A chat with the gateway is told to lease a worktree from the pool rather than

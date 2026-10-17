@@ -549,6 +549,7 @@ export async function runGitCommand(
       message: execError.timedOut
         ? execError.message
         : stderr || removeLineEndingWarnings(execError.message ?? '') || 'Git command failed.',
+      ...(execError.timedOut ? { timedOut: true as const } : {}),
     }
   }
 }

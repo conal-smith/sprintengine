@@ -196,6 +196,8 @@ test("a Codex chat on a WSL machine is handed that machine's gateway, its token 
   expect(f.asked).toEqual([{ hostId: 'wsl:Ubuntu' }])
   expect(f.connection.args).toEqual([
     '-c',
+    'mcp_optional_startup_grace_ms=10000',
+    '-c',
     'mcp_servers.sprintengine-studio={ "command" = "/home/dev/.sprintengine/bin/studio", "args" = ["mcp"], "env_vars" = ["SPRINTENGINE_MCP_CHANNEL_TOKEN"], "env" = { "SPRINTENGINE_USER_DATA_DIR" = "/home/dev/.local/share/sprintengine-studio", "SPRINTENGINE_WORKSPACE_ID" = "workspace", "SPRINTENGINE_AGENT_ID" = "agent", "SPRINTENGINE_AGENT_CLI" = "codex" } }',
   ])
   expect(f.connection.args?.join(' ')).not.toContain(TOKEN)

@@ -21,6 +21,9 @@ import type {
   ConversationSessionSummary,
   ConversationSetModelInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
   ConversationStartSessionResult,
@@ -186,6 +189,17 @@ export type ConversationTransport = {
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
   /**
+   * Ask a side question about the chat: answered from its context, added to
+   * nothing, a running turn left as it was. Absent where the transport
+   * cannot, as `stopSubagent` is. Offered only where the provider declares
+   * `sideQuestion` as well.
+   */
+  askSideQuestion?(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult>
+  /** Call off a side question still being answered. Present wherever `askSideQuestion` is. */
+  cancelSideQuestion?(
+    input: ConversationCancelSideQuestionInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }>
+  /**
    * The Studio this window belongs to: providers, files, plans and command
    * lists. The same for every chat in the window, whichever machine it runs on.
    */
@@ -239,6 +253,8 @@ const ipcConversationParts: Required<
   startSession: (input) => window.api.conversationSessionStart(input),
   revert: (input) => window.api.conversationRevertToTurn(input),
   stopSubagent: (input) => window.api.conversationSessionStopSubagent(input),
+  askSideQuestion: (input) => window.api.conversationSessionAskSideQuestion(input),
+  cancelSideQuestion: (input) => window.api.conversationSessionCancelSideQuestion(input),
 }
 
 // One Studio implementation per window object, so its client and the
@@ -320,6 +336,12 @@ export const localConversationTransport: ConversationTransport = {
   // one has no way to do it.
   get stopSubagent() {
     return localParts().stopSubagent
+  },
+  get askSideQuestion() {
+    return localParts().askSideQuestion
+  },
+  get cancelSideQuestion() {
+    return localParts().cancelSideQuestion
   },
   services: windowServices,
 }

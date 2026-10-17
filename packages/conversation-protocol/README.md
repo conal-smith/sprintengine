@@ -149,6 +149,19 @@ advertises it serves one at `GET /tailnet/v1/conversation-image` by its `ref`
 (`attachment=<ref>` in place of `toolUseId`). A client without it names the
 picture rather than drawing it.
 
+`conversation-message-files` (`CONVERSATION_MESSAGE_FILES_CAPABILITY`) names
+no frame either. The desktop's upload route takes `kind=file`, a file of any
+type, and a `send` names its `uploadId` in `uploadIds` beside any picture's.
+The desktop attaches it to the message by its path there, so the
+`user_message` lists it in `files` (`{ path }`). A client without it offers
+pictures only.
+
+`conversation-image-downscale` (`CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY`)
+names no frame either. A desktop that advertises it shrinks each picture
+uploaded for a chat to a 1568px long edge on receipt, so its upload route takes
+up to 20 MB as it arrives and keeps at most 5 MB. A client without it holds an
+upload to 5 MB itself.
+
 `ConversationCreateRequest` is what starting a conversation takes, with
 `allowedTools` — tools the chat may use without asking — beside the preset.
 Validate one with `parseConversationCreateRequest`. The tailnet lane does not
