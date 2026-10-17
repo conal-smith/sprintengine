@@ -5,6 +5,7 @@ import {
   remapEditorBuffers,
   removeEditorBuffersForPath,
   setEditorBuffer,
+  setEditorDiskBaseline,
 } from '../../utils/editorBuffers'
 import { pickRandomAgentName } from '../../utils/agentNames'
 // One containment check for the whole app (src/shared/paths.ts); re-exported
@@ -358,6 +359,9 @@ export function createAgentsSlice(set: AgentsSliceSet): AgentsSlice {
 
     openFile: (workspaceId, path, name, content) => {
       setEditorBuffer(workspaceId, path, content)
+      // Every opener hands over what it just read off disk (or, for a file it
+      // just created, the nothing it wrote): the editor's on-disk baseline.
+      setEditorDiskBaseline(workspaceId, path, content)
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === workspaceId)
         if (!ws) return
