@@ -41,8 +41,8 @@ import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, studioEnvEntry, without
 import { withoutInheritedSessionEnv } from './inherited-session-env'
 import {
   lastKnownLoginShellPath,
-  lastKnownLoginShellTrustEnv,
-  withLoginShellTrustEnv,
+  lastKnownLoginShellEnv,
+  withLoginShellEnv,
   withUserShellPath,
 } from './login-shell-path'
 import { isWindowsPath, toWslPath, wslToWindowsPath } from '../shared/host-paths'
@@ -130,14 +130,15 @@ export function getTerminalEnv(): Record<string, string> {
   // The person's own PATH, not the one the app was started with: opened from
   // Finder or the Dock, that is launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, and
   // an agent's shell then has no Homebrew, no `/usr/local/bin` and no `npx`.
-  // Its certificate trust too, for the same reason: see LOGIN_SHELL_TRUST_VARIABLES.
-  const userEnv = withLoginShellTrustEnv(
+  // Its certificate trust and provider settings too, for the same reason: see
+  // LOGIN_SHELL_ENV_VARIABLES.
+  const userEnv = withLoginShellEnv(
     withUserShellPath(env, {
       platform: process.platform,
       loginPath: lastKnownLoginShellPath(),
       exists: existsSync,
     }),
-    lastKnownLoginShellTrustEnv(),
+    lastKnownLoginShellEnv(),
   )
 
   // Surface CLIs installed into the managed npm prefix (e.g. Codex) on PATH so
