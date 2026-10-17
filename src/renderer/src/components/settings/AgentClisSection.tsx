@@ -38,6 +38,7 @@ import { modelDiscoveryLine } from './modelDiscoveryLine'
 import { SettingCard, SettingsRow, SettingsSectionTitle } from './SettingsAtoms'
 import type { SettingsUpdateBadge } from '../../utils/settingsUpdateBadges'
 import { isImeKey } from '../../utils/imeKey'
+import { useRelativeNowFor } from '../../hooks/useRelativeNow'
 
 // The bare shell runtime is the machine's own `sh`, not a CLI this app
 // installs or updates. Asked `--version`, bash answers with its whole banner
@@ -263,7 +264,6 @@ export function AgentClisSection({
   machineAvailability,
   onMachineReload,
   showMachine,
-  now,
   runs,
   updateBadgeClis,
 }: {
@@ -276,7 +276,6 @@ export function AgentClisSection({
   onMachineReload: () => void
   /** A switcher is on screen, so a state line names the machine it found the CLI on. */
   showMachine: boolean
-  now: number
   /**
    * The CLIs on this machine whose update is still news — not installed, not
    * dismissed — and so wear a count beside their Update button
@@ -587,7 +586,6 @@ export function AgentClisSection({
                         name={plugin.displayName}
                         catalog={discoveredCatalog}
                         error={modelRefresh.errors[plugin.id] ?? null}
-                        now={now}
                         refreshing={modelRefresh.running}
                         onRefresh={() => void refreshCliModels()}
                       />
@@ -671,26 +669,27 @@ export function AgentClisSection({
 }
 
 // One CLI's model list: where the rows in its picker came from, with the one
-// manual trigger. The words come from modelDiscoveryLine; the clock is the
-// band's, so "checked 2m ago" ages with it. Refresh re-asks every installed CLI
+// manual trigger. The words come from modelDiscoveryLine, and the row keeps
+// its own clock so "checked 2m ago" ages without the tab re-rendering around
+// it. Refresh re-asks every installed CLI
 // past the freshness window, and the answer replaces each CLI's list.
 function CliModelsRow({
   name,
   catalog,
   error,
-  now,
   refreshing,
   onRefresh,
 }: {
   name: string
   catalog: DiscoveredCliModelCatalog | undefined
   error: string | null
-  now: number
   refreshing: boolean
   onRefresh: () => void
 }) {
+  const line = (now: number) => modelDiscoveryLine({ name, catalog, error, now })
+  const now = useRelativeNowFor(line)
   return (
-    <SettingsRow label="Model list" help={modelDiscoveryLine({ name, catalog, error, now })}>
+    <SettingsRow label="Model list" help={line(now)}>
       <OutlineButton size="xs" disabled={refreshing} onClick={onRefresh}>
         {refreshing ? <Spinner className="icon-sm" /> : null}
         Refresh

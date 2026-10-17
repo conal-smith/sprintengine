@@ -40,7 +40,6 @@ function Section({
         reloads.count += 1
       }}
       showMachine
-      now={2}
       runs={runs}
       updateBadgeClis={updateBadgeClis}
     />

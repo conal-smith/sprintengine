@@ -20,6 +20,7 @@ import { effectiveWindowMaterial, type WindowMaterial } from '../../types/appThe
 import { resolveProjectKnowledgeConfig } from '../../utils/projectKnowledge'
 import { basename } from '../../utils/paths'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
+import { useRelativeNowFor } from '../../hooks/useRelativeNow'
 import { WorkspacePanel } from '../ui/WorkspacePanel'
 import {
   Badge,
@@ -384,15 +385,18 @@ function KeepRecentAliveField({ descriptor }: { descriptor: SettingDescriptor })
 // disagree.
 function AgentCliBand({
   checkedAt,
-  now,
   rechecking,
   onRecheck,
 }: {
   checkedAt: number | null
-  now: number
   rechecking: boolean
   onRecheck: () => void
 }) {
+  // The meta has to age or it lies: "checked just now" would stay on screen
+  // for an hour. The band reads the shared clock itself and draws again only
+  // when the words change, so the minute stays honest without the whole
+  // Agents tab re-rendering on every tick to draw "checked 3h ago" again.
+  const now = useRelativeNowFor((at) => formatRelativeMsAgo(checkedAt, at))
   const freshness = formatRelativeMsAgo(checkedAt, now)
   const meta = freshness ? `checked ${freshness}` : undefined
   return (
@@ -789,18 +793,6 @@ export default function SettingsPanel({
     void refreshCliAvailability({ cliRuntimes })
   }, [activeSettingsTab, refreshCliAvailability, cliRuntimes])
 
-  // The band's freshness meta has to age or it lies: "Checked just now" would
-  // stay on screen for an hour. Re-read the clock every 30s while the tab is
-  // open (and immediately on a new probe) — enough to keep the minute honest,
-  // cheap enough not to matter.
-  const [agentsFreshnessNow, setAgentsFreshnessNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (activeSettingsTab !== 'agents') return
-    setAgentsFreshnessNow(Date.now())
-    const tick = window.setInterval(() => setAgentsFreshnessNow(Date.now()), 30_000)
-    return () => window.clearInterval(tick)
-  }, [activeSettingsTab, cliAvailabilityCheckedAt])
-
   // Which machine's agent CLIs the Agents tab lists (owner ruling 2026-09-24):
   // this one, and each WSL distribution turned on in Settings ▸ Machines. One
   // machine — every macOS and Linux install, and Windows with no distribution
@@ -862,11 +854,6 @@ export default function SettingsPanel({
       setAgentsRechecking(false)
     }
   }, [checkCliVersions, cliRuntimes, refreshCliAvailability, refreshCliVersionAdvisories, reloadAgentsMachine])
-  // A WSL machine's answer restarts the band's clock the way this machine's does.
-  const agentsMachineCheckedAt = agentsMachineCli.availability?.checkedAt ?? null
-  useEffect(() => {
-    if (agentsMachineCheckedAt !== null) setAgentsFreshnessNow(Date.now())
-  }, [agentsMachineCheckedAt])
 
   // If the active tab is no longer visible (e.g. the Mobile module was disabled
   // while its tab was active), fall back to the first visible tab so the panel
@@ -1514,7 +1501,6 @@ export default function SettingsPanel({
         <div role="tabpanel" id="settings-panel-agents" aria-labelledby="settings-tab-agents" className="space-y-3">
           <AgentCliBand
             checkedAt={agentsOnWsl ? (agentsMachineCli.availability?.checkedAt ?? null) : cliAvailabilityCheckedAt}
-            now={agentsFreshnessNow}
             rechecking={agentsRechecking}
             onRecheck={() => void recheckAgentClis()}
           />
@@ -1551,7 +1537,6 @@ export default function SettingsPanel({
             machineAvailability={agentsMachineCli.availability}
             onMachineReload={agentsMachineCli.reload}
             showMachine={agentsMachineOptions.length > 1}
-            now={agentsFreshnessNow}
             updateBadgeClis={updateBadges.clis[agentsMachine.id] ?? NO_UPDATE_BADGE_CLIS}
           />
           {/* A WSL machine's own `gh`, beside its agent CLIs: its chats open

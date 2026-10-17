@@ -334,7 +334,9 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       // A count git could not give is no proof the remote has it all: push.
       if (Number.isFinite(ahead) && ahead <= 0) return { ok: true, pushed: false }
     }
-    const pushed = await git(gitRoot, ['push', ...(target.setUpstream ? ['-u'] : []), remote, refspec])
+    // `--` so the remote, read from the repository's config, is never taken
+    // for an option, whatever slipped past the push target's check.
+    const pushed = await git(gitRoot, ['push', ...(target.setUpstream ? ['-u'] : []), '--', remote, refspec])
     return pushed.ok ? { ok: true, pushed: true } : { ok: false, message: gitFailure('push', pushed) }
   }
 
