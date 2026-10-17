@@ -1,5 +1,11 @@
 import { expect, test } from 'vitest'
-import { codexCompactRequest, codexConversationCommands, codexGoalRequest, codexListedSkills, codexSkillInputs } from './codex'
+import {
+  codexCompactRequest,
+  codexConversationCommands,
+  codexGoalRequest,
+  codexListedSkills,
+  codexSkillInputs,
+} from './codex'
 
 const cwd = '/Users/dev/app'
 const listed = (skills: unknown[]) => ({ data: [{ cwd, skills, errors: [] }] })
