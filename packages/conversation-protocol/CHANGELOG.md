@@ -25,6 +25,13 @@
   `parseConversationServerFrame` keeps it when both counts are whole and one
   is above zero, and leaves it out otherwise (`parseConversationBackgroundWork`).
   The pinned files are unchanged.
+- **A session can have a goal.** `ConversationGoal` (`objective`, `status`)
+  is a goal the agent keeps working toward by itself, and
+  `ConversationGoalStatus` says where it stands. A `session_updated` event
+  carries it as `goal` when it changes, and `goal: null` once there is none.
+  The turns the agent starts toward it come as `turn_started` with no
+  `user_message` before them, as a turn an agent carries on with by itself
+  always has. No frame changed; the pinned files are unchanged.
 - **A listed chat says where the desktop's sidebar orders it, and when its
   turn began.** `recencyAt` and `turnStartedAt` are optional members of
   `ConversationThread`. `recencyAt` is the moment the desktop's own sidebar
@@ -48,6 +55,7 @@
   20 MB where it took 5 MB; what it keeps is still at most 5 MB. No frame
   changed; a client without it keeps its upload under 5 MB itself. The pinned
   files are unchanged.
+
 - **The pictures a person sent with a message can be fetched.**
   `CONVERSATION_MESSAGE_IMAGES_CAPABILITY` (`conversation-message-images`)
   names a desktop whose `GET /tailnet/v1/conversation-image` takes

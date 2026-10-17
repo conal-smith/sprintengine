@@ -209,6 +209,7 @@ import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
 import { PROMPT_STASH_COMMAND, usePromptStash } from './agentChat/promptStashPicker'
 import { BackgroundTasksTrayRow } from './agentChat/backgroundTasksRow'
+import { GoalTrayRow } from './agentChat/goalTrayRow'
 import { WorktreeInstallTrayRow } from './agentChat/worktreeInstallRow'
 import { StudioConnectionNotice } from './agentChat/studioConnectionNotice'
 import { ConversationTodoStrip } from './agentChat/todoProgressStrip'
@@ -3818,6 +3819,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   stopping={pending === 'stopping'}
                 />
               ) : null}
+              {/* The goal the agent keeps working toward by itself, turn after
+                turn, and where it stands: during its turns as between them.
+                Only for a live session, which says its goal again once it has
+                read the thread's. */}
+              {sessionId !== null ? <GoalTrayRow goal={projection.goal} seed={sessionId} /> : null}
               {requestPending ? null : (
                 <>
                   <ConversationTodoStrip entries={shapeEntries} activeTurn={projection.activeTurn} />

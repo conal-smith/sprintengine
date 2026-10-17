@@ -199,6 +199,7 @@ function reconcileProjection(previous: ConversationProjection, next: Conversatio
     backgroundTasks: sameValue(previous.backgroundTasks, next.backgroundTasks, -1)
       ? previous.backgroundTasks
       : next.backgroundTasks,
+    goal: sameValue(previous.goal, next.goal) ? previous.goal : next.goal,
     promptCache: sameValue(previous.promptCache, next.promptCache) ? previous.promptCache : next.promptCache,
   }
 }

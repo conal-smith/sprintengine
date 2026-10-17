@@ -3,9 +3,9 @@ import { leadingSlashCommand } from './leading-command'
 
 /**
  * Codex's app-server has no command list: the terminal's slash commands are
- * RPCs there, and a `/compact` sent as text reaches the model as prose. This is
- * the one the Codex adapter runs itself (`thread/compact/start`), so it is the
- * one the menu offers.
+ * RPCs there, and a `/compact` sent as text reaches the model as prose. The
+ * menu offers the ones the Codex adapter runs itself: this one as
+ * `thread/compact/start`, and `/goal` below.
  */
 export const CODEX_COMPACT_COMMAND: ConversationCommand = {
   name: 'compact',
@@ -27,6 +27,43 @@ export function codexCompactRequest(message: string, attachments = 0): 'run' | '
 
 /** A skill Codex lists for a folder, with the `SKILL.md` path it names it by. */
 export type CodexListedSkill = { name: string; path: string | null; description?: string }
+
+/**
+ * A goal Codex keeps working toward: with one set, Codex starts its next turn
+ * itself until the goal is met, paused or blocked. The adapter runs it as
+ * `thread/goal/set`, `get` and `clear`, the words the terminal's `/goal` takes.
+ */
+export const CODEX_GOAL_COMMAND: ConversationCommand = {
+  name: 'goal',
+  description: 'Set a goal Codex keeps working toward',
+  argumentHint: '[objective | pause | resume | clear]',
+  source: 'cli',
+}
+
+/** The commands the Codex adapter runs itself, ahead of the folder's skills. */
+export const CODEX_BUILT_IN_COMMANDS: readonly ConversationCommand[] = [CODEX_COMPACT_COMMAND, CODEX_GOAL_COMMAND]
+
+export type CodexGoalRequest =
+  | { action: 'show' | 'pause' | 'resume' | 'clear' }
+  | { action: 'set'; objective: string }
+  | { action: 'refuse'; message: string }
+
+/**
+ * What a message asks of `/goal`: on its own, to say the goal; `pause`,
+ * `resume` or `clear` alone after it, that; anything else after it, the
+ * objective to set, every line of it. Images are refused, since a goal is
+ * words only and Codex would drop them without a word. Null when the message
+ * is not `/goal` at all.
+ */
+export function codexGoalRequest(message: string, attachments = 0): CodexGoalRequest | null {
+  if (leadingSlashCommand(message) !== CODEX_GOAL_COMMAND.name) return null
+  if (attachments > 0) return { action: 'refuse', message: 'A Codex goal is words only: send /goal without images.' }
+  const rest = message.trim().slice('/goal'.length).trim()
+  if (!rest) return { action: 'show' }
+  const word = rest.toLowerCase()
+  if (word === 'pause' || word === 'resume' || word === 'clear') return { action: word }
+  return { action: 'set', objective: rest }
+}
 
 /**
  * The enabled skills Codex lists for a folder (`skills/list`), one per name,
@@ -112,10 +149,11 @@ export function codexSkillInputs(
   return inputs
 }
 
-/** Codex's whole `/` menu for a folder: `/compact`, then its skills. */
+/** Codex's whole `/` menu for a folder: `/compact` and `/goal`, then its skills. */
 export function codexConversationCommands(skillsListResponse: unknown, cwd: string): ConversationCommand[] {
+  const builtIn = new Set(CODEX_BUILT_IN_COMMANDS.map((command) => command.name))
   return [
-    CODEX_COMPACT_COMMAND,
-    ...codexSkillCommands(skillsListResponse, cwd).filter((skill) => skill.name !== CODEX_COMPACT_COMMAND.name),
+    ...CODEX_BUILT_IN_COMMANDS,
+    ...codexSkillCommands(skillsListResponse, cwd).filter((skill) => !builtIn.has(skill.name)),
   ]
 }
