@@ -319,7 +319,7 @@
     "axe-core": "^4.14.0",
     "electron": "^44.7.2",
     "electron-builder": "^26.15.3",
-    "electron-vite": "6.0.0-beta.5",
+    "electron-vite": "6.0.0-beta.8",
     "esbuild": "^0.28.2",
     "jsdom": "^30.1.2",
     "knip": "6.41.0",
