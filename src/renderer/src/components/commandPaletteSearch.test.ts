@@ -11,6 +11,7 @@ import {
   PALETTE_GROUP_ORDER,
   PALETTE_SCORE,
   paletteGroupRank,
+  paletteScopeForCommand,
   scoreCommandMatch,
   workspaceKeywordsFromDefinition,
   type PaletteCommandGroup,
@@ -445,4 +446,15 @@ test('commandPaletteSearch', async () => {
   })
 
   console.log('commandPaletteSearch: all assertions passed')
+})
+
+test('Go to file opens the palette on the Files tab', () => {
+  assert.equal(paletteScopeForCommand('search.goToFile'), 'files')
+})
+
+test('the other palette commands keep the scope they open on', () => {
+  assert.equal(paletteScopeForCommand('commandPalette.open'), 'all')
+  assert.equal(paletteScopeForCommand('search.everywhere'), 'all')
+  assert.equal(paletteScopeForCommand('search.files.open'), 'text')
+  assert.equal(paletteScopeForCommand('chat.new'), null)
 })

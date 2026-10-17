@@ -40,6 +40,12 @@ function fixture(
     resolveStudioMcpServer?: CodexConversationProviderOptions['resolveStudioMcpServer']
     // Codex never answers `initialize`.
     initializeTimesOut?: boolean
+    // Codex exits before it answers `initialize`, with this error.
+    initializeError?: string
+    // The machine the chat's `codex` runs on, and the folder it runs in.
+    platform?: NodeJS.Platform
+    homeDir?: string
+    workspaceRoot?: string
     readCodexLogBytes?: CodexConversationProviderOptions['readCodexLogBytes']
     // The answer to `account/rateLimits/read`.
     rateLimits?: () => unknown
@@ -61,6 +67,8 @@ function fixture(
     saveGeneratedImage: setup.saveGeneratedImage,
     ...(setup.resolveStudioMcpServer ? { resolveStudioMcpServer: setup.resolveStudioMcpServer } : {}),
     ...(setup.readCodexLogBytes ? { readCodexLogBytes: setup.readCodexLogBytes } : {}),
+    ...(setup.platform ? { platform: setup.platform } : {}),
+    ...(setup.homeDir ? { homeDir: setup.homeDir } : {}),
     createTransport(options) {
       connection = options
       transports.created++
@@ -69,6 +77,7 @@ function fixture(
         async request(method, params) {
           calls.push({ method, params })
           if (method === 'initialize' && setup.initializeTimesOut) throw new Error('Codex initialize timed out.')
+          if (method === 'initialize' && setup.initializeError) throw new Error(setup.initializeError)
           if (method === 'account/read')
             return setup.account ?? { requiresOpenaiAuth: true, account: { type: 'chatgpt' } }
           if (method === 'thread/resume' && setup.resume) return setup.resume(params)
@@ -109,7 +118,7 @@ function fixture(
     agentId: 'agent',
     providerId: 'codex-agent',
     modelId: 'gpt-6-sol',
-    workspaceRoot: '/workspace/app',
+    workspaceRoot: setup.workspaceRoot ?? '/workspace/app',
     permissionPreset: 'none' as ConversationPermissionPreset,
   }
   const events: ConversationEvent[] = []
@@ -1141,6 +1150,36 @@ test('a start Codex never answers says what to run, and names a large log databa
   expect(words).toContain('Moving `~/.codex/logs_*.sqlite*` aside fixes it.')
   // Read on the machine the chat ran on: this one, here.
   expect(asked).toEqual([null])
+})
+
+const EPERM_EXIT = 'Codex process exited (1): Error: EPERM: operation not permitted, uv_cwd.'
+
+test('a start refused with EPERM in a folder macOS keeps private says where to allow it', async () => {
+  const f = fixture({
+    initializeError: EPERM_EXIT,
+    platform: 'darwin',
+    homeDir: '/Users/dev',
+    workspaceRoot: '/Users/dev/Documents/app',
+  })
+  await f.adapter.startSession(f.input)
+  await f.send()
+  const words = JSON.stringify((f.events.at(-1) as ConversationEvent).payload)
+  expect(words).toContain('EPERM: operation not permitted')
+  expect(words).toContain('System Settings › Privacy & Security › Files and Folders')
+})
+
+test('the same refusal off macOS, or in a folder macOS does not keep, says only what Codex said', async () => {
+  for (const setup of [
+    { platform: 'linux' as const, homeDir: '/home/dev', workspaceRoot: '/home/dev/Documents/app' },
+    { platform: 'darwin' as const, homeDir: '/Users/dev', workspaceRoot: '/Users/dev/code/app' },
+  ]) {
+    const f = fixture({ initializeError: EPERM_EXIT, ...setup })
+    await f.adapter.startSession(f.input)
+    await f.send()
+    const words = JSON.stringify((f.events.at(-1) as ConversationEvent).payload)
+    expect(words).toContain('EPERM')
+    expect(words).not.toContain('Privacy & Security')
+  }
 })
 
 test('a start Codex never answers with a small log database names only what to run', async () => {

@@ -249,7 +249,7 @@ import { dispatchPanelCommandEvent } from '../../utils/panelCommands'
 // From the pure search module, not the palette component: the palette is
 // React.lazy and importing a type through it would be a needless edge into the
 // deferred chunk.
-import type { PaletteScope } from '../commandPaletteSearch'
+import { paletteScopeForCommand, type PaletteScope } from '../commandPaletteSearch'
 import { subscribePaletteOpenRequest, type PaletteAgentTarget } from '../palette/paletteOpenRequest'
 import { isGlobalShortcutSuppressedTarget, isTerminalKeyTarget } from '../../utils/keyboard'
 import { controlTabContextItemOf, controlTabContextOf, cycleFocusedControlTabScope } from '../../utils/controlTab'
@@ -3988,17 +3988,15 @@ export default function WorkspaceManager() {
         openSettings(true, 'general')
         return true
       }
-      // ⌘K, Shift Shift and ⌘⇧F raise the same overlay and dismiss the same
-      // competing surfaces; they differ only in the scope it opens filtered to
-      // (and, for the first two, not even that — they are separate commands so
-      // they are separately rebindable). Sharing the branch is what keeps them
-      // from drifting into three slightly different "open the palette" behaviours.
-      if (
-        commandId === 'commandPalette.open' ||
-        commandId === 'search.everywhere' ||
-        commandId === 'search.files.open'
-      ) {
-        setPaletteScope(commandId === 'search.files.open' ? 'text' : 'all')
+      // ⌘K, Shift Shift, ⌘P and ⌘⇧F raise the same overlay and dismiss the
+      // same competing surfaces; they differ only in the scope it opens
+      // filtered to (and, for the first two, not even that — they are separate
+      // commands so they are separately rebindable). Sharing the branch is what
+      // keeps them from drifting into slightly different "open the palette"
+      // behaviours.
+      const raisedScope = paletteScopeForCommand(commandId)
+      if (raisedScope) {
+        setPaletteScope(raisedScope)
         // A keyboard-raised palette belongs to no pane: whatever the star last
         // aimed it at must not silently steer this one.
         setPaletteTarget(null)
