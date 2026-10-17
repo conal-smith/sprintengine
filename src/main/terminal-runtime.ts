@@ -53,6 +53,7 @@ import {
 } from '../server/core/gateway-launch-tokens'
 import { resolveWslDistroForPath } from './hosts/wsl-distro'
 import type { HostAgentIntegration, HostLaunchTarget, HostProcessRef } from './hosts/execution-host'
+import type { LaunchIntegration } from './integrations/launch-integration'
 import {
   agentIdentityEnv,
   cleanupHostContextFile,
@@ -163,6 +164,22 @@ type TerminalRuntimeOptions = {
     // launch disagree.
     integration?: HostAgentIntegration | null
   }): Promise<{ ok: true } | { ok: false; message: string }>
+  // What this launch hands its CLI through the CLI's own per-launch channels
+  // (`integrations/launch-integration.ts`): the flags, environment, settings
+  // and plugin directories carrying its MCP servers, its agent-state hook and
+  // the skill its prompt invokes, so none of them is written into the
+  // workspace. Null for a launch with no such route (another machine, a
+  // connector launch, a CLI that takes none): the workspace writers below run
+  // as they always have. A failure is the launch's, like a failed MCP sync.
+  prepareLaunchIntegration?(input: {
+    workspaceRoot: string
+    cli: AgentCli
+    settings: McpSettings
+    skillIds: string[]
+    hostId?: string
+    integration?: HostAgentIntegration | null
+    connectorLaunch: boolean
+  }): Promise<{ ok: true; integration: LaunchIntegration | null } | { ok: false; message: string }>
   // Ensures a built-in skill is installed into the workspace before an agent
   // launches, so a prefilled invocation of it (a Backlog handoff's `/backlog`)
   // resolves to a real skill. Best-effort: the caller swallows failures and
@@ -197,7 +214,13 @@ type TerminalRuntimeOptions = {
   prepareAgentStateHook?(
     workspaceRoot: string,
     cli: string,
-    execution?: { pathStyle?: TerminalPathStyle; hostId?: string; integration?: HostAgentIntegration | null },
+    execution?: {
+      pathStyle?: TerminalPathStyle
+      hostId?: string
+      integration?: HostAgentIntegration | null
+      // The launch hands the CLI its hook itself: tidy, never install.
+      launchCarriesHook?: boolean
+    },
   ): Promise<void>
   // Durable freeze-the-view: per-terminal snapshot sidecars on disk, so a
   // suspended terminal reopens painted-and-paused after an app restart. Absent
@@ -331,6 +354,7 @@ let logMainPerfEvent: TerminalRuntimeOptions['logMainPerfEvent'] = () => {}
 const agentSessionExitListeners = new Set<AgentSessionExitListener>()
 const agentPhaseListeners = new Set<AgentPhaseListener>()
 let syncMcpConfig: TerminalRuntimeOptions['syncMcpConfig']
+let prepareLaunchIntegration: TerminalRuntimeOptions['prepareLaunchIntegration']
 let ensureBuiltinSkillInstalled: TerminalRuntimeOptions['ensureBuiltinSkillInstalled']
 let excludeWorktreeMcpConfig: TerminalRuntimeOptions['excludeWorktreeMcpConfig']
 let prepareAgentStateHook: TerminalRuntimeOptions['prepareAgentStateHook']
@@ -377,6 +401,7 @@ export function createTerminalRuntime(options: TerminalRuntimeOptions): Terminal
   agentSessionExitListeners.clear()
   agentPhaseListeners.clear()
   syncMcpConfig = options.syncMcpConfig
+  prepareLaunchIntegration = options.prepareLaunchIntegration
   ensureBuiltinSkillInstalled = options.ensureBuiltinSkillInstalled
   excludeWorktreeMcpConfig = options.excludeWorktreeMcpConfig
   prepareAgentStateHook = options.prepareAgentStateHook
@@ -3215,7 +3240,43 @@ async function spawnTerminalFromIpc(
       disposeOtherAgentSessions(sessionId, workspaceId, agentId)
     }
 
-    if (!shellOnly && syncMcpConfig) {
+    let launchIntegration: LaunchIntegration | null = null
+    if (!shellOnly && prepareLaunchIntegration) {
+      const prepared = await prepareLaunchIntegration({
+        workspaceRoot: workingDirectory,
+        cli: agentCli,
+        settings: mcpSettings ?? { syncEnabled: false, servers: {} },
+        skillIds: spawnSkillId ? [spawnSkillId] : [],
+        hostId: host.id,
+        integration: hostIntegration,
+        connectorLaunch: connectorLaunch === true,
+      })
+      if (!prepared.ok) {
+        retainFailedTerminalSession({
+          sessionId,
+          sender,
+          message: prepared.message,
+          kind: kind ?? (shellOnly ? 'terminal' : 'agent'),
+          workspaceId,
+          agentId,
+          agentName,
+          terminalId,
+          cli: shellOnly ? undefined : cli,
+          cwd: workingDirectory,
+          executionMode,
+          worktreeId,
+          worktreePath,
+          agentSession: materializeAgentSessionIdentity(sessionId, workspaceId, agentSession),
+          visible,
+        })
+        sendTerminalEvent(sender, `terminal:error:${sessionId}`, prepared.message)
+        sendTerminalEvent(sender, `terminal:exit:${sessionId}`, 1)
+        return { ok: false, sessionId, message: prepared.message, exitCode: 1 } satisfies TerminalSpawnResult
+      }
+      launchIntegration = prepared.integration
+    }
+
+    if (!shellOnly && syncMcpConfig && !launchIntegration?.carries.mcp) {
       const syncResult = await syncMcpConfig({
         workspaceRoot: workingDirectory,
         settings: mcpSettings ?? { syncEnabled: false, servers: {} },
@@ -3268,7 +3329,12 @@ async function spawnTerminalFromIpc(
     // to a present skill. Independent of connector isolation — only connector
     // launches get the MCP-config exclusion below. Best-effort: a failure is
     // logged and never blocks the spawn.
-    if (spawnSkillId && !shellOnly && ensureBuiltinSkillInstalled) {
+    if (
+      spawnSkillId &&
+      !shellOnly &&
+      ensureBuiltinSkillInstalled &&
+      !launchIntegration?.carries.skills.includes(spawnSkillId)
+    ) {
       try {
         await ensureBuiltinSkillInstalled(workingDirectory, spawnSkillId, agentCli, {
           hostId: host.id,
@@ -3383,6 +3449,16 @@ async function spawnTerminalFromIpc(
             // it as a plugin of its own, and the install above wrote nothing
             // for it (`delivered-at-launch`).
             launchSkills: spawnSkillId ? [spawnSkillId] : [],
+            ...(launchIntegration
+              ? {
+                  integration: {
+                    args: launchIntegration.args,
+                    env: launchIntegration.env,
+                    ...(launchIntegration.settings ? { settings: launchIntegration.settings } : {}),
+                    ...(launchIntegration.pluginDirs ? { pluginDirs: launchIntegration.pluginDirs } : {}),
+                  },
+                }
+              : {}),
           },
         )
     unownedLaunchPromptPath = launchPromptPath
@@ -3406,6 +3482,7 @@ async function spawnTerminalFromIpc(
         pathStyle: executionPathStyle,
         hostId: host.id,
         integration: hostIntegration,
+        ...(launchIntegration?.carries.agentState ? { launchCarriesHook: true } : {}),
       })
     }
 

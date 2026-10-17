@@ -15,15 +15,15 @@ Two tools in the desktop's `browser` toolset:
   answers where the file is, how long it is, how big it is and why it stopped.
 
 A recording is the tab as the person sees it: the same guest the agent drives,
-not a headless copy. It lands in the calling agent's project folder at
-`.sprintengine/browser/recordings/recording-<host>-<stamp>.webm`, in a folder
-that ignores itself in git. For a chat in a worktree (every New chat leases one
-from the worktree pool) that is the checkout the worktree was cut from, not the
-worktree: a pool slot is reused by the next chat and removed over the pool's
-limits, so a video there would linger under another chat or go with the slot.
-The answer gives the file's absolute `path`, which the agent opens from its
-worktree with its own file tools, and its `workspacePath` relative to the
-project folder; nothing large crosses the MCP connection.
+not a headless copy. It lands in the project's store in the person's home, at
+`~/.sprintengine/workspaces/<project>/browser/recordings/recording-<host>-<stamp>.webm`
+(`src/main/workspace-store.ts`), never in the project's folder. A chat in a
+worktree (every New chat leases one from the worktree pool) records into the
+same store as the checkout it was cut from: a pool slot is reused by the next
+chat and removed over the pool's limits, so a video kept with it would linger
+under another chat or go with the slot. The answer gives the file's absolute
+`path`, which the agent opens with its own file tools; nothing large crosses
+the MCP connection.
 
 While it runs, the tab's toolbar says **Recording 0:12**, with a Stop button.
 
@@ -197,9 +197,8 @@ makes it its own change with its own review, and an owner decision.
 - **Deadlines.** `record_start` has the browser default of 20 s (capture has
   10 s to begin); `record_stop` has 60 s, for the last second of video and a
   file of up to 60 MB.
-- **Files.** `.sprintengine/browser/recordings/`, written as
-  `<name>.webm.part` while recording and renamed when it ends; the
-  `browser/.gitignore` the screenshots write covers it.
+- **Files.** `browser/recordings/` in the project's store, written as
+  `<name>.webm.part` while recording and renamed when it ends.
 
 ## 8. Where the code is
 
@@ -207,7 +206,7 @@ makes it its own change with its own review, and an owner decision.
 | ------------------------------------------------- | ------------------------------------------------------------------------ |
 | The two tools                                     | `src/main/automation/browser-tools.ts`                                   |
 | Lifecycle, limits, stop reasons (Electron-free)   | `src/main/browser/browser-recorder.ts`                                   |
-| The file in the workspace, and the SSH refusal    | `src/main/browser/recording-output.ts`                                   |
+| The file in the store, and the SSH refusal        | `src/main/browser/recording-output.ts`                                   |
 | The display-media grant and the window's messages | `src/main/browser/recording-encoder.ts`                                  |
 | The length in the header                          | `src/main/browser/webm-duration.ts`                                      |
 | Capture, cursor, MediaRecorder                    | `src/renderer/src/components/workspace/pane/browser/browserRecording.ts` |
@@ -242,7 +241,7 @@ thing to grant an agent, and is left out:
    chat ask the agent to record it while it clicks through something
    (`browser.record_start`, a few `browser.click`s, `browser.record_stop`).
 2. The toolbar shows **Recording** with a clock while it runs; the answer to
-   the stop names `.sprintengine/browser/recordings/….webm`. Open the file:
+   the stop names `~/.sprintengine/workspaces/<project>/browser/recordings/….webm`. Open the file:
    it plays, shows its length, seeks, and the agent's cursor and click rings
    are in it.
 3. Start one and press the toolbar's Stop: the agent's `browser.record_stop`

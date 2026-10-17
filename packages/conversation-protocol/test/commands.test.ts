@@ -243,3 +243,32 @@ test('a listed chat names its CLI mode only beside its preset', () => {
   assert.deepEqual(listed.sessions[0]?.capabilities?.permissionModes, ['acceptEdits', 'dontAsk'])
   assert.equal(listed.sessions[1]?.permissionMode, undefined)
 })
+
+test('an answer is keyed by its whole question, however long the question is', () => {
+  const long = `${'Which of these should happen to the old history? '.repeat(6)}Pick one.`
+  assert.ok(long.length > 200)
+  const answers = { [long]: 'Rewrite now, make this repo public', 'And the PRs?': 'Leave them, Other words' }
+  assert.deepEqual(parseConversationClientMessage(command({ kind: 'answerQuestion', requestId: 'req-2', answers })), {
+    type: 'command',
+    commandId: 'cmd-1',
+    command: { kind: 'answerQuestion', requestId: 'req-2', answers },
+  })
+  // The first version's own reader still refuses it, as an older desktop does.
+  assert.equal(parseConversationClientFrame(command({ kind: 'answerQuestion', requestId: 'req-2', answers })), null)
+  // Past a question's own limit it is too large, answered under its id.
+  const huge = command({ kind: 'answerQuestion', requestId: 'req-2', answers: { ['Q'.repeat(20_001)]: 'yes' } })
+  assert.equal(parseConversationClientMessage(huge), null)
+  assert.deepEqual(explainRejectedConversationMessage(huge), {
+    code: 'too_large',
+    message: 'A question and its answer may each hold at most 20000 characters.',
+    commandId: 'cmd-1',
+    commandKind: 'answerQuestion',
+  })
+  // Still at most 64 answers, each a string.
+  const many = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`q${index}`, 'a']))
+  assert.equal(parseConversationClientMessage(command({ kind: 'answerQuestion', requestId: 'r', answers: many })), null)
+  assert.equal(
+    parseConversationClientMessage(command({ kind: 'answerQuestion', requestId: 'r', answers: { q: 1 } })),
+    null,
+  )
+})

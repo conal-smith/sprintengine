@@ -16,6 +16,8 @@ import {
 } from './launcher'
 import { ledgerKey, type IntegrationLedger, type IntegrationLedgerEntry } from './ledger'
 import type { GitCommandResult } from '../git'
+import type { IntegrationRemovalReport } from '../../shared/integration-removal'
+import { removeIntegrations, SESSION_INTEGRATION_KINDS } from './remove-integrations'
 
 export type PrepareIntegrationsInput = {
   ledger: IntegrationLedger
@@ -135,4 +137,73 @@ function namersFor(script: IntegrationLedgerEntry, entries: readonly Integration
 /** The ledger's mirror inside a distribution, as this process opens it. */
 export function wslLedgerMirrorPath(nativeHome: string): string {
   return join(nativeHome, '.sprintengine', 'integration-ledger.json')
+}
+
+// ── Taking out what launches no longer write ────────────────────────────────
+//
+// Every launch on this machine now hands its CLI the app's hooks, MCP servers
+// and skills itself, or keeps them in the CLI's user-level configuration for
+// as long as the app runs (`launch-integration.ts`). What earlier builds wrote
+// into repositories for the same purpose is therefore only clutter in
+// `git status`, and a second registration beside the launch's own. Each start
+// takes it out before the first launch (which waits for this): the ledger's
+// entries, and once per clean-up version a fresh scan of the known checkouts
+// and their worktrees for what the ledger never saw. Only what the removal can
+// prove is the app's goes — its markers, its command shapes, its provenance
+// files — and nothing the repository has committed.
+
+/** Bump to scan the known checkouts again on the next start. 1: the launch-integration move. */
+export const REPOSITORY_CLEANUP_VERSION = 1
+
+/** What a start removes: everything a launch writes again when it needs it, and the reporter copies. */
+export const BOOT_CLEANUP_KINDS: ReadonlySet<IntegrationLedgerEntry['kind']> = new Set<IntegrationLedgerEntry['kind']>([
+  ...[...SESSION_INTEGRATION_KINDS].filter((kind) => kind !== 'launcher'),
+  'hook-script',
+  'knowledge-activity-hook',
+])
+
+export type BootCleanupInput = {
+  ledger: IntegrationLedger
+  listRoots: () => ScanRoot[]
+  /**
+   * Move a repository's knowledge-activity opt-in out of its settings before
+   * its hook entry goes (`knowledgeActivityLaunchCommand`), so the person's
+   * choice survives the clean-up. Resolves once the entry is out.
+   */
+  migrateKnowledgeActivity?: (repo: string) => Promise<void>
+  runGit?: (cwd: string, args: string[]) => Promise<GitCommandResult>
+  /** Stop before the next entry after this; what is left is tried at the next start or quit. */
+  deadline?: number
+  stop?: () => boolean | Promise<boolean>
+}
+
+export async function cleanRepositoriesAtBoot(input: BootCleanupInput): Promise<IntegrationRemovalReport> {
+  if ((await input.ledger.cleanedVersion()) < REPOSITORY_CLEANUP_VERSION) {
+    const found = await scanForIntegrations({
+      roots: input.listRoots(),
+      homes: [],
+      ...(input.runGit ? { runGit: input.runGit } : {}),
+    }).catch(() => [])
+    await input.ledger.record(found)
+    await input.ledger.markCleaned(REPOSITORY_CLEANUP_VERSION)
+  }
+  if (input.migrateKnowledgeActivity) {
+    const repos = new Set(
+      (await input.ledger.list())
+        .filter((entry) => entry.kind === 'knowledge-activity-hook' && entry.hostId === 'local' && entry.repo)
+        .map((entry) => entry.repo!),
+    )
+    for (const repo of repos) await input.migrateKnowledgeActivity(repo).catch(() => undefined)
+  }
+  return removeIntegrations(
+    { ledger: input.ledger, scan: false, ...(input.runGit ? { runGit: input.runGit } : {}) },
+    {
+      kinds: BOOT_CLEANUP_KINDS,
+      hostId: 'local',
+      keepCommitted: true,
+      keepLauncher: true,
+      ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
+      ...(input.stop ? { stop: input.stop } : {}),
+    },
+  )
 }

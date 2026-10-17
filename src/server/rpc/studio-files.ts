@@ -36,7 +36,7 @@ export type StudioFileFailure = {
 }
 
 export type StudioFiles = {
-  roots(workspaceId: string): { workspace: boolean; boards: boolean }
+  roots(workspaceId: string): { workspace: boolean; boards: boolean; store: boolean }
   stat(root: StudioFileRoot, path: string): Promise<{ ok: true; stat: StudioFileStat } | StudioFileFailure>
   list(root: StudioFileRoot, path: string): Promise<{ ok: true; entries: StudioFileEntry[] } | StudioFileFailure>
   read(
@@ -71,11 +71,25 @@ export type StudioFiles = {
 export type StudioFilesOptions = {
   /** A workspace's root on this disk, or null when it has none here. Read on every call. */
   resolveRoot(root: StudioFileRoot): string | null
+  /**
+   * Where a path that names nothing under its root now is, or null: what an
+   * older Studio kept in a project's `.sprintengine/` lives in the project's
+   * store. Asked only by the reads (`stat`, `list`, `read`, `watch`), and only
+   * when the path names nothing where it was asked for, so a file still there
+   * is read from there.
+   */
+  moved?(root: StudioFileRoot, path: string): { root: StudioFileRoot; path: string } | null
   /** How long a burst of changes is gathered before one push. */
   watchDebounceMs?: number
 }
 
 const WATCH_DEBOUNCE_MS = 150
+
+const ROOT_NAMES: Record<StudioFileRoot['kind'], string> = {
+  workspace: 'folder',
+  boards: 'board store',
+  store: 'store',
+}
 
 const notFound = (message = 'There is no such file here.'): StudioFileFailure => ({
   ok: false,
@@ -137,8 +151,7 @@ export function createStudioFiles(options: StudioFilesOptions): StudioFiles {
     if (!isStudioRelativePath(path))
       return { ok: false, code: 'invalid_params', message: 'That path is not relative to its root.' }
     const base = rootHere(root)
-    if (!base)
-      return notFound(`Workspace ${root.workspaceId} has no ${root.kind === 'boards' ? 'board store' : 'folder'} here.`)
+    if (!base) return notFound(`Workspace ${root.workspaceId} has no ${ROOT_NAMES[root.kind]} here.`)
     const target = path === '' ? base : join(base, ...path.split('/'))
     let realBase: string
     try {
@@ -164,6 +177,28 @@ export function createStudioFiles(options: StudioFilesOptions): StudioFiles {
       }
     }
     return { ok: true, base, target }
+  }
+
+  /** `locate` for a read, which follows a path that names nothing where asked to where it now is. */
+  async function locateForReading(
+    root: StudioFileRoot,
+    path: string,
+  ): Promise<{ ok: true; base: string; target: string } | StudioFileFailure> {
+    const located = await locate(root, path)
+    const moved = options.moved?.(root, path)
+    if (!moved || (located.ok && (await exists(located.target)))) return located
+    const there = await locate(moved.root, moved.path)
+    return there.ok || !located.ok ? there : located
+  }
+
+  async function exists(target: string): Promise<boolean> {
+    try {
+      await stat(target)
+      return true
+    } catch (error) {
+      if (missing(error)) return false
+      throw error
+    }
   }
 
   async function currentHash(target: string): Promise<string | null> {
@@ -200,11 +235,12 @@ export function createStudioFiles(options: StudioFilesOptions): StudioFiles {
       return {
         workspace: rootHere({ kind: 'workspace', workspaceId }) !== null,
         boards: rootHere({ kind: 'boards', workspaceId }) !== null,
+        store: rootHere({ kind: 'store', workspaceId }) !== null,
       }
     },
 
     async stat(root, path) {
-      const located = await locate(root, path)
+      const located = await locateForReading(root, path)
       if (!located.ok) return located
       try {
         const info = await stat(located.target)
@@ -227,7 +263,7 @@ export function createStudioFiles(options: StudioFilesOptions): StudioFiles {
     },
 
     async list(root, path) {
-      const located = await locate(root, path)
+      const located = await locateForReading(root, path)
       if (!located.ok) return located
       try {
         const entries = await readdir(located.target, { withFileTypes: true })
@@ -249,7 +285,7 @@ export function createStudioFiles(options: StudioFilesOptions): StudioFiles {
     },
 
     async read(root, path) {
-      const located = await locate(root, path)
+      const located = await locateForReading(root, path)
       if (!located.ok) return located
       try {
         // The link's target, not the link: `locate` has checked where it lands.
@@ -329,7 +365,7 @@ export function createStudioFiles(options: StudioFilesOptions): StudioFiles {
     },
 
     async watch(root, path, listener, onEnded) {
-      const located = await locate(root, path)
+      const located = await locateForReading(root, path)
       if (!located.ok) return located
       const debounceMs = options.watchDebounceMs ?? WATCH_DEBOUNCE_MS
       const pending = new Set<string>()

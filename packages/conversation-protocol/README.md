@@ -142,6 +142,13 @@ and adds, each behind its capability:
   `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
   a send made while a turn runs is refused `busy` as before.
 
+`conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
+names no frame. A `user_message`'s `attachments` record each picture the
+person sent as `{ id, mediaType, name?, byteLength, ref }`, and a desktop that
+advertises it serves one at `GET /tailnet/v1/conversation-image` by its `ref`
+(`attachment=<ref>` in place of `toolUseId`). A client without it names the
+picture rather than drawing it.
+
 `ConversationCreateRequest` is what starting a conversation takes, with
 `allowedTools` — tools the chat may use without asking — beside the preset.
 Validate one with `parseConversationCreateRequest`. The tailnet lane does not

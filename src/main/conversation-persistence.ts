@@ -7,19 +7,23 @@ import {
   readBoundedConversationFile,
   resolveConversationPath,
 } from './conversation-file-access'
+import { conversationConfinementRoot } from './workspace-store'
 
 export const MAX_CONVERSATION_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 export const MAX_CONVERSATION_METADATA_BYTES = 8 * 1024 * 1024
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
 const identity = (info: { dev: number; ino: number }) => `${info.dev}:${info.ino}`
 
-/** Validate each parent, rather than treating a repository sidecar as trusted.
+/** Validate each parent, rather than treating the storage folder as trusted.
  * Post-open checks detect replacement during open. Like the existing-file
  * helper, this is defense in depth, not a native openat/renameat sandbox against
  * an adversary repeatedly restoring/replacing the same directory inode.
  */
 async function storagePath(rootPath: string, requested: string, createParents = false) {
-  const { root, target: path } = await resolveConversationPath(rootPath, requested)
+  const { root, target: path } = await resolveConversationPath(
+    await conversationConfinementRoot(rootPath, requested),
+    requested,
+  )
   const inspect = async (create: boolean) => {
     let current = root
     const rootInfo = await lstat(root)
@@ -49,7 +53,7 @@ async function storagePath(rootPath: string, requested: string, createParents = 
 }
 
 export async function readConversationStorage(root: string, path: string, limit: number): Promise<Buffer> {
-  const file = await openConfinedExistingFile(root, path)
+  const file = await openConfinedExistingFile(await conversationConfinementRoot(root, path), path)
   try {
     return await readBoundedConversationFile(file, limit)
   } finally {

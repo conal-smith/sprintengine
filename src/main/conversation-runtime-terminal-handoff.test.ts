@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStorePath } from './workspace-store'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -162,7 +163,7 @@ test('a terminal is never handed a CLI session another provider wrote', async ()
   roots.add(workspaceRoot)
   // The chat ran on another provider before this one: its thread id is the
   // newest cursor in the transcript, and means nothing to this provider's CLI.
-  const dir = join(workspaceRoot, '.sprintengine', 'conversations', 'workspace')
+  const dir = workspaceStorePath(workspaceRoot, 'conversations', 'workspace')
   await mkdir(dir, { recursive: true })
   const other = {
     id: 'old_1',

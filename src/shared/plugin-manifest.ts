@@ -263,6 +263,18 @@ type PluginLaunchPluginsSpec = {
   args: string[]
 }
 
+// `claude`: `--mcp-config <file>` beside the app's plugin directory and a
+// `--settings` fragment; `codex`: `-c` overrides; `opencode`:
+// `OPENCODE_CONFIG_CONTENT`; `cursor`: one more `--plugin-dir`. Each route's
+// measurements live with its code.
+// `userSkillsDir`: for a CLI with no launch-time skill folder, the
+// home-relative folder it reads the person's own skills from, where the skill a
+// launch's prompt invokes is copied while the app runs.
+export type PluginLaunchIntegrationSpec = {
+  route?: 'claude' | 'codex' | 'opencode' | 'cursor'
+  userSkillsDir?: string
+}
+
 // Declares that a CLI accepts a settings document on its command line, for the
 // settings a plugin cannot carry. `args` is rendered ONCE with
 // `{{launchSettingsJson}}` bound to every setting this launch wants, merged
@@ -415,6 +427,11 @@ export type PluginManifest = {
   // Settings this CLI accepts at launch, for what a plugin cannot declare —
   // today the status line the app reads context usage from.
   launchSettings?: PluginLaunchSettingsSpec
+  // Which per-launch channels the app hands this CLI its MCP servers, hooks
+  // and launch skills through instead of the repository
+  // (src/main/integrations/launch-integration.ts). Absent ⇒ none: the
+  // workspace or user-level registrations carry them.
+  launchIntegration?: PluginLaunchIntegrationSpec
   skillIntegration?: PluginSkillIntegration
   // Authoritative agent-state integration (see the section above). Absent ⇒
   // the CLI cannot report authoritative agent state.
@@ -582,6 +599,13 @@ export type PluginRenderContext = {
   // caller supplies the rest (the status line). Absent or empty renders no
   // flag beyond the theme the launch already passed.
   launchSettings?: Record<string, unknown>
+  // What the app hands this one launch beyond its plugin directories: the
+  // CLI's own per-launch flags for the MCP servers and hooks it would
+  // otherwise read from the repository (`--mcp-config <file>`, Codex's
+  // `-c mcp_servers.…`). Built by main for the CLI being launched, because
+  // their values are files and TOML the manifest cannot spell; a manifest
+  // places them with { spreadIf: "integrationArgs" }. Absent renders nothing.
+  integrationArgs?: string[]
   // Set when the prompt is too long for this platform's command line and goes
   // by the manifest's `promptInjection.overflow` instead: `input` renders its
   // args (the prompt itself is typed in later, so `prompt` is absent); `file`

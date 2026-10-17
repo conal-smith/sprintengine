@@ -103,6 +103,10 @@ export type AgentLaunchRenderInput = {
   // that never fills and nothing in the terminal to say so. Absent renders the
   // document the theme alone would have.
   launchSettings?: Record<string, unknown>
+  // The CLI's own per-launch flags for the MCP servers and hooks the app hands
+  // this session (see `launch-integration.ts`), for manifests that place
+  // `integrationArgs`. Absent or empty renders nothing.
+  integrationArgs?: string[]
   // Set by `planAgentLaunch` when the prompt is too long for the command line,
   // or is typed in because the manifest is `send-after-ready`: the prompt leaves
   // argv and the manifest's `promptInjection.overflow` args render in its place.
@@ -197,6 +201,7 @@ function buildLaunchRenderContext(
     ...(input.launchSettings && Object.keys(input.launchSettings).length > 0
       ? { launchSettings: input.launchSettings }
       : {}),
+    ...(input.integrationArgs && input.integrationArgs.length > 0 ? { integrationArgs: input.integrationArgs } : {}),
     ...(input.promptOverflow ? { promptOverflow: input.promptOverflow } : {}),
   }
   return { binary, context }

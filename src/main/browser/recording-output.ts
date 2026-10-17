@@ -5,29 +5,25 @@ import { isAbsolute, join } from 'node:path'
 
 import { distroOfUncPath, toWslPath } from '../../shared/host-paths'
 import { isMachinePath, parseMachinePath } from '../../shared/machine-paths'
-import { sidecarRelativePath } from '../../shared/workspace-sidecar'
-import { ensureSidecarDirNoLinks, workspaceSidecarPath } from '../workspace-sidecar'
+import { ensureWorkspaceStoreDir } from '../workspace-store'
 import type { RecordingFailure, RecordingOutput, RecordingOutputs } from './browser-recorder'
 import { webmDurationPatch } from './webm-duration'
 
-// Where a browser recording is saved: in the project's own folder, in
-// `.sprintengine/browser/recordings/`. That folder ignores itself (the same
-// `.gitignore` the pane's screenshots write), so a recording never shows in
-// `git status`.
+// Where a browser recording is saved: in the project's store in the person's
+// home, `~/.sprintengine/workspaces/<project>/browser/recordings/`
+// (workspace-store.ts), never in the project's folder, where it was one more
+// file the person had to teach git to ignore.
 //
-// For a chat in a worktree (a New chat leases one from the pool) that is the
-// checkout the worktree was cut from, not the worktree: a pool slot is reused
-// by the next chat (its `git clean` leaves ignored files) and removed over the
-// idle and disk limits, so a video kept there would linger under someone
-// else's chat or vanish with the slot, and is not where a person looks. The
-// answer's `path` is absolute, so the agent opens it from its worktree all
-// the same; `workspacePath` is relative to the project's folder.
+// One store per project, so a chat in a worktree (a New chat leases one from
+// the pool) records into the same folder as one in the checkout: a pool slot
+// is reused by the next chat and removed over the idle and disk limits, and a
+// video kept with the slot would linger under someone else's chat or vanish
+// with it. The answer's `path` is absolute, so the agent opens it from its
+// worktree all the same.
 //
-// A project on this computer is written here directly, and so is one in WSL,
-// through the `\\wsl.localhost\…` path this computer opens it by, which is
-// the same folder the agent reads in the distribution. The answer names the
-// file relative to the project, which reads the same on both sides, and as the
-// agent's own machine spells it.
+// A project in WSL keeps its store in the distribution's home, reached from
+// here through the `\\wsl.localhost\…` path this computer opens it by, so the
+// answer names the file as the agent there spells it.
 //
 // A workspace on an SSH machine is refused before anything is captured.
 // Studio has no way yet to write a file into a folder on that machine (its
@@ -35,8 +31,8 @@ import { webmDurationPatch } from './webm-duration'
 // on this computer would be a path the agent there cannot open. The design
 // for carrying it there is in docs/design/browser-recording.md.
 
-/** What the pane's capture folder holds; recordings sit in a folder inside it. */
-const BROWSER_SIDECAR = 'browser'
+/** The store's folder for the pane's captures; recordings sit in a folder inside it. */
+const BROWSER_FOLDER = 'browser'
 const RECORDINGS_FOLDER = 'recordings'
 const EXTENSION = '.webm'
 /** A file still being written: renamed to its final name when the recording ends. */
@@ -121,7 +117,7 @@ export function createWorkspaceRecordingOutputs(deps: WorkspaceRecordingOutputsD
         const name = (machine && deps.machineLabel?.(machine.id)) || 'an SSH machine'
         return fail(
           'recording_unavailable',
-          `Recordings are saved into the workspace, and Studio cannot write files into a workspace on ${name} yet. ` +
+          `Recordings are kept on the machine a workspace is on, and Studio cannot write files on ${name} yet. ` +
             'Recording works for workspaces on this computer and in WSL.',
         )
       }
@@ -129,12 +125,10 @@ export function createWorkspaceRecordingOutputs(deps: WorkspaceRecordingOutputsD
         return fail('no_workspace_folder', 'The workspace folder is not available to save a recording in.')
       }
 
-      const directory = workspaceSidecarPath(root, BROWSER_SIDECAR, RECORDINGS_FOLDER)
+      let directory: string
       let name: string | null = null
       try {
-        // The folder ignores itself, as it does for the pane's screenshots,
-        // and none of it is made or written through a link the project holds.
-        await ensureSidecarDirNoLinks(root, BROWSER_SIDECAR, RECORDINGS_FOLDER)
+        directory = await ensureWorkspaceStoreDir(root, BROWSER_FOLDER, RECORDINGS_FOLDER)
         // A second recording in the same second takes the next free name. The
         // partial file is made exclusively, so two recordings starting
         // together never both take one name.
@@ -154,7 +148,6 @@ export function createWorkspaceRecordingOutputs(deps: WorkspaceRecordingOutputsD
       const partial = file + PARTIAL_SUFFIX
 
       const output: RecordingOutput = {
-        workspacePath: sidecarRelativePath(BROWSER_SIDECAR, RECORDINGS_FOLDER, name),
         path: agentPathOf(file),
         append: (bytes) => fs.appendFile(partial, bytes),
         async finish(durationMs) {

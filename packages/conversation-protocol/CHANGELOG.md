@@ -13,6 +13,13 @@
 
 ### Added
 
+- **The pictures a person sent with a message can be fetched.**
+  `CONVERSATION_MESSAGE_IMAGES_CAPABILITY` (`conversation-message-images`)
+  names a desktop whose `GET /tailnet/v1/conversation-image` takes
+  `attachment`, the `ref` of an entry in a `user_message`'s `attachments`, in
+  place of `toolUseId`, and serves that picture when the chat kept it. No
+  frame changed; a client without it names the picture as before. The pinned
+  files are unchanged.
 - **A message may steer the turn that is running.**
   `CONVERSATION_STEER_SENDS_CAPABILITY` (`conversation-steer-sends`) names a
   desktop that takes `steer: true` on `send`: the message goes into the turn

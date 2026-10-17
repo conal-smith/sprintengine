@@ -31,6 +31,7 @@ import { launchArgBudgetFor, quoteWindowsCommandLineArg } from './launch-arg-bud
 import { RAISE_OOM_SCORE_SHELL_LINE } from './agent-oom-score'
 import { CLI_EXITED_OSC } from './deferred-prompt-delivery'
 import { buildLaunchStatusLineSetting } from './agent-state'
+import { usableLocalLauncherRef } from './integrations/launcher'
 import { resolveAgentStateSocketPath } from './agent-state-service'
 import { installedStudioPlatform, studioPlatform } from '../server/platform/platform'
 import { getPluginManifest } from './plugin-registry-instance'
@@ -233,9 +234,9 @@ export function setLaunchPluginDirsResolver(resolver: (() => string[]) | null): 
  * hook. Until the helper has written it, a WSL launch passes none, and the
  * workspace installer (which asks the same host) carries agent state instead.
  *
- * Native Windows is still left on the workspace install, and the predicate in
- * app-services agrees, so the two can never each think the other registers the
- * hook.
+ * A native Windows launch takes this machine's copy, as macOS and Linux do;
+ * the predicate in app-services asks the same thing, so the two can never each
+ * think the other registers the hook.
  */
 function pluginDirsForLaunch(cli: AgentCli, target: HostLaunchTarget, skills: readonly string[] = []): string[] {
   if (target.kind === 'wsl') {
@@ -336,12 +337,24 @@ function launchSettingsForLaunch(
     socketPath,
     homeDir: homedir(),
     env: process.env,
+    // As the copy's own hooks do on Windows (`hookLauncher` in
+    // agent-integration-home.ts): no Node on PATH is assumed there.
+    launcher: process.platform === 'win32' ? usableLocalLauncherRef(homedir()) : null,
   })
   return statusLine ? { statusLine } : undefined
 }
 
-export function launchPluginsSupportedOnThisPlatform(platform: NodeJS.Platform = process.platform): boolean {
-  return platform !== 'win32'
+/**
+ * Whether this platform takes the app's plugin directories at launch. Every
+ * platform does now. Native Windows was held back when the flag arrived,
+ * because the copy then shared one set of substituted paths with WSL launches
+ * and a Linux `claude` would have been handed `C:/…`; a WSL launch has had its
+ * own copy inside the distribution since, so a native one gets this machine's,
+ * with its hooks and status line run through the launcher. Kept a function so
+ * the installers keep asking the same question the launch flag does.
+ */
+export function launchPluginsSupportedOnThisPlatform(_platform: NodeJS.Platform = process.platform): boolean {
+  return true
 }
 
 /**
@@ -450,10 +463,12 @@ export function mergeProviderLaunchEnv(
 /**
  * `next` merged over `existing` when both are JSON objects, else `next`.
  *
- * Shallow on objects and concatenating on arrays, which is what "add my entry to
- * your list" needs and all this channel is for. Anything that does not parse —
- * the overwhelming majority of env values — takes the plain replacement path, so
- * this is invisible to every other manifest.
+ * One level deep: arrays concatenate and objects merge key by key, which is
+ * what "add my entry to your list" needs and all this channel is for — the
+ * app's MCP servers join a person's own `mcp` table rather than replacing it.
+ * Anything that does not parse — the overwhelming majority of env values —
+ * takes the plain replacement path, so this is invisible to every other
+ * manifest.
  */
 function mergeJsonEnvValue(existing: string | undefined, next: string): string {
   if (!existing) return next
@@ -463,9 +478,15 @@ function mergeJsonEnvValue(existing: string | undefined, next: string): string {
   const merged: Record<string, unknown> = { ...left }
   for (const [key, value] of Object.entries(right)) {
     const previous = merged[key]
-    merged[key] = Array.isArray(previous) && Array.isArray(value) ? [...previous, ...value] : value
+    if (Array.isArray(previous) && Array.isArray(value)) merged[key] = [...previous, ...value]
+    else if (isPlainJsonObject(previous) && isPlainJsonObject(value)) merged[key] = { ...previous, ...value }
+    else merged[key] = value
   }
   return JSON.stringify(merged)
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {
@@ -1360,6 +1381,41 @@ export function cleanupHostContextFile(contextPath: string | undefined): Promise
 /** What a manifest's `contextInjection` templates render against. */
 export type HostContextRenderInputs = { contextFile?: string; contextText?: string }
 
+/** What a launch builder renders against: the host context, and the flags `integration` carries. */
+type LaunchRenderInputs = HostContextRenderInputs & { integrationArgs?: string[] }
+
+/** See `integration` on `getShellLaunchConfig`. */
+export type LaunchIntegrationRender = {
+  args?: string[]
+  env?: Record<string, string>
+  settings?: Record<string, unknown>
+  pluginDirs?: string[]
+}
+
+function integrationRenderInputs(integration: LaunchIntegrationRender | undefined): LaunchRenderInputs {
+  return integration?.args && integration.args.length > 0 ? { integrationArgs: integration.args } : {}
+}
+
+// Only beside the app's own directories: a launch that is not handed those (a
+// CLI that takes none, a build whose copy failed) is not handed these either,
+// so it never loads a skill plugin without the hook and gateway it rides with.
+function withIntegrationPluginDirs(dirs: string[], integration: LaunchIntegrationRender | undefined): string[] {
+  if (dirs.length === 0 || !integration?.pluginDirs?.length) return dirs
+  return [...dirs, ...integration.pluginDirs.filter((dir) => !dirs.includes(dir))]
+}
+
+// Claude Code takes ONE `--settings` (a second replaces the first outright,
+// measured against 2.1.296 on 2026-10-16), so what the integration adds joins
+// the status line in the same document rather than riding a flag of its own.
+function withIntegrationSettings(
+  settings: Record<string, unknown> | undefined,
+  integration: LaunchIntegrationRender | undefined,
+): Record<string, unknown> | undefined {
+  const extra = integration?.settings
+  if (!extra || Object.keys(extra).length === 0) return settings
+  return { ...settings, ...extra }
+}
+
 export function hostContextRenderInputs(
   delivery: HostContextDelivery,
   target: 'windows' | 'wsl' | null,
@@ -1405,7 +1461,7 @@ function buildWslShellScript(
   managedMcpEnv?: Record<string, string>,
   providerLaunchEnv?: Record<string, string>,
   cliReasoning?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   host: WslLaunchTarget = DEFAULT_WSL_TARGET,
   planOptions: AgentLaunchPlanOptions = { budget: launchArgBudgetFor('wsl') },
   onPlan?: (plan: PlannedAgentLaunch) => void,
@@ -1530,11 +1586,22 @@ export function getShellLaunchConfig(
      * `bundledSkillDeliveredAtLaunch`, which answers from the same copy.
      */
     launchSkills?: readonly string[]
+    /**
+     * What the app hands this launch through the CLI's own per-launch channels
+     * instead of the repository: its flags (`--mcp-config <file>`, Codex's
+     * `-c` overrides), its environment (OpenCode's `OPENCODE_CONFIG_CONTENT`),
+     * settings for the one `--settings` document and plugin directories beside
+     * the app's own (`integrations/launch-integration.ts`). This machine only:
+     * a WSL launch is built from what its helper wrote inside the distribution.
+     */
+    integration?: LaunchIntegrationRender
   } = {},
 ): ShellLaunchConfig {
   assertExistingDirectory(cwd)
 
   const cliRuntime = getCliRuntimeSettings(cli, cliRuntimes)
+  // Never on WSL: what it would name are this machine's files.
+  const integration = launchHost.kind === 'wsl' ? undefined : hostContextOptions.integration
 
   // The host's own context for this launch (an attached design system, the
   // project's Knowledge Graph), built here so EVERY
@@ -1585,7 +1652,10 @@ export function getShellLaunchConfig(
 
   if (launchHost.kind === 'windows') {
     const windowsCwd = wslToWindowsPath(cwd)
-    const windowsHostContext = hostContextRenderInputs(hostContext, 'windows', [cwd, memoryRootPath])
+    const windowsHostContext = {
+      ...hostContextRenderInputs(hostContext, 'windows', [cwd, memoryRootPath]),
+      ...integrationRenderInputs(integration),
+    }
     const shellInitialPrompt = normalizeTextPaths(launchPrompt, 'windows', [
       cwd,
       memoryRootPath,
@@ -1611,8 +1681,8 @@ export function getShellLaunchConfig(
         cliModel,
         cliReasoning,
         windowsHostContext,
-        pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills),
-        launchSettingsForLaunch(cli, cwd, launchHost),
+        withIntegrationPluginDirs(pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills), integration),
+        withIntegrationSettings(launchSettingsForLaunch(cli, cwd, launchHost), integration),
         launchPlanOptions(launchHost, sessionId, cwd),
         (plan) => {
           promptDelivery = plan.promptDelivery
@@ -1624,11 +1694,14 @@ export function getShellLaunchConfig(
       command: 'powershell.exe',
       args: ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', startupScriptPath],
       env: mergeProviderLaunchEnv(
-        {
-          ...getTerminalEnv(),
-          ...managedMcpEnv,
-        },
-        providerLaunchEnv,
+        mergeProviderLaunchEnv(
+          {
+            ...getTerminalEnv(),
+            ...managedMcpEnv,
+          },
+          providerLaunchEnv,
+        ),
+        integration?.env,
       ),
       cwd: windowsCwd,
       pathStyle: 'windows',
@@ -1692,9 +1765,9 @@ export function getShellLaunchConfig(
       cliModel,
       cliReasoning,
       resolvedBinaryPath,
-      hostContextRenderInputs(hostContext, null, []),
-      pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills),
-      launchSettingsForLaunch(cli, cwd, launchHost),
+      { ...hostContextRenderInputs(hostContext, null, []), ...integrationRenderInputs(integration) },
+      withIntegrationPluginDirs(pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills), integration),
+      withIntegrationSettings(launchSettingsForLaunch(cli, cwd, launchHost), integration),
       launchPlanOptions(launchHost, sessionId, cwd),
       (plan) => {
         promptDelivery = plan.promptDelivery
@@ -1711,11 +1784,14 @@ export function getShellLaunchConfig(
     args: isLoginShell(shellName) ? ['-l', startupScriptPath] : [startupScriptPath],
     cwd,
     env: mergeProviderLaunchEnv(
-      {
-        ...getTerminalEnv(),
-        ...managedMcpEnv,
-      },
-      providerLaunchEnv,
+      mergeProviderLaunchEnv(
+        {
+          ...getTerminalEnv(),
+          ...managedMcpEnv,
+        },
+        providerLaunchEnv,
+      ),
+      integration?.env,
     ),
     pathStyle: 'posix',
     startupScriptPath,
@@ -1812,7 +1888,7 @@ export function buildNativeAgentLaunchPowerShellScript(
   cliPermissionPreset: CliPermissionSetting = 'none',
   cliModel?: string,
   cliReasoning?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   pluginDirs: string[] = [],
   launchSettings?: Record<string, unknown>,
   planOptions: AgentLaunchPlanOptions = { budget: launchArgBudgetFor('windows') },
@@ -1900,7 +1976,7 @@ export function buildCodexLegacyNativeAgentLaunchPowerShellScript(
   cliPermissionPreset: CliPermissionSetting = 'none',
   cliModel?: string,
   cliReasoning?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   colorScheme?: 'light' | 'dark',
   // Fit the launch to the Windows command line (`planAgentLaunch`). Absent
   // renders it as-is, which is what the script's own tests pin.
@@ -1973,7 +2049,7 @@ function buildAgentLaunchCommand(
   cliModel?: string,
   cliReasoning?: string,
   resolvedBinaryPath?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   pluginDirs: string[] = [],
   launchSettings?: Record<string, unknown>,
   planOptions: AgentLaunchPlanOptions = { budget: launchArgBudgetFor('posix') },

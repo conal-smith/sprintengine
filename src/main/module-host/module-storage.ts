@@ -2,12 +2,13 @@ import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { isAbsolute, join } from 'path'
-import { sidecarLinkOnPath, workspaceSidecarPath, workspaceSidecarRoot } from '../workspace-sidecar'
+import { workspaceStorePath, workspaceStoreReady } from '../workspace-store'
 
 // Per-module, per-workspace JSON storage for capability modules (SDK
 // getModuleStorage). The host owns file placement so modules stop inventing
-// locations: workspace-scoped keys live in the workspace folder
-// (`<workspaceRoot>/.sprintengine/modules/<moduleId>/<key>.json`), global keys
+// locations: workspace-scoped keys live in the project's store in the person's
+// home (`<store>/modules/<moduleId>/<key>.json`, workspace-store.ts — never in
+// the project's folder, and one per project, whichever checkout asks), global keys
 // under userData (`<userData>/module-storage/<moduleId>/<key>.json`). The
 // registry takes the module id on every call; the SDK helper closes over
 // `host.moduleId` (same scoping structure as the Automations module service).
@@ -15,8 +16,13 @@ import { sidecarLinkOnPath, workspaceSidecarPath, workspaceSidecarRoot } from '.
 //
 // Beyond one key at a time: `list({ prefix })` and `getMany` read a scope in
 // one call, and `watch` says which keys changed — on this module's own writes
-// at once, and on anything else that changed the folder (a `git pull`, another
-// window's process) at the next poll. Data too large for a value goes in the
+// at once, and on anything else that changed the folder (another window's
+// process, a hand edit) at the next poll.
+//
+// Older builds kept workspace keys in `<project>/.sprintengine/modules/`. The
+// store's one-time move takes them out, except files git tracks: a project
+// that committed a module's data keeps those files, and the module no longer
+// reads them. Data too large for a value goes in the
 // module's private directory (`dataDir`), which is the module's to lay out.
 
 export type ModuleStorageErrorCode =
@@ -58,7 +64,7 @@ export type ModuleStorageRegistry = {
   /**
    * Hear which keys of a scope changed. Returns the unsubscriber. A write
    * through this registry is reported at once; a change made any other way
-   * (a `git pull` into the workspace) at the next poll.
+   * (another window's process) at the next poll.
    */
   watch(moduleId: string, input: ModuleStorageScope, listener: (change: ModuleStorageChange) => void): () => void
   /**
@@ -100,7 +106,6 @@ function failure<T>(code: ModuleStorageErrorCode, message: string): ModuleStorag
 
 type ModuleStorageWatcher = {
   dir: string
-  linkRoot: string | null
   listener: (change: ModuleStorageChange) => void
   /** key -> mtime:size as last seen; null until the first scan settles. */
   seen: Map<string, string> | null
@@ -124,7 +129,7 @@ export function createModuleStorageRegistry(options: {
     moduleId: string,
     scope: ModuleStorageScope | undefined,
   ):
-    | { ok: true; dir: string; linkRoot: string | null }
+    | { ok: true; dir: string; workspaceRoot: string | null }
     | { ok: false; code: ModuleStorageErrorCode; message: string } => {
     if (UNSAFE_SEGMENT.test(moduleId) || moduleId.trim().length === 0) {
       return { ok: false, code: 'io_error', message: `Module id "${moduleId}" is not usable as a storage folder.` }
@@ -138,25 +143,19 @@ export function createModuleStorageRegistry(options: {
           message: 'workspaceRoot must be an absolute path (resolve it via the workspace context).',
         }
       }
-      return {
-        ok: true,
-        dir: workspaceSidecarPath(workspaceRoot, 'modules', moduleId),
-        linkRoot: workspaceSidecarRoot(workspaceRoot),
+      try {
+        return { ok: true, dir: workspaceStorePath(workspaceRoot, 'modules', moduleId), workspaceRoot }
+      } catch (error) {
+        return { ok: false, code: 'invalid_workspace_root', message: (error as Error).message }
       }
     }
-    return { ok: true, dir: join(options.userDataDir(), 'module-storage', moduleId), linkRoot: null }
+    return { ok: true, dir: join(options.userDataDir(), 'module-storage', moduleId), workspaceRoot: null }
   }
 
-  // Any folder from `.sprintengine` down to the module's own (or a stored
-  // file) could be a link the cloned repository committed.
-  const throughLink = async (
-    linkRoot: string | null,
-    path: string,
-  ): Promise<{ ok: false; code: ModuleStorageErrorCode; message: string } | null> => {
-    const link = linkRoot ? await sidecarLinkOnPath(linkRoot, path) : null
-    return link
-      ? { ok: false, code: 'io_error', message: `${link} is a link; module storage is not kept through one.` }
-      : null
+  // A workspace scope's first read after an upgrade waits out the store's
+  // one-time move, so it sees the values the move brings in.
+  const ready = async (dir: { workspaceRoot: string | null }): Promise<void> => {
+    if (dir.workspaceRoot) await workspaceStoreReady(dir.workspaceRoot)
   }
 
   // Watchers share one timer: a poll re-reads each watched folder's listing
@@ -167,7 +166,6 @@ export function createModuleStorageRegistry(options: {
 
   const scan = async (watcher: ModuleStorageWatcher): Promise<Map<string, string>> => {
     const seen = new Map<string, string>()
-    if (await throughLink(watcher.linkRoot, watcher.dir)) return seen
     let entries: string[]
     try {
       entries = await readdir(watcher.dir)
@@ -275,8 +273,7 @@ export function createModuleStorageRegistry(options: {
       if (keyIssue) return failure('invalid_key', keyIssue)
       const dir = resolveDir(moduleId, input)
       if (!dir.ok) return dir
-      const linked = await throughLink(dir.linkRoot, join(dir.dir, `${input.key}.json`))
-      if (linked) return linked
+      await ready(dir)
       return readValue(dir, input.key)
     },
 
@@ -292,11 +289,9 @@ export function createModuleStorageRegistry(options: {
       }
       const dir = resolveDir(moduleId, input)
       if (!dir.ok) return dir
+      await ready(dir)
       const values: Record<string, unknown> = {}
       for (const key of new Set(keys as string[])) {
-        // Per key, exactly as `get`: the stored file itself could be a link.
-        const linked = await throughLink(dir.linkRoot, join(dir.dir, `${key}.json`))
-        if (linked) return linked
         const read = await readValue(dir, key)
         if (!read.ok) return read
         if (read.found) values[key] = read.value
@@ -323,14 +318,11 @@ export function createModuleStorageRegistry(options: {
       }
       return enqueue(async () => {
         const path = join(dir.dir, `${input.key}.json`)
-        const linked = await throughLink(dir.linkRoot, dir.dir)
-        if (linked) return linked
+        await ready(dir)
         try {
           await mkdir(dir.dir, { recursive: true })
-          // A fresh name, created exclusively: a workspace folder is a cloned
-          // repository's to fill, and a `<key>.json.tmp` link it committed
-          // would otherwise have the value written through it to wherever it
-          // points.
+          // A fresh name, created exclusively, so a write never lands in a
+          // temp file something else left or made at that name.
           const tmp = `${path}.${process.pid}-${randomUUID()}.tmp`
           try {
             await writeFile(tmp, serialized, { encoding: 'utf8', flag: 'wx' })
@@ -354,8 +346,7 @@ export function createModuleStorageRegistry(options: {
       if (!dir.ok) return dir
       return enqueue(async () => {
         const path = join(dir.dir, `${input.key}.json`)
-        const linked = await throughLink(dir.linkRoot, dir.dir)
-        if (linked) return linked
+        await ready(dir)
         try {
           await readFile(path, 'utf8')
         } catch (error) {
@@ -376,8 +367,7 @@ export function createModuleStorageRegistry(options: {
     async list(moduleId, input) {
       const dir = resolveDir(moduleId, input)
       if (!dir.ok) return dir
-      const linked = await throughLink(dir.linkRoot, dir.dir)
-      if (linked) return linked
+      await ready(dir)
       let entries: string[]
       try {
         entries = await readdir(dir.dir)
@@ -402,7 +392,7 @@ export function createModuleStorageRegistry(options: {
       if (typeof listener !== 'function') throw new Error('watch needs a listener function.')
       const dir = resolveDir(moduleId, input)
       if (!dir.ok) throw new Error(dir.message)
-      const watcher: ModuleStorageWatcher = { dir: dir.dir, linkRoot: dir.linkRoot, listener, seen: null }
+      const watcher: ModuleStorageWatcher = { dir: dir.dir, listener, seen: null }
       watchers.add(watcher)
       // The baseline the first poll compares against; nothing is reported for it.
       void scan(watcher).then((seen) => {

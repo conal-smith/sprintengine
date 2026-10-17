@@ -127,7 +127,7 @@ that use is sound.
 
 The sidebar row's `+N −M` and the title bar's branch chip count **files**, not
 lines (`changedFileMarks`, `src/renderer/src/components/workspace/terminalLines.ts:132`;
-`WorkspaceIdentity.tsx:432`). They are read from git: on a feature branch,
+`WorkspaceIdentity.tsx`, `gitCountBadge`). They are read from git: on a feature branch,
 `merge-base(HEAD, trunk)` to the working tree (`src/main/git-branch-span.ts:11`),
 and on the trunk only what is uncommitted. They include everyone's changes. A
 chat row shows no numbers at all (`WorkspaceSidebar.tsx:3701`).

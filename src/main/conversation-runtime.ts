@@ -118,7 +118,7 @@ import { createCodexConversationProvider } from './providers/codex-conversation-
 import { ACP_PROFILES, createAcpConversationProvider } from './providers/acp-conversation-provider'
 import { leadingCommandFor } from './conversation-commands/leading-command'
 import { cliForConversationProvider } from '../shared/conversation-harness'
-import { workspaceSidecarPath } from './workspace-sidecar'
+import { workspaceStorePath } from './workspace-store'
 import {
   ConversationEventLog,
   type ConversationAppendOutcome,
@@ -2826,7 +2826,7 @@ export class ConversationRuntime {
   }
 
   private toolDetailPath(input: ConversationToolDetailInput): string {
-    return workspaceSidecarPath(
+    return workspaceStorePath(
       input.workspaceRoot,
       'conversations',
       safeSegment(input.workspaceId),
@@ -3249,12 +3249,7 @@ export class ConversationRuntime {
   }
 
   private transcriptPath(workspaceRoot: string, workspaceId: string, agentId: string): string {
-    return workspaceSidecarPath(
-      workspaceRoot,
-      'conversations',
-      safeSegment(workspaceId),
-      `${safeSegment(agentId)}.jsonl`,
-    )
+    return workspaceStorePath(workspaceRoot, 'conversations', safeSegment(workspaceId), `${safeSegment(agentId)}.jsonl`)
   }
 
   // Replay the persisted transcript for one agent, bounded to the most recent

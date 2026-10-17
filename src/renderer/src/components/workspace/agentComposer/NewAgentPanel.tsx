@@ -24,6 +24,7 @@ import { useProjectColor } from '../../../hooks/useProjectColors'
 import { projectColorKey } from '../../../utils/projectColor'
 import { resolveSkillMentionPrefix } from '../../../../../shared/skill-invocation'
 import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
+import { workspaceProjectRootOf } from '../../../../../shared/worktree-paths'
 import { composerTokenAt } from '../../../../../shared/conversation/composerTrigger'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import {
@@ -640,8 +641,11 @@ export default function NewAgentPanel({
   const projectLabel = React.useMemo(() => {
     const folder = workspaceRoot?.trim()
     if (!folder) return null
-    if (isProjectlessChatsRoot(folder)) return PROJECTLESS_CHATS_LABEL
-    return projectOptions?.find((option) => option.path === folder)?.label ?? basename(folder) ?? folder
+    // A worktree's folder (a pool slot, one New chat cut) is how the chat is
+    // isolated, not a place the person chose: it is labelled as its project.
+    const project = workspaceProjectRootOf({ folderPath: folder }) ?? folder
+    if (isProjectlessChatsRoot(project)) return PROJECTLESS_CHATS_LABEL
+    return projectOptions?.find((option) => option.path === project)?.label ?? basename(project) ?? project
   }, [projectOptions, workspaceRoot])
   // Can this surface change where the agent runs? True when the host gave us
   // any way to — a folder browser, or projects to switch between. Deliberately
@@ -1645,6 +1649,7 @@ export default function NewAgentPanel({
     })
   }
 
+  const chatHasMessage = (text: string) => !isChatLaunch || text.trim() !== '' || images.length > 0 || files.length > 0
   const launch = (text: string, options: { stay?: boolean } = {}) => {
     if (!canLaunch || !extensionReady) return
     // Staying applies to a chat or agent started now, here or over SSH; a
@@ -1655,6 +1660,9 @@ export default function NewAgentPanel({
       void schedule(text)
       return
     }
+    // A chat opens on the message that starts it. With nothing to send, New
+    // chat stays where it is rather than opening a chat with nothing in it.
+    if (!chatHasMessage(text)) return
     if (pickedSsh) {
       if (sshFolderProblem) {
         showToast({ tone: 'warn', title: 'Which folder?', description: sshFolderProblem })
@@ -2545,7 +2553,7 @@ export default function NewAgentPanel({
                 <SendButton
                   size="sm"
                   onClick={() => launch(prompt)}
-                  disabled={!canLaunch || !extensionReady}
+                  disabled={!canLaunch || !extensionReady || !chatHasMessage(prompt)}
                   aria-label={isTerminalLaunch ? 'Open terminal' : 'Start agent'}
                   aria-keyshortcuts="Enter"
                   className="w-control-sm shrink-0 px-0"

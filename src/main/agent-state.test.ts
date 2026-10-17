@@ -1405,9 +1405,12 @@ test('agent-state', async () => {
     )
 
     // --- owned-json install round-trip on disk (grok spec) -------------------
-    // Writes .grok/hooks/sprintengine-agent-state.json, copies the shared reporter,
-    // and references it by absolute path.
+    // Writes ~/.grok/hooks/sprintengine-agent-state.json (user-level: the Grok TUI
+    // takes no hook at launch, and grok lists user hooks as always trusted), and
+    // runs the launcher of that same home.
+    assert.equal(grokSpec.registration.scope, 'user', 'grok hooks live in the home, never the repository')
     const grokRoot = await mkdtemp(join(tmpdir(), 'sprintengine-agent-state-grok-'))
+    const grokHome = join(grokRoot, 'home')
     const grokReporter = join(grokRoot, 'reporter-src.mjs')
     await writeFile(grokReporter, '// reporter\n', 'utf8')
     const grokSocket = join(grokRoot, 'agent-state.sock')
@@ -1415,24 +1418,23 @@ test('agent-state', async () => {
     const grokInstalled = await installAgentStateReporter(grokRoot, grokSpec, {
       sourceScriptPath: grokReporter,
       socketPath: grokSocket,
-      homeDir: join(grokRoot, 'home'),
+      homeDir: grokHome,
     })
     assert.equal(grokInstalled.ok, true)
-    const grokConfigPath = join(grokRoot, '.grok', 'hooks', 'sprintengine-agent-state.json')
+    assert.ok(!existsSync(join(grokRoot, '.grok')), 'nothing is written into the workspace')
+    const grokConfigPath = join(grokHome, '.grok', 'hooks', 'sprintengine-agent-state.json')
     const grokOnDisk = JSON.parse(await readFile(grokConfigPath, 'utf8')) as Settings
     const grokEntry = grokOnDisk.hooks?.SessionStart?.[0]?.hooks?.[0]
     const grokScript = join(grokRoot, '.sprintengine', 'hooks', 'agent-state.mjs')
     assert.ok(!existsSync(grokScript), 'grok install must not copy the reporter into the workspace')
-    assert.ok(
-      grokEntry?.command.includes(localLauncherRef(join(grokRoot, 'home')).path),
-      grokEntry?.command ?? 'no hook entry',
-    )
+    assert.ok(grokEntry?.command.includes(localLauncherRef(grokHome).path), grokEntry?.command ?? 'no hook entry')
     assert.ok(!grokEntry?.command.startsWith('node '), 'must not run a bare node')
 
     // Re-install is idempotent (whole-file overwrite, no accumulation).
     const grokReinstall = await installAgentStateReporter(grokRoot, grokSpec, {
       sourceScriptPath: grokReporter,
       socketPath: grokSocket,
+      homeDir: grokHome,
     })
     assert.equal(grokReinstall.ok, true)
     const grokTwice = JSON.parse(await readFile(grokConfigPath, 'utf8')) as Settings
@@ -1442,6 +1444,7 @@ test('agent-state', async () => {
     const grokMissing = await installAgentStateReporter(grokRoot, grokSpec, {
       sourceScriptPath: join(grokRoot, 'nope.mjs'),
       socketPath: grokSocket,
+      homeDir: grokHome,
     })
     assert.equal(grokMissing.ok, false)
 
@@ -1475,11 +1478,16 @@ test('agent-state', async () => {
     }
 
     // --- flat-hooks-json merge / unmerge round-trip (cursor spec) ------------
+    // User-level ~/.cursor/hooks.json: a plugin's stop and beforeSubmitPrompt
+    // hooks only fire beside a user or project file naming the same event, and
+    // the project file is the repository's.
+    assert.equal(cursorSpec.registration.scope, 'user', 'cursor hooks live in the home, never the repository')
     const cursorRoot = await mkdtemp(join(tmpdir(), 'sprintengine-agent-state-cursor-'))
+    const cursorHome = join(cursorRoot, 'home')
     const cursorReporter = join(cursorRoot, 'reporter-src.mjs')
     await writeFile(cursorReporter, '// reporter\n', 'utf8')
-    const cursorHooksPath = join(cursorRoot, '.cursor', 'hooks.json')
-    await mkdir(join(cursorRoot, '.cursor'), { recursive: true })
+    const cursorHooksPath = join(cursorHome, '.cursor', 'hooks.json')
+    await mkdir(join(cursorHome, '.cursor'), { recursive: true })
     // A user's own hook and a stale reporter entry from a moved workspace root:
     // the user's survives install untouched; the stale one is
     // reclaimed by command shape (no _sprintengine tag exists in this format).
@@ -1504,6 +1512,7 @@ test('agent-state', async () => {
     const cursorInstalled = await installAgentStateReporter(cursorRoot, cursorSpec, {
       sourceScriptPath: cursorReporter,
       socketPath: join(cursorRoot, 'agent.sock'),
+      homeDir: cursorHome,
     })
     assert.equal(cursorInstalled.ok, true)
     type FlatFile = { version?: number; hooks?: Record<string, Array<{ command?: string }>> }
@@ -1529,6 +1538,7 @@ test('agent-state', async () => {
     const cursorReinstall = await installAgentStateReporter(cursorRoot, cursorSpec, {
       sourceScriptPath: cursorReporter,
       socketPath: join(cursorRoot, 'agent.sock'),
+      homeDir: cursorHome,
     })
     assert.equal(cursorReinstall.ok, true)
     cursorFile = JSON.parse(await readFile(cursorHooksPath, 'utf8')) as FlatFile

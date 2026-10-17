@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { workspaceStoreRoot } from './workspace-store'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +23,7 @@ afterEach(async () => {
 })
 
 async function receiptFiles(root: string): Promise<string[]> {
-  const entries = await readdir(root, { recursive: true }).catch(() => [] as string[])
+  const entries = await readdir(workspaceStoreRoot(root), { recursive: true }).catch(() => [] as string[])
   return entries.filter((entry) => entry.endsWith('.receipts.json'))
 }
 
