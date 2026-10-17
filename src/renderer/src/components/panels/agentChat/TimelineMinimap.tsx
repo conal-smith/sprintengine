@@ -120,6 +120,28 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
   // The strip opens out from under a still pointer, so the turn it rests on
   // is read again once the strip has finished growing.
   const pointerYRef = useRef<number | null>(null)
+  // A text selection dragged right past the end of a line reaches the strip
+  // with the button still held. Taking the pointer there would open the strip
+  // and its preview and pull the selection over the rest of the conversation,
+  // so a press that began elsewhere passes through to the text underneath
+  // until the button comes up. A press on the strip itself still scrubs.
+  const pressedOnStripRef = useRef(false)
+  const [passThrough, setPassThrough] = useState(false)
+  useEffect(() => {
+    // The button can come up outside the window, where no mouseup arrives;
+    // the next move without it held ends the press all the same.
+    const release = (event: MouseEvent) => {
+      if (event.type === 'mousemove' && event.buttons !== 0) return
+      pressedOnStripRef.current = false
+      setPassThrough(false)
+    }
+    window.addEventListener('mouseup', release)
+    window.addEventListener('mousemove', release)
+    return () => {
+      window.removeEventListener('mouseup', release)
+      window.removeEventListener('mousemove', release)
+    }
+  }, [])
   // The minimap re-renders with every streamed token; its ticks only change
   // with the prompts, the reader's turn and the pointer.
   const ticks = useMemo(
@@ -144,8 +166,8 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
     return minimapIndexAtPointer(count, rect.top, rect.height, pointerY)
   }
   const spacing = expanded ? TICK_SPACING_EXPANDED_PX : TICK_SPACING_PX
-  const stepClass =
-    'pointer-events-auto opacity-0 transition-opacity duration-150 group-hover/minimap:opacity-100 group-focus-within/minimap:opacity-100'
+  const pointerEvents = passThrough ? 'pointer-events-none' : 'pointer-events-auto'
+  const stepClass = `${pointerEvents} opacity-0 transition-opacity duration-150 group-hover/minimap:opacity-100 group-focus-within/minimap:opacity-100`
   return (
     <nav
       ref={navRef}
@@ -167,9 +189,19 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
         role="presentation"
         data-minimap-strip=""
         data-expanded={expanded || undefined}
-        className={`pointer-events-auto relative cursor-pointer transition-[height,width] duration-150 ease-out ${expanded ? 'w-8' : 'w-4'}`}
+        data-pass-through={passThrough || undefined}
+        className={`${pointerEvents} relative cursor-pointer transition-[height,width] duration-150 ease-out ${expanded ? 'w-8' : 'w-4'}`}
         style={{ height: `min(${(count - 1) * spacing}px, calc(100% - 6rem))` }}
+        onMouseDown={() => {
+          pressedOnStripRef.current = true
+        }}
         onMouseMove={(event) => {
+          if (event.buttons !== 0 && !pressedOnStripRef.current) {
+            pointerYRef.current = null
+            setHovered(null)
+            setPassThrough(true)
+            return
+          }
           pointerYRef.current = event.clientY
           setHovered(indexAt(event.currentTarget, event.clientY))
         }}
