@@ -1166,10 +1166,15 @@ test('workspacesSlice', async () => {
     })
     useWorkspaceStore.getState().setActiveWorkspace(lookedAtId)
     const rowOf = (id: string) => useWorkspaceStore.getState().workspaces.find((w) => w.id === id)!
+    // The pull request list has been read and holds none: absent, it is not
+    // yet read, and the keep for open pull requests holds every row.
     const reconcile = (now: number, busyIds: string[] = [], heldIds: string[] = []) =>
-      useWorkspaceStore
-        .getState()
-        .reconcileWorkspaceSettlement({ now, busyIds: new Set(busyIds), heldIds: new Set(heldIds) })
+      useWorkspaceStore.getState().reconcileWorkspaceSettlement({
+        now,
+        busyIds: new Set(busyIds),
+        heldIds: new Set(heldIds),
+        pullRequestsByWorkspaceId: {},
+      })
     const activeIds = () =>
       new Set([
         useWorkspaceStore.getState().activeWorkspaceId,
@@ -1192,9 +1197,42 @@ test('workspacesSlice', async () => {
     reconcile(bornAt + 4 * DAY, [], [settleId])
     assert.equal(rowOf(settleId).settledAt ?? null, null, 'the unseen mark holds a row out of the shelf')
 
-    // Idle three days: it settles, quietly.
-    reconcile(bornAt + 4 * DAY)
+    // Idle three days, but the pull requests not read yet: an open one may be
+    // among them, so the keep holds it…
+    useWorkspaceStore
+      .getState()
+      .reconcileWorkspaceSettlement({ now: bornAt + 4 * DAY, busyIds: new Set(), heldIds: new Set() })
+    assert.equal(rowOf(settleId).settledAt ?? null, null, 'an unread pull request list holds a row with the keep on')
+    // …and an open one, once read, holds it too.
+    const openPullRequest = {
+      url: 'https://github.com/acme/app/pull/1',
+      repoKey: 'github.com/acme/app',
+      repoName: 'app',
+      number: 1,
+      title: 'Fix it',
+      state: 'open' as const,
+      isDraft: false,
+      openedAt: bornAt,
+      stateAt: bornAt,
+    }
+    useWorkspaceStore.getState().reconcileWorkspaceSettlement({
+      now: bornAt + 4 * DAY,
+      busyIds: new Set(),
+      heldIds: new Set(),
+      pullRequestsByWorkspaceId: { [settleId]: [openPullRequest] },
+    })
+    assert.equal(rowOf(settleId).settledAt ?? null, null, 'an open pull request holds a quiet row')
+    useWorkspaceStore.getState().setKeepChatsWithOpenPullRequest(false)
+    useWorkspaceStore.getState().reconcileWorkspaceSettlement({
+      now: bornAt + 4 * DAY,
+      busyIds: new Set(),
+      heldIds: new Set(),
+      pullRequestsByWorkspaceId: { [settleId]: [openPullRequest] },
+    })
+    // With the keep off, idle three days settles it all the same, quietly.
     assert.equal(rowOf(settleId).settledAt, bornAt + 4 * DAY, 'the sweep stamps settledAt')
+    useWorkspaceStore.getState().setKeepChatsWithOpenPullRequest(true)
+    assert.equal(useWorkspaceStore.getState().appSettings.keepChatsWithOpenPullRequest, true)
     assert.equal(rowOf(settleId).settledOverride ?? null, null, 'the sweep records no hand decision')
 
     // Wanting the person (a prompt landed after the sweep's reading): a

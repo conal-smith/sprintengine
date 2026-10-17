@@ -65,6 +65,9 @@ test('TerminalLinkMenu', async () => {
       calls.push(`readfile:${path}`)
       return 'contents'
     },
+    showItemInFolder: async (path: string) => {
+      calls.push(`showItemInFolder:${path}`)
+    },
   }
 
   const ROOT = '/repo'
@@ -100,7 +103,7 @@ test('TerminalLinkMenu', async () => {
     let closed = 0
     const errors: string[] = []
 
-    function mount(target: Target): { unmount: () => void } {
+    function mount(target: Target, revealInSystemLabel?: string): { unmount: () => void } {
       const root = createRoot(container)
       act(() => {
         root.render(
@@ -113,6 +116,7 @@ test('TerminalLinkMenu', async () => {
               closed += 1
             },
             onError: (message: string) => errors.push(message),
+            revealInSystemLabel,
           }),
         )
       })
@@ -214,6 +218,28 @@ test('TerminalLinkMenu', async () => {
     await run('a directory offers only the locate group', () => {
       const view = mount(fileTarget(`${ROOT}/src`, true))
       assert.deepEqual(labels(), ['Reveal in Files', 'Copy path'])
+      view.unmount()
+    })
+
+    await run('offered a system reveal, the menu shows the file in the file manager', async () => {
+      const view = mount(fileTarget(`${ROOT}/src/App.tsx`), 'Reveal in Finder')
+      assert.deepEqual(labels(), [
+        'Open in editor',
+        'Open in pop-out window',
+        'Reveal in Files',
+        'Reveal in Finder',
+        'Copy path',
+      ])
+      calls.length = 0
+      click('Reveal in Finder')
+      await act(async () => {})
+      assert.deepEqual(calls, [`showItemInFolder:${ROOT}/src/App.tsx`])
+      view.unmount()
+    })
+
+    await run('not offered one (a terminal link), the menu has no system reveal', () => {
+      const view = mount(fileTarget(`${ROOT}/src/App.tsx`))
+      assert.equal(labels().includes('Reveal in Finder'), false)
       view.unmount()
     })
 
