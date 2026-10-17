@@ -262,7 +262,14 @@ records, in place of `toolUseId`. Those entries (`{ id, mediaType, name?,
 byteLength, ref }`) were on the wire before it, an optional member with no
 capability; the capability only says the bytes can be fetched. A client that
 does not see it names the picture, and an older desktop answers the request
-400, since it names no `toolUseId`. The machine each chat runs on (`host`),
+400, since it names no `toolUseId`. Files of any type with a message are the
+`conversation-message-files` capability (2026-10-17): the upload route takes
+`kind=file`, and the `uploadIds` a `send` already carried name that upload as
+they name a picture's, so neither the route's path nor any frame changed. The
+message records it in `files` (`{ path }`), a member `user_message` carried
+before for files dropped on the desktop. A client that does not see it offers
+pictures only; an older desktop refuses a file `415 invalid_media_type`, as it
+always did. The machine each chat runs on (`host`),
 its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not

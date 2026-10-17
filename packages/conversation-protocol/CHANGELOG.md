@@ -22,6 +22,13 @@
   absent from a desktop built before they were listed;
   `parseConversationServerFrame` keeps each when it is a clock and leaves out
   anything else. The pinned files are unchanged.
+- **A message can carry files, not only pictures.**
+  `CONVERSATION_MESSAGE_FILES_CAPABILITY` (`conversation-message-files`) names
+  a desktop whose upload route takes `kind=file`: a file of any type, which a
+  `send` names in `uploadIds` as it names a picture and which the message then
+  carries by its path on that desktop (`files` on the `user_message`). No
+  frame changed; a client without it offers pictures only. The pinned files
+  are unchanged.
 - **The pictures a person sent with a message can be fetched.**
   `CONVERSATION_MESSAGE_IMAGES_CAPABILITY` (`conversation-message-images`)
   names a desktop whose `GET /tailnet/v1/conversation-image` takes

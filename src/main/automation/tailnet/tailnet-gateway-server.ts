@@ -48,6 +48,7 @@ import {
 } from './tailnet-routes'
 import { openConversationImage } from './tailnet-conversation-images'
 import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENT_BYTES } from '../../../shared/conversation-attachments'
+import { MAX_TAILNET_FILE_BYTES, type TailnetFileUploads } from './tailnet-file-uploads'
 import {
   createResyncBackoff,
   createTailnetConversationStream,
@@ -133,6 +134,12 @@ export type TailnetGatewayServerOptions = {
   devices: TailnetDeviceStore
   peers: TailnetPeerResolver
   conversations?: ConversationGatewayHost
+  /**
+   * Where a file a device sends with a message is kept (`upload?kind=file`):
+   * Studio's own store, never a project's folder. Without it this build
+   * refuses a file upload as unavailable; pictures are unaffected.
+   */
+  fileUploads?: TailnetFileUploads
   /**
    * Fired when a peer asks to pair, so the surfaces that answer these
    * can refresh without polling. It carries no detail: a listener's job is to
@@ -375,7 +382,15 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     // Revocation must reach a device that is already mid-stream, not just its
     // next request: a live WebSocket would otherwise keep serving a device the
     // user just removed.
-    const unsubscribeRevoked = options.devices.onDeviceRevoked((deviceId) => closeStreamsFor(deviceId))
+    // The files a removed device sent go with it, as a removed browser's do.
+    const unsubscribeRevoked = options.devices.onDeviceRevoked((deviceId) => {
+      closeStreamsFor(deviceId)
+      try {
+        options.fileUploads?.forgetDevice(deviceId)
+      } catch (error) {
+        options.log?.(`tailnet uploads of a removed device were not removed: ${message(error)}`)
+      }
+    })
     // A narrowed grant reaches an open conversation socket the same way: it
     // re-reads the device and closes, or stops accepting commands. The RPC
     // stream needs no push: it re-reads the device on every message it answers.
@@ -436,6 +451,10 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * Streamed to disk with the ceiling enforced as the bytes arrive, so an
    * oversized upload is cut off mid-flight rather than buffered to discover
    * its size — and the part-written file is removed.
+   *
+   * `kind=file` is a file of any type instead (`conversation-message-files`),
+   * up to 25 MB, kept in Studio's own store rather than staged: the send that
+   * spends its id attaches it by path, and the agent reads it there.
    */
   async function handleUpload(
     request: IncomingMessage,
@@ -447,7 +466,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       writeJson(response, 403, {
         error: {
           code: 'tailnet_scope_required',
-          message: 'This device may read conversations but not attach images to them.',
+          message: 'This device may read conversations but not attach files to them.',
         },
       })
       return
@@ -475,6 +494,10 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       return
     }
     const mediaType = (headerOf(request, 'content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? ''
+    if (url.searchParams.get('kind') === 'file') {
+      await receiveFile(request, response, device, { sessionId, name, mediaType })
+      return
+    }
     if (!ATTACHABLE_IMAGE_TYPES.includes(mediaType as (typeof ATTACHABLE_IMAGE_TYPES)[number])) {
       writeJson(response, 415, {
         error: { code: 'invalid_media_type', message: 'Only PNG, JPEG, WebP and GIF images can be attached.' },
@@ -491,7 +514,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     const declared = Number(request.headers['content-length'] ?? '')
     if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
       // Drained before the answer, not after: see `drainRefusedBody`.
-      if (await drainRefusedBody(request)) writeTooLarge(response)
+      if (await drainRefusedBody(request)) writeTooLarge(response, MAX_ATTACHMENT_BYTES)
       return
     }
     try {
@@ -527,13 +550,78 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     } catch (error) {
       if (error instanceof UploadTooLarge) {
         // Drained before the answer, not after: see `drainRefusedBody`.
-        if (await drainRefusedBody(request)) writeTooLarge(response)
+        if (await drainRefusedBody(request)) writeTooLarge(response, MAX_ATTACHMENT_BYTES)
         return
       }
       options.log?.(`tailnet upload failed: ${message(error)}`)
       // A staging directory removed underneath the app (a temp cleaner) is
       // made again on the next upload.
       if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') conversationUploadDirectory = null
+      writeJson(response, 500, { error: { code: 'internal_error', message: 'The file could not be written.' } })
+    }
+  }
+
+  /**
+   * One file of any type for a chat's next message, written where Studio keeps
+   * a device's files (tailnet-file-uploads.ts) under its own name made safe,
+   * and answered with an id only this device can spend on this chat, as a
+   * picture's is. The scope and the chat were checked by the caller. The type
+   * the device declared is recorded, never trusted to mean anything: no
+   * provider is handed these bytes, only their path.
+   */
+  async function receiveFile(
+    request: IncomingMessage,
+    response: ServerResponse,
+    device: TailnetDevice,
+    input: { sessionId: string; name: string; mediaType: string },
+  ): Promise<void> {
+    const conversations = options.conversations
+    const store = options.fileUploads
+    if (!conversations?.registerUpload || !store) {
+      writeJson(response, 501, {
+        error: { code: 'upload_unavailable', message: 'This build cannot receive files for a chat.' },
+      })
+      return
+    }
+    const declared = Number(request.headers['content-length'] ?? '')
+    if (Number.isFinite(declared) && declared > MAX_TAILNET_FILE_BYTES) {
+      if (await drainRefusedBody(request, REFUSED_FILE_DRAIN_MAX_BYTES)) writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
+      return
+    }
+    let place: ReturnType<TailnetFileUploads['place']> | null = null
+    try {
+      place = store.place(device.id, input.name)
+      const written = await streamUploadToDisk(request, place.path, MAX_TAILNET_FILE_BYTES)
+      const kept = place
+      const uploadId = conversations.registerUpload({
+        deviceId: device.id,
+        sessionId: input.sessionId,
+        path: kept.path,
+        name: kept.name,
+        mediaType: MEDIA_TYPE_SHAPE.test(input.mediaType) ? input.mediaType : 'application/octet-stream',
+        bytes: written,
+        kind: 'file',
+        dispose: () => {
+          try {
+            kept.remove()
+          } catch {
+            // Pruned with the week's others instead.
+          }
+        },
+      })
+      writeJson(response, 200, { uploadId, bytes: written, name: kept.name })
+    } catch (error) {
+      try {
+        place?.remove()
+      } catch {
+        // Pruned with the week's others instead.
+      }
+      if (error instanceof UploadTooLarge) {
+        if (await drainRefusedBody(request, REFUSED_FILE_DRAIN_MAX_BYTES))
+          writeTooLarge(response, MAX_TAILNET_FILE_BYTES)
+        return
+      }
+      options.log?.(`tailnet file upload failed: ${message(error)}`)
       writeJson(response, 500, { error: { code: 'internal_error', message: 'The file could not be written.' } })
     }
   }
@@ -1409,14 +1497,17 @@ function writePeerRefused(response: ServerResponse, refusal: { code: string; mes
   writeJson(response, 401, { error: { code: refusal.code, message: refusal.message } })
 }
 
-function writeTooLarge(response: ServerResponse): void {
+function writeTooLarge(response: ServerResponse, limitBytes: number): void {
   writeJson(response, 413, {
     error: {
       code: 'too_large',
-      message: `That file is over the ${Math.floor(MAX_ATTACHMENT_BYTES / (1024 * 1024))}MB limit.`,
+      message: `That file is over the ${Math.floor(limitBytes / (1024 * 1024))}MB limit.`,
     },
   })
 }
+
+/** A declared `type/subtype`, recorded as sent; anything else is recorded as bytes. */
+const MEDIA_TYPE_SHAPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u
 
 function writeJson(response: ServerResponse, status: number, payload: Record<string, unknown>): void {
   // The catch-all 500 in the request handler can fire after a route already
@@ -1481,8 +1572,11 @@ function queryOf(url: string | undefined): URLSearchParams {
 // connection is cut instead, and how long that is given. Generous enough that
 // an honest client which overshot the ceiling always gets its sentence (the
 // phone's own screenshot is megabytes, not gigabytes), small enough that a
-// client streaming without end is hung up on rather than served forever.
+// client streaming without end is hung up on rather than served forever. A
+// file's ceiling is five times a picture's, so a file over it is given twice
+// its ceiling instead.
 const REFUSED_BODY_DRAIN_MAX_BYTES = 4 * MAX_ATTACHMENT_BYTES
+const REFUSED_FILE_DRAIN_MAX_BYTES = 2 * MAX_TAILNET_FILE_BYTES
 const REFUSED_BODY_DRAIN_MS = 15_000
 
 /**
@@ -1514,7 +1608,10 @@ const REFUSED_BODY_DRAIN_MS = 15_000
  *
  * @returns whether the body ended, and so whether an answer can still be sent.
  */
-async function drainRefusedBody(request: IncomingMessage): Promise<boolean> {
+async function drainRefusedBody(
+  request: IncomingMessage,
+  maxBytes: number = REFUSED_BODY_DRAIN_MAX_BYTES,
+): Promise<boolean> {
   if (request.readableEnded || request.complete) return true
   return await new Promise<boolean>((resolve) => {
     let discarded = 0
@@ -1540,7 +1637,7 @@ async function drainRefusedBody(request: IncomingMessage): Promise<boolean> {
     }
     const onData = (chunk: Buffer): void => {
       discarded += chunk.length
-      if (discarded > REFUSED_BODY_DRAIN_MAX_BYTES) giveUp()
+      if (discarded > maxBytes) giveUp()
     }
     timer = setTimeout(giveUp, REFUSED_BODY_DRAIN_MS)
     // Never hold the process open for a body nobody is waiting on.

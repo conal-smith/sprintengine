@@ -175,6 +175,12 @@ export const TAILNET_CAPABILITIES = [
   // picture this machine kept for that chat. A client without it names the
   // picture instead. CONVERSATION_MESSAGE_IMAGES_CAPABILITY.
   'conversation-message-images',
+  // Files of any type with a message (2026-10-17): `upload?kind=file` takes
+  // one up to 25 MB, kept in Studio's own store, and the `send` that spends
+  // its id attaches it to the message by path (`files` on its
+  // `user_message`). A client without it offers pictures only.
+  // CONVERSATION_MESSAGE_FILES_CAPABILITY.
+  'conversation-message-files',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:
