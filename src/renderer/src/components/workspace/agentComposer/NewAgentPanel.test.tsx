@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { JSDOM } from 'jsdom'
+import { standInImageDecoding } from '../../../../../../tests/image-decoding'
 import { bundledPermissionModes } from '../../../../../../tests/permission-modes'
 import {
   composerDisabled,
@@ -46,6 +47,7 @@ test('NewAgentPanel', async () => {
   anyGlobal.KeyboardEvent = dom.window.KeyboardEvent
   anyGlobal.FileReader = dom.window.FileReader
   anyGlobal.File = dom.window.File
+  const imageDecoding = standInImageDecoding(dom.window)
   anyGlobal.getComputedStyle = dom.window.getComputedStyle
   // jsdom has no `CSS`; the skill type-ahead escapes a row id with it to keep
   // the highlighted row in view.
@@ -1843,8 +1845,12 @@ test('NewAgentPanel', async () => {
           typeIntoComposer(textarea, 'fix the build')
         })
 
-        // Drop an image: it goes with the launch, as the image it is.
+        // Drop an image: it goes with the launch, as the image it is, shrunk
+        // the way the chat's composer shrinks one.
         useToastStore.setState({ toasts: [] })
+        imageDecoding.decoded = { width: 3136, height: 2352 }
+        imageDecoding.encodedBytes = 900
+        imageDecoding.drawn.length = 0
         const file = new dom.window.File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' })
         const box = textarea.closest('[class*="relative"]')!
         const dropEvent = new dom.window.Event('drop', { bubbles: true, cancelable: true })
@@ -1883,6 +1889,18 @@ test('NewAgentPanel', async () => {
         assert.equal(images?.[0]?.mediaType, 'image/png')
         assert.equal(images?.[0]?.name, 'shot.png')
         assert.ok(typeof images?.[0]?.dataBase64 === 'string' && images[0].dataBase64.length > 0, 'as its bytes')
+        assert.deepEqual(
+          imageDecoding.drawn,
+          [{ width: 1568, height: 1176 }],
+          'drawn at the long edge a vision model uses, not the 3136px it was taken at',
+        )
+        assert.equal(images?.[0]?.byteLength, 900, 'and those are the bytes that go')
+        assert.equal(
+          Buffer.from(String(images?.[0]?.dataBase64), 'base64').length,
+          900,
+          'the shrunk image, not the file as dropped',
+        )
+        imageDecoding.decoded = { width: 400, height: 300 }
         assert.equal('path' in (images?.[0] ?? {}), false, 'and not as a path on this disk, which names nothing there')
         assert.equal(
           remoteLaunches[0]?.remoteWorkspaceRoot,

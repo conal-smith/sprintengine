@@ -45,7 +45,24 @@ export const LOGIN_PATH_SENTINEL = 'SPRINTENGINE_LOGIN_PATH:'
 export const USER_SHELL_PATH_TIMEOUT_MS = 5_000
 export const LOGIN_BASH_PATH_TIMEOUT_MS = 10_000
 
-const PRINT_PATH_SCRIPT = `printf '\\n%s%s\\n' '${LOGIN_PATH_SENTINEL}' "$PATH"`
+/** Marks a line carrying one of `LOGIN_SHELL_TRUST_VARIABLES` as `NAME=value`. */
+export const LOGIN_ENV_SENTINEL = 'SPRINTENGINE_LOGIN_ENV:'
+
+/**
+ * Certificate trust a person sets in their shell profile. Opened from Finder or
+ * the Dock, the app never sees those exports, so an agent behind a proxy that
+ * re-signs TLS, or a Node built against a shared OpenSSL with no roots of its
+ * own, cannot verify its API or its registry, though the same CLI works in the
+ * person's terminal. They are read from the same shell that answers for PATH.
+ */
+export const LOGIN_SHELL_TRUST_VARIABLES = ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS'] as const
+
+const PRINT_PATH_SCRIPT = [
+  `printf '\\n%s%s\\n' '${LOGIN_PATH_SENTINEL}' "$PATH"`,
+  ...LOGIN_SHELL_TRUST_VARIABLES.map(
+    (name) => `if [ -n "$${name}" ]; then printf '\\n%s%s=%s\\n' '${LOGIN_ENV_SENTINEL}' '${name}' "$${name}"; fi`,
+  ),
+].join('; ')
 
 /**
  * True when `shell` is one whose own config can be asked for its PATH: a zsh or
@@ -89,6 +106,46 @@ export function parseLoginShellPath(stdout: string): string | null {
     if (line.startsWith(LOGIN_PATH_SENTINEL)) found = line.slice(LOGIN_PATH_SENTINEL.length).trim()
   }
   return found ? found : null
+}
+
+/**
+ * The trust variables a shell printed, by name. The LAST marked line for a name
+ * wins, as for PATH; a name outside `LOGIN_SHELL_TRUST_VARIABLES` or an empty
+ * value is ignored.
+ */
+export function parseLoginShellTrustEnv(stdout: string): Record<string, string> {
+  const found: Record<string, string> = {}
+  const names: readonly string[] = LOGIN_SHELL_TRUST_VARIABLES
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line.startsWith(LOGIN_ENV_SENTINEL)) continue
+    const entry = line.slice(LOGIN_ENV_SENTINEL.length)
+    const separator = entry.indexOf('=')
+    if (separator <= 0) continue
+    const name = entry.slice(0, separator)
+    const value = entry.slice(separator + 1).trim()
+    if (names.includes(name) && value) found[name] = value
+  }
+  return found
+}
+
+/**
+ * `env` with each trust variable the login shell set and `env` lacks. One the
+ * app was started with is the person's choice for this session and is never
+ * replaced.
+ */
+export function withLoginShellTrustEnv(
+  env: Record<string, string>,
+  loginEnv: Readonly<Record<string, string>>,
+): Record<string, string> {
+  let next = env
+  for (const name of LOGIN_SHELL_TRUST_VARIABLES) {
+    const value = loginEnv[name]
+    if (!value || env[name]) continue
+    if (next === env) next = { ...env }
+    next[name] = value
+  }
+  return next
 }
 
 /**
@@ -157,10 +214,16 @@ export function withUserShellPath(
 // spawn reads the answer the session already has (CLI detection asks at boot)
 // rather than waiting for one.
 let lastResolvedLoginPath: string | null = null
+let lastResolvedLoginTrustEnv: Readonly<Record<string, string>> = {}
 
 /** The login shell's PATH as last resolved this session, or null before any shell has answered. */
 export function lastKnownLoginShellPath(): string | null {
   return lastResolvedLoginPath
+}
+
+/** The trust variables the shell that last answered for PATH set; empty before any has. */
+export function lastKnownLoginShellTrustEnv(): Readonly<Record<string, string>> {
+  return lastResolvedLoginTrustEnv
 }
 
 async function isExecutableFile(candidate: string): Promise<boolean> {
@@ -208,13 +271,13 @@ export function createLoginShellPathResolver(deps: {
 }): LoginShellPathResolver {
   let memo: Promise<string | null> | null = null
 
-  async function ask(env: NodeJS.ProcessEnv): Promise<string | null> {
+  async function ask(env: NodeJS.ProcessEnv): Promise<{ path: string; trustEnv: Record<string, string> } | null> {
     for (const descriptor of loginShellPathDescriptors(deps.shell())) {
       try {
         const outcome = await deps.run(descriptor, env)
         if (outcome.timedOut) continue
         const path = parseLoginShellPath(outcome.stdout)
-        if (path) return path
+        if (path) return { path, trustEnv: parseLoginShellTrustEnv(outcome.stdout) }
       } catch {
         // A shell that will not start is one fewer place to ask, not a failure.
       }
@@ -225,13 +288,20 @@ export function createLoginShellPathResolver(deps: {
   return {
     resolve(env) {
       if (memo) return memo
-      const pending = ask(env)
+      const pending = ask(env).then((answer) => {
+        // The trust variables come from the same shell as the PATH, so they
+        // are replaced together: a profile that dropped one drops it here too.
+        if (answer) {
+          lastResolvedLoginPath = answer.path
+          lastResolvedLoginTrustEnv = answer.trustEnv
+        }
+        return answer?.path ?? null
+      })
       memo = pending
       void pending.then((path) => {
         // Kept only when it answered. Dropping a failure lets the next refresh
         // try again instead of living with the process PATH all session.
         if (path === null && memo === pending) memo = null
-        if (path !== null) lastResolvedLoginPath = path
       })
       return pending
     },

@@ -73,11 +73,42 @@ import { withoutStudioNoticePrefix } from '../../../../../shared/studio-notice'
 
 // Auth-shaped turn failures get a sign-in action in the error block. Whole
 // words and stems, so a path or message that merely contains "author" or a
-// number with 401 in it is not read as a lapsed login.
+// number with 401 in it is not read as a lapsed login. A refusal of access is
+// not one either, though the Claude CLI files a 403 as an authentication
+// failure: signing in again cannot grant what the account is not allowed.
 export function isAuthShapedFailure(reason: string | undefined): boolean {
   return Boolean(
-    reason && /authenticat|unauthori[sz]ed|\bauth\b|log ?in|oauth|credential|\b401\b|expired|api key/i.test(reason),
+    reason &&
+    permissionDeniedReason(reason) === undefined &&
+    /authenticat|unauthori[sz]ed|\bauth\b|log ?in|oauth|credential|\b401\b|expired|api key/i.test(reason),
   )
+}
+
+// The provider's own reason for refusing access ("Your organization does not
+// have access to this model."), read from after the 403; empty when it gave
+// none, undefined when the failure is not a refusal. A JSON error body gives
+// its message. A bare 403 elsewhere in the text counts only beside wording
+// that says access was refused.
+const REFUSAL_WORDING =
+  /permission|forbidden|(?:does not|doesn['’]t|do not|don['’]t) have access|access (?:is )?denied|not allowed/i
+export function permissionDeniedReason(text: string | undefined): string | undefined {
+  if (!text) return undefined
+  const status = /API Error:\s*403\b/i.exec(text) ?? (REFUSAL_WORDING.test(text) ? /\b403\b/.exec(text) : null)
+  if (!status) return undefined
+  const rest = text
+    .slice(status.index + status[0].length)
+    .replace(/^[\s:–—-]*(?:forbidden\b[\s:–—-]*)?/i, '')
+    .trim()
+  if (rest.startsWith('{')) {
+    try {
+      const body = JSON.parse(rest) as { message?: unknown; error?: { message?: unknown } }
+      const message = body.error?.message ?? body.message
+      if (typeof message === 'string') return message.trim()
+    } catch {
+      // Not JSON after all: the text reads as it came.
+    }
+  }
+  return rest
 }
 
 // Chrome the timeline rows need from the component: who is speaking, how to
@@ -961,8 +992,15 @@ export function TurnErrorBlock({
   // A provider with no known command is told to sign in, not given another
   // CLI's command that would do nothing for it.
   const command = chrome.cli ? CLI_SIGN_IN_COMMAND[chrome.cli] : undefined
+  // A refusal says the provider's own reason up front rather than under
+  // Details: it is what the person has to take to whoever grants access.
+  const refusal = permissionDeniedReason(entry.failureDetail) ?? permissionDeniedReason(entry.failureReason)
+  const refused =
+    refusal === undefined
+      ? undefined
+      : `${chrome.assistantName} was refused access${refusal ? `: ${refusal}${/[.!?]$/.test(refusal) ? '' : '.'}` : '.'}`
   const message: React.ReactNode = !authShaped ? (
-    `Something went wrong while responding. ${kept}`
+    `${refused ?? 'Something went wrong while responding.'} ${kept}`
   ) : onSignIn ? (
     `The session could not authenticate — usually a sign your sign-in expired. Sign in, then retry.${
       chrome.platform === 'win32'

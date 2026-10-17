@@ -3,6 +3,7 @@ import type { Options, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude
 import type { ConversationCommand } from '../../shared/conversation/commands'
 import type { ConversationCliRuntimeOverrides } from '../../shared/conversation-runtime'
 import { isWslHostId } from '../../shared/execution-host'
+import { hasClaudeManagedMcpConfig } from '../claude-managed-mcp'
 
 /** The CLI id a Claude chat's command list is kept under. */
 export const CLAUDE_COMMANDS_CLI = 'claude-code'
@@ -166,6 +167,8 @@ export type ClaudeCommandsProbeDeps = {
   resolveExecutable?: (cliRuntimes?: ConversationCliRuntimeOverrides) => Promise<string>
   env?: () => Promise<Record<string, string>> | Record<string, string>
   timeoutMs?: number
+  /** Whether an administrator's `managed-mcp.json` is installed; read from disk by default. */
+  managedMcpConfig?: () => boolean
 }
 
 const CLAUDE_COMMANDS_PROBE_TIMEOUT_MS = 20_000
@@ -211,7 +214,9 @@ export async function probeClaudeConversationCommands(
         pathToClaudeCodeExecutable: executable,
         settingSources: ['user'],
         settings: { disableAllHooks: true },
-        strictMcpConfig: true,
+        // Claude refuses strict MCP mode beside an administrator's
+        // managed-mcp.json, which already keeps the person's own servers out.
+        ...((deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)() ? {} : { strictMcpConfig: true }),
         env: probeEnv(env),
         abortController: abort,
       },
