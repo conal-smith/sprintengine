@@ -2,8 +2,11 @@
 
 import {
   ATTACHABLE_IMAGE_TYPES as SHARED_ATTACHABLE_IMAGE_TYPES,
+  ATTACHMENT_JPEG_QUALITY,
+  ATTACHMENT_JPEG_SOURCE_QUALITY,
   MAX_ATTACHMENT_BYTES as SHARED_MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_TURN as SHARED_MAX_ATTACHMENTS_PER_TURN,
+  scaledImageDimensions,
 } from '../../../../../shared/conversation-attachments'
 import type { ConversationImageAttachment } from '../../../../../shared/conversation-runtime'
 
@@ -16,13 +19,13 @@ import type { ConversationImageAttachment } from '../../../../../shared/conversa
 export const ATTACHABLE_IMAGE_TYPES: readonly string[] = SHARED_ATTACHABLE_IMAGE_TYPES
 export const MAX_ATTACHMENT_BYTES = SHARED_MAX_ATTACHMENT_BYTES
 export const MAX_ATTACHMENTS_PER_TURN = SHARED_MAX_ATTACHMENTS_PER_TURN
-// Longest edge kept when an image is resampled. Vision models stop gaining
-// detail past ~1568px on the long edge, so this is the token-cost choice as
-// much as the size guard.
-export const MAX_ATTACHMENT_EDGE = 1568
-// Re-encode quality for the JPEG fallback used when a resampled image is still
-// over the byte ceiling.
-export const ATTACHMENT_JPEG_QUALITY = 0.82
+// The resampling policy is shared with main, which shrinks a paired device's
+// uploads by the same rules (src/shared/conversation-attachments.ts).
+export {
+  ATTACHMENT_JPEG_QUALITY,
+  MAX_ATTACHMENT_EDGE,
+  scaledImageDimensions,
+} from '../../../../../shared/conversation-attachments'
 
 // Providers whose adapter actually composes image content blocks from a turn's
 // `attachments` — the claude-agent harness today (T2/D3). Every other provider
@@ -43,20 +46,6 @@ export function isAttachableImageType(mediaType: string): boolean {
 export function base64ByteLength(base64: string): number {
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
-}
-
-// Longest-edge-constrained target size, aspect ratio preserved. An image that
-// already fits comes back untouched so small images are never resampled (which
-// would re-encode them for no gain).
-export function scaledImageDimensions(
-  width: number,
-  height: number,
-  maxEdge = MAX_ATTACHMENT_EDGE,
-): { width: number; height: number } {
-  const longest = Math.max(width, height)
-  if (longest <= maxEdge || longest === 0) return { width, height }
-  const scale = maxEdge / longest
-  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
 }
 
 export function formatAttachmentBytes(bytes: number): string {
@@ -156,7 +145,11 @@ export async function readImageAttachment(file: File, id: string): Promise<Conve
     // second choice, not the default). Encoded off the main thread, measured as
     // bytes, and only the encoding that is sent is turned into base64.
     const preferredType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png'
-    let encoded = await canvasToBlob(canvas, preferredType)
+    let encoded = await canvasToBlob(
+      canvas,
+      preferredType,
+      preferredType === 'image/jpeg' ? ATTACHMENT_JPEG_SOURCE_QUALITY : undefined,
+    )
     if (encoded && encoded.size > MAX_ATTACHMENT_BYTES && preferredType !== 'image/jpeg') {
       encoded = await canvasToBlob(canvas, 'image/jpeg', ATTACHMENT_JPEG_QUALITY)
     }

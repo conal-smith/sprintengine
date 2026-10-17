@@ -45,7 +45,7 @@ export const LOGIN_PATH_SENTINEL = 'SPRINTENGINE_LOGIN_PATH:'
 export const USER_SHELL_PATH_TIMEOUT_MS = 5_000
 export const LOGIN_BASH_PATH_TIMEOUT_MS = 10_000
 
-/** Marks a line carrying one of `LOGIN_SHELL_TRUST_VARIABLES` as `NAME=value`. */
+/** Marks a line carrying one of `LOGIN_SHELL_ENV_VARIABLES` as `NAME=value`. */
 export const LOGIN_ENV_SENTINEL = 'SPRINTENGINE_LOGIN_ENV:'
 
 /**
@@ -57,9 +57,63 @@ export const LOGIN_ENV_SENTINEL = 'SPRINTENGINE_LOGIN_ENV:'
  */
 export const LOGIN_SHELL_TRUST_VARIABLES = ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS'] as const
 
+/**
+ * What a person exports in their shell profile to point an agent CLI at its
+ * provider, lost the same way as the trust variables when the app is opened
+ * from the Dock: Claude Code on Bedrock or Vertex and its model pins, the API
+ * keys and endpoints of the other CLIs, the company proxy, the GitHub token an
+ * agent's `gh` reads, and where Codex and OpenCode keep their config.
+ *
+ * A fixed list, not a pattern: nothing else in the profile is read. The values
+ * are secrets as often as not, and are never logged.
+ *
+ * Left out on purpose: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
+ * `ANTHROPIC_BASE_URL`. A Claude chat is subscription-auth by contract and its
+ * provider strips all three from the child (`STRIPPED_ANTHROPIC_AUTH_ENV_KEYS`
+ * in claude-agent-provider.ts); a base URL without the token that goes with it
+ * would only send a terminal's `claude` to an endpoint it cannot sign in to.
+ * A Codex chat strips `OPENAI_API_KEY` and `OPENAI_BASE_URL` the same way, so
+ * those two reach terminals and the other CLIs, not a Codex chat.
+ */
+export const LOGIN_SHELL_PROVIDER_VARIABLES = [
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_FABLE_MODEL',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'AWS_PROFILE',
+  'AWS_REGION',
+  'AWS_DEFAULT_REGION',
+  'CLOUD_ML_REGION',
+  'ANTHROPIC_VERTEX_PROJECT_ID',
+  'GOOGLE_CLOUD_PROJECT',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'OPENAI_BASE_URL',
+  'OPENAI_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'XAI_API_KEY',
+  'OPENROUTER_API_KEY',
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'NO_PROXY',
+  'https_proxy',
+  'http_proxy',
+  'no_proxy',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'CODEX_HOME',
+  'OPENCODE_CONFIG',
+] as const
+
+/** Every variable the login shell is asked for besides PATH. */
+export const LOGIN_SHELL_ENV_VARIABLES = [...LOGIN_SHELL_TRUST_VARIABLES, ...LOGIN_SHELL_PROVIDER_VARIABLES] as const
+
 const PRINT_PATH_SCRIPT = [
   `printf '\\n%s%s\\n' '${LOGIN_PATH_SENTINEL}' "$PATH"`,
-  ...LOGIN_SHELL_TRUST_VARIABLES.map(
+  ...LOGIN_SHELL_ENV_VARIABLES.map(
     (name) => `if [ -n "$${name}" ]; then printf '\\n%s%s=%s\\n' '${LOGIN_ENV_SENTINEL}' '${name}' "$${name}"; fi`,
   ),
 ].join('; ')
@@ -109,13 +163,13 @@ export function parseLoginShellPath(stdout: string): string | null {
 }
 
 /**
- * The trust variables a shell printed, by name. The LAST marked line for a name
- * wins, as for PATH; a name outside `LOGIN_SHELL_TRUST_VARIABLES` or an empty
- * value is ignored.
+ * The variables a shell printed, by name. The LAST marked line for a name wins,
+ * as for PATH; a name outside `LOGIN_SHELL_ENV_VARIABLES` or an empty value is
+ * ignored.
  */
-export function parseLoginShellTrustEnv(stdout: string): Record<string, string> {
+export function parseLoginShellEnv(stdout: string): Record<string, string> {
   const found: Record<string, string> = {}
-  const names: readonly string[] = LOGIN_SHELL_TRUST_VARIABLES
+  const names: readonly string[] = LOGIN_SHELL_ENV_VARIABLES
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line.startsWith(LOGIN_ENV_SENTINEL)) continue
@@ -130,16 +184,16 @@ export function parseLoginShellTrustEnv(stdout: string): Record<string, string> 
 }
 
 /**
- * `env` with each trust variable the login shell set and `env` lacks. One the
- * app was started with is the person's choice for this session and is never
- * replaced.
+ * `env` with each of `LOGIN_SHELL_ENV_VARIABLES` the login shell set and `env`
+ * lacks. One the app was started with is the person's choice for this session
+ * and is never replaced.
  */
-export function withLoginShellTrustEnv(
+export function withLoginShellEnv(
   env: Record<string, string>,
   loginEnv: Readonly<Record<string, string>>,
 ): Record<string, string> {
   let next = env
-  for (const name of LOGIN_SHELL_TRUST_VARIABLES) {
+  for (const name of LOGIN_SHELL_ENV_VARIABLES) {
     const value = loginEnv[name]
     if (!value || env[name]) continue
     if (next === env) next = { ...env }
@@ -214,16 +268,16 @@ export function withUserShellPath(
 // spawn reads the answer the session already has (CLI detection asks at boot)
 // rather than waiting for one.
 let lastResolvedLoginPath: string | null = null
-let lastResolvedLoginTrustEnv: Readonly<Record<string, string>> = {}
+let lastResolvedLoginEnv: Readonly<Record<string, string>> = {}
 
 /** The login shell's PATH as last resolved this session, or null before any shell has answered. */
 export function lastKnownLoginShellPath(): string | null {
   return lastResolvedLoginPath
 }
 
-/** The trust variables the shell that last answered for PATH set; empty before any has. */
-export function lastKnownLoginShellTrustEnv(): Readonly<Record<string, string>> {
-  return lastResolvedLoginTrustEnv
+/** The `LOGIN_SHELL_ENV_VARIABLES` the shell that last answered for PATH set; empty before any has. */
+export function lastKnownLoginShellEnv(): Readonly<Record<string, string>> {
+  return lastResolvedLoginEnv
 }
 
 async function isExecutableFile(candidate: string): Promise<boolean> {
@@ -271,13 +325,13 @@ export function createLoginShellPathResolver(deps: {
 }): LoginShellPathResolver {
   let memo: Promise<string | null> | null = null
 
-  async function ask(env: NodeJS.ProcessEnv): Promise<{ path: string; trustEnv: Record<string, string> } | null> {
+  async function ask(env: NodeJS.ProcessEnv): Promise<{ path: string; env: Record<string, string> } | null> {
     for (const descriptor of loginShellPathDescriptors(deps.shell())) {
       try {
         const outcome = await deps.run(descriptor, env)
         if (outcome.timedOut) continue
         const path = parseLoginShellPath(outcome.stdout)
-        if (path) return { path, trustEnv: parseLoginShellTrustEnv(outcome.stdout) }
+        if (path) return { path, env: parseLoginShellEnv(outcome.stdout) }
       } catch {
         // A shell that will not start is one fewer place to ask, not a failure.
       }
@@ -289,11 +343,11 @@ export function createLoginShellPathResolver(deps: {
     resolve(env) {
       if (memo) return memo
       const pending = ask(env).then((answer) => {
-        // The trust variables come from the same shell as the PATH, so they
-        // are replaced together: a profile that dropped one drops it here too.
+        // The variables come from the same shell as the PATH, so they are
+        // replaced together: a profile that dropped one drops it here too.
         if (answer) {
           lastResolvedLoginPath = answer.path
-          lastResolvedLoginTrustEnv = answer.trustEnv
+          lastResolvedLoginEnv = answer.env
         }
         return answer?.path ?? null
       })

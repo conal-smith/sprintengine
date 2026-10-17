@@ -370,6 +370,19 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   At most 16 images of 5 MB each per turn, as JPEG, PNG, GIF or WebP, on a live
   image-capable session. An accepted send removes its staged files; unused ones
   expire after an hour.
+- **Pictures sized for the model.** A desktop that advertises
+  `conversation-image-downscale` shrinks each uploaded picture on receipt by
+  the rules its own composer uses (`src/shared/conversation-attachments.ts`):
+  to a 1568px long edge, kept a JPEG if it was one and a PNG otherwise, a JPEG
+  only when the PNG is still over 5 MB, and byte for byte when it already
+  fits. So the route takes an upload of up to 20 MB as it arrives, and what is
+  kept is still at most 5 MB (`413 too_large` either way, saying which). A
+  picture its codec cannot read (Electron's `nativeImage` reads PNG and JPEG)
+  is kept as it came, under the same 5 MB. Without the shrinking a phone's
+  photo reached Claude full size, and Claude refuses an image over 2000px a
+  side once a thread holds more than 20. Only a desktop has the codec: a
+  standalone Studio server does not advertise the capability, and keeps the
+  5 MB upload ceiling. A client that does not see it keeps its own 5 MB check.
 - **Pictures a step shows.** A desktop that advertises the `conversation-images`
   capability serves the picture a step made (Codex's `GenerateImage`) or looked
   at (a file read of a picture) at `GET /tailnet/v1/conversation-image`, named
