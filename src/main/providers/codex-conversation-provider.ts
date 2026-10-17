@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
@@ -29,6 +30,7 @@ import {
   type RpcMessage,
 } from './codex-json-rpc'
 import { explainCodexInitializeTimeout, isCodexInitializeTimeout } from './codex-start-failure'
+import { withMacosPrivacyFolderHint } from '../../shared/conversation/macosPrivacyFolders'
 import { conversationCommandsFor, publishConversationCommands } from '../conversation-commands/registry'
 import { mcpServerStatusFor, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
@@ -228,6 +230,10 @@ export type CodexConversationProviderOptions = {
   // The size of Codex's log database on the chat's machine, read when a start
   // times out. Tests stand in; the default lists the Codex home folder there.
   readCodexLogBytes?: (wslDistro: string | null, env: NodeJS.ProcessEnv) => Promise<number | null>
+  // The machine a local `codex` runs on, for the macOS privacy-folder hint on
+  // a failed start. Tests stand in; the default is this process's.
+  platform?: NodeJS.Platform
+  homeDir?: string
 }
 
 /**
@@ -1222,6 +1228,15 @@ export function createCodexConversationProvider(
             wslDistro: wsl?.distro ?? null,
             env,
             ...(options.readCodexLogBytes ? { readLogBytes: options.readCodexLogBytes } : {}),
+          })
+        // A project in Desktop, Documents, Downloads or iCloud Drive that macOS
+        // has not let the app into: Codex exits with EPERM before it answers,
+        // and the fix is a setting. Not in WSL, whose folders macOS does not keep.
+        if (error instanceof Error && !wsl)
+          error.message = withMacosPrivacyFolderHint(error.message, {
+            platform: options.platform ?? process.platform,
+            folder: state.input.workspaceRoot,
+            home: options.homeDir ?? homedir(),
           })
         throw error
       }

@@ -65,6 +65,23 @@ export function codexToolFailure(line: string): string | null {
   return reason ? reason.slice(0, TOOL_FAILURE_CHARS) : null
 }
 
+const STARTUP_STDERR_CHARS = 300
+
+/**
+ * A stderr line worth repeating when Codex exits before it has said anything
+ * on the protocol: its colours stripped, clipped, and never one that names a
+ * credential. Until the app-server answers, a failed start (a folder it may not
+ * enter, a config it cannot read) is said only on stderr, and "Codex process
+ * exited (1)." alone gives the person nothing to act on.
+ */
+export function codexStartupStderrLine(line: string): string | null {
+  // oxlint-disable-next-line no-control-regex -- stripping the ANSI colours Codex logs with
+  const plain = line.replace(/\u001b\[[0-9;]*m/g, '').trim()
+  if (!plain) return null
+  if (/secret|token|api[-_]?key|authorization|bearer|password/iu.test(plain)) return null
+  return plain.length > STARTUP_STDERR_CHARS ? `${plain.slice(0, STARTUP_STDERR_CHARS - 1)}…` : plain
+}
+
 /** `SPRINTENGINE_CODEX_APP_SERVER_ARGS` split as a shell would, quotes and all. */
 export function codexAppServerArgs(value: string | undefined): string[] {
   const args: string[] = []
@@ -141,26 +158,39 @@ export function createCodexRpcTransport(options: CodexRpcOptions): CodexRpcTrans
         : error,
     ),
   )
-  child.on('close', (code) => finish(new Error(`Codex process exited${code === null ? '' : ` (${code})`}.`)))
+  // Whether Codex has spoken on the protocol yet: until it has, its last
+  // stderr line is kept to say why, should it exit.
+  let started = false
+  let startupLine: string | null = null
   // Drain diagnostics without retaining credentials or dumping them into the
   // transcript: a line is kept only until it is complete, and only a tool
-  // router failure's reason leaves this function.
+  // router failure's reason, or the cleaned last line of a start that failed,
+  // leaves this function.
   const stderrDecoder = new StringDecoder('utf8')
   let stderrLine = ''
   child.stderr.on('data', (chunk: Buffer) => {
-    if (!options.onToolFailure) return
+    if (!options.onToolFailure && started) return
     stderrLine += stderrDecoder.write(chunk)
     // Each line is read where it lies, and the remainder cut once per chunk.
     let start = 0
     let newline: number
     while ((newline = stderrLine.indexOf('\n', start)) >= 0) {
-      const reason = codexToolFailure(stderrLine.slice(start, newline))
+      const line = stderrLine.slice(start, newline)
       start = newline + 1
-      if (reason) options.onToolFailure(reason)
+      if (!started) startupLine = codexStartupStderrLine(line) ?? startupLine
+      const reason = options.onToolFailure ? codexToolFailure(line) : null
+      if (reason) options.onToolFailure?.(reason)
     }
     if (start > 0) stderrLine = stderrLine.slice(start)
     // A line this long is not a log line worth reading.
     if (stderrLine.length > 64 * 1024) stderrLine = ''
+  })
+  // A start that failed says why in the exit: the last line Codex wrote, or
+  // the unterminated one it was writing.
+  child.on('close', (code) => {
+    const status = `Codex process exited${code === null ? '' : ` (${code})`}`
+    const said = !started ? (startupLine ?? (stderrLine ? codexStartupStderrLine(stderrLine) : null)) : null
+    finish(new Error(said ? `${status}: ${said}${/[.!?]$/u.test(said) ? '' : '.'}` : `${status}.`))
   })
   const deliver = (line: string) => {
     let message: RpcMessage
@@ -188,6 +218,11 @@ export function createCodexRpcTransport(options: CodexRpcOptions): CodexRpcTrans
   }
   child.stdout.on('data', (chunk: Buffer) => {
     if (closed) return
+    // Codex is talking: what it says on stderr from here is its own business.
+    if (!started) {
+      started = true
+      startupLine = null
+    }
     let start = 0
     let newline: number
     while ((newline = chunk.indexOf(10, start)) >= 0) {

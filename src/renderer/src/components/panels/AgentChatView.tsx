@@ -161,6 +161,22 @@ import { pasteIntoComposer } from '../../utils/clipboardPasteBridge'
 
 /** ⌘⌥⏎ in the composer: send, then New chat (see the registry). */
 const SEND_AND_NEW_COMMAND = 'chat.sendAndNew'
+
+/** System Settings on Privacy & Security › Files and Folders; says so when it would not open. */
+function openMacosPrivacySettings(): void {
+  void window.api
+    .openExternal(MACOS_FILES_AND_FOLDERS_SETTINGS_URL)
+    .then((result) => {
+      if (!result.ok) showToast({ tone: 'error', title: 'System Settings did not open', description: result.message })
+    })
+    .catch((error: unknown) =>
+      showToast({
+        tone: 'error',
+        title: 'System Settings did not open',
+        description: error instanceof Error ? error.message : String(error),
+      }),
+    )
+}
 import { settleDisclosureResize, useStickToBottom } from './agentChat/useStickToBottom'
 import { ConversationRowFrame } from './agentChat/conversationRowFrame'
 import {
@@ -187,6 +203,7 @@ import { QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
 import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './agentChat/followUpDispatch'
 import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
+import { PROMPT_STASH_COMMAND, usePromptStash } from './agentChat/promptStashPicker'
 import { BackgroundTasksTrayRow } from './agentChat/backgroundTasksRow'
 import { WorktreeInstallTrayRow } from './agentChat/worktreeInstallRow'
 import { StudioConnectionNotice } from './agentChat/studioConnectionNotice'
@@ -248,6 +265,7 @@ export type {
   UserTurn,
 } from './agentChat/conversationProjection'
 import { clientSupports, hostPlatform } from '../../clientCapabilities'
+import { MACOS_FILES_AND_FOLDERS_SETTINGS_URL } from '../../../../shared/conversation/macosPrivacyFolders'
 import { useFileDropTarget } from '../../hooks/useFileDropTarget'
 import { ComposerDropOverlay } from './agentChat/ComposerDropOverlay'
 
@@ -2954,6 +2972,36 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       removeContextTrigger(range)
     },
   })
+  // ⌘S sets the draft aside, or on an empty box lists what was set aside
+  // (agentChat/promptStashPicker.tsx). A stashed prompt comes back ahead of
+  // anything typed since, the way "Edit from here" brings a message back.
+  const stashPicker = usePromptStash({
+    stashKeys: getEffectiveKeybindings(PROMPT_STASH_COMMAND, keybindingSettings),
+    platform: keyPlatform,
+    content: () => ({
+      text: draft,
+      files: draftMetadata.files,
+      mentions: draftMetadata.mentions,
+      images: attachments,
+    }),
+    clear: () => {
+      clearDraft()
+      setAttachments([])
+      detachRecall()
+    },
+    restore: ({ prompt, images }) => {
+      restoreDraftRef.current({
+        text: prompt.text,
+        files: prompt.files,
+        skills: [],
+        mentions: prompt.mentions,
+        attachments: images,
+      })
+      return true
+    },
+    acceptsImages: imagesEnabled,
+    empty: !draft.trim() && !attachments.length && !draftMetadata.files.length && !draftMetadata.mentions.length,
+  })
 
   const pendingApprovalEntries = shape.pendingApprovals
   const pendingApprovalEntry = pendingApprovalEntries[0]
@@ -3005,6 +3053,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const forkFromHere = useCallback((target: ForkFromHereTarget) => forkRef.current(target), [])
   const onFork =
     operate && capabilities?.fork === true && typeof transport.fork === 'function' ? forkFromHere : undefined
+  // The Files and Folders setting is this Mac's, so only a chat that runs on
+  // it, in a window that can reach System Settings, offers to open it.
+  const onOpenPrivacySettings =
+    transport.kind === 'local' && !machineId && hostPlatform() === 'darwin' && clientSupports('reveal-in-folder')
+      ? openMacosPrivacySettings
+      : undefined
   const chrome: TimelineChrome =
     oldChrome &&
     oldChrome.assistantName === assistantName &&
@@ -3013,6 +3067,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     oldChrome.onRetry === retry &&
     oldChrome.retryDisabled === composerDisabled &&
     oldChrome.onSignIn === onSignIn &&
+    oldChrome.onOpenPrivacySettings === onOpenPrivacySettings &&
     oldChrome.checkpointsEnabled === (capabilities?.checkpoints === true) &&
     oldChrome.conversationRunning === projection.activeTurn &&
     oldChrome.checkpointSeqs === stableCheckpointSeqs &&
@@ -3027,6 +3082,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           onRetry: retry,
           retryDisabled: composerDisabled,
           onSignIn,
+          onOpenPrivacySettings,
           platform: hostPlatform(),
           checkpointsEnabled: capabilities?.checkpoints === true,
           conversationRunning: projection.activeTurn,
@@ -3806,6 +3862,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   {composerError}
                 </ComposerTrayRow>
               ) : null}
+              {/* The stash ⌘S opened, against the box it restores into. */}
+              {stashPicker.picker}
             </ComposerTray>
 
             {/*
@@ -3872,7 +3930,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               <div className="px-5 pb-1 pt-4">
                 <ComposerField
                   ref={composerRef}
-                  contentAttributes={{ 'aria-label': `Message ${label}`, ...contextPicker.comboboxProps }}
+                  contentAttributes={{
+                    'aria-label': `Message ${label}`,
+                    ...contextPicker.comboboxProps,
+                    ...stashPicker.comboboxProps,
+                  }}
                   value={draft}
                   historyScope={`${workspaceId}\0${agentId}`}
                   onBlur={flushDraft}
@@ -3917,6 +3979,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing) return
                     if (contextPicker.handleKeyDown(event)) return
+                    if (stashPicker.handleKeyDown(event)) return
                     if (
                       event.key === 'Backspace' &&
                       event.currentTarget.selectionStart === 0 &&
