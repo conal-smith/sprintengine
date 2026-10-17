@@ -116,8 +116,10 @@ export function useConversationPullRequests(workspaceIds: readonly string[]): Co
       // asked about, and merging would keep a conversation's marks alive after
       // its row left the list — which is how a stale count survives a filter.
       // The first answer always lands, an empty one included: it is what
-      // tells `pullRequestsRead` the list has been read.
-      setByWorkspace((current) => (current !== NONE && sameLists(current, answer) ? current : answer))
+      // tells `pullRequestsRead` the list has been read. After that a
+      // workspace whose marks read the same keeps its list, so one pull
+      // request moving re-renders its own row and not every memoized row.
+      setByWorkspace((current) => (current === NONE ? answer : reuseUnchangedLists(current, answer)))
     } catch {
       // A read that reached nobody leaves what is on screen alone. A mark must
       // never blink out because one request failed (the record's own rule).
@@ -403,21 +405,47 @@ function sameLists(a: ConversationPullRequests, b: ConversationPullRequests): bo
   const bKeys = Object.keys(b)
   if (aKeys.length !== bKeys.length) return false
   for (const id of aKeys) {
-    const left = a[id]
     const right = b[id]
-    if (!right || left.length !== right.length) return false
-    for (let i = 0; i < left.length; i += 1) {
-      // URL and state are the whole of what a mark draws from; a title moving
-      // changes a tooltip, which is not worth a sidebar repaint.
-      if (left[i].url !== right[i].url || left[i].state !== right[i].state) return false
-      if (left[i].isDraft !== right[i].isDraft) return false
-      // When it ended is what Settle on merge reads.
-      if (left[i].endedAt !== right[i].endedAt) return false
-      // A watch's words are on the row, and whether there is one decides its seat.
-      if (!sameWatch(left[i], right[i])) return false
-    }
+    if (!right || !sameMarks(a[id], right)) return false
   }
   return true
+}
+
+/** Whether two readings of one conversation's pull requests draw the same marks. */
+function sameMarks(left: readonly BranchPullRequest[], right: readonly BranchPullRequest[]): boolean {
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i += 1) {
+    // URL and state are the whole of what a mark draws from; a title moving
+    // changes a tooltip, which is not worth a sidebar repaint.
+    if (left[i].url !== right[i].url || left[i].state !== right[i].state) return false
+    if (left[i].isDraft !== right[i].isDraft) return false
+    // When it ended is what Settle on merge reads.
+    if (left[i].endedAt !== right[i].endedAt) return false
+    // A watch's words are on the row, and whether there is one decides its seat.
+    if (!sameWatch(left[i], right[i])) return false
+  }
+  return true
+}
+
+/**
+ * The answer, with each workspace whose marks read the same as before keeping
+ * its previous list, and the previous map itself when nothing moved at all.
+ */
+export function reuseUnchangedLists(
+  current: ConversationPullRequests,
+  answer: ConversationPullRequests,
+): ConversationPullRequests {
+  let changed = Object.keys(current).length !== Object.keys(answer).length
+  const next: Record<string, readonly BranchPullRequest[]> = {}
+  for (const [workspaceId, list] of Object.entries(answer)) {
+    const previous = current[workspaceId]
+    if (previous && sameMarks(previous, list)) next[workspaceId] = previous
+    else {
+      next[workspaceId] = list
+      changed = true
+    }
+  }
+  return changed ? next : current
 }
 
 /**

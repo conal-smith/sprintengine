@@ -313,16 +313,24 @@ function gitRepoCacheKey(repoRoot: string): string {
 }
 
 export default function GitPanel({ workspaceId }: { workspaceId: string }) {
-  const workspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId) ?? null)
+  // The two facts the panel reads off its workspace, each selected on its
+  // own. The record itself is replaced by writes this panel has no use for —
+  // the visit stamp every few seconds while its chat is on screen, terminal
+  // input, layout moves — and selecting it whole re-rendered the panel on
+  // every one.
+  const workspaceFolderPath = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.folderPath)
+  const workspaceWorktreeRecord = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.worktree)
+  const workspaceFound = useWorkspaceStore((s) => s.workspaces.some((w) => w.id === workspaceId))
+  const workspace = useMemo(
+    () => (workspaceFound ? { folderPath: workspaceFolderPath ?? null, worktree: workspaceWorktreeRecord } : null),
+    [workspaceFound, workspaceFolderPath, workspaceWorktreeRecord],
+  )
   const folderPath = workspace?.folderPath ?? null
   // For a worktree-backed workspace the Git view should resolve to the
   // worktree's branch, not the parent project. The worktree is a real
   // `git worktree`, so it already shows up as a scope below; this drives the
   // *default* scope selection toward it.
-  const workspaceWorktree = useMemo(
-    () => (workspace ? resolveWorkspaceWorktree(workspace) : null),
-    [workspace?.folderPath, workspace?.worktree],
-  )
+  const workspaceWorktree = useMemo(() => (workspace ? resolveWorkspaceWorktree(workspace) : null), [workspace])
   const worktreeGitRoot = workspaceWorktree?.gitRoot ?? null
   const worktreeBranch = workspaceWorktree?.branch ?? null
   const mainGit = useGitStatus(folderPath)

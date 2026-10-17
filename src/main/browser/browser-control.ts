@@ -169,6 +169,21 @@ const SNAPSHOT_SCRIPT = `(() => {
     const r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0 || el.tagName === 'OPTION';
   };
+  // The snapshot is a tool result, kept in the chat's transcript, so a field
+  // holding a secret says only that it is filled: \`value=hidden\`, unquoted
+  // where a real value is always quoted. That is enough for the agent to know
+  // the form is ready to submit. A secret is what the page hides as it is
+  // typed (a password, or a field styled to draw dots), and what autofill is
+  // told is a password, a one-time code or a card's number or security code,
+  // which stays secret after a "show password" button makes it plain text.
+  const SECRET_AUTOCOMPLETE = ['current-password', 'new-password', 'one-time-code', 'cc-number', 'cc-csc'];
+  const secret = (el) => {
+    if (el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'password') return true;
+    const masked = getComputedStyle(el).getPropertyValue('-webkit-text-security');
+    if (masked && masked !== 'none') return true;
+    const tokens = (el.getAttribute('autocomplete') || '').toLowerCase().split(/\\s+/);
+    return tokens.some((t) => SECRET_AUTOCOMPLETE.includes(t));
+  };
   const roleOf = (el) => {
     const explicit = el.getAttribute('role');
     if (explicit) return explicit;
@@ -236,7 +251,7 @@ const SNAPSHOT_SCRIPT = `(() => {
         const bits = [role];
         if (name) bits.push(JSON.stringify(name));
         if (role === 'heading') bits.push('level=' + (tag[1] || el.getAttribute('aria-level') || '2'));
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { const v = el.value; if (v) bits.push('value=' + JSON.stringify(clip(v))); }
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { const v = el.value; if (v) bits.push(secret(el) ? 'value=hidden' : 'value=' + JSON.stringify(clip(v))); }
         if (el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions[0]) bits.push('value=' + JSON.stringify(clip(el.selectedOptions[0].textContent)));
         if (role === 'checkbox' || role === 'radio' || role === 'switch') bits.push(el.checked || el.getAttribute('aria-checked') === 'true' ? 'checked' : 'unchecked');
         if (el.disabled || el.getAttribute('aria-disabled') === 'true') bits.push('disabled');
