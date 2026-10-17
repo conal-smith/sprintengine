@@ -267,6 +267,11 @@ const restingRecord = (record: ConversationListWorkspace | null): boolean =>
 const epoch = (value: number | null | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+/** When the turn a live session is running began, left out between turns. */
+function turnStartOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'turnStartedAt'> {
+  return epoch(summary?.turnStartedAt) ? { turnStartedAt: Math.trunc(summary.turnStartedAt) } : {}
+}
+
 /** A listed chat's lifecycle members, each left out when there is nothing true to say. */
 function lifecycleOf(
   record: ConversationListWorkspace | null,
@@ -699,6 +704,7 @@ export function createConversationGatewayHost(
             ...permissionFor(key, sessions),
             ...(models ? { models } : {}),
             ...(summary ? { sessionId: summary.sessionId, capabilities: wireCapabilities(summary) } : {}),
+            ...turnStartOf(summary),
             ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt)),
             ...replyPreviewOf(sessions, thread.lastAssistantText),
           })
@@ -725,6 +731,7 @@ export function createConversationGatewayHost(
           ...(models ? { models } : {}),
           sessionId: summary.sessionId,
           capabilities: wireCapabilities(summary),
+          ...turnStartOf(summary),
           ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary)),
           ...replyPreviewOf(sessions),
         })
@@ -736,8 +743,16 @@ export function createConversationGatewayHost(
         const record = recordOf(thread.workspaceId)
         return record ? workspaceLastUserMessageAt(record) : thread.updatedAt
       }
+      // And the key itself, on each chat the sidebar here keeps a record of,
+      // so a device that interleaves these rows with its own puts each where
+      // it sits here, not by a fallback of its own.
       const listed = [...byId.values()]
         .map(wholeNumbers)
+        .map((thread) => {
+          const record = registry.lifecycleList ? recordOf(thread.workspaceId) : null
+          const recencyAt = record ? workspaceLastUserMessageAt(record) : null
+          return epoch(recencyAt) ? { ...thread, recencyAt: Math.trunc(recencyAt) } : thread
+        })
         .sort((a, b) =>
           registry.lifecycleList ? orderOf(b) - orderOf(a) || b.updatedAt - a.updatedAt : b.updatedAt - a.updatedAt,
         )
