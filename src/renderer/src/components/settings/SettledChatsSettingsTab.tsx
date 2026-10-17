@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react'
 
 import type { WorkspaceId } from '../../types/workspace'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import { showToast } from '../../store/toastStore'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
 import { EmptyState, GhostButton, OutlineButton } from '../ui'
 import { SettingCard, SettingToggle, SettingsPageHeader } from './SettingsAtoms'
@@ -42,7 +43,29 @@ export function SettledChatsSettingsTab({
   // Hundreds of chats settle on a long-lived profile; the page draws the most
   // recent and folds the rest.
   const [shown, setShown] = useState(SETTLED_PAGE)
-  const unsettle = useCallback((id: WorkspaceId) => setWorkspaceSettled(id, false), [setWorkspaceSettled])
+  // A chat opened here from a paired machine rests over there: that machine
+  // is asked to bring it back, so every device lists it again, and it comes
+  // back here once it has said yes. A machine that keeps no rest has nothing
+  // to ask.
+  const unsettle = useCallback(
+    (id: WorkspaceId) => {
+      const origin = useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === id)?.remoteOrigin
+      const settle = window.api?.meshSettleConversation
+      if (!origin || typeof settle !== 'function') {
+        setWorkspaceSettled(id, false)
+        return
+      }
+      const refused = (message: string) =>
+        showToast({ tone: 'error', title: 'The chat was not brought back', description: message })
+      void settle({ connectionId: origin.connectionId, workspaceId: origin.workspaceId, settled: false })
+        .then((answer) => {
+          if (answer.ok || answer.code === 'lifecycle_unsupported') setWorkspaceSettled(id, false)
+          else refused(answer.message)
+        })
+        .catch((error: unknown) => refused(error instanceof Error ? error.message : String(error)))
+    },
+    [setWorkspaceSettled],
+  )
   const open = useStableCallback(onOpenChat)
   const remaining = chats.length - shown
 

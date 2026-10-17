@@ -14,7 +14,9 @@ const fixtures = vi.hoisted(() => ({
   },
 }))
 vi.mock('../../store/workspaceStore', () => ({
-  useWorkspaceStore: (select: (state: typeof fixtures.state) => unknown) => select(fixtures.state),
+  useWorkspaceStore: Object.assign((select: (state: typeof fixtures.state) => unknown) => select(fixtures.state), {
+    getState: () => fixtures.state,
+  }),
 }))
 
 const { SettledChatsSettingsTab } = await import('./SettledChatsSettingsTab')
@@ -84,6 +86,44 @@ test('Un-settle puts a chat back, and Open leaves Settings for it', async () => 
   expect(unsettled).toEqual(['w2'])
   await act(async () => button('Open Tidy the release notes')?.click())
   expect(opened).toEqual(['w3'])
+})
+
+test('a chat opened from a paired machine is brought back there first, then here', async () => {
+  const asked: unknown[] = []
+  let answer: (value: { ok: true; workspaceId: string; settledAt: null }) => void = () => {}
+  const workspaces = fixtures.state.workspaces as Array<Record<string, unknown>>
+  workspaces[1] = {
+    ...workspaces[1],
+    remoteOrigin: {
+      connectionId: 'c1',
+      machineName: 'mac-mini',
+      workspaceId: 'remote-w2',
+      workspaceName: 'Fix the login banner',
+      workspaceRoot: '/Users/dev/app',
+      sessionId: 'remote-w2:agent-1',
+    },
+  }
+  const previous = (window as { api?: unknown }).api
+  ;(window as { api?: unknown }).api = {
+    meshSettleConversation: (input: unknown) => {
+      asked.push(input)
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    },
+  }
+  try {
+    await render()
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Un-settle Fix the login banner"]')?.click(),
+    )
+    expect(asked).toEqual([{ connectionId: 'c1', workspaceId: 'remote-w2', settled: false }])
+    expect(unsettled).toEqual([])
+    await act(async () => answer({ ok: true, workspaceId: 'remote-w2', settledAt: null }))
+    expect(unsettled).toEqual(['w2'])
+  } finally {
+    ;(window as { api?: unknown }).api = previous
+  }
 })
 
 test('with nothing settled, the page says how a chat gets here', async () => {
