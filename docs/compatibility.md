@@ -262,8 +262,16 @@ records, in place of `toolUseId`. Those entries (`{ id, mediaType, name?,
 byteLength, ref }`) were on the wire before it, an optional member with no
 capability; the capability only says the bytes can be fetched. A client that
 does not see it names the picture, and an older desktop answers the request
-400, since it names no `toolUseId`. A desktop that shrinks an uploaded picture
-for the model on receipt advertises `conversation-image-downscale`
+400, since it names no `toolUseId`. Files of any type with a message are the
+`conversation-message-files` capability (2026-10-17): the upload route takes
+`kind=file`, and the `uploadIds` a `send` already carried name that upload as
+they name a picture's, so neither the route's path nor any frame changed. The
+message records it in `files` (`{ path }`), a member `user_message` carried
+before for files dropped on the desktop. A client that does not see it offers
+pictures only; an older desktop refuses a file `415 invalid_media_type`, as it
+always did. A file is kept as it came: `conversation-image-downscale`
+applies to pictures only. A desktop that shrinks an uploaded picture for the
+model on receipt advertises `conversation-image-downscale`
 (2026-10-17): its `POST /tailnet/v1/upload` takes up to 20 MB as the bytes
 arrive, where it took 5 MB, and keeps at most 5 MB, sized to its composer's
 1568px long edge. Nothing in the request or the answer changed shape. A client

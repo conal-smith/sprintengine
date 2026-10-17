@@ -30,6 +30,8 @@ import { randomUUID } from 'node:crypto'
 import { DEFAULT_AGENT_SPAWN_PERMISSION_PRESET } from '../../../shared/launch-settings'
 import { parseCliPermissionModeId } from '../../../shared/cli-permission-mode'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
+import { stat } from 'node:fs/promises'
+import type { ConversationAttachedFile } from '../../../shared/conversation/attachedFiles'
 import { openConfinedExistingFile } from '../../conversation-file-access'
 import {
   conversationImageFileOf,
@@ -134,6 +136,12 @@ export type ConversationGatewayHost = {
    * chat's picture is `unknown_image`, as one that is gone is.
    */
   sentImage?(key: ConversationKey, ref: string): Promise<ConversationSentImage>
+  /**
+   * Keep what a device uploaded for one chat's next send, under an id only
+   * that device can spend. A picture is read into the turn; a `file` (any
+   * type, `conversation-message-files`) is attached to the message by its
+   * path, which then stays where the upload put it.
+   */
   registerUpload?(input: {
     deviceId: string
     sessionId: string
@@ -141,6 +149,7 @@ export type ConversationGatewayHost = {
     name: string
     mediaType: string
     bytes: number
+    kind?: 'file'
     dispose?: () => void
   }): string
   /**
@@ -476,6 +485,7 @@ export function createConversationGatewayHost(
       name: string
       mediaType: string
       bytes: number
+      kind?: 'file'
       at: number
       dispose?: () => void
     }
@@ -483,6 +493,12 @@ export function createConversationGatewayHost(
   const discardUpload = (id: string) => {
     uploads.get(id)?.dispose?.()
     uploads.delete(id)
+  }
+  // A sent file stays on disk: the message names its path, and the agent may
+  // read it in any later turn. Only its reference goes.
+  const spendUpload = (id: string) => {
+    if (uploads.get(id)?.kind === 'file') uploads.delete(id)
+    else discardUpload(id)
   }
   // Images an accepted send already carried, by upload id. Their files are
   // gone; a retry of that same command is answered from the runtime's receipt
@@ -946,7 +962,7 @@ export function createConversationGatewayHost(
             const turnEffort =
               effort && session.capabilities?.reasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}
             const ids = command.uploadIds ?? []
-            if (ids.length > MAX_ATTACHMENTS_PER_TURN) return { ok: false, message: 'Too many image attachments.' }
+            if (ids.length > MAX_ATTACHMENTS_PER_TURN) return { ok: false, message: 'Too many attachments.' }
             // Skills the paired machine's composer attached, resolved against
             // this machine's folder as its own chips are (conversation-skills.ts).
             const turnSkills = command.skills?.length ? { skills: command.skills.map((id) => ({ id })) } : {}
@@ -970,8 +986,24 @@ export function createConversationGatewayHost(
               })
             chatSessions.add(session.sessionId)
             const attachments: ConversationImageAttachment[] = []
+            const files: ConversationAttachedFile[] = []
             for (const id of ids) {
               const upload = uploads.get(id)
+              if (upload?.kind === 'file') {
+                if (
+                  upload.deviceId !== deviceId ||
+                  !chatSessions.has(upload.sessionId) ||
+                  Date.now() - upload.at > UPLOAD_TTL_MS
+                )
+                  return { ok: false, message: 'File upload reference is unavailable.' }
+                // The file is attached by path, so it must still be the one
+                // that was received: not removed, replaced or grown since.
+                const present = await stat(upload.path).catch(() => null)
+                if (!present?.isFile() || present.size !== upload.bytes)
+                  return { ok: false, message: 'File upload changed after receipt.' }
+                files.push({ path: upload.path })
+                continue
+              }
               if (
                 !upload ||
                 upload.deviceId !== deviceId ||
@@ -1026,6 +1058,7 @@ export function createConversationGatewayHost(
                 commandId,
                 message: command.message,
                 attachments,
+                ...(files.length ? { files } : {}),
                 ...turnEffort,
                 ...turnSkills,
                 ...turnSteer,
@@ -1036,11 +1069,12 @@ export function createConversationGatewayHost(
               stopWatching?.()
             }
             // Accepted: the images are in the turn now, so their staged files
-            // are removed rather than left for the hour-long expiry. A refused
-            // send keeps them for a retry.
+            // are removed rather than left for the hour-long expiry, and the
+            // files are the message's, so only their references go. A refused
+            // send keeps both for a retry.
             if (sent.ok) {
               for (const id of ids) {
-                discardUpload(id)
+                spendUpload(id)
                 spent.set(id, { deviceId, commandId })
               }
               while (spent.size > MAX_SPENT_UPLOAD_REFS) spent.delete(spent.keys().next().value!)
