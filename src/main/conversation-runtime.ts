@@ -1059,13 +1059,37 @@ export class ConversationRuntime {
         // A steer may have moved the stream on to a later turn; the stream's
         // end is that turn's.
         const ownTurnId = providerTurn.turnId
-        const currentSession = this.sessions.get(input.sessionId)
+        const ownsTurn = (current: RuntimeSession | undefined): current is RuntimeSession =>
+          !!current &&
+          current.status !== 'stopped' &&
+          current.activeTurnId === ownTurnId &&
+          !current.canceledTurnIds.has(ownTurnId)
+        let currentSession = this.sessions.get(input.sessionId)
+        // A stateful adapter whose stream ended with no end to the turn and no
+        // card left open: nothing is running it any more, so it fails here.
+        // Leaving it active locked the chat behind a turn nothing was running —
+        // no Send, and a Stop with nothing to stop.
         if (
-          currentSession &&
-          currentSession.status !== 'stopped' &&
-          currentSession.activeTurnId === ownTurnId &&
-          !currentSession.canceledTurnIds.has(ownTurnId)
+          ownsTurn(currentSession) &&
+          currentSession.stateful &&
+          !emitted.completed &&
+          !emitted.failed &&
+          emitted.approvalsRequested <= emitted.approvalsResolved
         ) {
+          const ended = await this.emit(
+            currentSession,
+            this.eventForSession(currentSession, 'turn_failed', {
+              turnId: ownTurnId,
+              reason: 'provider',
+              message: "The agent's stream ended before the turn finished.",
+            }),
+            { turnId: ownTurnId },
+          )
+          if (ended) emitted.failed = true
+          // A Stop that landed while the failure waited to be written settles the turn itself.
+          currentSession = this.sessions.get(input.sessionId)
+        }
+        if (ownsTurn(currentSession)) {
           this.applyTurnState(currentSession, emitted, requestId)
           currentSession.activeTurnAbort = null
           // Record only a cleanly completed turn (no failure) into history, so a
