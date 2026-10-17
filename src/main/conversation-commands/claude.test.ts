@@ -3,6 +3,8 @@
 // the mapping treats differently (built-ins, the ones a chat drops, a user
 // command, a plugin's command, skills with and without a qualified alias).
 import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 
@@ -188,6 +190,38 @@ test("the probe leaves strict MCP mode off beside an administrator's managed-mcp
   await probeClaudeConversationCommands({ cwd: '/Users/dev/app' }, { ...deps, managedMcpConfig: () => true })
   expect(session.options).not.toHaveProperty('strictMcpConfig')
   expect(session.options).toMatchObject({ settingSources: ['user'], settings: { disableAllHooks: true } })
+})
+
+test("the probe is given the folder's .claude/commands as the plugin a chat there runs, and removes it", async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claude-probe-commands-'))
+  try {
+    const cwd = join(root, 'app')
+    const tempDir = join(root, 'tmp')
+    await mkdir(join(cwd, '.claude', 'commands'), { recursive: true })
+    await mkdir(tempDir)
+    await writeFile(join(cwd, '.claude', 'commands', 'deploy.md'), '---\ndescription: Ship it\n---\nDeploy.')
+    let staged: string[] = []
+    const { deps, session } = fakeSdk(async () => {
+      const plugins = session.options?.plugins as Array<{ type: string; path: string }>
+      staged = await readdir(join(plugins[0]!.path, 'commands'))
+      expect(await readFile(join(plugins[0]!.path, '.claude-plugin', 'plugin.json'), 'utf8')).toMatch(/"project"/)
+      return [{ name: 'project:deploy', description: '(project) Ship it' }]
+    })
+    const commands = await probeClaudeConversationCommands({ cwd }, { ...deps, tempDir })
+    expect(staged).toEqual(['deploy.md'])
+    expect(commands).toEqual([{ name: 'project:deploy', description: '(project) Ship it', source: 'custom' }])
+    expect(session.options?.settingSources).toEqual(['user'])
+    expect(await readdir(tempDir)).toEqual([])
+    expect(await readdir(join(cwd, '.claude'))).toEqual(['commands'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a folder without .claude/commands is probed with no plugin', async () => {
+  const { deps, session } = fakeSdk(async () => [])
+  await probeClaudeConversationCommands({ cwd: '/Users/dev/app' }, deps)
+  expect(session.options?.plugins).toBeUndefined()
 })
 
 test('a CLI that cannot say which rows are skills still lists every command', async () => {

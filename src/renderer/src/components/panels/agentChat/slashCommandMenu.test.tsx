@@ -34,6 +34,17 @@ test('an exact name ranks first, then a prefix, then a match inside the name, th
   ])
 })
 
+test("a project's namespaced command is found by its own name and inserted with its namespace", () => {
+  const commands = [
+    command('release', 'custom', { description: 'Deploy notes for the release' }),
+    command('project:frontend:deploy-preview', 'custom'),
+    command('project:deploy', 'custom', { description: '(project) Ship it' }),
+  ]
+  const rows = rankConversationCommands(commands, '/deploy')
+  expect(names(rows)).toEqual(['project:deploy', 'project:frontend:deploy-preview', 'release'])
+  expect(commandInsertText(rows[0]!)).toBe('/project:deploy ')
+})
+
 test('the query ignores case, surrounding space and a leading slash', () => {
   const commands = [command('compact'), command('context')]
   expect(names(rankConversationCommands(commands, '  /COMP '))).toEqual(['compact'])
