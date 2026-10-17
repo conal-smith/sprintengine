@@ -13,6 +13,18 @@
 
 ### Added
 
+- **A listed chat says what it still has working after its turn.**
+  `backgroundWork` is an optional member of `ConversationThread`,
+  `ConversationBackgroundWork` (`{ agents, monitors }`): the background agents
+  the chat launched that are still running, and the background tasks that will
+  wake its agent (a monitor with a deadline, or a task it is told about when it
+  ends). The desktop's own sidebar counts such a chat as working; its `phase`
+  stays the turn's, so a client that holds sends while a turn runs does not
+  hold them for background work. Absent when nothing works in the background,
+  and from a desktop built before it was listed.
+  `parseConversationServerFrame` keeps it when both counts are whole and one
+  is above zero, and leaves it out otherwise (`parseConversationBackgroundWork`).
+  The pinned files are unchanged.
 - **A listed chat says where the desktop's sidebar orders it, and when its
   turn began.** `recencyAt` and `turnStartedAt` are optional members of
   `ConversationThread`. `recencyAt` is the moment the desktop's own sidebar
