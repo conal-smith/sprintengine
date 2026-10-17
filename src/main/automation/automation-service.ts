@@ -22,6 +22,7 @@ import { isStudioGatewayMutation } from './studio-gateway-tools'
 import { createTailnetMeshService, type TailnetMeshService } from './tailnet/tailnet-mesh-service'
 import { createTailnetRemoteService, type TailnetRemoteService } from './tailnet/tailnet-service'
 import type { ConversationGatewayHost } from './tailnet/tailnet-conversation-host'
+import type { ConversationImageDownscaler } from '../conversation-image-downscale'
 
 // Owns the always-on Studio MCP gateway lifecycle, local socket endpoint, and
 // discovery files external clients read to find it. The old enabled setting is
@@ -54,6 +55,12 @@ type AutomationServiceOptions = {
   /** Client tools: each agent connection's own catalog of the tools clients offer, and its notices. */
   clientTools?: McpSocketServerOptions['clientTools']
   resolveConversationHost?: () => ConversationGatewayHost
+  /**
+   * Shrinks a picture a paired device uploads, for the model: the shell's
+   * image codec, which only a desktop has. Absent, uploads are kept as they
+   * came and `conversation-image-downscale` is not advertised.
+   */
+  downscaleUpload?: ConversationImageDownscaler
   /** Absolute path of the shipped stdio bridge script, when the app knows it. */
   resolveBridgeScriptPath?: () => string | null
   /**
@@ -168,6 +175,7 @@ export function createAutomationService(options: AutomationServiceOptions) {
       ...(options.clientTools ? { clientTools: options.clientTools } : {}),
       isMutation: (tool) => isStudioGatewayMutation(tool, options.resolveGatewayTools),
       conversations: options.resolveConversationHost?.(),
+      ...(options.downscaleUpload ? { downscaleUpload: options.downscaleUpload } : {}),
       onToolCall: ({ context, tool, args, durationMs, result, error, servedBy }) => {
         // A token refused at the door is kept too, though nothing ran.
         if (

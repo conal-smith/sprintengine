@@ -271,7 +271,15 @@ records, in place of `toolUseId`. Those entries (`{ id, mediaType, name?,
 byteLength, ref }`) were on the wire before it, an optional member with no
 capability; the capability only says the bytes can be fetched. A client that
 does not see it names the picture, and an older desktop answers the request
-400, since it names no `toolUseId`. The machine each chat runs on (`host`),
+400, since it names no `toolUseId`. A desktop that shrinks an uploaded picture
+for the model on receipt advertises `conversation-image-downscale`
+(2026-10-17): its `POST /tailnet/v1/upload` takes up to 20 MB as the bytes
+arrive, where it took 5 MB, and keeps at most 5 MB, sized to its composer's
+1568px long edge. Nothing in the request or the answer changed shape. A client
+that does not see it holds its upload to 5 MB, as before, and an older desktop
+refuses a larger one `413 too_large`, as it always did. Only a desktop has the
+image codec, so a standalone Studio server leaves it out, and the Studio RPC,
+whose own uploads are kept as they came, never lists it. The machine each chat runs on (`host`),
 its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
