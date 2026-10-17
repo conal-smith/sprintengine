@@ -191,7 +191,8 @@ policies, its `yolo` is the Ask When Needed of `kimi --yolo` and its `auto` the
 Never Ask of `kimi --auto`, the other way round from the descriptions its ACP
 server gives them. Its menu lists the modes its terminal manifest names (Auto,
 which is Never Ask, at Bypass, and No flag); Auto runs `yolo` for a caller that
-names it.
+names it. Kimi asks its own questions as permission requests, one option per
+answer; the chat shows them as questions, answered from the list or skipped.
 
 Claude's Auto is its own classifier mode, `auto`, as Grok's is, Cursor's its
 auto-review and Codex's its auto-review (owner ruling 2026-10-01): someone who

@@ -12,6 +12,7 @@ import {
   acpApprovalInput,
   acpMcpServers,
   acpPresetSessionMode,
+  acpQuestionRequest,
   acpRawOutputText,
   acpRememberedToolCall,
   acpToolResultImages,
@@ -70,6 +71,8 @@ createInterface({input:process.stdin}).on('line',async line=>{
  if(text.startsWith('/')){if(text==='/refresh')update({sessionUpdate:'available_commands_update',availableCommands:[{name:'fresh',description:'Replaced list'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'ran '+text}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text.includes('inspect history')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});result(m.id,{stopReason:'end_turn'});return}
  if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,mode,pid:process.pid,permission:process.env.OPENCODE_PERMISSION??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // As Kimi Code asks its AskUserQuestion with no form support: a permission request, one option per answer.
+ if(text==='question'){const asked=await request('session/request_permission',{sessionId:'native',toolCall:{toolCallId:'1:ask',title:'AskUserQuestion',content:[{type:'content',content:{type:'text',text:'Which suite?'}}]},options:[{optionId:'q0_opt_0',name:'Unit',kind:'allow_once'},{optionId:'q0_opt_1',name:'End to end',kind:'allow_once'},{optionId:'q0_skip',name:'Skip',kind:'reject_once'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:asked.outcome?.optionId??asked.outcome?.outcome}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  // A turn that waits on a permission request, and then says which mode the agent is in.
  if(text==='wait then mode'){await request('session/request_permission',{sessionId:'native',toolCall:{toolCallId:'run',kind:'execute',title:'Bash',rawInput:{command:'make'}},options:[{kind:'allow_once',optionId:'allow',name:'Allow'},{kind:'reject_once',optionId:'deny',name:'Deny'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(mode)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='crash')process.exit(2);
@@ -1579,6 +1582,7 @@ test('Kimi Code runs No flag, Auto and Bypass as its own session modes, with no 
   expect(createAcpConversationProvider(kimi).capabilities).toMatchObject({
     permissionPresets: ['none', 'auto', 'bypass'],
     permissionModes: [],
+    questions: true,
   })
   // `kimi acp` takes no permission flag and no variable for one.
   for (const preset of ['none', 'auto', 'bypass'] as const) {
@@ -1706,6 +1710,83 @@ test('a Kimi Code build without the mode a preset runs in fails the turn as a re
     expect(message).toContain('yolo session mode')
     // So the runtime starts the chat again with no preset, as for a refused flag.
     expect(looksLikePermissionSettingRefusal(message)).toBe(true)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test("Kimi Code's AskUserQuestion is asked as a question and answered with the option the answer names", async () => {
+  const f = await presetFixture('kimi-code-agent', 'bypass', KIMI)
+  try {
+    const answer = async (respond: (requestId: string) => Parameters<typeof f.provider.resolveApproval>[0]) => {
+      const events: ConversationEvent[] = []
+      for await (const event of await f.provider.sendTurn({
+        ...f.input,
+        turnId: 'turn',
+        requestId: 'request',
+        message: 'question',
+      })) {
+        events.push(event)
+        if (event.type === 'approval_requested')
+          events.push(...(f.provider.resolveApproval(respond(String(event.payload?.requestId))) as ConversationEvent[]))
+      }
+      return events
+    }
+    const answered = await answer((requestId) => ({
+      ...f.input,
+      turnId: 'turn',
+      requestId,
+      approved: true,
+      answers: { 'Which suite?': 'End to end' },
+    }))
+    expect(answered.find((event) => event.type === 'approval_requested')?.payload).toMatchObject({
+      kind: 'question',
+      action: 'AskUserQuestion',
+      summary: 'Which suite?',
+      questions: [
+        { question: 'Which suite?', allowFreeText: false, options: [{ label: 'Unit' }, { label: 'End to end' }] },
+      ],
+    })
+    expect(answered.find((event) => event.type === 'approval_resolved')?.payload).toMatchObject({
+      approved: true,
+      answers: { 'Which suite?': 'End to end' },
+    })
+    expect(answered.find((event) => event.type === 'turn_completed')?.payload?.text).toBe('q0_opt_1')
+    // Declined, the question is skipped rather than answered with its first option.
+    const declined = await answer((requestId) => ({ ...f.input, turnId: 'turn', requestId, approved: false }))
+    expect(declined.find((event) => event.type === 'approval_resolved')?.payload).toMatchObject({ approved: false })
+    expect(declined.find((event) => event.type === 'turn_completed')?.payload?.text).toBe('q0_skip')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('only a permission request titled AskUserQuestion, with text and answers, is read as a question', () => {
+  const request = (title: string, text: string, kinds: Array<'allow_once' | 'reject_once'>) => ({
+    sessionId: 'native',
+    toolCall: {
+      toolCallId: 'call',
+      title,
+      content: text ? [{ type: 'content' as const, content: { type: 'text' as const, text } }] : [],
+    },
+    options: kinds.map((kind, index) => ({ optionId: `o${index}`, name: `Option ${index}`, kind })),
+  })
+  expect(acpQuestionRequest(request('AskUserQuestion', 'Which?', ['allow_once', 'reject_once']))).toEqual({
+    question: 'Which?',
+    multiSelect: false,
+    allowFreeText: false,
+    options: [{ label: 'Option 0' }],
+  })
+  expect(acpQuestionRequest(request('Bash', 'Which?', ['allow_once', 'reject_once']))).toBeNull()
+  expect(acpQuestionRequest(request('AskUserQuestion', '', ['allow_once']))).toBeNull()
+  expect(acpQuestionRequest(request('AskUserQuestion', 'Which?', ['reject_once']))).toBeNull()
+})
+
+test('another ACP agent asking with the same title gets a tool approval card', async () => {
+  const f = await presetFixture('grok-agent', 'none')
+  try {
+    const events = await turn(f as Awaited<ReturnType<typeof fixture>>, 'question')
+    expect(events.find((event) => event.type === 'approval_requested')?.payload).toMatchObject({ kind: 'tool' })
   } finally {
     await f.cleanup()
   }

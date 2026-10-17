@@ -53,6 +53,7 @@ import type {
   ConversationEvent,
   ConversationMcpServer,
   ConversationPermissionPreset,
+  ConversationQuestion,
   ConversationToolKind,
 } from '../../shared/conversation-runtime'
 import { turnUsageOf } from '../../shared/conversation/turn-usage'
@@ -105,6 +106,10 @@ export type AcpProfile = {
   authenticate?: string
   images: boolean
   planMode: boolean
+  // The agent asks its own questions as a permission request titled
+  // `AskUserQuestion`, one option per answer (acpQuestionRequest): asked as a
+  // question, not as a tool to allow.
+  questions?: boolean
 }
 
 // OpenCode's permission rule set for a preset. `opencode acp` takes no
@@ -228,6 +233,7 @@ export const ACP_PROFILES: AcpProfile[] = [
     authHint: 'Run kimi login in a terminal.',
     images: true,
     planMode: true,
+    questions: true,
   },
 ]
 
@@ -315,7 +321,7 @@ const baseCapabilities = (profile: AcpProfile): ConversationCapabilities => ({
   permissionModes: Object.keys(profile.ownModes ?? {}),
   tools: true,
   approvals: true,
-  questions: false,
+  questions: profile.questions === true,
   planMode: profile.planMode,
   images: profile.images,
   skills: 'context',
@@ -477,7 +483,35 @@ class Queue implements AsyncIterable<ConversationEvent> {
     }
   }
 }
-type Pending = { options: RequestPermissionRequest['options']; resolve: (value: RequestPermissionResponse) => void }
+type Pending = {
+  options: RequestPermissionRequest['options']
+  resolve: (value: RequestPermissionResponse) => void
+  // The text of a question asked as a permission request, which its answer is keyed by.
+  question?: string
+}
+
+/**
+ * A question the agent asked as a permission request, or null for a tool to
+ * allow. Kimi Code has no other way to ask over ACP without forms: its
+ * AskUserQuestion arrives titled so, the question as the call's text, one
+ * `allow_once` option per answer and a `reject_once` to skip it. One question,
+ * one answer from the list: it takes no typed answer.
+ */
+export function acpQuestionRequest(params: RequestPermissionRequest): ConversationQuestion | null {
+  if (params.toolCall.title !== 'AskUserQuestion') return null
+  const question = (params.toolCall.content ?? [])
+    .map((entry) => (entry.type === 'content' && entry.content.type === 'text' ? entry.content.text : ''))
+    .join('\n')
+    .trim()
+  const answers = params.options.filter((option) => option.kind === 'allow_once' && option.name.trim())
+  if (!question || answers.length === 0) return null
+  return {
+    question,
+    multiSelect: false,
+    allowFreeText: false,
+    options: answers.map((option) => ({ label: option.name })),
+  }
+}
 // How much of a CLI's stderr is kept for the message of a failure it ends with.
 const STDERR_TAIL_CHARS = 4000
 
@@ -848,6 +882,25 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
   const permission = (state: State, params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
     if (!state.turn || state.cancelled || state.closed || params.sessionId !== state.nativeId)
       return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    const question = profile.questions ? acpQuestionRequest(params) : null
+    if (question) {
+      const requestId = `acp_permission_${++requestSequence}`
+      const answered = new Promise<RequestPermissionResponse>((resolve) =>
+        state.pending.set(requestId, { options: params.options, resolve, question: question.question }),
+      )
+      // A question, never a tool: no permission mode answers it for the person.
+      emit(state, 'approval_requested', {
+        requestId,
+        kind: 'question',
+        action: 'AskUserQuestion',
+        input: { questions: [question] },
+        toolUseId: params.toolCall.toolCallId,
+        summary: question.question,
+        questions: [question],
+        cwd: state.input.workspaceRoot,
+      })
+      return answered
+    }
     if (state.turn.mode === 'ask' && !['read', 'search', 'fetch'].includes(params.toolCall.kind ?? 'other'))
       return Promise.resolve({ outcome: { outcome: 'cancelled' } })
     const requestId = `acp_permission_${++requestSequence}`
@@ -1555,7 +1608,15 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       const state = sessions.get(input.sessionId),
         pending = state?.pending.get(input.requestId)
       if (!state || !pending) return []
-      const selected = pending.options.find((option) => option.kind === (input.approved ? 'allow_once' : 'reject_once'))
+      // A question is answered with the option its answer names, and skipped
+      // (its reject option) when declined or answered with anything else.
+      const answer = pending.question === undefined ? undefined : input.answers?.[pending.question]
+      const selected =
+        pending.question === undefined
+          ? pending.options.find((option) => option.kind === (input.approved ? 'allow_once' : 'reject_once'))
+          : (input.approved &&
+              pending.options.find((option) => option.kind === 'allow_once' && option.name === answer)) ||
+            pending.options.find((option) => option.kind === 'reject_once')
       // Never convert a once-only approval into an agent-wide persistent grant.
       pending.resolve(
         selected
@@ -1563,10 +1624,12 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           : { outcome: { outcome: 'cancelled' } },
       )
       state.pending.delete(input.requestId)
+      const answered = pending.question !== undefined && selected?.kind === 'allow_once'
       return [
         event(state, 'approval_resolved', {
           requestId: input.requestId,
-          approved: input.approved && Boolean(selected),
+          approved: pending.question === undefined ? input.approved && Boolean(selected) : answered,
+          ...(answered ? { answers: { [pending.question!]: selected!.name } } : {}),
         }),
       ]
     },
