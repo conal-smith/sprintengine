@@ -13,6 +13,15 @@
 
 ### Added
 
+- **A listed chat says where the desktop's sidebar orders it, and when its
+  turn began.** `recencyAt` and `turnStartedAt` are optional members of
+  `ConversationThread`. `recencyAt` is the moment the desktop's own sidebar
+  sorts the chat by: `lastUserMessageAt` when a person has written to it, else
+  when the chat was made or last typed into there, which `lastUserMessageAt`
+  alone could not say. `turnStartedAt` is when the running turn began. Both are
+  absent from a desktop built before they were listed;
+  `parseConversationServerFrame` keeps each when it is a clock and leaves out
+  anything else. The pinned files are unchanged.
 - **An uploaded picture is sized for the model by the desktop.**
   `CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY` (`conversation-image-downscale`)
   names a desktop that shrinks a picture uploaded for a chat on receipt, to the

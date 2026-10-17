@@ -35,6 +35,7 @@ import {
 import { type PoolContext, type PoolRuntime, tail, messageOf, failureOf } from './pool-context'
 import type { LeaseBase, WorktreePoolLeaseInput, WorktreePoolLeaseResult } from './worktree-pool-service'
 import { hold, holdAfterFailure, forgetSlotsGoneFromDisk } from './pool-slot-steps'
+import { findLease } from './pool-return'
 
 /** Leasing a slot (worktree-pool-service.ts): the base it forks from, the reset that moves it there, and the lease itself. */
 
@@ -605,6 +606,77 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
     }
   }
   return { ok: false, reason: 'error', message: 'No pool worktree passed its checks.', base: await fetching }
+}
+
+/** What {@link catchUp} did with a leased slot. */
+export type CatchUpOutcome =
+  | { kind: 'moved'; ref: string; sha: string; note: string | null; repoRoot: string; path: string; branch: string }
+  | { kind: 'current'; ref: string; sha: string; note: string | null }
+  /** Someone has worked in it (a commit, an edit, another branch): it is theirs as it stands. */
+  | { kind: 'worked-in' }
+  | { kind: 'not-found' }
+  | { kind: 'busy' }
+  | { kind: 'failed'; message: string }
+
+/**
+ * Bring a leased slot nobody has worked in yet to the default branch as
+ * origin has it now. A New chat leases its worktree while the person types
+ * (utils/newChatWorktree.ts), and the person may type for minutes; the chat
+ * must still start on the latest origin/main, never on the one the lease
+ * fetched (owner ruling 2026-10-17).
+ *
+ * The fetch is the lease's own (`ensureBase`): one per `fetchFreshMs` serves
+ * every caller. The move is `merge --ff-only` on the lease's branch, and only
+ * while the slot is exactly as the lease left it — on that branch, at the base
+ * it was cut from, nothing changed — so nothing anyone did is ever moved. A
+ * submodule checkout follows the move, as on a lease.
+ */
+export async function catchUp(ctx: PoolContext, leaseId: string): Promise<CatchUpOutcome> {
+  const found = findLease(ctx, leaseId)
+  if (!found) return { kind: 'not-found' }
+  const { pool, slot } = found
+  if (!(await ctx.ready(pool))) return { kind: 'busy' }
+  const local = await localBase(ctx, pool)
+  if (!local) return { kind: 'failed', message: 'The repository has no default branch to catch up to.' }
+  const base = await ensureBase(ctx, pool, local)
+  const taken = await ctx.withPool(pool, async () => {
+    if (slot.state !== 'leased' || slot.lease?.leaseId !== leaseId || pool.busy.has(slot.id)) return false
+    pool.busy.add(slot.id)
+    return true
+  })
+  if (!taken) return { kind: 'busy' }
+  try {
+    const status = await readSlotStatus(ctx.git, slot.path)
+    if (!status.ok) return { kind: 'failed', message: status.message }
+    const { oid, branch, changedPaths } = status.status
+    if (branch !== slot.lease?.branch || oid !== slot.baseSha || changedPaths > 0) return { kind: 'worked-in' }
+    if (oid === base.sha) return { kind: 'current', ref: base.ref, sha: base.sha, note: base.note }
+    const merged = await ctx.git(slot.path, ['merge', '--ff-only', '--quiet', base.sha])
+    if (!merged.ok) return { kind: 'failed', message: merged.message ?? `Could not fast-forward to ${base.ref}.` }
+    if (await hasFile(slot.path, '.gitmodules')) {
+      const modules = await ctx.git(slot.path, ['submodule', 'update', '--init', '--recursive'], {
+        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+      })
+      if (!modules.ok) ctx.log(`${slot.path}: submodules after catching up: ${tail(modules.message)}`)
+    }
+    await ctx.withPool(pool, async () => {
+      slot.baseRef = base.ref
+      slot.baseSha = base.sha
+      await ctx.persist(pool)
+    })
+    ctx.log(`${slot.path}: caught up to ${base.ref} at ${base.sha.slice(0, 12)}`)
+    return {
+      kind: 'moved',
+      ref: base.ref,
+      sha: base.sha,
+      note: base.note,
+      repoRoot: pool.record.repoRoot,
+      path: slot.path,
+      branch,
+    }
+  } finally {
+    pool.busy.delete(slot.id)
+  }
 }
 
 /**
