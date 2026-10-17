@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, net, powerMonitor } from 'electron'
-import { createAppMenu } from './app-menu'
+import { createAppMenu, setChatWindowsForCloseChord } from './app-menu'
 import { sweepRetiredCheckpoints } from './checkpoint-sweep'
 import { createBootReveal } from './boot-reveal'
 import { DEEP_LINK_SCHEMES } from '../shared/deep-link-scheme'
@@ -437,6 +437,7 @@ export function registerAppLifecycle({
     }
     registerDeepLinkProtocols()
 
+    setChatWindowsForCloseChord(listWorkspaceWindows)
     Menu.setApplicationMenu(createAppMenu())
     // Out of process the server is forked first thing: it can only start once
     // the app is ready, and it composes in parallel with the windows below.
