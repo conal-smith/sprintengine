@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
+import { meshConversationSessionId } from '../../../../../shared/tailnet-mesh'
+import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type {
   MeshConversation,
   MeshConversationAccess,
@@ -9,9 +11,13 @@ import type {
   MeshQueuedMessage,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
-import { publishRemoteConversationList } from '../../workspace/remoteBand/remoteConversationFacts'
+import {
+  publishRemoteConversationList,
+  useRemoteConversationFactsOf,
+} from '../../workspace/remoteBand/remoteConversationFacts'
 import { ConversationChatBody } from '../AgentChatView'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
+import { publishRemoteChat } from './remoteChatRegistry'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
 import type { ChatReadiness } from './chatStates'
 import {
@@ -32,6 +38,8 @@ import {
 // Readiness is the link's: live and allowed to operate is ready; live and
 // read-only shows the conversation with the composer closed and says why; a
 // link that is reconnecting keeps the transcript on screen and says so.
+
+const NO_PULL_REQUESTS: readonly BranchPullRequest[] = []
 
 type Props = {
   /** The workspace here that holds this pane. */
@@ -271,6 +279,15 @@ export default function RemoteConversationPanel({
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
   }, [])
+  // The branch and pull requests the strip under the composer draws, from
+  // the newest list either this pane or the sidebar read: the sidebar reads
+  // the machine again whenever it says its chats changed, so a pull request
+  // the agent opens mid-conversation reaches the strip without a reopen.
+  const facts = useRemoteConversationFactsOf(connectionId, meshConversationSessionId(remoteWorkspaceId, remoteAgentId))
+  const listed = useMemo(
+    () => ({ branch: facts?.branch ?? null, pullRequests: facts?.pullRequests ?? NO_PULL_REQUESTS }),
+    [facts],
+  )
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(() => remoteConversationSession(thread, key, modelSwitch), [thread, key, modelSwitch])
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
@@ -293,8 +310,16 @@ export default function RemoteConversationPanel({
       // machine again; a third line saying both was the same fact once more.
       ...(engine ? { engine } : {}),
       hostQueue: { machineName, messages: hostQueued },
+      listed,
     }),
-    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued],
+    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued, listed],
+  )
+
+  // The Agents tab beside it reads the chat through this transport, as it
+  // reads a local chat through its record.
+  useEffect(
+    () => publishRemoteChat(workspaceId, { agentId: remoteAgentId, transport, binding }),
+    [workspaceId, remoteAgentId, transport, binding],
   )
 
   return (

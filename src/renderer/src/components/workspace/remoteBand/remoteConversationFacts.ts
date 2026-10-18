@@ -7,7 +7,8 @@ import { branchPullRequestsOfWire } from './remoteSessionsModel'
 
 // What a paired machine last listed about each of its chats, for the surfaces
 // here that draw one without reading the machine themselves: the tab a remote
-// chat's pane sits in. A local chat's tab reads its CLI mark, model, phase and
+// chat's pane sits in, and the strip under its composer (its branch and pull
+// requests), which the pane's own read would leave as they were when it opened. A local chat's tab reads its CLI mark, model, phase and
 // last finish off the session main holds; a remote chat's pane holds no
 // session here, so its tab drew the bare chat glyph and no time at all, and a
 // chat on another machine read differently from the same chat on this one
@@ -28,6 +29,8 @@ export type RemoteConversationFacts = {
   /** When the agent last finished a turn, as its machine records it; null before one has. */
   lastTurnEndedAt: number | null
   pullRequests: BranchPullRequest[]
+  /** The branch the chat's folder is on over there; null from a machine that does not say, or off a branch. */
+  branch: string | null
 }
 
 type Snapshot = ReadonlyMap<string, RemoteConversationFacts>
@@ -48,6 +51,7 @@ function factsOf(conversation: MeshConversation): RemoteConversationFacts {
     live: Boolean(conversation.sessionId),
     lastTurnEndedAt: conversation.lastTurnEndedAt ?? null,
     pullRequests: branchPullRequestsOfWire(conversation.pullRequests ?? []),
+    branch: conversation.branch?.trim() || null,
   }
 }
 
@@ -57,7 +61,8 @@ function sameFacts(a: RemoteConversationFacts, b: RemoteConversationFacts): bool
     a.modelId !== b.modelId ||
     a.phase !== b.phase ||
     a.live !== b.live ||
-    a.lastTurnEndedAt !== b.lastTurnEndedAt
+    a.lastTurnEndedAt !== b.lastTurnEndedAt ||
+    a.branch !== b.branch
   )
     return false
   if (a.pullRequests.length !== b.pullRequests.length) return false
@@ -115,6 +120,16 @@ export function readRemoteConversationFacts(): Snapshot {
 /** Every remote chat's facts, as the newest lists said them. */
 export function useRemoteConversationFacts(): Snapshot {
   return useSyncExternalStore(subscribe, readRemoteConversationFacts, readRemoteConversationFacts)
+}
+
+/** One remote chat's facts, as the newest list said them; null before any list has named it. */
+export function useRemoteConversationFactsOf(connectionId: string, sessionId: string): RemoteConversationFacts | null {
+  const key = remoteConversationFactsKey(connectionId, sessionId)
+  return useSyncExternalStore(
+    subscribe,
+    () => snapshot.get(key) ?? null,
+    () => snapshot.get(key) ?? null,
+  )
 }
 
 /** For tests: forget every machine's list. */

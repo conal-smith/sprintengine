@@ -106,6 +106,7 @@ async function mountRemote({
   queuedSends = false,
   steerSends = false,
   capabilities = thread.capabilities,
+  listed = {},
 }: {
   access: 'read' | 'operate'
   permissionPreset?: MeshConversation['permissionPreset']
@@ -116,6 +117,8 @@ async function mountRemote({
   steerSends?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
+  /** More of what the machine lists about the chat: its branch, its pull requests. */
+  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests'>>
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -148,6 +151,7 @@ async function mountRemote({
           modelId: listedModel,
           ...(permissionPreset ? { permissionPreset } : {}),
           ...(models ? { models } : {}),
+          ...listed,
         },
       ],
       access,
@@ -279,6 +283,25 @@ async function mountRemote({
     },
   }
 }
+
+test('the strip under a paired machine’s chat names its branch and its pull request, as a local chat’s does', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    listed: {
+      branch: 'agent/chat-5v54',
+      pullRequests: [
+        { number: 283, state: 'open', url: 'https://github.com/acme/studio/pull/283', title: 'Remote parity' },
+      ],
+    },
+  })
+  try {
+    const strip = chat.host.querySelector('[data-conversation-strip]')!
+    expect(strip.querySelector('[data-strip-branch="agent/chat-5v54"]')).not.toBeNull()
+    expect(strip.querySelector('[data-strip-pull-request-slot]')?.textContent).toContain('283')
+  } finally {
+    await chat.unmount()
+  }
+})
 
 test('a conversation on a paired machine renders in the chat view and is driven over the mesh', async () => {
   const chat = await mountRemote({ access: 'operate' })

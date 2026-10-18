@@ -20,8 +20,9 @@ import type { ConversationStripBranch, ConversationStripChanges, ConversationStr
 // read off the chat's binding and transport: the machine (when it is not this
 // computer), the branch of the checkout it works in, and how many files that
 // checkout has changed. Each answers null where the chat cannot know it — a
-// chat on a paired machine has no checkout here to ask — so the strip draws
-// what is true and leaves out what is not known, never a guess.
+// chat on a paired machine has no checkout here to ask, and its branch is the
+// one its machine lists — so the strip draws what is true and leaves out what
+// is not known, never a guess.
 
 /** No pull requests to scope by: a chat runs no terminal that would carry one. */
 const NO_PULL_REQUESTS: never[] = []
@@ -43,12 +44,15 @@ export function useConversationStripFacts({
   workspace,
   workspaceRoot,
   transport,
+  listedBranch = null,
 }: {
   workspaceId: string
   agentId: string
   workspace: ChatWorkspace | null
   workspaceRoot: string | null
   transport: Pick<ConversationTransport, 'kind' | 'machineName' | 'capabilities'>
+  /** The branch the machine running a remote chat lists its folder on. */
+  listedBranch?: string | null
 }): {
   machine: ConversationStripMachine | null
   branch: ConversationStripBranch | null
@@ -110,10 +114,14 @@ export function useConversationStripFacts({
     togglePaneKind(workspaceId, 'git')
   }, [togglePaneKind, workspaceId])
 
+  // A chat on a paired machine has no checkout here; its machine names the
+  // branch in its list, and there is no explorer here to open it in.
   const branch: ConversationStripBranch | null =
     checkout && branchName
       ? { name: branchName, worktree: inWorktree, onOpen: filesEnabled && folderPath ? openFiles : null }
-      : null
+      : transport.kind === 'remote' && listedBranch
+        ? { name: listedBranch, worktree: false, onOpen: null }
+        : null
 
   const counts = useCheckoutChanges(checkout, NO_PULL_REQUESTS, 'conversation-strip')
   const changes: ConversationStripChanges | null =

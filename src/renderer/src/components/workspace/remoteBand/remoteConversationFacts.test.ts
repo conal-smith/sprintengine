@@ -43,7 +43,18 @@ test('a listed chat is filed by its pairing and session, with what its tab draws
     live: false,
     lastTurnEndedAt: 900,
     pullRequests: [],
+    branch: null,
   })
+})
+
+test('the branch a chat is listed on is kept, and a change of it is a change', () => {
+  publishRemoteConversationList('c1', [conversation({ branch: 'agent/chat-1' })])
+  const first = read()
+  assert.equal(first.get(KEY)?.branch, 'agent/chat-1')
+  publishRemoteConversationList('c1', [conversation({ branch: 'agent/chat-1' })])
+  assert.equal(read(), first)
+  publishRemoteConversationList('c1', [conversation({ branch: 'main' })])
+  assert.equal(read().get(KEY)?.branch, 'main')
 })
 
 test('a re-read that moved nothing a tab draws keeps the snapshot', () => {

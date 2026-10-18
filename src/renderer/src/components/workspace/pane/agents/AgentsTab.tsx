@@ -23,6 +23,8 @@ import {
 import { WorkTimeline } from '../../../panels/agentChat/timelineRows'
 import { useChatViewActive } from '../../../panels/agentChat/chatViewActivity'
 import { useConversationSession } from '../../../panels/agentChat/useConversationSession'
+import { ConversationTransportProvider } from '../../../panels/agentChat/conversationTransport'
+import { useRemoteChat } from '../../../panels/agentChat/remoteChatRegistry'
 import { useAgentFocusRequest } from './agentsPaneFocus'
 
 // The Agents tab: every agent the focused chat sent off to work, the ones still
@@ -115,8 +117,16 @@ export function AgentsTab({ workspaceId, active }: { workspaceId: string; active
     previousFocusedAgentIdRef.current = focusedAgentId
     setTarget((previous) => (previous && focusedAgentId && previous.agentId !== focusedAgentId ? null : previous))
   }, [focusedAgentId])
-  const agentId = target?.agentId ?? focusedAgentId
-  const binding = useLocalChatBinding(workspaceId, agentId ?? '')
+  const askedAgentId = target?.agentId ?? focusedAgentId
+  const local = useLocalChatBinding(workspaceId, askedAgentId ?? '')
+  // A chat on a paired machine has no record here: its pane says it is open
+  // in this workspace, and the tab reads it through the pane's transport.
+  // The focus a local chat's tab records is not recorded for it, so with no
+  // chat asked for, the one open here is shown.
+  const remote = useRemoteChat(workspaceId, local ? null : askedAgentId)
+  const remoteShown = !local && remote !== null
+  const agentId = remoteShown ? remote.agentId : askedAgentId
+  const binding = local ?? (remoteShown ? remote.binding : null)
   const root = binding ? (binding.sessionRoot ?? binding.workspaceRoot) : null
 
   if (!agentId || !binding || !root) {
@@ -130,7 +140,7 @@ export function AgentsTab({ workspaceId, active }: { workspaceId: string; active
       </div>
     )
   }
-  return (
+  const agents = (
     <ChatAgents
       key={`${workspaceId}:${agentId}`}
       workspaceId={workspaceId}
@@ -141,6 +151,11 @@ export function AgentsTab({ workspaceId, active }: { workspaceId: string; active
       requestSerial={target?.serial ?? 0}
       active={active}
     />
+  )
+  return remoteShown ? (
+    <ConversationTransportProvider value={remote.transport}>{agents}</ConversationTransportProvider>
+  ) : (
+    agents
   )
 }
 
@@ -191,7 +206,14 @@ function ChatAgents({
   const showList = useCallback(() => setSelected(null), [])
 
   return (
-    <ConversationLinkProvider workspaceId={workspaceId} agentId={agentId} cwd={root} workspaceRoot={root}>
+    <ConversationLinkProvider
+      workspaceId={workspaceId}
+      agentId={agentId}
+      // A chat on a paired machine is keyed by its link, which is no folder
+      // here to resolve a file link against.
+      cwd={binding.workspaceRoot ?? ''}
+      workspaceRoot={binding.workspaceRoot ?? ''}
+    >
       <SubagentTypesProvider value={projection.agentTypes}>
         <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-[color:var(--bg-app)]">
           <PanelHeader title="Agents" subtitle={binding.agent.name} count={lanes.length || undefined} />

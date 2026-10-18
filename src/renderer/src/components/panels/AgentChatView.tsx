@@ -3424,6 +3424,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     workspace: binding.workspace,
     workspaceRoot,
     transport,
+    listedBranch: binding.listed?.branch ?? null,
   })
   // ── Scheduling the next message ──────────────────────────────────────────
   // Offered for a chat that runs on this computer, as its usage-limit resume
@@ -3485,10 +3486,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     setSendAt(null)
   }
   // The pull requests this conversation opened, from the record the sidebar
-  // reads. A chat on a paired machine has its record there, not here.
-  const conversationPullRequests = usePullRequestsOfConversation(
-    transport.kind === 'remote' ? null : { workspaceId, agentId },
-  )
+  // reads. A chat on a paired machine has its record there, and its machine
+  // lists them with the chat.
+  const localPullRequests = usePullRequestsOfConversation(transport.kind === 'remote' ? null : { workspaceId, agentId })
+  const conversationPullRequests =
+    transport.kind === 'remote' ? (binding.listed?.pullRequests ?? localPullRequests) : localPullRequests
   // The person's "Stop watching" on the strip's pull request: the record's
   // change comes back through the list above, so nothing is held here.
   const stopWatchingPullRequest = useCallback(
