@@ -3424,7 +3424,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     workspace: binding.workspace,
     workspaceRoot,
     transport,
-    listedBranch: binding.listed?.branch ?? null,
+    listed: binding.listed ?? null,
   })
   // ── Scheduling the next message ──────────────────────────────────────────
   // Offered for a chat that runs on this computer, as its usage-limit resume

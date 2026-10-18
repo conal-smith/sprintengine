@@ -8,11 +8,11 @@ import { useMachineIdentity, useWorkspaceMachineRef } from '../../../hooks/useMa
 import { selectModuleEnabled } from '../../../modules'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import type { Workspace } from '../../../types/workspace'
-import type { ChatWorkspace } from './chatBinding'
+import type { ChatBinding, ChatWorkspace } from './chatBinding'
 import { dispatchFileReveal } from '../../../utils/fileReveal'
 import { resolveWorkspaceWorktree } from '../../../utils/workspaceWorktree'
 import { useCheckoutChanges } from '../../workspace/checkoutChanges'
-import { changedFilesPhrase } from '../../workspace/terminalLines'
+import { changedFileMarks, changedFilesPhrase } from '../../workspace/terminalLines'
 import type { ConversationTransport } from './conversationTransport'
 import type { ConversationStripBranch, ConversationStripChanges, ConversationStripMachine } from './conversationStrip'
 
@@ -20,9 +20,9 @@ import type { ConversationStripBranch, ConversationStripChanges, ConversationStr
 // read off the chat's binding and transport: the machine (when it is not this
 // computer), the branch of the checkout it works in, and how many files that
 // checkout has changed. Each answers null where the chat cannot know it — a
-// chat on a paired machine has no checkout here to ask, and its branch is the
-// one its machine lists — so the strip draws what is true and leaves out what
-// is not known, never a guess.
+// chat on a paired machine has no checkout here to ask, and its branch and
+// counts are the ones its machine lists — so the strip draws what is true and
+// leaves out what is not known, never a guess.
 
 /** No pull requests to scope by: a chat runs no terminal that would carry one. */
 const NO_PULL_REQUESTS: never[] = []
@@ -44,15 +44,15 @@ export function useConversationStripFacts({
   workspace,
   workspaceRoot,
   transport,
-  listedBranch = null,
+  listed = null,
 }: {
   workspaceId: string
   agentId: string
   workspace: ChatWorkspace | null
   workspaceRoot: string | null
   transport: Pick<ConversationTransport, 'kind' | 'machineName' | 'capabilities'>
-  /** The branch the machine running a remote chat lists its folder on. */
-  listedBranch?: string | null
+  /** Where a remote chat works, as the machine running it lists it. */
+  listed?: Pick<NonNullable<ChatBinding['listed']>, 'branch' | 'worktree' | 'files'> | null
 }): {
   machine: ConversationStripMachine | null
   branch: ConversationStripBranch | null
@@ -119,11 +119,15 @@ export function useConversationStripFacts({
   const branch: ConversationStripBranch | null =
     checkout && branchName
       ? { name: branchName, worktree: inWorktree, onOpen: filesEnabled && folderPath ? openFiles : null }
-      : transport.kind === 'remote' && listedBranch
-        ? { name: listedBranch, worktree: false, onOpen: null }
+      : transport.kind === 'remote' && listed?.branch
+        ? { name: listed.branch, worktree: listed.worktree, onOpen: null }
         : null
 
   const counts = useCheckoutChanges(checkout, NO_PULL_REQUESTS, 'conversation-strip')
+  // A remote chat's counts are its machine's; there is no Git panel here on
+  // that checkout to open them in.
+  const remoteFiles = transport.kind === 'remote' ? (listed?.files ?? null) : null
+  const remoteMarks = remoteFiles ? changedFileMarks(remoteFiles) : null
   const changes: ConversationStripChanges | null =
     counts.hasCounts && counts.marks && counts.files
       ? {
@@ -132,7 +136,9 @@ export function useConversationStripFacts({
           phrase: changedFilesPhrase(counts.files),
           onOpen: gitEnabled ? openChanges : null,
         }
-      : null
+      : remoteFiles && remoteMarks && (remoteMarks.plus > 0 || remoteMarks.minus > 0)
+        ? { added: remoteMarks.plus, removed: remoteMarks.minus, phrase: changedFilesPhrase(remoteFiles), onOpen: null }
+        : null
 
   return { machine, branch, changes }
 }

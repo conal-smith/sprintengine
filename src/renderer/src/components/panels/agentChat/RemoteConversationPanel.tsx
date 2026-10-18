@@ -16,6 +16,7 @@ import {
   useRemoteConversationFactsOf,
 } from '../../workspace/remoteBand/remoteConversationFacts'
 import { ConversationChatBody } from '../AgentChatView'
+import { remoteFileCountsOf } from '../../workspace/terminalLines'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
 import { publishRemoteChat } from './remoteChatRegistry'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
@@ -279,15 +280,20 @@ export default function RemoteConversationPanel({
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
   }, [])
-  // The branch and pull requests the strip under the composer draws, from
+  // The branch, changed files and pull requests the strip under the composer draws, from
   // the newest list either this pane or the sidebar read: the sidebar reads
   // the machine again whenever it says its chats changed, so a pull request
   // the agent opens mid-conversation reaches the strip without a reopen.
   const facts = useRemoteConversationFactsOf(connectionId, meshConversationSessionId(remoteWorkspaceId, remoteAgentId))
-  const listed = useMemo(
-    () => ({ branch: facts?.branch ?? null, pullRequests: facts?.pullRequests ?? NO_PULL_REQUESTS }),
-    [facts],
-  )
+  const listed = useMemo(() => {
+    const pullRequests = facts?.pullRequests ?? NO_PULL_REQUESTS
+    return {
+      branch: facts?.branch ?? null,
+      worktree: facts?.worktree ?? false,
+      files: remoteFileCountsOf(facts?.changes ?? null, pullRequests)?.files ?? null,
+      pullRequests,
+    }
+  }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(() => remoteConversationSession(thread, key, modelSwitch), [thread, key, modelSwitch])
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])

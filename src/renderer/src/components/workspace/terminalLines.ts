@@ -12,6 +12,7 @@ import type { RemoteSessionRow } from './remoteBand/remoteSessionsModel'
 import { chatLineText } from './sidebar/conversationLines'
 import { checkoutPathFor } from './useSidebarGitSummaries'
 import type { PromptCacheReading } from '../../../../shared/prompt-cache'
+import type { ConversationWireChanges } from '../../../../../packages/conversation-protocol/src/public'
 
 // The sidebar row's terminal lines (sidebar-lists-every-terminal): one line
 // per live terminal under the row's title — its CLI mark (whose tooltip
@@ -494,7 +495,25 @@ function lineOfMeshPane(
  * conversation list carries no diff and no file breakdown, so a remote line
  * draws none rather than a confident zero.
  */
+/**
+ * A paired machine's count of a chat's files, read as `lineDiffOf` reads a
+ * summary here: once the chat's own pull request has merged, what is left
+ * uncommitted, and otherwise the branch's span. Null draws nothing, as for a
+ * summary that could not be read.
+ */
+export function remoteFileCountsOf(
+  changes: ConversationWireChanges | null,
+  pullRequests: ReadonlyArray<BranchPullRequest>,
+): { files: ChangedFileCounts; scope: TerminalDiffScope } | null {
+  if (!changes) return null
+  const { scope, uncommitted, ...files } = changes
+  if (primaryPullRequest(pullRequests)?.state === 'merged' && uncommitted)
+    return { files: uncommitted, scope: 'landed' }
+  return { files, scope: scope ?? 'branch' }
+}
+
 export function lineOfRemoteRow(row: RemoteSessionRow): TerminalLine {
+  const counted = remoteFileCountsOf(row.changes ?? null, row.pullRequests ?? [])
   return {
     key: row.sessionId,
     kind: 'remote',
@@ -504,16 +523,18 @@ export function lineOfRemoteRow(row: RemoteSessionRow): TerminalLine {
     machineName: null,
     // The branch its machine names for the chat's folder, which is on that
     // machine's disk: drawn as a local line draws its own, with no path to
-    // hover and no worktree claimed.
+    // hover, and its worktree mark where that machine says it is one.
     branch: row.branch ?? null,
-    worktree: false,
+    worktree: row.worktree === true,
     cwd: null,
     removed: false,
+    // Files, never lines: the machine counts what happened to each file, as
+    // the line here draws them, and lists no line counts.
     additions: 0,
     deletions: 0,
-    changedFiles: 0,
-    files: null,
-    diffScope: 'folder',
+    changedFiles: counted ? changedFilesTotal(counted.files) : 0,
+    files: counted?.files ?? null,
+    diffScope: counted?.scope ?? 'folder',
     activeSubagents: 0,
     // The ones its machine's record holds: the lookup runs where the checkout
     // is, and that is the other machine, which names them in its list.

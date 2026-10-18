@@ -151,10 +151,49 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * was listed.
    */
   backgroundWork?: ConversationBackgroundWork
+  /**
+   * What the chat's checkout carries, in files, as the desktop's own sidebar
+   * line and composer strip count it: the files its branch added, updated
+   * and removed against the default branch, uncommitted work included, and,
+   * in `uncommitted`, those changes alone (what a line shows once the branch
+   * has landed by squash). Listed only for a chat with a live session, as
+   * the desktop draws a line only for one: a parked chat's numbers would be
+   * the checkout's, not the chat's. Read from the desktop's shared reading,
+   * held for a few seconds, so a list asked for again runs no git. Absent for
+   * a chat at rest, a folder that is not a repository or could not be read,
+   * and from a desktop built before it was listed; never a confident zero.
+   */
+  changes?: ConversationWireChanges
+  /**
+   * The chat works in a git worktree of its project rather than the project's
+   * own checkout: the desktop marks its branch with the worktree glyph.
+   * Absent when it does not, and from a desktop built before it was listed.
+   */
+  worktree?: boolean
 }
 
 /** A listed chat's background work (`ConversationThread.backgroundWork`). At least one count is above zero. */
 export type ConversationBackgroundWork = { agents: number; monitors: number }
+
+/** Files changed, by what happened to each. */
+export type ConversationWireFileCounts = { added: number; updated: number; removed: number }
+
+/**
+ * Whose changes a listed chat's counts are: `worktree`, the chat's own
+ * worktree's branch; `branch`, the branch the folder is on, which other chats
+ * may share; `folder`, only what is uncommitted (a folder on the default
+ * branch, or with none to compare against).
+ */
+export type ConversationWireChangeScope = 'worktree' | 'branch' | 'folder'
+
+const CHANGE_SCOPES: ReadonlySet<string> = new Set<ConversationWireChangeScope>(['worktree', 'branch', 'folder'])
+
+/** A listed chat's changed files (`ConversationThread.changes`). */
+export type ConversationWireChanges = ConversationWireFileCounts & {
+  /** Absent from a desktop that did not say; a client then reads the counts as the branch's. */
+  scope?: ConversationWireChangeScope
+  uncommitted?: ConversationWireFileCounts
+}
 
 /** The most characters of a reply's opening a listed chat carries. */
 export const CONVERSATION_MAX_REPLY_PREVIEW = 240
@@ -360,6 +399,28 @@ export function parseConversationBackgroundWork(value: unknown): ConversationBac
   return { agents: value.agents, monitors: value.monitors }
 }
 
+function fileCounts(value: unknown): ConversationWireFileCounts | null {
+  return record(value) && integer(value.added) && integer(value.updated) && integer(value.removed)
+    ? { added: value.added, updated: value.updated, removed: value.removed }
+    : null
+}
+
+/**
+ * A listed chat's `changes`, or null: every count whole and not negative.
+ * An `uncommitted` reading in the wrong shape is left out on its own; the
+ * branch's counts still stand.
+ */
+export function parseConversationWireChanges(value: unknown): ConversationWireChanges | null {
+  const counts = fileCounts(value)
+  if (!counts) return null
+  const uncommitted = record(value) ? fileCounts(value.uncommitted) : null
+  const scope =
+    record(value) && typeof value.scope === 'string' && CHANGE_SCOPES.has(value.scope)
+      ? (value.scope as ConversationWireChangeScope)
+      : null
+  return { ...counts, ...(scope ? { scope } : {}), ...(uncommitted ? { uncommitted } : {}) }
+}
+
 /** One listed conversation, or null. Capabilities absent or malformed read as unknown, not as refused. */
 function thread(value: unknown): ConversationThread | null {
   if (!record(value)) return null
@@ -396,6 +457,7 @@ function thread(value: unknown): ConversationThread | null {
       ? value.branch
       : null
   const backgroundWork = parseConversationBackgroundWork(value.backgroundWork)
+  const changes = parseConversationWireChanges(value.changes)
   const lastAssistantText =
     typeof value.lastAssistantText === 'string' && value.lastAssistantText.trim()
       ? value.lastAssistantText.slice(0, CONVERSATION_MAX_REPLY_PREVIEW)
@@ -435,6 +497,8 @@ function thread(value: unknown): ConversationThread | null {
     ...(lastAssistantText ? { lastAssistantText } : {}),
     ...(branch ? { branch } : {}),
     ...(backgroundWork ? { backgroundWork } : {}),
+    ...(changes ? { changes } : {}),
+    ...(value.worktree === true ? { worktree: true } : {}),
     ...(flags
       ? {
           capabilities: {

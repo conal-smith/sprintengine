@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { conversationWorkingRoot, type AgentState } from '../../../../../shared/agent-state'
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
+import type { ChangedFileCounts } from '../../../../../shared/electron-api'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type { MeshQueuedMessage } from '../../../../../shared/tailnet-mesh'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
@@ -86,11 +87,18 @@ export type ChatBinding = {
   hostQueue?: { machineName: string; messages: MeshQueuedMessage[] }
   /**
    * Where a chat on another machine works, as that machine lists it: the
-   * branch its folder is on and the pull requests it opened. The strip under
-   * the composer draws them as it draws a local chat's own, which it reads
-   * off this machine's checkout and pull request record instead.
+   * branch its folder is on, whether that is a worktree, the files its
+   * checkout carries (null where it did not say) and the pull requests it
+   * opened. The strip under the composer draws them as it draws a local
+   * chat's own, which it reads off this machine's checkout and pull request
+   * record instead.
    */
-  listed?: { branch: string | null; pullRequests: readonly BranchPullRequest[] }
+  listed?: {
+    branch: string | null
+    worktree: boolean
+    files: ChangedFileCounts | null
+    pullRequests: readonly BranchPullRequest[]
+  }
 }
 
 /** A local chat's binding: its agent record in the workspace store. Null until that record has a conversation. */

@@ -2,6 +2,8 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
+import { conversationWorkingRoot } from '../../shared/agent-state'
+import { getWorkspaceChangeSummary } from '../../main/workspace-change-summary'
 import { isMachinePath } from '../../shared/machine-paths'
 import { isWorkspaceTombstoned } from '../../shared/workspace-registry'
 import { effectiveAgentLaunchSettings } from '../../shared/launch-settings'
@@ -16,6 +18,7 @@ import { createConversationGatewayHost } from '../../main/automation/tailnet/tai
 import { resolveCheckoutForCwd } from '../../main/checkout-resolve'
 import {
   conversationBranchesOf,
+  conversationCheckoutsOf,
   conversationHostOf,
   conversationPullRequestsOf,
   tailnetSelfMachine,
@@ -545,6 +548,22 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
           return record && !record.environment ? (record.folderPath ?? null) : null
         },
         resolveCheckoutForCwd,
+      ),
+    // The chat's own folder (its worktree, when the agent works in one),
+    // counted from the sidebar's shared reading; again only on this computer.
+    checkoutsOf: (keys: Array<{ workspaceId: string; agentId: string; live: boolean }>) =>
+      conversationCheckoutsOf(
+        keys,
+        ({ workspaceId, agentId }) => {
+          const record = workspaceRegistry.getRecord(workspaceId)
+          if (!record || record.environment) return null
+          const agent = record.agents[agentId]
+          const path = conversationWorkingRoot(agent, record.folderPath)
+          if (!path) return null
+          const agentWorktree = agent?.execution?.mode === 'worktree' && Boolean(agent.execution.cwd?.trim())
+          return { path, worktree: agentWorktree || Boolean(record.worktree) }
+        },
+        (checkoutPath) => getWorkspaceChangeSummary({ checkoutPath }),
       ),
   }
   // A chat's rest and its person-clocks, written for a paired device to the

@@ -118,7 +118,7 @@ async function mountRemote({
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, its pull requests. */
-  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests'>>
+  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -284,11 +284,13 @@ async function mountRemote({
   }
 }
 
-test('the strip under a paired machine’s chat names its branch and its pull request, as a local chat’s does', async () => {
+test('the strip under a paired machine’s chat names its branch, its changed files and its pull request, as a local chat’s does', async () => {
   const chat = await mountRemote({
     access: 'operate',
     listed: {
       branch: 'agent/chat-5v54',
+      worktree: true,
+      changes: { added: 3, updated: 2, removed: 1, scope: 'worktree' },
       pullRequests: [
         { number: 283, state: 'open', url: 'https://github.com/acme/studio/pull/283', title: 'Remote parity' },
       ],
@@ -298,6 +300,9 @@ test('the strip under a paired machine’s chat names its branch and its pull re
     const strip = chat.host.querySelector('[data-conversation-strip]')!
     expect(strip.querySelector('[data-strip-branch="agent/chat-5v54"]')).not.toBeNull()
     expect(strip.querySelector('[data-strip-pull-request-slot]')?.textContent).toContain('283')
+    // The files that machine counted, as "+5 −1", and the worktree it names.
+    expect(strip.querySelector('[aria-label^="3 files added, 2 updated, 1 removed"]')).not.toBeNull()
+    expect(strip.querySelector('[data-strip-branch]')?.getAttribute('aria-label')).toContain('in a worktree')
   } finally {
     await chat.unmount()
   }

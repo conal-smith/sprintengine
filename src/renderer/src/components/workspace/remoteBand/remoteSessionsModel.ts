@@ -10,7 +10,10 @@ import {
   type MeshConversationAccess,
   type MeshMachineReachability,
 } from '../../../../../shared/tailnet-mesh'
-import type { ConversationWirePullRequest } from '../../../../../../packages/conversation-protocol/src/public'
+import type {
+  ConversationWireChanges,
+  ConversationWirePullRequest,
+} from '../../../../../../packages/conversation-protocol/src/public'
 import { classifyPullRequestUrl } from '../../../../../shared/git/pr-url'
 import { pullRequestRepository, type BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type { Workspace, WorkspaceRemoteOrigin } from '../../../types/workspace'
@@ -109,6 +112,10 @@ export type RemoteSessionRow = {
   branch: string | null
   /** The pull requests the chat opened, as its machine's record holds them, newest first. */
   pullRequests: BranchPullRequest[]
+  /** The files the chat's checkout carries over there; null from a machine that does not say, or a chat at rest. */
+  changes: ConversationWireChanges | null
+  /** The chat works in a worktree of its project over there. */
+  worktree: boolean
   /** Epoch ms the activity began — how long it has worked, or sat idle. Null when the remote did not say. */
   since: number | null
   /** The workspace here whose pane is attached to this session, when one is. */
@@ -348,6 +355,8 @@ function remoteChatRowOf(
     replyPreview: conversation.lastAssistantText ?? null,
     branch: conversation.branch ?? null,
     pullRequests: branchPullRequestsOfWire(conversation.pullRequests ?? []),
+    changes: conversation.changes ?? null,
+    worktree: conversation.worktree === true,
     // A working chat counts from when its turn began, where its machine says;
     // `updatedAt` also moves when an approval resolves or the model changes.
     since: presence === 'running' ? (conversation.turnStartedAt ?? conversation.updatedAt) : conversation.updatedAt,

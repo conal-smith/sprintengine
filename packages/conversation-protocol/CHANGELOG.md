@@ -13,6 +13,18 @@
 
 ### Added
 
+- **A listed chat says what its checkout carries, and whether it is a
+  worktree.** `changes` is an optional member of `ConversationThread`,
+  `ConversationWireChanges` (`{ added, updated, removed, scope?, uncommitted? }`):
+  the files the chat's branch added, updated and removed, as the desktop's own
+  sidebar line and composer strip count them, whose changes they are
+  (`ConversationWireChangeScope`: `worktree`, `branch` or `folder`), and the
+  uncommitted ones alone.
+  Listed only for a chat with a live session. `worktree: true` says the chat
+  works in a git worktree of its project. Both are absent from a desktop built
+  before they were listed. `parseConversationServerFrame` keeps `changes` when
+  every count is whole and not negative (`parseConversationWireChanges`), and
+  `worktree` only when it is `true`. The pinned files are unchanged.
 - **A listed chat says what it still has working after its turn.**
   `backgroundWork` is an optional member of `ConversationThread`,
   `ConversationBackgroundWork` (`{ agents, monitors }`): the background agents

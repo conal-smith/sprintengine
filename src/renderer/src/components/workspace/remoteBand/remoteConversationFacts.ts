@@ -1,5 +1,9 @@
 import { useSyncExternalStore } from 'react'
 
+import type {
+  ConversationWireChanges,
+  ConversationWireFileCounts,
+} from '../../../../../../packages/conversation-protocol/src/public'
 import { cliForConversationProvider } from '../../../../../shared/conversation-harness'
 import { meshConversationSessionId, type MeshConversation } from '../../../../../shared/tailnet-mesh'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
@@ -7,8 +11,9 @@ import { branchPullRequestsOfWire } from './remoteSessionsModel'
 
 // What a paired machine last listed about each of its chats, for the surfaces
 // here that draw one without reading the machine themselves: the tab a remote
-// chat's pane sits in, and the strip under its composer (its branch and pull
-// requests), which the pane's own read would leave as they were when it opened. A local chat's tab reads its CLI mark, model, phase and
+// chat's pane sits in, and the strip under its composer (its branch, the files
+// it changed and its pull requests), which the pane's own read would leave as
+// they were when it opened. A local chat's tab reads its CLI mark, model, phase and
 // last finish off the session main holds; a remote chat's pane holds no
 // session here, so its tab drew the bare chat glyph and no time at all, and a
 // chat on another machine read differently from the same chat on this one
@@ -31,6 +36,10 @@ export type RemoteConversationFacts = {
   pullRequests: BranchPullRequest[]
   /** The branch the chat's folder is on over there; null from a machine that does not say, or off a branch. */
   branch: string | null
+  /** The chat works in a worktree of its project over there. */
+  worktree: boolean
+  /** The files its checkout carries over there; null from a machine that does not say, or a chat at rest. */
+  changes: ConversationWireChanges | null
 }
 
 type Snapshot = ReadonlyMap<string, RemoteConversationFacts>
@@ -52,7 +61,19 @@ function factsOf(conversation: MeshConversation): RemoteConversationFacts {
     lastTurnEndedAt: conversation.lastTurnEndedAt ?? null,
     pullRequests: branchPullRequestsOfWire(conversation.pullRequests ?? []),
     branch: conversation.branch?.trim() || null,
+    worktree: conversation.worktree === true,
+    changes: conversation.changes ?? null,
   }
+}
+
+function sameCounts(a: ConversationWireFileCounts | undefined, b: ConversationWireFileCounts | undefined): boolean {
+  if (!a || !b) return a === b
+  return a.added === b.added && a.updated === b.updated && a.removed === b.removed
+}
+
+function sameChanges(a: ConversationWireChanges | null, b: ConversationWireChanges | null): boolean {
+  if (!a || !b) return a === b
+  return sameCounts(a, b) && a.scope === b.scope && sameCounts(a.uncommitted, b.uncommitted)
 }
 
 function sameFacts(a: RemoteConversationFacts, b: RemoteConversationFacts): boolean {
@@ -62,7 +83,9 @@ function sameFacts(a: RemoteConversationFacts, b: RemoteConversationFacts): bool
     a.phase !== b.phase ||
     a.live !== b.live ||
     a.lastTurnEndedAt !== b.lastTurnEndedAt ||
-    a.branch !== b.branch
+    a.branch !== b.branch ||
+    a.worktree !== b.worktree ||
+    !sameChanges(a.changes, b.changes)
   )
     return false
   if (a.pullRequests.length !== b.pullRequests.length) return false
