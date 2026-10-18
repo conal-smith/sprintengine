@@ -2,6 +2,7 @@ import type { ClientCapability } from './client-capabilities'
 import type { AttachedFilePreview } from './attached-files'
 import type { ChatLink } from './deep-link'
 import type { AgentNotificationMode } from './agent-notifications'
+import type { ArtifactsSettingsView, ArtifactsSettingsWriteResult, ArtifactsTestResult } from './artifacts'
 import type { PreviewOpenAnswer, PreviewPort, PreviewSummary, WebDevicesStatus } from './web-client'
 import type {
   SshEnvironmentResult,
@@ -1906,6 +1907,14 @@ export type ElectronApi = {
   // client whose machine is not this one to keep awake (a browser tab).
   getKeepAwake: () => Promise<boolean | null>
   setKeepAwake: (enabled: boolean) => Promise<boolean | null>
+  /**
+   * Settings ▸ Artifacts: where agents publish their pages, which main owns.
+   * Null from a client that is not this machine's desktop (a browser tab).
+   * The Cloudflare token goes in with a save or a test, and never comes out.
+   */
+  getArtifactsSettings: () => Promise<ArtifactsSettingsView | null>
+  setArtifactsSettings: (settings: unknown, cloudflareToken?: string) => Promise<ArtifactsSettingsWriteResult | null>
+  testArtifactsSettings: (settings: unknown, cloudflareToken?: string) => Promise<ArtifactsTestResult | null>
   resolveBacklogLocation: (workspaceRoot: string) => Promise<BacklogLocationResult>
   setBacklogRoot: (input: BacklogSetRootInput) => Promise<BacklogLocationResult>
   ensureBacklogObjectRecords: (workspaceRoot: string, items: BacklogItemRecordInput[]) => Promise<BacklogReadResult>
