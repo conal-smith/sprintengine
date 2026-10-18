@@ -6,6 +6,7 @@ import { CONVERSATION_MUTATION_TOOL_NAMES } from './conversation-tools'
 import { CONVERSATION_COMMAND_TOOL_NAMES } from './tailnet/tailnet-conversation-stream'
 import { TAILNET_MUTATION_TOOL_NAMES } from './tailnet/tailnet-tools'
 import { TOUR_MUTATION_TOOL_NAMES } from './tour-tools'
+import { ARTIFACTS_MUTATION_TOOL_NAMES } from '../artifacts/artifacts-tools'
 import type { CliPermissionPreset } from '../../shared/cli-permission-preset'
 import {
   mcpToolWireName,
@@ -59,6 +60,10 @@ const APP_MUTATION_TOOLS = new Set([
   // on the owner's behalf. `tour.status` only reads.
   ...TOUR_MUTATION_TOOL_NAMES,
   'workspace.create',
+  // Publishing, changing or removing an artifact writes to the person's
+  // artifacts site with this machine's credentials. Served on the local
+  // socket only (`localOnlyGatewayToolReason`); listing and reading stay reads.
+  ...ARTIFACTS_MUTATION_TOOL_NAMES,
   // The mobile companion's command envelope over the gateway. A mutation for both of its consequences: a
   // paired phone needs `workspace:operate` to drive it, and every dispatch —
   // including a refused one — lands in the audit with the device identity.

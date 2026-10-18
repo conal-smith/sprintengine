@@ -39,6 +39,13 @@ const TERMINAL_LAUNCH_TOOLS: ReadonlySet<string> = new Set(['terminal.create', '
  * conversation's, or watches one for it and wakes its chat, and a paired
  * device has no conversation to record it under or chat to wake.
  * The `local_server.*` family is the same, for a server the agent started.
+ *
+ * Publishing, changing or removing an artifact reads a page from this
+ * machine's disk at a path the caller names and writes it to the person's
+ * artifacts site with this machine's credentials, so a paired device could
+ * use it to send any file it can name off the machine. Those three stay local;
+ * `artifacts.list`, `search` and `get` only read the site, and are served on
+ * the read scope like any other read.
  */
 export function localOnlyGatewayToolReason(toolName: string): string | null {
   if (toolName.startsWith('tailnet.')) {
@@ -52,6 +59,9 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
   }
   if (toolName.startsWith('local_server.')) {
     return `"${toolName}" records a local server as the calling agent's conversation's, and a paired device is not an agent. Run it from an agent on that machine.`
+  }
+  if (toolName === 'artifacts.publish' || toolName === 'artifacts.update' || toolName === 'artifacts.delete') {
+    return `"${toolName}" publishes files from this machine's disk with its credentials, and is served only on its local socket. Run it from an agent on that machine.`
   }
   if (toolName.startsWith('worktree.')) {
     return `"${toolName}" hands the calling agent a worktree on this machine and holds it for that agent, and a paired device is not an agent. Run it from an agent on that machine.`

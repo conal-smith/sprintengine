@@ -47,6 +47,10 @@
   `name_taken` and `not_offered` codes.
 - `worktree` among `STUDIO_RESERVED_TOOLSET_NAMES`: the worktree pool's
   `worktree.lease` and `worktree.release`, which a Studio's shell offers.
+- `artifacts` among `STUDIO_RESERVED_TOOLSET_NAMES`: `artifacts.publish`,
+  `list`, `search`, `get`, `update` and `delete`, which publish an agent's
+  HTML pages to the site set on Settings ▸ Artifacts, and which a Studio's
+  shell offers.
 
 - **The chat surface** (`chat.ts`): `session.*`, `uploads.*` (with
   `uploads.discard`), the

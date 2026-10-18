@@ -289,6 +289,30 @@
       "sha256": "3d2790cf5be92d92ba13ee951db2d9b29817673604684884759a130d4c48915f"
     },
     {
+      "name": "artifacts.publish",
+      "sha256": "c27bc142a6ae08d05e70dd45cecf3ac20588d995c5132e632804cdc0037d8e2f"
+    },
+    {
+      "name": "artifacts.list",
+      "sha256": "a9ec37289891561ec4c868d5636f7aff0b0632b78b2562cb7303bb9d26d8e979"
+    },
+    {
+      "name": "artifacts.search",
+      "sha256": "1549c35463e77116391bb700c0d7d4751d716e866602c91dcb1b1e3b41ee52c8"
+    },
+    {
+      "name": "artifacts.get",
+      "sha256": "729371da3bff3ff9de8639007d73a75ac64205ecd739c905d87af97d14049d3f"
+    },
+    {
+      "name": "artifacts.update",
+      "sha256": "0b91eca80719a2741163c65014dbe6640ddc231bffeeec5b25c9774bc0599025"
+    },
+    {
+      "name": "artifacts.delete",
+      "sha256": "1f852f2e7b8cf088d695cf40d6487004aaff3fce2c71d3765ecace8002b02671"
+    },
+    {
       "name": "tailnet.status",
       "sha256": "cc199cfc73135e699938fd9e369ae707fb1ee041fca8b37e42f22289c42af576"
     },
@@ -611,6 +635,30 @@
       "sha256": "3d2790cf5be92d92ba13ee951db2d9b29817673604684884759a130d4c48915f"
     },
     {
+      "name": "artifacts.publish",
+      "sha256": "c27bc142a6ae08d05e70dd45cecf3ac20588d995c5132e632804cdc0037d8e2f"
+    },
+    {
+      "name": "artifacts.list",
+      "sha256": "a9ec37289891561ec4c868d5636f7aff0b0632b78b2562cb7303bb9d26d8e979"
+    },
+    {
+      "name": "artifacts.search",
+      "sha256": "1549c35463e77116391bb700c0d7d4751d716e866602c91dcb1b1e3b41ee52c8"
+    },
+    {
+      "name": "artifacts.get",
+      "sha256": "729371da3bff3ff9de8639007d73a75ac64205ecd739c905d87af97d14049d3f"
+    },
+    {
+      "name": "artifacts.update",
+      "sha256": "0b91eca80719a2741163c65014dbe6640ddc231bffeeec5b25c9774bc0599025"
+    },
+    {
+      "name": "artifacts.delete",
+      "sha256": "1f852f2e7b8cf088d695cf40d6487004aaff3fce2c71d3765ecace8002b02671"
+    },
+    {
       "name": "tailnet.status",
       "sha256": "cc199cfc73135e699938fd9e369ae707fb1ee041fca8b37e42f22289c42af576"
     },
@@ -747,6 +795,18 @@
     {
       "name": "schedule.list",
       "sha256": "b0e71eb292275e6d7b9ce1cc4c3d05dd6f09188ce55612180c48d0b572cfaeb4"
+    },
+    {
+      "name": "artifacts.list",
+      "sha256": "a9ec37289891561ec4c868d5636f7aff0b0632b78b2562cb7303bb9d26d8e979"
+    },
+    {
+      "name": "artifacts.search",
+      "sha256": "1549c35463e77116391bb700c0d7d4751d716e866602c91dcb1b1e3b41ee52c8"
+    },
+    {
+      "name": "artifacts.get",
+      "sha256": "729371da3bff3ff9de8639007d73a75ac64205ecd739c905d87af97d14049d3f"
     }
   ]
 }
