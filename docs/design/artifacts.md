@@ -13,46 +13,56 @@ first.
 
 ## 2. Where it is set up
 
-Settings ▸ Artifacts. One host or none:
+Settings ▸ Artifacts, or `artifacts.setup` from an agent (section 3). One host
+or none, and each asks the person for one thing:
 
-- **GitHub Pages.** A repository on github.com or on a GitHub Enterprise
-  Server, given by its https or ssh address (or `owner/name` on github.com).
-  Studio pushes to `main`, and Pages serves it as it is. The site's address is
-  worked out from the repository (`https://<owner>.github.io/<repo>/`; on a
-  GitHub Enterprise Server `https://pages.<host>/<owner>/<repo>/`, its address
-  with subdomain isolation) and can be overridden. Pages is turned on by the
-  person, in the repository's Settings ▸ Pages: deploy from the `main` branch,
-  `/ (root)`. A Pages site is public on the internet even when the repository is
-  private, unless the organization is on GitHub Enterprise Cloud and limits it
-  to members; the settings page says so.
-- **Cloudflare Pages.** An account ID, a Pages project made with Direct
-  Upload, and an API token with the Cloudflare Pages Edit permission; a custom
-  domain and a git repository for the site's source are optional. Studio
-  uploads the site itself (section 5), so no CI runs. A sign-in goes in front
-  with a Cloudflare Access self-hosted application for `<project>.pages.dev`
-  and the custom domain; the settings page says how.
+- **GitHub Pages: the repository**, on github.com or a GitHub Enterprise
+  Server (its https or ssh address, or `owner/name` on github.com). Studio
+  reads it and rehearses a push (a dry run of a throwaway commit to a branch
+  never made), pushes the gallery to `main` when the repository is empty,
+  turns Pages on when it is off (`POST /repos/{owner}/{repo}/pages`, main at
+  `/`, through `gh api` on that host), waits for the first build, and keeps
+  the address GitHub answers (`html_url`), so a custom domain or an
+  Enterprise Server's Pages host is simply what the person gets. Refusals are
+  said in words with what to do: a plan that does not allow Pages on a private
+  repository, a sign-in without admin rights on it, gh missing or signed out.
+  A Pages site is public on the internet even when the repository is private,
+  unless the organization is on GitHub Enterprise Cloud and limits it; the
+  page says so.
+- **Cloudflare Pages: an API token** with Account › Cloudflare Pages › Edit
+  (the page links to Cloudflare's token page with that permission
+  preselected). Studio lists the accounts the token sees (`GET /accounts`):
+  one is used, of several the person picks, none is an error saying what token
+  to make. The project, `studio-artifacts` unless renamed under Advanced, is
+  found or made; one that deploys from its own git connection, or whose latest
+  deployment Studio did not make, is left alone and another name asked for. A
+  project made by someone else between the lookup and the create is read as
+  found. The site's address is the project's own domain, or its
+  `*.pages.dev` subdomain. A source repository is optional, under Advanced.
+  A sign-in goes in front with a Cloudflare Access self-hosted application;
+  the page says how.
 
-Test checks the fields on the page, saved or not, without publishing: the
-repository is reachable and accepts a push (a dry-run push of a throwaway
-commit to a branch that is never made), Pages' status where `gh` can read it,
-the Cloudflare token is valid and the project exists and takes direct
-uploads, and a dry run of the upload.
+Test and Save both run the set-up and list what was found and done ("Found
+account Acme", "Created project studio-artifacts", the site's address); Save
+keeps it. What a test makes (a first commit, Pages turned on, a project, an
+upload) stays made, and says so.
 
 What is kept, and where: `artifacts-settings.json` in userData holds the
-non-secret fields. The Cloudflare token is sealed with the app's secret cipher
-in `artifacts-cloudflare-token.bin`, as the GitHub token is, and never comes
-back to the renderer; the page learns only whether one is held. Pushing to a
-git host uses the sign-in the machine already has for that host: the saved
-GitHub token for github.com, otherwise the token `gh` holds for the host
-(`gh auth token --hostname`), handed to git through an inline credential
-helper and the child's environment, never argv, a remote URL or the clone's
-config. With neither, and for ssh, git uses the person's own helper or keys.
-An address with a sign-in in it is refused at the field.
+repository and what Studio found (the site's address, the Cloudflare account
+and project). The Cloudflare token is sealed with the app's secret cipher in
+`artifacts-cloudflare-token.bin`, as the GitHub token is, and never comes back
+to the renderer, a tool's answer or an error. Pushing to a git host uses the
+sign-in the machine already has for that host: the saved GitHub token for
+github.com, otherwise the token `gh` holds for the host, handed to git through
+an inline credential helper and the child's environment, never argv, a remote
+URL or the clone's config. With neither, and for ssh, git uses the person's
+own helper or keys. An address with a sign-in in it is refused.
 
 ## 3. The tools
 
 | Tool | What it does |
 | --- | --- |
+| `artifacts.setup` | Sets the host up from a repository or a Cloudflare token, once the person confirms in Studio. Answers the site's address. |
 | `artifacts.publish` | An HTML file, or a folder with its page, with a title, description, tags, project, source repository/branch/commit and an optional picture. Answers the artifact's address. |
 | `artifacts.list` | Newest first, narrowed by tags and project. |
 | `artifacts.search` | By words in the title, description, project, tags and branch. |
@@ -60,12 +70,25 @@ An address with a sign-in in it is refused at the field.
 | `artifacts.update` | Retitle, describe, re-tag, move project, and/or publish a new version from a path. |
 | `artifacts.delete` | Takes it off the site; a git-kept site keeps it in its history. |
 
-With no host chosen every tool refuses with `not_configured`, naming the
-settings page. Publishing, changing and removing read files at a path the
-caller names and write them with this machine's credentials, so they are
-served on the local socket only; a paired device gets the three reads on the
-`workspace:read` scope. Main serves the family in process and out (the shell's
-`artifacts` toolset), as it does `worktree.*`.
+With no host set up every tool but `artifacts.setup` refuses with
+`not_configured`, naming the settings page and `artifacts.setup`, so an agent
+offers to set it up in conversation.
+
+`artifacts.setup` changes the person's setting, so the person decides. Main
+asks them in a native message box (as it asks before quitting), naming the
+agent, the host, the repository or the account and project, and what Studio
+will do; Return and Escape refuse, and no answer in five minutes is a refusal.
+Nothing is turned on, made or saved before the answer, and only one question
+is open at a time. The only thing done before asking is reading which accounts
+a Cloudflare token sees, so the person can be asked which. The token goes
+from the arguments to secret storage; neither the question nor the answer
+carries it, and the gateway's audit keeps no argument but identifiers.
+
+Publishing, changing, removing and setting up read files at a path the caller
+names, or change where this machine publishes, and use its credentials, so
+they are mutations served on the local socket only; a paired device gets the
+three reads on the `workspace:read` scope. Main serves the family in process
+and out (the shell's `artifacts` toolset), as it does `worktree.*`.
 
 ## 4. A version, and the site
 
@@ -91,6 +114,7 @@ The repository's layout is the site:
 README.md          what it is, and the gallery's address
 index.html         the gallery: reads artifacts.json
 artifacts.json     every artifact's summary, newest first
+site-files.json    every file of the site with its SHA-256
 assets/            the gallery's and viewer's stylesheet and scripts
 a/<slug>/
   index.html       the viewer: header, version picker, the page below
@@ -127,16 +151,29 @@ left in the clone (a half-written manifest, an unpushed commit) is thrown away
 by the next reset. A local store copies the site before a change and puts the
 copy back if the change fails, or if the app did not live to finish it.
 
-Cloudflare uploads once the change is kept, still inside the queue, on the
-tree as it was kept: the whole site, content-addressed, so only files Pages
-does not have are sent, then one deployment. An upload that fails after the
-change was kept answers the publish with `live: false` and a note saying so;
-what was last put live is recorded, and the next publish or update (an update
-with nothing to change will do) uploads the site again. Two machines that
-publish to one Cloudflare project through one repository each deploy the tree
-they pushed; if their uploads finish out of order the older tree is live until
-the next change. Without a repository the site's source lives on one machine,
-and publishing to the same project from another replaces it.
+GitHub Pages is turned on, if it is off, after a push and still in the queue,
+so `main` exists by then, and two callers (a test and a first publish) share
+one request; a 409 from another machine turning it on first reads as on. A
+first publish waits up to two minutes for the first build and then answers
+with `live: false` and where the site will be.
+
+Cloudflare uploads once the change is kept, still inside the queue: the whole
+site, content-addressed, so only files Pages does not have are sent, then one
+deployment, whose message starts "SprintEngine Studio artifacts" so a project
+can be told as Studio's. An upload that fails after the change was kept
+answers `live: false` and why; the next publish or update uploads again.
+
+Every change also writes `site-files.json`, every file of the site with its
+SHA-256. A Cloudflare site kept on this machine, whose project's latest
+deployment is not the one this machine made, is read back from the live site
+before it is changed (`cloudflare-live-copy.ts`): with no copy at all every
+file is fetched and checked; with a copy that is behind, each artifact the live
+site has a newer version of is taken in, and one the copy has at the same or a
+newer version is never touched, so work made here and not yet uploaded
+survives. An artifact removed elsewhere comes back from a copy that still has
+it. A site behind Cloudflare Access answers a sign-in page instead, and cannot
+be read back: the publish says so, and that a source repository under
+Advanced is how machines share one site.
 
 ## 6. Adding a host
 
