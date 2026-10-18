@@ -41,6 +41,9 @@ export const BUILT_IN_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = {
   'artifacts.publish': 240_000,
   'artifacts.update': 240_000,
   'artifacts.delete': 180_000,
+  // Waits for the person's answer (up to five minutes), then sets the host
+  // up: a first push, Pages turned on and its first build, or an upload.
+  'artifacts.setup': 600_000,
 }
 const BUILT_IN_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = { browser: 20_000, canvas: 15_000 }
 

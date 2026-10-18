@@ -46,7 +46,7 @@ function settings(): ArtifactsSettings {
   return {
     ...EMPTY_ARTIFACTS_SETTINGS,
     provider: 'github-pages',
-    github: { repositoryUrl: remote.url, pagesUrl: SITE },
+    github: { repositoryUrl: remote.url, siteUrl: SITE },
   }
 }
 
@@ -86,6 +86,7 @@ test('with no host chosen, every operation refuses and names the settings page',
     assert.equal(outcome.ok, false)
     assert.equal(!outcome.ok && outcome.code, 'not_configured')
     assert.match(!outcome.ok ? outcome.message : '', /Settings ▸ Artifacts/)
+    assert.match(!outcome.ok ? outcome.message : '', /artifacts\.setup/)
   }
 })
 
@@ -100,6 +101,7 @@ test('an empty site is set up with its README, gallery and manifest', async () =
     'assets/site.css',
     'assets/viewer.js',
     'index.html',
+    'site-files.json',
   ])
   assert.deepEqual(JSON.parse(remoteFile(remote.path, 'artifacts.json')).artifacts, [])
   assert.match(remoteFile(remote.path, 'README.md'), /Open the gallery: http:\/\/127\.0\.0\.1:8123\/artifacts\//)

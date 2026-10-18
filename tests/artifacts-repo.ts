@@ -62,3 +62,9 @@ export function remoteFile(remote: string, path: string): string {
 export async function cleanup(paths: string[]): Promise<void> {
   for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true })
 }
+
+/** Point a host's address at a local bare repository, for every git the suite starts. */
+export async function mapRemote(home: string, address: string, bareUrl: string): Promise<void> {
+  const { appendFile } = await import('node:fs/promises')
+  await appendFile(join(home, 'gitconfig'), `[url "${bareUrl}"]\n\tinsteadOf = ${address}\n`)
+}

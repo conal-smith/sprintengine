@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -143,6 +144,9 @@ async function writeIfChanged(path: string, content: string): Promise<void> {
   await writeFile(path, content)
 }
 
+/** The last line of a README Studio wrote: one carrying it is Studio's to rewrite as the address changes. */
+const README_MARKER = '<!-- Written by SprintEngine Studio; edit it and Studio leaves it alone. -->'
+
 export function renderArtifactsReadme(settings: { repository: string; siteUrl: string }): string {
   return [
     '# Artifacts',
@@ -164,12 +168,15 @@ export function renderArtifactsReadme(settings: { repository: string; siteUrl: s
     '| `a/<slug>/v<n>/` | One version: the page and the files it references, as laid out on disk. |',
     '| `a/<slug>/thumbnail.png` | A picture of the latest version. |',
     '| `assets/` | The gallery’s stylesheet and scripts. |',
+    '| `site-files.json` | Every file of the site with its SHA-256, for rebuilding a copy elsewhere. |',
     '',
     'The site is static and served from `main` as it is: there is no build step.',
     'Studio writes this repository with git, one commit per change, so the history',
     'is the record of what was published, changed or removed, and when.',
     '',
     `Source: \`${settings.repository}\``,
+    '',
+    README_MARKER,
     '',
   ].join('\n')
 }
@@ -187,7 +194,8 @@ export async function writeArtifactsSite(
   if (index === null || index.includes(SITE_MARKER)) await writeIfChanged(join(checkout, 'index.html'), template.index)
   for (const [name, content] of template.assets) await writeIfChanged(join(checkout, 'assets', name), content)
   await writeIfChanged(join(checkout, '.nojekyll'), '')
-  if ((await readText(join(checkout, 'README.md'))) === null) {
+  const readme = await readText(join(checkout, 'README.md'))
+  if (readme === null || readme.includes(README_MARKER)) {
     await writeIfChanged(join(checkout, 'README.md'), renderArtifactsReadme(settings))
   }
   for (const slug of await listArtifactSlugs(checkout)) {
@@ -265,4 +273,48 @@ export async function writeArtifactsManifest(checkout: string): Promise<Artifact
   }
   await writeIfChanged(join(checkout, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`)
   return manifest
+}
+
+/** The list of every file the site serves, for a machine that has to rebuild its copy from the live site. */
+export const SITE_FILES_FILE = 'site-files.json'
+
+export type SiteFileList = {
+  schema: typeof ARTIFACTS_SCHEMA
+  files: Array<{ path: string; sha256: string; bytes: number }>
+}
+
+/**
+ * Write `site-files.json`: every file of the site (not hidden ones, not this
+ * list) with its SHA-256. Served with the site, it is what lets a Cloudflare
+ * site kept on one machine be read back on another (cloudflare-live-copy.ts).
+ */
+export async function writeSiteFileList(root: string): Promise<SiteFileList> {
+  const files: SiteFileList['files'] = []
+  const walk = async (dir: string, prefix: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (entry.isDirectory()) await walk(join(dir, entry.name), path)
+      else if (entry.isFile() && path !== SITE_FILES_FILE) {
+        const bytes = await readFile(join(dir, entry.name))
+        files.push({ path, sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length })
+      }
+    }
+  }
+  await walk(root, '')
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  const list: SiteFileList = { schema: ARTIFACTS_SCHEMA, files }
+  await writeIfChanged(join(root, SITE_FILES_FILE), `${JSON.stringify(list, null, 1)}\n`)
+  return list
+}
+
+/** The site's own files, its manifest and its file list, brought up to date on the tree: the end of every change. */
+export async function finishSiteTree(
+  root: string,
+  template: ArtifactsSiteTemplate,
+  settings: { repository: string; siteUrl: string },
+): Promise<void> {
+  await writeArtifactsSite(root, template, settings)
+  await writeArtifactsManifest(root)
+  await writeSiteFileList(root)
 }

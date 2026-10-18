@@ -3,12 +3,14 @@ import { test } from 'vitest'
 
 import {
   artifactsSiteUrl,
-  cloudflareSiteUrl,
+  CLOUDFLARE_TOKEN_URL,
+  cloudflareProjectName,
   defaultGitHubPagesUrl,
   EMPTY_ARTIFACTS_SETTINGS,
+  isArtifactsHostReady,
   normalizeSiteUrl,
   parseArtifactsRepositoryUrl,
-  validateArtifactsSettings,
+  readArtifactsSettings,
 } from './artifacts'
 
 function repository(input: string) {
@@ -97,90 +99,59 @@ test('a site address is https (or http on this machine), ends in a slash, and ca
   assert.equal(normalizeSiteUrl('not a url'), null)
 })
 
-test('choosing GitHub Pages needs the repository, and an address when none can be worked out', () => {
-  const missing = validateArtifactsSettings({ provider: 'github-pages' })
-  assert.deepEqual(missing.ok ? null : missing.field, 'github.repositoryUrl')
-  const local = validateArtifactsSettings({
-    provider: 'github-pages',
-    github: { repositoryUrl: 'file:///Users/dev/acme/a.git' },
-  })
-  assert.deepEqual(local.ok ? null : local.field, 'github.pagesUrl')
-  const ok = validateArtifactsSettings({ provider: 'github-pages', github: { repositoryUrl: ' acme/artifacts ' } })
-  assert.ok(ok.ok)
-  assert.equal(ok.ok && artifactsSiteUrl(ok.settings), 'https://acme.github.io/artifacts/')
-})
-
-test('an override wins over the worked-out Pages address', () => {
-  const ok = validateArtifactsSettings({
-    provider: 'github-pages',
-    github: { repositoryUrl: 'acme/artifacts', pagesUrl: 'https://docs.acme.example/artifacts' },
-  })
-  assert.ok(ok.ok)
-  assert.equal(ok.ok && artifactsSiteUrl(ok.settings), 'https://docs.acme.example/artifacts/')
-})
-
-test('choosing Cloudflare Pages needs the account and the project, each well formed', () => {
-  const account = 'a'.repeat(32)
-  assert.equal(validateArtifactsSettings({ provider: 'cloudflare-pages' }).ok, false)
-  const badAccount = validateArtifactsSettings({
+test('what is on disk is read as the setting, anything malformed as empty', () => {
+  const read = readArtifactsSettings({
     provider: 'cloudflare-pages',
-    cloudflare: { accountId: 'abc', projectName: 'art' },
-  })
-  assert.equal(badAccount.ok ? null : badAccount.field, 'cloudflare.accountId')
-  const badProject = validateArtifactsSettings({
-    provider: 'cloudflare-pages',
-    cloudflare: { accountId: account, projectName: 'Art_1' },
-  })
-  assert.equal(badProject.ok ? null : badProject.field, 'cloudflare.projectName')
-  const badDomain = validateArtifactsSettings({
-    provider: 'cloudflare-pages',
-    cloudflare: { accountId: account, projectName: 'art', customDomain: 'not a domain' },
-  })
-  assert.equal(badDomain.ok ? null : badDomain.field, 'cloudflare.customDomain')
-  const ok = validateArtifactsSettings({
-    provider: 'cloudflare-pages',
+    github: { repositoryUrl: 'https://x:secret@github.com/acme/a', siteUrl: 'ftp://nope' },
     cloudflare: {
-      accountId: account.toUpperCase(),
-      projectName: 'art',
-      customDomain: 'https://Artifacts.Acme.example/',
+      accountId: 'ABCDEF0123456789ABCDEF0123456789',
+      accountName: 'Acme',
+      projectName: 'Not Valid',
+      repositoryUrl: 'acme/site',
+      siteUrl: 'https://studio-artifacts.pages.dev',
     },
   })
-  assert.ok(ok.ok)
-  assert.equal(ok.ok && ok.settings.cloudflare.accountId, account)
-  assert.equal(ok.ok && artifactsSiteUrl(ok.settings), 'https://artifacts.acme.example/')
-  assert.equal(
-    cloudflareSiteUrl({ accountId: account, projectName: 'art', customDomain: '', repositoryUrl: '' }),
-    'https://art.pages.dev/',
-  )
-})
-
-test('the other host’s fields are kept as typed, and do not block the chosen one', () => {
-  const kept = validateArtifactsSettings({
-    provider: 'github-pages',
-    github: { repositoryUrl: 'acme/artifacts' },
-    cloudflare: { accountId: 'not-an-id', projectName: 'Not Valid' },
+  assert.deepEqual(read, {
+    provider: 'cloudflare-pages',
+    github: { repositoryUrl: '', siteUrl: '' },
+    cloudflare: {
+      accountId: 'abcdef0123456789abcdef0123456789',
+      accountName: 'Acme',
+      projectName: '',
+      repositoryUrl: 'acme/site',
+      siteUrl: 'https://studio-artifacts.pages.dev/',
+    },
   })
-  assert.ok(kept.ok, kept.ok ? '' : kept.message)
-  assert.equal(kept.ok && kept.settings.cloudflare.accountId, 'not-an-id')
-  // Chosen, they are checked.
-  const chosen = validateArtifactsSettings({ ...(kept.ok ? kept.settings : {}), provider: 'cloudflare-pages' })
-  assert.equal(chosen.ok ? null : chosen.field, 'cloudflare.accountId')
+  assert.deepEqual(readArtifactsSettings('garbage'), EMPTY_ARTIFACTS_SETTINGS)
+  assert.deepEqual(readArtifactsSettings({ provider: 'carrier-pigeon' }).provider, null)
 })
 
-test('a sign-in in either repository address is refused whichever host is chosen', () => {
-  const hidden = validateArtifactsSettings({
-    provider: 'github-pages',
-    github: { repositoryUrl: 'acme/artifacts' },
-    cloudflare: { repositoryUrl: 'https://dev:ghp_secret@github.com/acme/site' },
-  })
-  assert.equal(hidden.ok ? null : hidden.field, 'cloudflare.repositoryUrl')
-  assert.ok(!hidden.ok && !hidden.message.includes('ghp_secret'))
+test('a host is ready once Studio has what it found: the repository, or the account', () => {
+  assert.equal(isArtifactsHostReady(EMPTY_ARTIFACTS_SETTINGS), false)
+  assert.equal(isArtifactsHostReady({ ...EMPTY_ARTIFACTS_SETTINGS, provider: 'github-pages' }), false)
+  const github = {
+    ...EMPTY_ARTIFACTS_SETTINGS,
+    provider: 'github-pages' as const,
+    github: { repositoryUrl: 'acme/a', siteUrl: 'https://acme.github.io/a/' },
+  }
+  assert.equal(isArtifactsHostReady(github), true)
+  assert.equal(artifactsSiteUrl(github), 'https://acme.github.io/a/')
+  const cloudflare = {
+    ...EMPTY_ARTIFACTS_SETTINGS,
+    provider: 'cloudflare-pages' as const,
+    cloudflare: {
+      ...EMPTY_ARTIFACTS_SETTINGS.cloudflare,
+      accountId: 'a'.repeat(32),
+      siteUrl: 'https://art.example.com/',
+    },
+  }
+  assert.equal(isArtifactsHostReady(cloudflare), true)
+  assert.equal(artifactsSiteUrl(cloudflare), 'https://art.example.com/')
+  assert.equal(cloudflareProjectName(cloudflare.cloudflare), 'studio-artifacts')
 })
 
-test('no host is always accepted, and has no site', () => {
-  const off = validateArtifactsSettings({ provider: null })
-  assert.ok(off.ok)
-  assert.deepEqual(off.ok && off.settings, EMPTY_ARTIFACTS_SETTINGS)
-  assert.equal(artifactsSiteUrl(EMPTY_ARTIFACTS_SETTINGS), null)
-  assert.equal(validateArtifactsSettings({ provider: 'carrier-pigeon' }).ok, false)
+test('the token page opens with Pages edit preselected', () => {
+  const url = new URL(CLOUDFLARE_TOKEN_URL)
+  assert.equal(url.host, 'dash.cloudflare.com')
+  assert.deepEqual(JSON.parse(url.searchParams.get('permissionGroupKeys') ?? ''), [{ key: 'page', type: 'edit' }])
 })

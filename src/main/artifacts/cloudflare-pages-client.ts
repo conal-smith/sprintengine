@@ -45,9 +45,20 @@ export type CloudflareDeployResult =
   | { ok: true; dryRun: boolean; files: number; uploaded: number; deploymentId: string | null; url: string | null }
   | { ok: false; message: string }
 
+/** Every deployment Studio makes says so first, so a project it finds can be told apart from someone else's. */
+export const STUDIO_DEPLOYMENT_PREFIX = 'SprintEngine Studio artifacts'
+
 export type CloudflarePagesClient = {
   verifyToken(): Promise<{ ok: true } | { ok: false; message: string }>
   project(): Promise<{ ok: true; project: CloudflareProject } | { ok: false; status: number; message: string }>
+  /** Make the project, for Direct Upload, publishing from main. 409: it exists already. */
+  createProject(): Promise<{ ok: true; project: CloudflareProject } | { ok: false; status: number; message: string }>
+  /** The project's latest deployment, if any: its id, and whether Studio made it. */
+  latestDeployment(): Promise<
+    | { ok: true; deployed: false }
+    | { ok: true; deployed: true; id: string; studios: boolean }
+    | { ok: false; message: string }
+  >
   deploy(
     files: CloudflarePagesFile[],
     options: { commitMessage: string; commitHash?: string | null; dryRun?: boolean },
@@ -114,6 +125,42 @@ function cloudflareError(status: number, envelope: Envelope, what: string): stri
   return `Cloudflare could not ${what} (HTTP ${status}${said ? `: ${said}` : ''}).`
 }
 
+/**
+ * The accounts a token can see. An empty list is a token made without an
+ * account in its scope: the person makes another, with Pages edit on one.
+ */
+export async function listCloudflareAccounts(input: {
+  token: string
+  fetch?: CloudflareFetch
+  apiBase?: string
+}): Promise<{ ok: true; accounts: Array<{ id: string; name: string }> } | { ok: false; message: string }> {
+  const fetchImpl: CloudflareFetch = input.fetch ?? ((url, init) => fetch(url, init))
+  let response: Awaited<ReturnType<CloudflareFetch>>
+  try {
+    response = await fetchImpl(`${input.apiBase ?? CLOUDFLARE_API_BASE}/accounts?per_page=50`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${input.token}` },
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Could not reach Cloudflare (${error instanceof Error ? error.message : 'the request failed'}).`,
+    }
+  }
+  const envelope = envelopeOf(await response.json().catch(() => ({})))
+  if (!response.ok || envelope.success === false) {
+    return { ok: false, message: cloudflareError(response.status, envelope, 'list the accounts it can use') }
+  }
+  const accounts = (Array.isArray(envelope.result) ? envelope.result : [])
+    .map((entry) => envelopeOf(entry) as Record<string, unknown>)
+    .filter((entry) => typeof entry.id === 'string' && /^[0-9a-f]{32}$/i.test(entry.id))
+    .map((entry) => ({
+      id: String(entry.id).toLowerCase(),
+      name: typeof entry.name === 'string' ? entry.name : String(entry.id),
+    }))
+  return { ok: true, accounts }
+}
+
 export function createCloudflarePagesClient(input: {
   accountId: string
   projectName: string
@@ -157,6 +204,19 @@ export function createCloudflarePagesClient(input: {
     return { ok: true, result: envelope.result }
   }
 
+  function projectOf(raw: unknown): CloudflareProject {
+    const result = envelopeOf(raw) as Record<string, unknown>
+    const source =
+      result.source && typeof result.source === 'object' ? (result.source as Record<string, unknown>) : null
+    return {
+      name: typeof result.name === 'string' ? result.name : input.projectName,
+      subdomain: typeof result.subdomain === 'string' ? result.subdomain : null,
+      domains: Array.isArray(result.domains) ? result.domains.filter((d): d is string => typeof d === 'string') : [],
+      productionBranch: typeof result.production_branch === 'string' ? result.production_branch : 'main',
+      sourceType: source && typeof source.type === 'string' ? source.type : null,
+    }
+  }
+
   async function project(): Promise<
     { ok: true; project: CloudflareProject } | { ok: false; status: number; message: string }
   > {
@@ -170,27 +230,47 @@ export function createCloudflarePagesClient(input: {
         return {
           ok: false,
           status: 404,
-          message: `The account has no Pages project named "${input.projectName}". Create one with Direct Upload in the Cloudflare dashboard (Workers & Pages ▸ Create ▸ Pages ▸ Upload assets), or check the name.`,
+          message: `The account has no Pages project named "${input.projectName}".`,
         }
       }
       return answered
     }
-    const result = envelopeOf(answered.result) as Record<string, unknown>
-    const source =
-      result.source && typeof result.source === 'object' ? (result.source as Record<string, unknown>) : null
-    return {
-      ok: true,
-      project: {
-        name: typeof result.name === 'string' ? result.name : input.projectName,
-        subdomain: typeof result.subdomain === 'string' ? result.subdomain : null,
-        domains: Array.isArray(result.domains) ? result.domains.filter((d): d is string => typeof d === 'string') : [],
-        productionBranch: typeof result.production_branch === 'string' ? result.production_branch : 'main',
-        sourceType: source && typeof source.type === 'string' ? source.type : null,
-      },
-    }
+    return { ok: true, project: projectOf(answered.result) }
   }
 
   return {
+    async createProject() {
+      const answered = await call(
+        'POST',
+        `accounts/${account}/pages/projects`,
+        `make the Pages project "${input.projectName}"`,
+        {
+          json: { name: input.projectName, production_branch: 'main' },
+        },
+      )
+      return answered.ok ? { ok: true, project: projectOf(answered.result) } : answered
+    },
+
+    async latestDeployment() {
+      const answered = await call(
+        'GET',
+        `accounts/${account}/pages/projects/${projectPath}/deployments?per_page=1`,
+        `read the project "${input.projectName}"'s deployments`,
+      )
+      if (!answered.ok) return { ok: false, message: answered.message }
+      const list = Array.isArray(answered.result) ? answered.result : []
+      if (list.length === 0) return { ok: true, deployed: false }
+      const latest = envelopeOf(list[0]) as Record<string, unknown>
+      const trigger = latest.deployment_trigger as { metadata?: { commit_message?: unknown } } | undefined
+      const message = trigger?.metadata?.commit_message
+      return {
+        ok: true,
+        deployed: true,
+        id: typeof latest.id === 'string' ? latest.id : '',
+        studios: typeof message === 'string' && message.startsWith(STUDIO_DEPLOYMENT_PREFIX),
+      }
+    },
+
     async verifyToken() {
       const user = await call('GET', 'user/tokens/verify', 'check the API token')
       if (user.ok) {

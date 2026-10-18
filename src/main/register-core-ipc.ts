@@ -259,7 +259,11 @@ export function registerCoreIpc(
     void services.desktopShell?.refreshToolsets()
   })
   registerKeepAwakeIpc(ipcMain, services.keepAwakeStore, () => services.agentKeepAwake.refresh())
-  registerArtifactsIpc(ipcMain, { store: services.artifactsSettingsStore, test: services.testArtifactsSettings })
+  registerArtifactsIpc(ipcMain, {
+    store: services.artifactsSettingsStore,
+    setUp: services.setUpArtifacts,
+    consent: services.artifactsSetupConsent,
+  })
   registerMarketplaceRegistryIpc(ipcMain)
   registerHostedSourcesFeedIpc(ipcMain)
   registerHostedCardFeedIpc(ipcMain)

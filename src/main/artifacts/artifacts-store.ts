@@ -371,7 +371,14 @@ export function createGitStore(input: {
  * queue, and a change that fails part-way is undone from a copy taken first,
  * so a half-written manifest is never what the next upload reads.
  */
-export function createLocalStore(input: { dir: string }): ArtifactsStore {
+export function createLocalStore(input: {
+  dir: string
+  /**
+   * Bring the copy up to date before it is used (a Cloudflare site's copy,
+   * from the live site): null, or why it could not be. Runs in the queue.
+   */
+  prepare?: (dir: string) => Promise<string | null>
+}): ArtifactsStore {
   const { dir } = input
   const serialized = queueOf(dir)
   const backup = `${dir}.before-change`
@@ -391,12 +398,16 @@ export function createLocalStore(input: { dir: string }): ArtifactsStore {
     read(work) {
       return serialized(async () => {
         await recover()
-        return { ok: true as const, value: await work(dir), stale: false }
+        // A copy that is behind is still an answer; only no answer is a failure.
+        const failed = input.prepare ? await input.prepare(dir).catch((error: unknown) => String(error)) : null
+        return { ok: true as const, value: await work(dir), stale: failed !== null }
       })
     },
     change(work, after) {
       return serialized(async () => {
         await recover()
+        const failed = input.prepare ? await input.prepare(dir).catch((error: unknown) => String(error)) : null
+        if (failed) return { ok: false as const, message: failed }
         await cp(dir, backup, { recursive: true })
         const restore = async () => {
           await rm(dir, { recursive: true, force: true })

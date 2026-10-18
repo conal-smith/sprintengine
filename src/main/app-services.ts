@@ -1628,7 +1628,7 @@ export function createAppServices(
   // Settings ▸ Artifacts and the `artifacts.*` tools. Main serves them in
   // process and out, as it does `worktree.*`: the pages are this machine's
   // files, and publishing signs in with this machine's credentials.
-  const { artifactsSettingsStore, artifactsTools, testArtifactsSettings } = createArtifactsServices({
+  const { artifactsSettingsStore, artifactsTools, setUpArtifacts, artifactsSetupConsent } = createArtifactsServices({
     githubTokenStore,
   })
 
@@ -2307,7 +2307,8 @@ export function createAppServices(
     canvasSubscribers,
     worktreePool,
     artifactsSettingsStore,
-    testArtifactsSettings,
+    setUpArtifacts,
+    artifactsSetupConsent,
     liveWorkPaths,
     dependencyInstaller,
     automationService,

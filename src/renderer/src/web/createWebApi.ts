@@ -149,8 +149,7 @@ const browserEmptyStates = {
   setKeepAwake: async () => null,
   // Nor the desktop's disk and credentials to publish an artifact with.
   getArtifactsSettings: async () => null,
-  setArtifactsSettings: async () => null,
-  testArtifactsSettings: async () => null,
+  setUpArtifacts: async () => null,
   // Third-party renderer modules are off on the web unless the owner turns
   // them on for this server (R61); bundled modules load from the bundle.
   listThirdPartyRendererEntries: async () => ({ entries: [], failures: {} }),

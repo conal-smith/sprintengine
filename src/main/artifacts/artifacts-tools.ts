@@ -1,9 +1,25 @@
 import { isAbsolute } from 'node:path'
 
-import { ARTIFACTS_SETTINGS_PAGE } from '../../shared/artifacts'
-import { toolError, toolSuccess, type McpToolRegistration, type McpToolResult } from '../../shared/modules/mcp-tools'
+import {
+  ARTIFACTS_SETTINGS_PAGE,
+  parseArtifactsRepositoryUrl,
+  type ArtifactsSetupInput,
+  type ArtifactsSetupResult,
+} from '../../shared/artifacts'
+import {
+  toolError,
+  toolSuccess,
+  type McpConnectionContext,
+  type McpToolRegistration,
+  type McpToolResult,
+} from '../../shared/modules/mcp-tools'
 import { SLUG_PATTERN } from './artifact-site'
 import type { ArtifactsService } from './artifacts-service'
+import {
+  ARTIFACTS_SETUP_CONSENT_TIMEOUT_MS,
+  artifactsSetupQuestion,
+  type ArtifactsSetupConsent,
+} from './artifacts-setup-consent'
 
 // The `artifacts.*` tools: an agent publishes an HTML page (a mockup, a
 // prototype, a report) so the person can open it from any device, and finds,
@@ -13,7 +29,12 @@ import type { ArtifactsService } from './artifacts-service'
 // publishing signs in with this machine's credentials; a paired device is
 // served the reads only (tailnet-scopes.ts).
 
-export const ARTIFACTS_MUTATION_TOOL_NAMES = ['artifacts.publish', 'artifacts.update', 'artifacts.delete'] as const
+export const ARTIFACTS_MUTATION_TOOL_NAMES = [
+  'artifacts.publish',
+  'artifacts.update',
+  'artifacts.delete',
+  'artifacts.setup',
+] as const
 
 const LIMITS = {
   title: 200,
@@ -110,7 +131,7 @@ function answer(result: { ok: boolean; code?: string; message?: string } & Recor
   return toolSuccess(rest)
 }
 
-const NOT_SET_UP_NOTE = `Refused with "not_configured" until a host is chosen on ${ARTIFACTS_SETTINGS_PAGE}.`
+const NOT_SET_UP_NOTE = `Refused with "not_configured" until a host is set up, on ${ARTIFACTS_SETTINGS_PAGE} or with artifacts.setup.`
 
 const SOURCE_PROPERTIES = {
   project: {
@@ -152,9 +173,31 @@ const PAGE_PROPERTIES = {
   },
 }
 
-export function createArtifactsTools(deps: { service: ArtifactsService }): McpToolRegistration[] {
+/** What `artifacts.setup` needs beyond the service: the set-up itself, and the person's say. */
+export type ArtifactsSetupToolDeps = {
+  /**
+   * For Cloudflare, read only: the account the token would publish to, or
+   * the accounts to pick from when it sees several.
+   */
+  cloudflareAccount(
+    token: string | undefined,
+    accountId: string | undefined,
+  ): Promise<
+    | { ok: true; account: { id: string; name: string } }
+    | { ok: false; message: string; accounts?: Array<{ id: string; name: string }> }
+  >
+  /** The set-up, saved. */
+  run(input: ArtifactsSetupInput): Promise<ArtifactsSetupResult>
+  consent: ArtifactsSetupConsent
+}
+
+export function createArtifactsTools(deps: {
+  service: ArtifactsService
+  setup?: ArtifactsSetupToolDeps
+}): McpToolRegistration[] {
   const { service } = deps
   return [
+    createSetupTool(deps.setup),
     {
       name: 'artifacts.publish',
       description:
@@ -327,4 +370,163 @@ async function list(service: ArtifactsService, args: Args, search: boolean): Pro
       ...(typeof limit === 'number' ? { limit } : {}),
     }),
   )
+}
+
+/**
+ * `artifacts.setup`: an agent sets the host up in conversation, from what
+ * the person gave it (a repository, or a Cloudflare token). It is the
+ * person's setting, so the person confirms in Studio before anything is
+ * turned on, made or saved (artifacts-setup-consent.ts); the agent cannot
+ * answer for them. Like the `tailnet.*` configuration tools it is a mutation,
+ * audited, and served on this machine's socket only. The token goes from the
+ * arguments to secret storage: no answer, step or question carries it, and
+ * the audit keeps no argument but its identifiers.
+ */
+function createSetupTool(setup: ArtifactsSetupToolDeps | undefined): McpToolRegistration {
+  return {
+    name: 'artifacts.setup',
+    description:
+      'Set up where artifacts are published, when the other artifacts tools answer "not_configured": GitHub Pages from a repository ' +
+      '(its address, on github.com or a GitHub Enterprise Server), or Cloudflare Pages from an API token with the Cloudflare Pages Edit permission. ' +
+      `Offer it to the person (the other way is ${ARTIFACTS_SETTINGS_PAGE}, which they open themselves), and ask them for the repository or the token. ` +
+      'Studio shows the person what will be done and asks them to confirm; nothing is changed or saved until they do, and a refusal is final for this call. ' +
+      'GitHub: Studio turns Pages on if it is off and answers the site address GitHub gives. Cloudflare: Studio finds the account (when the token ' +
+      'sees several it answers them, to ask the person which, and call again with "accountId") and finds or makes the project. ' +
+      'The token goes to secret storage and is never answered back; do not repeat it in the conversation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', enum: ['github-pages', 'cloudflare-pages'] },
+        repositoryUrl: {
+          type: 'string',
+          description: 'GitHub Pages: the repository’s address, or owner/name on github.com.',
+        },
+        cloudflareToken: {
+          type: 'string',
+          description: 'Cloudflare Pages: the API token the person gave. Left out, the token already saved, if any.',
+        },
+        accountId: {
+          type: 'string',
+          description: 'Cloudflare Pages: the account to use, when the token sees several.',
+        },
+        projectName: {
+          type: 'string',
+          description: 'Cloudflare Pages: the project, when the person wants another than "studio-artifacts".',
+        },
+        sourceRepositoryUrl: {
+          type: 'string',
+          description: 'Cloudflare Pages: a git repository to keep the site’s source in, when the person wants one.',
+        },
+      },
+      required: ['provider'],
+      additionalProperties: false,
+    },
+    mutates: true,
+    handler: async (args, context) => {
+      if (!setup) return toolError('unavailable', `Set artifacts up on ${ARTIFACTS_SETTINGS_PAGE}.`)
+      const fields: Record<string, string | undefined> = {}
+      for (const key of [
+        'repositoryUrl',
+        'cloudflareToken',
+        'accountId',
+        'projectName',
+        'sourceRepositoryUrl',
+      ] as const) {
+        const value = args[key]
+        if (value === undefined || value === null) continue
+        if (typeof value !== 'string' || value.length > 4096 || value.includes('\0')) {
+          return toolError('invalid_arguments', `"${key}" is a string.`)
+        }
+        fields[key] = value.trim()
+      }
+      if (args.provider === 'github-pages') {
+        const repositoryUrl = fields.repositoryUrl ?? ''
+        const parsed = parseArtifactsRepositoryUrl(repositoryUrl)
+        if (!parsed.ok) return toolError('invalid_arguments', `"repositoryUrl": ${parsed.message}`)
+        return confirmAndRun(
+          setup,
+          context,
+          { provider: 'github-pages', repositoryUrl },
+          {
+            provider: 'github-pages',
+            repositoryUrl,
+          },
+        )
+      }
+      if (args.provider === 'cloudflare-pages') {
+        if (fields.sourceRepositoryUrl) {
+          const parsed = parseArtifactsRepositoryUrl(fields.sourceRepositoryUrl)
+          if (!parsed.ok) return toolError('invalid_arguments', `"sourceRepositoryUrl": ${parsed.message}`)
+        }
+        // Read only, and before the person is asked: which account it would be.
+        const account = await setup.cloudflareAccount(
+          fields.cloudflareToken || undefined,
+          fields.accountId || undefined,
+        )
+        if (!account.ok) {
+          if (account.accounts?.length) {
+            return toolSuccess({
+              ok: false,
+              needsAccount: true,
+              message: `${account.message} Ask the person which, then call again with its "accountId".`,
+              accounts: account.accounts,
+            })
+          }
+          return toolError('invalid_arguments', account.message)
+        }
+        return confirmAndRun(
+          setup,
+          context,
+          {
+            provider: 'cloudflare-pages',
+            accountName: account.account.name,
+            projectName: fields.projectName ?? '',
+            sourceRepositoryUrl: fields.sourceRepositoryUrl || null,
+          },
+          {
+            provider: 'cloudflare-pages',
+            ...(fields.cloudflareToken ? { token: fields.cloudflareToken } : {}),
+            accountId: account.account.id,
+            ...(fields.projectName !== undefined ? { projectName: fields.projectName } : {}),
+            ...(fields.sourceRepositoryUrl !== undefined ? { repositoryUrl: fields.sourceRepositoryUrl } : {}),
+          },
+        )
+      }
+      return toolError('invalid_arguments', '"provider" is "github-pages" or "cloudflare-pages".')
+    },
+  }
+}
+
+/** The set-ups waiting on the person: one question at a time, never a stack of them. */
+const asking = new WeakSet<ArtifactsSetupToolDeps>()
+
+async function confirmAndRun(
+  setup: ArtifactsSetupToolDeps,
+  context: McpConnectionContext | undefined,
+  request: Parameters<typeof artifactsSetupQuestion>[0],
+  input: ArtifactsSetupInput,
+): Promise<McpToolResult> {
+  if (asking.has(setup)) {
+    return toolError('busy', 'The person is already being asked about setting artifacts up. Wait for that answer.')
+  }
+  const question = artifactsSetupQuestion(request, context?.metadata.agentName ?? null)
+  asking.add(setup)
+  const confirmed = await setup
+    .consent(question, AbortSignal.timeout(ARTIFACTS_SETUP_CONSENT_TIMEOUT_MS))
+    .catch(() => false)
+    .finally(() => asking.delete(setup))
+  if (!confirmed) {
+    return toolError(
+      'not_confirmed',
+      `The person did not confirm setting artifacts up, so nothing was changed. They can set it up on ${ARTIFACTS_SETTINGS_PAGE}.`,
+    )
+  }
+  const result = await setup.run(input)
+  if (!result.ok) {
+    return toolError(
+      'setup_failed',
+      `${result.message}${result.steps.length ? ` (${result.steps.map((step) => `${step.label}: ${step.detail}`).join(' ')})` : ''}`,
+    )
+  }
+  return toolSuccess({ siteUrl: result.siteUrl, steps: result.steps })
 }

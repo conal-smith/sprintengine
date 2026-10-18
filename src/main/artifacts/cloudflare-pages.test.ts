@@ -1,89 +1,28 @@
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 
-import { EMPTY_ARTIFACTS_SETTINGS, type ArtifactsSettings } from '../../shared/artifacts'
-import { readArtifactsSiteTemplate } from './artifact-site'
-import { createArtifactsService } from './artifacts-service'
-import { createCloudflarePagesHost } from './artifacts-hosts'
-import { cloudflareAssetHash, createCloudflarePagesClient, type CloudflareFetch } from './cloudflare-pages-client'
+import { createSecretCipherStandIn } from '../../../tests/stubs/secret-cipher'
 import { bareRemote, cleanup, hermeticGit, remoteFiles, testGit, writeFiles } from '../../../tests/artifacts-repo'
+import {
+  ACCOUNT_ACME,
+  ACCOUNT_OTHER,
+  FAKE_TOKEN,
+  fakeCloudflare,
+  type FakeProject,
+} from '../../../tests/fake-cloudflare'
+import { readArtifactsSiteTemplate } from './artifact-site'
+import { createCloudflarePagesHost, type ArtifactsHostDeps } from './artifacts-hosts'
+import { createArtifactsService } from './artifacts-service'
+import { createArtifactsSettingsStore, type ArtifactsSettingsStore } from './artifacts-settings-store'
+import { setUpArtifacts } from './artifacts-setup'
+import { cloudflareAssetHash, createCloudflarePagesClient, STUDIO_DEPLOYMENT_PREFIX } from './cloudflare-pages-client'
 
-// Cloudflare Pages is never called here: a fake of its API answers, and
-// records what was asked of it.
-
-const ACCOUNT = '0123456789abcdef0123456789abcdef'
-const TOKEN = 'cf-test-token-0123456789abcdef'
-
-type Call = { method: string; path: string; bearer: string; body: unknown }
-
-function fakeCloudflare(
-  options: { sourceType?: string; failDeployments?: number; tokenStatus?: string; projectStatus?: number } = {},
-) {
-  const calls: Call[] = []
-  const stored = new Set<string>()
-  const deployments: Array<Record<string, string>> = []
-  let failDeployments = options.failDeployments ?? 0
-  const reply = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body })
-  const fetch: CloudflareFetch = async (url, init) => {
-    const path = url.replace('https://api.cloudflare.com/client/v4/', '')
-    const bearer = init.headers.Authorization?.replace(/^Bearer /, '') ?? ''
-    let body: unknown = init.body
-    if (typeof init.body === 'string') body = JSON.parse(init.body)
-    if (init.body instanceof FormData)
-      body = Object.fromEntries([...init.body.entries()].map(([key, value]) => [key, String(value)]))
-    calls.push({ method: init.method, path, bearer, body })
-    if (path === 'user/tokens/verify') {
-      return bearer === TOKEN
-        ? reply(200, { success: true, result: { status: options.tokenStatus ?? 'active' } })
-        : reply(401, { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] })
-    }
-    if (path === `accounts/${ACCOUNT}/tokens/verify`)
-      return reply(401, { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] })
-    if (bearer !== TOKEN && bearer !== 'upload-jwt')
-      return reply(403, { success: false, errors: [{ code: 10000, message: 'Authentication error' }] })
-    if (path === `accounts/${ACCOUNT}/pages/projects/art`) {
-      if (options.projectStatus === 404)
-        return reply(404, { success: false, errors: [{ code: 8000007, message: 'Project not found' }] })
-      return reply(200, {
-        success: true,
-        result: {
-          name: 'art',
-          subdomain: 'art.pages.dev',
-          domains: ['art.pages.dev'],
-          production_branch: 'main',
-          source: options.sourceType ? { type: options.sourceType } : null,
-        },
-      })
-    }
-    if (path === `accounts/${ACCOUNT}/pages/projects/art/upload-token`)
-      return reply(200, { success: true, result: { jwt: 'upload-jwt' } })
-    if (path === 'pages/assets/check-missing') {
-      const hashes = (body as { hashes: string[] }).hashes
-      return reply(200, { success: true, result: hashes.filter((hash) => !stored.has(hash)) })
-    }
-    if (path === 'pages/assets/upload') {
-      for (const file of body as Array<{ key: string }>) stored.add(file.key)
-      return reply(200, { success: true, result: null })
-    }
-    if (path === 'pages/assets/upsert-hashes') return reply(200, { success: true, result: null })
-    if (path === `accounts/${ACCOUNT}/pages/projects/art/deployments`) {
-      if (failDeployments > 0) {
-        failDeployments -= 1
-        return reply(500, { success: false, errors: [{ code: 8000000, message: 'Internal error' }] })
-      }
-      deployments.push(body as Record<string, string>)
-      return reply(200, {
-        success: true,
-        result: { id: `dep-${deployments.length}`, url: `https://${deployments.length}.art.pages.dev` },
-      })
-    }
-    return reply(404, { success: false, errors: [{ code: 7003, message: `No route for ${path}` }] })
-  }
-  return { fetch, calls, deployments, stored }
-}
+// Cloudflare Pages is never called here: a fake of its API answers
+// (tests/fake-cloudflare.ts), records what was asked of it, and serves the
+// live site from its latest deployment.
 
 const temporary: string[] = []
 let root = ''
@@ -96,6 +35,7 @@ beforeEach(async () => {
     'patterns/stars.html': '<link rel="stylesheet" href="../foundations/tokens.css"><p>Stars</p>',
     'foundations/tokens.css': ':root{}',
     'patterns/tide.html': '<p>Tide</p>',
+    'patterns/swell.html': '<p>Swell</p>',
   })
 })
 afterEach(async () => {
@@ -103,159 +43,285 @@ afterEach(async () => {
   await cleanup(temporary)
 })
 
-function cloudflareSettings(repositoryUrl = ''): ArtifactsSettings {
-  return {
-    ...EMPTY_ARTIFACTS_SETTINGS,
-    provider: 'cloudflare-pages',
-    cloudflare: { accountId: ACCOUNT, projectName: 'art', customDomain: '', repositoryUrl },
-  }
-}
+type Fake = ReturnType<typeof fakeCloudflare>
 
-function service(fake: ReturnType<typeof fakeCloudflare>, settings = cloudflareSettings(), token = TOKEN) {
-  return createArtifactsService({
-    settings: () => settings,
-    hostDeps: {
-      dataDir: join(root, 'data'),
-      git: testGit,
-      resolveHostToken: async () => '',
-      cloudflareToken: async () => token,
-      fetch: fake.fetch,
-      retryDelayMs: () => 5,
-    },
-    siteTemplate: () => readArtifactsSiteTemplate(join(process.cwd(), 'resources', 'artifacts-site')),
+/** One machine: its own data folder and settings, the shared fake Cloudflare. */
+function machine(fake: Fake, name: string, options: { behindAccess?: boolean } = {}) {
+  const store = createArtifactsSettingsStore({
+    resolveUserDataDir: () => join(root, name),
+    cipher: createSecretCipherStandIn(),
+  })
+  const hostDeps: ArtifactsHostDeps = {
+    dataDir: join(root, name, 'artifacts'),
+    git: testGit,
+    resolveHostToken: async () => '',
+    cloudflareToken: () => store.cloudflareToken(),
+    fetch: fake.fetch,
+    siteFetch: fake.siteFetch('studio-artifacts', options.behindAccess),
+    retryDelayMs: () => 5,
+  }
+  const siteTemplate = () => readArtifactsSiteTemplate(join(process.cwd(), 'resources', 'artifacts-site'))
+  const service = createArtifactsService({
+    settings: () => store.read(),
+    hostDeps,
+    siteTemplate,
     thumbnailer: async () => Buffer.from('PNG'),
     git: testGit,
   })
+  const setUp = (input: Parameters<typeof setUpArtifacts>[0], save = true) =>
+    setUpArtifacts(input, { save }, { store, hostDeps, siteTemplate })
+  return { store, service, setUp, hostDeps }
 }
 
-test('a publish uploads the whole site as one deployment, at the project’s address', async () => {
+const page = (name: string) => join(root, 'work', 'patterns', `${name}.html`)
+
+function words(result: { steps: Array<{ detail: string }> }): string[] {
+  return result.steps.map((step) => step.detail)
+}
+
+test('a token is all it takes: the one account is found, the project made, the site put up and its address kept', async () => {
   const fake = fakeCloudflare()
-  const published = await service(fake).publish({
-    path: join(root, 'work/patterns/stars.html'),
-    title: 'Stars',
-    tags: ['mockup'],
+  const here = machine(fake, 'a')
+  const result = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.ok(result.ok, result.ok ? '' : result.message)
+  assert.equal(result.siteUrl, 'https://studio-artifacts.pages.dev/')
+  assert.deepEqual(words(result).slice(0, 2), ['Found account Acme.', 'Created project studio-artifacts.'])
+  assert.match(words(result).join(' '), /Uploaded the site/)
+  assert.equal(fake.deployments('studio-artifacts').length, 1)
+  assert.ok(fake.deployments('studio-artifacts')[0].commit_message.startsWith(STUDIO_DEPLOYMENT_PREFIX))
+  const settings = here.store.read()
+  assert.deepEqual(settings.cloudflare, {
+    accountId: ACCOUNT_ACME,
+    accountName: 'Acme',
+    projectName: '',
+    repositoryUrl: '',
+    siteUrl: 'https://studio-artifacts.pages.dev/',
   })
-  assert.ok(published.ok, published.ok ? '' : published.message)
-  assert.equal(published.live, true)
-  assert.equal(published.artifact.url, 'https://art.pages.dev/a/stars/')
-  assert.equal(fake.deployments.length, 1)
-  const manifest = JSON.parse(fake.deployments[0].manifest) as Record<string, string>
-  for (const path of [
-    '/index.html',
-    '/artifacts.json',
-    '/assets/gallery.js',
-    '/a/stars/index.html',
-    '/a/stars/meta.json',
-    '/a/stars/v1/patterns/stars.html',
-    '/a/stars/v1/foundations/tokens.css',
-  ]) {
-    assert.ok(manifest[path], path)
-  }
-  assert.ok(!Object.keys(manifest).some((path) => path.includes('/.')), 'no hidden file is deployed')
-  assert.equal(fake.deployments[0].branch, 'main')
+  assert.equal(await here.store.cloudflareToken(), FAKE_TOKEN)
+  assert.ok(!JSON.stringify(result).includes(FAKE_TOKEN), 'the token is never answered back')
 })
 
-test('a second publish uploads only the files Pages does not have', async () => {
+test('a test finds and makes what it says, and saves nothing', async () => {
   const fake = fakeCloudflare()
-  const studio = service(fake)
-  await studio.publish({ path: join(root, 'work/patterns/stars.html'), title: 'Stars' })
-  const before = fake.calls
-    .filter((call) => call.path === 'pages/assets/upload')
-    .flatMap((call) => call.body as unknown[]).length
-  await studio.publish({ path: join(root, 'work/patterns/tide.html'), title: 'Tide' })
-  const uploads = fake.calls.filter((call) => call.path === 'pages/assets/upload')
-  const after = uploads.flatMap((call) => call.body as unknown[]).length
-  // The new artifact's page, record, viewer and picture, and the manifest: not the gallery's own files again.
-  assert.ok(after - before < before, `${after - before} new of ${before}`)
-  assert.equal(fake.deployments.length, 2)
+  const here = machine(fake, 'a')
+  const tested = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN }, false)
+  assert.ok(tested.ok)
+  assert.equal(tested.saved, false)
+  assert.equal(here.store.read().provider, null)
+  assert.equal(await here.store.cloudflareToken(), '')
+  // Saved after: the project it made is found, not made again.
+  const saved = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.ok(saved.ok)
+  assert.ok(words(saved).includes('Found project studio-artifacts.'))
+  assert.equal(fake.writes().filter((call) => call.path.endsWith('/pages/projects')).length, 1)
 })
 
-test('an upload that fails after the change was kept says so, and the next change puts it live', async () => {
-  const fake = fakeCloudflare({ failDeployments: 1 })
-  const studio = service(fake)
-  const published = await studio.publish({ path: join(root, 'work/patterns/stars.html'), title: 'Stars' })
-  assert.ok(published.ok)
-  assert.equal(published.live, false)
-  assert.match(
-    published.note,
-    /not live on Cloudflare Pages yet: Cloudflare could not create the deployment \(HTTP 500: Internal error \(8000000\)\)\./,
+test('a token that sees several accounts asks which; the one picked is used', async () => {
+  const fake = fakeCloudflare({
+    accounts: [
+      { id: ACCOUNT_ACME, name: 'Acme' },
+      { id: ACCOUNT_OTHER, name: 'Acme Labs' },
+    ],
+  })
+  const here = machine(fake, 'a')
+  const asked = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.equal(asked.ok, false)
+  assert.deepEqual(!asked.ok && asked.accounts, [
+    { id: ACCOUNT_ACME, name: 'Acme' },
+    { id: ACCOUNT_OTHER, name: 'Acme Labs' },
+  ])
+  assert.equal(fake.writes().length, 0, 'nothing is made before the person picks')
+  const picked = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN, accountId: ACCOUNT_OTHER })
+  assert.ok(picked.ok, picked.ok ? '' : picked.message)
+  assert.equal(here.store.read().cloudflare.accountName, 'Acme Labs')
+  const stranger = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN, accountId: 'f'.repeat(32) })
+  assert.equal(!stranger.ok && stranger.field, 'cloudflare.accountId')
+  assert.equal(!stranger.ok && stranger.accounts?.length, 2, 'the accounts it can see are offered to pick from')
+})
+
+test('a token that sees no account is told so, with what to make instead', async () => {
+  const here = machine(fakeCloudflare({ accounts: [] }), 'a')
+  const result = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.equal(result.ok, false)
+  assert.equal(!result.ok && result.field, 'cloudflare.token')
+  assert.match(!result.ok ? result.message : '', /can see no Cloudflare account.*Cloudflare Pages › Edit/)
+  const wrong = await machine(fakeCloudflare(), 'b').setUp({
+    provider: 'cloudflare-pages',
+    token: 'cf-wrong-token-0123456789abcd',
+  })
+  assert.equal(!wrong.ok && wrong.field, 'cloudflare.token')
+  assert.ok(!JSON.stringify(wrong).includes('cf-wrong-token'))
+  const malformed = await machine(fakeCloudflare(), 'c').setUp({ provider: 'cloudflare-pages', token: 'not a token' })
+  assert.equal(!malformed.ok && malformed.field, 'cloudflare.token')
+})
+
+test('a project of that name that is not Studio’s is left alone, and another name asked for', async () => {
+  const foreign: FakeProject = {
+    name: 'studio-artifacts',
+    subdomain: 'studio-artifacts.pages.dev',
+    domains: [],
+    source: null,
+    deployments: [{ id: 'theirs', commit_message: 'Launch the marketing site' }],
+  }
+  const fromGit: FakeProject = {
+    name: 'docs',
+    subdomain: 'docs.pages.dev',
+    domains: [],
+    source: { type: 'github' },
+    deployments: [],
+  }
+  const fake = fakeCloudflare({ projects: [foreign, fromGit] })
+  const here = machine(fake, 'a')
+  const taken = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.equal(!taken.ok && taken.field, 'cloudflare.projectName')
+  assert.match(!taken.ok ? taken.message : '', /a site Studio did not publish.*under Advanced/)
+  const git = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN, projectName: 'docs' })
+  assert.match(!git.ok ? git.message : '', /deploys from its own github connection/)
+  assert.equal(fake.writes().length, 0, 'neither project was touched')
+  const other = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN, projectName: 'acme-artifacts' })
+  assert.ok(other.ok, other.ok ? '' : other.message)
+  assert.equal(here.store.read().cloudflare.projectName, 'acme-artifacts')
+  assert.equal(other.siteUrl, 'https://acme-artifacts.pages.dev/')
+})
+
+test('a project made by someone else between the lookup and the create is found, at the address it got', async () => {
+  const fake = fakeCloudflare({ createRaces: true })
+  const result = await machine(fake, 'a').setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.ok(result.ok, result.ok ? '' : result.message)
+  assert.ok(words(result).includes('Found project studio-artifacts.'))
+  assert.equal(result.siteUrl, 'https://studio-artifacts-a1b.pages.dev/')
+})
+
+test('the site’s address is the project’s own domain when it has one', async () => {
+  const fake = fakeCloudflare({
+    projects: [
+      {
+        name: 'studio-artifacts',
+        subdomain: 'studio-artifacts.pages.dev',
+        domains: ['studio-artifacts.pages.dev', 'artifacts.acme.example'],
+        source: null,
+        deployments: [],
+      },
+    ],
+  })
+  const result = await machine(fake, 'a').setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.ok(result.ok)
+  assert.equal(result.siteUrl, 'https://artifacts.acme.example/')
+})
+
+test('a publish uploads only what Pages does not have, and an upload that failed after the change goes up with the next', async () => {
+  const fake = fakeCloudflare()
+  const here = machine(fake, 'a')
+  assert.ok((await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })).ok)
+  const published = await here.service.publish({ path: page('stars'), title: 'Stars' })
+  assert.ok(published.ok, published.ok ? '' : published.message)
+  assert.equal(published.artifact.url, 'https://studio-artifacts.pages.dev/a/stars/')
+  assert.ok(
+    [...fake.uploadCounts().values()].every((count) => count === 1),
+    'no file is sent twice',
   )
-  assert.match(published.note, /next publish or update uploads it again/)
-  // Nothing changes in this update, and the kept change goes live with it.
-  const retried = await studio.update({ slug: published.artifact.slug })
-  assert.ok(retried.ok)
-  assert.equal(retried.live, true)
-  assert.equal(fake.deployments.length, 1)
-  // And a site already live is not uploaded again for nothing.
-  await studio.update({ slug: published.artifact.slug })
-  assert.equal(fake.deployments.length, 1)
+
+  fake.refuseDeployments(1)
+  const kept = await here.service.publish({ path: page('tide'), title: 'Tide' })
+  assert.ok(kept.ok)
+  assert.equal(kept.live, false)
+  assert.match(kept.note, /not live on Cloudflare Pages yet.*next publish or update uploads it again/)
+  const before = fake.deployments('studio-artifacts').length
+  const retried = await here.service.update({ slug: kept.artifact.slug })
+  assert.ok(retried.ok && retried.live)
+  assert.equal(fake.deployments('studio-artifacts').length, before + 1)
+  assert.ok(fake.deployments('studio-artifacts').at(-1)?.manifest?.['/a/tide/meta.json'])
+  await here.service.update({ slug: kept.artifact.slug })
+  assert.equal(fake.deployments('studio-artifacts').length, before + 1, 'a site already live is not uploaded again')
 })
 
-test('with a source repository, the change is pushed there first and then deployed with its commit', async () => {
+test('a machine with no copy of the site rebuilds it from the live site before it publishes', async () => {
+  const fake = fakeCloudflare()
+  const first = machine(fake, 'first')
+  assert.ok((await first.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })).ok)
+  assert.ok((await first.service.publish({ path: page('stars'), title: 'Stars' })).ok)
+  assert.ok((await first.service.publish({ path: page('tide'), title: 'Tide' })).ok)
+
+  const second = machine(fake, 'second')
+  const joined = await second.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.ok(joined.ok, joined.ok ? '' : joined.message)
+  assert.ok(
+    words(joined).some((word) => /Rebuilt this machine’s copy of the site .*\(2 artifacts\)/.test(word)),
+    words(joined).join(' | '),
+  )
+  const published = await second.service.publish({ path: page('swell'), title: 'Swell' })
+  assert.ok(published.ok)
+  const listed = await second.service.list()
+  assert.ok(listed.ok)
+  assert.deepEqual(listed.artifacts.map((artifact) => artifact.slug).sort(), ['stars', 'swell', 'tide'])
+
+  // Back on the first machine: the artifact published elsewhere is taken in, its own kept.
+  const again = await first.service.publish({ path: page('stars'), title: 'Stars', slug: 'stars' })
+  assert.ok(again.ok)
+  const live = fake.deployments('studio-artifacts').at(-1)?.manifest ?? {}
+  for (const slug of ['stars', 'swell', 'tide']) assert.ok(live[`/a/${slug}/meta.json`], slug)
+  assert.ok(live['/a/stars/v2/patterns/stars.html'], 'the new version is live')
+})
+
+test('reading the live site back never replaces a newer artifact this machine has', async () => {
+  const fake = fakeCloudflare()
+  const first = machine(fake, 'first')
+  const second = machine(fake, 'second')
+  assert.ok((await first.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })).ok)
+  assert.ok((await first.service.publish({ path: page('stars'), title: 'Stars' })).ok)
+  assert.ok((await second.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })).ok)
+  // The first machine makes v2 of stars, but its upload fails: v2 exists only there.
+  fake.refuseDeployments(1)
+  const local = await first.service.publish({ path: page('tide'), title: 'Stars', slug: 'stars' })
+  assert.ok(local.ok && !local.live)
+  // The second machine publishes something else, so the live site moves on without v2.
+  assert.ok((await second.service.publish({ path: page('swell'), title: 'Swell' })).ok)
+  const retried = await first.service.update({ slug: 'stars' })
+  assert.ok(retried.ok, retried.ok ? '' : retried.message)
+  const got = await first.service.get('stars')
+  assert.ok(got.ok && got.artifact.version === 2, 'v2, made here, survives the read-back')
+  const live = fake.deployments('studio-artifacts').at(-1)?.manifest ?? {}
+  assert.ok(live['/a/stars/v2/tide.html'] && live['/a/swell/meta.json'], 'both machines’ work is live')
+})
+
+test('a site behind Cloudflare Access cannot be read back, and the publish says so and what to do', async () => {
+  const fake = fakeCloudflare()
+  const first = machine(fake, 'first')
+  assert.ok((await first.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })).ok)
+  assert.ok((await first.service.publish({ path: page('stars'), title: 'Stars' })).ok)
+  const second = machine(fake, 'second', { behindAccess: true })
+  const joined = await second.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN })
+  assert.equal(joined.ok, false)
+  assert.match(!joined.ok ? joined.message : '', /behind Cloudflare Access.*source repository under Advanced/)
+  assert.equal(fake.deployments('studio-artifacts').length, 2, 'nothing was uploaded over the first machine’s site')
+  // The first machine, whose copy is what is live, publishes behind Access all the same.
+  const firstBehind = machine(fake, 'first', { behindAccess: true })
+  assert.ok((await firstBehind.service.publish({ path: page('tide'), title: 'Tide' })).ok)
+})
+
+test('with a source repository the change is pushed there, deployed with its commit, and no live read is needed', async () => {
   const remote = await bareRemote(root)
   const fake = fakeCloudflare()
-  const published = await service(fake, cloudflareSettings(remote.url)).publish({
-    path: join(root, 'work/patterns/stars.html'),
-    title: 'Stars',
-  })
-  assert.ok(published.ok, published.ok ? '' : published.message)
-  assert.ok(remoteFiles(remote.path).includes('a/stars/meta.json'))
-  assert.equal(fake.deployments[0].commit_hash, published.commit)
-  assert.equal(fake.deployments[0].commit_dirty, 'false')
-})
-
-test('the API token is sent only as the bearer, and never said back', async () => {
-  const fake = fakeCloudflare()
-  const studio = service(fake, cloudflareSettings(), 'cf-wrong-token-0123456789abcdef')
-  const published = await studio.publish({ path: join(root, 'work/patterns/stars.html'), title: 'Stars' })
+  const here = machine(fake, 'a')
+  const result = await here.setUp({ provider: 'cloudflare-pages', token: FAKE_TOKEN, repositoryUrl: remote.url })
+  assert.ok(result.ok, result.ok ? '' : result.message)
+  const published = await here.service.publish({ path: page('stars'), title: 'Stars' })
   assert.ok(published.ok)
-  assert.equal(published.live, false)
-  assert.match(published.note, /refused the API token/)
-  assert.ok(!JSON.stringify(published).includes('cf-wrong-token'), 'not in the answer')
-  for (const call of fake.calls) assert.ok(!JSON.stringify(call.body ?? '').includes('cf-wrong-token'), 'not in a body')
-})
-
-test('the check verifies the token and the project, rehearses the upload, and deploys nothing', async () => {
-  const fake = fakeCloudflare()
-  const studio = service(fake)
-  await studio.publish({ path: join(root, 'work/patterns/stars.html'), title: 'Stars' })
-  const deployed = fake.deployments.length
-  const uploads = fake.calls.filter((call) => call.path === 'pages/assets/upload').length
-  const checked = await studio.test()
-  assert.ok('checks' in checked)
-  assert.ok(checked.ok, JSON.stringify(checked))
-  assert.deepEqual(
-    checked.checks.map((check) => [check.label, check.status]),
-    [
-      ['API token', 'pass'],
-      ['Project', 'pass'],
-      ['Source', 'warn'],
-      ['Upload', 'pass'],
-    ],
-  )
-  assert.equal(fake.deployments.length, deployed, 'no deployment')
-  assert.equal(fake.calls.filter((call) => call.path === 'pages/assets/upload').length, uploads, 'no upload')
-})
-
-test('the check says what is wrong: a bad token, a missing project, a project that builds from git', async () => {
-  const badToken = await service(fakeCloudflare(), cloudflareSettings(), 'cf-other-token-0123456789abcdef').test()
-  assert.ok('checks' in badToken && !badToken.ok && badToken.checks[0].label === 'API token')
-  const missing = await service(fakeCloudflare({ projectStatus: 404 })).test()
-  assert.ok('checks' in missing && !missing.ok)
-  assert.match(JSON.stringify(missing), /no Pages project named \\"art\\"/)
-  const fromGit = await service(fakeCloudflare({ sourceType: 'github' })).test()
-  assert.ok('checks' in fromGit && !fromGit.ok)
-  assert.match(JSON.stringify(fromGit), /takes no direct upload/)
-  const noToken = await service(fakeCloudflare(), cloudflareSettings(), '').test()
-  assert.ok('checks' in noToken && !noToken.ok && noToken.checks[0].detail === 'No API token is saved.')
+  assert.ok(remoteFiles(remote.path).includes('a/stars/meta.json'))
+  const latest = fake.deployments('studio-artifacts').at(-1)
+  assert.ok(latest?.commit_message.endsWith(published.commit?.slice(0, 12) ?? 'none'))
 })
 
 test('a dry run compares the site with Pages and uploads nothing', async () => {
-  const fake = fakeCloudflare()
+  const fake = fakeCloudflare({
+    projects: [
+      { name: 'studio-artifacts', subdomain: 'studio-artifacts.pages.dev', domains: [], source: null, deployments: [] },
+    ],
+  })
   const client = createCloudflarePagesClient({
-    accountId: ACCOUNT,
-    projectName: 'art',
-    token: async () => TOKEN,
+    accountId: ACCOUNT_ACME,
+    projectName: 'studio-artifacts',
+    token: async () => FAKE_TOKEN,
     fetch: fake.fetch,
   })
   const files = [
@@ -264,29 +330,27 @@ test('a dry run compares the site with Pages and uploads nothing', async () => {
   ]
   const rehearsed = await client.deploy(files, { commitMessage: 'Check', dryRun: true })
   assert.deepEqual(rehearsed, { ok: true, dryRun: true, files: 2, uploaded: 2, deploymentId: null, url: null })
-  assert.deepEqual(
-    fake.calls.map((call) => call.path),
-    [
-      `accounts/${ACCOUNT}/pages/projects/art`,
-      `accounts/${ACCOUNT}/pages/projects/art/upload-token`,
-      'pages/assets/check-missing',
-    ],
-  )
+  assert.equal(fake.writes().length, 0)
+  const dir = join(root, 'dry')
+  await writeFile(join(root, 'marker'), '')
   const dryHost = createCloudflarePagesHost({
-    settings: cloudflareSettings(),
-    siteUrl: 'https://art.pages.dev/',
+    settings: {
+      provider: 'cloudflare-pages',
+      github: { repositoryUrl: '', siteUrl: '' },
+      cloudflare: { accountId: ACCOUNT_ACME, accountName: 'Acme', projectName: '', repositoryUrl: '', siteUrl: '' },
+    },
     dryRun: true,
     deps: {
-      dataDir: join(root, 'dry'),
+      dataDir: dir,
       git: testGit,
       resolveHostToken: async () => '',
-      cloudflareToken: async () => TOKEN,
+      cloudflareToken: async () => FAKE_TOKEN,
       fetch: fake.fetch,
     },
   })
   const changed = await dryHost.change(async () => null)
   assert.ok(changed.ok)
-  assert.equal(fake.deployments.length, 0)
+  assert.equal(fake.deployments('studio-artifacts').length, 0)
 })
 
 test('an asset’s key is 32 hex characters of its content and extension', () => {
@@ -295,3 +359,5 @@ test('an asset’s key is 32 hex characters of its content and extension', () =>
   assert.notEqual(key, cloudflareAssetHash('a/page.css', Buffer.from('x')))
   assert.equal(key, cloudflareAssetHash('b/other.html', Buffer.from('x')))
 })
+
+export type { ArtifactsSettingsStore }

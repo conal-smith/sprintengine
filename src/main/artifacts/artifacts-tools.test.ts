@@ -4,7 +4,9 @@ import { test } from 'vitest'
 import { localOnlyGatewayToolReason, requiredScopeForTool } from '../automation/tailnet/tailnet-scopes'
 import { isStudioGatewayMutation } from '../automation/studio-gateway-tools'
 import type { ArtifactsService } from './artifacts-service'
-import { createArtifactsTools } from './artifacts-tools'
+import { createArtifactsTools, type ArtifactsSetupToolDeps } from './artifacts-tools'
+import type { ArtifactsSetupConsentQuestion } from './artifacts-setup-consent'
+import { EMPTY_ARTIFACTS_SETTINGS, type ArtifactsSetupInput } from '../../shared/artifacts'
 
 /** A service that records what it was asked and answers ok. */
 function recordingService() {
@@ -40,6 +42,7 @@ test('the family is publish, list, search, get, update and delete, and only the 
   assert.deepEqual(
     tools.map((registration) => [registration.name, registration.mutates === true]),
     [
+      ['artifacts.setup', true],
       ['artifacts.publish', true],
       ['artifacts.list', false],
       ['artifacts.search', false],
@@ -128,7 +131,7 @@ test('a service failure is the tool’s error, with its code and message', async
 })
 
 test('a paired device may read artifacts, but publishing, changing and removing stay on this machine', () => {
-  for (const name of ['artifacts.publish', 'artifacts.update', 'artifacts.delete']) {
+  for (const name of ['artifacts.publish', 'artifacts.update', 'artifacts.delete', 'artifacts.setup']) {
     assert.ok(localOnlyGatewayToolReason(name), name)
     assert.equal(isStudioGatewayMutation(name), true, name)
   }
@@ -136,4 +139,139 @@ test('a paired device may read artifacts, but publishing, changing and removing 
     assert.equal(localOnlyGatewayToolReason(name), null, name)
     assert.equal(requiredScopeForTool(name, isStudioGatewayMutation(name)), 'workspace:read', name)
   }
+})
+
+const TOKEN = 'cf-test-token-0123456789abcdef'
+
+/** A set-up whose person answers `answer`, recording what was asked and run. */
+function setupDeps(answer: boolean, accounts = [{ id: 'a'.repeat(32), name: 'Acme' }]) {
+  const asked: ArtifactsSetupConsentQuestion[] = []
+  const ran: ArtifactsSetupInput[] = []
+  const deps: ArtifactsSetupToolDeps = {
+    cloudflareAccount: async (_token, accountId) => {
+      const chosen = accountId
+        ? accounts.find((account) => account.id === accountId)
+        : accounts.length === 1
+          ? accounts[0]
+          : undefined
+      return chosen
+        ? { ok: true, account: chosen }
+        : { ok: false, message: `The token can see ${accounts.length} accounts.`, accounts }
+    },
+    run: async (input) => {
+      ran.push(input)
+      return {
+        ok: true,
+        saved: true,
+        siteUrl: 'https://studio-artifacts.pages.dev/',
+        steps: [{ label: 'Account', status: 'pass', detail: 'Found account Acme.' }],
+        view: {
+          ...EMPTY_ARTIFACTS_SETTINGS,
+          cloudflareToken: { configured: true, encryptionAvailable: true },
+          siteUrl: 'https://studio-artifacts.pages.dev/',
+        },
+      }
+    },
+    consent: async (question) => {
+      asked.push(question)
+      return answer
+    },
+  }
+  return { deps, asked, ran }
+}
+
+function setupTool(deps: ArtifactsSetupToolDeps) {
+  const { service } = recordingService()
+  return createArtifactsTools({ service, setup: deps }).find((registration) => registration.name === 'artifacts.setup')!
+}
+
+const agent = {
+  metadata: { kind: 'studio-agent' as const, workspaceId: 'ws-1', agentId: 'agent-1', agentName: 'Claude Code' },
+}
+
+test('setting up waits for the person: refused, nothing runs and nothing is saved', async () => {
+  const { deps, asked, ran } = setupDeps(false)
+  const result = await setupTool(deps).handler(
+    { provider: 'github-pages', repositoryUrl: 'https://github.com/acme/artifacts' },
+    agent,
+  )
+  assert.equal(errorOf(result), 'not_confirmed')
+  assert.equal(ran.length, 0)
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0].message, 'Publish artifacts with GitHub Pages?')
+  assert.match(asked[0].detail, /Claude Code asks to set this up/)
+  assert.match(asked[0].detail, /Repository: acme\/artifacts on github\.com/)
+  assert.match(asked[0].detail, /public on the internet/)
+})
+
+test('confirmed, the set-up runs and answers the site, never the token', async () => {
+  const { deps, asked, ran } = setupDeps(true)
+  const result = await setupTool(deps).handler({ provider: 'cloudflare-pages', cloudflareToken: ` ${TOKEN} ` }, agent)
+  assert.equal(errorOf(result), null)
+  assert.deepEqual(ran, [{ provider: 'cloudflare-pages', token: TOKEN, accountId: 'a'.repeat(32) }])
+  assert.equal((result.structuredContent as { siteUrl?: string }).siteUrl, 'https://studio-artifacts.pages.dev/')
+  assert.ok(!JSON.stringify(result).includes(TOKEN), 'the answer never carries the token')
+  assert.ok(!JSON.stringify(asked).includes(TOKEN), 'nor does the question put to the person')
+  assert.match(asked[0].detail, /Account: Acme/)
+})
+
+test('a token that sees several accounts is answered with them before the person is asked anything', async () => {
+  const accounts = [
+    { id: 'a'.repeat(32), name: 'Acme' },
+    { id: 'b'.repeat(32), name: 'Acme Labs' },
+  ]
+  const { deps, asked, ran } = setupDeps(true, accounts)
+  const first = await setupTool(deps).handler({ provider: 'cloudflare-pages', cloudflareToken: TOKEN }, agent)
+  assert.equal(errorOf(first), null)
+  assert.deepEqual((first.structuredContent as { accounts?: unknown }).accounts, accounts)
+  assert.equal(asked.length + ran.length, 0)
+  const second = await setupTool(deps).handler(
+    { provider: 'cloudflare-pages', cloudflareToken: TOKEN, accountId: 'b'.repeat(32) },
+    agent,
+  )
+  assert.equal(errorOf(second), null)
+  assert.match(asked[0].detail, /Account: Acme Labs/)
+})
+
+test('a malformed request is refused before the person is asked', async () => {
+  const { deps, asked } = setupDeps(true)
+  const tool = setupTool(deps)
+  for (const args of [
+    {},
+    { provider: 'carrier-pigeon' },
+    { provider: 'github-pages' },
+    { provider: 'github-pages', repositoryUrl: 'https://x:secret@github.com/acme/a' },
+    { provider: 'cloudflare-pages', cloudflareToken: 12 },
+    { provider: 'cloudflare-pages', sourceRepositoryUrl: 'not a repository' },
+  ]) {
+    assert.equal(errorOf(await tool.handler(args, agent)), 'invalid_arguments', JSON.stringify(args))
+  }
+  assert.equal(asked.length, 0)
+})
+
+test('a set-up that fails after the person said yes says why, with its steps', async () => {
+  const { deps } = setupDeps(true)
+  deps.run = async () => ({
+    ok: false,
+    message: 'GitHub Pages is not available for a private repository.',
+    steps: [{ label: 'Pages', status: 'fail', detail: 'Plan.' }],
+  })
+  const result = await setupTool(deps).handler({ provider: 'github-pages', repositoryUrl: 'acme/artifacts' }, agent)
+  assert.equal(errorOf(result), 'setup_failed')
+  assert.match(
+    result.content[0]?.type === 'text' ? result.content[0].text : '',
+    /not available for a private repository.*Pages: Plan\./,
+  )
+})
+
+test('while the person is being asked, another set-up is refused rather than stacking a second question', async () => {
+  const { deps } = setupDeps(true)
+  let release: (answer: boolean) => void = () => {}
+  deps.consent = () => new Promise<boolean>((resolve) => (release = resolve))
+  const tool = setupTool(deps)
+  const first = tool.handler({ provider: 'github-pages', repositoryUrl: 'acme/artifacts' }, agent)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(errorOf(await tool.handler({ provider: 'github-pages', repositoryUrl: 'acme/other' }, agent)), 'busy')
+  release(false)
+  assert.equal(errorOf(await first), 'not_confirmed')
 })

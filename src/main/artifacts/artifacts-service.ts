@@ -2,7 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 
-import { parseArtifactsRepositoryUrl, type ArtifactsSettings, type ArtifactsTestResult } from '../../shared/artifacts'
+import { parseArtifactsRepositoryUrl, type ArtifactsSettings } from '../../shared/artifacts'
 import { collectArtifactBundle, type ArtifactBundle } from './artifact-bundle'
 import {
   ARTIFACTS_DIR,
@@ -14,8 +14,7 @@ import {
   SLUG_PATTERN,
   summarizeArtifact,
   writeArtifactRecord,
-  writeArtifactsManifest,
-  writeArtifactsSite,
+  finishSiteTree,
   type ArtifactRecord,
   type ArtifactsSiteTemplate,
   type ArtifactSource,
@@ -275,17 +274,15 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
   }
 
   /** The site's own files and its manifest, brought up to date on the tree. */
-  async function finishTree(root: string, active: ArtifactHostLike): Promise<void> {
+  async function finishTree(root: string, active: ArtifactsHost): Promise<void> {
     const settings = deps.settings()
     const repository =
       settings.provider === 'github-pages'
         ? settings.github.repositoryUrl
-        : settings.cloudflare.repositoryUrl || `Cloudflare Pages project ${settings.cloudflare.projectName}`
-    await writeArtifactsSite(root, await deps.siteTemplate(), { repository, siteUrl: active.siteUrl })
-    await writeArtifactsManifest(root)
+        : settings.cloudflare.repositoryUrl ||
+          `Cloudflare Pages project ${settings.cloudflare.projectName || 'studio-artifacts'}`
+    await finishSiteTree(root, await deps.siteTemplate(), { repository, siteUrl: active.siteUrl() })
   }
-
-  type ArtifactHostLike = Pick<ArtifactsHost, 'siteUrl'>
 
   function liveNote(active: ArtifactsHost, notLive: string | undefined): string {
     if (notLive) return notLive
@@ -305,7 +302,7 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
         return { message: 'Set up the artifacts site', value: true }
       })
       if (!changed.ok) return { ok: false, code: 'publish_failed', message: changed.message }
-      return { ok: true, commit: changed.commit, siteUrl: active.siteUrl, note: liveNote(active, changed.notLive) }
+      return { ok: true, commit: changed.commit, siteUrl: active.siteUrl(), note: liveNote(active, changed.notLive) }
     },
 
     async publish(input: ArtifactPublishInput) {
@@ -375,8 +372,8 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
         return {
           ok: true as const,
           created,
-          artifact: viewOf(active.siteUrl, record),
-          versionUrl: siteUrlFor(active.siteUrl, `${ARTIFACTS_DIR}/${record.slug}/`, { v: String(record.version) }),
+          artifact: viewOf(active.siteUrl(), record),
+          versionUrl: siteUrlFor(active.siteUrl(), `${ARTIFACTS_DIR}/${record.slug}/`, { v: String(record.version) }),
           commit: changed.commit,
           live: !changed.notLive,
           note: liveNote(active, changed.notLive),
@@ -441,7 +438,7 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
         return {
           ok: true as const,
           changed: changed.value.changed,
-          artifact: viewOf(active.siteUrl, changed.value.record),
+          artifact: viewOf(active.siteUrl(), changed.value.record),
           commit: changed.commit,
           live: !changed.notLive,
           note: liveNote(active, changed.notLive),
@@ -518,8 +515,8 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
       return {
         ok: true as const,
         total: matching.length,
-        artifacts: matching.slice(0, limit).map((record) => viewOf(active.siteUrl, record)),
-        siteUrl: active.siteUrl,
+        artifacts: matching.slice(0, limit).map((record) => viewOf(active.siteUrl(), record)),
+        siteUrl: active.siteUrl(),
         ...(read.stale
           ? { note: `Could not reach ${active.label}; this is the list as this machine last saw it.` }
           : {}),
@@ -544,23 +541,17 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
       return {
         ok: true as const,
         artifact: {
-          ...viewOf(active.siteUrl, record),
+          ...viewOf(active.siteUrl(), record),
           versions: record.versions.map((entry) => ({
             ...entry,
-            url: siteUrlFor(active.siteUrl, `${ARTIFACTS_DIR}/${record.slug}/`, { v: String(entry.version) }),
-            pageUrl: siteUrlFor(active.siteUrl, `${ARTIFACTS_DIR}/${record.slug}/${entry.entry}`),
+            url: siteUrlFor(active.siteUrl(), `${ARTIFACTS_DIR}/${record.slug}/`, { v: String(entry.version) }),
+            pageUrl: siteUrlFor(active.siteUrl(), `${ARTIFACTS_DIR}/${record.slug}/${entry.entry}`),
           })),
         },
         ...(read.stale
           ? { note: `Could not reach ${active.label}; this is the record as this machine last saw it.` }
           : {}),
       }
-    },
-
-    async test(): Promise<ArtifactsTestResult | Failure> {
-      const resolved = host()
-      if (!resolved.ok) return resolved
-      return resolved.host.test()
     },
   }
 }
