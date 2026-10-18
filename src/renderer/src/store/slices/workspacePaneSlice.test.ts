@@ -272,11 +272,29 @@ test('workspacePaneSlice', async () => {
     slice.setActivePaneTab(WS, b)
     slice.closePaneTab(WS, b)
     assert.equal(pane().activeTabId, c, 'the right neighbour takes over')
+    assert.equal(pane().open, true, 'a pane with tabs left stays open')
     slice.closePaneTab(WS, c)
     assert.equal(pane().activeTabId, a, 'then the left one')
     slice.closePaneTab(WS, a)
     assert.equal(pane().activeTabId, null)
-    assert.equal(pane().open, true, 'an emptied pane stays open on its launcher')
+    assert.equal(pane().open, false, 'closing the last tab closes the pane')
+  })
+
+  run('closing the last docked tab closes the pane; a tab closed in its own window does not', () => {
+    const { slice, pane } = carrierWith({
+      open: true,
+      activeTabId: 'a',
+      tabs: [
+        { id: 'a', kind: 'files' },
+        { id: 'b', kind: 'git', poppedOut: 'popout-1' },
+        { id: 'c', kind: 'backlog', poppedOut: 'popout-1' },
+      ],
+    })
+    slice.closePaneTab(WS, 'b')
+    assert.equal(pane().open, true, 'a popped-out tab closing leaves the pane open')
+    slice.closePaneTab(WS, 'a')
+    assert.equal(pane().open, false, 'only a popped-out tab is left: the pane closes, as a pop-out emptying it does')
+    assert.equal(pane().tabs.length, 1)
   })
 
   run('togglePaneKind: absent opens, behind brings forward, showing closes (and the pane when empty)', () => {

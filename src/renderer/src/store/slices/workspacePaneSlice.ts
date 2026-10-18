@@ -707,9 +707,14 @@ export function createWorkspacePaneSlice(set: PaneSliceSet): WorkspacePaneSliceA
         const index = pane.tabs.findIndex((tab) => tab.id === tabId)
         if (index === -1) return
         // For ⌘⇧T (utils/recentlyClosedTabs.ts): what opens one like it again.
-        rememberClosedPaneTab(id, pane.tabs[index]!)
+        const closed = pane.tabs[index]!
+        rememberClosedPaneTab(id, closed)
         pane.tabs.splice(index, 1)
         if (pane.activeTabId === tabId) pane.activeTabId = nextActiveAfterClose(pane.tabs, index)
+        // The last docked tab closing takes the pane with it, the way a toggle
+        // and a pop-out emptying it already do: an empty column is width spent
+        // on nothing. A tab closed in its own window leaves the pane as it was.
+        if (!closed.poppedOut && !pane.tabs.some((tab) => !tab.poppedOut)) pane.open = false
         ws.paneState = normalizeWorkspacePaneState(pane)
       }),
 
