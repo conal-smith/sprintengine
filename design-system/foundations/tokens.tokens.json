@@ -225,13 +225,90 @@
   },
   "sem": {
     "syntax": {
-      "foreground": {"$type":"color","$value":"{sem.color.text.default}","$description":"Code syntax foreground ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"foreground tokens inside source code.","components":["code-block"]}}},
-      "comment": {"$type":"color","$value":"{sem.color.text.muted}","$description":"Code syntax comment ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"comment tokens inside source code.","components":["code-block"]}}},
-      "keyword": {"$type":"color","$value":"{sem.color.mark.violet}","$description":"Code syntax keyword ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"keyword tokens inside source code.","components":["code-block"]}}},
-      "string": {"$type":"color","$value":"{sem.color.mark.teal}","$description":"Code syntax string ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"string tokens inside source code.","components":["code-block"]}}},
-      "number": {"$type":"color","$value":"{sem.color.mark.orange}","$description":"Code syntax number ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"number tokens inside source code.","components":["code-block"]}}},
-      "function": {"$type":"color","$value":"{sem.color.mark.blue}","$description":"Code syntax function ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"function tokens inside source code.","components":["code-block"]}}},
-      "type": {"$type":"color","$value":"{sem.color.mark.cyan}","$description":"Code syntax type ink.","$extensions":{"com.sprintengine":{"role":"syntax","use":"type tokens inside source code.","components":["code-block"]}}}
+      "foreground": {
+        "$type": "color",
+        "$value": "{sem.color.text.default}",
+        "$description": "Code syntax foreground ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "foreground tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      },
+      "comment": {
+        "$type": "color",
+        "$value": "{sem.color.text.muted}",
+        "$description": "Code syntax comment ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "comment tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      },
+      "keyword": {
+        "$type": "color",
+        "$value": "{sem.color.mark.violet}",
+        "$description": "Code syntax keyword ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "keyword tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      },
+      "string": {
+        "$type": "color",
+        "$value": "{sem.color.mark.teal}",
+        "$description": "Code syntax string ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "string tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      },
+      "number": {
+        "$type": "color",
+        "$value": "{sem.color.mark.orange}",
+        "$description": "Code syntax number ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "number tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      },
+      "function": {
+        "$type": "color",
+        "$value": "{sem.color.mark.blue}",
+        "$description": "Code syntax function ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "function tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      },
+      "type": {
+        "$type": "color",
+        "$value": "{sem.color.mark.cyan}",
+        "$description": "Code syntax type ink.",
+        "$extensions": {
+          "com.sprintengine": {
+            "role": "syntax",
+            "use": "type tokens inside source code.",
+            "components": ["code-block"]
+          }
+        }
+      }
     },
     "color": {
       "bg": {
@@ -293,10 +370,7 @@
               "role": "surface",
               "use": "Code blocks and other preformatted source shown inside prose \u2014 content the reader is meant to see as a separate object in the flow, not as chrome. Pair with a border.subtle hairline. Also the groove of a segmented control (owner ruling 2026-10-01): a track is set INTO the surface the same way, and a tint rather than a solid is what lets one strip sit on a panel, a card or a popover alike.",
               "doNotUse": "A control's own face, rows, hover or selection (those are bg.hover / bg.selected), and chrome raised above the panel (bg.surface-raised). Never stack a well inside a well: the tints add.",
-              "components": [
-                "code-block",
-                "segmented-control"
-              ],
+              "components": ["code-block", "segmented-control"],
               "modes": {
                 "light": "rgba(32, 36, 40, 0.05)",
                 "dark": "rgba(252, 252, 252, 0.06)"
@@ -760,9 +834,7 @@
               "role": "status",
               "use": "list-row --finished: the row-wide wash a finished row wears. One step under good-soft, because a finished row asks for a look, not an answer, and sits beside rows that must stay readable.",
               "doNotUse": "Chips, banners, or anything smaller than a row \u2014 those take good-soft. Never as a hover or selection fill.",
-              "components": [
-                "list-row"
-              ],
+              "components": ["list-row"],
               "modes": {
                 "light": "rgba(21, 127, 55, 0.10)",
                 "dark": "rgba(48, 208, 88, 0.10)"
@@ -866,9 +938,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose language wears blue, and of a machine's glyph when the machine wears blue (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.blue-600}",
                 "dark": "{ref.color.blue-400}"
@@ -885,9 +955,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose kind wears yellow, and of a machine's glyph when the machine wears yellow (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.amber-800}",
                 "dark": "{ref.color.amber-400}"
@@ -904,9 +972,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose kind wears orange, and of a machine's glyph when the machine wears orange (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.orange-700}",
                 "dark": "{ref.color.orange-400}"
@@ -923,9 +989,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose kind wears red, and of a machine's glyph when the machine wears red (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.red-600}",
                 "dark": "{ref.color.coral-400}"
@@ -942,9 +1006,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose kind wears teal, and of a machine's glyph when the machine wears teal (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.teal-700}",
                 "dark": "{ref.color.teal-400}"
@@ -961,9 +1023,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose kind wears cyan, and of a machine's glyph when the machine wears cyan (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.cyan-700}",
                 "dark": "{ref.color.cyan-400}"
@@ -980,9 +1040,7 @@
               "role": "identity",
               "use": "Ink of a file-type glyph whose kind wears violet, and of a machine's glyph when the machine wears violet (owner ruling 2026-10-04); nothing else.",
               "doNotUse": "Status (that is status.*), the accent, selection, text, borders, or any background. Never a category code on a control, a row, or a section; never on a glyph that answers an action, lifecycle or status question.",
-              "components": [
-                "glyphs"
-              ],
+              "components": ["glyphs"],
               "modes": {
                 "light": "{ref.color.violet-500}",
                 "dark": "{ref.color.violet-500}"
@@ -1000,9 +1058,7 @@
                 "role": "identity",
                 "use": "The L channel of the oklch() a project's folder glyph and its picker swatch are drawn in; nothing else.",
                 "doNotUse": "Any colour that is not a project's identity hue. Never text, status, the accent, selection, borders, or a background.",
-                "components": [
-                  "glyphs"
-                ],
+                "components": ["glyphs"],
                 "modes": {
                   "light": 0.54,
                   "dark": 0.74
@@ -1019,9 +1075,7 @@
                 "role": "identity",
                 "use": "The C channel of the oklch() a project's folder glyph and its picker swatch are drawn in; nothing else.",
                 "doNotUse": "Any colour that is not a project's identity hue. Never text, status, the accent, selection, borders, or a background.",
-                "components": [
-                  "glyphs"
-                ],
+                "components": ["glyphs"],
                 "modes": {
                   "light": 0.09,
                   "dark": 0.125
@@ -1245,11 +1299,9 @@
           "$extensions": {
             "com.sprintengine": {
               "role": "agent-trail",
-              "use": "The trailing group of a file-tree row an agent is reading or editing.",
+              "use": "The trailing group of a file-tree row an agent is reading or editing; the outline and pill of a tab whose page, board or file an agent is using, and the edge round that surface (AgentPresence.tsx).",
               "doNotUse": "Status, selection, the accent, a file's name (that is its git tint), or a file-type glyph (mark.violet).",
-              "components": [
-                "file-tree"
-              ],
+              "components": ["file-tree", "tabs", "side-pane"],
               "modes": {
                 "light": "{ref.color.violet-600}",
                 "dark": "{ref.color.violet-300}"
@@ -1264,11 +1316,9 @@
           "$extensions": {
             "com.sprintengine": {
               "role": "agent-trail",
-              "use": "The row wash of the agent trail's reading state.",
+              "use": "The row wash of the agent trail's reading state, and the wash of a tab an agent is using.",
               "doNotUse": "Selection, banners, or any fill that is not the agent trail.",
-              "components": [
-                "file-tree"
-              ]
+              "components": ["file-tree", "tabs", "side-pane"]
             }
           }
         },
@@ -1279,11 +1329,9 @@
           "$extensions": {
             "com.sprintengine": {
               "role": "agent-trail",
-              "use": "The row wash of the agent trail's editing state, and the pill behind its verb.",
+              "use": "The row wash of the agent trail's editing state, and the pill behind its verb or a tab's Agent pill.",
               "doNotUse": "Selection, banners, or any fill that is not the agent trail.",
-              "components": [
-                "file-tree"
-              ]
+              "components": ["file-tree", "tabs", "side-pane"]
             }
           }
         }
@@ -1348,9 +1396,7 @@
             "role": "elevation",
             "use": "The toast card only. The inset highlight is the control-raised light source (lit from above); the drop sits between popover and modal because a toast floats over live content with no scrim and no anchor to lean on.",
             "doNotUse": "Anchored surfaces (shadow.popover) or scrimmed shells (shadow.modal).",
-            "components": [
-              "toast"
-            ],
+            "components": ["toast"],
             "modes": {
               "light": "inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(16, 20, 24, 0.08), 0 10px 28px -8px rgba(16, 20, 24, 0.22)",
               "dark": "inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 1px 2px rgba(0, 0, 0, 0.4), 0 14px 36px -10px rgba(0, 0, 0, 0.75)"
@@ -1367,9 +1413,7 @@
             "role": "elevation",
             "use": "Tier 1 only \u2014 the filled primary and destructive buttons at rest. The inset highlight is the light source and the whole treatment: no drop, no sheen. The control presses by scale(0.97), not by swapping shadows, and a disabled one drops the highlight.",
             "doNotUse": "Tier 2 standalone secondaries (flat, on a border.strong hairline) and tier 3 controls inside a surface (ghost, a hover fill only). Not overlays either \u2014 those take shadow.popover / shadow.modal / shadow.drawer.",
-            "components": [
-              "button"
-            ],
+            "components": ["button"],
             "modes": {
               "light": "inset 0 1px 0 rgba(255, 255, 255, 0.16)",
               "dark": "inset 0 1px 0 rgba(255, 255, 255, 0.12)"
@@ -1386,9 +1430,7 @@
             "role": "elevation",
             "use": "A segmented control\u2019s selected segment, over its bg.selected fill. No lit lip and no sheen. Reached through the app\u2019s .control-thumb class, never spelled at a call site.",
             "doNotUse": "A control a person presses to act \u2014 those are flat, or carry shadow.control-raised on the primary \u2014 the track under the thumb, or any surface that is not a thumb.",
-            "components": [
-              "segmented-control"
-            ],
+            "components": ["segmented-control"],
             "modes": {
               "light": "0 1px 2px rgba(16, 20, 24, 0.1)",
               "dark": "0 1px 2px rgba(0, 0, 0, 0.4)"
@@ -1401,15 +1443,7 @@
       "family": {
         "ui": {
           "$type": "fontFamily",
-          "$value": [
-            "Inter",
-            "SF Pro Text",
-            "Segoe UI",
-            "Roboto",
-            "Helvetica",
-            "Arial",
-            "sans-serif"
-          ],
+          "$value": ["Inter", "SF Pro Text", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
           "$description": "Default UI face for prose, labels, and chrome. Load Inter with font-feature-settings 'cv11', 'ss01', 'ss03'.",
           "$extensions": {
             "com.sprintengine": {
@@ -1630,9 +1664,7 @@
               "role": "typography",
               "use": "Multi-line monospace source read line by line \u2014 code blocks. The extra leading over relaxed keeps a line's brackets and operators from touching the line above, which prose at the same size does not need.",
               "doNotUse": "Prose, labels and single-line code (inline code takes the line height of the sentence it sits in).",
-              "components": [
-                "code-block"
-              ]
+              "components": ["code-block"]
             }
           }
         }
@@ -1844,11 +1876,7 @@
             "role": "shape",
             "use": "Badges, status chips, switch tracks and progress rails \u2014 anything whose shape says \"this is a marker, not a control\". Referenced by liveness, which spelled var(--sem-radius-pill) before this token existed and therefore rendered square.",
             "doNotUse": "Buttons, inputs, cards and rows \u2014 those take radius.control. A pill-shaped button wears the badge shape, and the two stop being tellable apart; the one exception is the composer's round send (owner ruling 2026-10-04). Nor is this a ramp step: it sits outside the 3/7/9 scale on purpose, so a tool reading sem.radius.* as a ramp must exclude it.",
-            "components": [
-              "badge",
-              "liveness",
-              "switch"
-            ]
+            "components": ["badge", "liveness", "switch"]
           }
         }
       }
@@ -1900,9 +1928,7 @@
               "role": "motion",
               "use": "The single play of a change pulse \u2014 a count that just moved, a status icon that just flipped. Long enough to be noticed after the eye arrives, where a transition only has to keep up with a pointer already there. Value taken from the shipped .status-icon-pulse, which hard-coded 620ms.",
               "doNotUse": "Transitions and state changes \u2014 those take fast / normal / deliberate. A 620ms hover is a control that feels broken. Never loop it either: the pulse means \"this just changed\", and a loop means \"this is still happening\".",
-              "components": [
-                "liveness"
-              ]
+              "components": ["liveness"]
             }
           }
         }
@@ -1933,9 +1959,7 @@
             "role": "emphasis",
             "use": "Ink opacity of content that stays readable but steps back while a guided walkthrough points at one region (a diff tour: every line outside the step). Reached as the resting value of an animated custom property, so the dim eases in rather than snapping.",
             "doNotUse": "Disabled controls (they take text.disabled), placeholder text, or hiding anything: dimmed content is still content and must stay legible. Never on the region being pointed at.",
-            "components": [
-              "tour-callout"
-            ],
+            "components": ["tour-callout"],
             "modes": {
               "light": 0.42,
               "dark": 0.38
@@ -2222,11 +2246,7 @@
             "role": "elevation",
             "use": "Four kit shells and nothing else: the toast card (owner ruling 2026-09-04, a corner-sized area), the popover family's opt-in glass material (2026-09-07/08), and the command palette's shell (2026-09-10), which holds the terminal repaint pause while it is up so the blur beneath it is computed once rather than on every PTY chunk. Dark mode blurs a little more because the lighter glass over near-black needs it to read as a pane.",
             "doNotUse": "Any scrim, drawer, menu, or full-width surface, and any modal other than the palette \u2014 blur over terminal panes re-samples every frame and was measured at ~10fps on a full-window scrim; the palette escapes that only by pausing the panes. The conformance lint pins glass to the four shells.",
-            "components": [
-              "toast",
-              "popover",
-              "command-palette"
-            ],
+            "components": ["toast", "popover", "command-palette"],
             "modes": {
               "light": "12px",
               "dark": "16px"
@@ -2243,11 +2263,7 @@
             "role": "elevation",
             "use": "The glass shells' ground: color-mix(bg.surface-raised, glass.opacity) over the blur. Where backdrop-filter is unsupported each falls back to solid bg.surface-raised.",
             "doNotUse": "Tinting any other surface translucent.",
-            "components": [
-              "toast",
-              "popover",
-              "command-palette"
-            ]
+            "components": ["toast", "popover", "command-palette"]
           }
         }
       },
@@ -2260,11 +2276,7 @@
             "role": "elevation",
             "use": "Paired with glass.blur in the glass shells' backdrop-filter. Dark mode boosts less: near-black grounds have little to saturate and over-boosting shows as colour fringing.",
             "doNotUse": "Anywhere glass.blur is not.",
-            "components": [
-              "toast",
-              "popover",
-              "command-palette"
-            ],
+            "components": ["toast", "popover", "command-palette"],
             "modes": {
               "light": 1.14,
               "dark": 1.08

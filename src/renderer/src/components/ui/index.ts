@@ -16,6 +16,7 @@ export { DiffStatPill } from './DiffStatPill'
 export { FrontTruncatedText, frontTruncate } from './FrontTruncatedText'
 export { Spinner } from './Spinner'
 export { WorkingEdge } from './WorkingEdge'
+export { AgentEdge, AgentPill, AGENT_TAB_CLASS, AGENT_TAB_RING_CLASS } from './AgentPresence'
 export { LifecycleGlyph, type LifecycleState } from './LifecycleGlyph'
 export { PullRequestGlyph } from './PullRequestGlyph'
 export {

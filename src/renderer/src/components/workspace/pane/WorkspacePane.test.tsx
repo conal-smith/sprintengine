@@ -76,6 +76,9 @@ const popOutRequests: unknown[] = []
 const activeNotes: Array<string | null> = []
 const apiTarget: Record<string, unknown> = {
   platform: 'win32',
+  // A subscription answers with its unsubscribe, as the preload's do: the
+  // agent pill reads the chats' file trail, which subscribes on mount.
+  onConversationEvent: () => () => {},
   browserNoteActive: (_workspaceId: string, tabId: string | null) => {
     activeNotes.push(tabId)
     return Promise.resolve()

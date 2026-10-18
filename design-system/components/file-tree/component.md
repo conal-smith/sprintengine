@@ -2,14 +2,19 @@
 
 A folder of files, as a tree: one 24px row per entry, indented by depth, a
 disclosure chevron on folders, a 16px glyph slot, the name in its git tint and
-a one-letter status. It is the Files tab in the workspace pane and the column
-beside the file in the editor window — the same rows in both, because two
-trees that drew their own rows would be two answers to "how far does a child
-indent" and "what does the selected row look like".
+a one-letter status. It is the Files tab in the workspace pane, the column
+beside the file in the editor window, and the file list beside the diff in the
+diff viewer — and it is **one tree** in all three, not three trees sharing a
+row. Two trees that drew their own rows would be two answers to "how far does a
+child indent" and "what does the selected row look like"; two trees with their
+own menus would be two answers to "what can I do with this file".
 
-What a tree lets you **do** with a row is the surface's decision, not the
-row's. The workspace tree renames, moves, drags and deletes; the editor
-window's tree only reads and opens. Neither changes how a row looks.
+What a row offers is the tree's decision, made once: the same right-click menu
+in every host, with an item left off only where it makes no sense for the
+entry (a deleted file has nothing on disk to open or rename) or where the host
+cannot do it (below). What differs between hosts is what a **click** means —
+select, in the Files tab; open the file, in the editor window; show its diff,
+in the diff viewer — and where the rows come from.
 
 **Why not `check-row --tree`.** [check-row](../check-row/component.md) is the
 pick-_and_-mark row: it spends its fifth element on a checkbox, because in the
@@ -17,8 +22,11 @@ Git changes list the tick is the index. A file tree marks nothing — picking a
 row is the whole interaction — so it has no box, and its rows can stay at four
 elements (chevron, glyph, name, status) under the ceiling without an amendment.
 
-In the app: `FileTreeRow`, `FileTreeRootRow`, `FileTreePinnedRow` and
-`FileTreeRows` in `src/renderer/src/components/ui/FileTree.tsx`.
+In the app: the rows are `FileTreeRow`, `FileTreeRootRow`, `FileTreePinnedRow`
+and `FileTreeRows` in `src/renderer/src/components/ui/FileTree.tsx`; the tree is
+`FileExplorerTree` in `src/renderer/src/components/panels/FileExplorer.tsx`,
+which the editor window (`EditorFileTree`) and the diff viewer (`DiffFileTree`)
+render inside their own bands.
 
 ## Anatomy
 
@@ -33,6 +41,7 @@ In the app: `FileTreeRow`, `FileTreeRootRow`, `FileTreePinnedRow` and
 | Glyph      | `.ds-file-tree-glyph`      | yes — the reserved 16px slot: the file's kind glyph, or the folder glyph                            |
 | Name       | `.ds-file-tree-name`       | yes — truncates from the end; tinted by git status (`--modified`, `--added`, `--deleted`)           |
 | Badge      | `.ds-file-tree-badge`      | no — display-only status letter: `A`, `M`, `R`, `D`, `!`                                            |
+| Meta       | `.ds-file-tree-meta`       | no — display-only trailing counts before the badge: the diff's `+N −N`, in the `diff.*` inks        |
 | Pinned     | `.ds-file-tree-pinned`     | no — the open file when it lies outside the root (below); `role="group"`, outside the tree          |
 | Agent      | `.ds-file-tree-agent`      | no — an agent at work on the row (below): the verb or count, then the agent's mark                  |
 
@@ -44,33 +53,38 @@ In the app: `FileTreeRow`, `FileTreeRootRow`, `FileTreePinnedRow` and
 - **Banded** — the editor window's tree: a band names the root and carries
   the view controls, and the first level of the tree is depth 0 with no row
   above it. The band is the root row's job done once, as chrome.
-- **Changed files** — a view of the banded tree, not a separate component:
-  only the files git reports as changed, with the folders between them and
-  the root synthesised from their paths. Nothing is read from disk to show
-  it.
+- **Filtered** — the tree with a filter applied, not a separate component:
+  exactly a given set of files, with the folders between them and the root
+  synthesised from their paths, open until the person closes one. Nothing is
+  read from disk to show it. The editor window's _Changed files_ is the files
+  git reports; the diff viewer's list is the files the diff holds — after an
+  agent's narrowing or a tour — one row per file even where the diff steps
+  through it twice (staged and unstaged), with the diff's own status letter
+  and `+N −N` rather than the working tree's.
 - `.ds-file-tree-row--folder` — a folder's name is set at `font.weight.medium`.
 - `.ds-file-tree-row--ignored` — a path the repository ignores: the whole row,
   glyph included, drops to `text.disabled`.
 
 ## States
 
-| State                      | Treatment                                                          |
-| -------------------------- | ------------------------------------------------------------------ |
-| Rest                       | `text.default`; the glyph in its kind hue                          |
-| Hover                      | `bg.hover`, name to `text.primary` — background only               |
-| Selected (tree has focus)  | `--selected`: `bg.selected` plus the 2px inset edge                |
-| Selected (focus elsewhere) | `--resting`: `bg.selected-resting`, no edge                        |
-| Multi-select companion     | `--resting` — the cursor row alone is `--selected`                 |
-| Expanded                   | chevron rotated 90°; `aria-expanded="true"`                        |
-| Loading                    | the spinner in the chevron's slot, once a listing passes 160ms     |
-| Drop target                | `bg.selected` plus a 1px accent ring (workspace tree only)         |
-| Agent reading              | `--agent-reading`: `agent-trail.soft` (workspace tree only)        |
-| Agent editing              | `--agent-editing`: `agent-trail.soft-strong` (workspace tree only) |
+| State                      | Treatment                                                      |
+| -------------------------- | -------------------------------------------------------------- |
+| Rest                       | `text.default`; the glyph in its kind hue                      |
+| Hover                      | `bg.hover`, name to `text.primary` — background only           |
+| Selected (tree has focus)  | `--selected`: `bg.selected` plus the 2px inset edge            |
+| Selected (focus elsewhere) | `--resting`: `bg.selected-resting`, no edge                    |
+| Multi-select companion     | `--resting` — the cursor row alone is `--selected`             |
+| Expanded                   | chevron rotated 90°; `aria-expanded="true"`                    |
+| Loading                    | the spinner in the chevron's slot, once a listing passes 160ms |
+| Drop target                | `bg.selected` plus a 1px accent ring (unfiltered tree only)    |
+| Agent reading              | `--agent-reading`: `agent-trail.soft`                          |
+| Agent editing              | `--agent-editing`: `agent-trail.soft-strong`                   |
 
 The two selection tiers are `patterns/selection` exactly. In the editor
-window the open file's row is selected; while Monaco has the keyboard it
-rests, and it takes the full fill and the edge only when the tree itself is
-being driven. Exactly one edge is ever on screen.
+window the open file's row is selected, and in the diff viewer the file on
+screen; while Monaco has the keyboard it rests, and it takes the full fill and
+the edge only when the tree itself is being driven. Exactly one edge is ever on
+screen.
 
 ### Outside the root
 
@@ -93,7 +107,8 @@ elsewhere) and _Copy path_.
 
 ### Agent trail
 
-While an agent works, the workspace tree shows where: the file it is reading
+While an agent works, the tree shows where — in every host, since "is an agent
+in this file?" does not change with the window it is asked in: the file it is reading
 or editing wears a violet wash, stronger for an edit, with the verb at the
 row's end (`.ds-file-tree-agent-verb`, _reading_ or _editing_). The file the
 agent is on right now also carries the agent's own mark after the verb: its
@@ -139,10 +154,24 @@ the folders between the root and the file, reading only the ones not already
 read, then selects the row and scrolls it to the nearest edge. It never scans
 the tree, and a tab switch that lands before the last one finished cancels it.
 
-**The tree that only reads writes nothing shared.** The editor window's tree
-keeps its own expanded folders, and its column's width and visibility live in
-that window's own storage — never in the workspace's remembered state, which
-belongs to the workspace tree.
+**Only the Files tab remembers for the workspace.** The editor window's and
+the diff viewer's trees keep their own open folders, and their columns' width
+and visibility live in their own storage — never in the workspace's
+remembered state, which is the Files tab's, so two trees on one workspace never
+fight over which folders are open.
+
+**A window that cannot write the workspace says so by leaving items out.** The
+editor window and the diff window are auxiliary windows; the workspace is not
+theirs to write. Their menus leave off _Mark directory as_, a rename carries
+that window's own tabs rather than the workspace's, and _View Git diff_ opens
+the diff window. Everything else — open, reveal, new, copy, paste, rename,
+delete, refresh, a module's actions — is the same menu.
+
+**The diff viewer's column is shown in the window and hidden in the pane.** The
+pane's Diff tab is the narrow right-hand column, where a tree beside a
+side-by-side diff leaves neither readable, and the band's file stepper already
+walks the list there; one press on the band's files switch shows it. Either
+host remembers the choice, and the column's width, for itself.
 
 **Rebuilding it in a framework:** what must survive is the fixed 24px pitch,
 the one glyph column (the leaf keeps the chevron's slot), the three colour
@@ -153,8 +182,12 @@ channels, the two selection tiers, and the one-tab-stop keyboard contract.
 - The tree is **one tab stop**. ↑/↓ move the selection, Home/End jump to the
   ends, → opens a folder (or steps into it when open), ← closes it (or steps
   to its parent), Enter opens a file or toggles a folder.
-- **Escape returns focus to the editor** in the editor window, and must not
-  reach the window's own Escape (which closes it).
+- **Escape returns focus to the editor** in the editor window (to the diff, in
+  the diff viewer), and must not reach the window's own Escape (which closes
+  it). The diff viewer's own arrow keys stand back while the tree has focus.
+- A plain click or Enter on a file does the host's thing (open it, show its
+  diff); a modifier click still extends the selection, and a double click
+  opens the file in an editor.
 - Every row carries `aria-level`; folders carry `aria-expanded`; the selected
   row carries `aria-selected="true"`. The chevron is `tabindex="-1"` — the
   keyboard reaches folders through the tree, not through the chevron.

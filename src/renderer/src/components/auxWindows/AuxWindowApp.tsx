@@ -5,6 +5,7 @@ import { useAppTheme } from '../../hooks/useAppTheme'
 import { followStoredSettings } from './auxSettingsWrite'
 import { writeAuxWindowBounds } from './auxWindowPlacement'
 import { InlineNotice, Spinner } from '../ui'
+import { ToastRegion } from '../ui/ToastRegion'
 
 // Each window body is only ever needed by the one kind of aux window that shows
 // it, and the workspace window shares this bundle without showing any of them,
@@ -161,6 +162,7 @@ export default function AuxWindowApp() {
           focusSide={params.revealSide === 'original' ? 'original' : 'modified'}
           revealKey={params.revealKey ?? null}
         />
+        <ToastRegion />
       </Suspense>
     )
   }
@@ -184,6 +186,10 @@ export default function AuxWindowApp() {
   return (
     <Suspense fallback={<AuxLoading />}>
       <ExternalEditorWindow incoming={incoming} nonce={retargetNonce} />
+      {/* The diff and editor windows carry the workspace's Files tree, whose
+          menu reports a failed rename or delete as a toast — so they hold the
+          one region a toast lands in, as a popped-out pane does. */}
+      <ToastRegion />
     </Suspense>
   )
 }

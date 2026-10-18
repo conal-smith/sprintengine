@@ -18,6 +18,10 @@ import { configureMonacoLanguages } from '../../utils/patchLanguage'
 import { TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET } from '../workspace/AppTitleBar'
 import { WindowCloseButton } from '../workspace/WindowControls'
 import {
+  AGENT_TAB_CLASS,
+  AGENT_TAB_RING_CLASS,
+  AgentEdge,
+  AgentPill,
   CloseIconButton,
   EmptyState,
   GhostButton,
@@ -37,6 +41,8 @@ import {
   type ExternalFileTab,
 } from './externalEditorFile'
 import { EditorFileTree } from './EditorFileTree'
+import { useAgentFileTrail } from '../panels/useAgentFileTrail'
+import { normalizePathKey } from '../../hooks/useGitStatus'
 import {
   EDITOR_TREE_DEFAULT_WIDTH,
   EDITOR_TREE_MAX_WIDTH,
@@ -47,7 +53,7 @@ import {
   type EditorTreePrefs,
 } from './editorTreePrefs'
 import { startColumnResizeDrag } from '../workspace/columnResizeDrag'
-import { splitTreePath } from '../../utils/fileTreeEntries'
+import { movedTreePath, splitTreePath } from '../../utils/fileTreeEntries'
 import { isLetterKey } from '../../utils/keyboard'
 import {
   applyDiskContentToEditor,
@@ -309,6 +315,12 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
   }, [nonce])
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null
+  // The files an agent in this workspace is reading or editing, as the Files
+  // tree marks them: their tabs wear the agent pill, and the editor showing
+  // one wears the agent edge.
+  const agentTrail = useAgentFileTrail(activeTab?.workspaceId ?? tabs[0]?.workspaceId ?? '', null)
+  const agentHere = (path: string): boolean => agentTrail.marks.has(normalizePathKey(path))
+  const activeAgentHere = activePath !== null && agentHere(activePath)
   const treeRoot = useTreeRoot(activeTab)
 
   const updateTreePrefs = useCallback((next: EditorTreePrefs) => {
@@ -565,10 +577,13 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
         <div className="flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto">
           {tabs.map((tab) => {
             const selected = tab.path === activePath
+            const agent = agentHere(tab.path)
             return (
               <div
                 key={tab.path}
                 className={`app-no-drag group/tab flex h-[28px] min-w-0 shrink-0 items-center gap-1.5 self-center rounded-md px-2 text-meta transition-colors ${
+                  agent ? `${selected ? AGENT_TAB_RING_CLASS : AGENT_TAB_CLASS} ` : ''
+                }${
                   selected
                     ? // The neutral selected fill, as every other selection: the
                       // raised surface it used was the strip's own ground in the
@@ -582,10 +597,16 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
                       and this is one of the two targets inside it. Its ring is
                       inset, which the scrolling strip needs — an outset one at
                       either end is clipped by the overflow container. */}
-                  <RowButton density="flush" onClick={() => setActivePath(tab.path)} className="max-w-[200px]">
+                  <RowButton
+                    density="flush"
+                    onClick={() => setActivePath(tab.path)}
+                    className="max-w-[200px]"
+                    aria-label={agent ? `${tab.name}: an agent is using this` : undefined}
+                  >
                     <span className="min-w-0 truncate">{tab.name}</span>
                   </RowButton>
                 </Tooltip>
+                {agent ? <AgentPill /> : null}
                 <span
                   className={`inline-flex size-control-xs shrink-0 items-center justify-center ${
                     isDirty(buffers[tab.path])
@@ -646,10 +667,29 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
           >
             <EditorFileTree
               rootPath={treeRoot}
+              workspaceId={activeTab?.workspaceId ?? null}
               outsideLabel={activeTab?.rootPath ? 'Outside this workspace' : 'Outside this folder'}
               activePath={activePath}
               onOpenFile={openFromTree}
               onReturnFocus={returnFocusToEditor}
+              // A rename or move from the tree's menu: this window's tabs, and
+              // what they hold, follow the file to where it went — the
+              // workspace window's own tabs are its business, not this one's.
+              onPathMoved={(fromPath, toPath) => {
+                const move = (path: string) => movedTreePath(path, fromPath, toPath)
+                const rekey = <T,>(record: Record<string, T>): Record<string, T> =>
+                  Object.fromEntries(Object.entries(record).map(([path, value]) => [move(path), value]))
+                setTabs((prev) =>
+                  prev.map((tab) =>
+                    move(tab.path) === tab.path
+                      ? tab
+                      : { ...tab, path: move(tab.path), name: splitTreePath(move(tab.path)).name },
+                  ),
+                )
+                setBuffers(rekey)
+                setDiskNotices(rekey)
+                setActivePath((current) => (current ? move(current) : current))
+              }}
             />
             {/* Drag the right edge to resize — the side-pane's resizable
                 variant, with the workspace columns' drag underneath. */}
@@ -765,6 +805,7 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
                 landActive()
               },
             )}
+            {activeAgentHere ? <AgentEdge /> : null}
           </div>
         </div>
       </div>
