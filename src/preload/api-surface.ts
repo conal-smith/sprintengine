@@ -30,6 +30,7 @@ import { credentialApi } from './api/credential'
 import { designSystemApi } from './api/design-system'
 import { filesystemApi } from './api/filesystem'
 import { gitApi } from './api/git'
+import { artifactsApi } from './api/artifacts'
 import { marketplaceApi } from './api/marketplace'
 import { hostedSourcesFeedApi } from './api/hosted-sources-feed'
 import { hostedCardFeedApi } from './api/hosted-card-feed'
@@ -86,6 +87,7 @@ export const apiModules = {
   ...startupApi,
   ...buildStampApi,
   ...appearanceApi,
+  ...artifactsApi,
   ...authApi,
   ...automationApi,
   ...studioLocalAppsApi,

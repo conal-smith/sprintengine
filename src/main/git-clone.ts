@@ -36,6 +36,21 @@ const TOKEN_CREDENTIAL_HELPER =
   `!f() { h=; while IFS= read -r l; do [ "$l" = "host=$${TOKEN_HOST_ENV_VAR}" ] && h=1; [ -z "$l" ] && break; done; ` +
   `[ "$h" = "1" ] && printf "username=x-access-token\\npassword=%s\\n" "$${TOKEN_ENV_VAR}"; :; }; f`
 
+/**
+ * What a git command needs to sign in to one https host with a token: the
+ * arguments that put the helper above in place, and the environment it reads
+ * the token from. The empty helper comes first: it clears inherited helpers
+ * (osxkeychain, manager) so a stale stored credential cannot shadow the token.
+ * `host` is the host as git names it in a credential request (with its port,
+ * when the URL has one).
+ */
+export function tokenCredentialGit(host: string, token: string): { args: string[]; env: Record<string, string> } {
+  return {
+    args: ['-c', 'credential.helper=', '-c', `credential.helper=${TOKEN_CREDENTIAL_HELPER}`],
+    env: { [TOKEN_ENV_VAR]: token, [TOKEN_HOST_ENV_VAR]: host },
+  }
+}
+
 // Public hosts that are certainly not a GitHub server: `gh` has no sign-in
 // for them, so it is not asked. Any other https host may be a company's own
 // GitHub under a name of its choosing, and `gh auth token --hostname` is the
@@ -373,11 +388,9 @@ export async function cloneRepository(
   const args = ['clone', '--progress']
   const credential = await tokenFor(source, deps)
   if (credential) {
-    env[TOKEN_ENV_VAR] = credential.token
-    env[TOKEN_HOST_ENV_VAR] = credential.host
-    // The empty helper first: it clears inherited helpers (osxkeychain,
-    // manager) so a stale stored credential cannot shadow the token.
-    args.unshift('-c', 'credential.helper=', '-c', `credential.helper=${TOKEN_CREDENTIAL_HELPER}`)
+    const signIn = tokenCredentialGit(credential.host, credential.token)
+    Object.assign(env, signIn.env)
+    args.unshift(...signIn.args)
   }
   if (branch) args.push('--branch', branch)
   args.push('--', source.url, target)

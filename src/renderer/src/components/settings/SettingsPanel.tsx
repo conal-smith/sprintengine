@@ -47,6 +47,7 @@ import { ProviderSettingsTab } from './ProviderSettingsTab'
 import { MachinesSettingsTab } from './MachinesSettingsTab'
 import { SettledChatsSettingsTab } from './SettledChatsSettingsTab'
 import { WorktreesSettingsTab } from './WorktreesSettingsTab'
+import { ArtifactsSettingsTab } from './ArtifactsSettingsTab'
 import { AgentClisSection, AgentsMachineSwitcher, useAgentCliRuns } from './AgentClisSection'
 import { ConversationApprovalSettings } from './ConversationApprovalSettings'
 import { FollowUpBehaviorSetting } from './FollowUpBehaviorSetting'
@@ -96,6 +97,7 @@ import {
   MachinesSettingsIcon,
   SettledChatsSettingsIcon,
   WorktreesSettingsIcon,
+  ArtifactsSettingsIcon,
 } from '../AppIcons'
 import { AccountAvatar } from '../workspace/AccountAvatar'
 import { GlobalSurfaceShell } from '../workspace/globalSurface/GlobalSurfaceShell'
@@ -151,6 +153,7 @@ type SettingsTabId =
   | 'providers'
   | 'machines'
   | 'worktrees'
+  | 'artifacts'
   | 'knowledge-graph'
   | 'design-system'
   | 'remote'
@@ -181,6 +184,8 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: SettingsTabI
   // Every worktree the agents work in and the pool they come from (owner,
   // 2026-10-05): where each is, who has it, what it costs on disk.
   { id: 'worktrees', label: 'Worktrees', icon: WorktreesSettingsIcon },
+  // Where agents publish the pages they make, to open from any device.
+  { id: 'artifacts', label: 'Artifacts', icon: ArtifactsSettingsIcon },
   // Covers both groups on the page (the VCS itself, then the hosting provider),
   // so the label is the subject rather than one of the two rows. The tab *id*
   // stays 'github' — it is a persisted deep-link target (menus, module routes).
@@ -200,7 +205,7 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: SettingsTabI
 // sections render after these under the trailing 'extensions' group.
 const settingsTabGroups: Array<{ label: string; ids: SettingsTabId[] }> = [
   { label: 'app', ids: ['general', 'profile', 'appearance', 'shortcuts', 'settled-chats'] },
-  { label: 'agents', ids: ['agents', 'providers', 'machines', 'worktrees'] },
+  { label: 'agents', ids: ['agents', 'providers', 'machines', 'worktrees', 'artifacts'] },
   { label: 'workspace', ids: ['github', 'trackers', 'knowledge-graph', 'design-system', 'modules'] },
   { label: 'companion', ids: ['remote'] },
 ]
@@ -240,6 +245,7 @@ function isSettingsTabId(value: unknown): value is SettingsTabId {
     value === 'providers' ||
     value === 'machines' ||
     value === 'worktrees' ||
+    value === 'artifacts' ||
     value === 'knowledge-graph' ||
     value === 'design-system' ||
     value === 'remote'
@@ -1659,6 +1665,8 @@ export default function SettingsPanel({
       {activeSettingsTab === 'settled-chats' ? <SettledChatsSettingsTab onOpenChat={openSettledChat} /> : null}
 
       {activeSettingsTab === 'worktrees' ? <WorktreesSettingsTab onOpenChat={openSettledChat} /> : null}
+
+      {activeSettingsTab === 'artifacts' ? <ArtifactsSettingsTab /> : null}
 
       {activeSettingsTab === 'modules' ? <ModulesSettingsTab /> : null}
 

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-studio-artifacts-site="1">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="generator" content="SprintEngine Studio" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>Artifact</title>
+    <link rel="stylesheet" href="../../assets/site.css" />
+    <script src="../../assets/viewer.js" defer></script>
+  </head>
+  <body>
+    <div class="viewer">
+      <header class="viewer-header">
+        <a class="back" href="../../" title="Back to the gallery">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M10 3.5 5.5 8l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="label">Gallery</span>
+        </a>
+        <div class="viewer-title">
+          <h1 id="title">Loading…</h1>
+          <div class="chips" id="tags"></div>
+        </div>
+        <div class="viewer-actions">
+          <label class="visually-hidden" for="version">Version</label>
+          <select id="version" hidden></select>
+          <a class="commit" id="commit" hidden target="_blank" rel="noopener"></a>
+          <a class="open-alone" id="alone" hidden title="Open the page without this header">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M9 2.5h4.5V7M13.25 2.75 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="label">Open alone</span>
+          </a>
+        </div>
+      </header>
+      <iframe class="viewer-frame" id="frame" title="Artifact" hidden></iframe>
+      <div class="viewer-missing" id="missing" hidden></div>
+    </div>
+  </body>
+</html>

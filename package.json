@@ -124,6 +124,13 @@
         ]
       },
       {
+        "from": "resources/artifacts-site",
+        "to": "artifacts-site",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "packages/module-sdk/templates",
         "to": "sdk-templates",
         "filter": [
