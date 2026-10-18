@@ -851,6 +851,24 @@ export function WorktreesSettingsIcon({ className }: IconProps) {
   )
 }
 
+// A page with a picture on it, pinned up: the Artifacts tab is where the pages
+// agents make are published for opening anywhere.
+export function ArtifactsSettingsIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="3.5" width="16" height="17" rx="2" stroke="currentColor" strokeWidth={iconStroke} />
+      <path
+        d="M4 15.5l4.2-4.2a1.5 1.5 0 0 1 2.1 0L15 16m-1.5-1.5 1.7-1.7a1.5 1.5 0 0 1 2.1 0L20 15.5"
+        stroke="currentColor"
+        strokeWidth={iconStroke}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M8 7.5h5" stroke="currentColor" strokeWidth={iconStroke} strokeLinecap="round" />
+    </svg>
+  )
+}
+
 // A screen with a prompt in it: the Machines tab is about the machines on THIS
 // computer that run a workspace's shells (this PC, and its WSL distributions).
 export function MachinesSettingsIcon({ className }: IconProps) {

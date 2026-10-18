@@ -13,9 +13,20 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
  * server's: its family is, and no offer may shadow a family the server serves.
  * It starts its terminal through `ShellBridge.terminals`. The worktree pool's
  * `worktree` family is the shell's too: main keeps the pool, and a pool driven
- * from two processes would race over its slots.
+ * from two processes would race over its slots. So is `artifacts`: a publish
+ * reads the page from this machine's disk and signs in with its credentials,
+ * and its clone of the site is one main keeps.
  */
-export const SHELL_TOOLSETS = ['browser', 'canvas', 'editor', 'tour', 'terminal', 'agent', 'worktree'] as const
+export const SHELL_TOOLSETS = [
+  'browser',
+  'canvas',
+  'editor',
+  'tour',
+  'terminal',
+  'agent',
+  'worktree',
+  'artifacts',
+] as const
 
 /** Whether a gateway tool is one the shell offers, out of process, and not the server's. */
 export function isShellToolName(name: string): boolean {

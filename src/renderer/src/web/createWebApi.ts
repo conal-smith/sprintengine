@@ -147,6 +147,9 @@ const browserEmptyStates = {
   // Nor a machine of its own to keep awake: the desktop's agents are the desktop's.
   getKeepAwake: async () => null,
   setKeepAwake: async () => null,
+  // Nor the desktop's disk and credentials to publish an artifact with.
+  getArtifactsSettings: async () => null,
+  setUpArtifacts: async () => null,
   // Third-party renderer modules are off on the web unless the owner turns
   // them on for this server (R61); bundled modules load from the bundle.
   listThirdPartyRendererEntries: async () => ({ entries: [], failures: {} }),

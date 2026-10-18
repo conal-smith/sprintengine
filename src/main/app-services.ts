@@ -129,6 +129,7 @@ import { syncStudioMcpConfig } from './studio-mcp-sync'
 import { STUDIO_MCP_SERVER_ID, STUDIO_MCP_SERVER_NAME } from '../shared/product-identity'
 import { excludeMcpConfigFromWorktree } from './git'
 import { createWorktreeServices } from './worktree-services'
+import { createArtifactsServices } from './artifacts-services'
 import { createConversationPeekService } from './conversation-peek/service'
 import { chatHandoffStart, createConversationTerminalHandoff } from './conversation-terminal-handoff'
 import { createAgentPromptStore, registeredAgentOwners } from './agent-prompt-store'
@@ -1624,6 +1625,12 @@ export function createAppServices(
     liveWorkPaths,
     workspaceSyncService,
   })
+  // Settings ▸ Artifacts and the `artifacts.*` tools. Main serves them in
+  // process and out, as it does `worktree.*`: the pages are this machine's
+  // files, and publishing signs in with this machine's credentials.
+  const { artifactsSettingsStore, artifactsTools, setUpArtifacts, artifactsSetupConsent } = createArtifactsServices({
+    githubTokenStore,
+  })
 
   const canvasSubscribers = createCanvasSubscriberRegistry()
   const canvasService = createCanvasService({
@@ -1847,6 +1854,7 @@ export function createAppServices(
           // Remote-control configuration, local socket only: the listener refuses
           // this whole family regardless of a device's scopes (tailnet-scopes.ts).
           worktree: worktreeTools,
+          artifacts: artifactsTools,
           tailnet: createTailnetTools({ resolveTailnet: () => tailnetToolsFrontDoor }),
         }),
       })
@@ -1945,6 +1953,7 @@ export function createAppServices(
             { name: 'editor', registrations: editorTools },
             { name: 'tour', registrations: tourTools },
             { name: 'worktree', registrations: worktreeTools },
+            { name: 'artifacts', registrations: artifactsTools },
             ...shellTerminalToolsets(
               createServerGatewayBackends({
                 getWorkspaceSyncSnapshot: () => workspaceSyncService.getSnapshot(),
@@ -2297,6 +2306,9 @@ export function createAppServices(
     canvasService,
     canvasSubscribers,
     worktreePool,
+    artifactsSettingsStore,
+    setUpArtifacts,
+    artifactsSetupConsent,
     liveWorkPaths,
     dependencyInstaller,
     automationService,
