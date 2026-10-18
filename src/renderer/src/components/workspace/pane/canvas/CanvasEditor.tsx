@@ -31,7 +31,7 @@ import type {
 import { sceneVersionHash } from '../../../../../../shared/canvas/merge'
 import { CANVAS_DEFAULT_BACKGROUND, reduceAppState } from '../../../../../../shared/canvas/scene-file'
 import type { ColorScheme } from '../../../../types/appTheme'
-import { Badge } from '../../../ui'
+import { AgentPill } from '../../../ui'
 import {
   bufferCanvasPush,
   canApplyBufferedPush,
@@ -687,9 +687,11 @@ export default function CanvasEditor({
         // beside the collaborator avatars and the Library button, and it will
         // squeeze anything that lets it — which turned the pill into a sliver
         // with its own label hanging out of it.
-        <Badge tone="accent" ariaLabel="An agent is drawing on this board" className="shrink-0 whitespace-nowrap">
-          Agent
-        </Badge>
+        // The agent violet, as on the tab and round the surface (ui/AgentPresence.tsx).
+        <span className="inline-flex shrink-0 whitespace-nowrap">
+          <span className="sr-only">An agent is drawing on this board</span>
+          <AgentPill />
+        </span>
       ) : null,
     [presence?.controller],
   )

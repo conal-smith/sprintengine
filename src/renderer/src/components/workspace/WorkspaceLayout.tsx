@@ -56,7 +56,9 @@ import { rememberClosedLayoutTab } from '../../utils/recentlyClosedTabs'
 import { getHighlightSwatch } from '../../utils/highlight'
 import { resolveWorkspaceWorktree } from '../../utils/workspaceWorktree'
 import { ChatGlyph } from '../AppIcons'
-import { MachineGlyph } from '../ui'
+import { AgentPill, MachineGlyph } from '../ui'
+import { useAgentFileTrail } from '../panels/useAgentFileTrail'
+import { normalizePathKey } from '../../hooks/useGitStatus'
 import { resolveMachineIdentity, type MachineIdentity } from '../../../../shared/machine-identity'
 import { distroOfHostId, isWslHostId } from '../../../../shared/execution-host'
 import { useMachineIdentity, useWorkspaceMachineRef } from '../../hooks/useMachineIdentity'
@@ -444,6 +446,9 @@ function WorkspaceLayoutBody({
   const editorOpenFiles = useWorkspaceStore(
     (s) => s.workspaces.find((w) => w.id === workspaceId)?.editorState?.openFiles ?? EMPTY_OPEN_FILES,
   )
+  // Files an agent in this workspace is reading or editing, as the Files tree
+  // marks them: an editor tab on one wears the agent pill.
+  const agentFileTrail = useAgentFileTrail(workspaceId, null)
   // Worktree-backed workspace (a worktree opened as a workspace). The branch
   // glyph is workspace-level on the tabs below: every
   // terminal/agent tab earns it when the workspace is worktree-backed, because
@@ -1315,9 +1320,16 @@ function WorkspaceLayoutBody({
       if (node.getComponent() === 'file-editor') {
         const config = node.getConfig() as { filePath?: string } | undefined
         const file = editorOpenFiles.find((openFile) => openFile.path === config?.filePath)
+        const agentHere = config?.filePath ? agentFileTrail.marks.has(normalizePathKey(config.filePath)) : false
         renderValues.content = (
           <span className="inline-flex min-w-0 items-center gap-1">
             {tabContent}
+            {agentHere ? (
+              <>
+                <span className="sr-only">, an agent is using this</span>
+                <AgentPill />
+              </>
+            ) : null}
             {file?.isDirty && (
               <span
                 className="shrink-0 text-[color:var(--tone-warn)]"
@@ -1688,6 +1700,7 @@ function WorkspaceLayoutBody({
       )
     },
     [
+      agentFileTrail,
       commitRename,
       editorOpenFiles,
       hideTab,

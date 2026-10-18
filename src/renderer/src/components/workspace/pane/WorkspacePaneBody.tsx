@@ -12,10 +12,11 @@ import { defaultDiffChangelistId } from '../../../utils/diffChangelistDefault'
 import { paneKindRetainsPanel } from './paneKinds'
 import { FloatingPlayerChrome, useFloatRect } from './FloatingPlayer'
 import { clientSupports } from '../../../clientCapabilities'
-import { EmptyState, OpenInWindowGlyph, OutlineButton, PrimaryButton } from '../../ui'
+import { AgentEdge, EmptyState, OpenInWindowGlyph, OutlineButton, PrimaryButton } from '../../ui'
 import { bringBackPaneTab, showPanePopOut } from './popout/panePopOutHost'
 import { paneTabLabel } from './paneTabItem'
 import { useRecordingTabIds } from './browser/recordingTabs'
+import { useAgentPresentTabIds } from './agentPresence'
 
 // The pane's content region: one layer per tab that needs to stay mounted
 // (terminal, browser, canvas) plus the active tab. Inactive retained layers are
@@ -373,6 +374,7 @@ export function WorkspacePaneBody({
   const floatingTab = tabs.find((tab) => tab.floating && paneKindFloats(tab.kind)) ?? null
   const floatRect = useFloatRect(workspaceId, floatingTab)
   const recordingTabIds = useRecordingTabIds()
+  const agentPresentTabIds = useAgentPresentTabIds(workspaceId, tabs)
   return (
     <>
       {tabs.map((tab) => {
@@ -453,6 +455,11 @@ export function WorkspacePaneBody({
                 />
               </React.Suspense>
             )}
+            {!poppedOut && agentPresentTabIds.has(tab.id) ? (
+              // The panel an agent is driving or drawing in, outlined in the
+              // violet its tab's pill wears (agentPresence.ts).
+              <AgentEdge />
+            ) : null}
           </div>
         )
       })}

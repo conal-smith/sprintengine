@@ -40,6 +40,7 @@ vi.mock('../store/toastStore', () => ({
 const { ensureChatWorktree } = await import('./chatWorktreeRestore')
 
 const CONTAINER = '/Users/dev/.sprintengine-worktrees/app'
+const SLOT_STEM = 'app'
 const originalWindow = (globalThis as { window?: unknown }).window
 
 type Answer = { ok: boolean; message?: string; definitive?: true } | Error
@@ -263,18 +264,26 @@ test('with no prefix, an unmarked settled chat on an unprefixed branch is not re
 test('an unmarked settled chat in a pool slot asks main even with its folder there: the slot may be another chat’s', async () => {
   state.workspaces = [
     { id: 'pooled', folderPath: `${CONTAINER}/pool-03`, worktree: { branch: 'agent/pooled' }, settledAt: 1 },
+    { id: 'named', folderPath: `${CONTAINER}/${SLOT_STEM}-04`, worktree: { branch: 'agent/named' }, settledAt: 1 },
     { id: 'own', folderPath: `${CONTAINER}/own`, worktree: { branch: 'agent/own' }, settledAt: 1 },
   ]
-  const restores = stubApi(new Set([`${CONTAINER}/pool-03`, `${CONTAINER}/own`]), () => ({
-    ok: false,
-    message: `The worktree this chat used at ${CONTAINER}/pool-03 has since been given to another agent (agent/other).`,
-  }))
+  const restores = stubApi(
+    new Set([`${CONTAINER}/pool-03`, `${CONTAINER}/${SLOT_STEM}-04`, `${CONTAINER}/own`]),
+    () => ({
+      ok: false,
+      message: `The worktree this chat used at ${CONTAINER}/pool-03 has since been given to another agent (agent/other).`,
+    }),
+  )
   assert.equal(await ensureChatWorktree('own'), true)
   assert.equal(restores.length, 0)
   assert.equal(await ensureChatWorktree('pooled'), false)
+  assert.equal(await ensureChatWorktree('named'), false, 'a slot named after its project is a slot too')
   assert.deepEqual(
     restores.map((input) => input.path),
-    [`${CONTAINER}/pool-03`],
+    [`${CONTAINER}/pool-03`, `${CONTAINER}/${SLOT_STEM}-04`],
   )
-  assert.deepEqual(missing, [['pooled', true]])
+  assert.deepEqual(missing, [
+    ['pooled', true],
+    ['named', true],
+  ])
 })

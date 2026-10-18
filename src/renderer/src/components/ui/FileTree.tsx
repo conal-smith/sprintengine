@@ -9,12 +9,13 @@ import { folderRoleInk, type FolderRole } from '../../utils/folderRoles'
 //
 // Spec: design-system/components/file-tree/component.md.
 //
-// One row vocabulary for every tree in the product: the workspace pane's Files
-// tree, which renames and moves and drags, and the editor window's tree, which
-// only reads and opens. What a row IS lives here — the indent, the disclosure
-// chevron, the 16px glyph slot, the name in its git tint, the status letter,
-// the two selection tiers — and what a row DOES stays with the tree that
-// renders it, passed through as ordinary DOM props. A second tree that drew
+// One row vocabulary for every tree in the product — and one tree, too
+// (panels/FileExplorer.tsx → FileExplorerTree), which the workspace pane's
+// Files tab, the editor window's column and the diff viewer's file list all
+// render. What a row IS lives here — the indent, the disclosure chevron, the
+// 16px glyph slot, the name in its git tint, the status letter, the two
+// selection tiers — and what a row DOES stays with the tree that renders it,
+// passed through as ordinary DOM props. A second tree that drew
 // its own rows would be a second answer to "how far does a child indent" and
 // "what does the selected row look like", and those drift.
 
@@ -157,6 +158,12 @@ export type FileTreeRowProps = {
   nameClassName?: string
   /** The one-letter git status, trailing. Display only. */
   badge?: string | null
+  /**
+   * Trailing text before the badge, for a tree that knows more about a file
+   * than its status: the diff's `+N −N`. Display only, and the same micro
+   * size as the badge, so it never makes the row taller.
+   */
+  meta?: React.ReactNode
   /** A whole-row wash class for a role the person declared (`rowWashClass`). */
   washClassName?: string
   /** A folder's declared role, which inks its mark. */
@@ -181,6 +188,7 @@ export function FileTreeRow({
   ignored = false,
   nameClassName = '',
   badge = null,
+  meta = null,
   washClassName = '',
   folderRole = null,
   agentMark = null,
@@ -292,9 +300,12 @@ export function FileTreeRow({
           ) : null}
         </span>
       ) : null}
+      {meta ? (
+        <span className={`${agent ? '' : 'ml-auto '}flex shrink-0 items-center text-micro leading-4`}>{meta}</span>
+      ) : null}
       {badge ? (
         <span
-          className={`${agent ? '' : 'ml-auto '}shrink-0 font-mono text-micro font-semibold text-current opacity-80`}
+          className={`${agent || meta ? '' : 'ml-auto '}shrink-0 font-mono text-micro font-semibold text-current opacity-80`}
         >
           {badge}
         </span>

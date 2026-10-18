@@ -1,5 +1,5 @@
 // The editor window's file tree remembers two things about itself: whether it
-// is showing, and how wide it is. They belong to that window, so they live in
+// is showing, and how wide it is (the diff viewer's file column, the same). They belong to that window, so they live in
 // its own localStorage key — exactly as the window's placement does
 // (auxWindowPlacement.ts) — and never in the shared settings envelope. An aux
 // window writing the envelope would push the snapshot it opened with over
@@ -39,28 +39,51 @@ function defaultStorage(): StorageLike | null {
   }
 }
 
-export function readEditorTreePrefs(storage: StorageLike | null = defaultStorage()): EditorTreePrefs {
+/**
+ * The diff viewer's file column keeps the same two facts, under a key per host:
+ * the diff window's, and the pane's Diff tab's. The pane's starts hidden — it
+ * is the narrow right-hand column, where a tree beside a side-by-side diff
+ * would leave neither readable — and the window's starts shown, like the
+ * editor window's.
+ */
+export const DIFF_WINDOW_TREE_PREFS_KEY = 'sprintengine.auxWindow.diff.tree'
+export const DIFF_PANE_TREE_PREFS_KEY = 'sprintengine.pane.diff.tree'
+
+export function readTreeColumnPrefs(
+  key: string,
+  defaults: EditorTreePrefs,
+  storage: StorageLike | null = defaultStorage(),
+): EditorTreePrefs {
   try {
-    const raw = storage?.getItem(EDITOR_TREE_PREFS_KEY)
-    if (!raw) return DEFAULT_EDITOR_TREE_PREFS
+    const raw = storage?.getItem(key)
+    if (!raw) return defaults
     const parsed = JSON.parse(raw) as Partial<EditorTreePrefs> | null
     return {
-      visible: typeof parsed?.visible === 'boolean' ? parsed.visible : DEFAULT_EDITOR_TREE_PREFS.visible,
-      width: typeof parsed?.width === 'number' ? clampEditorTreeWidth(parsed.width) : EDITOR_TREE_DEFAULT_WIDTH,
+      visible: typeof parsed?.visible === 'boolean' ? parsed.visible : defaults.visible,
+      width: typeof parsed?.width === 'number' ? clampEditorTreeWidth(parsed.width) : defaults.width,
     }
   } catch {
-    return DEFAULT_EDITOR_TREE_PREFS
+    return defaults
   }
 }
 
-export function writeEditorTreePrefs(prefs: EditorTreePrefs, storage: StorageLike | null = defaultStorage()): void {
+export function writeTreeColumnPrefs(
+  key: string,
+  prefs: EditorTreePrefs,
+  storage: StorageLike | null = defaultStorage(),
+): void {
   try {
-    storage?.setItem(
-      EDITOR_TREE_PREFS_KEY,
-      JSON.stringify({ visible: prefs.visible, width: clampEditorTreeWidth(prefs.width) }),
-    )
+    storage?.setItem(key, JSON.stringify({ visible: prefs.visible, width: clampEditorTreeWidth(prefs.width) }))
   } catch {
     // Best-effort: a quota or serialization failure means the next window
     // opens with the defaults.
   }
+}
+
+export function readEditorTreePrefs(storage: StorageLike | null = defaultStorage()): EditorTreePrefs {
+  return readTreeColumnPrefs(EDITOR_TREE_PREFS_KEY, DEFAULT_EDITOR_TREE_PREFS, storage)
+}
+
+export function writeEditorTreePrefs(prefs: EditorTreePrefs, storage: StorageLike | null = defaultStorage()): void {
+  writeTreeColumnPrefs(EDITOR_TREE_PREFS_KEY, prefs, storage)
 }

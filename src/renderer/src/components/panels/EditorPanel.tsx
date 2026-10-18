@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import MonacoEditor, { OnMount } from '@monaco-editor/react'
 import type * as Monaco from 'monaco-editor'
 import { useWorkspaceStore } from '../../store/workspaceStore'
-import { getGitEntry, useGitStatus } from '../../hooks/useGitStatus'
+import { getGitEntry, normalizePathKey, useGitStatus } from '../../hooks/useGitStatus'
+import { useAgentFileTrail } from './useAgentFileTrail'
 import { getGitLineChanges, type GitLineChange } from '../../utils/gitDiff'
 import { renderMarkdown } from '../../utils/markdown'
 import { isImageFile } from '../../utils/files'
@@ -37,6 +38,7 @@ import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
 import {
+  AgentEdge,
   ContextMenu,
   EmptyState,
   IconButton,
@@ -127,6 +129,10 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
 
   const openFiles = editorState?.openFiles ?? []
   const activeFilePath = filePath ?? editorState?.activeFilePath ?? null
+  // An agent in this workspace reading or editing the file, as the Files tree
+  // marks it: the editor wears the agent edge, its tab the pill.
+  const agentTrail = useAgentFileTrail(workspaceId, null)
+  const agentHere = activeFilePath !== null && agentTrail.marks.has(normalizePathKey(activeFilePath))
   const activeFile = openFiles.find((f) => f.path === activeFilePath)
   const isImage = Boolean(activeFilePath && activeFile && isImageFile(activeFile.path || activeFile.name))
   const activeFileHasRuntimeBuffer = activeFilePath ? hasEditorBuffer(workspaceId, activeFilePath) : false
@@ -888,6 +894,7 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
             />
           </div>
         )}
+        {agentHere ? <AgentEdge /> : null}
       </div>
       {editorMenu ? (
         <ContextMenu

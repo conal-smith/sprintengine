@@ -40,7 +40,9 @@ beforeAll(() => {
   anyGlobal.MouseEvent = dom.window.MouseEvent
   anyGlobal.IS_REACT_ACT_ENVIRONMENT = true
   ;(dom.window as unknown as Record<string, unknown>).api = new Proxy(
-    { platform: 'darwin' } as Record<string, unknown>,
+    // A subscription answers with its unsubscribe, as the preload's do: the
+    // agent pill reads the chats' file trail, which subscribes on mount.
+    { platform: 'darwin', onConversationEvent: () => () => {} } as Record<string, unknown>,
     {
       get: (target, key: string) => (key in target ? target[key] : () => Promise.resolve(undefined)),
     },

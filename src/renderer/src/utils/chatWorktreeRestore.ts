@@ -1,5 +1,6 @@
 import { isStudioBranch } from '../../../shared/worktree-branch'
 import { repoRootFromWorktreePath } from '../../../shared/worktree-paths'
+import { isPoolSlotPath as isPoolSlotFolder } from '../../../shared/worktree-pool-slot-name'
 import { showToast } from '../store/toastStore'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import type { Workspace, WorkspaceId } from '../types/workspace'
@@ -40,19 +41,13 @@ const refused = new Set<WorkspaceId>()
 // The reason last shown for each chat whose restore failed.
 const reasonShown = new Map<WorkspaceId, string>()
 
-// A worktree pool slot's folder (`<container>/pool-NN`, worktree-pool/). Its
-// path outlives any one chat: once the cleanup gave it back it may be idle in
-// the pool or another chat's now, so finding it on disk says nothing about
-// whether it is this chat's worktree.
-const POOL_SLOT_NAME = /^pool-\d{2,}$/u
-
+// A worktree pool slot's folder (`<container>/<project>-NN`, or `pool-NN` from
+// before slots took their project's name; worktree-pool/). Its path outlives
+// any one chat: once the cleanup gave it back it may be idle in the pool or
+// another chat's now, so finding it on disk says nothing about whether it is
+// this chat's worktree.
 function isPoolSlotPath(path: string): boolean {
-  const name =
-    path
-      .replace(/[\\/]+$/u, '')
-      .split(/[\\/]/u)
-      .pop() ?? ''
-  return POOL_SLOT_NAME.test(name) && repoRootFromWorktreePath(path) !== null
+  return isPoolSlotFolder(path) && repoRootFromWorktreePath(path) !== null
 }
 
 type RestoreCandidate = Workspace & { folderPath: string; worktree: { branch: string } }

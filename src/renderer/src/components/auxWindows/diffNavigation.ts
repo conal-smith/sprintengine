@@ -99,7 +99,7 @@ export function navigateFile(fileIndex: number, direction: 'next' | 'prev', file
  * belongs when the editor has the keyboard.
  */
 export const NAVIGATION_KEY_EXCLUSIONS =
-  '[role="radiogroup"], [role="menu"], input, textarea, [contenteditable="true"], [role="textbox"], .monaco-editor'
+  '[role="radiogroup"], [role="menu"], [role="tree"], input, textarea, [contenteditable="true"], [role="textbox"], .monaco-editor'
 
 /** Just enough of an element to ask. Kept structural so this stays testable
  *  without a DOM. */
@@ -110,8 +110,9 @@ export type NavigationKeyTarget = { closest?: (selector: string) => unknown } | 
  *
  * It is not, when the key landed inside a control that owns the arrow keys
  * itself: the view toggle is a radiogroup (arrows move the selection), the gear
- * menu is a menu (arrows walk the rows), a text field is a text field — and the
- * diff itself is Monaco.
+ * menu is a menu (arrows walk the rows), the file tree is a tree (arrows walk
+ * its rows, and Enter shows the one it is on), a text field is a text field —
+ * and the diff itself is Monaco.
  */
 export function takesNavigationKey(target: NavigationKeyTarget): boolean {
   if (!target?.closest) return true

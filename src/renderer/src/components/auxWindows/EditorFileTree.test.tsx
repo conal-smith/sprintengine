@@ -59,6 +59,7 @@ function stubApi(): void {
 
 stubApi()
 const { EditorFileTree, EDITOR_TREE_FOLLOW_DELAY_MS } = await import('./EditorFileTree')
+const { ConfirmDialogProvider } = await import('../ui/ConfirmDialog')
 const { useWorkspaceStore } = await import('../../store/workspaceStore')
 const { APP_SETTINGS_STORAGE_KEY } = await import('../../store/slices/persistenceSlice')
 
@@ -69,14 +70,16 @@ let returned = 0
 
 function Tree({ activePath }: { activePath: string | null }): React.JSX.Element {
   return (
-    <EditorFileTree
-      rootPath={ROOT}
-      activePath={activePath}
-      onOpenFile={(path) => opened.push(path)}
-      onReturnFocus={() => {
-        returned += 1
-      }}
-    />
+    <ConfirmDialogProvider>
+      <EditorFileTree
+        rootPath={ROOT}
+        activePath={activePath}
+        onOpenFile={(path) => opened.push(path)}
+        onReturnFocus={() => {
+          returned += 1
+        }}
+      />
+    </ConfirmDialogProvider>
   )
 }
 

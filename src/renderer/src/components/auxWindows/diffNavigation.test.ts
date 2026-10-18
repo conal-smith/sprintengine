@@ -149,6 +149,8 @@ test('diffNavigation', async () => {
     assert.equal(takesNavigationKey(target('input')), false)
     assert.equal(takesNavigationKey(target('textarea')), false)
     assert.equal(takesNavigationKey(target('[contenteditable="true"]')), false)
+    // The file tree beside the diff walks its own rows.
+    assert.equal(takesNavigationKey(target('[role="tree"]')), false)
 
     assert.match(NAVIGATION_KEY_EXCLUSIONS, /role="textbox"/)
     assert.match(NAVIGATION_KEY_EXCLUSIONS, /\.monaco-editor/)

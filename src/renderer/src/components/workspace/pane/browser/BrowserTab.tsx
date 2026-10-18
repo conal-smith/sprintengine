@@ -27,7 +27,7 @@ import {
 import type { WorkspacePaneTab } from '../../../../types/workspace'
 import type { EmbeddedWebviewElement, WebviewIpcMessageEvent } from '../../../../types/webview'
 import { showToast } from '../../../../store/toastStore'
-import { Badge, IconButton, OverflowMenu, Tooltip } from '../../../ui'
+import { AgentPill, IconButton, OverflowMenu, Tooltip } from '../../../ui'
 import { BrowserDeviceToolbar } from './BrowserDeviceToolbar'
 import { BrowserStartPage } from './BrowserStartPage'
 import { BrowserErrorPage } from './BrowserErrorPage'
@@ -549,9 +549,11 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
           trailing={
             <>
               {state?.controller === 'agent' ? (
-                <Badge tone="accent" ariaLabel="An agent is driving this page">
-                  Agent
-                </Badge>
+                // The agent violet, as on the tab and round the surface (ui/AgentPresence.tsx).
+                <span className="inline-flex shrink-0 whitespace-nowrap">
+                  <span className="sr-only">An agent is driving this page</span>
+                  <AgentPill />
+                </span>
               ) : null}
               {state?.recording ? (
                 <BrowserRecordingIndicator
