@@ -4,6 +4,7 @@ import { hostIdForFolder, isWslHostId, normalizeExecutionHostId } from '../../sh
 import { pathJoin } from '../../shared/paths'
 import { worktreeBranchName } from '../../shared/worktree-branch'
 import { slugifyWorktreeName } from '../../shared/worktree-paths'
+import { poolSlotName, poolSlotNumber, poolSlotStemForContainer } from '../../shared/worktree-pool-slot-name'
 import { agentWorktreeLockReason, lockAgentWorktree } from '../agent-worktree-lock'
 import { hiddenEditPaths } from '../agent-worktree-keep-checks'
 import { pathExists } from '../git-utils'
@@ -46,7 +47,7 @@ import { findLease } from './pool-return'
  */
 export const POOL_MAX_SLOTS = 32
 
-/** `pool-01` … `pool-999`: past that a container holds something other than slots, and no name is picked. */
+/** `<project>-01` … `<project>-999`: past that a container holds something other than slots, and no name is picked. */
 const SLOT_NUMBER_LIMIT = 1000
 
 export const FETCH_FRESH_MS = 60_000
@@ -323,10 +324,18 @@ async function moveSlot(ctx: PoolContext, pool: PoolRuntime, slot: SlotRecord, t
 // ── Leasing ──────────────────────────────────────────────────────────────
 
 async function nextSlotPath(pool: PoolRuntime): Promise<{ id: string; path: string } | null> {
+  // Named after the project (shared/worktree-pool-slot-name.ts). A number a
+  // slot already has under the old `pool-NN` spelling is taken too: one pool
+  // counts once, so `multicode-03` is never made beside a live `pool-03`.
+  const stem = poolSlotStemForContainer(pool.containerPath)
   const taken = new Set(pool.record.slots.map((slot) => slot.id))
+  const takenNumbers = new Set(
+    pool.record.slots.map((slot) => poolSlotNumber(slot.id, stem)).filter((n): n is number => n !== null),
+  )
   const released = new Set(pool.record.releasedPaths.map(comparablePath))
   for (let n = 1; n < SLOT_NUMBER_LIMIT; n += 1) {
-    const id = `pool-${String(n).padStart(2, '0')}`
+    if (takenNumbers.has(n)) continue
+    const id = poolSlotName(stem, n)
     // Joined in the container's own spelling (git's, forward slashes even on
     // Windows), so the slot's path compares equal to what `worktree list` says.
     const path = pathJoin(pool.containerPath, id)
@@ -344,7 +353,7 @@ async function createSlot(
   base: { ref: string; sha: string },
 ): Promise<SlotRecord | 'full' | 'error'> {
   // The name is picked under the pool's mutex, in the same step that records
-  // it: two leases creating at once must never both pick `pool-01`.
+  // it: two leases creating at once must never both pick `<project>-01`.
   const { maxSlots } = await ctx.getSettings()
   const slot = await ctx.withPool(pool, async () => {
     if (pool.record.slots.length >= Math.min(maxSlots, POOL_MAX_SLOTS)) return null
