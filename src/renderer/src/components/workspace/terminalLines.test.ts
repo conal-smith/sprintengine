@@ -235,8 +235,8 @@ test('terminalLines', async () => {
 
   // One remote AGENT's line: the agent's own name (the ROW is titled with the
   // conversation, so a chat running three of them says which is which), and no
-  // diff, because the conversation list carries none. A machine that names no
-  // branch leaves the line without one.
+  // diff where its machine lists none (a chat at rest, an older desktop). A
+  // machine that names no branch leaves the line without one.
   {
     const row = {
       sessionId: 'r1',
@@ -261,6 +261,34 @@ test('terminalLines', async () => {
     assert.equal(working.working, true)
     assert.equal(working.workingSince, 42)
     assert.equal(working.idleSince, null)
+  }
+
+  // The files its machine counted, drawn as a local line draws its own: the
+  // branch's span, or what is left uncommitted once its pull request merged.
+  {
+    const changes = {
+      added: 1,
+      updated: 2,
+      removed: 1,
+      scope: 'worktree' as const,
+      uncommitted: { added: 0, updated: 1, removed: 0 },
+    }
+    const row = { sessionId: 'r3', title: 'Gael Corry', activity: 'working', since: 5, changes, worktree: true }
+    const line = lineOfRemoteRow({ ...row, pullRequests: [] } as unknown as RemoteSessionRow)
+    assert.deepEqual(line.files, { added: 1, updated: 2, removed: 1 })
+    assert.equal(line.changedFiles, 4)
+    assert.equal(line.diffScope, 'worktree')
+    assert.equal(line.worktree, true, 'the worktree its machine names')
+    const merged = { url: 'https://github.com/acme/app/pull/9', number: 9, state: 'merged', title: 'Done' }
+    const landed = lineOfRemoteRow({ ...row, pullRequests: [merged] } as unknown as RemoteSessionRow)
+    assert.deepEqual(landed.files, { added: 0, updated: 1, removed: 0 })
+    assert.equal(landed.diffScope, 'landed')
+    const unscoped = lineOfRemoteRow({
+      ...row,
+      changes: { added: 1, updated: 0, removed: 0 },
+      pullRequests: [],
+    } as unknown as RemoteSessionRow)
+    assert.equal(unscoped.diffScope, 'branch', 'a machine that names no scope is read as the branch’s')
   }
 
   // …and it SAYS what a local chat's line says: the opening of the agent's

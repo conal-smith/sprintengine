@@ -29,6 +29,10 @@ import {
   type MeshForgetMachineResult,
   type MeshWorkspaceCheckoutResult,
   type MeshWorkspaceExtensionsResult,
+  type MeshPullRequestCreateResult,
+  type MeshPullRequestDraftResult,
+  type MeshPullRequestPushResult,
+  type MeshPullRequestStateResult,
   type MeshConversationCommandResult,
   type MeshConversationFrame,
   type MeshConversationImageResult,
@@ -42,6 +46,14 @@ import type {
 } from '../../../shared/conversation-runtime'
 import { parseImageAttachments } from '../../conversation-ipc-inputs'
 import type { WorkspaceExtensions } from '../../../shared/workspace-extensions'
+import {
+  PULL_REQUEST_BODY_MAX_CHARS,
+  PULL_REQUEST_TITLE_MAX_CHARS,
+  readPullRequestCheckoutPin,
+  type CreatePullRequestReadiness,
+  type CreatePullRequestState,
+} from '../../../shared/git/pull-request-create'
+import type { PullRequestForge } from '../../../shared/git/pr-url'
 import type { WorkspaceSkill } from '../../../shared/ipc/skills'
 import { createRemoteConversationCache } from './tailnet-remote-conversation-cache'
 import {
@@ -352,6 +364,27 @@ export type TailnetMeshService = {
     workspaceId: unknown
     cli?: unknown
   }): Promise<MeshWorkspaceExtensionsResult>
+  /**
+   * A remote chat's Create PR (`chat-create-pull-request`): whether its
+   * checkout is ready, the drafted text, the push and the creation, each
+   * asked of the machine the chat runs on, which finds the chat's checkout in
+   * its own record and drafts with its own text generation settings. A
+   * pull request created there is recorded there as the chat's. A machine
+   * that does not advertise it is refused here, before anything is asked.
+   */
+  conversationPullRequestState(input: { key: unknown }): Promise<MeshPullRequestStateResult>
+  conversationPullRequestDraft(input: { key: unknown; draftId?: unknown }): Promise<MeshPullRequestDraftResult>
+  conversationPullRequestDraftCancel(input: {
+    key: unknown
+    draftId: unknown
+  }): Promise<{ ok: true } | { ok: false; code: string; message: string }>
+  conversationPullRequestPush(input: { key: unknown; pin?: unknown }): Promise<MeshPullRequestPushResult>
+  conversationPullRequestCreate(input: {
+    key: unknown
+    title: unknown
+    body: unknown
+    pin?: unknown
+  }): Promise<MeshPullRequestCreateResult>
   conversationToolDetail(input: { key: unknown; toolUseId: unknown }): Promise<ConversationToolDetailResult>
   conversationTurnDiff(input: { key: unknown; turnSeq: unknown; path?: unknown }): Promise<ConversationTurnDiffResult>
   /**
@@ -1509,6 +1542,142 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, extensions: readWorkspaceExtensions(answer.value) }
   }
 
+  // ── A remote chat's Create PR ───────────────────────────────────────────
+  //
+  // Every step is the chat's machine's: the call names the chat, and that
+  // machine finds its checkout. The draft runs its CLI and the push and the
+  // creation reach the forge, so each waits as long as the same step does
+  // there, never the ten seconds a read is given.
+  type PullRequestCall =
+    | { ok: true; connection: StoredMeshConnection; value: Record<string, unknown> }
+    | { ok: false; code: string; message: string }
+  async function callPullRequestTool(
+    keyInput: unknown,
+    tool: string,
+    args: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<PullRequestCall> {
+    const key = meshConversationKeyOf(keyInput)
+    if (!key) return { ok: false, code: 'invalid_arguments', message: 'Name the remote chat.' }
+    const connection = connectionFor(key.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    if (!tailnetPeerSupports(peerCapabilities.get(connection.id), 'chat-create-pull-request'))
+      return {
+        ok: false,
+        code: 'pull_requests_unsupported',
+        message: `${connection.machineName} cannot open a pull request for its chats from here yet. Update SprintEngine Studio there to use Create PR from here.`,
+      }
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool,
+      args: { workspaceId: key.workspaceId, agentId: key.agentId, ...args },
+      ...(timeoutMs ? { timeoutMs } : {}),
+    })
+    if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
+    return { ok: true, connection, value: answer.value }
+  }
+
+  async function conversationPullRequestState(input: { key: unknown }): Promise<MeshPullRequestStateResult> {
+    const answer = await callPullRequestTool(
+      input.key,
+      'conversation.pull_request_state',
+      {},
+      PULL_REQUEST_STATE_TIMEOUT_MS,
+    )
+    if (!answer.ok) return answer
+    return { ok: true, state: readCreatePullRequestState(answer.value.state) }
+  }
+
+  async function conversationPullRequestDraft(input: {
+    key: unknown
+    draftId?: unknown
+  }): Promise<MeshPullRequestDraftResult> {
+    if (input.draftId !== undefined && !isDraftId(input.draftId))
+      return { ok: false, code: 'invalid_arguments', message: 'Name the draft with a short id.' }
+    const answer = await callPullRequestTool(
+      input.key,
+      'conversation.pull_request_draft',
+      input.draftId !== undefined ? { draftId: input.draftId } : {},
+      PULL_REQUEST_DRAFT_TIMEOUT_MS,
+    )
+    if (!answer.ok) {
+      // Said with the machine's name: the setting that is off is over there.
+      if (answer.code === 'text_generation_off') {
+        const key = meshConversationKeyOf(input.key)
+        const machineName = (key && connectionFor(key.connectionId)?.machineName) || 'That machine'
+        return {
+          ok: false,
+          code: answer.code,
+          message: `Text generation is off on ${machineName} (Settings → Agents → Text generation there), so write the title and description here.`,
+        }
+      }
+      return answer
+    }
+    const title =
+      typeof answer.value.title === 'string' ? answer.value.title.slice(0, PULL_REQUEST_TITLE_MAX_CHARS) : ''
+    const body = typeof answer.value.body === 'string' ? answer.value.body.slice(0, PULL_REQUEST_BODY_MAX_CHARS) : ''
+    if (!title.trim()) return { ok: false, code: 'unreadable_result', message: 'The draft came back without a title.' }
+    return { ok: true, title, body }
+  }
+
+  async function conversationPullRequestDraftCancel(input: {
+    key: unknown
+    draftId: unknown
+  }): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    if (!isDraftId(input.draftId)) return { ok: false, code: 'invalid_arguments', message: 'Name the draft to stop.' }
+    const answer = await callPullRequestTool(input.key, 'conversation.pull_request_draft_cancel', {
+      draftId: input.draftId,
+    })
+    return answer.ok ? { ok: true } : answer
+  }
+
+  async function conversationPullRequestPush(input: {
+    key: unknown
+    pin?: unknown
+  }): Promise<MeshPullRequestPushResult> {
+    const pin = pinArgs(input.pin)
+    if (!pin)
+      return { ok: false, code: 'invalid_arguments', message: 'The pin is the branch and commit the state answered.' }
+    const answer = await callPullRequestTool(
+      input.key,
+      'conversation.pull_request_push',
+      pin.args,
+      PULL_REQUEST_PUSH_TIMEOUT_MS,
+    )
+    if (!answer.ok) return answer
+    return { ok: true, pushed: answer.value.pushed === true }
+  }
+
+  async function conversationPullRequestCreate(input: {
+    key: unknown
+    title: unknown
+    body: unknown
+    pin?: unknown
+  }): Promise<MeshPullRequestCreateResult> {
+    if (typeof input.title !== 'string' || !input.title.trim() || typeof input.body !== 'string')
+      return { ok: false, code: 'invalid_arguments', message: 'A pull request needs a title.' }
+    const pin = pinArgs(input.pin)
+    if (!pin)
+      return { ok: false, code: 'invalid_arguments', message: 'The pin is the branch and commit the state answered.' }
+    const answer = await callPullRequestTool(
+      input.key,
+      'conversation.pull_request_create',
+      {
+        title: input.title.slice(0, PULL_REQUEST_TITLE_MAX_CHARS),
+        body: input.body.slice(0, PULL_REQUEST_BODY_MAX_CHARS),
+        ...pin.args,
+      },
+      PULL_REQUEST_CREATE_TIMEOUT_MS,
+    )
+    if (!answer.ok) return answer
+    const outcome = readCreatePullRequestOutcome(answer.value)
+    // The chat's list over there now carries the pull request: the next read
+    // goes to the machine, not to an answer shared from before it existed.
+    if (outcome.ok && outcome.kind === 'created') forgetSharedReads(answer.connection.id, 'conversations')
+    return outcome
+  }
+
   async function workspaceCheckout(connectionId: unknown, workspaceId: unknown): Promise<MeshWorkspaceCheckoutResult> {
     const connection = connectionFor(connectionId)
     if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
@@ -1922,6 +2091,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'conversation-send-skills') &&
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
+          createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
         }
       : listed
   }
@@ -2136,6 +2306,11 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     visitConversation,
     workspaceCheckout,
     workspaceExtensions,
+    conversationPullRequestState,
+    conversationPullRequestDraft,
+    conversationPullRequestDraftCancel,
+    conversationPullRequestPush,
+    conversationPullRequestCreate,
 
     async listConversations(connectionId): Promise<MeshConversationListResult> {
       const connection = connectionFor(connectionId)
@@ -2451,4 +2626,119 @@ function readWorkspaceExtensions(value: Record<string, unknown>): WorkspaceExten
     },
   )
   return { skills, servers }
+}
+
+// How long each Create PR step is waited for: the state may ask the forge's
+// CLI whether the branch has a pull request; a draft is a CLI run with its own
+// ninety-second deadline over there; a push sends the branch's commits; a
+// creation pushes nothing but waits on the forge's CLI for a minute.
+const PULL_REQUEST_STATE_TIMEOUT_MS = 30_000
+const PULL_REQUEST_DRAFT_TIMEOUT_MS = 120_000
+const PULL_REQUEST_PUSH_TIMEOUT_MS = 180_000
+const PULL_REQUEST_CREATE_TIMEOUT_MS = 120_000
+
+function isDraftId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200
+}
+
+/** The pin as the tool takes it: none, or one that is a pin; anything else is refused, never dropped. */
+function pinArgs(value: unknown): { args: Record<string, unknown> } | null {
+  if (value === undefined) return { args: {} }
+  const pin = readPullRequestCheckoutPin(value)
+  return pin ? { args: { pin } } : null
+}
+
+const READINESS_REASONS = new Set([
+  'detached',
+  'default-branch',
+  'nothing-to-propose',
+  'open-pull-request',
+  'no-remote',
+  'unsupported-forge',
+])
+const FORGES = new Set<PullRequestForge>(['github', 'gitlab', 'gitea', 'bitbucket', 'azure-devops'])
+const nullableText = (value: unknown, max = 255): string | null =>
+  typeof value === 'string' && value.length > 0 ? value.slice(0, max) : null
+
+/**
+ * `conversation.pull_request_state`'s answer, read member by member: another
+ * machine's words are not trusted to be the shape they claim. No path of
+ * that machine's is kept.
+ */
+function readCreatePullRequestState(value: unknown): CreatePullRequestState | null {
+  const record = asRecord(value)
+  const readiness = asRecord(record?.readiness)
+  if (!record || !readiness) return null
+  const read: CreatePullRequestReadiness | null =
+    readiness.ready === true
+      ? { ready: true }
+      : readiness.ready === false && READINESS_REASONS.has(readiness.reason as string)
+        ? { ready: false, reason: readiness.reason as Extract<CreatePullRequestReadiness, { ready: false }>['reason'] }
+        : null
+  if (!read) return null
+  const headSha =
+    typeof record.headSha === 'string' && /^[0-9a-f]{7,64}$/iu.test(record.headSha) ? record.headSha : null
+  return {
+    readiness: read,
+    gitRoot: null,
+    branch: nullableText(record.branch),
+    headSha,
+    uncommittedChanges:
+      typeof record.uncommittedChanges === 'number' &&
+      Number.isSafeInteger(record.uncommittedChanges) &&
+      record.uncommittedChanges >= 0
+        ? record.uncommittedChanges
+        : null,
+    base: nullableText(record.base),
+    forge: FORGES.has(record.forge as PullRequestForge) ? (record.forge as PullRequestForge) : null,
+  }
+}
+
+/** A web address this machine may open: the forge's, over http(s). */
+const webUrl = (value: unknown): string | null =>
+  typeof value === 'string' && value.length <= 8192 && /^https?:\/\//iu.test(value) ? value : null
+
+/** `conversation.pull_request_create`'s answer, read member by member; the address is opened here, so it must be a web one. */
+function readCreatePullRequestOutcome(value: Record<string, unknown>): MeshPullRequestCreateResult {
+  const url = webUrl(value.url)
+  const unreadable = {
+    ok: false as const,
+    code: 'unreadable_result',
+    message: 'The pull request step answered in a shape this build cannot read.',
+  }
+  if (!url) return unreadable
+  const place = nullableText(value.place, 200) ?? 'The forge'
+  const reason = nullableText(value.reason, 1000)
+  switch (value.kind) {
+    case 'created':
+      return {
+        ok: true,
+        kind: 'created',
+        url,
+        recorded:
+          value.recorded === false
+            ? {
+                ok: false,
+                message:
+                  nullableText(value.recordMessage, 1000) ??
+                  `The pull request is open (${url}), but it could not be recorded.`,
+              }
+            : { ok: true },
+      }
+    case 'existing':
+      return { ok: true, kind: 'existing', url }
+    case 'page':
+      return {
+        ok: true,
+        kind: 'page',
+        url,
+        place,
+        ...(reason ? { reason } : {}),
+        ...(value.descriptionLeftOut === true ? { descriptionLeftOut: true as const } : {}),
+      }
+    case 'list':
+      return { ok: true, kind: 'list', url, place, reason: reason ?? 'Its address is not known.' }
+    default:
+      return unreadable
+  }
 }

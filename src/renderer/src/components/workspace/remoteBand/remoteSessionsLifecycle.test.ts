@@ -243,6 +243,23 @@ test('a row opened from a chat its machine has settled follows that settle', () 
   assert.deepEqual(due, [{ workspaceId: 'here-1', settledAt: 4_000, settled: true }])
 })
 
+test('a row started from New chat follows its own chat, not the project chat it was started from', () => {
+  // Stored before the fix: `workspaceId` named the project's seat over there
+  // (an old chat, resting), and only the session id named the chat started.
+  const started = {
+    ...opened('here-1', 'c1', 'seat'),
+    remoteOrigin: { ...opened('here-1', 'c1', 'seat').remoteOrigin!, sessionId: 'conversation:new-chat:agent-9' },
+  } as Workspace
+  const browses = new Map([
+    ['c1', entry([remoteWorkspace('seat', 'Old chat', 4_000), remoteWorkspace('new-chat', 'New chat')])],
+  ])
+  assert.deepEqual(remoteRestToFollow({ workspaces: [started], browses, followed: new Map() }), [])
+  // One already hidden by the seat's settle comes back: its own chat is not resting.
+  assert.deepEqual(remoteRestToFollow({ workspaces: [started], browses, followed: new Map([['here-1', 4_000]]) }), [
+    { workspaceId: 'here-1', settledAt: 4_000, settled: false },
+  ])
+})
+
 test('a settle already followed is not followed again, so a row brought back here stays', () => {
   const input = {
     workspaces: [opened('here-1', 'c1', 'resting')],

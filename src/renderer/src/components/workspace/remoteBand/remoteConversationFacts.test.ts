@@ -43,7 +43,32 @@ test('a listed chat is filed by its pairing and session, with what its tab draws
     live: false,
     lastTurnEndedAt: 900,
     pullRequests: [],
+    branch: null,
+    worktree: false,
+    changes: null,
   })
+})
+
+test('the files a chat changed are kept, and a change in them is a change', () => {
+  const changes = { added: 1, updated: 2, removed: 0, scope: 'branch' as const }
+  publishRemoteConversationList('c1', [conversation({ changes, worktree: true })])
+  const first = read()
+  assert.deepEqual(first.get(KEY)?.changes, changes)
+  assert.equal(first.get(KEY)?.worktree, true)
+  publishRemoteConversationList('c1', [conversation({ changes: { ...changes }, worktree: true })])
+  assert.equal(read(), first, 'the same counts read again move nothing')
+  publishRemoteConversationList('c1', [conversation({ changes: { ...changes, removed: 1 }, worktree: true })])
+  assert.equal(read().get(KEY)?.changes?.removed, 1)
+})
+
+test('the branch a chat is listed on is kept, and a change of it is a change', () => {
+  publishRemoteConversationList('c1', [conversation({ branch: 'agent/chat-1' })])
+  const first = read()
+  assert.equal(first.get(KEY)?.branch, 'agent/chat-1')
+  publishRemoteConversationList('c1', [conversation({ branch: 'agent/chat-1' })])
+  assert.equal(read(), first)
+  publishRemoteConversationList('c1', [conversation({ branch: 'main' })])
+  assert.equal(read().get(KEY)?.branch, 'main')
 })
 
 test('a re-read that moved nothing a tab draws keeps the snapshot', () => {

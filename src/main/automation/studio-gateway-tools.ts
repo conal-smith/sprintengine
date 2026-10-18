@@ -3,6 +3,7 @@ import { CANVAS_MUTATION_TOOL_NAMES } from './canvas-tools'
 import { EDITOR_MUTATION_TOOL_NAMES } from './editor-tools'
 import type { McpToolContribution } from '../module-host/main-host'
 import { CONVERSATION_MUTATION_TOOL_NAMES } from './conversation-tools'
+import { CONVERSATION_PULL_REQUEST_MUTATION_TOOL_NAMES } from './conversation-pull-request-tools'
 import { CONVERSATION_COMMAND_TOOL_NAMES } from './tailnet/tailnet-conversation-stream'
 import { TAILNET_MUTATION_TOOL_NAMES } from './tailnet/tailnet-tools'
 import { TOUR_MUTATION_TOOL_NAMES } from './tour-tools'
@@ -43,6 +44,10 @@ const APP_MUTATION_TOOLS = new Set([
   // Starting a chat on this machine, on the same `conversation:operate` grant
   // as the commands above, and audited with the device that asked.
   ...CONVERSATION_MUTATION_TOOL_NAMES,
+  // A paired desktop's Create PR on a chat here: drafting runs a CLI, and the
+  // push and the creation reach the forge. Reading whether it may show is not
+  // among them.
+  ...CONVERSATION_PULL_REQUEST_MUTATION_TOOL_NAMES,
   // Configuring who may drive this machine. Classified as mutations so every
   // one of them is audited — minting a pairing code is the most consequential
   // write on this surface. The tailnet listener never serves them at all

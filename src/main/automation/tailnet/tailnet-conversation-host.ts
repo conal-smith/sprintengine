@@ -272,6 +272,17 @@ export type ConversationListMarks = {
    * list asked for again runs no git.
    */
   branchesOf?: (workspaceIds: string[]) => Promise<Map<string, string>>
+  /**
+   * Where each chat works, keyed `workspaceId:agentId`: whether in a worktree
+   * of its project, and, for a chat whose session is `live`, the files its
+   * checkout carries. Counted from the shared reading the sidebar's lines
+   * take, held for a few seconds, so a list asked for again runs no git; and
+   * only for a live chat, as the sidebar draws a line only for one. A chat
+   * left out, or a count that could not be read, lists without it.
+   */
+  checkoutsOf?: (
+    keys: Array<{ workspaceId: string; agentId: string; live: boolean }>,
+  ) => Promise<Map<string, Pick<ConversationThread, 'changes' | 'worktree'>>>
 }
 
 const restingRecord = (record: ConversationListWorkspace | null): boolean =>
@@ -631,7 +642,8 @@ export function createConversationGatewayHost(
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
   const withMarks = async (listed: ConversationThread[]): Promise<ConversationThread[]> => {
-    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf) return listed
+    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf && !marks.checkoutsOf)
+      return listed
     const machines = new Map<string, ConversationWireHost | null>()
     let read: ((workspaceId: string) => ConversationWireHost | null) | undefined
     try {
@@ -662,13 +674,28 @@ export function createConversationGatewayHost(
     if (marks.branchesOf && listed.length > 0) {
       branches = await marks.branchesOf([...new Set(listed.map((thread) => thread.workspaceId))]).catch(() => null)
     }
+    let checkouts: Map<string, Pick<ConversationThread, 'changes' | 'worktree'>> | null = null
+    if (marks.checkoutsOf && listed.length > 0) {
+      checkouts = await marks
+        .checkoutsOf(
+          listed.map((thread) => ({
+            workspaceId: thread.workspaceId,
+            agentId: thread.agentId,
+            live: Boolean(thread.sessionId),
+          })),
+        )
+        .catch(() => null)
+    }
     return listed.map((thread) => {
       const host = machineOf(thread.workspaceId)
       const branch = branches?.get(thread.workspaceId)
+      const checkout = checkouts?.get(`${thread.workspaceId}:${thread.agentId}`)
       return {
         ...thread,
         ...(host ? { host } : {}),
         ...(branch ? { branch } : {}),
+        ...(checkout?.changes ? { changes: checkout.changes } : {}),
+        ...(checkout?.worktree ? { worktree: true } : {}),
         ...(pullRequests ? { pullRequests: pullRequests.get(`${thread.workspaceId}:${thread.agentId}`) ?? [] } : {}),
       }
     })

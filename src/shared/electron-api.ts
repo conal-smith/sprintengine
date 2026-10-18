@@ -159,6 +159,10 @@ import type {
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
   MeshWorkspaceExtensionsResult,
+  MeshPullRequestCreateResult,
+  MeshPullRequestDraftResult,
+  MeshPullRequestPushResult,
+  MeshPullRequestStateResult,
   MeshEvent,
   MeshLiveState,
   MeshPairResult,
@@ -1092,6 +1096,29 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationImageResult>
+  // A paired machine's chat's Create PR (`chat-create-pull-request`), the
+  // steps of the shell's own below, each run on that machine in the chat's
+  // checkout there. A pull request it creates is recorded there as the chat's.
+  meshConversationPullRequestState: (input: { key: MeshConversationKey }) => Promise<MeshPullRequestStateResult>
+  /** Drafted with that machine's text generation settings; `text_generation_off` where they are off. */
+  meshConversationPullRequestDraft: (input: {
+    key: MeshConversationKey
+    draftId?: string
+  }) => Promise<MeshPullRequestDraftResult>
+  meshConversationPullRequestDraftCancel: (input: {
+    key: MeshConversationKey
+    draftId: string
+  }) => Promise<{ ok: true } | { ok: false; code: string; message: string }>
+  meshConversationPullRequestPush: (input: {
+    key: MeshConversationKey
+    pin?: PullRequestCheckoutPin
+  }) => Promise<MeshPullRequestPushResult>
+  meshConversationPullRequestCreate: (input: {
+    key: MeshConversationKey
+    title: string
+    body: string
+    pin?: PullRequestCheckoutPin
+  }) => Promise<MeshPullRequestCreateResult>
   // Scheduled agents: a prompt and a schedule, each run a new chat. Main owns
   // the list and the scheduler; the renderer reads and writes through these.
   listScheduledAgents: () => Promise<ScheduledAgentView[]>

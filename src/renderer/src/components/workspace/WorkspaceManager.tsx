@@ -3932,13 +3932,19 @@ export default function WorkspaceManager() {
         return
       }
       addWorkspace(SOLO_CHAT_TEMPLATE, {
-        name: remoteWorkspaceName(created.title, launch.remoteWorkspaceName),
+        // Named for the chat, not its project: the project is the header the
+        // row files under. The row then follows the title the machine gives
+        // the chat (`remoteConversationTitle`), as a local New chat's does.
+        name: created.title,
         folderPath: null,
         remoteOrigin: {
           connectionId: launch.connectionId,
           machineName: launch.machineName,
-          workspaceId: launch.remoteWorkspaceId,
-          workspaceName: launch.remoteWorkspaceName,
+          // The chat that was created, not the project's seat it was created
+          // from: settle, visit and bring-back ask about this id, and the
+          // seat is another chat — one that may be resting.
+          workspaceId: created.workspaceId,
+          workspaceName: created.title,
           workspaceRoot: launch.remoteWorkspaceRoot,
           // The id the Remote band lists this chat by, so its row is this one.
           sessionId: remoteSessionId,

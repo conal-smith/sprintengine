@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 
 import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import { ConversationComposerStrip } from './conversationStrip'
+import { localPullRequestHost } from './pullRequestHost'
 
 function server(overrides: Partial<StudioLocalServer> = {}): StudioLocalServer {
   return {
@@ -107,8 +108,7 @@ test("one item takes the line's slack, so the pinned end sits together: Create P
       changes={null}
       context={{ used: 40_000, total: 200_000 }}
       createPullRequest={{
-        cwd: '/Users/dev/app',
-        conversation: { workspaceId: 'ws-1', agentId: 'agent-1' },
+        host: localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' }),
         onSettled: () => undefined,
       }}
     />,

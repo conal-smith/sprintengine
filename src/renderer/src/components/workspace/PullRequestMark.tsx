@@ -148,7 +148,9 @@ export function peekMarkCopy(list: readonly BranchPullRequest[], now: number): P
   if (!primary) return null
   const spans = pullRequestsSpanRepositories(list)
   const state = pullRequestStateLabel(primary)
-  const opened = relativeFromNow(primary.openedAt, now)
+  // A paired machine's list carries no opening time (read as 0), and an age
+  // counted from 1970 is worse than none.
+  const opened = primary.openedAt > 0 ? relativeFromNow(primary.openedAt, now) : ''
   const identity = spans ? writtenNumber(primary, spans) : `Pull request ${writtenNumber(primary, spans)}`
   // A pull request recorded from its URL alone has no title until GitHub
   // answers — and never gets one if `gh` cannot reach it, or it is on
@@ -217,7 +219,7 @@ export function pullRequestMenuGroups(list: readonly BranchPullRequest[], now: n
       url: pr.url,
       number: writtenNumber(pr, spans),
       title: titled ? pr.title : '',
-      age: formatRelativeMs(pr.openedAt, now),
+      age: pr.openedAt > 0 ? formatRelativeMs(pr.openedAt, now) : '',
       state: pr.state,
       ariaLabel: titled
         ? `${spokenNumber(pr, spans)}, ${pullRequestStateLabel(pr)}: ${pr.title}. ${pullRequestOpenLabel(pr)}`

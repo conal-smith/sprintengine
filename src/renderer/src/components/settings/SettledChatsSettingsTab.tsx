@@ -7,6 +7,7 @@ import { formatRelativeMsAgo } from '../../utils/relativeTime'
 import { EmptyState, GhostButton, OutlineButton } from '../ui'
 import { SettingCard, SettingToggle, SettingsPageHeader } from './SettingsAtoms'
 import { createSettledChatsSelector, type SettledChatEntry } from './settledChatsModel'
+import { remoteOriginChatWorkspaceId } from '../workspace/remoteBand/remoteSessionsModel'
 import { useStableCallback } from '../../hooks/useStableCallback'
 
 const SETTLED_PAGE = 100
@@ -59,7 +60,11 @@ export function SettledChatsSettingsTab({
       }
       const refused = (message: string) =>
         showToast({ tone: 'error', title: 'The chat was not brought back', description: message })
-      void settle({ connectionId: origin.connectionId, workspaceId: origin.workspaceId, settled: false })
+      void settle({
+        connectionId: origin.connectionId,
+        workspaceId: remoteOriginChatWorkspaceId(origin),
+        settled: false,
+      })
         .then((answer) => {
           if (answer.ok || answer.code === 'lifecycle_unsupported') setWorkspaceSettled(id, false)
           else refused(answer.message)

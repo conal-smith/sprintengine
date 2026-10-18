@@ -96,6 +96,30 @@ export type MeshWorkspaceExtensionsResult =
   | { ok: false; code: string; message: string }
 
 /**
+ * A paired machine's answers to its chat's Create PR (`chat-create-pull-request`),
+ * one per step, as the shell's own channels answer them for a chat here
+ * (`createPullRequestState`, `draftPullRequestText`, `pushForPullRequest`,
+ * `createPullRequest`). The state carries no path on that machine: its
+ * `gitRoot` is null. `text_generation_off` is a machine whose own text
+ * generation is off, where the person writes the text themselves.
+ */
+export type MeshPullRequestStateResult =
+  | { ok: true; state: import('./git/pull-request-create').CreatePullRequestState | null }
+  | { ok: false; code: string; message: string }
+export type MeshPullRequestDraftResult =
+  { ok: true; title: string; body: string } | { ok: false; code: string; message: string }
+export type MeshPullRequestPushResult = { ok: true; pushed: boolean } | { ok: false; code: string; message: string }
+/**
+ * A creation's end, as `createPullRequest` answers it, except that a pull
+ * request created there was recorded there as the chat's: `recorded` says
+ * whether that landed, and why not.
+ */
+export type MeshPullRequestCreateResult =
+  | Exclude<import('./git/pull-request-create').CreatePullRequestOutcome, { ok: false } | { kind: 'created' }>
+  | { ok: true; kind: 'created'; url: string; recorded: { ok: true } | { ok: false; message: string } }
+  | { ok: false; code: string; message: string }
+
+/**
  * A part of a browse this machine is not allowed to read, named with the reason.
  *
  * A device paired for conversations alone genuinely cannot list workspaces.
@@ -335,6 +359,12 @@ export const MESH_VISIT_CONVERSATION_CHANNEL = 'mesh:visit-conversation'
 /** One remote workspace's checkout facts (branch, branches, worktrees) over `workspace.checkout`. */
 export const MESH_WORKSPACE_CHECKOUT_CHANNEL = 'mesh:workspace-checkout'
 export const MESH_WORKSPACE_EXTENSIONS_CHANNEL = 'mesh:workspace-extensions'
+/** A remote chat's Create PR, one channel per step (`chat-create-pull-request`). */
+export const MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL = 'mesh:conversation-pull-request-state'
+export const MESH_CONVERSATION_PULL_REQUEST_DRAFT_CHANNEL = 'mesh:conversation-pull-request-draft'
+export const MESH_CONVERSATION_PULL_REQUEST_DRAFT_CANCEL_CHANNEL = 'mesh:conversation-pull-request-draft-cancel'
+export const MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL = 'mesh:conversation-pull-request-push'
+export const MESH_CONVERSATION_PULL_REQUEST_CREATE_CHANNEL = 'mesh:conversation-pull-request-create'
 
 /**
  * What forgetting a machine did, from the Mesh's side.
@@ -422,6 +452,9 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * may go into the turn one of its chats is running, where that chat's provider
  * takes one (its listed `capabilities.steer`). False for a machine that does
  * not, where a message sent mid-turn waits for the turn to end.
+ *
+ * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
+ * chat of its own offers Create PR here, every step run over there.
  */
 export type MeshConversationListResult =
   | {
@@ -434,6 +467,7 @@ export type MeshConversationListResult =
       queuedSends?: boolean
       sendSkills?: boolean
       steerSends?: boolean
+      createPullRequest?: boolean
     }
   | { ok: false; code: string; message: string }
 

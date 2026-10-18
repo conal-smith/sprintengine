@@ -16,6 +16,7 @@ import {
   conversationsOf,
   openSpecOfConversation,
   remoteConversationTitle,
+  remoteOriginChatWorkspaceId,
   remoteLinkStateOf,
   branchPullRequestsOfWire,
   remoteFinishUnseen,
@@ -480,6 +481,18 @@ test('remoteSessionsModel', async () => {
   )
   assert.equal(titled('sprintengine', 'sprintengine'), 'sprintengine', 'a row already named for its chat is left alone')
   assert.equal(titled('Ship the release', 'sprintengine'), 'Ship the release', 'a name a person chose is theirs')
+  const listedAs = (name: string, workspaceName: string, listed: string) =>
+    remoteConversationTitle({ name, remoteOrigin: { workspaceName } as never }, listed)
+  assert.equal(
+    listedAs('New chat', 'New chat', 'Fix the release script'),
+    'Fix the release script',
+    'a row still named as it was born follows the title its machine gives the chat',
+  )
+  assert.equal(
+    listedAs('Ship the release', 'New chat', 'Fix the release script'),
+    'Ship the release',
+    'a row renamed here keeps the name',
+  )
   assert.equal(
     titled(' · sprintengine', 'sprintengine'),
     ' · sprintengine',
@@ -676,4 +689,13 @@ test('interleaveChats: a paired machine’s chats sit among the local ones by wh
     ['opened', 'now', 'hour'],
     'an opened remote chat is as recent as its machine says it was written to',
   )
+})
+
+test('a remote-born row names its chat by the session it was stamped with', () => {
+  assert.equal(
+    remoteOriginChatWorkspaceId({ workspaceId: 'seat', sessionId: 'conversation:new-chat:agent-9' }),
+    'new-chat',
+  )
+  assert.equal(remoteOriginChatWorkspaceId({ workspaceId: 'ws:1', sessionId: 'conversation:ws:1:agent-9' }), 'ws:1')
+  assert.equal(remoteOriginChatWorkspaceId({ workspaceId: 'seat' }), 'seat', 'a row born before the stamp')
 })

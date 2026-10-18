@@ -10,10 +10,13 @@ import {
   type MeshConversationAccess,
   type MeshMachineReachability,
 } from '../../../../../shared/tailnet-mesh'
-import type { ConversationWirePullRequest } from '../../../../../../packages/conversation-protocol/src/public'
+import type {
+  ConversationWireChanges,
+  ConversationWirePullRequest,
+} from '../../../../../../packages/conversation-protocol/src/public'
 import { classifyPullRequestUrl } from '../../../../../shared/git/pr-url'
 import { pullRequestRepository, type BranchPullRequest } from '../../../../../shared/git/pull-request'
-import type { Workspace } from '../../../types/workspace'
+import type { Workspace, WorkspaceRemoteOrigin } from '../../../types/workspace'
 import { workspaceLastUserMessageAt } from '../../../utils/workspaceRecency'
 import type { Tone } from '../../ui'
 import type { RowRecency } from '../stableRowSlices'
@@ -109,6 +112,10 @@ export type RemoteSessionRow = {
   branch: string | null
   /** The pull requests the chat opened, as its machine's record holds them, newest first. */
   pullRequests: BranchPullRequest[]
+  /** The files the chat's checkout carries over there; null from a machine that does not say, or a chat at rest. */
+  changes: ConversationWireChanges | null
+  /** The chat works in a worktree of its project over there. */
+  worktree: boolean
   /** Epoch ms the activity began — how long it has worked, or sat idle. Null when the remote did not say. */
   since: number | null
   /** The workspace here whose pane is attached to this session, when one is. */
@@ -348,6 +355,8 @@ function remoteChatRowOf(
     replyPreview: conversation.lastAssistantText ?? null,
     branch: conversation.branch ?? null,
     pullRequests: branchPullRequestsOfWire(conversation.pullRequests ?? []),
+    changes: conversation.changes ?? null,
+    worktree: conversation.worktree === true,
     // A working chat counts from when its turn began, where its machine says;
     // `updatedAt` also moves when an approval resolves or the model changes.
     since: presence === 'running' ? (conversation.turnStartedAt ?? conversation.updatedAt) : conversation.updatedAt,
@@ -685,6 +694,19 @@ export function remoteWorkspaceName(agentTitle: string, remoteChatName: string |
 }
 
 /**
+ * The id of the chat a remote-born row is, on its machine. Read off the
+ * session id the row was stamped with, which names the chat itself: rows
+ * started from New chat were stored with the PROJECT's workspace there in
+ * `workspaceId` (the chat the project picker was seated on), so a settle, a
+ * visit or a bring-back asked about that chat instead, and the row followed
+ * that chat's settle off the sidebar while its own chat ran on.
+ */
+export function remoteOriginChatWorkspaceId(origin: Pick<WorkspaceRemoteOrigin, 'workspaceId' | 'sessionId'>): string {
+  const match = origin.sessionId ? /^conversation:(.+):[^:]+$/.exec(origin.sessionId) : null
+  return match?.[1] ?? origin.workspaceId
+}
+
+/**
  * The name a remote pane's tab shows: its agent's, and nothing else (owner,
  * 2026-10-08, REVERSING the machine-in-the-name rule: "all we need to show here
  * is in the tab the name of the agent, and then the computer icon to show that
@@ -711,8 +733,17 @@ export function remotePaneTabLabel(name: string, machineName: string | null | un
  * row themselves keeps their name — unless they happened to type that exact
  * shape, in which case they get the chat's name, which is not a bad one.
  */
-export function remoteConversationTitle(workspace: Pick<Workspace, 'name' | 'remoteOrigin'>): string {
+export function remoteConversationTitle(
+  workspace: Pick<Workspace, 'name' | 'remoteOrigin'>,
+  listedTitle?: string | null,
+): string {
   const chatName = workspace.remoteOrigin?.workspaceName?.trim()
+  // A row still named what it was born as follows the chat's title over
+  // there, as a local chat's row follows its own: the machine names a new
+  // chat once its first turn has been read, and a rename there reaches here.
+  // A row renamed here keeps the person's name.
+  const listed = listedTitle?.trim()
+  if (listed && workspace.name.trim() === (chatName ?? '')) return listed
   if (!chatName) return workspace.name
   const suffix = ` · ${chatName}`
   if (workspace.name.length > suffix.length && workspace.name.endsWith(suffix)) return chatName
@@ -805,7 +836,8 @@ export function remoteRestToFollow(input: {
     if (!origin) continue
     const entry = input.browses.get(origin.connectionId)
     if (entry?.lifecycle !== true || !entry.browse) continue
-    const remote = entry.browse.workspaces.find((candidate) => candidate.id === origin.workspaceId)
+    const chatWorkspaceId = remoteOriginChatWorkspaceId(origin)
+    const remote = entry.browse.workspaces.find((candidate) => candidate.id === chatWorkspaceId)
     if (!remote) continue
     if (typeof remote.settledAt === 'number') {
       if (input.followed.get(workspace.id) === remote.settledAt) continue

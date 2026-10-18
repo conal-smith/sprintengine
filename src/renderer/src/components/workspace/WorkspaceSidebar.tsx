@@ -97,6 +97,7 @@ import {
   openSpecOfConversation,
   remoteFinishUnseen,
   remoteConversationTitle,
+  remoteOriginChatWorkspaceId,
   followedRemoteRestsToKeep,
   FOLLOWED_REMOTE_RESTS_KEY,
   readFollowedRemoteRests,
@@ -1390,14 +1391,15 @@ function WorkspaceSidebar({
       const row = remoteConversationByWorkspace.get(workspace.id)?.agents[0]
       const visit = window.api?.meshVisitConversation
       if (!row?.lifecycle || typeof visit !== 'function') return null
+      const chatWorkspaceId = remoteOriginChatWorkspaceId(origin)
       return {
-        key: `remote:${origin.connectionId}:${origin.workspaceId}`,
+        key: `remote:${origin.connectionId}:${chatWorkspaceId}`,
         turnEndedAt: row.lastTurnEndedAt,
         visitedAt: row.lastVisitedAt,
         // The machine stamps the visit with its own clock, which this one's
         // may not agree with.
         stamp: () => {
-          void visit({ connectionId: origin.connectionId, workspaceId: origin.workspaceId }).catch(() => undefined)
+          void visit({ connectionId: origin.connectionId, workspaceId: chatWorkspaceId }).catch(() => undefined)
         },
       }
     }
@@ -1477,7 +1479,7 @@ function WorkspaceSidebar({
           title: settled ? `${workspace.name} was not settled` : `${workspace.name} was not brought back`,
           description: message,
         })
-      void settle({ connectionId: origin.connectionId, workspaceId: origin.workspaceId, settled })
+      void settle({ connectionId: origin.connectionId, workspaceId: remoteOriginChatWorkspaceId(origin), settled })
         .then((answer) => {
           if (answer.ok) here()
           else refused(answer.message)
@@ -3925,7 +3927,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   // in it (owner, 2026-09-13). `remoteConversationTitle` also rescues the
   // rows already stored under the old `${agentName} · ${chatName}` rule, so
   // the fix reaches chats that exist rather than only the next one opened.
-  const rowTitle = remoteConversationTitle(workspace)
+  const rowTitle = remoteConversationTitle(workspace, rowConversation?.title)
   // The conversation this row is, over on its machine — present only for a
   // remote-born row whose machine has answered a browse.
   // A remote chat with agents standing in it is live whatever this window is
