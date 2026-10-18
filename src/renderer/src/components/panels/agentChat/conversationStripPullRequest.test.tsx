@@ -198,6 +198,7 @@ test('Create PR takes the slot, drafts, pushes, creates, and says on the strip w
     pluginCatalogEntries: [{ id: 'claude-code' }] as never,
   }))
   const { ConversationComposerStrip } = await import('./conversationStrip')
+  const { localPullRequestHost } = await import('./pullRequestHost')
   let settled = 0
   const holds: boolean[] = []
   const mounted = await mount(
@@ -208,8 +209,7 @@ test('Create PR takes the slot, drafts, pushes, creates, and says on the strip w
       context={null}
       pullRequests={[pr({ number: 2, state: 'merged' })]}
       createPullRequest={{
-        cwd: '/Users/dev/app',
-        conversation: { workspaceId: 'ws-1', agentId: 'agent-1' },
+        host: localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' }),
         onSettled: () => (settled += 1),
         onHoldChange: (held) => holds.push(held),
       }}
@@ -253,10 +253,10 @@ test('a held Create PR failure on a checkout no longer ready is dismissed, not r
     pluginCatalogEntries: [{ id: 'claude-code' }] as never,
   }))
   const { CreatePullRequestControl } = await import('./createPullRequest')
+  const { localPullRequestHost } = await import('./pullRequestHost')
   const holds: boolean[] = []
   const props = {
-    cwd: '/Users/dev/app',
-    conversation: { workspaceId: 'ws-1', agentId: 'agent-1' },
+    host: localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' }),
     onSettled: () => {},
     onHoldChange: (held: boolean) => holds.push(held),
   }
@@ -310,6 +310,7 @@ test('a pull request the branch already had is opened, not claimed for this chat
     pluginCatalogEntries: [{ id: 'claude-code' }] as never,
   }))
   const { CreatePullRequestControl } = await import('./createPullRequest')
+  const { localPullRequestHost } = await import('./pullRequestHost')
   let settled = 0
   const { act } = await import('react')
   const { createRoot } = await import('react-dom/client')
@@ -319,8 +320,7 @@ test('a pull request the branch already had is opened, not claimed for this chat
   await act(async () =>
     root.render(
       <CreatePullRequestControl
-        cwd="/Users/dev/app"
-        conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+        host={localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' })}
         onSettled={() => (settled += 1)}
         ready
       />,
@@ -365,11 +365,11 @@ test('the confirm step says how many uncommitted changes the pull request leaves
     pluginCatalogEntries: [{ id: 'claude-code' }] as never,
   }))
   const { CreatePullRequestControl } = await import('./createPullRequest')
+  const { localPullRequestHost } = await import('./pullRequestHost')
   let settled = 0
   const mounted = await mount(
     <CreatePullRequestControl
-      cwd="/Users/dev/app"
-      conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+      host={localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' })}
       onSettled={() => (settled += 1)}
       ready
     />,
@@ -494,11 +494,11 @@ test('on GitLab the control says merge request, and a page opened instead says w
     pluginCatalogEntries: [{ id: 'claude-code' }] as never,
   }))
   const { CreatePullRequestControl } = await import('./createPullRequest')
+  const { localPullRequestHost } = await import('./pullRequestHost')
   let settled = 0
   const { container, act, unmount } = await mount(
     <CreatePullRequestControl
-      cwd="/Users/dev/app"
-      conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+      host={localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' })}
       onSettled={() => (settled += 1)}
       forge="gitlab"
       ready
@@ -559,11 +559,11 @@ async function confirmCreate(outcome: unknown, openResult: unknown, draft = { ti
     pluginCatalogEntries: [{ id: 'claude-code' }] as never,
   }))
   const { CreatePullRequestControl } = await import('./createPullRequest')
+  const { localPullRequestHost } = await import('./pullRequestHost')
   let settled = 0
   const { container, act, unmount } = await mount(
     <CreatePullRequestControl
-      cwd="/Users/dev/app"
-      conversation={{ workspaceId: 'ws-1', agentId: 'agent-1' }}
+      host={localPullRequestHost('/Users/dev/app', { workspaceId: 'ws-1', agentId: 'agent-1' })}
       onSettled={() => (settled += 1)}
       forge="gitlab"
       ready

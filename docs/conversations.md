@@ -673,6 +673,21 @@ goes the way a local Settle takes a row. One that machine settles without
 asking here (on the phone, or on that machine) is followed once its browse says
 so, and the row here leaves the rail the same way.
 
+On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
+paired desktop's Create PR runs there too, in the chat's own checkout:
+**`conversation.pull_request_state`** `{ workspaceId, agentId }` answers
+whether it is ready, as the strip asks a local chat's (`gitRoot` is always
+null: no path of that machine's crosses); **`conversation.pull_request_draft`**
+`{ workspaceId, agentId, draftId? }` writes the title and description with that
+machine's text generation settings, refused `text_generation_off` where they
+are off (`conversation.pull_request_draft_cancel` stops one by its id);
+**`conversation.pull_request_push`** and **`conversation.pull_request_create`**
+take the `pin` the state answered and are refused once the checkout has moved
+off it. A creation's `kind` is the local one's, and a `created` pull request
+is recorded there as the chat's, with `recorded` saying whether that landed.
+The state is a read on `conversation:read`; the other four need
+`conversation:operate` and are audited.
+
 ### Following from another desktop
 
 A Studio desktop paired to this one follows its conversations with the same

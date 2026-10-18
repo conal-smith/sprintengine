@@ -131,6 +131,7 @@ import { ComposerPlusMenu } from '../workspace/agentComposer/ComposerPlusMenu'
 import { unwatchPullRequest, usePullRequestsOfConversation } from '../workspace/useConversationPullRequests'
 import { useLocalServersOfConversation } from '../workspace/useLocalServers'
 import { useCreatePullRequestState } from './agentChat/createPullRequest'
+import { localPullRequestHost } from './agentChat/pullRequestHost'
 import { conversationContextReading } from './agentChat/contextReading'
 import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
@@ -3518,11 +3519,23 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       ? usageLimitProviderOf(conversation?.providerId)
       : null
   const stripUsageLimits = useUsageLimitSnapshot(usageProvider)
-  // "Create PR" works in this computer's checkout only: a chat on a paired
-  // machine, WSL or an SSH machine (the strip names its machine) has no git
-  // or `gh` here.
+  // "Create PR" works in this computer's checkout, or on the paired machine a
+  // remote chat runs on, which does every step in its own checkout (owner
+  // ruling 2026-10-18) where it says it can and this pairing may drive the
+  // chat. A chat on WSL or an SSH machine (the strip names its machine) has
+  // no git or `gh` here, and nothing there answers for them.
   const createPullRequestCwd =
     transport.kind !== 'remote' && transport.capabilities.localFiles && !stripFacts.machine ? workspaceRoot : null
+  const remotePullRequestHost =
+    transport.kind === 'remote' && transport.capabilities.hostPullRequests && operate
+      ? (transport.pullRequestHost ?? null)
+      : null
+  const pullRequestHost = useMemo(
+    () =>
+      remotePullRequestHost ??
+      (createPullRequestCwd ? localPullRequestHost(createPullRequestCwd, { workspaceId, agentId }) : null),
+    [remotePullRequestHost, createPullRequestCwd, workspaceId, agentId],
+  )
   // A turn ending moves the transcript's shape, and a token never does: read
   // when the shape moves, not on every streamed frame, which scanned back over
   // the whole running turn's events each time.
@@ -3537,7 +3550,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const [createPullRequestAsk, setCreatePullRequestAsk] = useState(0)
   const createPullRequestState = useCreatePullRequestState(
     // Not asked while the conversation owns an open pull request: the slot is that one's.
-    conversationPullRequests.some((pr) => pr.state === 'open') ? null : createPullRequestCwd,
+    conversationPullRequests.some((pr) => pr.state === 'open') ? null : pullRequestHost,
     [
       lastTurnEnd,
       stripFacts.branch?.name ?? '',
@@ -3552,17 +3565,16 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const [createPullRequestHeld, setCreatePullRequestHeld] = useState(false)
   const createPullRequest = useMemo(
     () =>
-      createPullRequestCwd && (createPullRequestState?.readiness.ready || createPullRequestHeld)
+      pullRequestHost && (createPullRequestState?.readiness.ready || createPullRequestHeld)
         ? {
-            cwd: createPullRequestCwd,
-            conversation: { workspaceId, agentId },
+            host: pullRequestHost,
             onSettled: () => setCreatePullRequestAsk((count) => count + 1),
             onHoldChange: setCreatePullRequestHeld,
             ready: createPullRequestState?.readiness.ready === true,
             forge: createPullRequestState?.forge ?? null,
           }
         : null,
-    [createPullRequestCwd, createPullRequestState, createPullRequestHeld, workspaceId, agentId],
+    [pullRequestHost, createPullRequestState, createPullRequestHeld],
   )
   return (
     <ConversationLinkProvider

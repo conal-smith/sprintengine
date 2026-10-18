@@ -107,6 +107,7 @@ async function mountRemote({
   steerSends = false,
   capabilities = thread.capabilities,
   listed = {},
+  createPullRequest = false,
 }: {
   access: 'read' | 'operate'
   permissionPreset?: MeshConversation['permissionPreset']
@@ -117,8 +118,10 @@ async function mountRemote({
   steerSends?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
-  /** More of what the machine lists about the chat: its branch, its pull requests. */
+  /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
   listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
+  /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
+  createPullRequest?: boolean
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -140,6 +143,8 @@ async function mountRemote({
   const followed: MeshConversationKey[] = []
   // The model the machine says the chat is on: what an accepted switch moves.
   let listedModel = thread.modelId
+  // What the machine lists once a Create PR there has recorded one as the chat's.
+  let recordedPullRequests: NonNullable<MeshConversation['pullRequests']> | null = null
   const api = {
     platform: 'darwin',
     meshConversationList: vi.fn(async () => ({
@@ -152,6 +157,7 @@ async function mountRemote({
           ...(permissionPreset ? { permissionPreset } : {}),
           ...(models ? { models } : {}),
           ...listed,
+          ...(recordedPullRequests ? { pullRequests: recordedPullRequests } : {}),
         },
       ],
       access,
@@ -159,7 +165,50 @@ async function mountRemote({
       permissionModes,
       queuedSends,
       steerSends,
+      createPullRequest,
     })),
+    // Create PR on the machine the chat runs on: each step answers as that
+    // machine would, and a creation records the pull request there.
+    meshConversationPullRequestState: vi.fn(async (_input: { key: MeshConversationKey }) => ({
+      ok: true,
+      state: {
+        readiness: { ready: true },
+        gitRoot: null,
+        branch: 'agent/remote-pr',
+        headSha: 'abc1234def',
+        uncommittedChanges: 2,
+        base: 'main',
+        forge: 'github',
+      },
+    })),
+    meshConversationPullRequestDraft: vi.fn(async (_input: { key: MeshConversationKey; draftId?: string }) => ({
+      ok: true,
+      title: 'feat: create a pull request from a paired machine',
+      body: 'Drafted over there.',
+    })),
+    meshConversationPullRequestDraftCancel: vi.fn(async () => ({ ok: true })),
+    meshConversationPullRequestPush: vi.fn(async (_input: { key: MeshConversationKey; pin?: unknown }) => ({
+      ok: true,
+      pushed: true,
+    })),
+    meshConversationPullRequestCreate: vi.fn(
+      async (_input: { key: MeshConversationKey; title: string; body: string; pin?: unknown }) => {
+        recordedPullRequests = [
+          {
+            number: 290,
+            state: 'open',
+            url: 'https://github.com/acme/studio/pull/290',
+            title: 'feat: create a pull request from a paired machine',
+          },
+        ]
+        return {
+          ok: true,
+          kind: 'created',
+          url: 'https://github.com/acme/studio/pull/290',
+          recorded: { ok: true },
+        }
+      },
+    ),
     onMeshConversationSession: vi.fn(
       (input: { key: MeshConversationKey }, receive: (frame: MeshConversationFrame) => void) => {
         followed.push(input.key)
@@ -771,5 +820,61 @@ test('a steer to a chat over there clears once its message is in, and a failure 
   } finally {
     useWorkspaceStore.getState().setFollowUpBehavior('queue')
     await chat.unmount()
+  }
+})
+
+test('a paired machine that opens pull requests offers Create PR, and every step runs over there', async () => {
+  const chat = await mountRemote({ access: 'operate', createPullRequest: true, listed: { branch: 'agent/remote-pr' } })
+  try {
+    const createButton = () =>
+      Array.from(chat.host.querySelectorAll('button')).find((item) => item.textContent?.includes('Create PR'))
+    // The machine is asked whether the chat's checkout is ready, by the chat's key.
+    expect(chat.api.meshConversationPullRequestState).toHaveBeenCalledWith({ key })
+    expect(createButton()?.getAttribute('aria-label')).toBe('Create a pull request from this branch')
+
+    await chat.act(async () => createButton()!.click())
+    // The draft is written over there, with that machine's settings.
+    expect(chat.api.meshConversationPullRequestDraft).toHaveBeenCalledWith(expect.objectContaining({ key }))
+    const title = chat.document.querySelector<HTMLInputElement>('input[maxlength="300"]')!
+    expect(title.value).toBe('feat: create a pull request from a paired machine')
+    // What the checkout over there leaves out is said as it is for a local chat.
+    expect(chat.document.querySelector('[data-create-pull-request-uncommitted]')?.textContent).toContain(
+      '2 uncommitted changes',
+    )
+
+    const listReads = chat.api.meshConversationList.mock.calls.length
+    const create = Array.from(chat.document.querySelectorAll('button')).find((item) => item.textContent === 'Create')
+    await chat.act(async () => create!.click())
+    const pin = { branch: 'agent/remote-pr', headSha: 'abc1234def' }
+    expect(chat.api.meshConversationPullRequestPush).toHaveBeenCalledWith({ key, pin })
+    expect(chat.api.meshConversationPullRequestCreate).toHaveBeenCalledWith({
+      key,
+      title: 'feat: create a pull request from a paired machine',
+      body: 'Drafted over there.',
+      pin,
+    })
+    // The machine recorded it; the list is read again and the slot is that pull request's.
+    expect(chat.api.meshConversationList.mock.calls.length).toBeGreaterThan(listReads)
+    expect(chat.host.querySelector('[data-create-pull-request-error]')).toBeNull()
+    expect(chat.host.querySelector('[data-strip-pull-request-slot]')?.textContent).toContain('290')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Create PR for a machine that does not open pull requests, or a pairing that may only follow', async () => {
+  for (const options of [
+    { access: 'operate' as const, createPullRequest: false },
+    { access: 'read' as const, createPullRequest: true },
+  ]) {
+    const chat = await mountRemote({ ...options, listed: { branch: 'agent/remote-pr' } })
+    try {
+      expect(chat.api.meshConversationPullRequestState).not.toHaveBeenCalled()
+      expect(
+        Array.from(chat.host.querySelectorAll('button')).some((item) => item.textContent?.includes('Create PR')),
+      ).toBe(false)
+    } finally {
+      await chat.unmount()
+    }
   }
 })

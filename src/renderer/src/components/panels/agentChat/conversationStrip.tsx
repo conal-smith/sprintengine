@@ -12,6 +12,7 @@ import type { StudioLocalServer } from '../../../../../../packages/studio-protoc
 import { LocalServersStripButton, localServersStripCopy } from '../../workspace/LocalServerMarks'
 import { PullRequestStripButton, stripPullRequestCopy } from '../../workspace/PullRequestMark'
 import { CreatePullRequestControl, pullRequestSlotChoice } from './createPullRequest'
+import type { PullRequestHost } from './pullRequestHost'
 import { fitComposerStrip, fullComposerStripFit, sameComposerStripFit, type ComposerStripFit } from './composerStripFit'
 import type { UsageLimitSnapshot } from '../../../../../shared/usage-limits'
 import { UsageLimitsStripButton } from './usageLimits'
@@ -106,10 +107,10 @@ export function ConversationComposerStrip({
   pullRequests?: readonly BranchPullRequest[]
   /** Stop Studio watching one of them; absent where this window cannot, and then none is offered. */
   onStopWatchingPullRequest?: (url: string) => void
-  /** The checkout is ready to propose: "Create PR" may take the slot. Null when it is not, or not on this computer. */
+  /** The checkout is ready to propose: "Create PR" may take the slot. Null when it is not, or nothing can open one. */
   createPullRequest?: {
-    cwd: string
-    conversation: { workspaceId: string; agentId: string }
+    /** Where the checkout is read and the pull request opened: this computer, or the chat's paired machine. */
+    host: PullRequestHost
     onSettled: () => void
     /** Keeps the control in the slot while it shows its dialog, a step or a failure. */
     onHoldChange?: (held: boolean) => void
@@ -398,8 +399,7 @@ export function ConversationComposerStrip({
         >
           {slot === 'create' && createPullRequest ? (
             <CreatePullRequestControl
-              cwd={createPullRequest.cwd}
-              conversation={createPullRequest.conversation}
+              host={createPullRequest.host}
               onSettled={createPullRequest.onSettled}
               onHoldChange={createPullRequest.onHoldChange}
               ready={createPullRequest.ready}

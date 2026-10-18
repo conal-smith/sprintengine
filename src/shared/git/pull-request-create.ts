@@ -90,6 +90,23 @@ export type CreatePullRequestState = {
  */
 export type PullRequestCheckoutPin = { branch: string; headSha: string }
 
+/** The longest title and description a creation takes; what is longer is cut, as the dialog's field cuts a title. */
+export const PULL_REQUEST_TITLE_MAX_CHARS = 300
+export const PULL_REQUEST_BODY_MAX_CHARS = 65_000
+
+/**
+ * A pin as a window or a paired machine sent it, or null when it is not one: a
+ * branch name git could hold and a commit id. Shared by the shell's channels
+ * and the gateway's tools, so the two cannot disagree about what a pin is.
+ */
+export function readPullRequestCheckoutPin(value: unknown): PullRequestCheckoutPin | null {
+  if (!value || typeof value !== 'object') return null
+  const { branch, headSha } = value as Record<string, unknown>
+  if (typeof branch !== 'string' || !branch || branch.length > 255 || branch.includes('\0')) return null
+  if (typeof headSha !== 'string' || !/^[0-9a-f]{7,64}$/iu.test(headSha)) return null
+  return { branch, headSha }
+}
+
 /**
  * A creation's end: created by the forge's CLI, already there, a forge page to
  * open, the forge's list to look in, or why not. The window opens the address

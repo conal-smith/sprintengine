@@ -227,6 +227,13 @@ export const TAILNET_CAPABILITIES = [
   // skips the argument.
   'workspace-extensions',
   'new-chat-skills',
+  // A paired desktop's Create PR on a chat here (2026-10-18): the
+  // `conversation.pull_request_*` tools read whether the chat's checkout is
+  // ready, draft the text with this machine's text generation settings, push
+  // the branch and open the pull request here, recording it as the chat's.
+  // They name the chat, never a folder. A client that does not see it draws
+  // no Create PR under this machine's chats, as before.
+  'chat-create-pull-request',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

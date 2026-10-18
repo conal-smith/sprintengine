@@ -9,6 +9,7 @@ import { createAutomationTools } from './automation-tools'
 import { createBrowserTools } from './browser-tools'
 import { createCanvasTools } from './canvas-tools'
 import { createConversationTools } from './conversation-tools'
+import { createConversationPullRequestTools } from './conversation-pull-request-tools'
 import { createPullRequestTools } from '../../server/pull-requests/pull-request-tools'
 import { createLocalServerTools } from '../../server/local-servers/local-server-tools'
 import { desktopGatewayTools } from './desktop-gateway-tools'
@@ -47,7 +48,12 @@ export function desktopToolParts(): Parameters<typeof desktopGatewayTools>[0] & 
     automation: createAutomationTools(stub),
     worktree: createWorktreePoolTools(stub),
     tailnet: createTailnetTools({ resolveTailnet: () => null }),
-    core: [...createConversationTools(stub), ...createPullRequestTools(stub), ...createLocalServerTools(stub)],
+    core: [
+      ...createConversationTools(stub),
+      ...createConversationPullRequestTools(stub),
+      ...createPullRequestTools(stub),
+      ...createLocalServerTools(stub),
+    ],
   }
 }
 

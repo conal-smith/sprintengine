@@ -19,6 +19,11 @@ import {
   MESH_CONVERSATION_EARLIER_CHANNEL,
   MESH_CONVERSATION_FOLLOW_CHANNEL,
   MESH_CONVERSATION_LIST_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_CREATE_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_DRAFT_CANCEL_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_DRAFT_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL,
   MESH_CONVERSATION_SEND_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
@@ -134,6 +139,29 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
     return service
       .mesh()
       .workspaceExtensions({ connectionId: record.connectionId, workspaceId: record.workspaceId, cli: record.cli })
+  })
+  // A remote chat's Create PR, a step per channel as the shell's own are:
+  // every one runs on the chat's machine, in its checkout there.
+  ipcMain.handle(MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL, (_event, input: unknown) =>
+    service.mesh().conversationPullRequestState({ key: asRecord(input)?.key }),
+  )
+  ipcMain.handle(MESH_CONVERSATION_PULL_REQUEST_DRAFT_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationPullRequestDraft({ key: record.key, draftId: record.draftId })
+  })
+  ipcMain.handle(MESH_CONVERSATION_PULL_REQUEST_DRAFT_CANCEL_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationPullRequestDraftCancel({ key: record.key, draftId: record.draftId })
+  })
+  ipcMain.handle(MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationPullRequestPush({ key: record.key, pin: record.pin })
+  })
+  ipcMain.handle(MESH_CONVERSATION_PULL_REQUEST_CREATE_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service
+      .mesh()
+      .conversationPullRequestCreate({ key: record.key, title: record.title, body: record.body, pin: record.pin })
   })
 
   // Conversations on a paired machine. Like every `mesh:*` channel these

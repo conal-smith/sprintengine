@@ -384,7 +384,19 @@ in the `notice`, even when that turn then fails. `steer` is never beside `queue`
 additive: a desktop without the capability drops `steer`, so the send is
 refused `busy` mid-turn as before, and a client sends it only where it is
 advertised. The Studio RPC advertises it too: its `conversation.send` reads
-the lane's own validator and reaches the same host. Breaking frame changes require a new
+the lane's own validator and reaches the same host.
+Create PR on a paired machine's chat is `chat-create-pull-request`
+(2026-10-18), gateway tools beside `conversation.mark_unread` and, like it,
+without the `conversation-` prefix: `conversation.pull_request_state`
+(`conversation:read`) and `conversation.pull_request_draft`, `_draft_cancel`,
+`_push` and `_create` (`conversation:operate`). Each names the chat by
+`workspaceId` and `agentId`, never a folder; the machine reads the chat's
+checkout from its own record, drafts with its own text generation settings,
+and records a pull request it creates as the chat's, so its next list carries
+it. All of it is additive: a client offers Create PR under a machine's chats
+only where it is advertised, and an older machine answers the tools "Unknown
+tool". The Studio RPC does not advertise it, having no method for them.
+Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.
 Both ESM and CommonJS tarball consumers and Node16 declarations are checked by

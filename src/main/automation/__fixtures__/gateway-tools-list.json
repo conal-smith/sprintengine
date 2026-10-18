@@ -161,6 +161,26 @@
       "sha256": "3c2161f38ef3a4b106ece523aa149731ae2cac491aa53faef5480375f2f26784"
     },
     {
+      "name": "conversation.pull_request_state",
+      "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
+    },
+    {
+      "name": "conversation.pull_request_draft",
+      "sha256": "d8a1d6c05cb113b4d2b4649e5d048e6619252e10874fb0e5af1c2cacb0b96b64"
+    },
+    {
+      "name": "conversation.pull_request_draft_cancel",
+      "sha256": "674781b03759b70d61c64a3fb98e06c69d1ab2186880fcfb6e2641d9da1186ba"
+    },
+    {
+      "name": "conversation.pull_request_push",
+      "sha256": "03896ee5c4f39703636e653d9a3ad7a908b6f6a7f0014d8d07d4ae8a29e40ad1"
+    },
+    {
+      "name": "conversation.pull_request_create",
+      "sha256": "08f79f14066acfbf6a706d969f87c2c8c63bb071603dcf940deca66fb204ab0c"
+    },
+    {
       "name": "pull_request.link",
       "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
     },
@@ -483,6 +503,26 @@
       "sha256": "3c2161f38ef3a4b106ece523aa149731ae2cac491aa53faef5480375f2f26784"
     },
     {
+      "name": "conversation.pull_request_state",
+      "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
+    },
+    {
+      "name": "conversation.pull_request_draft",
+      "sha256": "d8a1d6c05cb113b4d2b4649e5d048e6619252e10874fb0e5af1c2cacb0b96b64"
+    },
+    {
+      "name": "conversation.pull_request_draft_cancel",
+      "sha256": "674781b03759b70d61c64a3fb98e06c69d1ab2186880fcfb6e2641d9da1186ba"
+    },
+    {
+      "name": "conversation.pull_request_push",
+      "sha256": "03896ee5c4f39703636e653d9a3ad7a908b6f6a7f0014d8d07d4ae8a29e40ad1"
+    },
+    {
+      "name": "conversation.pull_request_create",
+      "sha256": "08f79f14066acfbf6a706d969f87c2c8c63bb071603dcf940deca66fb204ab0c"
+    },
+    {
       "name": "pull_request.link",
       "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
     },
@@ -695,6 +735,10 @@
     {
       "name": "tour.status",
       "sha256": "32ab506d18b5e8ab44ff26209fe600fe55f60008121fc93310f8c9e91caa6160"
+    },
+    {
+      "name": "conversation.pull_request_state",
+      "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },
     {
       "name": "workspace.checkout",

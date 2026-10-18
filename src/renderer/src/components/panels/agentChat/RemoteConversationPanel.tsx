@@ -160,6 +160,8 @@ export default function RemoteConversationPanel({
   // holds for this chat, as it last said.
   const [queuedSends, setQueuedSends] = useState(false)
   const [sendSkills, setSendSkills] = useState(false)
+  // The machine opens a pull request for one of its chats (Create PR).
+  const [hostPullRequests, setHostPullRequests] = useState(false)
   // The machine takes a message into a turn one of its chats is running.
   const [steerSends, setSteerSends] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
@@ -184,6 +186,8 @@ export default function RemoteConversationPanel({
   queuedSendsRef.current = queuedSends
   const sendSkillsRef = useRef(sendSkills)
   sendSkillsRef.current = sendSkills
+  const hostPullRequestsRef = useRef(hostPullRequests)
+  hostPullRequestsRef.current = hostPullRequests
   const steerSendsRef = useRef(steerSends)
   steerSendsRef.current = steerSends
   const threadRef = useRef(thread)
@@ -195,6 +199,10 @@ export default function RemoteConversationPanel({
       access: null,
       onLink: setLink,
       onQueued: setHostQueued,
+      // A pull request Create PR opened there is in the machine's list now:
+      // read it again, so the strip says "Open PR #N" without waiting for the
+      // sidebar's next read.
+      onPullRequestRecorded: () => setListVersion((version) => version + 1),
     })
     const capabilities = base.capabilities
     const setModel = base.setModel
@@ -219,6 +227,7 @@ export default function RemoteConversationPanel({
           hostQueue: queuedSendsRef.current,
           skills: sendSkillsRef.current,
           steer: steerSendsRef.current,
+          hostPullRequests: hostPullRequestsRef.current,
         }
       },
       ...(setModel
@@ -257,6 +266,7 @@ export default function RemoteConversationPanel({
         setPermissionModes(result.permissionModes === true)
         setQueuedSends(result.queuedSends === true)
         setSendSkills(result.sendSkills === true)
+        setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setThread(
           result.conversations.find(
