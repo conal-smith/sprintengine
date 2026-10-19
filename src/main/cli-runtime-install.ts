@@ -8,7 +8,12 @@ import type {
 } from '../shared/electron-api'
 import type { PluginInstallMethod, PluginInstallPlatform, PluginManifest } from '../shared/plugin-manifest'
 import { getPluginManifest } from './plugin-registry-instance'
-import { chooseCliUpdateCommand, foreignPackageManager, localCliInstallFs } from './cli-version-advisory'
+import {
+  chooseCliUpdateCommand,
+  foreignPackageManager,
+  installedByWinGet,
+  localCliInstallFs,
+} from './cli-version-advisory'
 import { currentRuntimeEnv, ensureManagedRuntimeShims, withManagedRuntimePath } from './managed-runtime'
 import { runSpawnDescriptor, type RunOutcome, type SpawnDescriptor } from './process-run'
 import { knownDefaultWslDistro, resolveDefaultWslDistro, wslLoginScript, wslScriptDescriptor } from './hosts/wsl-distro'
@@ -1113,6 +1118,22 @@ export async function updateCli(
   }
   const target = resolveInstallPlatform(process.platform, runtime?.hostId)
   const distro = await wslDistroFor(target, runtime?.hostId)
+
+  // WinGet's install is WinGet's to move, whatever updater the CLI declares.
+  if (target === 'win32' && manifest.update?.args?.length) {
+    const detected = await detectCli(cli, runtime)
+    const real = detected.resolvedPath ? localCliInstallFs.realPath(detected.resolvedPath) : null
+    if (detected.installed && installedByWinGet(detected.resolvedPath, real))
+      return {
+        ok: false,
+        cli,
+        installed: true,
+        version: detected.version,
+        resolvedPath: detected.resolvedPath,
+        log: '',
+        error: `${manifest.displayName} at ${detected.resolvedPath} was installed with WinGet. Update it with WinGet, the way it was installed.`,
+      }
+  }
 
   if (manifest.update?.args?.length) {
     const binary = resolveBinary(manifest, runtime)

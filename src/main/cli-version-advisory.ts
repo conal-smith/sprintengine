@@ -120,6 +120,21 @@ export const localCliInstallFs: CliInstallFs = {
 // which reads as an npm prefix and would have npm write into mise's version
 // folder. A global installed by the npm of a mise-managed Node
 // (`mise/installs/node/<version>/…`) is npm's, and keeps the npm update.
+// WinGet links a portable install into `Microsoft\WinGet\Links` and unpacks
+// it under `WinGet\Packages\<id>_<source>` (per user in LocalAppData, per
+// machine in Program Files). A CLI's own updater does not move what WinGet put
+// there: `claude update` on one says it is managed by winget, exits 0 and
+// changes nothing, so the update read as done while the version stayed behind.
+const WINGET_PATH = /[\\/](?:Microsoft[\\/])?WinGet[\\/](?:Links|Packages)[\\/]/i
+
+/**
+ * Whether WinGet put the binary here, by its own path or the one it links to.
+ * Asked before a manifest's `update` command, which is the CLI's own updater.
+ */
+export function installedByWinGet(...paths: Array<string | null | undefined>): boolean {
+  return paths.some((path) => !!path && WINGET_PATH.test(path))
+}
+
 const FOREIGN_PACKAGE_MANAGERS: ReadonlyArray<readonly [name: string, segment: RegExp]> = [
   ['Volta', /[\\/]\.?volta[\\/]/i],
   ['pnpm', /[\\/]\.?pnpm[\\/]/i],
@@ -128,6 +143,7 @@ const FOREIGN_PACKAGE_MANAGERS: ReadonlyArray<readonly [name: string, segment: R
   ['mise', /[\\/]mise[\\/]shims[\\/]/i],
   ['mise', /(?:^|[\\/])mise(?:\.exe)?$/i],
   ['mise', /[\\/]mise[\\/]installs[\\/](?!node[\\/])[^\\/]+[\\/][^\\/]+[\\/]/i],
+  ['WinGet', WINGET_PATH],
 ]
 
 /** The package manager other than npm and Homebrew that put a binary here, when its path says so. */
@@ -187,6 +203,7 @@ export function chooseCliUpdateCommand(input: {
 }): CliUpdateCommand | null {
   const { manifest, resolvedPath } = input
   const fs = input.fs === undefined ? localCliInstallFs : input.fs
+  if (installedByWinGet(resolvedPath, resolvedPath && fs ? fs.realPath(resolvedPath) : null)) return null
   if (manifest.update?.args?.length) {
     return { kind: 'cli-updater', command: [manifest.binary, ...manifest.update.args].join(' ') }
   }
