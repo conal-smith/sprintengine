@@ -39,6 +39,19 @@ export function zoomWindowContents(contents: Electron.WebContents, step: 1 | -1 
   afterWindowZoom?.(contents)
 }
 
+/**
+ * Ctrl+wheel over a window's own page reaches it only as a request:
+ * Electron leaves applying it to the app. It takes the menu's step, so the
+ * browser pane's pages are put back at their own zoom after it. A wheel a
+ * page uses for itself (a canvas, a diagram) never asks, and one over a
+ * browser tab asks that tab, not the window.
+ */
+export function zoomWithWheel(contents: Electron.WebContents): void {
+  contents.on('zoom-changed', (_event, direction) => {
+    if (!contents.isDestroyed()) zoomWindowContents(contents, direction === 'in' ? 1 : -1)
+  })
+}
+
 // The chat windows open now, set by the lifecycle once windows exist.
 let listChatWindows: (() => readonly Electron.BaseWindow[]) | null = null
 

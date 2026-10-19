@@ -7,7 +7,7 @@ vi.mock('electron', () => ({
   Menu: { buildFromTemplate: (template: unknown) => template, setApplicationMenu: () => {} },
 }))
 
-const { createAppMenu, setAfterWindowZoom, setChatWindowsForCloseChord, zoomWindowContents } =
+const { createAppMenu, setAfterWindowZoom, setChatWindowsForCloseChord, zoomWindowContents, zoomWithWheel } =
   await import('./app-menu')
 
 type Item = {
@@ -73,6 +73,32 @@ test('the numeric keypad zooms the window too, through items the menu does not l
     expect(level).toBe(0)
   } finally {
     windows.delete(7)
+  }
+})
+
+test('Ctrl+wheel zooms the window by the step the menu takes, and the browser pane puts its pages back after', () => {
+  let level = 0
+  let request: ((event: unknown, direction: 'in' | 'out') => void) | null = null
+  const contents = {
+    isDestroyed: () => false,
+    getZoomLevel: () => level,
+    setZoomLevel: (next: number) => {
+      level = next
+    },
+    on: (event: string, listener: typeof request) => {
+      if (event === 'zoom-changed') request = listener
+    },
+  } as unknown as Electron.WebContents
+  const after: number[] = []
+  setAfterWindowZoom(() => after.push(level))
+  try {
+    zoomWithWheel(contents)
+    request!({}, 'in')
+    request!({}, 'out')
+    request!({}, 'out')
+    expect(after).toEqual([0.5, 0, -0.5])
+  } finally {
+    setAfterWindowZoom(null)
   }
 })
 
