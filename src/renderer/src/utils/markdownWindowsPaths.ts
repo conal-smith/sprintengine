@@ -11,8 +11,16 @@
 // A web address, or anything else, parses exactly as before. A character
 // reference (`&amp;`) is the one escape a path could mean, so a destination
 // holding `&` keeps the parsed value.
+//
+// The same escape ate backslashes in prose: `Saved to C:\Users\me\.t3\_build`
+// read `C:\Users\me.t3_build`. An escape inside a drive path keeps its
+// backslash too. A prose path ends at whitespace, since past that nothing tells
+// a path from a sentence, and `C:\x and \*this\*` still reads `*this*`.
 
 const WINDOWS_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/u
+
+// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
+const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/u
 
 // The slices of the parser's context and of the syntax tree this pass touches.
 // Declared here, as the other passes declare theirs: the packages that own the
@@ -25,6 +33,8 @@ type PathNode = {
   data?: { hProperties?: Record<string, unknown> }
 }
 
+type TextNode = { type: string; value?: string }
+
 type CompileContext = {
   resume(): string
   sliceSerialize(token: unknown): string
@@ -36,6 +46,17 @@ function keepWindowsPath(this: CompileContext, token: unknown): void {
   const source = this.sliceSerialize(token)
   const node = this.stack[this.stack.length - 1]
   node.url = WINDOWS_PATH.test(source) && !source.includes('&') ? source : parsed
+}
+
+// By the time an escape exits, its character has been appended to the text
+// before it, with the backslash dropped; put the backslash back when that text
+// is part-way through a drive path.
+function keepWindowsPathEscape(this: CompileContext): void {
+  const siblings = this.stack[this.stack.length - 1]?.children as TextNode[] | undefined
+  const text = siblings?.[siblings.length - 1]
+  if (text?.type !== 'text' || text.value === undefined) return
+  const before = text.value.slice(0, -1)
+  if (UNFINISHED_DRIVE_PATH.test(before)) text.value = `${before}\\${text.value.slice(-1)}`
 }
 
 // The HTML a link becomes carries its URL percent-encoded; a path's own
@@ -61,12 +82,16 @@ function pinPaths(node: PathNode, definitions: Map<string, string>): void {
   for (const child of node.children ?? []) pinPaths(child, definitions)
 }
 
-/** Remark plugin: Windows path destinations read as written. */
+/** Remark plugin: Windows path destinations, and drive paths in prose, read as written. */
 export function remarkWindowsPaths(this: { data(): object }) {
   const data = this.data() as { fromMarkdownExtensions?: unknown[] }
   data.fromMarkdownExtensions ??= []
   data.fromMarkdownExtensions.push({
-    exit: { resourceDestinationString: keepWindowsPath, definitionDestinationString: keepWindowsPath },
+    exit: {
+      resourceDestinationString: keepWindowsPath,
+      definitionDestinationString: keepWindowsPath,
+      characterEscape: keepWindowsPathEscape,
+    },
   })
   return (tree: PathNode) => {
     const definitions = new Map<string, string>()
