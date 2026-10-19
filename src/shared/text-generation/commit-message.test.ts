@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
 import {
+  MAX_COMMIT_BODY_LENGTH,
   MAX_COMMIT_PATCH_CHARS,
   MAX_COMMIT_SUBJECT_LENGTH,
   buildCommitMessagePrompt,
@@ -211,4 +212,24 @@ test('trailers, and a body that repeats the subject, are dropped', () => {
     )?.body,
     'They vanished.',
   )
+})
+
+// A lone surrogate, which git would store as U+FFFD. With the `u` flag a whole
+// pair is one code point, so only half of one matches.
+const splitsAPair = (text: string) => /[\uD800-\uDFFF]/u.test(text)
+
+test('a subject cut at the length limit never ends in half an emoji', () => {
+  const subject = 'fix: ' + 'a'.repeat(MAX_COMMIT_SUBJECT_LENGTH - 6) + '🚀 more'
+  const read = readCommitMessageOutput({ subject, body: '' }, { conventional: true })
+  assert.ok(read)
+  assert.equal(splitsAPair(read.subject), false)
+  assert.ok(read.subject.length <= MAX_COMMIT_SUBJECT_LENGTH)
+})
+
+test('a body cut at the length limit never ends in half an emoji', () => {
+  const body = 'x'.repeat(MAX_COMMIT_BODY_LENGTH - 1) + '🚀🚀'
+  const read = readCommitMessageOutput({ subject: 'fix: a thing', body }, { conventional: true })
+  assert.ok(read)
+  assert.equal(splitsAPair(read.body), false)
+  assert.equal(read.body, 'x'.repeat(MAX_COMMIT_BODY_LENGTH - 1))
 })

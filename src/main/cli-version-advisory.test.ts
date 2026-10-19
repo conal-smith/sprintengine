@@ -396,3 +396,30 @@ test('an advisory for a WSL machine never reads this machine’s files', async (
   assert.deepEqual(advisories.grok?.updateCommand, { kind: 'cli-updater', command: 'grok update' })
   assert.equal(read, 0)
 })
+
+test('a CLI WinGet installed gets no update command, not its own updater that cannot move it', () => {
+  const claude = manifest({
+    id: 'claude-code',
+    binary: 'claude',
+    update: { args: ['update'] },
+    package: { npm: '@anthropic-ai/claude-code' },
+  })
+  const link = 'C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe'
+  const pkg =
+    'C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe'
+  // WinGet's link, its package folder, and a native-looking alias that resolves into it.
+  assert.equal(chooseCliUpdateCommand({ manifest: claude, resolvedPath: link, fs: fakeFs({ [link]: pkg }) }), null)
+  assert.equal(chooseCliUpdateCommand({ manifest: claude, resolvedPath: pkg, fs: fakeFs({}, [pkg]) }), null)
+  const alias = 'C:\\Users\\me\\.local\\bin\\claude.exe'
+  assert.equal(chooseCliUpdateCommand({ manifest: claude, resolvedPath: alias, fs: fakeFs({ [alias]: pkg }) }), null)
+  // A machine-wide install.
+  const machine = 'C:\\Program Files\\WinGet\\Packages\\Anthropic.ClaudeCode_x\\claude.exe'
+  assert.equal(chooseCliUpdateCommand({ manifest: claude, resolvedPath: machine, fs: fakeFs({}, [machine]) }), null)
+  assert.equal(foreignPackageManager(link), 'WinGet')
+  // The native install keeps the CLI's own updater.
+  const native = 'C:\\Users\\me\\.local\\bin\\claude.exe'
+  assert.deepEqual(chooseCliUpdateCommand({ manifest: claude, resolvedPath: native, fs: fakeFs({}, [native]) }), {
+    kind: 'cli-updater',
+    command: 'claude update',
+  })
+})

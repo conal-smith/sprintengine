@@ -268,10 +268,22 @@ async function readPairingMoves(
     // stat data for a file changed in the same second the index was written.
     await utimes(index, info.atime, info.mtime)
     // `:(top,literal)`: the paths are repo-root-relative (`--full-name`) while
-    // cwd may be a subdirectory, and a name with `*` in it is a name.
+    // cwd may be a subdirectory, and a name with `*` in it is a name. The copy
+    // is written whole, never as a split index: a split write under the
+    // repository's `core.splitIndex` expires shared index files by age,
+    // the one the repository's own index uses among them.
     const added = await runGitCommand(
       cwd,
-      ['add', '--intent-to-add', '--', ...files.map((path) => `:(top,literal)${path}`)],
+      [
+        '-c',
+        'core.splitIndex=false',
+        '-c',
+        'splitIndex.sharedIndexExpire=never',
+        'add',
+        '--intent-to-add',
+        '--',
+        ...files.map((path) => `:(top,literal)${path}`),
+      ],
       env,
     )
     return added.ok ? await readTracked(cwd, base, env) : null

@@ -4,11 +4,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -531,6 +533,26 @@ test('a file moved without git mv is one rename, and the real index is never wri
         ['new', 'src/c.ts'],
       ],
     )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('pairing a move through the index copy leaves a split index the repository still uses in place', async () => {
+  const { dir } = movedRepo()
+  try {
+    // A split index whose shared files expire at once: any split write in
+    // the repository deletes every shared index file older than now.
+    gitIn(dir, 'config', 'core.splitIndex', 'true')
+    gitIn(dir, 'config', 'splitIndex.sharedIndexExpire', 'now')
+    gitIn(dir, 'update-index', '--split-index')
+    const gitDir = join(dir, '.git')
+    const past = new Date(Date.now() - 60_000)
+    for (const name of readdirSync(gitDir))
+      if (name.startsWith('sharedindex.')) utimesSync(join(gitDir, name), past, past)
+    const diff = await diffBranchSelection(dir, { kind: 'uncommitted' })
+    assert.equal(diff.files.find((file) => file.path === 'src/b.ts')?.status, 'renamed')
+    assert.match(gitIn(dir, 'ls-files', '--cached'), /src\/a\.ts/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -1,5 +1,17 @@
 import assert from 'node:assert/strict'
-import { chmod, copyFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, vi } from 'vitest'
@@ -819,5 +831,32 @@ test('a folder that becomes a repository after its chat started keeps checkpoint
   } finally {
     await runtime.shutdown()
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('capture and revert leave a split index the repository still uses in place', async () => {
+  const f = await repository()
+  try {
+    // A repository on a split index whose shared files expire at once: any
+    // split write in it deletes every shared index file older than now.
+    await git(f.root, ['config', 'core.splitIndex', 'true'])
+    await git(f.root, ['config', 'splitIndex.sharedIndexExpire', 'now'])
+    await git(f.root, ['update-index', '--split-index'])
+    const gitDir = join(f.root, '.git')
+    const past = new Date(Date.now() - 60_000)
+    for (const name of await readdir(gitDir))
+      if (name.startsWith('sharedindex.')) await utimes(join(gitDir, name), past, past)
+    const checkpoints = new ConversationCheckpoints()
+    await writeFile(join(f.root, 'untracked.txt'), 'new\n')
+    assert.ok((await checkpoints.capture(f.key, 1, 'pre')).ok)
+    await writeFile(join(f.root, 'existing.txt'), 'after\n')
+    assert.ok((await checkpoints.capture(f.key, 1, 'post')).ok)
+    assert.ok((await previewThenRevert((input) => checkpoints.revert(input), { key: f.key, turnSeq: 1 })).ok)
+    assert.equal(await readFile(join(f.root, 'existing.txt'), 'utf8'), 'original\n')
+    // The repository's own index still reads.
+    assert.match(await git(f.root, ['ls-files', '--cached']), /existing\.txt/)
+    await git(f.root, ['status', '--porcelain'])
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
   }
 })

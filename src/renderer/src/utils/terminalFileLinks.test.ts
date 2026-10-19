@@ -358,3 +358,46 @@ test('a web address after a path is not taken into the path', () => {
     ['src/app.ts'],
   )
 })
+
+test('a quoted path with spaces in it is one reference, its line inside or after the quotes', () => {
+  const roots = { workspaceRoot: '/repo', executionRoot: null }
+  const [inside, ...more] = findTerminalFileReferences('Error in "/Users/dev/My Project/src/index.ts:12:3"', roots)
+  assert.equal(more.length, 0)
+  assert.equal(inside?.path, '/Users/dev/My Project/src/index.ts')
+  assert.equal(inside?.line, 12)
+  assert.equal(inside?.column, 3)
+  assert.equal(inside?.startIndex, 'Error in "'.length)
+  assert.equal(inside?.text, '/Users/dev/My Project/src/index.ts:12:3')
+
+  const [after] = findTerminalFileReferences("at 'C:\\Program Files\\app\\main.ts':7", roots)
+  assert.equal(after?.path, 'C:\\Program Files\\app\\main.ts')
+  assert.equal(after?.line, 7)
+
+  const [relative] = findTerminalFileReferences('"docs/My Notes/a.md"', roots)
+  assert.equal(relative?.resolvedPath, '/repo/docs/My Notes/a.md')
+})
+
+test('a quoted path without a space, and quoted prose, read as before', () => {
+  const roots = { workspaceRoot: '/repo', executionRoot: null }
+  const plain = findTerminalFileReferences('"src/index.ts:4" and "lib/a.ts"', roots)
+  assert.deepEqual(
+    plain.map((reference) => [reference.path, reference.line]),
+    [
+      ['src/index.ts', 4],
+      ['lib/a.ts', undefined],
+    ],
+  )
+  // A quote that holds no separator is not a path, and the path after it still links.
+  const prose = findTerminalFileReferences('said "hello there" then src/b.ts', roots)
+  assert.deepEqual(
+    prose.map((reference) => reference.path),
+    ['src/b.ts'],
+  )
+  // Apostrophes inside words quote nothing.
+  assert.deepEqual(
+    findTerminalFileReferences("it's in src/main.ts and that's it", roots).map((reference) => reference.path),
+    ['src/main.ts'],
+  )
+  // A quoted URL with a space is still the web-link provider's.
+  assert.equal(findTerminalFileReferences('"https://example.com/a b"', roots).length, 0)
+})
