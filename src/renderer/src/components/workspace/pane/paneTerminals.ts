@@ -1,6 +1,6 @@
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import type { WorkspacePaneTab } from '../../../types/workspace'
-import { isWorkspacePaneFocused } from './paneFocus'
+import { keepFocusOutOfClosedPane } from './paneFocus'
 
 // A pane terminal tab owns a pty the FlexLayout knows nothing about. Its
 // session id follows PlainTerminalPanel's convention, and closing the tab
@@ -15,16 +15,9 @@ export function closePaneTabAndItsTerminal(workspaceId: string, tab: WorkspacePa
   if (tab.kind === 'terminal' && tab.terminalId) {
     void window.api.terminalKill(paneTerminalSessionId(tab.terminalId)).catch(() => {})
   }
-  const store = useWorkspaceStore.getState()
-  const focused = isWorkspacePaneFocused()
-  store.closePaneTab(workspaceId, tab.id)
-  // The last tab took the pane with it. Focus left inside the closed column
-  // would strand the keyboard in hidden chrome, so it goes where reopening
-  // the pane lives: the header's pane switch.
-  const closedPane = !useWorkspaceStore.getState().workspaces.find((w) => w.id === workspaceId)?.paneState?.open
-  if (focused && closedPane && typeof window !== 'undefined') {
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>('[data-pane-switch]')?.focus()
-    })
-  }
+  // The last tab takes the pane with it.
+  keepFocusOutOfClosedPane(
+    () => useWorkspaceStore.getState().closePaneTab(workspaceId, tab.id),
+    () => Boolean(useWorkspaceStore.getState().workspaces.find((w) => w.id === workspaceId)?.paneState?.open),
+  )
 }
