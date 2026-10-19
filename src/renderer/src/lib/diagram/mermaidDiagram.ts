@@ -329,6 +329,70 @@ const SECURE_KEYS = [
 
 let svgPurifier: ReturnType<Purify> | null = null
 
+// Mermaid typesets a `$$…$$` label with KaTeX, whose output there is MathML:
+// with no MathML allowed the sanitizer emptied every math label to a bare
+// `<span class="katex">`. These are the elements KaTeX writes, less three:
+// `annotation` (Mermaid drops it), `semantics` (only a wrapper; what it wraps
+// is kept) and `mglyph` (an image). `maction` and `annotation-xml` are never
+// allowed. DOMPurify still takes `<math>` only under an HTML parent (a label's
+// `<div>` in a `foreignObject`) and checks each child's namespace.
+const KATEX_MATHML_TAGS = new Set([
+  'math',
+  'menclose',
+  'mfrac',
+  'mi',
+  'mlabeledtr',
+  'mn',
+  'mo',
+  'mover',
+  'mpadded',
+  'mphantom',
+  'mroot',
+  'mrow',
+  'mspace',
+  'msqrt',
+  'mstyle',
+  'msub',
+  'msubsup',
+  'msup',
+  'mtable',
+  'mtd',
+  'mtext',
+  'mtr',
+  'munder',
+  'munderover',
+])
+// The presentation attributes KaTeX sets on them, on them only. The profiles
+// above already allow class, style, width, height, display and xmlns.
+const KATEX_MATHML_ATTRIBUTES = new Set([
+  'accent',
+  'accentunder',
+  'columnalign',
+  'columnlines',
+  'columnspacing',
+  'depth',
+  'displaystyle',
+  'fence',
+  'largeop',
+  'linebreak',
+  'linethickness',
+  'lspace',
+  'mathbackground',
+  'mathcolor',
+  'mathsize',
+  'mathvariant',
+  'maxsize',
+  'minsize',
+  'notation',
+  'rowlines',
+  'rowspacing',
+  'rspace',
+  'scriptlevel',
+  'separator',
+  'stretchy',
+  'voffset',
+])
+
 // A sanitizer of our own rather than the shared one, which Mermaid also uses
 // and configures with hooks of its own.
 function purifier(purify: Purify): ReturnType<Purify> {
@@ -349,14 +413,15 @@ function purifier(purify: Purify): ReturnType<Purify> {
 /**
  * The SVG as the page may hold it: SVG, and the HTML Mermaid sets inside a
  * `foreignObject` for the labels a few diagrams draw that way (Venn sets,
- * architecture icons, typeset math), with every script, handler, link, image
+ * architecture icons, typeset math as KaTeX's MathML), with every script, handler, link, image
  * and CSS fetch taken out. `url(#id)`, the diagram pointing at its own markers
  * and gradients, stays.
  */
 export function sanitizeDiagramSvg(purify: Purify, svg: string): string {
   return purifier(purify).sanitize(svg, {
     USE_PROFILES: { svg: true, svgFilters: true, html: true },
-    ADD_TAGS: ['foreignObject'],
+    ADD_TAGS: ['foreignObject', ...KATEX_MATHML_TAGS],
+    ADD_ATTR: (attribute, tagName) => KATEX_MATHML_TAGS.has(tagName) && KATEX_MATHML_ATTRIBUTES.has(attribute),
     HTML_INTEGRATION_POINTS: { foreignobject: true },
     FORBID_TAGS: LOADING_TAGS,
     FORBID_ATTR: LOADING_ATTRIBUTES,

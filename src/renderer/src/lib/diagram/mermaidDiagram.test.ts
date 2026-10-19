@@ -192,6 +192,51 @@ test('the SVG keeps its drawing and labels and loses anything that could run', (
   expect(clean).toContain('marker-end="url(#d_arrow)"')
 })
 
+// A note label as Mermaid draws one for `$$…$$` text: KaTeX's MathML in a foreignObject.
+function mathNote(label: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><foreignObject height="34" width="35"><div xmlns="http://www.w3.org/1999/xhtml"><span class="katex">${label}</span></div></foreignObject></svg>`
+}
+
+function sanitizedInto(svg: string): HTMLElement {
+  const host = document.createElement('div')
+  host.innerHTML = sanitizeDiagramSvg(DOMPurify, svg)
+  return host
+}
+
+test('a math label keeps the MathML KaTeX typeset it in', () => {
+  const host = sanitizedInto(
+    mathNote(
+      '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mfrac><mi>d</mi><mrow><mi>d</mi><mi>x</mi></mrow></mfrac><mrow><mo fence="true">(</mo><mi mathvariant="bold">v</mi><mo fence="true">)</mo></mrow><msqrt><mn>2</mn></msqrt></mrow></math>',
+    ),
+  )
+  const math = host.querySelector('.katex > math')
+  expect(math?.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+  expect(math?.getAttribute('display')).toBe('block')
+  expect(math?.querySelector('mfrac')?.textContent).toBe('ddx')
+  expect(math?.querySelector('msqrt')?.textContent).toBe('2')
+  expect(math?.querySelector("mi[mathvariant='bold']")?.textContent).toBe('v')
+  expect(math?.querySelectorAll("mo[fence='true']")).toHaveLength(2)
+})
+
+test('a math label loses links, handlers and the MathML KaTeX never writes', () => {
+  const host = sanitizedInto(
+    mathNote(
+      '<math href="javascript:alert(1)"><mi href="javascript:alert(1)" onclick="alert(1)">x</mi><maction actiontype="toggle"><mi>a</mi></maction><mglyph src="https://example.com/a.png"></mglyph><annotation-xml encoding="text/html"><img src="x" onerror="alert(1)"></annotation-xml><semantics><mi>y</mi><annotation encoding="application/x-tex">y</annotation></semantics></math>',
+    ),
+  )
+  expect(host.querySelector('math mi')?.textContent).toBe('x')
+  expect(host.querySelector('[href], [onclick], [src], [onerror]')).toBeNull()
+  expect(host.querySelector('maction, mglyph, annotation-xml, annotation, semantics, img')).toBeNull()
+})
+
+test('MathML is taken only as a label, and its attributes only on MathML', () => {
+  const host = sanitizedInto(
+    '<svg xmlns="http://www.w3.org/2000/svg"><math><mi>x</mi></math><text mathvariant="bold" fence="true">label</text></svg>',
+  )
+  expect(host.querySelector('math, mi')).toBeNull()
+  expect(host.querySelector('text')?.getAttributeNames()).toEqual([])
+})
+
 test('the SVG loses everything that would load from elsewhere', () => {
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10">',
