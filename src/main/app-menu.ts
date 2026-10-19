@@ -211,6 +211,26 @@ export function createAppMenu(platform: NodeJS.Platform = process.platform): Men
           accelerator: 'CmdOrCtrl+-',
           click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), -1),
         },
+        // The numeric keypad sends key codes of its own, which the number-row
+        // keys above never match. Hidden, so the menu lists each command once.
+        {
+          label: 'Actual Size',
+          accelerator: 'CmdOrCtrl+num0',
+          visible: false,
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 0),
+        },
+        {
+          label: 'Zoom In',
+          accelerator: 'CmdOrCtrl+numadd',
+          visible: false,
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 1),
+        },
+        {
+          label: 'Zoom Out',
+          accelerator: 'CmdOrCtrl+numsub',
+          visible: false,
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), -1),
+        },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
