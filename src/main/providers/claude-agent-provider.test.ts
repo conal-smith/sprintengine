@@ -2314,6 +2314,30 @@ test('a Claude API retry tells the turn why it has nothing yet and when the next
   })
 })
 
+test('a hook that blocks the prompt says why in the transcript, and transcript-mode lines stay out', () => {
+  const state: Parameters<typeof mapSdkMessage>[0] = mapperState()
+  mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
+  const informational = (content: string, level: string) =>
+    mapSdkMessage(state, { type: 'system', subtype: 'informational', session_id: 'native', uuid: 'u', content, level })
+  assert.deepEqual(informational('Tool Bash running for 12s…', 'info'), [])
+  assert.deepEqual(informational('   ', 'warning'), [])
+  const reason = 'Prompt dropped by a hook: Deploys are frozen until Monday.'
+  const [note, ...rest] = informational(reason, 'warning')
+  assert.equal(rest.length, 0)
+  assert.equal(note?.type, 'command_output')
+  assert.deepEqual(note?.payload, { turnId: 'turn_1', adapterNote: true, output: reason })
+  // The CLI repeats the reason as the result's text; that adds no second note.
+  const ended = mapSdkMessage(state, {
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    session_id: 'native',
+    num_turns: 0,
+    result: reason,
+  })
+  assert.equal(ended.filter((event) => event.type === 'command_output').length, 0)
+})
+
 test('a refusal Claude answered on its fallback model is noted once, and the session reads the fallback model', () => {
   const state: Parameters<typeof mapSdkMessage>[0] = mapperState()
   mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
