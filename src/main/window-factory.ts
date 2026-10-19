@@ -9,6 +9,7 @@ import { sendWindowHidden, sendWindowPlacement, sendWindowState } from './ipc/wi
 import { getWindowCanvasColor, getWindowMaterial } from './window-material-store'
 import { appDocumentUrl, guardPrivilegedWindow } from './privileged-window-navigation'
 import { allowAppWindowPermissionCheck, allowAppWindowPermissionRequest } from './app-window-permissions'
+import { zoomWithWheel } from './app-menu'
 
 /** The one document every window made here may show; see privileged-window-navigation.ts. */
 function appDocument(): URL {
@@ -272,6 +273,7 @@ export function createMainWindow({
   win.on('move', schedulePlacementUpdate)
   win.on('resize', schedulePlacementUpdate)
   win.on('focus', () => sendWindowPlacement(win))
+  zoomWithWheel(win.webContents)
   win.on('close', (event) => {
     if (windowId === 'primary' || appQuitInProgress || forceCloseWindowIds.has(win)) return
     event.preventDefault()

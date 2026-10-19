@@ -81,6 +81,7 @@ import {
   evaluatePullRequestWatch,
   notePullRequestWatchReadFailed,
   parsePullRequestWatchState,
+  resumePullRequestWatch,
   startPullRequestWatch,
   type PullRequestWake,
   type PullRequestWatchState,
@@ -267,6 +268,10 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   const entries = new Map<string, BranchPullRequest>()
   /** URL → what its watching agent has been told, for the pull requests an agent asked to have watched. */
   const watches = new Map<string, PullRequestWatchState>()
+  // What each ended watch last told its chat, so watching the same pull
+  // request again does not tell it the same checks or conflict a second time.
+  // Held for this run only: after a restart a new watch starts from nothing.
+  const endedWatches = new Map<string, PullRequestWatchState>()
   /** Conversation → the URLs it opened. */
   const byConversation = new Map<string, Set<string>>()
   /** Workspace → every URL opened in it, by any conversation, and by a capture that named no agent. */
@@ -364,6 +369,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       unindex(entry)
       entries.delete(entry.url)
       watches.delete(entry.url)
+      endedWatches.delete(entry.url)
       watch.disarm(entry.url)
     }
   }
@@ -646,7 +652,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     // Unwatched while the read was out: what it found is nobody's news.
     if (!previous || !entry || !owner) return
     const outcome = evaluatePullRequestWatch(previous, read)
-    if (outcome.stop) watches.delete(url)
+    if (outcome.stop) endWatch(url, outcome.state)
     else watches.set(url, outcome.state)
     if (outcome.stop || JSON.stringify(outcome.state) !== JSON.stringify(previous)) persist()
     if (outcome.stop || JSON.stringify(outcome.state.view) !== JSON.stringify(previous.view)) emitFor(entry)
@@ -672,7 +678,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     if (!previous || !entry || !owner) return
     const failed = notePullRequestWatchReadFailed(previous, reason)
     if (failed.state === previous && !failed.stop) return
-    if (failed.stop) watches.delete(url)
+    if (failed.stop) endWatch(url, failed.state)
     else watches.set(url, failed.state)
     persist()
     if (!failed.stop) return
@@ -689,6 +695,12 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       news: [],
       stop: failed.stop,
     })
+  }
+
+  /** A watch stops, keeping what it last told its chat for a watch begun again. */
+  function endWatch(url: string, last: PullRequestWatchState): void {
+    watches.delete(url)
+    endedWatches.set(url, last)
   }
 
   function tellWatcher(conversation: PullRequestConversationKey, wake: PullRequestWake): void {
@@ -727,7 +739,9 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     }
     const alreadyWatching = watches.has(entry.url)
     if (!alreadyWatching) {
-      watches.set(entry.url, startPullRequestWatch(now()))
+      const ended = endedWatches.get(entry.url)
+      endedWatches.delete(entry.url)
+      watches.set(entry.url, ended ? resumePullRequestWatch(ended, now()) : startPullRequestWatch(now()))
       persist()
       emitFor(entry)
     }
@@ -747,8 +761,9 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   function stopWatch(key: PullRequestConversationKey, url: string): boolean {
     const canonical = canonicalPullRequestUrlOf(url?.trim() ?? '')
     const entry = canonical ? entries.get(canonical) : undefined
-    if (!entry || !watches.has(entry.url) || !isTheirs(entry, key)) return false
-    watches.delete(entry.url)
+    const watched = entry ? watches.get(entry.url) : undefined
+    if (!entry || !watched || !isTheirs(entry, key)) return false
+    endWatch(entry.url, watched)
     persist()
     emitFor(entry)
     if (!isWatchable(entry)) watch.disarm(entry.url)

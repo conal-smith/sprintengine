@@ -39,6 +39,19 @@ export function zoomWindowContents(contents: Electron.WebContents, step: 1 | -1 
   afterWindowZoom?.(contents)
 }
 
+/**
+ * Ctrl+wheel over a window's own page reaches it only as a request:
+ * Electron leaves applying it to the app. It takes the menu's step, so the
+ * browser pane's pages are put back at their own zoom after it. A wheel a
+ * page uses for itself (a canvas, a diagram) never asks, and one over a
+ * browser tab asks that tab, not the window.
+ */
+export function zoomWithWheel(contents: Electron.WebContents): void {
+  contents.on('zoom-changed', (_event, direction) => {
+    if (!contents.isDestroyed()) zoomWindowContents(contents, direction === 'in' ? 1 : -1)
+  })
+}
+
 // The chat windows open now, set by the lifecycle once windows exist.
 let listChatWindows: (() => readonly Electron.BaseWindow[]) | null = null
 
@@ -209,6 +222,26 @@ export function createAppMenu(platform: NodeJS.Platform = process.platform): Men
         {
           label: 'Zoom Out',
           accelerator: 'CmdOrCtrl+-',
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), -1),
+        },
+        // The numeric keypad sends key codes of its own, which the number-row
+        // keys above never match. Hidden, so the menu lists each command once.
+        {
+          label: 'Actual Size',
+          accelerator: 'CmdOrCtrl+num0',
+          visible: false,
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 0),
+        },
+        {
+          label: 'Zoom In',
+          accelerator: 'CmdOrCtrl+numadd',
+          visible: false,
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 1),
+        },
+        {
+          label: 'Zoom Out',
+          accelerator: 'CmdOrCtrl+numsub',
+          visible: false,
           click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), -1),
         },
         { type: 'separator' },

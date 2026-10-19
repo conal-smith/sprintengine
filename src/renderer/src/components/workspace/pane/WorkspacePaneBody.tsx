@@ -218,6 +218,15 @@ function PaneDiffTab({
     [writeTourFields],
   )
 
+  // The branch step the viewer has open, kept the same way, so coming back to
+  // the tab does not put it back on the whole branch.
+  const keptStep = tab.diff?.kept ?? null
+  const keepStep = useCallback(
+    (kept: NonNullable<NonNullable<WorkspacePaneTab['diff']>['kept']>) =>
+      writeTourFields((diff) => ({ ...diff, kept })),
+    [writeTourFields],
+  )
+
   return (
     <DiffViewer
       // Keyed on the repo only: a Git row click retargets the mounted
@@ -247,6 +256,8 @@ function PaneDiffTab({
       focusRange={tab.diff?.reveal?.range ?? null}
       focusSide={tab.diff?.reveal?.side ?? 'modified'}
       revealKey={tab.diff?.reveal?.key ?? null}
+      keptStep={keptStep}
+      onKeepStep={keepStep}
       tourHost={tourHost}
       onTourOfferTaken={takeOffer}
       onTourCurrentChange={keepCurrent}

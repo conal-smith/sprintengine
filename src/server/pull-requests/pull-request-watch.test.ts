@@ -8,6 +8,7 @@ import {
   evaluatePullRequestWatch,
   notePullRequestWatchReadFailed,
   parsePullRequestWatchState,
+  resumePullRequestWatch,
   startPullRequestWatch,
   WATCH_COMMENT_WAKE_LIMIT,
   WATCH_FAILED_READ_LIMIT,
@@ -180,6 +181,40 @@ test('a new head starts the checks over: a failure told on the old head is news 
   // An empty rollup (a fresh head, or GitHub failing to read its checks) keeps what was known.
   const empty = evaluatePullRequestWatch(failedAgain.state, read({ headSha: NEW_HEAD, checks: [] }))
   assert.deepEqual(empty.state.failedChecks, failedAgain.state.failedChecks)
+})
+
+test('a watch begun again tells nothing the ended one already told, and a head that moved since starts over', () => {
+  const told = evaluatePullRequestWatch(
+    primed(),
+    read({ checks: [check('Build', 'passed'), check('Lint', 'failed')], mergeState: 'behind' }),
+  )
+  assert.deepEqual(kinds(told), ['checks-failed', 'behind'])
+  const LATER = STARTED + 3_600_000
+  // The same head, the same checks: nothing is news again.
+  const again = evaluatePullRequestWatch(
+    resumePullRequestWatch(told.state, LATER),
+    read({ checks: [check('Build', 'passed'), check('Lint', 'failed')], mergeState: 'behind' }),
+  )
+  assert.deepEqual(again.news, [])
+  // The head moved while nobody watched: its checks are news as on any new head.
+  const moved = evaluatePullRequestWatch(
+    resumePullRequestWatch(told.state, LATER),
+    read({ headSha: NEW_HEAD, checks: [check('Build', 'passed'), check('Lint', 'passed')], mergeState: 'clean' }),
+  )
+  assert.deepEqual(kinds(moved), ['checks-passed'])
+  // A comment written before the new watch began is not news; one after it is.
+  const resumed = resumePullRequestWatch(told.state, LATER)
+  assert.equal(resumed.startedAt, LATER)
+  assert.equal(resumed.primed, false)
+  assert.deepEqual(resumed.remarks, {})
+})
+
+test('a fresh watch still learns its head on the first read, and tells what is there', () => {
+  const first = evaluatePullRequestWatch(
+    startPullRequestWatch(STARTED),
+    read({ headSha: NEW_HEAD, checks: [check('Build', 'failed')] }),
+  )
+  assert.deepEqual(kinds(first), ['checks-failed'])
 })
 
 test('behind and conflicting are told when they start, kept through "unknown", and told again if they come back', () => {

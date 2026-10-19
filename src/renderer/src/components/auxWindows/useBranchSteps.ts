@@ -41,10 +41,16 @@ export function useBranchSteps(
   // naming the branch, the uncommitted tail or one commit. Applied once per
   // `key`, after which the strip is the person's again.
   requested: { selection: BranchStepSelection; key: string } | null = null,
+  // What the host kept of an earlier mount: the step that was open and the
+  // request it was chosen after. A pane tab unmounts its viewer when another
+  // tab is shown, and coming back put the strip on the whole branch, or on an
+  // agent's request the person had already moved on from.
+  kept: { step: BranchStepSelection; afterReveal: string | null } | null = null,
+  onKeep?: (kept: { step: BranchStepSelection; afterReveal: string | null }) => void,
 ): BranchStepsState {
   const [snapshot, setSnapshot] = useState<BranchStepsSnapshot | null>(null)
   const [diff, setDiff] = useState<BranchStepDiff | null>(null)
-  const [selection, setSelection] = useState<BranchStepSelection>(SPAN)
+  const [selection, setSelection] = useState<BranchStepSelection>(() => kept?.step ?? SPAN)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -92,19 +98,35 @@ export function useBranchSteps(
   // A repo change must not leave the previous repo's chips on screen while the
   // new snapshot is in flight — the selection would be resolved against a strip
   // belonging to somewhere else.
+  // On a change of repository, not on mount: a mount starts from what was kept.
+  // A request still standing is applied again in the new repository.
+  const shownRepoRoot = useRef(repoRoot)
+  const keptAfter = useRef(kept?.afterReveal ?? null)
   useEffect(() => {
+    if (shownRepoRoot.current === repoRoot) return
+    shownRepoRoot.current = repoRoot
+    keptAfter.current = null
     setSnapshot(null)
     setSelection(SPAN)
   }, [repoRoot])
 
   // After the repo reset above, so a request that arrives with a new repository
-  // is not immediately undone by it.
+  // is not immediately undone by it. A request the kept step was already chosen
+  // after is not applied again on a remount.
   const requestedKey = requested?.key ?? null
   const requestedRef = useRef(requested)
   requestedRef.current = requested
   useEffect(() => {
-    if (requestedKey && requestedRef.current) setSelection(requestedRef.current.selection)
+    if (!requestedKey || !requestedRef.current || requestedKey === keptAfter.current) return
+    keptAfter.current = requestedKey
+    setSelection(requestedRef.current.selection)
   }, [requestedKey, repoRoot])
+
+  const onKeepRef = useRef(onKeep)
+  onKeepRef.current = onKeep
+  useEffect(() => {
+    onKeepRef.current?.({ step: selection, afterReveal: keptAfter.current })
+  }, [selection])
 
   // A selection can stop existing under us — a rebase drops the hash a person
   // had open. Resolving through the strip's own entries means the surface falls

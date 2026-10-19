@@ -202,13 +202,20 @@ export function isClaudeUsageLimitMessage(text: string): boolean {
 
 /**
  * Whether a failed Claude `result` (the SDK's `SDKResultMessage`) ended on a
- * usage limit. The CLI says so itself: `terminal_reason: 'blocking_limit'`,
- * or an exchange whose API call came back 429. Next, a refusal the exchange
- * already heard (a rejected `rate_limit_event`, an assistant message with
- * the `rate_limit` error) counts when the result does not name another
- * cause: no other HTTP status, no terminal reason but an API error or the
- * limit itself. A sign-in that failed is never a usage limit, whatever came
- * with it. Last, for a CLI too old to send `terminal_reason`, its message.
+ * usage limit. The CLI says so itself with an exchange whose API call came
+ * back 429. Next, a refusal the exchange already heard (a rejected
+ * `rate_limit_event`, an assistant message with the `rate_limit` error)
+ * counts when the result does not name another cause: no other HTTP status,
+ * no terminal reason but an API error or the limit itself. A sign-in that
+ * failed is never a usage limit, whatever came with it. Last, for a CLI too
+ * old to send `terminal_reason`, its message.
+ *
+ * `terminal_reason: 'blocking_limit'` is not a usage limit on its own. The
+ * CLI ends there when the conversation no longer fits the context window (a
+ * prompt too long even after compacting), and read as one, a full chat got
+ * the usage-limit notice with no reset time, its provider counted as limited,
+ * and a wait that could never clear it. It counts only beside a refusal the
+ * exchange heard, or in the usage-limit wording.
  */
 export function isClaudeUsageLimitResult(
   result: Record<string, unknown>,
@@ -217,7 +224,7 @@ export function isClaudeUsageLimitResult(
   if (heard.authFailed) return false
   const reason = result.terminal_reason
   const status = result.api_error_status
-  if (reason === 'blocking_limit') return true
+  if (reason === 'blocking_limit') return heard.refused || isClaudeUsageLimitMessage(heard.reported)
   if (result.subtype === 'success' && status === 429) return true
   if (
     heard.refused &&

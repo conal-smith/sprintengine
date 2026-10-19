@@ -276,3 +276,29 @@ test('a watch outlives a restart, stored on its pull request’s row', async () 
   assert.deepEqual(reopened.watchedUrls(), [PR])
   reopened.dispose()
 })
+
+test('watching a pull request again does not repeat what the ended watch already told the chat', async () => {
+  const { record, news, answer, probe, clock } = await setUp()
+  answer(watchRead({ checks: [check('Build', 'passed')] }))
+  await record.watch(CHAT, { url: PR })
+  await record.flush()
+  assert.deepEqual(
+    news.flatMap((event) => event.wake.news.map((item) => item.kind)),
+    ['checks-passed'],
+  )
+  // The chat settles, which ends its watch; later the agent watches again.
+  assert.equal(record.unwatch(CHAT, PR), true)
+  clock.advance(3_600_000)
+  const again = await record.watch(CHAT, { url: PR })
+  assert.equal(again.ok && again.alreadyWatching, false)
+  await record.flush()
+  assert.equal(news.length, 1, 'the same head with the same checks is no news')
+  // A push since is: its checks are told as on any new head.
+  answer(watchRead({ headSha: 'ffff000011112222333344445555666677778888', checks: [check('Build', 'failed')] }))
+  await probe()
+  assert.deepEqual(
+    news.slice(1).flatMap((event) => event.wake.news.map((item) => item.kind)),
+    ['checks-failed'],
+  )
+  record.dispose()
+})

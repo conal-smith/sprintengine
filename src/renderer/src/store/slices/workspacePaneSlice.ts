@@ -126,18 +126,33 @@ function defaultWorkspacePaneState(): WorkspacePaneState {
 
 type DiffReveal = NonNullable<NonNullable<WorkspacePaneTab['diff']>['reveal']>
 
+type DiffStep = NonNullable<DiffReveal['step']>
+type DiffKept = NonNullable<NonNullable<WorkspacePaneTab['diff']>['kept']>
+
+function normalizeDiffStep(input: unknown): DiffStep | null {
+  if (!input || typeof input !== 'object') return null
+  const raw = input as Partial<{ kind: unknown; hash: unknown }>
+  if (raw.kind === 'span' || raw.kind === 'uncommitted') return { kind: raw.kind }
+  if (raw.kind === 'commit' && typeof raw.hash === 'string') return { kind: 'commit', hash: raw.hash }
+  return null
+}
+
+function normalizeDiffKept(input: unknown): DiffKept | null {
+  if (!input || typeof input !== 'object') return null
+  const raw = input as { step?: unknown; afterReveal?: unknown }
+  const step = normalizeDiffStep(raw.step)
+  if (!step) return null
+  return { step, afterReveal: typeof raw.afterReveal === 'string' && raw.afterReveal ? raw.afterReveal : null }
+}
+
 function normalizeDiffReveal(input: unknown): DiffReveal | null {
   if (!input || typeof input !== 'object') return null
   const raw = input as Partial<DiffReveal>
   if (typeof raw.key !== 'string' || !raw.key) return null
   const reveal: DiffReveal = { key: raw.key }
   if (Array.isArray(raw.paths)) reveal.paths = raw.paths.filter((path): path is string => typeof path === 'string')
-  if (raw.step && typeof raw.step === 'object') {
-    if (raw.step.kind === 'span' || raw.step.kind === 'uncommitted') reveal.step = { kind: raw.step.kind }
-    else if (raw.step.kind === 'commit' && typeof raw.step.hash === 'string') {
-      reveal.step = { kind: 'commit', hash: raw.step.hash }
-    }
-  }
+  const step = normalizeDiffStep(raw.step)
+  if (step) reveal.step = step
   if (raw.range && typeof raw.range === 'object' && typeof raw.range.startLine === 'number') reveal.range = raw.range
   if (raw.side === 'modified' || raw.side === 'original') reveal.side = raw.side
   return reveal
@@ -208,6 +223,9 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
         : null
     const rawOffer = (raw.diff as { tourOffer?: unknown }).tourOffer
     const tourOffer = typeof rawOffer === 'string' && rawOffer ? rawOffer : null
+    // The step the viewer has open, carried for the same reason as the reveal
+    // and dropped with it on a restart.
+    const kept = normalizeDiffKept((raw.diff as { kept?: unknown }).kept)
     tab.diff = {
       ...(repoRoot ? { repoRoot } : {}),
       focusPath,
@@ -216,6 +234,7 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
       ...(reveal ? { reveal } : {}),
       ...(tour ? { tour } : {}),
       ...(tourOffer ? { tourOffer } : {}),
+      ...(kept ? { kept } : {}),
     }
   }
   return tab
@@ -330,12 +349,15 @@ export function partializeWorkspacePaneState(input: unknown): WorkspacePaneState
       // `floating` is session-only alongside the favicon: the rect persists,
       // the "is it floating right now" does not.
       // So is an agent's reveal on a Diff tab: a restart must not re-narrow the
-      // viewer or re-highlight lines nobody asked about today.
+      // viewer or re-highlight lines nobody asked about today. The step the
+      // viewer had open goes with it: a restart opens on the whole branch.
       // And so is `poppedOut`: the window it names closes with the app, and a
       // restart has to find the tab back in the pane rather than stranded as a
       // placeholder for a window that is not there.
       const withoutReveal =
-        tab.diff?.reveal !== undefined ? { ...tab, diff: (({ reveal: _reveal, ...diff }) => diff)(tab.diff) } : tab
+        tab.diff?.reveal !== undefined || tab.diff?.kept !== undefined
+          ? { ...tab, diff: (({ reveal: _reveal, kept: _kept, ...diff }) => diff)(tab.diff) }
+          : tab
       if (!withoutReveal.faviconUrl && !withoutReveal.floating && !withoutReveal.poppedOut) return withoutReveal
       const { faviconUrl: _faviconUrl, floating: _floating, poppedOut: _poppedOut, ...rest } = withoutReveal
       return rest

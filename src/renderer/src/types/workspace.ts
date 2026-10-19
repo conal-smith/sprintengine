@@ -719,6 +719,13 @@ export type WorkspacePaneTab = {
      */
     tour?: { id: string; playing: boolean }
     tourOffer?: string
+    /**
+     * The branch step the viewer has open, so switching to another pane tab
+     * and back does not put it back on the whole branch; `afterReveal` is the
+     * agent reveal it was chosen after, which a remount does not apply again.
+     * Session-only, like `reveal`.
+     */
+    kept?: { step: BranchStepSelection; afterReveal: string | null }
   }
   // Canvas only: the board the tab is drawing on, project-relative and
   // normalized (`normalizeCanvasPath`). Absent is a real state, not a broken

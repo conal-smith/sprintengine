@@ -165,6 +165,10 @@ type Props = {
   focusStep?: BranchStepSelection | null
   /** Changes with every agent reveal, so the same range or filter can be shown twice. */
   revealKey?: string | null
+  /** The step an earlier mount had open, as the host keeps it (pane only). */
+  keptStep?: { step: BranchStepSelection; afterReveal: string | null } | null
+  /** The step open now changed; the host keeps it for the next mount. */
+  onKeepStep?: (kept: { step: BranchStepSelection; afterReveal: string | null }) => void
   /**
    * The diff tours this viewer holds, as its host keeps them across a remount:
    * the tour it had open (and whether it was playing), and a tour an agent has
@@ -568,6 +572,8 @@ export function DiffViewer({
   focusSide = 'modified',
   focusStep = null,
   revealKey = null,
+  keptStep = null,
+  onKeepStep,
   tourHost = null,
   onTourOfferTaken,
   onTourCurrentChange,
@@ -590,6 +596,8 @@ export function DiffViewer({
     branchSteps,
     status,
     focusStep && revealKey ? { selection: focusStep, key: revealKey } : null,
+    keptStep,
+    onKeepStep,
   )
   const stripEntries = useMemo(() => stripEntriesFrom(steps.snapshot), [steps.snapshot])
   const stepNote = useMemo(() => scopeNote(steps.snapshot), [steps.snapshot])
