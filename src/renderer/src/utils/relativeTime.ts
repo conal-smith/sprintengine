@@ -32,10 +32,13 @@ const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
 export function relativeFromNow(at: number, now: number): string {
   const deltaSec = Math.round((at - now) / 1000)
-  const abs = Math.abs(deltaSec)
-  if (abs < 60) return RELATIVE.format(deltaSec, 'second')
-  if (abs < 3600) return RELATIVE.format(Math.round(deltaSec / 60), 'minute')
-  if (abs < 86400) return RELATIVE.format(Math.round(deltaSec / 3600), 'hour')
+  if (Math.abs(deltaSec) < 60) return RELATIVE.format(deltaSec, 'second')
+  // Each unit is chosen on the rounded count, so 59m50s reads "1 hour", not
+  // "60 minutes", and 23h50m reads "tomorrow", not "in 24 hours".
+  const minutes = Math.round(deltaSec / 60)
+  if (Math.abs(minutes) < 60) return RELATIVE.format(minutes, 'minute')
+  const hours = Math.round(deltaSec / 3600)
+  if (Math.abs(hours) < 24) return RELATIVE.format(hours, 'hour')
   return RELATIVE.format(Math.round(deltaSec / 86400), 'day')
 }
 
