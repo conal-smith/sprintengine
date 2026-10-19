@@ -242,7 +242,23 @@ test('a Claude result is a usage limit by what the CLI says: its terminal reason
   useClaudeUsageLimitPrefixes(USAGE_LIMIT_ERROR_PREFIXES)
   const heard = { refused: false, authFailed: false, reported: 'Request failed' }
   const failed = (extra: Record<string, unknown>) => ({ type: 'result', subtype: 'success', is_error: true, ...extra })
-  expect(isClaudeUsageLimitResult(failed({ terminal_reason: 'blocking_limit' }), heard)).toBe(true)
+  // A full context window ends on `blocking_limit` too: a limit only with a refusal or the limit's wording.
+  expect(isClaudeUsageLimitResult(failed({ terminal_reason: 'blocking_limit' }), heard)).toBe(false)
+  expect(
+    isClaudeUsageLimitResult(failed({ terminal_reason: 'blocking_limit' }), {
+      ...heard,
+      reported: 'Prompt is too long',
+    }),
+  ).toBe(false)
+  expect(isClaudeUsageLimitResult(failed({ terminal_reason: 'blocking_limit' }), { ...heard, refused: true })).toBe(
+    true,
+  )
+  expect(
+    isClaudeUsageLimitResult(failed({ terminal_reason: 'blocking_limit' }), {
+      ...heard,
+      reported: "You've hit your limit · resets 3pm",
+    }),
+  ).toBe(true)
   expect(isClaudeUsageLimitResult(failed({ api_error_status: 429, terminal_reason: 'api_error' }), heard)).toBe(true)
   expect(isClaudeUsageLimitResult(failed({ api_error_status: 500, terminal_reason: 'api_error' }), heard)).toBe(false)
   // A refusal the exchange heard counts unless the result names another cause.

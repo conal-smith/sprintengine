@@ -207,7 +207,7 @@ test('a result that says it ended on a limit is a hit with no event before it; a
   const hits = collectHits()
   const state = mapperState()
   subscribed(state)
-  mapSdkMessage(state, { ...failedResult('Claude usage limit reached.'), terminal_reason: 'blocking_limit' })
+  mapSdkMessage(state, { ...failedResult("You've hit your limit · resets 3pm"), terminal_reason: 'blocking_limit' })
   mapSdkMessage(state, { ...failedResult('Rate limited'), terminal_reason: 'api_error', api_error_status: 429 })
   expect(hits.map((hit) => [hit.windowId, hit.resetsAt])).toEqual([
     [null, null],
@@ -227,6 +227,15 @@ test('a result that says it ended on a limit is a hit with no event before it; a
   })
   mapSdkMessage(state, { ...failedResult('Not logged in'), terminal_reason: 'blocking_limit' })
   expect(hits).toHaveLength(2)
+})
+
+test('a chat whose context window filled is not a usage limit, and its provider is not limited', () => {
+  const hits = collectHits()
+  const state = mapperState()
+  subscribed(state)
+  mapSdkMessage(state, rateLimitEvent({ status: 'allowed', resetsAt: RESET_S, rateLimitType: 'five_hour' }))
+  mapSdkMessage(state, { ...failedResult('Prompt is too long'), terminal_reason: 'blocking_limit' })
+  expect(hits).toHaveLength(0)
 })
 
 // The session's account, as its initialize answers it, decides whether there
