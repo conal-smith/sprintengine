@@ -54,10 +54,19 @@ export function createConversationModelCatalog(
     const discovered = await deps.readDiscovered().catch((): Record<string, DiscoveredCliModelCatalog> => ({}))
     const merged = mergeCliModelCatalog(entry.modelSelection, [...(deps.userModels(cli) ?? [])], discovered[cli], now())
     if (!merged) return null
+    const listed = merged.options.filter(
+      (option) => option.id !== CONVERSATION_DEFAULT_MODEL_ID && option.id.length <= MAX_MODEL_ID_CHARS,
+    )
+    // A CLI can report more models than the wire carries (Cursor lists about
+    // 240), and the ids the person added come last in the merge, so a plain
+    // cut dropped every one of them. Theirs are kept first; the CLI's own fill
+    // the rest in its order, and the list keeps the merge's order.
+    const users = listed.filter((option) => option.origin === 'user').slice(0, CONVERSATION_MAX_MODEL_OPTIONS)
+    const room = CONVERSATION_MAX_MODEL_OPTIONS - users.length
+    const kept = new Set([...listed.filter((option) => option.origin !== 'user').slice(0, room), ...users])
     const options: ConversationModelCatalog['options'] = []
-    for (const option of merged.options) {
-      if (options.length >= CONVERSATION_MAX_MODEL_OPTIONS) break
-      if (option.id === CONVERSATION_DEFAULT_MODEL_ID || option.id.length > MAX_MODEL_ID_CHARS) continue
+    for (const option of listed) {
+      if (!kept.has(option)) continue
       const label = option.label?.trim()
       options.push({ id: option.id, ...(label && label.length <= MAX_MODEL_LABEL_CHARS ? { label } : {}) })
     }
