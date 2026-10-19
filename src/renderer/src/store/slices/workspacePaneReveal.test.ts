@@ -42,6 +42,24 @@ test('a restart restores the Diff tab but not the reveal', () => {
   assert.deepEqual(persisted?.tabs[0].diff, withoutReveal)
 })
 
+test('the step the viewer has open rides the tab for the session, and a restart drops it', () => {
+  const kept = { step: { kind: 'commit' as const, hash: 'b'.repeat(40) }, afterReveal: 'req-1' }
+  const withKept = { ...diffTab, diff: { ...diffTab.diff, kept } }
+  const pane = normalizeWorkspacePaneState({ open: true, activeTabId: 'tab-diff', tabs: [withKept] })
+  assert.deepEqual(pane?.tabs[0].diff?.kept, kept)
+  // A malformed one is dropped, not the tab.
+  const bad = normalizeWorkspacePaneState({
+    open: true,
+    activeTabId: 'tab-diff',
+    tabs: [{ ...diffTab, diff: { ...diffTab.diff, kept: { step: { kind: 'sideways' } } } }],
+  })
+  assert.equal(bad?.tabs[0].diff?.kept, undefined)
+  assert.equal(bad?.tabs[0].id, 'tab-diff')
+  const persisted = partializeWorkspacePaneState({ open: true, activeTabId: 'tab-diff', tabs: [withKept] })
+  assert.equal(persisted?.tabs[0].diff?.kept, undefined)
+  assert.equal(persisted?.tabs[0].diff?.reveal, undefined)
+})
+
 test('an agent diff never takes focus, and a branch or commit view goes to the pane', () => {
   const auxCalls: OpenAuxWindowInput[] = []
   const paneCalls: Array<{ workspaceId: string; input: Record<string, unknown> }> = []
