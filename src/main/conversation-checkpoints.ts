@@ -38,13 +38,28 @@ const MAX_UNBORN_REPOSITORIES = 64
 const PATHSPEC_CHARS = 24_000
 // The copy must never write a split index into the repository's git
 // directory, and a filesystem monitor's answers belong to the real index.
+// Every command that writes the copy carries this, not only `add`: a write
+// under the repository's own `core.splitIndex=true` writes a new shared index
+// and expires old ones by age, and with a short `splitIndex.sharedIndexExpire`
+// that deleted the one the repository's own index points to, after which every
+// git command there failed. Expiry is off for the copy's writes, so whatever
+// one writes, it leaves the repository's shared index files alone.
 // Every stat field is compared, whatever runs the snapshot: Linux git on a
 // Windows drive trusts size and mtime alone (R89), and there the copy is
 // Git for Windows' index, whose blobs may be the file after a line-ending
 // conversion Linux git does not make. A trusted entry would put LF in the
 // turn's "before" for a CRLF file, so its diff would show every line and
 // revert would write LF. The inode it does not know makes git read the file.
-const SNAPSHOT_CONFIG = ['-c', 'core.splitIndex=false', '-c', 'core.fsmonitor=false', '-c', 'core.checkStat=default']
+const SNAPSHOT_CONFIG = [
+  '-c',
+  'core.splitIndex=false',
+  '-c',
+  'splitIndex.sharedIndexExpire=never',
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'core.checkStat=default',
+]
 // A snapshot's `git add` writes only the throwaway index (its lock is in the
 // same temp folder, removed after) and loose objects git prunes on its own, so
 // stopping a stuck one leaves the repository as it was. A minute is far past
@@ -464,7 +479,7 @@ export class ConversationCheckpoints {
         }
       }
       const head = await runGitCommand(root, ['rev-parse', '--verify', 'HEAD'])
-      await this.git(root, head.ok ? ['read-tree', 'HEAD'] : ['read-tree', '--empty'], env)
+      await this.git(root, [...SNAPSHOT_CONFIG, ...(head.ok ? ['read-tree', 'HEAD'] : ['read-tree', '--empty'])], env)
       // A force-added file can be tracked in the user's index while absent
       // from HEAD and ignored by discovery through the throwaway index.
       const staged = (await runGitCommand(root, ['ls-files', '--cached', '-z'])).stdout.split('\0').filter(Boolean)
@@ -514,7 +529,8 @@ export class ConversationCheckpoints {
     }
     // One call per flag: `update-index --stdin` applies only the last flag given.
     for (const [flag, paths] of Object.entries(flagged))
-      if (paths.length) await this.git(root, ['update-index', flag, '-z', '--stdin'], env, paths.join('\0') + '\0')
+      if (paths.length)
+        await this.git(root, [...SNAPSHOT_CONFIG, 'update-index', flag, '-z', '--stdin'], env, paths.join('\0') + '\0')
   }
 
   private async snapshot(root: string, env: NodeJS.ProcessEnv, include: string[]): Promise<string> {
@@ -558,7 +574,7 @@ export class ConversationCheckpoints {
           { timeoutMs: SNAPSHOT_ADD_TIMEOUT_MS },
         )
     }
-    return (await this.git(root, ['write-tree'], env)).trim()
+    return (await this.git(root, [...SNAPSHOT_CONFIG, 'write-tree'], env)).trim()
   }
 
   /**
@@ -610,8 +626,8 @@ export class ConversationCheckpoints {
     const temp = await mkdtemp(join(tmpdir(), 'conversation-restore-'))
     const env = { GIT_INDEX_FILE: join(temp, 'index'), GIT_OPTIONAL_LOCKS: '0' }
     try {
-      await this.git(root, ['read-tree', commit], env)
-      await this.git(root, ['checkout-index', '-f', '-z', '--stdin'], env, paths.join('\0') + '\0')
+      await this.git(root, [...SNAPSHOT_CONFIG, 'read-tree', commit], env)
+      await this.git(root, [...SNAPSHOT_CONFIG, 'checkout-index', '-f', '-z', '--stdin'], env, paths.join('\0') + '\0')
     } finally {
       await rm(temp, { recursive: true, force: true })
     }
