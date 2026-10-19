@@ -22,8 +22,10 @@ export type ComposerToken = {
  *
  * A token whose query opens with another marker (`//`, `@$`) is not one. A `/`
  * whose query holds another `/` is a path (`/Users/dev/app`, `/src/foo`), not
- * a command or a skill; and `https://` never gets this far, its `/` following
- * a colon.
+ * a command or a skill. That holds for the whole token, not only what is
+ * before the caret: with the caret moved back into `/et|c/hosts` the path is
+ * still a path, and a pick would replace all of it. `https://` never gets this
+ * far, its `/` following a colon.
  */
 export function composerTokenAt(text: string, caret: number, markers: string): ComposerToken | null {
   if (!markers || !Number.isInteger(caret) || caret < 0 || caret > text.length) return null
@@ -32,10 +34,11 @@ export function composerTokenAt(text: string, caret: number, markers: string): C
   const marker = match[1],
     query = match[2]
   if (/[/@$]/u.test(query[0] ?? '') || query[0] === marker) return null
-  if (marker === '/' && query.includes('/')) return null
   const start = caret - query.length - 1
   const suffix = text.slice(caret).search(/\s/u)
-  return { marker, query, range: { start, end: suffix < 0 ? text.length : caret + suffix } }
+  const end = suffix < 0 ? text.length : caret + suffix
+  if (marker === '/' && text.slice(start + 1, end).includes('/')) return null
+  return { marker, query, range: { start, end } }
 }
 
 /**

@@ -10,6 +10,55 @@ import {
 } from './repository-identity'
 import { test } from 'vitest'
 
+test('the name keeps the casing the remote spells it in, and every spelling still shares one key', () => {
+  for (const form of [
+    'git@github.com:Acme/MyRepo.git',
+    'https://github.com/Acme/MyRepo/',
+    'ssh://git@github.com/Acme/MyRepo',
+  ]) {
+    const identity = repositoryIdentityFromRemote(form)
+    assert.equal(identity?.name, 'MyRepo', form)
+    assert.equal(identity?.canonicalKey, 'github.com/acme/myrepo', form)
+  }
+  assert.equal(repositoryIdentityFromRemote('https://me:ghp_secret@github.com/Acme/MyRepo.git')?.name, 'MyRepo')
+  assert.equal(repositoryIdentityFromRemote('/srv/git/Repo.git')?.name, 'Repo')
+})
+
+test('a remote at a relative path never names the repository', () => {
+  assert.equal(pickPrimaryRemote(new Map([['gb-local', '.']])), null)
+  assert.equal(pickPrimaryRemote(new Map([['mirror', '../mirror']])), null)
+  assert.equal(pickPrimaryRemote(new Map([['mirror', '.\\mirror']])), null)
+  assert.deepEqual(
+    pickPrimaryRemote(
+      new Map([
+        ['gb-local', '.'],
+        ['origin', 'git@github.com:acme/app.git'],
+      ]),
+    ),
+    { remoteName: 'origin', remoteUrl: 'git@github.com:acme/app.git' },
+  )
+  // An `origin` at a relative path gives way to a remote that names something.
+  assert.deepEqual(
+    pickPrimaryRemote(
+      new Map([
+        ['origin', './'],
+        ['github', 'https://github.com/acme/app.git'],
+      ]),
+    ),
+    { remoteName: 'github', remoteUrl: 'https://github.com/acme/app.git' },
+  )
+  // An absolute path still names one place: two clones of one bare repository.
+  assert.deepEqual(pickPrimaryRemote(new Map([['origin', '/srv/git/app.git']])), {
+    remoteName: 'origin',
+    remoteUrl: '/srv/git/app.git',
+  })
+  // A dotted name is not a relative path.
+  assert.deepEqual(pickPrimaryRemote(new Map([['origin', '.hidden-host:acme/app']])), {
+    remoteName: 'origin',
+    remoteUrl: '.hidden-host:acme/app',
+  })
+})
+
 test('repository-identity', async () => {
   // one-project-across-machines: every spelling of one remote is one
   // key, so a clone on this disk and a clone on a paired machine group as one
@@ -41,7 +90,7 @@ test('repository-identity', async () => {
     assert.deepEqual(identity, {
       canonicalKey: 'github.com/acme/sprintengine',
       remoteUrl: 'git@github.com:Acme/SprintEngine.git',
-      name: 'sprintengine',
+      name: 'SprintEngine',
     })
     assert.equal(repositoryIdentityFromRemote(''), null)
     // A token in the URL never leaves the reader; the key was never carrying it.

@@ -194,7 +194,7 @@ import {
   setExtensionsSurfaceHost,
   type ExtensionsSurfaceHostPorts,
 } from './globalSurface/extensions/extensionsSurfaceHost'
-import { isWorkspacePaneFocused } from './pane/paneFocus'
+import { isWorkspacePaneFocused, keepFocusOutOfClosedPane } from './pane/paneFocus'
 import { closePaneTabAndItsTerminal } from './pane/paneTerminals'
 import { reopenLastClosedTab } from './manager/reopenClosedTab'
 import { terminateWorkspaceTerminals } from './workspaceTerminalTermination'
@@ -380,6 +380,11 @@ const ConversationImportCard = React.lazy(() => import('../onboarding/Conversati
 // to open before it gives way to whatever the window shows instead. The splash
 // gives boot the same budget (BOOT_REVEAL_TIMEOUT_MS in main/boot-reveal.ts).
 const BOOT_COMPOSER_WAIT_MS = 10_000
+
+/** Reads, when called, whether a workspace's pane is open. */
+function paneOpenOf(workspaceId: string): () => boolean {
+  return () => Boolean(useWorkspaceStore.getState().workspaces.find((w) => w.id === workspaceId)?.paneState?.open)
+}
 
 // Display name for a New Chat project scope: the folder's last path segment.
 function newChatFolderLabel(path: string): string {
@@ -4227,10 +4232,8 @@ export default function WorkspaceManager() {
         return reopenLastClosedTab(windowActiveWorkspaceId)
       }
       if (commandId === 'pane.toggle' && windowActiveWorkspaceId) {
-        const open =
-          useWorkspaceStore.getState().workspaces.find((w) => w.id === windowActiveWorkspaceId)?.paneState?.open ??
-          false
-        setPaneOpen(windowActiveWorkspaceId, !open)
+        const open = paneOpenOf(windowActiveWorkspaceId)
+        keepFocusOutOfClosedPane(() => setPaneOpen(windowActiveWorkspaceId, !open()), open)
         return true
       }
       if (commandId === 'pane.add') {
@@ -4241,7 +4244,10 @@ export default function WorkspaceManager() {
         return true
       }
       if (commandId === 'panel.files.toggle' && windowActiveWorkspaceId) {
-        togglePaneKind(windowActiveWorkspaceId, 'files')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'files'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.editor.toggle' && windowActiveWorkspaceId) {
@@ -4249,11 +4255,17 @@ export default function WorkspaceManager() {
         return true
       }
       if (commandId === 'panel.git.toggle' && windowActiveWorkspaceId) {
-        togglePaneKind(windowActiveWorkspaceId, 'git')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'git'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.agents.toggle' && windowActiveWorkspaceId) {
-        togglePaneKind(windowActiveWorkspaceId, 'agents')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'agents'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.canvas.toggle' && windowActiveWorkspaceId) {
@@ -4264,7 +4276,10 @@ export default function WorkspaceManager() {
         // The pane keeps whatever width the person last gave it: a new Canvas
         // tab opens docked like every other kind (owner ruling 2026-09-22), and
         // Maximise in the pane strip is one click away when a board wants room.
-        togglePaneKind(windowActiveWorkspaceId, 'canvas')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'canvas'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.knowledge-graph.toggle' && windowActiveWorkspaceId) {

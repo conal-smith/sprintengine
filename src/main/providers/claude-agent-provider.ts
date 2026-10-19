@@ -2882,6 +2882,17 @@ export function mapSdkMessage(
         }
         break
       }
+      // A line the CLI shows its own user: a hook's word on the prompt (a
+      // UserPromptSubmit hook that blocks it says why only here), a model
+      // switch, a held session. Without it a blocked prompt ended a turn that
+      // said nothing at all. `info` lines are the CLI's transcript-mode
+      // detail (a tool's running time, "Compacting…"), shown elsewhere.
+      if (message.subtype === 'informational') {
+        const said = typeof message.content === 'string' ? message.content.trim() : ''
+        if (said && message.level !== 'info')
+          events.push(eventFor(state, 'command_output', { turnId, adapterNote: true, output: said }))
+        break
+      }
       // The model refused and no fallback ran. The message has no words of its
       // own; the API's explanation, when it gave one, goes with the turn's end.
       if (message.subtype === 'model_refusal_no_fallback') {

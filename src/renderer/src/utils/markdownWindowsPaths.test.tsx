@@ -51,3 +51,32 @@ test('a path holding a character reference reads it as the character it names', 
 test('a relative path is unchanged', () => {
   expect(destinations('[a](docs/a\\_b.md)')).toEqual(['link docs/a_b.md'])
 })
+
+// The text a message reads as, with each code span marked.
+function prose(text: string): string {
+  const html = renderToStaticMarkup(<>{renderMarkdown(text, {})}</>)
+  return html
+    .replace(/<code[^>]*>/gu, '`')
+    .replace(/<\/code>/gu, '`')
+    .replace(/<[^>]+>/gu, '')
+}
+
+test('a drive path in prose keeps the backslashes markdown would read as escapes', () => {
+  expect(prose(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`)).toBe(
+    String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`,
+  )
+})
+
+test('an escape past the end of a prose path still reads as an escape', () => {
+  expect(prose(String.raw`See C:\x and \*this\* and Note:\*that\*.`)).toBe(
+    String.raw`See C:\x and *this* and Note:*that*.`,
+  )
+})
+
+test('a path an agent already escaped keeps its doubled backslashes', () => {
+  expect(prose(String.raw`Escaped C:\\Users\\me`)).toBe(String.raw`Escaped C:\\Users\\me`)
+})
+
+test('a path in a code span reads as before', () => {
+  expect(prose('`C:\\me\\.t3` and C:\\me\\.t3')).toBe('`C:\\me\\.t3` and C:\\me\\.t3')
+})

@@ -98,6 +98,10 @@ const commandCases: Array<[string, string | null]> = [
   ['/Users/dev/app|', null],
   ['open ./scripts|', null],
   ['dev@example.com/x|', null],
+  // A path with the caret moved back into it, before its second `/`.
+  ['/et|c/hosts', null],
+  ['cat /et|c/hosts', null],
+  ['/|etc/hosts', null],
   // A URL.
   ['https://|', null],
   ['see https://example.com/docs|', null],
