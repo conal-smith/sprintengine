@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only. `debug-overrides` additionally applies only while
+  `android:debuggable` is true, so the release build cannot pick this up.
+
+  `debug-overrides` lets a debug build trust user-installed CAs, so a
+  locally-run https fixture server signed by your own CA can be reached.
+  Install the fixture CA as a user certificate on the device.
+
+  `base-config` restates cleartext: naming a network security config makes Android
+  ignore the manifest's `usesCleartextTraffic`, and the platform default for
+  targetSdk 28+ is to deny it — which silently cuts the debug build off from Metro.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+  <debug-overrides>
+    <trust-anchors>
+      <certificates src="system" />
+      <certificates src="user" />
+    </trust-anchors>
+  </debug-overrides>
+</network-security-config>

@@ -54,7 +54,12 @@ time of the approval or question that stopped it; absent while nothing is
 asked). Each is additive, with no bump: a server of the same wire version
 built before one existed leaves it out, and the desktop reads that absence
 as it did before the member: a "working for" count and the next chat that
-needs you (`nextWaitingChat.ts`) both fall back to `updatedAt`.
+needs you (`nextWaitingChat.ts`) both fall back to `updatedAt`. A fourth,
+`workingSince` (2026-10-20: when the chat's current stretch of work began,
+held through the turns it opens by itself while a background agent or a
+monitor works; present only while the summary reads as working), is additive
+the same way: a server built before it leaves it out, and the desktop counts
+"working for" from its own reading of the turns, as it did before.
 
 The summary also carries `fileActivity`: the files the chat's tool calls are
 reading and editing, and the ones they finished with in the last minute, which
@@ -219,7 +224,8 @@ same wire also ran through a hosted relay; the relay was removed on 2026-09-27
 (owner ruling) and the package with it. Its published `4.x` versions stay on
 npm, and wire version 4 is what this tree still speaks, unchanged.
 
-The phone app keeps its own copy of these types. Nothing compares the two
+The phone app keeps its own copy of these types, in
+`mobile/src/shared/mobile-control/protocol.ts`. Nothing compares the two
 automatically any more, so a change that crosses the wire is made on both sides
 in the same coordinated change, and the version integer is still the only thing
 a peer sees.
@@ -299,6 +305,20 @@ such a chat as working, but a phone of that date holds a plain send while the
 listed phase says `running`, so the phase could not carry it. An older phone
 ignores the member and shows the chat as finished, as before; a phone that
 reads it shows the chat working without holding sends.
+`workingSince` (2026-10-20) is another, beside `turnStartedAt`: when the
+chat's stretch of work began, the person's message that began it, held
+through the turns the chat opens by itself while its `backgroundWork` goes on,
+which is the number the desktop's own sidebar counts "working for" from. It
+is listed whenever the desktop counts the chat as working, background work
+included. A client that does not read it counts from `turnStartedAt`, as
+before, and restarts with each turn the chat opens by itself; a client that
+reads it falls back to `turnStartedAt` for a desktop that does not send it.
+So are `scheduledAgentId` (the schedule whose run started the chat, which
+the desktop marks with the schedule's clock) and `snoozedUntil` (when a chat
+the person snoozed on the desktop wakes, listed only while that is ahead): a
+client that reads them draws the clock, and leaves a sleeping chat unmarked
+by "finished, unseen" until it wakes, as the desktop's own row does; an older
+client ignores both.
 The context a chat has spent (`contextWindow` and `contextUsed` on a
 `usage_updated` event) is the same kind of member: a phone that does not read
 them shows no context ring, and one that does draws none for a desktop that
