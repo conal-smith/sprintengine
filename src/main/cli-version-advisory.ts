@@ -235,6 +235,15 @@ function isHomebrewKeg(path: string | null): boolean {
   return /\/(cellar|caskroom)\//i.test(path.replace(/\\/g, '/'))
 }
 
+/**
+ * Whether Homebrew put the binary here, by its own path or the one it links to:
+ * inside a formula's keg or a cask's directory. Homebrew's bin alone does not
+ * say so, since npm under a Homebrew Node links its globals there too.
+ */
+export function installedByHomebrew(...paths: Array<string | null | undefined>): boolean {
+  return paths.some((path) => isHomebrewKeg(path ?? null))
+}
+
 export type ResolveCliVersionAdvisoriesDeps = {
   /** The machine the availability map was detected on; absent is this one. */
   hostId?: ExecutionHostId
