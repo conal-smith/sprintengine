@@ -76,6 +76,37 @@ test('the numeric keypad zooms the window too, through items the menu does not l
   }
 })
 
+test('Cmd++ and Ctrl++ zoom in, through items the menu does not list', () => {
+  const zoomIns = (platform: NodeJS.Platform) =>
+    (createAppMenu(platform) as unknown as Item[])
+      .find((menu) => menu.label === 'View')!
+      .submenu!.filter((item) => item.label === 'Zoom In' && item.visible === false)
+      .map((item) => item.accelerator)
+  expect(zoomIns('darwin')).toEqual(['CmdOrCtrl+numadd', 'CmdOrCtrl+Plus', 'CmdOrCtrl+Shift+='])
+  expect(zoomIns('win32')).toEqual(['CmdOrCtrl+numadd', 'CmdOrCtrl+Plus'])
+  expect(zoomIns('linux')).toEqual(['CmdOrCtrl+numadd', 'CmdOrCtrl+Plus'])
+
+  const view = (createAppMenu('darwin') as unknown as Item[]).find((menu) => menu.label === 'View')!
+  let level = 0
+  const contents = {
+    getZoomLevel: () => level,
+    setZoomLevel: (next: number) => {
+      level = next
+    },
+  }
+  windows.set(8, { isDestroyed: () => false, webContents: contents })
+  try {
+    for (const accelerator of ['CmdOrCtrl+Plus', 'CmdOrCtrl+Shift+=']) {
+      view.submenu!.find((entry) => entry.accelerator === accelerator)!.click!({}, fakeWindow(8), {
+        triggeredByAccelerator: true,
+      })
+    }
+    expect(level).toBe(1)
+  } finally {
+    windows.delete(8)
+  }
+})
+
 test('Ctrl+wheel zooms the window by the step the menu takes, and the browser pane puts its pages back after', () => {
   let level = 0
   let request: ((event: unknown, direction: 'in' | 'out') => void) | null = null
