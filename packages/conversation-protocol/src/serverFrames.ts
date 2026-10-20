@@ -99,6 +99,17 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    */
   turnStartedAt?: number
   /**
+   * When the chat's current stretch of work began: the person's message that
+   * began it, held through the turns the chat opens by itself while its
+   * `backgroundWork` goes on (an agent's result or a monitor waking it), where
+   * `turnStartedAt` restarts with each. The desktop's own sidebar counts
+   * "working for" from it. Present whenever the desktop counts the chat as
+   * working: `phase` running or starting, or `backgroundWork` beside a phase
+   * that says the turn is over. Absent otherwise, and from a desktop built
+   * before it was listed, where a client counts from `turnStartedAt`.
+   */
+  workingSince?: number
+  /**
    * When the chat's agent last finished a turn, or failed one: read from the
    * chat's transcript, so it does not move on a rename, a model switch or a
    * session starting. Absent from a desktop built before it was listed, and
@@ -124,6 +135,21 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * never marked unread.
    */
   visitRewoundAt?: number
+  /**
+   * The schedule whose run started the chat, by the desktop's own id for it:
+   * the desktop marks such a chat with the schedule's clock. Absent for a chat
+   * a person or an agent started, and from a desktop built before it was
+   * listed.
+   */
+  scheduledAgentId?: string
+  /**
+   * When a chat the person snoozed on the desktop wakes. The desktop draws a
+   * sleeping chat in its folder's Snoozed shelf and never marks it "finished,
+   * unseen"; a client that reads this does the same until the time passes.
+   * Absent for a chat that is awake, and from a desktop built before it was
+   * listed.
+   */
+  snoozedUntil?: number
   /**
    * The opening of the agent's last reply, as the desktop's own sidebar
    * previews it under the chat's title: the reply's first characters as
@@ -491,9 +517,12 @@ function thread(value: unknown): ConversationThread | null {
     ...(clock(value.lastUserMessageAt) ? { lastUserMessageAt: value.lastUserMessageAt } : {}),
     ...(clock(value.recencyAt) ? { recencyAt: value.recencyAt } : {}),
     ...(clock(value.turnStartedAt) ? { turnStartedAt: value.turnStartedAt } : {}),
+    ...(clock(value.workingSince) ? { workingSince: value.workingSince } : {}),
     ...(clock(value.lastTurnEndedAt) ? { lastTurnEndedAt: value.lastTurnEndedAt } : {}),
     ...(clock(value.lastVisitedAt) ? { lastVisitedAt: value.lastVisitedAt } : {}),
     ...(clock(value.visitRewoundAt) ? { visitRewoundAt: value.visitRewoundAt } : {}),
+    ...(id(value.scheduledAgentId) ? { scheduledAgentId: value.scheduledAgentId } : {}),
+    ...(clock(value.snoozedUntil) ? { snoozedUntil: value.snoozedUntil } : {}),
     ...(lastAssistantText ? { lastAssistantText } : {}),
     ...(branch ? { branch } : {}),
     ...(backgroundWork ? { backgroundWork } : {}),

@@ -102,6 +102,15 @@ export type ConversationSessionSummary = {
   // carried on by itself. A message steered into a running turn does not move
   // it. Absent between turns, so a "working for" count needs no event stream.
   turnStartedAt?: number
+  // When the chat's current stretch of work began (conversation/
+  // workingStretch.ts): the person's message that began it, carried through
+  // the turns the chat opens by itself while a background agent or a monitor
+  // still works, where `turnStartedAt` restarts with each. The sidebar's
+  // "working for" count, here and on a paired machine. Present only while the
+  // summary reads as working (`conversationSummaryPhase` running or
+  // starting), and absent from a server built before it, where the sidebar
+  // keeps its own reading.
+  workingSince?: number
   // When the chat began waiting on the person: the request (an approval or a
   // question) that stopped it, by the event's own time, so a resume restores
   // it from the transcript. A second card while one is up does not move it.

@@ -18,6 +18,7 @@ import { classifyPullRequestUrl } from '../../../../../shared/git/pr-url'
 import { pullRequestRepository, type BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type { Workspace, WorkspaceRemoteOrigin } from '../../../types/workspace'
 import { workspaceLastUserMessageAt } from '../../../utils/workspaceRecency'
+import { finishedUnseen } from '../../../../../shared/workspace-lifecycle'
 import type { Tone } from '../../ui'
 import type { RowRecency } from '../stableRowSlices'
 import { meshMachinePhase, type MeshMachinePhase } from '../../remote/machineRowModel'
@@ -133,6 +134,10 @@ export type RemoteSessionRow = {
   /** When the chat's agent last finished a turn, and a person last had it on screen, on any device. */
   lastTurnEndedAt: number | null
   lastVisitedAt: number | null
+  /** The schedule whose run started the chat over there, which its row marks; null for any other chat. */
+  scheduledAgentId: string | null
+  /** When the chat wakes, while it is snoozed over there; null from a machine that does not say, or awake. */
+  snoozedUntil: number | null
   /**
    * The machine keeps this chat's rest and read state, and this pairing may
    * write them (`remoteLifecycleWritable`), so Settle may be offered for it
@@ -221,15 +226,23 @@ export function branchPullRequestsOfWire(listed: readonly ConversationWirePullRe
 
 /**
  * The agent finished a turn nobody has had on screen since, on any device:
- * the green "finished while you were away" row a local chat wears. Only a
- * machine that keeps its chats' read state can say so, and a chat with no
- * visit recorded reads as seen, as the list's contract has it.
+ * the green "finished while you were away" row a local chat wears, by the
+ * rule a local row is marked by (`finishedUnseen`). Only a machine that keeps
+ * its chats' read state can say so, and a chat with no visit recorded reads
+ * as seen, as the list's contract has it. A chat snoozed over there is not
+ * marked until it wakes, as its machine's own row is not.
  */
 export function remoteFinishUnseen(
-  row: Pick<RemoteSessionRow, 'activity' | 'lastTurnEndedAt' | 'lastVisitedAt'>,
+  row: Pick<RemoteSessionRow, 'activity' | 'lastTurnEndedAt' | 'lastVisitedAt'> &
+    Partial<Pick<RemoteSessionRow, 'snoozedUntil'>>,
+  now: number = Date.now(),
 ): boolean {
-  if (row.activity !== 'idle' || row.lastTurnEndedAt === null || row.lastVisitedAt === null) return false
-  return row.lastTurnEndedAt > row.lastVisitedAt
+  if (typeof row.snoozedUntil === 'number' && row.snoozedUntil > now) return false
+  return finishedUnseen({
+    idle: row.activity === 'idle',
+    finishedAt: row.lastTurnEndedAt,
+    visitedAt: row.lastVisitedAt,
+  })
 }
 
 /** What opening a row asks the app to do: focus the attached workspace, or follow the chat in a new one. */
@@ -322,7 +335,9 @@ function remoteChatRowOf(
 ): RemoteSessionRow {
   const remoteWorkspace = browse?.workspaces.find((workspace) => workspace.id === conversation.workspaceId) ?? null
   const sessionId = meshConversationSessionId(conversation.workspaceId, conversation.agentId)
-  const presence = meshConversationPresence(conversation.phase)
+  // Its background work counts, as the machine's own sidebar counts it: a
+  // chat whose turn is over while its agents or a monitor go on is working.
+  const presence = meshConversationPresence(conversation.phase, conversation.backgroundWork)
   const attached = attachedWorkspaceFor(workspaces, connection.id, sessionId)
   const title = conversation.title || 'Conversation'
   // The chat's own title over there is its workspace's name there; the list
@@ -357,14 +372,22 @@ function remoteChatRowOf(
     pullRequests: branchPullRequestsOfWire(conversation.pullRequests ?? []),
     changes: conversation.changes ?? null,
     worktree: conversation.worktree === true,
-    // A working chat counts from when its turn began, where its machine says;
-    // `updatedAt` also moves when an approval resolves or the model changes.
-    since: presence === 'running' ? (conversation.turnStartedAt ?? conversation.updatedAt) : conversation.updatedAt,
+    // A working chat counts from when its stretch of work began, the number
+    // its machine's own sidebar counts from: a turn the chat opened by itself
+    // does not restart it. A machine from before it said so gives the turn's
+    // start; `updatedAt` also moves when an approval resolves or the model
+    // changes.
+    since:
+      presence === 'running'
+        ? (conversation.workingSince ?? conversation.turnStartedAt ?? conversation.updatedAt)
+        : conversation.updatedAt,
     attachedWorkspaceId: attached?.id ?? null,
     recencyAt: conversation.recencyAt ?? conversation.lastUserMessageAt ?? conversation.updatedAt,
     lastUserMessageAt: conversation.lastUserMessageAt ?? null,
     lastTurnEndedAt: conversation.lastTurnEndedAt ?? null,
     lastVisitedAt: conversation.lastVisitedAt ?? null,
+    scheduledAgentId: conversation.scheduledAgentId ?? null,
+    snoozedUntil: conversation.snoozedUntil ?? null,
     lifecycle,
   }
 }

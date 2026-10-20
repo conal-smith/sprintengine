@@ -1,6 +1,7 @@
 // Which terminals and mesh panes a sidebar row stands for, and which of
 // their completions the user has not seen yet.
 
+import { finishedUnseen } from '../../../../../shared/workspace-lifecycle'
 import { type Workspace } from '../../../types/workspace'
 import { meshPanesOf, meshMachineNamesOf } from './folderGroups'
 
@@ -124,6 +125,43 @@ export function keepUnvisitedCompletions(input: {
     next.delete(id)
   }
   return next ?? input.marks
+}
+
+/**
+ * The unseen-completion marks the visit clock says, read off the record
+ * rather than watched happen: every chat whose latest finish is newer than
+ * anyone's last look at it, on any device, and which has nothing working or
+ * waiting now (`finishedUnseen`, the rule a paired machine's row for the same
+ * chat is marked by). This is what survives a reload or a window hidden
+ * overnight, where the transitions `deriveUnseenCompletions` watches for
+ * were never seen; and what makes the green row here and on a paired machine
+ * the same. The chat on screen is being looked at, and a chat followed from a
+ * paired machine keeps its read state there, so neither is marked. Answers
+ * `previous` itself when the marks are the same, so a caller keeps its identity.
+ */
+export function visitClockCompletions<W extends Pick<Workspace, 'id' | 'lastVisitedAt' | 'remoteOrigin'>>(input: {
+  workspaces: readonly W[]
+  /** When an agent in the chat last finished a turn, as far as this window knows. */
+  finishedAt: (workspace: W) => number | null
+  idle: (workspaceId: string) => boolean
+  onScreenWorkspaceId: string | null
+  previous?: ReadonlySet<string>
+}): ReadonlySet<string> {
+  const next = new Set<string>()
+  for (const workspace of input.workspaces) {
+    if (workspace.id === input.onScreenWorkspaceId || workspace.remoteOrigin) continue
+    if (
+      finishedUnseen({
+        idle: input.idle(workspace.id),
+        finishedAt: input.finishedAt(workspace),
+        visitedAt: workspace.lastVisitedAt,
+      })
+    )
+      next.add(workspace.id)
+  }
+  const previous = input.previous
+  if (previous && previous.size === next.size && [...next].every((id) => previous.has(id))) return previous
+  return next
 }
 
 /** A live session whose hooks report a settled phase: the turn ended, the agent is still there. */
