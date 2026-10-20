@@ -376,7 +376,10 @@ export async function cloneRepository(
   }
 
   try {
-    await mkdir(input.parentDir, { recursive: true })
+    // Only a parent that is missing is created. On Windows a recursive mkdir
+    // of a drive root (`D:\`) fails with EPERM even though it exists.
+    const parent = await lstat(input.parentDir).catch(() => null)
+    if (!parent?.isDirectory()) await mkdir(input.parentDir, { recursive: true })
   } catch (error) {
     return {
       ok: false,
