@@ -63,6 +63,31 @@ export const ALLOWED_PACKAGES = new Set([
   'universalify',
   // node-pty's
   'node-addon-api',
+  // Export chat writes Word documents with docx, which main loads lazily on
+  // the first export. The rest are what it depends on. nanoid is in
+  // devDependencies, since only the renderer imports it, and ships because
+  // docx depends on it. pako sits under jszip in the lock but electron-builder
+  // lays it out at the top level. @types/node and undici-types are types only,
+  // and the `*.d.ts` exclude in build.files leaves next to nothing of them.
+  'docx',
+  '@types/node',
+  'hash.js',
+  'inherits',
+  'minimalistic-assert',
+  'jszip',
+  'lie',
+  'immediate',
+  'pako',
+  'readable-stream',
+  'core-util-is',
+  'isarray',
+  'process-nextick-args',
+  'safe-buffer',
+  'string_decoder',
+  'util-deprecate',
+  'setimmediate',
+  'nanoid',
+  'undici-types',
 ])
 
 // ripgrep's binary comes in one optional package per platform, and npm
@@ -70,7 +95,8 @@ export const ALLOWED_PACKAGES = new Set([
 const ALLOWED_PATTERNS = [/^@vscode\/ripgrep-[a-z0-9-]+$/u]
 
 // 48 MiB on macOS arm64 when this was written: out/ is 40 MB of it, and the
-// node_modules above are about 10 MB. The budget leaves room for the app to grow
+// node_modules above are about 10 MB. docx and its dependencies took it to
+// 52 MiB. The budget leaves room for the app to grow
 // and none for one of the renderer's packages, the smallest of which by
 // itself would not fit (excalidraw's 46 MB, mermaid's 75 MB, Monaco's 104 MB).
 export const ASAR_BUDGET_BYTES = 64 * 1024 * 1024
