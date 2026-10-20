@@ -610,6 +610,12 @@ export type ElectronApi = {
   windowClose: () => Promise<void>
   getWindowState: () => Promise<WindowState | null>
   getWindowPlacement: () => Promise<WindowPlacement | null>
+  /**
+   * This window's zoom (View ▸ Zoom), read in process with no IPC. The browser
+   * tab's device frame divides by it, so a zoomed window lays a page out at
+   * the device's own size. 1 where there is no window to zoom.
+   */
+  getWindowZoomFactor: () => number
   createWorkspaceWindow: (input: CreateWorkspaceWindowInput) => Promise<CreateWorkspaceWindowResult>
   openAuxWindow: (input: OpenAuxWindowInput) => Promise<OpenAuxWindowResult>
   onAuxWindowRetarget: (cb: (payload: AuxWindowRetargetPayload) => void) => () => void

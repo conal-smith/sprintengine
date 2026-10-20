@@ -1,4 +1,4 @@
-import type { IpcRendererEvent } from 'electron'
+import { webFrame, type IpcRendererEvent } from 'electron'
 import { ipc as ipcRenderer } from '../ipc-router'
 import type { ChatLink } from '../../shared/deep-link'
 import { subscribeToChatLinks } from './chat-link-subscription'
@@ -35,6 +35,7 @@ export const windowApi = {
   windowClose: () => ipcRenderer.invoke('window:close'),
   getWindowState: (): Promise<WindowState | null> => ipcRenderer.invoke('window:get-state'),
   getWindowPlacement: (): Promise<WindowPlacement | null> => ipcRenderer.invoke('window:get-placement'),
+  getWindowZoomFactor: (): number => webFrame.getZoomFactor(),
   createWorkspaceWindow: (input: CreateWorkspaceWindowInput): Promise<CreateWorkspaceWindowResult> =>
     ipcRenderer.invoke('window:create-workspace-window', input),
   openAuxWindow: (input: OpenAuxWindowInput): Promise<OpenAuxWindowResult> =>
@@ -145,6 +146,7 @@ export const windowApi = {
   | 'windowClose'
   | 'getWindowState'
   | 'getWindowPlacement'
+  | 'getWindowZoomFactor'
   | 'createWorkspaceWindow'
   | 'openAuxWindow'
   | 'onAuxWindowRetarget'
