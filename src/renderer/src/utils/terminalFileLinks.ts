@@ -230,6 +230,28 @@ export function resolveTerminalFileReferencePath(filePath: string, roots: Termin
   return normalizeResolvedPath(toHostPath(joinFilePath(base, filePath), roots))
 }
 
+/**
+ * `relativePath` without the leading folders that repeat the end of `base`,
+ * or null when it starts with none. A workspace opened at a subfolder of its
+ * repository (`/Users/dev/mono/apps/web`) hears paths from the repository's
+ * root (`apps/web/src/App.tsx`, as `git diff --stat` prints them), which join
+ * onto the workspace as `apps/web/apps/web/…`. Only a candidate: the literal
+ * path wins whenever it exists.
+ */
+export function withoutRepeatedWorkspacePrefix(relativePath: string, base: string): string | null {
+  if (isAbsoluteFilePath(relativePath)) return null
+  const pathSegments = relativePath.split(/[\\/]+/u)
+  const baseSegments = base.split(/[\\/]+/u).filter(Boolean)
+  const fold = isWindowsPath(base) ? (segment = '') => segment.toLowerCase() : (segment = '') => segment
+  for (let count = Math.min(baseSegments.length, pathSegments.length - 1); count > 0; count--) {
+    const prefix = baseSegments.slice(-count)
+    if (prefix.every((segment, index) => fold(segment) === fold(pathSegments[index]))) {
+      return pathSegments.slice(count).join('/') || null
+    }
+  }
+  return null
+}
+
 type TerminalFileReferenceRoots = {
   executionRoot?: string | null
   workspaceRoot?: string | null
