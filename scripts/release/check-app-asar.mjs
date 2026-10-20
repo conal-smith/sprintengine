@@ -32,7 +32,8 @@ import { getRawHeader } from '@electron/asar'
 // What `require`s and `import()`s in out/main and out/preload name, then the
 // closure of their dependencies as npm lays them out. zod is a peer of the ACP
 // SDK that npm installs but electron-builder does not follow, which is why it
-// is a dependency of the app in its own right.
+// is a dependency of the app in its own right; shipped-peers.test.mjs keeps
+// every peer like it in `dependencies`, and so on this list.
 export const ALLOWED_PACKAGES = new Set([
   '@agentclientprotocol/sdk',
   '@anthropic-ai/claude-agent-sdk',
