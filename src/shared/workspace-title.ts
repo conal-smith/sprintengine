@@ -178,6 +178,13 @@ export const INJECTED_FRAGMENT_PATTERNS = {
   barePath: /(?:^|\s)[\w.-]+\/[\w./-]+/g,
   /** A bare commit hash pasted by a commit drop. */
   commitHash: /(?:^|\s)[0-9a-f]{7,64}(?=\s|$)/gi,
+  /**
+   * Placeholders Claude Code substitutes for a pasted image inside the
+   * person's own text (`[Image #26] What happened?`) and the companion line it
+   * writes for a dropped screenshot. A prompt that is only a pasted picture
+   * reduces to nothing, so the chat keeps its name until a prompt with words.
+   */
+  imagePlaceholder: /\[Image(?:\s*#\d+|:[^\]\n]{0,200})\]/g,
 } as const
 
 /**
@@ -201,6 +208,7 @@ export function stripInjectedFragments(prompt: string): string {
   return prompt
     .replace(patterns.fencedBlock, ' ')
     .replace(patterns.inlineCode, ' ')
+    .replace(patterns.imagePlaceholder, ' ')
     .replace(patterns.slashCommand, ' ')
     .replace(patterns.mention, ' ')
     .replace(patterns.url, ' ')
