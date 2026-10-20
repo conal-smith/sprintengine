@@ -6,7 +6,7 @@ import { TerminalLinkMenu } from '../../terminal/TerminalLinkMenu'
 import { openFileSurface } from '../../../utils/openFileSurface'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { availableFolderOpenTargets, resolveFolderOpenPrimary } from '../../workspace/openInEditorTargets'
-import { resolveTerminalFileReferencePath } from '../../../utils/terminalFileLinks'
+import { resolveTerminalFileReferencePath, withoutRepeatedWorkspacePrefix } from '../../../utils/terminalFileLinks'
 import { showToast } from '../../../store/toastStore'
 import { StreamingMarkdown } from './StreamingMarkdown'
 import { useReplyStreaming } from '../../../utils/replyStreaming'
@@ -60,11 +60,14 @@ function rememberPathKind(path: string, kind: 'file' | 'other'): void {
 // extension reads as one (nearly always right, and it keeps the text from
 // changing under the reader); one without — `/Users/dev/project` — reads as text,
 // because it is far more often a folder. The answer then settles it either way.
-function useExistingFile(resolved: string | null | undefined, path: string | null): boolean {
+// A fallback candidate passes `guessFromName: false`: it is a link only once
+// the disk has said it is a file, never on the strength of its extension.
+function useExistingFile(resolved: string | null | undefined, path: string | null, guessFromName = true): boolean {
   const files = useConversationTransport().services.files
   const guess = (): boolean => {
     const known = resolved ? knownPathKind(resolved) : undefined
     if (known) return known === 'file'
+    if (!guessFromName) return false
     return /\.[A-Za-z0-9]+$/u.test((resolved ?? path ?? '').split(/[\\/]/).at(-1) ?? '')
   }
   const [isFile, setIsFile] = useState(guess)
@@ -130,17 +133,22 @@ export const ConversationFileLink = React.memo(function ConversationFileLink({
     cwd: context?.cwd,
     platform: hostPlatform() || 'darwin',
   })
-  const resolved =
-    target?.type === 'file'
-      ? resolveTerminalFileReferencePath(target.path, {
-          executionRoot: context?.cwd,
-          workspaceRoot: context?.workspaceRoot,
-        })
-      : null
-  const existingFile = useExistingFile(
-    target?.type === 'file' && localFiles ? resolved : null,
+  const roots = { executionRoot: context?.cwd, workspaceRoot: context?.workspaceRoot }
+  const literal = target?.type === 'file' ? resolveTerminalFileReferencePath(target.path, roots) : null
+  const literalIsFile = useExistingFile(
+    target?.type === 'file' && localFiles ? literal : null,
     target?.type === 'file' ? target.path : null,
   )
+  // A path from the repository's root, in a workspace opened at a subfolder of
+  // it, is tried without the folders it repeats once the literal path is not
+  // a file here.
+  const base = context?.cwd || context?.workspaceRoot
+  const repeated =
+    target?.type === 'file' && !literalIsFile && base ? withoutRepeatedWorkspacePrefix(target.path, base) : null
+  const fallback = repeated ? resolveTerminalFileReferencePath(repeated, roots) : null
+  const fallbackIsFile = useExistingFile(localFiles ? fallback : null, null, false) && fallback !== null
+  const existingFile = literalIsFile || fallbackIsFile
+  const resolved = !literalIsFile && fallbackIsFile ? fallback : literal
   if (!target || (target.type === 'file' && !localFiles)) return <>{givenLabel ?? token}</>
   if (target.type === 'url') {
     const href = /^[a-z]+:/i.test(target.href) ? target.href : `https://${target.href}`

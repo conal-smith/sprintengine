@@ -59,6 +59,25 @@ test('a remote at a relative path never names the repository', () => {
   })
 })
 
+test("a partial clone's remote, whose fetch line ends with its filter, is read", () => {
+  const remotes = parseRemoteFetchUrls(
+    [
+      'origin\thttps://github.com/acme/app (fetch) [blob:none]',
+      'origin\thttps://github.com/acme/app (push)',
+      'mirror\tgit@github.com:acme/app.git (fetch) [tree:0]',
+      'mirror\tgit@github.com:acme/app.git (push)',
+    ].join('\n'),
+  )
+  assert.deepEqual(
+    [...remotes],
+    [
+      ['origin', 'https://github.com/acme/app'],
+      ['mirror', 'git@github.com:acme/app.git'],
+    ],
+  )
+  assert.deepEqual(pickPrimaryRemote(remotes), { remoteName: 'origin', remoteUrl: 'https://github.com/acme/app' })
+})
+
 test('repository-identity', async () => {
   // one-project-across-machines: every spelling of one remote is one
   // key, so a clone on this disk and a clone on a paired machine group as one

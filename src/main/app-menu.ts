@@ -244,6 +244,26 @@ export function createAppMenu(platform: NodeJS.Platform = process.platform): Men
           visible: false,
           click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), -1),
         },
+        // People reach for ⌘+ / Ctrl++, which on most layouts is the = key with
+        // Shift held, and `CmdOrCtrl+=` does not match it with Shift down. Plus
+        // covers it on Windows and Linux; macOS matches the Shift chord only
+        // when it is spelled out.
+        {
+          label: 'Zoom In',
+          accelerator: 'CmdOrCtrl+Plus',
+          visible: false,
+          click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 1),
+        },
+        ...(platform === 'darwin'
+          ? ([
+              {
+                label: 'Zoom In',
+                accelerator: 'CmdOrCtrl+Shift+=',
+                visible: false,
+                click: (_, win) => zoomFocusedWindow(win ?? BrowserWindow.getFocusedWindow(), 1),
+              },
+            ] satisfies Electron.MenuItemConstructorOptions[])
+          : []),
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],

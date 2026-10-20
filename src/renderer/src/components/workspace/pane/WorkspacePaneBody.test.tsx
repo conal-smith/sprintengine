@@ -201,3 +201,45 @@ test('a browser tab recording behind another stays in place, out of reach', asyn
     act(() => useRecordingTabsStore.getState().end('rec-1'))
   }
 })
+
+// Dragging a tab reorders the strip. A browser layer moved in the tree
+// detaches its <webview>, which reloads the page, so the layers never move.
+
+test('reordering the tabs leaves every layer where it is in the tree', async () => {
+  const browser = { id: 'tab-a', kind: 'browser' } as WorkspacePaneTab
+  const terminal = { id: 'tab-b', kind: 'terminal', terminalId: 'term-b' } as WorkspacePaneTab
+  const body = await renderBody([browser, terminal], 'tab-b')
+  const browserLayer = body.querySelector('#pane-ws-popped-panel-tab-a')!
+  const removed: Node[] = []
+  const observer = new dom.window.MutationObserver((records) => {
+    for (const record of records) removed.push(...record.removedNodes)
+  })
+  observer.observe(body, { childList: true })
+  try {
+    const { WorkspacePaneBody } = await import('./WorkspacePaneBody')
+    for (const order of [
+      [terminal, browser],
+      [browser, terminal],
+    ]) {
+      await act(async () => {
+        root?.render(
+          React.createElement(WorkspacePaneBody, {
+            workspaceId: 'ws-popped',
+            tabs: order,
+            activeTabId: 'tab-b',
+            selectedTabId: 'tab-b',
+          }),
+        )
+      })
+      observer.takeRecords().forEach((record) => removed.push(...record.removedNodes))
+    }
+    assert.deepEqual(
+      removed.map((node) => (node as Element).id),
+      [],
+      'no layer was taken out of the tree and put back',
+    )
+    assert.equal(body.querySelector('#pane-ws-popped-panel-tab-a'), browserLayer)
+  } finally {
+    observer.disconnect()
+  }
+})

@@ -114,6 +114,19 @@ export function applyTerminalCapabilityDefaults(env: Record<string, string>): vo
   env.FORCE_HYPERLINK = env.FORCE_HYPERLINK || '1'
 }
 
+/**
+ * Drops the variables naming the tmux, screen or Zellij pane the app was
+ * started from — `npm run dev` in a tmux pane, an AppImage launched from one.
+ * A terminal or agent here is not inside that pane: inherited, `tmux` refuses
+ * to nest, `tmux split-window` splits the person's outside pane, and a CLI that
+ * checks `$TMUX` believes it is in their session. screen's `WINDOW` is a
+ * common enough name that it goes only alongside screen's own `STY`.
+ */
+export function withoutInheritedMultiplexerEnv(env: Record<string, string | undefined>): void {
+  if (env.STY !== undefined) delete env.WINDOW
+  for (const key of ['TMUX', 'TMUX_PANE', 'STY', 'ZELLIJ', 'ZELLIJ_SESSION_NAME', 'ZELLIJ_PANE_ID']) delete env[key]
+}
+
 export function getTerminalEnv(): Record<string, string> {
   // Without the markers of a Claude Code session the app itself may have been
   // started from: inherited, they make every `claude` this app launches (or a
@@ -126,6 +139,7 @@ export function getTerminalEnv(): Record<string, string> {
   )
 
   delete env.ELECTRON_RUN_AS_NODE
+  withoutInheritedMultiplexerEnv(env)
   applyTerminalCapabilityDefaults(env)
 
   // The person's own PATH, not the one the app was started with: opened from

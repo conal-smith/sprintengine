@@ -134,12 +134,13 @@ export function pickPrimaryRemote(
 
 /**
  * Parse `git remote -v` into name → fetch URL. Push URLs are ignored: a
- * repository is identified by where it is read from.
+ * repository is identified by where it is read from. A partial clone's fetch
+ * line ends with its filter, `(fetch) [blob:none]`.
  */
 export function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>()
   for (const line of stdout.split(/\r?\n/)) {
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]*\])?$/.exec(line.trim())
     if (!match) continue
     const [, name = '', url = '', direction = ''] = match
     if (direction !== 'fetch' || !name || !url) continue

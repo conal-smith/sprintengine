@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, vi } from 'vitest'
-import { ConversationCheckpoints } from './conversation-checkpoints'
+import { ConversationCheckpoints, longPathsConfig } from './conversation-checkpoints'
 import { runGitCommand } from './git-utils'
 import { ConversationRuntime } from './conversation-runtime'
 import { createMockConversationProvider } from './providers/mock-conversation-provider'
@@ -859,4 +859,10 @@ test('capture and revert leave a split index the repository still uses in place'
   } finally {
     await rm(f.directory, { recursive: true, force: true })
   }
+})
+
+test('checkpoint git commands turn on long paths on Windows only', () => {
+  assert.deepEqual(longPathsConfig('win32'), ['-c', 'core.longpaths=true'])
+  assert.deepEqual(longPathsConfig('darwin'), [])
+  assert.deepEqual(longPathsConfig('linux'), [])
 })
