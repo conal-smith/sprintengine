@@ -90,7 +90,9 @@ import { launchCommandLineKey, launchPreviewRequest, type LaunchCommandLineState
 import { drawSuggestions, newSuggestionSeed } from './suggestionBank'
 import { WorktreeChip } from './WorktreeChip'
 import { useNewChatWorktreeReservation } from './useNewChatWorktreeReservation'
-import { ScheduleFailureTray, ScheduleTag } from './schedule/SchedulePicker'
+import { ScheduleFailureTray, SchedulePausedTray, ScheduleTag } from './schedule/SchedulePicker'
+import { useScheduledAgentsPause } from '../../../store/scheduledAgentsStore'
+import { setScheduledAgentPaused } from '../../../utils/scheduledAgentsPause'
 import { ComposerTray } from '../../panels/agentChat/composerTray'
 import { PROMPT_STASH_COMMAND, usePromptStash } from '../../panels/agentChat/promptStashPicker'
 import { StartAsGlyph, startAsLabel, type StartAs } from './ComposerOptionsMenu'
@@ -1487,6 +1489,8 @@ export default function NewAgentPanel({
   // the door closes on the card it lands as.
   const [scheduleBusy, setScheduleBusy] = React.useState(false)
   // Why the last run did not start, until the person has seen it here.
+  // Every scheduled agent paused at once: said over the editor of any of them.
+  const scheduledPausedAll = useScheduledAgentsPause()
   const [lastRunFailure, setLastRunFailure] = React.useState<string | null>(() =>
     editing?.lastRun && !editing.lastRun.ok && (editing.lastFailureSeenAt ?? 0) < editing.lastRun.at
       ? editing.lastRun.message
@@ -2278,6 +2282,15 @@ export default function NewAgentPanel({
         {scheduled && lastRunFailure && !terminalUnavailable ? (
           <ScheduleFailureTray failure={lastRunFailure} onDismiss={() => setLastRunFailure(null)} />
         ) : null}
+        {/* A paused schedule's editor says so, behind the box, while it is. */}
+        {scheduled && editing && !terminalUnavailable ? (
+          <SchedulePausedTray
+            pausedAt={editing.pausedAt}
+            pausedAll={scheduledPausedAll}
+            now={Date.now()}
+            onResume={() => void setScheduledAgentPaused(editing, false)}
+          />
+        ) : null}
         {/* The stash ⌘S opened on an empty box, behind the box it restores into. */}
         {stashPicker.picker && !terminalUnavailable ? <ComposerTray>{stashPicker.picker}</ComposerTray> : null}
         <div
@@ -2492,11 +2505,30 @@ export default function NewAgentPanel({
             ) : null}
 
             {/* Run now starts what is saved; only a scheduled agent that exists
-                has anything saved to run. */}
+                has anything saved to run. It runs a paused one too: asked for.
+                Pause beside it keeps the schedule and stops its runs a while. */}
             {scheduled && editing ? (
-              <GhostButton size="xs" onClick={() => void runSavedNow()}>
-                Run now
-              </GhostButton>
+              <>
+                <Tooltip
+                  content={
+                    editing.pausedAt !== undefined
+                      ? 'Runs next at its next time; times missed while paused are not made up'
+                      : 'No runs at its times until resumed; a run already going carries on'
+                  }
+                  placement="top"
+                >
+                  <GhostButton
+                    size="xs"
+                    data-schedule-editor-pause={editing.pausedAt !== undefined ? 'resume' : 'pause'}
+                    onClick={() => void setScheduledAgentPaused(editing, editing.pausedAt === undefined)}
+                  >
+                    {editing.pausedAt !== undefined ? 'Resume' : 'Pause'}
+                  </GhostButton>
+                </Tooltip>
+                <GhostButton size="xs" onClick={() => void runSavedNow()}>
+                  Run now
+                </GhostButton>
+              </>
             ) : null}
 
             {/* The send: a small round accent button with an up arrow (owner

@@ -341,6 +341,11 @@ beside it.
   a one-time schedule's run before it closes; and `scheduledAgentId` /
   `scheduledAgentTag` on a run's `ModuleConversationSummary`. The type docs
   say what happens to a missed time. `scheduled-agent-runs`.
+- **`ScheduledAgent.pausedAt`**: when the person paused a scheduled agent in
+  the app, absent while it runs. A paused one (or any, while the person has
+  paused them all) has `nextRunAt: null`, starts nothing at its times, and
+  does not make them up when resumed; `runNow` still runs it. Read-only to a
+  module, and absent on an older host.
 
 ### Breaking: removed
 

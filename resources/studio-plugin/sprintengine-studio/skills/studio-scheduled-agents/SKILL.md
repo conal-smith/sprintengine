@@ -1,6 +1,6 @@
 ---
 name: studio-scheduled-agents
-description: List, create, run and remove SprintEngine Studio scheduled agents, and read the agent CLIs, capability modules and marketplace behind them. Use when asked to run an agent on a schedule ("every weekday at 9", "nightly", a cron expression), to check what is scheduled on this computer, to start a scheduled agent's run now, to stop one, to find out whether a capability module is enabled, or to browse the extension marketplace the app itself reads.
+description: List, create, run, pause, resume and remove SprintEngine Studio scheduled agents, and read the agent CLIs, capability modules and marketplace behind them. Use when asked to run an agent on a schedule ("every weekday at 9", "nightly", a cron expression), to check what is scheduled on this computer, to start a scheduled agent's run now, to pause or resume one, to stop one, to find out whether a capability module is enabled, or to browse the extension marketplace the app itself reads.
 ---
 
 # Scheduled agents
@@ -26,9 +26,12 @@ not replayed, and one that passes while the computer sleeps runs once on waking.
 
 `schedule_list` returns every scheduled agent on this computer: its `id`, the
 prompt, the cron schedule and its `scheduleWords` ("Every Sunday at 9:00 PM"),
-`nextRunAt`, the project folder and machine, and `lastRun` — whether the last
-run started (with the `workspaceId` of the chat it started) or why it did not.
-Read it before creating one, so you do not schedule the same thing twice.
+`nextRunAt`, the project folder and machine, `paused` (and `pausedAt`), and
+`lastRun` — whether the last run started (with the `workspaceId` of the chat it
+started) or why it did not. Beside the list, `pausedAll` says whether the person
+has paused every scheduled agent, and `until` when (null: until they resume
+them). `nextRunAt` is null for a schedule that is paused either way. Read it
+before creating one, so you do not schedule the same thing twice.
 
 ## Create
 
@@ -79,6 +82,17 @@ waiting for its schedule, and answers with the `workspaceId` of the chat it
 started. `schedule_delete` with `{id}` stops and removes a scheduled agent;
 chats its earlier runs started are left as they are.
 
+## Pause and resume
+
+`schedule_pause` with `{id}` stops a scheduled agent's runs at its times until
+it is resumed; it stays in the list, and the person sees it marked Paused. A run
+already going is left to finish, and `schedule_run` still starts one.
+`schedule_resume` with `{id}` puts it back on its schedule: it runs next at its
+first time from now, and the times that passed while it was paused are not made
+up. Resuming is held to your preset as `schedule_run` is. Pausing every
+scheduled agent at once is the person's, in the app; while that holds, a
+resumed one still waits for it to end.
+
 Runs never overlap. While a scheduled agent's last run is still working — a
 turn open, or waiting on an approval card — `schedule_run` is refused with
 "Its last run is still working.", and a scheduled time that comes round then is
@@ -87,7 +101,8 @@ skipped rather than starting a second chat beside the first.
 ## When you are a scheduled run
 
 A chat a scheduled agent started may read `schedule_list`, but
-`schedule_create`, `schedule_delete` and `schedule_run` refuse it with
+`schedule_create`, `schedule_delete`, `schedule_run`, `schedule_pause` and
+`schedule_resume` refuse it with
 `scheduled_run_refused`: a run never makes, removes or fires a schedule, so no
 run can start a chain of runs. If the task seems to need a schedule changed,
 say so in your reply for the person to do in the app.

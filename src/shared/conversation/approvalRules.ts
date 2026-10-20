@@ -617,6 +617,9 @@ const AGENT_LAUNCHING_GATEWAY_TOOLS = new Set([
   'conversation.create',
   'schedule.create',
   'schedule.run',
+  // A resumed schedule starts agents again at its times, on the prompt it was
+  // made with: the same hand-off as making it. Pausing starts nothing.
+  'schedule.resume',
   'terminal.create',
   'workspace.create',
 ])

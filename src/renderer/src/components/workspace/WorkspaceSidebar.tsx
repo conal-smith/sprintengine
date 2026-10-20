@@ -123,9 +123,11 @@ import { chatSettleStep } from './chatSettleCommand'
 import { waitingChatCount, waitingLabel } from './sidebar/projectWaiting'
 import { isSnoozedWorkspace, resolveSnoozePresets, snoozeWakeLabel, workspaceWokeAt } from '../../utils/workspaceSnooze'
 import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
-import { useScheduledAgents } from '../../store/scheduledAgentsStore'
+import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
+import { PauseAllScheduledAgentsControl, ScheduledAgentsPausedNotice } from './sidebar/ScheduledPauseControls'
+import { setScheduledAgentPaused } from '../../utils/scheduledAgentsPause'
 import { isScheduledRunChat, scheduledAgentRunInProgress } from '../../utils/scheduledAgentRuns'
 import type { ScheduledAgentView } from '../../../../shared/scheduled-agents'
 import {
@@ -404,6 +406,25 @@ function WorkspaceSidebar({
   )
   const allScheduledAgents = useScheduledAgents()
   const scheduledAgents = scheduledAgentsEnabled ? allScheduledAgents : NO_SCHEDULED_AGENTS
+  // Every scheduled agent paused at once, and until when (null: they are not).
+  const scheduledAgentsPause = useScheduledAgentsPause()
+  const scheduledPausedAll = scheduledAgentsEnabled ? scheduledAgentsPause : null
+  // Run now from a schedule's menu: the run is a chat of its own, started in
+  // the background as every run is, and it runs whether or not the schedule is
+  // paused — it was asked for.
+  const runScheduledAgentNow = useCallback((agent: ScheduledAgentView) => {
+    void window.api
+      .runScheduledAgentNow(agent.id)
+      .then((result) => {
+        const failure = !result.ok ? result.message : !result.run.ok ? result.run.message : null
+        showToast(
+          failure === null
+            ? { tone: 'good', title: 'Started', description: 'Its chat is in the list, with the schedule’s clock.' }
+            : { tone: 'error', title: 'Did not run', description: failure },
+        )
+      })
+      .catch(() => {})
+  }, [])
   // Closing a card is how a scheduled agent is switched off: removed at once,
   // and said so. No Undo on the toast — the toast spec keeps its action row for
   // its two named consumers, and an undo racing a dismissal timer is not one.
@@ -2725,6 +2746,10 @@ function WorkspaceSidebar({
   // A row opens its schedule's editor, never a run — the runs are chats, in
   // the list above with the schedule's clock on them, and the editor lists a
   // schedule's recent ones.
+  //
+  // Beside the fold, the pause of them all (an hour, until tomorrow morning,
+  // until resumed); while it holds, a line under the fold says so with Resume,
+  // folded or not, since it is about every schedule and not about a row.
   const renderScheduledSection = () => {
     if (scheduledAgents.length === 0) return null
     const expanded = expandedShelves[SCHEDULED_SHELF_KEY] !== false
@@ -2737,7 +2762,9 @@ function WorkspaceSidebar({
           flush
           controlsId={SCHEDULED_SHELF_ID}
           onToggle={() => setExpandedShelves((prev) => ({ ...prev, [SCHEDULED_SHELF_KEY]: !expanded }))}
+          trailing={<PauseAllScheduledAgentsControl pause={scheduledPausedAll} />}
         />
+        {scheduledPausedAll ? <ScheduledAgentsPausedNotice pause={scheduledPausedAll} now={now} /> : null}
         <div id={SCHEDULED_SHELF_ID} role="group" aria-label="Scheduled agents" hidden={!expanded}>
           {expanded
             ? scheduledAgents.map((agent) => (
@@ -2748,8 +2775,11 @@ function WorkspaceSidebar({
                   project={flatProjectOfScheduled(agent)}
                   runInProgress={scheduledAgentRunInProgress(agent, activityByWorkspaceId)}
                   selected={openScheduledAgentId === agent.id}
+                  pausedAll={scheduledPausedAll !== null}
                   onOpen={() => onOpenScheduledAgent?.(agent.id)}
                   onClose={() => closeScheduledAgent(agent)}
+                  onTogglePause={() => void setScheduledAgentPaused(agent, agent.pausedAt === undefined)}
+                  onRunNow={() => runScheduledAgentNow(agent)}
                 />
               ))
             : null}
@@ -3180,7 +3210,14 @@ function WorkspaceSidebar({
                 A scheduled agent is a New chat that starts itself, so it has no
                 door of its own. */}
             {onNewScheduledAgent && scheduledAgentsEnabled ? (
-              <Tooltip content="New scheduled agent" placement="right">
+              <Tooltip
+                content={
+                  scheduledPausedAll
+                    ? 'New scheduled agent — scheduled agents are paused for now'
+                    : 'New scheduled agent'
+                }
+                placement="right"
+              >
                 <IconButton
                   size="md"
                   tone="quiet"
@@ -3321,6 +3358,13 @@ function WorkspaceSidebar({
             return workspace ? canMarkWorkspaceUnread(workspace) : false
           })()}
           watchedPullRequestNumber={watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ?? null}
+          schedule={(() => {
+            // A chat a schedule here started: its menu pauses (or resumes)
+            // that schedule. Only while the schedule is still in the list.
+            const scheduledAgentId = workspaceById.get(contextMenu.workspaceId)?.scheduledAgentId
+            const agent = scheduledAgentId ? scheduledAgents.find((entry) => entry.id === scheduledAgentId) : null
+            return agent ? { paused: agent.pausedAt !== undefined } : null
+          })()}
           onClose={() => setContextMenu(null)}
           onSelect={(action) => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
@@ -3425,6 +3469,12 @@ function WorkspaceSidebar({
             }
             if (action === 'wake') {
               setWorkspaceSnoozed(workspace.id, null)
+              setContextMenu(null)
+              return
+            }
+            if (action === 'toggle-schedule-pause') {
+              const agent = scheduledAgents.find((entry) => entry.id === workspace.scheduledAgentId)
+              if (agent) void setScheduledAgentPaused(agent, agent.pausedAt === undefined)
               setContextMenu(null)
               return
             }

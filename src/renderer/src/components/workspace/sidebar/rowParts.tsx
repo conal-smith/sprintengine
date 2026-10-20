@@ -38,6 +38,9 @@ import { useRelativeNow } from '../../../hooks/useRelativeNow'
 // and a caller's `text-*` on one element are resolved by stylesheet order, not
 // class order. The group is named (`group/shelf`) so hovering the folder
 // section around it, which is a `group` of its own, does not lift it.
+//
+// `trailing` sits after the fold, outside it: a control about the shelf's rows
+// (the Scheduled section's pause), never part of the button that folds them.
 export function ShelfFoldRow({
   label,
   count,
@@ -45,6 +48,7 @@ export function ShelfFoldRow({
   controlsId,
   onToggle,
   flush = false,
+  trailing = null,
 }: {
   label: string
   count: number
@@ -53,6 +57,7 @@ export function ShelfFoldRow({
   onToggle: () => void
   /** The flat stream's shelf: no folder header above it, so no indent under one. */
   flush?: boolean
+  trailing?: React.ReactNode
 }) {
   return (
     <div className="mx-1.5 my-0.5 flex items-center gap-1">
@@ -91,6 +96,7 @@ export function ShelfFoldRow({
           {count}
         </span>
       </RowButton>
+      {trailing}
     </div>
   )
 }
