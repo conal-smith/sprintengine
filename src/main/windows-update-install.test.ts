@@ -273,3 +273,29 @@ test('the write probe answers for a folder and leaves nothing behind', async () 
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('an update puts back a missing Start Menu shortcut, with only what the stock installer defines', () => {
+  const nsh = readFileSync(join(process.cwd(), 'build', 'installer.nsh'), 'utf8')
+  const start = nsh.indexOf('!macro customInstall')
+  assert.ok(start > 0, 'the installer defines customInstall')
+  const body = nsh
+    .slice(start, nsh.indexOf('!macroend', start))
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith(';'))
+  const guard = body.indexOf('${IfNot} ${FileExists} "$newStartMenuLink"')
+  assert.ok(guard > 0, 'a link that is there is left as it is')
+  assert.equal(body[guard - 1], '!ifndef DO_NOT_CREATE_START_MENU_SHORTCUT', 'and none is made for a build without one')
+  const made = body.slice(guard)
+  assert.ok(made.includes('CreateShortCut "$newStartMenuLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"'))
+  assert.ok(made.includes('WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"'))
+  // makensis runs with -WX, so a name the templates stopped defining fails the
+  // Windows build; this says which one without one.
+  const templates = join(process.cwd(), 'node_modules', 'app-builder-lib', 'templates', 'nsis')
+  const installer = readFileSync(join(templates, 'installer.nsi'), 'utf8')
+  assert.match(installer, /^Var newStartMenuLink$/mu)
+  assert.match(installer, /^\s*Var appExe$/mu)
+  const stockShortcuts = readFileSync(join(templates, 'include', 'installer.nsh'), 'utf8')
+  assert.match(stockShortcuts, /^!macro createMenuDirectory$/mu)
+  assert.match(stockShortcuts, /WinShell::SetLnkAUMI "\$newStartMenuLink" "\$\{APP_ID\}"/u)
+})
