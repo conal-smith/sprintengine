@@ -386,9 +386,16 @@ export function WorkspacePaneBody({
   const floatRect = useFloatRect(workspaceId, floatingTab)
   const recordingTabIds = useRecordingTabIds()
   const agentPresentTabIds = useAgentPresentTabIds(workspaceId, tabs)
+  // The layers keep one order whatever the strip's is. Dragging a tab moves
+  // it in `tabs`, and rendering in that order would have React move layers in
+  // the tree to match; a browser layer moved that way detaches its <webview>,
+  // which reloads the page from its first URL as a WebContents main no longer
+  // knows. Only the selected or floating layer paints, so the tree's order
+  // shows nowhere.
+  const layerTabs = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)), [tabs])
   return (
     <>
-      {tabs.map((tab) => {
+      {layerTabs.map((tab) => {
         const floating = tab.id === floatingTab?.id && floatRect !== null
         const selected = tab.id === selectedTabId || floating
         const active = floating || (selected && tab.id === activeTabId)
