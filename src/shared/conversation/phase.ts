@@ -29,16 +29,27 @@ export function conversationPhaseNeedsAttention(phase: ConversationPhase): boole
   return phase === 'waiting_for_approval' || phase === 'waiting_for_input' || phase === 'failed'
 }
 
+/**
+ * A turn's phase, counting what the chat still has working once the turn is
+ * over. Background agents keep working after the turn that launched them
+ * ends, and a monitor will wake the agent again: the chat is not done with
+ * either. The one rule both a chat's summary here and a paired machine's
+ * listed chat (its `phase` beside its `backgroundWork`) are read by.
+ */
+export function phaseWithBackgroundWork(phase: ConversationPhase, backgroundWork: boolean): ConversationPhase {
+  return backgroundWork && (phase === 'completed' || phase === 'idle') ? 'running' : phase
+}
+
 export function conversationSummaryPhase(summary: ConversationSessionSummary): ConversationPhase {
-  const phase = summary.phase ?? statusPhase(summary)
-  // Background agents keep working after the turn that launched them ends, and
-  // a monitor will wake the agent again: the chat is not done with either.
-  if (
-    (summary.backgroundAgents || backgroundTasksWakeAgent(summary.backgroundTasks)) &&
-    (phase === 'completed' || phase === 'idle')
+  return phaseWithBackgroundWork(
+    summary.phase ?? statusPhase(summary),
+    Boolean(summary.backgroundAgents) || backgroundTasksWakeAgent(summary.backgroundTasks),
   )
-    return 'running'
-  return phase
+}
+
+/** Whether a phase is the agent at work: what a sidebar row's working mark and its count are drawn for. */
+export function conversationPhaseWorking(phase: ConversationPhase): boolean {
+  return phase === 'running' || phase === 'starting'
 }
 
 function statusPhase(summary: ConversationSessionSummary): ConversationPhase {

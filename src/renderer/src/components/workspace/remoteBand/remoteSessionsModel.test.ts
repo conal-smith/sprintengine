@@ -661,6 +661,109 @@ test('chats on a paired machine are rows of their own, with the presence their p
   assert.equal(remoteFinishUnseen({ ...finish, activity: 'needs-input' }), false)
 })
 
+// One chat on the Mac mini, as its list carries it, read into the row this
+// machine's sidebar draws for it.
+const miniConnection: MeshConnection = {
+  id: 'c-mini',
+  machineName: 'mac-mini',
+  endpoint: 'mac-mini.tail1234.ts.net:8471',
+  deviceId: 'tnd_mini',
+  deviceName: 'dev-macbook-air',
+  scopes: ['conversation:read', 'conversation:operate'],
+  pairedAt: '2026-09-05T00:00:00.000Z',
+  lastConnectedAt: null,
+  pairedVia: 'request',
+}
+function rowOfListed(over: Partial<MeshConversation>) {
+  const listed: MeshConversation = {
+    workspaceId: 'rw1',
+    agentId: 'agent-1',
+    title: 'Nightly triage',
+    phase: 'completed',
+    updatedAt: 9_000,
+    createdAt: 1_000,
+    providerId: 'claude-agent',
+    modelId: 'opus',
+    turnCount: 3,
+    lastSeq: 40,
+    ...over,
+  }
+  const [group] = buildRemoteBand({
+    connections: [miniConnection],
+    browses: new Map([
+      [miniConnection.id, { browse: null, loading: false, error: null, at: 1, conversations: [listed] }],
+    ]),
+    reachability: new Map(),
+    workspaces: [],
+  })
+  return group!.rows[0]!
+}
+
+test('a chat whose turn is over while its background agent works reads as working, counted from when its work began', () => {
+  const t0 = 1_000_000
+  const row = rowOfListed({
+    phase: 'completed',
+    backgroundWork: { agents: 1, monitors: 0 },
+    workingSince: t0,
+    updatedAt: t0 + 14 * 60_000,
+  })
+  assert.equal(row.activity, 'working')
+  assert.equal(row.status.label, 'Running')
+  assert.equal(row.since, t0, 'the stretch of work, not the last thing that moved')
+
+  // A turn the chat opened by itself is counted from the same start, not its own.
+  const woken = rowOfListed({
+    phase: 'running',
+    backgroundWork: { agents: 1, monitors: 0 },
+    turnStartedAt: t0 + 14 * 60_000,
+    workingSince: t0,
+  })
+  assert.equal(woken.activity, 'working')
+  assert.equal(woken.since, t0)
+
+  // A monitor that will wake the agent keeps it working too, from an idle phase as from a finished one.
+  assert.equal(rowOfListed({ phase: 'idle', backgroundWork: { agents: 0, monitors: 1 } }).activity, 'working')
+  // A turn waiting on the person still waits, whatever works behind it.
+  assert.equal(
+    rowOfListed({ phase: 'waiting_for_approval', backgroundWork: { agents: 1, monitors: 0 } }).activity,
+    'needs-input',
+  )
+  assert.equal(meshConversationPresence('completed', { agents: 2, monitors: 0 }), 'running')
+  assert.equal(
+    meshConversationPresence('failed', { agents: 2, monitors: 0 }),
+    'idle',
+    'a failure is the turn’s own word',
+  )
+})
+
+test('a machine from before it said when the work began reads as it did', () => {
+  // Neither member: the turn's phase alone, and the turn's own start.
+  const running = rowOfListed({ phase: 'running', turnStartedAt: 7_000, updatedAt: 9_000 })
+  assert.equal(running.activity, 'working')
+  assert.equal(running.since, 7_000)
+  const done = rowOfListed({ phase: 'completed', updatedAt: 9_000 })
+  assert.equal(done.activity, 'idle')
+  assert.equal(done.since, 9_000)
+  assert.equal(rowOfListed({ phase: 'running', updatedAt: 9_000 }).since, 9_000, 'with no turn start, the last move')
+  // A machine that lists background work but no stretch: working, from what it does say.
+  const background = rowOfListed({ phase: 'completed', backgroundWork: { agents: 1, monitors: 0 }, updatedAt: 9_000 })
+  assert.equal(background.activity, 'working')
+  assert.equal(background.since, 9_000)
+})
+
+test('a remote row carries the schedule that started its chat and its snooze, and a sleeping chat is not marked finished', () => {
+  const t0 = 1_000_000
+  const run = rowOfListed({ scheduledAgentId: 'sa-1', lastTurnEndedAt: t0 + 60_000, lastVisitedAt: t0 })
+  assert.equal(run.scheduledAgentId, 'sa-1')
+  assert.equal(remoteFinishUnseen(run, t0 + 120_000), true, 'a run nobody opened finished unseen')
+  assert.equal(rowOfListed({}).scheduledAgentId, null)
+
+  const sleeping = rowOfListed({ lastTurnEndedAt: t0 + 60_000, lastVisitedAt: t0, snoozedUntil: t0 + 3_600_000 })
+  assert.equal(sleeping.snoozedUntil, t0 + 3_600_000)
+  assert.equal(remoteFinishUnseen(sleeping, t0 + 120_000), false, 'asleep over there, so not news here')
+  assert.equal(remoteFinishUnseen(sleeping, t0 + 3_600_001), true, 'news again once it wakes')
+})
+
 test('interleaveChats: a paired machine’s chats sit among the local ones by when each was last written to', () => {
   const local = (id: string, lastUserMessageAt: number) =>
     ({ id, createdAt: 0, lastUserMessageAt }) as unknown as Workspace
