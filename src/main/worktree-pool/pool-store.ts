@@ -4,6 +4,8 @@ import { hostname } from 'os'
 import { join } from 'path'
 import {
   DEFAULT_WORKTREE_POOL_SETTINGS,
+  WORKTREE_POOL_IDLE_RETURN_MAX_MINUTES,
+  WORKTREE_POOL_IDLE_RETURN_MIN_MINUTES,
   WORKTREE_POOL_KEEP_IDLE_MAX,
   WORKTREE_POOL_MAX_SLOTS_CEILING,
   WORKTREE_POOL_MAX_SLOTS_MIN,
@@ -73,6 +75,31 @@ export type SlotLease = {
 /** How long a lease nobody has been seen using is left alone before it is returned. */
 export const UNCLAIMED_LEASE_MS = 60 * 60_000
 
+/**
+ * Who a slot given back while they still exist is kept for: a chat whose
+ * worktree it was (its folder is the slot), or the agent that leased it
+ * through MCP and its chat. What the lease said, so the slot's owner is
+ * matched against the app's records as the lease's was.
+ */
+export type SlotKeeper = {
+  branch: string
+  /** The agent that leased it itself (`worktree.lease`); null for a chat's own worktree. */
+  agentId: string | null
+  workspaceId: string | null
+  since: number
+}
+
+/**
+ * A slot's path, kept free for the chat whose slot it was after the slot was
+ * removed to make room (`makeRoom`): the chat names that path, and its CLI
+ * keys its sessions by it, so the chat must come back there, not to a new
+ * one. No new slot is made at it; the chat's return makes one there again.
+ */
+export type ReservedPath = SlotKeeper & { path: string }
+
+/** The most reserved paths a pool remembers; past it the oldest is forgotten (its chat then gets a fresh worktree there). */
+export const RESERVED_PATHS_MAX = 64
+
 export type SlotHeld = {
   reason: WorktreePoolHeldReason
   detail: string | null
@@ -101,6 +128,13 @@ export type SlotRecord = {
   size: WorktreeDiskUsage | null
   /** Why the last removal of this idle slot left it on disk; cleared when it is leased or cleared. */
   kept: string | null
+  /**
+   * Set on an idle slot given back while its chat or agent still exists
+   * (`returnUnused`, `makeRoom`): it is that chat's to come back to, and no
+   * lease reuses it as it stands. Cleared when it is leased again, or when
+   * its keeper is gone.
+   */
+  parked: SlotKeeper | null
 }
 
 export type PoolRecord = {
@@ -117,6 +151,8 @@ export type PoolRecord = {
   slots: SlotRecord[]
   /** Slot paths the person chose to keep as ordinary worktrees; never adopted back. */
   releasedPaths: string[]
+  /** Paths of parked slots removed to make room, kept free for their chats ({@link ReservedPath}). */
+  reservedPaths: ReservedPath[]
 }
 
 /**
@@ -155,6 +191,19 @@ const OP_KINDS = new Set<SlotOp['kind']>(['create', 'lease', 'reset', 'return', 
 
 const str = (value: unknown): string | null => (typeof value === 'string' && value ? value : null)
 const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+function parseKeeper(value: unknown): SlotKeeper | null {
+  if (!isRecord(value)) return null
+  const branch = str(value.branch)
+  if (!branch) return null
+  return { branch, agentId: str(value.agentId), workspaceId: str(value.workspaceId), since: num(value.since) ?? 0 }
+}
+
+function parseReservedPath(value: unknown): ReservedPath | null {
+  const keeper = parseKeeper(value)
+  const path = isRecord(value) ? str(value.path) : null
+  return keeper && path ? { ...keeper, path } : null
+}
 
 function parseSize(value: unknown): WorktreeDiskUsage | null {
   if (!isRecord(value)) return null
@@ -227,6 +276,10 @@ function parseSlot(value: unknown): SlotRecord | null {
     lastBranch: str(value.lastBranch),
     size: parseSize(value.size),
     kept: str(value.kept),
+    // Only an idle slot is kept for anyone, or one on its way into or out of
+    // being idle (a return, removal or reclaim that recovery finishes): on a
+    // leased or held one it is a leftover of a step cut short.
+    parked: state === 'leased' || state === 'held' || state === 'creating' ? null : parseKeeper(value.parked),
   }
 }
 
@@ -257,6 +310,13 @@ function parsePoolRecord(text: string): PoolRecord | null {
     releasedPaths: Array.isArray(value.releasedPaths)
       ? value.releasedPaths.filter((path): path is string => typeof path === 'string')
       : [],
+    // Absent in a record an older build wrote, which reserved nothing.
+    reservedPaths: Array.isArray(value.reservedPaths)
+      ? value.reservedPaths
+          .map(parseReservedPath)
+          .filter((entry): entry is ReservedPath => entry !== null)
+          .slice(-RESERVED_PATHS_MAX)
+      : [],
   }
 }
 
@@ -284,6 +344,12 @@ export function normalizePoolSettings(input: Partial<WorktreePoolSettings> | nul
         : typeof diskLimitGb === 'number' && Number.isFinite(diskLimitGb) && diskLimitGb > 0
           ? Math.min(100_000, diskLimitGb)
           : base.diskLimitGb,
+    idleReturnMinutes: clamp(
+      input?.idleReturnMinutes,
+      WORKTREE_POOL_IDLE_RETURN_MIN_MINUTES,
+      WORKTREE_POOL_IDLE_RETURN_MAX_MINUTES,
+      base.idleReturnMinutes,
+    ),
     dependencyInstall: normalizeDependencyInstall(input?.dependencyInstall),
   }
 }
