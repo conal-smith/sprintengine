@@ -352,6 +352,20 @@ jobs:
         shell: bash
         run: npx electron-builder --linux --publish never "-c.publish.channel=${CHANNEL}"
 
+      # The packaged app.asar may only carry what main and preload load, within
+      # a size budget: a renderer package listed under `dependencies` packages
+      # green and adds its whole node_modules tree to every download (they
+      # made up some 330 MB of each app.asar until 0.8.0). Guarded like the
+      # icon step: a promotion may build a commit from before the script existed.
+      - name: Check what app.asar ships
+        shell: bash
+        run: |
+          if [ -f scripts/release/check-app-asar.mjs ]; then
+            node scripts/release/check-app-asar.mjs dist
+          else
+            echo "This commit predates the app.asar check; skipping it."
+          fi
+
       # Named files only: dist/ also holds builder-debug.yml and the unpacked
       # app, neither of which belongs on a release.
       - name: Upload packaged artifacts
