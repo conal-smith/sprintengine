@@ -308,6 +308,54 @@ export const COMMAND_REGISTRY = [
     availability: ['activeWorkspace'],
     handlerPath: { kind: 'panel-event', eventId: 'chat.replay.start' },
   }),
+  // Export the focused chat, whole, to send to someone: onto the clipboard to
+  // paste into an email, or as a file. No chords, for the reason Replay has
+  // none: they are reached for rarely, from here or the chat tab's menu.
+  command({
+    id: 'chat.export.copy',
+    title: 'Copy chat',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.copy' },
+  }),
+  command({
+    id: 'chat.export.copyMarkdown',
+    title: 'Copy chat as Markdown',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.copyMarkdown' },
+  }),
+  command({
+    id: 'chat.export.pdf',
+    title: 'Export chat as PDF…',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.pdf' },
+  }),
+  command({
+    id: 'chat.export.docx',
+    title: 'Export chat as Word document…',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.docx' },
+  }),
+  command({
+    id: 'chat.export.markdown',
+    title: 'Export chat as Markdown…',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.markdown' },
+  }),
   // Find in the conversation you are reading: its messages, replies and plans,
   // a match at a time. ⌘F because that is where a person's hand goes to find
   // anything, and it is free here: `terminal.find` holds the chord on the more

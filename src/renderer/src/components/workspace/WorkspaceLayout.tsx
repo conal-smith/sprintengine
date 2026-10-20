@@ -76,6 +76,8 @@ import { TabPromptPeek } from './TabPromptPeek'
 import { ChatAppToolsMenuItems } from './ChatAppToolsMenuItems'
 import { chatResumesInTerminal, resumeChatInTerminalOrToast } from '../panels/agentChat/resumeInTerminal'
 import { requestChatReplay } from '../panels/agentChat/chatReplayRequests'
+import { chatExportSupported, chatHasMessages } from '../panels/agentChat/chatExport'
+import { ChatExportMenuItems } from './ChatExportMenuItems'
 import { ModuleContributionBoundary } from '../../modules/ModuleContributionBoundary'
 import { GitBranchGlyph } from './WorkspaceActions'
 import { remotePaneTabLabel } from './remoteBand/remoteSessionsModel'
@@ -183,6 +185,8 @@ type TabMenuState = {
   agentId: string | null
   /** The tab's chat, when it is one: what "Replay conversation" plays. */
   chatId: string | null
+  /** Export chat for the tab's chat, where this shell can export one, and whether the chat is still empty. */
+  chatExport: { empty: boolean } | null
 }
 
 /**
@@ -398,6 +402,10 @@ function WorkspaceLayoutBody({
   conversationSessions: conversationSessionsProp = NO_CONVERSATION_SESSIONS,
 }: Props) {
   const conversationSessions = useConversationTabSessions(conversationSessionsProp)
+  // The sessions as handed in, read when the tab menu opens: whether a chat
+  // has a message yet is not part of what the strip holds them by.
+  const conversationSessionsRef = useRef(conversationSessionsProp)
+  conversationSessionsRef.current = conversationSessionsProp
   // What each paired machine last listed about its chats, for the tab of a
   // pane open on one: the same mark, clock and card a local chat's tab wears.
   const remoteFacts = useRemoteConversationFacts()
@@ -1077,6 +1085,10 @@ function WorkspaceLayoutBody({
         resumableChatId: tabAgentId && chatResumesInTerminal(tabAgent, store.pluginCatalogEntries) ? tabAgentId : null,
         agentId: tabAgentId,
         chatId: tabAgentId && tabAgent?.runtimeKind === 'conversation' ? tabAgentId : null,
+        chatExport:
+          tabAgentId && tabAgent?.runtimeKind === 'conversation' && chatExportSupported()
+            ? { empty: chatHasMessages(workspaceId, tabAgentId, conversationSessionsRef.current) === false }
+            : null,
       })
     },
     [workspaceId],
@@ -1898,6 +1910,14 @@ function WorkspaceLayoutBody({
             >
               Replay conversation
             </MenuItem>
+          ) : null}
+          {tabMenu.chatId && tabMenu.chatExport ? (
+            <ChatExportMenuItems
+              workspaceId={workspaceId}
+              agentId={tabMenu.chatId}
+              empty={tabMenu.chatExport.empty}
+              onDone={() => setTabMenu(null)}
+            />
           ) : null}
           {tabMenu.resumableChatId ? (
             <MenuItem

@@ -1,7 +1,7 @@
-import { agentLeaseKey } from '../../shared/ipc/worktree-pool'
+import { agentLeaseKey, type WorktreePoolHeldReason } from '../../shared/ipc/worktree-pool'
 import { worktreeBranchName } from '../../shared/worktree-branch'
 import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
-import { UNCLAIMED_LEASE_MS, type SlotLease, type SlotRecord } from './pool-store'
+import { UNCLAIMED_LEASE_MS, type ReservedPath, type SlotKeeper, type SlotLease, type SlotRecord } from './pool-store'
 import {
   clearStaleIndexLock,
   commitIsReachable,
@@ -15,6 +15,7 @@ import { type PoolContext, type PoolRuntime, tail, messageOf } from './pool-cont
 import type { WorktreePoolSweepEntry, WorktreePoolReturnInput } from './worktree-pool-service'
 import { lockReasonOf, isOurLock, hold, holdAfterFailure, forgetSlotsGoneFromDisk } from './pool-slot-steps'
 import { evictOverLimit, measureSlot, enforceDiskLimit } from './pool-eviction'
+import { giveBack, judgeIdle, readIdleFacts, type IdleFacts } from './pool-idle'
 
 /** Returning a slot (worktree-pool-service.ts): one lease at a time, or every leased slot nothing uses any more. */
 
@@ -32,12 +33,19 @@ export function findLease(ctx: PoolContext, leaseId: string): { pool: PoolRuntim
  * Take a slot back from its owner (or re-check a held one). Clean: detached,
  * unlocked, idle again — it is moved to the default branch by the next lease,
  * not now. Anything else: held. The result says which.
+ *
+ * `park`: the owner still exists, and the slot is given back because it sat
+ * clean and unused (pool-idle.ts), so it is kept for them. Written down before
+ * the first git step, so a return the app stopped in finishes kept for them
+ * too. Anything found that would hold a slot instead puts it back as it was,
+ * leased: its owner is still there to deal with it, and no person need.
  */
 export async function returnSlot(
   ctx: PoolContext,
   pool: PoolRuntime,
   slot: SlotRecord,
   recovering = false,
+  park: SlotKeeper | null = null,
 ): Promise<'returned' | 'held' | 'postponed' | 'skipped'> {
   const began = await ctx.withPool(pool, async () => {
     if (pool.busy.has(slot.id)) return null
@@ -45,9 +53,11 @@ export async function returnSlot(
     if (!(from === 'leased' || from === 'held' || from === 'returning' || (recovering && from === 'leasing'))) {
       return null
     }
+    if (park && from !== 'leased') return null
     pool.busy.add(slot.id)
     slot.state = 'returning'
     slot.op = { kind: 'return', startedAt: ctx.now(), pid: process.pid }
+    if (park) slot.parked = park
     await ctx.persist(pool)
     return { from, lease: slot.lease, held: slot.held }
   })
@@ -57,9 +67,20 @@ export async function returnSlot(
     await ctx.withPool(pool, async () => {
       slot.state = began.from === 'leasing' ? 'returning' : began.from
       slot.op = null
+      if (park) slot.parked = null
       await ctx.persist(pool)
     })
     return 'postponed'
+  }
+  /** Held for a person; or, given back while its owner exists, left with them as it was. */
+  const holdUnlessParking = async (
+    reason: WorktreePoolHeldReason,
+    detail: string | null,
+    extra: { changedPaths?: number | null; branch?: string | null },
+  ): Promise<'held' | 'postponed'> => {
+    if (park) return putBack()
+    await hold(ctx, pool, slot, reason, detail, extra)
+    return 'held'
   }
   try {
     // The agent's terminal (or anyone's) is still in there: put it back as
@@ -71,41 +92,29 @@ export async function returnSlot(
     const lock = await lockReasonOf(ctx, pool, slot.path)
     if (lock === undefined) return await putBack()
     if (lock !== null && !isOurLock(lock)) {
-      await hold(ctx, pool, slot, 'error', `locked by someone else (${lock || 'no reason given'})`, { branch })
-      return 'held'
+      return await holdUnlessParking('error', `locked by someone else (${lock || 'no reason given'})`, { branch })
     }
     const gitDir = await readSlotGitDir(ctx.git, slot.path)
-    if (!gitDir) {
-      await hold(ctx, pool, slot, 'error', 'the slot is no longer a git worktree', { branch })
-      return 'held'
-    }
+    if (!gitDir) return await holdUnlessParking('error', 'the slot is no longer a git worktree', { branch })
     const operation = await operationInProgress(gitDir)
-    if (operation) {
-      await hold(ctx, pool, slot, 'operation', `a ${operation} is in progress`, { branch })
-      return 'held'
-    }
-    if ((await clearStaleIndexLock(gitDir, true, ctx.now())) === 'busy') {
-      await ctx.withPool(pool, async () => {
-        slot.state = began.from === 'leasing' ? 'returning' : began.from
-        slot.op = null
-        await ctx.persist(pool)
-      })
-      return 'postponed'
-    }
+    if (operation) return await holdUnlessParking('operation', `a ${operation} is in progress`, { branch })
+    if ((await clearStaleIndexLock(gitDir, true, ctx.now())) === 'busy') return await putBack()
     const status = await readSlotStatus(ctx.git, slot.path)
-    if (!status.ok) {
-      await hold(ctx, pool, slot, 'error', `status failed: ${status.message}`, { branch })
-      return 'held'
-    }
+    if (!status.ok) return await holdUnlessParking('error', `status failed: ${status.message}`, { branch })
     // The MCP config every agent launch writes into its worktree is the
     // app's, not the agent's work, and is removed below; nothing else counts
     // as clean.
     const ownFiles = status.status.untrackedPaths.filter(isPerAgentFile).length
     const agentChanges = status.status.changedPaths - ownFiles
     if (agentChanges > 0) {
-      await hold(ctx, pool, slot, 'dirty', null, { changedPaths: agentChanges, branch: status.status.branch ?? branch })
-      return 'held'
+      return await holdUnlessParking('dirty', null, {
+        changedPaths: agentChanges,
+        branch: status.status.branch ?? branch,
+      })
     }
+    // Kept for a chat that comes back to its branch: the slot must be on it,
+    // or the chat would come back to whatever this is.
+    if (park && status.status.branch !== park.branch) return await putBack()
     const oid = status.status.oid
     // Detaching is free when HEAD is on a branch (the branch keeps it) or at
     // a commit some ref already reaches. A detached HEAD with commits of its
@@ -166,7 +175,7 @@ export async function returnSlot(
 }
 
 /** Whether the agent that leased a slot through MCP is still in the app's records. */
-function agentStillHeld(lease: SlotLease, input: WorktreePoolReturnInput): boolean {
+function agentStillHeld(lease: Pick<SlotLease, 'agentId' | 'workspaceId'>, input: WorktreePoolReturnInput): boolean {
   if (lease.agentId === null) return false
   if (lease.workspaceId !== null) {
     return input.agentKeys == null || input.agentKeys.has(agentLeaseKey(lease.workspaceId, lease.agentId))
@@ -176,14 +185,65 @@ function agentStillHeld(lease: SlotLease, input: WorktreePoolReturnInput): boole
 }
 
 /**
- * Return every leased slot of a repository that nothing uses any more. Asked
- * by the agent worktree cleanup, which already knows every path the app's
- * records use; the pool has no sweep of its own.
+ * Whether whoever a parked slot (or a reserved path) is kept for is still in
+ * the app's records: the chat whose folder it is, or the agent that leased
+ * it. Unknown keeps it.
+ */
+async function keeperStillHeld(
+  keeper: SlotKeeper,
+  path: string,
+  protectedSpellings: readonly string[][],
+  input: WorktreePoolReturnInput,
+): Promise<boolean> {
+  if (keeper.agentId !== null) return agentStillHeld(keeper, input)
+  const spellings = await pathSpellings(path)
+  return protectedSpellings.some((each) => insideAny(each, spellings))
+}
+
+/**
+ * Let a slot kept for a chat (or agent) go to anyone once they are gone (the
+ * chat settled or was deleted): it is an idle slot like any other again. A
+ * reserved path is forgotten the same way.
+ */
+async function forgetGoneKeepers(
+  ctx: PoolContext,
+  pool: PoolRuntime,
+  protectedSpellings: readonly string[][],
+  input: WorktreePoolReturnInput,
+): Promise<void> {
+  const released: SlotRecord[] = []
+  for (const slot of pool.record.slots) {
+    if (slot.state !== 'idle' || !slot.parked || pool.busy.has(slot.id)) continue
+    if (!(await keeperStillHeld(slot.parked, slot.path, protectedSpellings, input))) released.push(slot)
+  }
+  const forgotten: ReservedPath[] = []
+  for (const reserved of pool.record.reservedPaths) {
+    if (!(await keeperStillHeld(reserved, reserved.path, protectedSpellings, input))) forgotten.push(reserved)
+  }
+  if (released.length === 0 && forgotten.length === 0) return
+  await ctx.withPool(pool, async () => {
+    for (const slot of released) if (slot.state === 'idle') slot.parked = null
+    pool.record.reservedPaths = pool.record.reservedPaths.filter((entry) => !forgotten.includes(entry))
+    await ctx.persist(pool)
+  })
+  for (const slot of released) {
+    ctx.log(`${slot.path}: no longer kept for ${slot.lastBranch ?? 'its chat'}; its chat is gone`)
+  }
+}
+
+/**
+ * Return every leased slot of a repository that nothing uses any more, and
+ * give back the ones in use only on the records' say-so that have sat clean
+ * and untouched for the idle period (pool-idle.ts). Asked by the agent
+ * worktree cleanup, which already knows every path the app's records use; the
+ * pool has no sweep of its own.
  *
  * A slot is in use while a protected path or a live terminal sits in it, or
  * while the agent that leased it through MCP still exists. A lease never seen
  * in use is left alone for {@link UNCLAIMED_LEASE_MS}: the chat it was made
- * for may not be recorded yet.
+ * for may not be recorded yet. One in use only because its chat or agent
+ * still exists is given back, kept for them, when `judgeIdle` finds nothing
+ * in it that is only there and nobody using it for `idleReturnMinutes`.
  */
 export async function returnUnused(
   ctx: PoolContext,
@@ -197,6 +257,11 @@ export async function returnUnused(
       .filter(Boolean)
       .map((path) => pathSpellings(path)),
   )
+  if (!input.dryRun) await forgetGoneKeepers(ctx, pool, protectedSpellings, input)
+  const { idleReturnMinutes } = await ctx.getSettings()
+  const givenBackHow = `clean, pushed and unused for ${idleReturnMinutes} minutes; its branch is kept for it`
+  // Read once, at the first slot in use that needs them.
+  let facts: IdleFacts | null = null
   const entries: WorktreePoolSweepEntry[] = []
   for (const slot of [...pool.record.slots]) {
     // Quitting: the slots not reached yet are the next start's sweep's.
@@ -220,7 +285,29 @@ export async function returnUnused(
           await ctx.persist(pool)
         })
       }
-      entries.push({ ...base, verdict: 'in-use' })
+      facts ??= await readIdleFacts(ctx)
+      const verdict = await judgeIdle(ctx, pool, slot, facts, idleReturnMinutes * 60_000)
+      if (!verdict.ok) {
+        entries.push({ ...base, verdict: 'in-use', detail: verdict.reason })
+        continue
+      }
+      if (input.dryRun) {
+        entries.push({ ...base, verdict: 'returned', detail: givenBackHow })
+        continue
+      }
+      const outcome = await giveBack(ctx, pool, slot, verdict.keeper, { why: 'unused for the idle period' })
+      const after = ctx.slotById(pool, slot.id)
+      entries.push(
+        outcome === 'returned'
+          ? { ...base, verdict: 'returned', detail: givenBackHow }
+          : outcome === 'held'
+            ? { ...base, verdict: 'held', detail: after?.held?.detail ?? after?.held?.reason }
+            : {
+                ...base,
+                verdict: 'in-use',
+                detail: outcome === 'skipped' ? 'busy' : 'it changed while it was checked',
+              },
+      )
       continue
     }
     if (!lease.claimed && ctx.now() - lease.leasedAt < UNCLAIMED_LEASE_MS) {

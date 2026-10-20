@@ -237,6 +237,16 @@ installers, manifests and the anonymous URLs installed apps use to discover
 updates, including that a nightly is the first nightly in the feed and never
 what `/releases/latest` resolves to.
 
+The macOS legs notarize in electron-builder's `afterSign` hook
+(`scripts/release/notarize-mac.mjs`), before the DMG and updater ZIP are made
+from the app, so both carry the stapled ticket. Notarization is submitted
+once. Stapling fetches the ticket from Apple's CloudKit service, which
+sometimes drops the connection (`Failed to staple your application with code:
+68`, NSURLErrorDomain -1005); a staple that fails that way is retried after
+30s, 60s and 120s, four attempts in all, and the log says so. Any other staple
+failure, and a fourth network failure, fails the leg. The DMG itself is not
+signed, notarized or stapled; the app inside it is.
+
 A tag left by an interrupted draft reserves its version. No version-bump commit
 is pushed to main, and the workflow's own token does not trigger a second
 release from the tag it creates.

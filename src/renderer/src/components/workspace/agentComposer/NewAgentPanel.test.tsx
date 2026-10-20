@@ -1898,8 +1898,14 @@ test('NewAgentPanel', async () => {
         await act(async () => {
           box.dispatchEvent(dropEvent)
         })
-        await settle()
-        await settle()
+        // Reading the image takes several timer hops (decode, encode, read
+        // back), so a fixed count of settles lost the race on a loaded CI Mac
+        // and Enter launched before the image was staged. Waited for instead:
+        // the strip offers to remove it once it is staged.
+        for (let i = 0; i < 50 && !view.container.querySelector('[aria-label="Remove shot.png"]'); i += 1) {
+          await settle()
+        }
+        assert.ok(view.container.querySelector('[aria-label="Remove shot.png"]'), 'the dropped image is staged')
         const enter = () =>
           act(async () => {
             textarea.dispatchEvent(

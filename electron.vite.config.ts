@@ -48,7 +48,14 @@ assertReleasesRepoMatchesManifest()
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), buildStampPlugin(isDevBuild)],
+    plugins: [
+      // Bundled rather than loaded from app.asar: Export chat reads replies
+      // with the renderer's own Markdown parser and sets their math with its
+      // typesetter, and bundling keeps main from depending on where those
+      // renderer packages are listed (or whether app.asar carries them).
+      externalizeDepsPlugin({ exclude: ['remark-gfm', 'remark-math', 'katex'] }),
+      buildStampPlugin(isDevBuild),
+    ],
     define: serviceEndpointDefines(),
     build: {
       rollupOptions: {

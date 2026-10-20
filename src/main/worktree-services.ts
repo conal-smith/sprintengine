@@ -1,3 +1,4 @@
+import { comparablePath } from '../shared/host-paths'
 import { dependencyInstallSettingFor } from '../shared/ipc/worktree-pool'
 import { chatIdsOnRecord } from './agent-worktree-keep-checks'
 import { diagnosticLogger } from './diagnostics-service'
@@ -8,6 +9,7 @@ import type { WorkspaceSyncService } from './workspace-sync-service'
 import { installWorktreePool } from './worktree-pool/active-pool'
 import { createDependencyInstaller, installDependencyInstaller } from './worktree-pool/dependency-install'
 import { cachedDependencyInstallEnvironment } from './worktree-pool/install-environment'
+import { poolChatsOf } from './worktree-pool/pool-chats'
 import { createPoolStore } from './worktree-pool/pool-store'
 import { createWorktreePoolService } from './worktree-pool/worktree-pool-service'
 import { createWorktreePoolTools } from './worktree-pool/worktree-pool-tools'
@@ -18,10 +20,17 @@ export type WorktreeServicesContext = {
   userDataPath: string
   /** Where live work sits (app-services' `liveWorkPaths`): a slot something works in is never recycled. */
   liveWorkPaths: () => Promise<string[]>
+  /** Where a chat's session works now (a running turn, or a live child): part of `liveWorkPaths`, asked apart. */
+  liveConversationPaths: () => Promise<string[]>
   workspaceSyncService: WorkspaceSyncService
 }
 
-export function createWorktreeServices({ userDataPath, liveWorkPaths, workspaceSyncService }: WorktreeServicesContext) {
+export function createWorktreeServices({
+  userDataPath,
+  liveWorkPaths,
+  liveConversationPaths,
+  workspaceSyncService,
+}: WorktreeServicesContext) {
   // The pool of reusable agent worktrees (worktree-pool/). Every agent
   // worktree made with `fromPool` (git.ts) is leased from it, and the agent
   // worktree cleanup hands back the slots nothing uses. It does nothing on its
@@ -30,12 +39,21 @@ export function createWorktreeServices({ userDataPath, liveWorkPaths, workspaceS
   const worktreePool = createWorktreePoolService({
     store: createPoolStore(userDataPath),
     livePaths: liveWorkPaths,
+    liveSessionPaths: liveConversationPaths,
     // Recovery, holds and evictions are what a person asks about later.
     log: diagnosticLogger('worktree-pool'),
     onChange: broadcastWorktreePoolChanged,
     seedIncludedFiles: seedWorktreeIncludedFiles,
     // Settled chats included: a slot holding a chat's history is never removed.
     knownWorkspaceIds: () => chatIdsOnRecord(workspaceSyncService.getSnapshot().state.workspaces),
+    // What a slot given back while its chat lives is weighed against
+    // (worktree-pool/pool-idle.ts): which chats work in it, whether one is on
+    // screen, and when each was last active.
+    chats: () => poolChatsOf(workspaceSyncService.getSnapshot().state),
+    // The chat whose worktree it was is marked as the cleanup's report marks
+    // it (`chatsReclaimedBy`), so opening it brings the worktree back: a slot
+    // a lease gave back to make room is in no report.
+    onGivenBack: ({ path }) => markChatsReclaimed(workspaceSyncService, path),
   })
   installWorktreePool(worktreePool)
   void worktreePool.load()
@@ -66,4 +84,20 @@ export function createWorktreeServices({ userDataPath, liveWorkPaths, workspaceS
       }),
   })
   return { worktreePool, dependencyInstaller, worktreeTools }
+}
+
+/**
+ * Mark every chat whose own worktree is at `path` as given back
+ * (`worktree.reclaimedAt`), as the renderer marks the ones a sweep's report
+ * names: the chat then brings its worktree back when it is opened
+ * (chatWorktreeRestore.ts), not when its folder is found missing.
+ */
+function markChatsReclaimed(workspaceSyncService: WorkspaceSyncService, path: string): void {
+  const reclaimedAt = Date.now()
+  for (const workspace of workspaceSyncService.getSnapshot().state.workspaces) {
+    const worktree = workspace.worktree
+    if (!worktree?.branch || worktree.reclaimedAt !== undefined || !workspace.folderPath) continue
+    if (comparablePath(workspace.folderPath) !== comparablePath(path)) continue
+    workspaceSyncService.updateWorkspaceFields(workspace.id, { worktree: { ...worktree, reclaimedAt } }, 'system')
+  }
 }

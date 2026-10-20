@@ -18,6 +18,7 @@ import type {
 } from './ssh-environments'
 import type { SshPreviewStatus } from './ssh-preview'
 import type { ServerMode } from './server-mode'
+import type { ChatExportInput, ChatExportResult } from './chat-export'
 import type { StudioServerInfo, StudioServerStatus } from './studio-server-status'
 import type { EditorRevealAck, EditorRevealRequest, EditorStateQuery, EditorStateReply } from './editor-reveal'
 import type {
@@ -1479,6 +1480,18 @@ export type ElectronApi = {
   showMenubarMenu: (label: string, position?: { x?: number; y?: number }) => Promise<boolean>
   clipboardReadText: () => Promise<string>
   clipboardWriteText: (text: string) => Promise<void>
+  /**
+   * Plain text and HTML in one write, so a paste into a rich editor keeps the
+   * formatting and a paste into a terminal gets the text. Absent where the
+   * host has no rich clipboard of its own.
+   */
+  clipboardWriteRich?: (payload: { text: string; html: string }) => Promise<void>
+  /**
+   * Export chat: a chat tab's whole conversation saved as a PDF, Word or
+   * Markdown file where the save dialog says, or copied to the clipboard.
+   * Main reads the chat; the window names it and the format.
+   */
+  exportChat: (input: ChatExportInput) => Promise<ChatExportResult>
   // What this machine actually has: probed `git`/`gh` versions plus gh's own
   // auth login. Read-only and argument-free — see src/shared/version-control.ts.
   probeVersionControlProviders: () => Promise<VersionControlProviderProbe[]>

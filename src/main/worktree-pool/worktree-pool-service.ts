@@ -32,6 +32,10 @@ import { heldAction } from './pool-held-actions'
 import { FETCH_FAILURE_BACKOFF_MS, FETCH_FRESH_MS, catchUp, lease, reclaim, type CatchUpOutcome } from './pool-lease'
 import { recoverPool } from './pool-recovery'
 import { release, returnUnused } from './pool-return'
+import type { PoolChat } from './pool-idle'
+import { reservationAt } from './pool-slot-steps'
+
+export type { PoolChat } from './pool-idle'
 
 /**
  * The pool of reusable agent worktrees.
@@ -164,6 +168,26 @@ export type WorktreePoolServiceDeps = {
    * as deleted.
    */
   knownWorkspaceIds?: () => Iterable<string> | null
+  /**
+   * The chats on record that are not settled, or are open in a window, with
+   * the folders they name, whether one is on screen, and when each was last
+   * active (worktree-services.ts, from the workspace registry). Null or left
+   * out: unknown, and no slot a chat may be using is given back while it
+   * exists (pool-idle.ts).
+   */
+  chats?: () => readonly PoolChat[] | null
+  /**
+   * Where a chat's session is working now: a running turn, or a live child
+   * with its background agents and monitors (`liveConversationWorkspaceRoots`).
+   * Also among `livePaths`; asked apart so a slot kept for one can say so.
+   */
+  liveSessionPaths?: () => string[] | Promise<string[]>
+  /**
+   * A slot was given back while its chat or agent still exists (pool-idle.ts):
+   * the chat whose folder it is is marked, so opening it brings its worktree
+   * back (`worktree.reclaimedAt`). Never throws into the pool.
+   */
+  onGivenBack?: (slot: { repoRoot: string; path: string; branch: string }) => void
 }
 
 export type WorktreePoolLeaseInput = {
@@ -439,6 +463,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
       createdAt: now(),
       slots: [],
       releasedPaths: [],
+      reservedPaths: [],
     }
     const pool = runtimeFor(record)
     await persist(pool)
@@ -537,6 +562,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
         lastBranch: slot.lastBranch,
         size: slot.size,
         kept: slot.kept,
+        parked: slot.parked ? { branch: slot.parked.branch, since: slot.parked.since } : null,
       })),
     }
   }
@@ -623,6 +649,34 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   }
 
   /**
+   * Whether a path is kept free for the chat whose parked slot was removed
+   * there: git.ts asks the pool to make it again (`reclaim`) before it would
+   * put a plain worktree there. Not a slot: the cleanup does not hand it over.
+   */
+  function reservesPath(path: string): boolean {
+    for (const pool of pools.values()) if (reservationAt(pool, path)) return true
+    return false
+  }
+
+  /**
+   * Whether the chat on `branch` whose folder is `path` must have its
+   * worktree brought back before an agent runs there: a slot is at the path
+   * and is not leased to that branch (given back, idle or parked, or someone
+   * else's since), or the path is reserved for it with no slot. Main's
+   * conversation runtime asks before every turn, and brings the worktree back
+   * first (git.ts `restoreGitWorktree`), or refuses the turn with the reason.
+   * In memory only, so asking costs nothing.
+   */
+  function awaitsChat(path: string, branch: string): boolean {
+    for (const pool of pools.values()) {
+      const slot = pool.record.slots.find((candidate) => comparablePath(candidate.path) === comparablePath(path))
+      if (slot) return !(slot.state === 'leased' && slot.lease?.branch === branch)
+      if (reservationAt(pool, path)) return true
+    }
+    return false
+  }
+
+  /**
    * Stop, wait up to `waitMs` (ten seconds unless the caller is short of time)
    * for the steps in flight, and give each pool's lock up.
    */
@@ -672,6 +726,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     updateSettings: (patch: Partial<WorktreePoolSettings>) => track(updateSettings(patch)),
     measure: (repoRoot?: string) => track(measure(ctx, repoRoot)),
     ownsPath,
+    reservesPath,
+    awaitsChat,
     shutdown,
   }
 }
