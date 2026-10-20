@@ -12,8 +12,10 @@ type UserEntry = Extract<TranscriptEntry, { kind: 'user' }>
 type AssistantEntry = Extract<TranscriptEntry, { kind: 'assistant' }>
 
 // The app's clipboard bridge, standing in for the main process: what a click
-// copied is read off this list.
+// copied is read off these lists — plain text alone, and both flavours in one
+// write.
 const written: string[] = []
+const rich: Array<{ text: string; html: string }> = []
 
 let root: Root | null = null
 let host: HTMLElement | null = null
@@ -21,9 +23,13 @@ let host: HTMLElement | null = null
 beforeEach(() => {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   written.length = 0
+  rich.length = 0
   ;(window as unknown as { api: unknown }).api = {
     clipboardWriteText: async (text: string) => {
       written.push(text)
+    },
+    clipboardWriteRich: async (payload: { text: string; html: string }) => {
+      rich.push(payload)
     },
   }
 })
@@ -102,13 +108,41 @@ test('opened reasoning reads as markdown, not as its raw marks', async () => {
   expect(body.textContent).not.toContain('**')
 })
 
+// What a rich write's HTML would paste as, without the charset line.
+const pastedText = (html: string) => new DOMParser().parseFromString(html, 'text/html').body.textContent ?? ''
+
+async function shiftClick(element: Element | null | undefined): Promise<void> {
+  if (!element) throw new Error('nothing to click')
+  await act(async () => element.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })))
+}
+
+async function rightClick(element: Element | null | undefined): Promise<void> {
+  if (!element) throw new Error('nothing to right-click')
+  await act(async () => element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
+}
+
+const menuItem = (name: string) =>
+  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === name)
+
 test('a message offers a copy glyph named for what it copies', async () => {
   const view = await mount(<UserTimelineRow entry={user()} chrome={chrome} />)
   const copy = button(view, 'Copy message')
   expect(copy).toBeDefined()
   expect(copy!.textContent).not.toContain('Copy')
   await click(copy)
-  expect(written).toEqual(['Fix the flaky test'])
+  expect(rich.map((payload) => payload.text)).toEqual(['Fix the flaky test'])
+})
+
+test('a copied message carries its markdown and the HTML it renders to', async () => {
+  const view = await mount(
+    <UserTimelineRow entry={user({ text: 'Fix **the flaky** test\n- in CI' })} chrome={chrome} />,
+  )
+  await click(button(view, 'Copy message'))
+  expect(written).toEqual([])
+  expect(rich).toHaveLength(1)
+  expect(rich[0].text).toBe('Fix **the flaky** test\n- in CI')
+  expect(rich[0].html).toContain('<strong>the flaky</strong>')
+  expect(rich[0].html).toContain('<li>in CI</li>')
 })
 
 test('an image-only message has no copy button, since it has no words to copy', async () => {
@@ -123,20 +157,73 @@ test('an image-only message has no copy button, since it has no words to copy', 
   expect(button(view, 'Copy message')).toBeUndefined()
 })
 
-test('copying a reply copies its prose between steps and its final text, in order', async () => {
+const steppedReply = () =>
+  assistant({
+    text: '**1. Mistakes.** Each booking is checked.\n\n1. First\n2. Second\n\n```ts\nconst a = 1\n```',
+    intermediateText: [{ text: 'Reading the test first.', beforeToolUseId: 'b' }],
+  })
+
+test('copying a reply copies the answer after the last step alone, in both flavours', async () => {
   const view = await mount(
-    <AssistantTurnBlock
-      entry={assistant({
-        text: 'All green.',
-        intermediateText: [{ text: 'Reading the test first.', beforeToolUseId: 'b' }],
-      })}
-      tools={[tool('a'), tool('b')]}
-      decisions={[]}
-      chrome={chrome}
-    />,
+    <AssistantTurnBlock entry={steppedReply()} tools={[tool('a'), tool('b')]} decisions={[]} chrome={chrome} />,
   )
   await click(button(view, 'Copy reply'))
-  expect(written).toEqual(['Reading the test first.\n\nAll green.'])
+  expect(written).toEqual([])
+  expect(rich).toHaveLength(1)
+  const [{ text, html }] = rich
+  expect(text).toBe(steppedReply().text)
+  expect(text).not.toContain('Reading the test first.')
+  expect(pastedText(html)).not.toContain('Reading the test first.')
+  expect(html).toContain('<strong>1. Mistakes.</strong>')
+  expect(html).toMatch(/<ol>\s*<li>First<\/li>\s*<li>Second<\/li>\s*<\/ol>/u)
+  expect(html).toMatch(/<pre style="[^"]*monospace[^"]*"><code[^>]*>const a = 1<\/code><\/pre>/u)
+  expect(html).not.toMatch(/class=|var\(--/u)
+})
+
+test('a reply with no steps copies all of it, as before', async () => {
+  const view = await mount(
+    <AssistantTurnBlock entry={assistant({ text: 'All **green**.' })} tools={[]} decisions={[]} chrome={chrome} />,
+  )
+  await click(button(view, 'Copy reply'))
+  expect(rich).toEqual([{ text: 'All **green**.', html: expect.stringContaining('All <strong>green</strong>.') }])
+})
+
+test('a Shift-click on Copy reply writes the markdown alone', async () => {
+  const view = await mount(
+    <AssistantTurnBlock entry={steppedReply()} tools={[tool('a'), tool('b')]} decisions={[]} chrome={chrome} />,
+  )
+  await shiftClick(button(view, 'Copy reply'))
+  expect(rich).toEqual([])
+  expect(written).toEqual([steppedReply().text])
+})
+
+test('a reply’s right-click menu offers Copy reply and Copy as Markdown beside it', async () => {
+  const view = await mount(
+    <AssistantTurnBlock entry={steppedReply()} tools={[tool('a'), tool('b')]} decisions={[]} chrome={chrome} />,
+  )
+  const answer = [...view.querySelectorAll('strong')].find((node) => node.textContent === '1. Mistakes.')
+  await rightClick(answer)
+  expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent)).toEqual([
+    'Copy reply',
+    'Copy as Markdown',
+  ])
+  await click(menuItem('Copy as Markdown'))
+  expect(rich).toEqual([])
+  expect(written).toEqual([steppedReply().text])
+  expect(menuItem('Copy reply')).toBeUndefined()
+
+  await rightClick(answer)
+  await click(menuItem('Copy reply'))
+  expect(rich.map((payload) => payload.text)).toEqual([steppedReply().text])
+  expect(rich[0].html).toContain('<strong>1. Mistakes.</strong>')
+})
+
+test('a message’s right-click menu copies it as Markdown, text alone', async () => {
+  const view = await mount(<UserTimelineRow entry={user({ text: 'Fix **it**' })} chrome={chrome} />)
+  await rightClick(view.querySelector('strong'))
+  await click(menuItem('Copy as Markdown'))
+  expect(rich).toEqual([])
+  expect(written).toEqual(['Fix **it**'])
 })
 
 test('a copied reply holds a follow-up Codex suggests as its label, as the page shows it', async () => {
@@ -149,7 +236,9 @@ test('a copied reply holds a follow-up Codex suggests as its label, as the page 
     />,
   )
   await click(button(view, 'Copy reply'))
-  expect(written).toEqual(['Next:\n\n- Prepare print version'])
+  expect(rich.map((payload) => payload.text)).toEqual(['Next:\n\n- Prepare print version'])
+  expect(pastedText(rich[0].html)).toContain('Prepare print version')
+  expect(rich[0].html).not.toContain('codex-followup')
 })
 
 test('a failed turn with nothing written offers no reply to copy', async () => {

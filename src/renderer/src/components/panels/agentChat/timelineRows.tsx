@@ -52,6 +52,8 @@ import { useLiveRowMotion } from './liveVisibility'
 import { formatMessageDateTime, formatMessageTime, LiveElapsed } from './liveElapsed'
 import { useClockFormat } from '../../../utils/clockFormat'
 import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
+import { markdownClipboardHtml } from '../../../utils/markdownClipboardHtml'
+import { useMessageCopyMenu } from './messageCopyMenu'
 import { ReasoningBlock } from './reasoningBlock'
 import { CompactionDivider, TurnMeta } from './turnMeta'
 import { CommandOutputRow } from './commandOutputRow'
@@ -71,7 +73,7 @@ import {
   useStopSubagent,
 } from './subagentStatus'
 import { StopGlyph } from './stopGlyph'
-import React, { memo, useId, useMemo, useState, useRef } from 'react'
+import React, { memo, useId, useMemo, useRef, useState } from 'react'
 import { STUDIO_PRODUCT_NAME } from '../../../../../shared/product-identity'
 import { withoutStudioNoticePrefix } from '../../../../../shared/studio-notice'
 
@@ -233,10 +235,18 @@ export function UserTimelineRow({
   const cards = fileCards ? files : []
   const named = fileCards ? [] : files
   const text = entry.text
+  const copy = useMessageCopyMenu(
+    text.trim()
+      ? { name: 'Message', label: 'Copy message', markdown: () => text, html: () => messageHtml(text) }
+      : null,
+  )
   return (
     <div className="flex flex-col items-end pb-6">
       <MessageAuthorHeading>You said</MessageAuthorHeading>
-      <div className="max-w-[76%] rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--agent-inset)] px-3 py-1.5">
+      <div
+        className="max-w-[76%] rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--agent-inset)] px-3 py-1.5"
+        onContextMenu={copy.onContextMenu}
+      >
         {attachments.length > 0 || stored.length > 0 || cards.length > 0 ? (
           <div data-copy-exclude="" className={`flex flex-wrap justify-end gap-1.5 ${text ? 'mb-2' : ''}`}>
             {attachments.map((attachment) => (
@@ -285,7 +295,13 @@ export function UserTimelineRow({
         {/* An image-only turn has no words to copy; a button that puts nothing
             on the clipboard and still says it did is worse than none. */}
         {entry.text.trim() ? (
-          <CopyGlyphButton size="xs" label="Copy message" text={entry.text} className={MESSAGE_ACTION_REVEAL} />
+          <CopyGlyphButton
+            size="xs"
+            label="Copy message"
+            text={entry.text}
+            html={() => messageHtml(entry.text)}
+            className={MESSAGE_ACTION_REVEAL}
+          />
         ) : null}
         {chrome?.checkpointsEnabled &&
         entry.seq &&
@@ -317,8 +333,15 @@ export function UserTimelineRow({
           />
         ) : null}
       </div>
+      {copy.menu}
     </div>
   )
+}
+
+// A message as a rich editor should receive it, drawn as its bubble draws it:
+// every newline a line break, and HTML the text it was typed as.
+function messageHtml(text: string): string {
+  return markdownClipboardHtml(text, { userText: true })
 }
 
 // A message Studio sent the chat itself — news from an agent the chat started,
@@ -419,7 +442,6 @@ export function AssistantTurnBlock({
     false,
   )
   const foldRegionId = useId()
-  const proseRef = useRef<HTMLDivElement>(null)
   const open = !fold || workOpen
   // Kept while the tools are, so the cards are not redrawn for each token.
   const lanes = useMemo(() => turnAgentLanes(tools), [tools])
@@ -427,6 +449,12 @@ export function AssistantTurnBlock({
   const foldedSteps = useMemo(() => turnFoldedSteps(tools).length, [tools])
   const foldedProse = useMemo(() => turnFoldedProse(entry.intermediateText), [entry.intermediateText])
   const shown = useMemo(() => turnShownWork(tools, entry.intermediateText), [tools, entry.intermediateText])
+  const settledReply = entry.status !== 'streaming' && hasReply(entry)
+  const copy = useMessageCopyMenu(
+    settledReply
+      ? { name: 'Reply', label: 'Copy reply', markdown: () => replyText(entry), html: () => replyHtml(entry) }
+      : null,
+  )
   return (
     <div className="pb-6">
       <MessageAuthorHeading>{chrome.assistantName}</MessageAuthorHeading>
@@ -493,8 +521,8 @@ export function AssistantTurnBlock({
         // are the list's own padding, so prose, code blocks and tool rows all
         // share them with the user's bubble.
         <div
-          ref={proseRef}
           className="min-w-0"
+          onContextMenu={copy.onContextMenu}
           {...{ [CHAT_FIND_SEGMENT_ATTRIBUTE]: chatFindSegmentKey.reply(entry.turnId) }}
         >
           <ConversationMarkdown text={entry.text} streaming={entry.status === 'streaming'} />
@@ -512,17 +540,14 @@ export function AssistantTurnBlock({
           {entry.durationMs !== undefined ? <span>{formatStepDuration(entry.durationMs)}</span> : null}
           <TurnMeta entry={entry} modelSwitched={modelSwitched} />
           <MessageTimestamp at={entry.startedAt} />
-          {hasReply(entry) ? (
+          {settledReply ? (
             <CopyGlyphButton
               size="xs"
               label="Copy reply"
               text={() => replyText(entry)}
               // The rendered reply beside its markdown, so a paste into a rich
-              // editor keeps the headings, lists and code. Only when the final
-              // text is the whole reply: the prose between steps may be folded
-              // out of the page, and a rich copy missing it would disagree with
-              // the plain one.
-              html={entry.intermediateText?.length ? undefined : () => replyHtml(proseRef.current)}
+              // editor keeps the headings, lists and code.
+              html={() => replyHtml(entry)}
               className={MESSAGE_ACTION_REVEAL}
             />
           ) : null}
@@ -536,6 +561,7 @@ export function AssistantTurnBlock({
           ) : null}
         </div>
       ) : null}
+      {copy.menu}
       {entry.status === 'failed' ? <TurnErrorBlock entry={entry} chrome={chrome} /> : null}
       {chrome.checkpointsEnabled &&
       entry.status !== 'streaming' &&
@@ -557,40 +583,25 @@ export function AssistantTurnBlock({
   )
 }
 
-// The reply as it was written: the prose between steps and the final text,
-// in order. Reasoning, steps and decisions are how it got there, not what it
-// said, so they stay out. A follow-up Codex suggests is its label, as the page
-// shows it. Built when it is copied, not on every render.
+// The reply is the answer: the prose after the turn's last step, which is what
+// a person reads as what the agent said. The prose between steps narrates the
+// work, as the steps and the reasoning do, so it stays out with them; a turn
+// that ran no steps is all answer. A follow-up Codex suggests is its label, as
+// the page shows it. Built when it is copied, not on every render.
 function replyText(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): string {
-  return [...(entry.intermediateText?.map((part) => part.text) ?? []), entry.text]
-    .filter((part) => part.trim())
-    .map(showCodexFollowupLabels)
-    .join('\n\n')
+  return showCodexFollowupLabels(entry.text)
 }
 
 function hasReply(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): boolean {
-  return /\S/u.test(entry.text) || Boolean(entry.intermediateText?.some((part) => /\S/u.test(part.text)))
+  return /\S/u.test(entry.text)
 }
 
-// The reply's rendered HTML for the clipboard's rich flavour, read off the page
-// at click time rather than rendered twice. The chrome inside the prose (a code
-// block's header, a copy glyph, screen-reader-only words) is not what the agent
-// wrote, so it goes; a file link drawn as a button keeps its words. Classes are
-// the app's own and mean nothing to the editor the paste lands in.
-export function replyHtml(prose: HTMLElement | null): string {
-  if (!prose) return ''
-  const clone = prose.cloneNode(true) as HTMLElement
-  for (const node of clone.querySelectorAll('[data-copy-exclude], [aria-hidden="true"], .sr-only')) node.remove()
-  for (const button of clone.querySelectorAll('button')) {
-    const span = document.createElement('span')
-    span.textContent = button.textContent
-    button.replaceWith(span)
-  }
-  for (const node of clone.querySelectorAll('[class], [style]')) {
-    node.removeAttribute('class')
-    node.removeAttribute('style')
-  }
-  return `<meta charset="utf-8">${clone.innerHTML}`
+// The reply's rich flavour, rendered from the same markdown `replyText` gives
+// the plain one, so the two never disagree, and never from the page, where
+// the reply's own blocks (a code block's header, a folded table) are drawn
+// with chrome round them.
+function replyHtml(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): string {
+  return markdownClipboardHtml(replyText(entry))
 }
 
 // Settled steps share a summary disclosure; live work stays outside it.

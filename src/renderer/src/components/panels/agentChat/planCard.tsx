@@ -13,6 +13,7 @@ import React, { useRef, useState } from 'react'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { showToast } from '../../../store/toastStore'
 import { useRevealMatch } from '../../../utils/revealMatch'
+import { markdownClipboardHtml } from '../../../utils/markdownClipboardHtml'
 import { Badge, CopyGlyphButton, GhostButton } from '../../ui'
 import { CHAT_FIND_SEGMENT_ATTRIBUTE } from './chatFindSegment'
 import { ConversationMarkdown, useConversationLinkContext } from './conversationLinks'
@@ -145,7 +146,13 @@ export function ResolvedPlanCard({
           {title}
         </span>
         {open ? <OpenPlanButton onOpen={() => open(plan, planFilePath)} /> : null}
-        <CopyGlyphButton size="xs" label="Copy plan" text={plan.trim()} className="shrink-0" />
+        <CopyGlyphButton
+          size="xs"
+          label="Copy plan"
+          text={plan.trim()}
+          html={() => markdownClipboardHtml(plan.trim())}
+          className="shrink-0"
+        />
       </div>
       {body ? (
         <div

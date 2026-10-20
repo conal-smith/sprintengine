@@ -34,10 +34,23 @@ async function writePlainText(text: string): Promise<void> {
   await navigator.clipboard.writeText(text)
 }
 
-// The rich write has no bridge, so it is the browser API or nothing. `false`
-// sends the caller down the plain-text path rather than failing the copy: the
-// text is the part a user can never do without.
+// Both flavours, through the main-process bridge when the app has one, for the
+// same reason as the plain write and one more: the window refuses the page's
+// own clipboard permission, so `navigator.clipboard.write` is refused in the
+// app. A host without the bridge (a browser tab) uses the browser API, where a
+// click is permission enough. `false` sends the caller down the plain-text path
+// rather than failing the copy: the text is the part a user can never do
+// without.
 async function writeRichText(text: string, html: string): Promise<boolean> {
+  const bridge = typeof window === 'undefined' ? undefined : window.api?.clipboardWriteRich
+  if (typeof bridge === 'function') {
+    try {
+      await bridge({ text, html })
+      return true
+    } catch {
+      return false
+    }
+  }
   if (typeof ClipboardItem !== 'function' || typeof navigator.clipboard?.write !== 'function') return false
   try {
     await navigator.clipboard.write([
