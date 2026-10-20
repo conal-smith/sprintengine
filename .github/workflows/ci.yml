@@ -166,6 +166,37 @@ jobs:
       - name: Web smoke
         run: npm run test:web:smoke
 
+  # The phone app under mobile/: its own package and lockfile, so its own
+  # install and its own gate (mobile/package.json's `ci`): typecheck, ESLint,
+  # the token lint and the regression suite. No native build; those need Xcode
+  # and the Android SDK, and the JS is what a pull request here changes.
+  # Skipped under the release gate: the desktop release does not ship it.
+  mobile:
+    name: Mobile app (ubuntu-latest)
+    if: ${{ !inputs.release_gate && (github.event_name == 'workflow_dispatch' || github.event.repository.private == false) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck, lint and test
+        run: npm run ci
+
   # SSH machines against a real sshd (phase 8 spec, 9.3): a container with
   # forwarding turned off, the system ssh, the askpass shim, the pinned Node
   # downloaded and streamed, a managed server started, a session dropped

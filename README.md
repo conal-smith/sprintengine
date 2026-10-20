@@ -92,7 +92,7 @@ Eleven themes, light and dark, all drawn from the same design system.
 
 Code review with a guide agent, a design-system door, a memory graph, scheduled
 and triggered automations, remote machines over SSH and your tailnet, and a
-companion app for driving all of it from your phone.
+[companion app](#phone-companion) for driving all of it from your phone.
 
 The app is an Electron desktop app with a React renderer and a TypeScript main
 process.
@@ -103,6 +103,31 @@ Build it from source — see [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchai
 and `npm run dev`. No account is needed to run it.
 
 Prebuilt installers for macOS, Windows and Linux are not published yet.
+
+## Phone companion
+
+The companion app pairs with Studio over your own tailnet and puts every chat on
+every paired computer in your pocket: read along, reply or steer an agent while
+it works, and start a new chat on any project. There is no account and no server
+in between; the phone talks straight to Studio over Tailscale.
+
+<p>
+  <img alt="A chat on the phone in dark mode: four subagent cards, two still working, and a follow-up queued on the desktop until the turn ends" src="docs/images/mobile/chat-subagents-queued-dark.png" width="24%">
+  <img alt="A failing test run's output in a chat on the phone, with the exit code and the failing assertion" src="docs/images/mobile/chat-tool-output-dark.png" width="24%">
+  <img alt="The phone's composer in light mode, about to steer a message into the turn that is running" src="docs/images/mobile/composer-steer-light.png" width="24%">
+  <img alt="The phone's Settings: paired desktops, shared web servers, notifications and steering" src="docs/images/mobile/settings-light.png" width="24%">
+</p>
+
+It is built from source for now, for iOS and Android, from [`mobile/`](mobile);
+[mobile/README.md](mobile/README.md) covers the toolchain, signing and the
+checks. With Tailscale running on the computer and the phone:
+
+1. In Studio, open **Settings → Remote** and turn on **Remote control over your
+   tailnet**.
+2. Click **Pair a device**, pick **A phone or another device — make a link**,
+   and click **Create link**.
+3. On the phone, tap **Pair with a desktop** and scan the QR code, or open the
+   `sprintengine-tailnet://pair` link, then confirm.
 
 ## The agent CLIs it drives
 
@@ -165,6 +190,7 @@ one needs network access and takes a while.
 | `packages/module-sdk` | The published SDK for building capability modules and BYO-CLI plugins: manifest and permission types, host contribution points, and bundle signing. MIT licensed. |
 | `resources/` | Everything bundled with the app rather than compiled into it: the agent CLI plugin manifests, the marketplace registry, MCP definitions, hooks, the studio plugin and its skills, the fetched agent runtimes, and the app icons. |
 | `design-system/` | A self-contained, framework-neutral design system — tokens, components, patterns and a catalog — with its own lint that the app's build gates enforce. |
+| `mobile/` | The phone companion, a React Native (Expo) app for iOS and Android. Its own package, with its own lockfile and checks (`npm run ci` inside it); the desktop build and its gates leave it alone. |
 
 ## Extending it
 

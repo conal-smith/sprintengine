@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=block" rel="stylesheet">
+<style>
+  html,body{margin:0;background:#888;}
+  /* The mark: the wordmark's own setting (Inter semibold, -0.011em,
+     lowercase — "sprintengine" is never capitalised; the pair sits tighter than the wordmark's -0.011em because at mark size the wordmark's optical closeness has to be drawn in) cut to its initials, on
+     the app's dark card. s in paper-100, e in the app's dark accent
+     (ref green-500), card in ref ink-900. */
+  #card{width:1024px;height:1024px;border-radius:236px;background:#0c0c10;
+        display:flex;align-items:center;justify-content:center;
+        font-family:Inter,sans-serif;font-weight:600;letter-spacing:-0.06em;
+        font-size:580px;line-height:1;color:#ececec;}
+  #card .e{color:#3f9468}
+  /* Lowercase sits on the baseline with no ascenders, so lift the pair to
+     optical centre of the card. */
+  #card .se{display:block;transform:translateY(-6%)}
+</style></head>
+<body><div id="card"><span class="se">s<span class="e">e</span></span></div></body></html>

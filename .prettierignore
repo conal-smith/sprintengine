@@ -15,3 +15,6 @@ resources/marketplace/
 packages/*/dist/
 # Generated from the Codex CLI by scripts/generate-codex-protocol.mjs.
 src/main/providers/codex-protocol/
+# The phone app: its own package, checked by its own `npm run ci` and not
+# formatted to this config.
+mobile/
