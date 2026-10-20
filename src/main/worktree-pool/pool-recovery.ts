@@ -167,6 +167,7 @@ export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<
       lastBranch: null,
       size: null,
       kept: null,
+      parked: null,
     })
     ctx.log(`${entry.path}: adopted into the pool (${leased ? 'leased' : 'held'})`)
   }

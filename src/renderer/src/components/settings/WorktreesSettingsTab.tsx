@@ -5,6 +5,7 @@ import {
   dependencyInstallSettingFor,
   WORKTREE_INSTALL_COMMAND_MAX,
   WORKTREE_POOL_DISK_LIMIT_CHOICES_GB,
+  WORKTREE_POOL_IDLE_RETURN_CHOICES_MIN,
   WORKTREE_POOL_KEEP_IDLE_MAX,
   WORKTREE_POOL_MAX_SLOTS_CEILING,
   WORKTREE_POOL_MAX_SLOTS_MIN,
@@ -90,6 +91,18 @@ const DISK_LIMIT_ITEMS = [
   { value: 'none', label: 'No limit' },
   ...WORKTREE_POOL_DISK_LIMIT_CHOICES_GB.map((gb) => ({ value: String(gb), label: `${gb} GB` })),
 ]
+
+/** `30 minutes`, `2 hours`, `1 day`: an idle period as the setting's menu says it. */
+function idlePeriodLabel(minutes: number): string {
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} day${minutes === 24 * 60 ? '' : 's'}`
+  if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`
+  return `${minutes} minutes`
+}
+
+const IDLE_RETURN_ITEMS = WORKTREE_POOL_IDLE_RETURN_CHOICES_MIN.map((minutes) => ({
+  value: String(minutes),
+  label: idlePeriodLabel(minutes),
+}))
 
 const STATE_TONE = {
   'in-use': 'accent',
@@ -675,6 +688,26 @@ export function WorktreesSettingsTab({
             value={String(settings.maxSlots)}
             disabled={!settings.enabled}
             onChange={(value) => void updateSettings({ maxSlots: Number(value) })}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Give back idle worktrees after"
+          help="A chat's worktree goes back to the pool once it has sat this long clean, with every commit pushed and nothing running in it. Its branch is kept, and opening the chat checks it out again in the same place. A new chat that finds the pool full takes back one that is not in use rather than waiting."
+          disabled={!settings.enabled}
+        >
+          <Select
+            ariaLabel="Give back idle worktrees after"
+            items={
+              IDLE_RETURN_ITEMS.some((item) => item.value === String(settings.idleReturnMinutes))
+                ? IDLE_RETURN_ITEMS
+                : [
+                    ...IDLE_RETURN_ITEMS,
+                    { value: String(settings.idleReturnMinutes), label: idlePeriodLabel(settings.idleReturnMinutes) },
+                  ]
+            }
+            value={String(settings.idleReturnMinutes)}
+            disabled={!settings.enabled}
+            onChange={(value) => void updateSettings({ idleReturnMinutes: Number(value) })}
           />
         </SettingRow>
         <SettingRow
@@ -1288,6 +1321,7 @@ function usedBySub(row: WorktreeRow, now: number): string {
     return `${how} · ${formatRelativeMsAgo(slot.lease.leasedAt, now)}`
   }
   if (row.state === 'held' && slot?.held) return `since ${formatRelativeMsAgo(slot.held.since, now)}`
+  if (row.state === 'ready' && slot?.parked) return `kept for its chat on ${slot.parked.branch}`
   if (row.state === 'ready' && slot?.kept) return `kept: ${slot.kept}`
   if (row.state === 'ready' && slot?.lastBranch) return `last on ${slot.lastBranch}`
   if (row.keptBecause && row.state === 'other') return row.keptBecause
@@ -1316,7 +1350,7 @@ function RowDetail({ row, now, actions, busy }: { row: WorktreeRow; now: number;
       slot?.lease
         ? {
             term: 'Leased',
-            description: `${formatRelativeMsAgo(slot.lease.leasedAt, now)}${slot.lease.agentId ? ', by the agent itself (worktree.lease)' : ''}. It comes back to the pool when its chat is done.`,
+            description: `${formatRelativeMsAgo(slot.lease.leasedAt, now)}${slot.lease.agentId ? ', by the agent itself (worktree.lease)' : ''}. It comes back to the pool when its chat is done, or once it has sat clean, pushed and unused for the idle period.`,
           }
         : null,
       slot ? { term: 'Leases served', description: String(slot.uses) } : null,

@@ -52,6 +52,14 @@ export type WorktreePoolSettings = {
    */
   diskLimitGb: number | null
   /**
+   * How long, in minutes, a leased worktree whose chat (or agent) still exists
+   * sits clean, pushed and untouched, with nothing running in it, before the
+   * cleanup gives it back to the pool. Its branch stays, and the chat checks
+   * it out again, at the same path, when it is next opened or sent to. A
+   * worktree that holds anything only it has is never given back this way.
+   */
+  idleReturnMinutes: number
+  /**
    * Per project, keyed by its main checkout's path as the pool names it: run
    * the dependency install in a leased worktree when its lockfile changed
    * since that worktree last installed (owner ruling 2026-10-06). A project
@@ -74,11 +82,21 @@ export const WORKTREE_POOL_MAX_SLOTS_MIN = 2
 /** The hard ceiling `maxSlots` is clamped to. */
 export const WORKTREE_POOL_MAX_SLOTS_CEILING = 32
 export const WORKTREE_POOL_DISK_LIMIT_CHOICES_GB = [10, 20, 30, 50, 100, 200] as const
+/** What Settings ▸ Worktrees offers for `idleReturnMinutes`. */
+export const WORKTREE_POOL_IDLE_RETURN_CHOICES_MIN = [30, 60, 120, 240, 480, 1440] as const
+/**
+ * The bounds `idleReturnMinutes` is clamped to. Below a quarter of an hour a
+ * person reading a reply in another chat would come back to a worktree being
+ * checked out again; past a week the pool is as full as it never gave any back.
+ */
+export const WORKTREE_POOL_IDLE_RETURN_MIN_MINUTES = 15
+export const WORKTREE_POOL_IDLE_RETURN_MAX_MINUTES = 7 * 24 * 60
 export const DEFAULT_WORKTREE_POOL_SETTINGS: WorktreePoolSettings = {
   enabled: true,
   keepIdle: 3,
   maxSlots: 12,
   diskLimitGb: null,
+  idleReturnMinutes: 120,
   dependencyInstall: {},
 }
 
@@ -145,6 +163,14 @@ export type WorktreePoolSlotView = {
    * kept it.
    */
   kept: string | null
+  /**
+   * An idle slot given back while its chat (or the agent that leased it)
+   * still exists, because it sat clean and unused: kept for that chat, on
+   * whose return its branch is checked out here again. No other lease reuses
+   * it as it stands; one that finds the pool full removes it and keeps its
+   * path free for the chat. Null for every other slot.
+   */
+  parked: { branch: string; since: number } | null
 }
 
 export type WorktreePoolSnapshot = {

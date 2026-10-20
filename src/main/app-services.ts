@@ -127,7 +127,9 @@ import { getPluginManifest, listPluginRegistryEntries } from './plugin-registry-
 import { createMcpServerResolver } from './mcp-config-readers/resolve-servers'
 import { syncStudioMcpConfig } from './studio-mcp-sync'
 import { STUDIO_MCP_SERVER_ID, STUDIO_MCP_SERVER_NAME } from '../shared/product-identity'
-import { excludeMcpConfigFromWorktree } from './git'
+import { excludeMcpConfigFromWorktree, restoreGitWorktree } from './git'
+import { activeWorktreePool } from './worktree-pool/active-pool'
+import { createChatFolderGuard, type GuardedChat } from './worktree-pool/chat-folder-guard'
 import { createWorktreeServices } from './worktree-services'
 import { createArtifactsServices } from './artifacts-services'
 import { createConversationPeekService } from './conversation-peek/service'
@@ -745,7 +747,7 @@ export function createAppServices(
   // and the pane's forward is a session proxy.
   // Read lazily: the registry is the core's, built just below.
   const workspaceRegistryOf = (): {
-    getRecord(id: string): { environment?: WorkspaceEnvironmentRef | null } | null | undefined
+    getRecord(id: string): (GuardedChat & { environment?: WorkspaceEnvironmentRef | null }) | null | undefined
   } => core.workspaceRegistry
   const ssh: DesktopSsh | null = sessionSshPreview()
     ? createDesktopSsh({
@@ -766,6 +768,14 @@ export function createAppServices(
     ? createRemoteCore(server)
     : createStudioCore(platform, {
         role: 'desktop',
+        // A worktree chat whose pool slot was given back while it sat idle
+        // gets its branch checked out again, at the same path, before any
+        // agent runs in it, whoever sent the turn (worktree-pool/pool-idle.ts).
+        prepareChatFolder: createChatFolderGuard({
+          pool: activeWorktreePool,
+          chat: (workspaceId) => workspaceRegistryOf().getRecord(workspaceId),
+          restore: restoreGitWorktree,
+        }),
         // A chat's agent is handed the gateway itself, on the machine its CLI
         // runs on: a Claude chat's child loads no project settings, so the
         // gateway pinned into a workspace's `.mcp.json` never reached it, and a
@@ -1612,17 +1622,19 @@ export function createAppServices(
   // every live terminal, the checkout it observes, and the folder of every chat
   // whose provider session is working now. One list, so neither recycles a
   // folder the other would have kept.
+  const liveConversationPaths = (): Promise<string[]> => conversations.liveConversationWorkspaceRoots().catch(() => [])
   const liveWorkPaths = async (): Promise<string[]> => [
     ...listLiveTerminalSessions().flatMap((session) =>
       [session.cwd, session.observedCheckout?.cwd, session.observedCheckout?.gitRoot].filter(
         (path): path is string => typeof path === 'string' && path.length > 0,
       ),
     ),
-    ...(await conversations.liveConversationWorkspaceRoots().catch(() => [])),
+    ...(await liveConversationPaths()),
   ]
   const { worktreePool, dependencyInstaller, worktreeTools } = createWorktreeServices({
     userDataPath: app.getPath('userData'),
     liveWorkPaths,
+    liveConversationPaths,
     workspaceSyncService,
   })
   // Settings ▸ Artifacts and the `artifacts.*` tools. Main serves them in
