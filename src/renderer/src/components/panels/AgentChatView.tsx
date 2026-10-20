@@ -183,6 +183,7 @@ function openMacosPrivacySettings(): void {
     )
 }
 import { settleDisclosureResize, useStickToBottom } from './agentChat/useStickToBottom'
+import { TRANSCRIPT_FOOT, TRANSCRIPT_SCROLL_PADDING_CLASS, TranscriptHead } from './agentChat/transcriptEnds'
 import { ConversationRowFrame } from './agentChat/conversationRowFrame'
 import {
   type ChatOpening,
@@ -3701,25 +3702,31 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                 // was neither the kit's colour nor its shape.
                 // The gutter, not a narrower list, draws the chat width setting's
                 // column: the scroller stays pane-wide so its scrollbar does too.
-                className={`chat-column-gutter h-full overflow-y-auto py-4 focus:outline-none ${FOCUS_RING_INSET_CLASS}`}
+                // No padding or margin of its own above or below the rows: the
+                // list cannot see one, and its end would stop short of it. The
+                // gap at either end is the list's header and footer
+                // (transcriptEnds.tsx).
+                className={`chat-column-gutter h-full overflow-y-auto ${TRANSCRIPT_SCROLL_PADDING_CLASS} focus:outline-none ${FOCUS_RING_INSET_CLASS}`}
                 tabIndex={0}
-                contentContainerClassName="space-y-1"
                 ListHeaderComponent={
-                  hasMore ? (
-                    <div className="flex justify-center pb-3">
-                      <OutlineButton
-                        size="xs"
-                        busy={loadingEarlier}
-                        disabled={loadingEarlier}
-                        onClick={() => {
-                          void loadEarlier().catch(() => undefined)
-                        }}
-                      >
-                        {loadingEarlier ? 'Loading earlier…' : 'Load earlier'}
-                      </OutlineButton>
-                    </div>
-                  ) : null
+                  <TranscriptHead>
+                    {hasMore ? (
+                      <div className="flex justify-center pb-3">
+                        <OutlineButton
+                          size="xs"
+                          busy={loadingEarlier}
+                          disabled={loadingEarlier}
+                          onClick={() => {
+                            void loadEarlier().catch(() => undefined)
+                          }}
+                        >
+                          {loadingEarlier ? 'Loading earlier…' : 'Load earlier'}
+                        </OutlineButton>
+                      </div>
+                    ) : null}
+                  </TranscriptHead>
                 }
+                ListFooterComponent={TRANSCRIPT_FOOT}
                 aria-live="off"
                 onScroll={handleLogScroll}
                 onFirstVisibleItemChanged={({ key }) => {
