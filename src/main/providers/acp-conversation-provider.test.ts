@@ -85,6 +85,10 @@ createInterface({input:process.stdin}).on('line',async line=>{
  // As OpenCode 1.18 keeps a checklist: its todowrite tool, ACP kind other, the list only in the
  // call's input, retitled with a count once done, and no plan update. 'todowrite plan' also sends one.
  if(text.startsWith('todowrite')){const todos=[{content:'Read the config',status:'completed',priority:'high'},{content:'Write the test',status:'in_progress',priority:'high'},{content:'Run the suite',status:'pending',priority:'medium'}];update({sessionUpdate:'tool_call',toolCallId:'call_todo',title:'todowrite',kind:'other',status:'pending',locations:[],rawInput:{}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'in_progress',kind:'other',title:'todowrite',locations:[],rawInput:{todos}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'completed',kind:'other',title:'2 todos',rawInput:{todos},rawOutput:{output:JSON.stringify(todos,null,2),metadata:{todos}},content:[{type:'content',content:{type:'text',text:JSON.stringify(todos,null,2)}}]});if(text==='todowrite plan')update({sessionUpdate:'plan',entries:todos.map(({content,status,priority})=>({content,status:status==='in_progress'?'completed':status,priority}))});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Planned'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // As OpenCode 1.18 finishes a read or a command: no kind on the last update, the tool's text in its raw
+ // output's 'output' beside metadata, a read's wrapped in an envelope and its plain text in the content
+ // block. 'read bare' has no plain text, as an empty file's read has none, so the block is the envelope.
+ if(text.startsWith('read ')||text==='bash'){const read=text!=='bash',envelope='<path>/Users/dev/app/notes.txt</path>\\n<type>file</type>\\n<content>\\n1: hello\\n2: </content> literal\\n\\n(End of file - total 2 lines)\\n</content>\\n<system-reminder>\\nProject instructions\\n</system-reminder>',plain=text==='read file'?'hello\\n</content> literal':envelope;update({sessionUpdate:'tool_call',toolCallId:'call_run',title:read?'read':'bash',kind:read?'read':'execute',status:'pending',locations:[],rawInput:read?{filePath:'/Users/dev/app/notes.txt'}:{command:'echo ok'}});update({sessionUpdate:'tool_call_update',toolCallId:'call_run',status:'completed',title:read?'notes.txt':'Print ok',content:[{type:'content',content:{type:'text',text:read?plain:'ok\\n'}}],rawOutput:read?{output:envelope,metadata:{preview:'hello',truncated:false,loaded:[],...(text==='read file'?{display:{type:'file',path:'/Users/dev/app/notes.txt',text:plain}}:{})}}:{output:'ok\\n',metadata:{output:'ok\\n',exit:0,description:'Print ok'}}});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Done'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  // As OpenCode returns a screenshot: the picture as an image block beside the text, and again as a
  // data URL among its raw output's attachments. 'screenshot blocks' sends the content alone.
  if(text.startsWith('screenshot')){const data=Buffer.from('not really a png').toString('base64');update({sessionUpdate:'tool_call',toolCallId:'call_shot',kind:'other',title:'screenshot',rawInput:{url:'http://localhost:5173'},status:'pending'});update({sessionUpdate:'tool_call_update',toolCallId:'call_shot',status:'completed',...(text==='screenshot'?{rawOutput:{output:'Captured screenshot',attachments:[{type:'file',mime:'image/png',filename:'screenshot.png',url:'data:image/png;base64,'+data}]}}:{}),content:[{type:'content',content:{type:'text',text:'Captured screenshot'}},{type:'content',content:{type:'image',mimeType:'image/png',data}}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Looks right'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
@@ -774,8 +778,58 @@ test('an ACP raw output with a picture attachment and no text of its own keeps e
       { type: 'file', mime: 'text/plain', url: 'file:///Users/dev/app/notes.txt' },
     ],
   })
-  expect(acpRawOutputText({ output: 'plain' })).toEqual({ output: 'plain' })
+  expect(acpRawOutputText({ output: 'plain' })).toBe('plain')
   expect(acpToolResultImages([], raw)).toEqual([{ mediaType: 'image/png', base64: 'AAAA' }])
+})
+async function finishedStepOutput(message: string) {
+  const f = await fixture()
+  try {
+    const events = await turn(f, message)
+    const output = events.filter((event) => event.type === 'tool_output' && event.payload?.toolUseId === 'call_run')
+    expect(output).toHaveLength(1)
+    return output[0]?.payload?.output
+  } finally {
+    await f.cleanup()
+  }
+}
+test("an OpenCode read's step shows the file's text, not the raw output object", async () => {
+  expect(await finishedStepOutput('read file')).toBe('hello\n</content> literal')
+})
+test('an OpenCode read with no plain text shows its envelope unwrapped, the instructions after it kept', async () => {
+  expect(await finishedStepOutput('read bare')).toBe(
+    '1: hello\n2: </content> literal\n\n(End of file - total 2 lines)\n<system-reminder>\nProject instructions\n</system-reminder>',
+  )
+})
+test("an OpenCode command's step shows what it printed, not the raw output object", async () => {
+  expect(await finishedStepOutput('bash')).toBe('ok\n')
+})
+test("an OpenCode read's envelope comes off only when it is whole, and only for a read", () => {
+  const directory =
+    '<path>/Users/dev/app/src</path>\n<type>directory</type>\n<entries>\nenv.ts\nlib/\n\n(2 entries)\n</entries>'
+  const file =
+    '<path>/Users/dev/app/env.ts</path>\n<type>file</type>\n<content>\n1: hello\n2: </content> literal\n</content>'
+  const read = (output: string) => acpRawOutputText({ output, metadata: { truncated: false } }, [])
+  expect(read(directory)).toBe('env.ts\nlib/\n\n(2 entries)')
+  expect(read(file)).toBe('1: hello\n2: </content> literal')
+  expect(read(file.replaceAll('\n', '\r\n'))).toBe('1: hello\r\n2: </content> literal')
+  // Not an envelope OpenCode finished: shown as it came.
+  const noPath = directory.slice(directory.indexOf('<type>'))
+  const unclosed = file.slice(0, file.lastIndexOf('\n</content>'))
+  expect(read(noPath)).toBe(noPath)
+  expect(read(unclosed)).toBe(unclosed)
+  // Another tool's output is its text even when it looks like one.
+  expect(acpRawOutputText({ output: directory })).toBe(directory)
+})
+test("another ACP agent's raw output that is not OpenCode's shape is passed on unchanged", () => {
+  for (const raw of [
+    'plain text',
+    ['a', 'b'],
+    { output: 'ok', exitCode: 1 },
+    { stdout: 'ok', stderr: '' },
+    { output: 5, metadata: {} },
+    { content: [{ type: 'text', text: 'ok' }] },
+  ])
+    expect(acpRawOutputText(raw, [])).toBe(raw)
 })
 // What the strip above the composer reads off a turn's events, the person's
 // message first as the runtime records it.

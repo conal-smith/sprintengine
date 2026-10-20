@@ -450,12 +450,54 @@ export function acpRememberedToolCall(tool: Record<string, unknown>): Record<str
   return kept
 }
 
+// The keys of OpenCode's raw output for a finished call. Only an object with
+// no others is read as its text: another agent's object with an `output`
+// beside fields of its own (an exit code) is shown whole, as it was before.
+const OPENCODE_RAW_OUTPUT_KEYS = new Set(['output', 'metadata', 'attachments'])
+
 /**
- * What a tool call's raw output says, with its pictures' bytes left out: the
- * tool's own text when it has one, else the raw output with each picture
- * attachment's data URL dropped. Output with no pictures is unchanged.
+ * A read's text without the envelope OpenCode wraps it in for the model:
+ * `<path>`, `<type>`, then the numbered lines in `<content>` or a directory's
+ * names in `<entries>`. Text in any other shape is returned as it came.
  */
-export function acpRawOutputText(rawOutput: unknown): unknown {
+function acpReadEnvelopeText(output: string): string {
+  const header = /^<path>[^\r\n]+<\/path>\r?\n<type>(directory|file)<\/type>\r?\n/.exec(output)
+  if (!header) return output
+  const body = output.slice(header[0].length)
+  // Every file line starts with its number, so only a closing tag on a line
+  // of its own ends the envelope: one inside the file's text does not.
+  const envelope =
+    header[1] === 'directory'
+      ? /^<entries>\r?\n([\s\S]*?)\r?\n<\/entries>(?=\r?\n|$)/.exec(body)
+      : /^<content>(?:\r?\n)?([\s\S]*?)\r?\n<\/content>(?=\r?\n|$)/.exec(body)
+  // OpenCode can append the project's instructions after it; they are kept.
+  return envelope ? envelope[1] + body.slice(envelope[0].length) : output
+}
+
+/**
+ * What a tool call's raw output says, with its pictures' bytes left out.
+ *
+ * OpenCode's raw output is `{ output, metadata?, attachments? }`, and what
+ * the step shows is its `output` text, not that object. A read's `output` is
+ * wrapped in an envelope for the model, so `read` (the update's text blocks,
+ * given only for a read call) is preferred: OpenCode puts the plain file text
+ * there.
+ *
+ * Any other raw output is the tool's own text when it has one beside a
+ * picture, else the raw output with each picture attachment's data URL
+ * dropped. Output in another shape with no pictures is unchanged.
+ */
+export function acpRawOutputText(rawOutput: unknown, read?: readonly string[]): unknown {
+  if (
+    rawOutput &&
+    typeof rawOutput === 'object' &&
+    !Array.isArray(rawOutput) &&
+    typeof (rawOutput as { output?: unknown }).output === 'string' &&
+    Object.keys(rawOutput).every((key) => OPENCODE_RAW_OUTPUT_KEYS.has(key))
+  ) {
+    const output = (rawOutput as { output: string }).output
+    return read ? acpReadEnvelopeText(read.length ? read.join('\n') : output) : output
+  }
   const attachments = acpAttachments(rawOutput)
   if (!attachments.some((entry) => typeof entry.url === 'string' && entry.url.startsWith('data:'))) return rawOutput
   const raw = rawOutput as Record<string, unknown>
@@ -995,7 +1037,14 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         })
       const output =
         value.rawOutput !== undefined && value.rawOutput !== null
-          ? acpRawOutputText(value.rawOutput)
+          ? acpRawOutputText(
+              value.rawOutput,
+              tool.kind === 'read'
+                ? content.flatMap((entry) =>
+                    entry.type === 'content' && entry.content.type === 'text' ? [entry.content.text] : [],
+                  )
+                : undefined,
+            )
           : content
               .map((entry) =>
                 entry.type === 'content' && entry.content.type === 'text'
