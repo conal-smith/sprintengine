@@ -6,6 +6,7 @@ import { parseAuthCallbackFromArgv } from './auth-service'
 import { registerAppLifecycle } from './app-lifecycle'
 import { createAppServices } from './app-services'
 import { ensureExtensionFolders } from './extension-folders'
+import { raiseConnectAttemptTimeout } from './network-defaults'
 import type { ModuleEnablementLiveApplier } from './ipc/module-enablement-ipc'
 import { activeForChannel } from '../shared/modules/dev-only'
 import { resolveModuleEnablement } from '../shared/modules/resolve'
@@ -85,6 +86,10 @@ attachBuildSkewWatch(ipcMain, createBuildSkewWatch({ mainStamp: mainBuildStamp }
 // create ~/.sprintengine/{modules,plugins} and seed each with a README describing
 // what to drop there. Best-effort — never block startup on it.
 const extensionFolders = ensureExtensionFolders()
+
+// Before anything here fetches: a slow IPv4 host behind an IPv6 address with
+// no route answers within a second, not Node's quarter-second.
+raiseConnectAttemptTimeout()
 
 const DIAGNOSTICS_ENABLED = readStudioEnv('SPRINTENGINE_DIAGNOSTICS') === '1'
 

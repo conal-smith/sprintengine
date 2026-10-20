@@ -1,5 +1,6 @@
 import { buildStamp } from 'virtual:sprintengine-build-stamp'
 
+import { raiseConnectAttemptTimeout } from '../main/network-defaults'
 import { installFatalHandlers } from './bootstrap/fatal'
 import { startHeadlessServer } from './bootstrap/headless'
 import { parentPortChannel, utilityParentPort } from './bootstrap/parent-port'
@@ -25,6 +26,7 @@ if (!port) {
 } else {
   const channel = parentPortChannel(port)
   installFatalHandlers(channel, say)
+  raiseConnectAttemptTimeout()
   void serveOnChannel(channel, {
     starters: { 'desktop-local': startDesktopServer, headless: startHeadlessServer },
     unwrapEnvelope: true,
