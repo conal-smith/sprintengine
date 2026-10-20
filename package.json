@@ -93,7 +93,9 @@
       "!node_modules/**/*.{map,d.ts,d.mts,d.cts}",
       "!node_modules/**/!(LICENSE*|LICENCE*|license*|licence*).md",
       "!node_modules/**/*.test.js",
-      "!node_modules/zod/src{,/**/*}"
+      "!node_modules/zod/src{,/**/*}",
+      "!node_modules/docx/dist/{charts,html,layout,macros,math,shapes,watermarks}.*",
+      "!node_modules/docx/dist/index.{mjs,iife.js,umd.cjs,d.ts,d.cts}"
     ],
     "asarUnpack": [
       "node_modules/@vscode/ripgrep-*/bin/**"
@@ -286,6 +288,7 @@
     "@xterm/addon-serialize": "0.15.0-beta.300",
     "@xterm/addon-unicode11": "0.10.0-beta.300",
     "@xterm/headless": "6.1.0-beta.303",
+    "docx": "^9.13.0",
     "electron-updater": "^6.8.9",
     "ignore": "7.0.12",
     "node-pty": "^1.1.0",
