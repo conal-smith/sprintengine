@@ -9,7 +9,8 @@
 // the literal byte is never needed.
 //
 // Scans every tracked file with a text source extension (plus any untracked,
-// non-ignored ones, so a new file is caught before its first commit).
+// non-ignored ones, so a new file is caught before its first commit). The phone
+// app under mobile/ is its own package with its own gates, so it is left out.
 // Exit 1 with file:line findings on any violation, 0 otherwise.
 
 import { execFileSync } from 'node:child_process'
@@ -20,11 +21,15 @@ const root = process.cwd()
 
 const TEXT_SOURCE = /\.(?:[cm]?[jt]sx?|json|css|scss|html|md|mdx|ya?ml|sh|ps1|toml|txt)$/i
 
-const listed = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
-  cwd: root,
-  encoding: 'utf8',
-  maxBuffer: 256 * 1024 * 1024,
-})
+const listed = execFileSync(
+  'git',
+  ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.', ':(exclude)mobile/'],
+  {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+  },
+)
   .split('\0')
   .filter((path) => path && TEXT_SOURCE.test(path))
 

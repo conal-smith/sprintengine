@@ -219,7 +219,8 @@ same wire also ran through a hosted relay; the relay was removed on 2026-09-27
 (owner ruling) and the package with it. Its published `4.x` versions stay on
 npm, and wire version 4 is what this tree still speaks, unchanged.
 
-The phone app keeps its own copy of these types. Nothing compares the two
+The phone app keeps its own copy of these types, in
+`mobile/src/shared/mobile-control/protocol.ts`. Nothing compares the two
 automatically any more, so a change that crosses the wire is made on both sides
 in the same coordinated change, and the version integer is still the only thing
 a peer sees.

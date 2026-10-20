@@ -12,7 +12,9 @@
     "resources/marketplace/**",
     "packages/*/dist/**",
     "design-system/catalog/**",
-    "src/main/providers/codex-protocol/**"
+    "src/main/providers/codex-protocol/**",
+    // The phone app: its own package, linted by its own ESLint config (mobile/package.json).
+    "mobile/**"
   ],
   "rules": {
     "react-hooks/exhaustive-deps": "warn",

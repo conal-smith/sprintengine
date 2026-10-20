@@ -85,6 +85,12 @@ after the rest. The release-script tests under `scripts/release/` run as
 `npm run test:release`, and the lint guard probes as part of `npm run lint` —
 both are in `verify:app`.
 
+The phone companion under `mobile/` is a separate package, with its own
+`package.json`, lockfile and gate, and none of the commands above look at it. To
+work on it, run `npm ci` and `npm run ci` (typecheck, ESLint, its token lint and
+its tests) inside `mobile/`; CI runs the same as a job of its own.
+`mobile/README.md` covers building it onto a phone.
+
 Most suites predate Vitest: each file is one `test()` that walks its cases in
 order and asserts with `node:assert/strict`, because the cases share state and
 their order matters. Write a new file with a `test()` per case, and split an
@@ -124,11 +130,11 @@ by their build scripts rather than edited by hand.
 
 ## Changing a wire format
 
-Two of the app's protocols are spoken to software this repository does not ship:
-another Studio on a tailnet, and the phone app. Both ends update separately, so
-a change to either wire is a compatibility decision, not a local edit — which
-version integer moves, whether a capability flag would do instead, and which of
-the enforcement sites have to agree.
+Two of the app's protocols are spoken to software the desktop app does not ship
+with: another Studio on a tailnet, and the phone app under `mobile/`. Both ends
+update separately, so a change to either wire is a compatibility decision, not
+a local edit — which version integer moves, whether a capability flag would do
+instead, and which of the enforcement sites have to agree.
 
 [`docs/compatibility.md`](docs/compatibility.md) is the policy, and it is short.
 Read it before you change anything that crosses either wire.
