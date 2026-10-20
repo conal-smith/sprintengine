@@ -147,6 +147,53 @@ test('an html flavour is written beside the plain text', async () => {
   }
 })
 
+test('in the app both flavours go through the main-process bridge, in one write', async () => {
+  const rich: Array<{ text: string; html: string }> = []
+  ;(window as unknown as { api: Record<string, unknown> }).api.clipboardWriteRich = async (payload: {
+    text: string
+    html: string
+  }) => {
+    rich.push(payload)
+  }
+  await mount({ text: '**npm** test', html: () => '<strong>npm</strong> test' })
+  await click()
+  expect(rich).toEqual([{ text: '**npm** test', html: '<strong>npm</strong> test' }])
+  expect(written).toEqual([])
+  expect(announcement()).toBe('Copied')
+})
+
+test('a Shift-click writes the plain text alone, and the tooltip says so', async () => {
+  const rich: unknown[] = []
+  ;(window as unknown as { api: Record<string, unknown> }).api.clipboardWriteRich = async (payload: unknown) => {
+    rich.push(payload)
+  }
+  const html = vi.fn(() => '<strong>npm</strong> test')
+  await mount({ text: '**npm** test', html, label: 'Copy reply' })
+  await act(async () => button().dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })))
+  expect(written).toEqual(['**npm** test'])
+  expect(rich).toEqual([])
+  expect(html).not.toHaveBeenCalled()
+  expect(button().getAttribute('aria-label')).toBe('Copy reply')
+})
+
+test('the tooltip of a rich copy names the Shift-click; a plain one does not', async () => {
+  const tooltip = () => document.querySelector('[role="tooltip"]')?.textContent
+  // Focus the keyboard moved, which opens a tooltip at once.
+  const tabTo = () =>
+    act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      button().focus()
+    })
+  await mount({ html: '<code>npm test</code>', label: 'Copy reply' })
+  await tabTo()
+  expect(tooltip()).toBe('Copy reply · Shift-click for Markdown')
+  await act(async () => root?.unmount())
+  host?.remove()
+  await mount()
+  await tabTo()
+  expect(tooltip()).toBe('Copy code')
+})
+
 test('a refused rich write still copies the plain text', async () => {
   vi.stubGlobal('ClipboardItem', class {})
   vi.stubGlobal('navigator', {
