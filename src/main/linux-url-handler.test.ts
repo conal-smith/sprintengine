@@ -5,6 +5,7 @@ import { test } from 'vitest'
 
 import {
   escapeExecArgument,
+  escapeExecProgram,
   isOwnUrlHandlerEntry,
   registerLinuxUrlHandler,
   renderUrlHandlerEntry,
@@ -96,7 +97,7 @@ test('a missing entry is written, the MIME cache refreshed, and it is made the d
   assert.deepEqual(h.writes, [ENTRY])
   const text = h.files.get(ENTRY) ?? ''
   assert.match(text, /^\[Desktop Entry\]\n/u)
-  assert.ok(text.includes(`Exec="${APPIMAGE}" %U\n`))
+  assert.ok(text.includes(`Exec=${APPIMAGE} %U\n`))
   assert.ok(text.includes('NoDisplay=true\n'))
   assert.ok(text.includes(`MimeType=${MIME};\n`))
   assert.ok(isOwnUrlHandlerEntry(text))
@@ -189,7 +190,7 @@ test('an entry written for an AppImage that has moved is rewritten and registere
   })
   await h.run()
   assert.deepEqual(h.writes, [ENTRY])
-  assert.ok(h.files.get(ENTRY)?.includes(`Exec="${APPIMAGE}" %U`))
+  assert.ok(h.files.get(ENTRY)?.includes(`Exec=${APPIMAGE} %U`))
   assert.deepEqual(h.commands, [`update-desktop-database ${APPS}`, `xdg-mime query default ${MIME}`])
 })
 
@@ -207,6 +208,17 @@ test('the AppImage path is quoted and escaped by the desktop-entry Exec rules', 
   assert.equal(escapeExecArgument('/home/dev/tab\there'), '"/home/dev/tab\\there"')
   const text = renderUrlHandlerEntry('sprintengine', '/home/dev/My Apps/50% off.AppImage')
   assert.ok(text.includes('Exec="/home/dev/My Apps/50%% off.AppImage" %U\n'))
+})
+
+test('the AppImage path is quoted only when the Exec rules require it', () => {
+  // xdg-open's generic fallback runs `command -v` on the first Exec word as
+  // written, quotes included, so a plain path is left bare.
+  assert.equal(escapeExecProgram(APPIMAGE), APPIMAGE)
+  assert.equal(escapeExecProgram('/home/dev/Apps/100%.AppImage'), '/home/dev/Apps/100%%.AppImage')
+  assert.equal(escapeExecProgram('/home/dev/My Apps/Studio.AppImage'), '"/home/dev/My Apps/Studio.AppImage"')
+  assert.equal(escapeExecProgram('/opt/Studio (beta)/x.AppImage'), '"/opt/Studio (beta)/x.AppImage"')
+  assert.equal(escapeExecProgram('/home/dev/~apps/x.AppImage'), '"/home/dev/~apps/x.AppImage"')
+  assert.equal(escapeExecProgram('/home/dev/$HOME/x.AppImage'), '"/home/dev/\\\\$HOME/x.AppImage"')
 })
 
 test('a missing xdg-mime or update-desktop-database is logged and swallowed', async () => {

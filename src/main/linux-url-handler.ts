@@ -57,13 +57,24 @@ export function escapeExecArgument(value: string): string {
   return escapeString(`"${quoted}"`)
 }
 
+/**
+ * The program an Exec line starts, quoted only when the desktop-entry spec
+ * requires it: a path holding one of its reserved characters. xdg-open's
+ * generic fallback (the one it takes outside GNOME, KDE and Xfce: i3, sway,
+ * Hyprland) checks the Exec line's first word with `command -v` without
+ * removing quotes, so a plain path that was quoted anyway opened nothing.
+ */
+export function escapeExecProgram(value: string): string {
+  return /[ \t\n"'\\><~|&;$*?#()`]/u.test(value) ? escapeExecArgument(value) : escapeString(value.replace(/%/gu, '%%'))
+}
+
 export function renderUrlHandlerEntry(scheme: string, appImage: string): string {
   return [
     '[Desktop Entry]',
     'Type=Application',
     `Name=${STUDIO_PRODUCT_NAME}`,
     `Comment=Opens ${scheme}:// links in ${STUDIO_PRODUCT_NAME}`,
-    `Exec=${escapeExecArgument(appImage)} %U`,
+    `Exec=${escapeExecProgram(appImage)} %U`,
     'Terminal=false',
     // Not a second launcher in the applications menu: the AppImage's own entry,
     // when the person has one, is the one they open the app from.
