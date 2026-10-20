@@ -81,6 +81,10 @@ test('WorkspaceSidebar.remoteRow', async () => {
       lastSeq: 8,
       lastAssistantText: '**Healthy.** The build is green and the backlog is short.',
       branch: 'agent/project-review',
+      // A schedule over there started it, and nobody has opened it since: its
+      // visit clock is still the moment the run was made.
+      scheduledAgentId: 'sa-1',
+      lastVisitedAt: Date.now() - 5 * hour,
     },
     {
       workspaceId: 'rw2',
@@ -236,6 +240,14 @@ test('WorkspaceSidebar.remoteRow', async () => {
 
       // The one mark that says where it runs.
       assert.equal(idle.querySelector('[data-remote-row-glyph]')?.getAttribute('data-remote-row-glyph'), 'mac-mini')
+      // …and the schedule's clock its own machine's row wears, on a chat a
+      // schedule started there; none on one a person started.
+      const clock = idle.querySelector<HTMLElement>('[data-scheduled-run]')
+      assert.ok(clock, 'the run wears the schedule’s clock here too')
+      assert.equal(clock.getAttribute('data-scheduled-run'), 'sa-1')
+      assert.equal(clock.getAttribute('aria-label'), 'Started by a schedule')
+      assert.equal(asking.querySelector('[data-scheduled-run]'), null)
+      assert.ok(idle.className.includes('tone-good-faint'), 'and finished while nobody looked: the green row')
 
       // Its line says what the agent last replied, as a local chat's does —
       // not a provider mark standing alone.
@@ -268,12 +280,7 @@ test('WorkspaceSidebar.remoteRow', async () => {
     }
   }
 
-  const suiteRun = main()
-    .then(() => console.log('sidebar remote row tests passed'))
-    .catch((error) => {
-      console.error(error)
-      process.exitCode = 1
-    })
-
-  await suiteRun
+  // Awaited as it is, so a failed assertion fails the test rather than only
+  // being printed.
+  await main()
 })

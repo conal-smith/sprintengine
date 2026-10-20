@@ -156,6 +156,7 @@ import {
   isHookSettledSession,
   keepUnvisitedCompletions,
   rowHasOpenTerminals,
+  visitClockCompletions,
 } from './sidebar/rowTerminals'
 import { useVisitStamp, type VisitTarget } from './sidebar/useVisitStamp'
 import { useChatJumpHints } from './sidebar/useChatJumpHints'
@@ -555,14 +556,15 @@ function WorkspaceSidebar({
   // it, so it is not stamped as seen. A door is leaving it. A chat started
   // with ⌘⏎ is not the front chat at all, so neither applies to it.
   const frontWorkspaceId = globalSurfaceActive ? null : activeWorkspaceId
-  // The unseen-completion mark (the green row, `doneRowClass`). Session-only: the
-  // store's recency slice persists when a workspace was last TYPED into, not
-  // when it was last looked at, so "seen" has no honest home there yet and a
-  // restart simply starts clean. The transition is read off the same
-  // hook-authoritative clock the working counter uses; nothing here reads a
-  // pane. A ref carries the previous clocks so the effect compares, not
-  // re-renders.
-  const [unseenDoneIds, setUnseenDoneIds] = useState<Set<string>>(() => new Set())
+  // The unseen-completion mark (the green row, `doneRowClass`), from two
+  // readings. The durable one is the visit clock (`visitClockCompletions`,
+  // below): a finish newer than anyone's last look, which a reload keeps and a
+  // paired machine's row for the same chat reads alike. These are the ones
+  // this window watched happen: a turn's end seen on the same
+  // hook-authoritative clock the working counter uses, which also marks a
+  // chat whose visits were never recorded. Nothing here reads a pane. A ref
+  // carries the previous clocks so the effect compares, not re-renders.
+  const [observedDoneIds, setObservedDoneIds] = useState<Set<string>>(() => new Set())
   const workingSinceRef = useRef<Record<string, number | null>>({})
   useEffect(() => {
     const workingSinceNow: Record<string, number | null> = {}
@@ -583,7 +585,7 @@ function WorkspaceSidebar({
     }
     const before = workingSinceRef.current
     workingSinceRef.current = workingSinceNow
-    setUnseenDoneIds((previous) => {
+    setObservedDoneIds((previous) => {
       const next = deriveUnseenCompletions({
         previous,
         workingSinceBefore: before,
@@ -595,9 +597,6 @@ function WorkspaceSidebar({
       return next
     })
   }, [terminalRecencyByWorkspaceId, terminalSessions, conversationSessions, onScreenWorkspaceId])
-  useEffect(() => {
-    onUnseenDoneChange?.(unseenDoneIds)
-  }, [unseenDoneIds, onUnseenDoneChange])
   // …and read somewhere else. A chat read on the phone, or in a desktop
   // following it, has had its finish seen, and its `lastVisitedAt` moves past
   // the moment this window put the mark up; the mark comes down here too
@@ -608,21 +607,21 @@ function WorkspaceSidebar({
   useEffect(() => {
     const marked = unseenMarkedAtRef.current
     const now = Date.now()
-    for (const id of unseenDoneIds) if (!marked.has(id)) marked.set(id, now)
-    for (const id of [...marked.keys()]) if (!unseenDoneIds.has(id)) marked.delete(id)
-  }, [unseenDoneIds])
+    for (const id of observedDoneIds) if (!marked.has(id)) marked.set(id, now)
+    for (const id of [...marked.keys()]) if (!observedDoneIds.has(id)) marked.delete(id)
+  }, [observedDoneIds])
   const unseenVisits = useWorkspaceStore(
     useCallback(
       (state: { workspaces: Workspace[] }) => {
-        if (unseenDoneIds.size === 0) return ''
+        if (observedDoneIds.size === 0) return ''
         let visits = ''
         for (const workspace of state.workspaces) {
-          if (unseenDoneIds.has(workspace.id) && typeof workspace.lastVisitedAt === 'number')
+          if (observedDoneIds.has(workspace.id) && typeof workspace.lastVisitedAt === 'number')
             visits += `${workspace.id}=${workspace.lastVisitedAt};`
         }
         return visits
       },
-      [unseenDoneIds],
+      [observedDoneIds],
     ),
   )
   useEffect(() => {
@@ -630,7 +629,7 @@ function WorkspaceSidebar({
     const visitedAt = new Map(
       useWorkspaceStore.getState().workspaces.map((workspace) => [workspace.id, workspace.lastVisitedAt]),
     )
-    setUnseenDoneIds((previous) => {
+    setObservedDoneIds((previous) => {
       const next = keepUnvisitedCompletions({
         marks: previous,
         markedAt: unseenMarkedAtRef.current,
@@ -667,10 +666,43 @@ function WorkspaceSidebar({
       marked.push(workspace.id)
     }
     if (marked.length === 0) return
-    setUnseenDoneIds((previous) =>
+    setObservedDoneIds((previous) =>
       marked.every((id) => previous.has(id)) ? previous : new Set([...previous, ...marked]),
     )
   }, [rewoundVisits, conversationsByWorkspaceId, onScreenWorkspaceId])
+  // The marks the visit clock says, which need no transition to have been
+  // watched: two overnight scheduled runs nobody opened are green after a
+  // reload, as they are on a paired machine following them. Idle is the
+  // row's own reading: nothing working (its background agents and monitors
+  // count) and nothing waiting on the person.
+  const visitClockDoneRef = useRef<ReadonlySet<string> | undefined>(undefined)
+  const visitClockDoneIds = useMemo(() => {
+    const next = visitClockCompletions({
+      workspaces,
+      finishedAt: (workspace) =>
+        latestFinishOf(workspace, conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS),
+      idle: (id) => {
+        const activity = activityByWorkspaceId[id]
+        return (
+          activity !== 'working' &&
+          activity !== 'needs-input' &&
+          typeof terminalRecencyByWorkspaceId[id]?.workingSince !== 'number'
+        )
+      },
+      onScreenWorkspaceId,
+      previous: visitClockDoneRef.current,
+    })
+    visitClockDoneRef.current = next
+    return next
+  }, [workspaces, conversationsByWorkspaceId, activityByWorkspaceId, terminalRecencyByWorkspaceId, onScreenWorkspaceId])
+  const unseenDoneIds = useMemo<ReadonlySet<string>>(() => {
+    if (visitClockDoneIds.size === 0) return observedDoneIds
+    if ([...visitClockDoneIds].every((id) => observedDoneIds.has(id))) return observedDoneIds
+    return new Set([...observedDoneIds, ...visitClockDoneIds])
+  }, [observedDoneIds, visitClockDoneIds])
+  useEffect(() => {
+    onUnseenDoneChange?.(unseenDoneIds)
+  }, [unseenDoneIds, onUnseenDoneChange])
 
   // Module-contributed top-nav doors used to be resolved here and handed to
   // ExtensionsRail. They are resolved inside `useExtensionsDrawerRows` now: the
@@ -2444,7 +2476,8 @@ function WorkspaceSidebar({
     const open = () => onOpenRemoteSession?.(openSpecOfConversation(conversation))
     const agent = conversation.agents[0]!
     const needsAttention = conversation.activity === 'needs-input'
-    const unseenDone = !needsAttention && conversation.agents.some(remoteFinishUnseen)
+    const unseenDone = !needsAttention && conversation.agents.some((row) => remoteFinishUnseen(row, now))
+    const scheduledAgentId = conversation.agents.find((row) => row.scheduledAgentId)?.scheduledAgentId ?? null
     const working = conversation.activity === 'working'
     const flatProject = options?.flatProject ?? null
     const surface = needsAttention
@@ -2559,6 +2592,9 @@ function WorkspaceSidebar({
                 so the row wears the glyph; in the flat stream the project line
                 already wears it, right of the folder icon. */}
             {flatProject ? null : <MachineRowGlyph machine={machine} />}
+            {/* A schedule over there started this chat: the clock its own
+                machine's row wears beside the title, in both shapes of the list. */}
+            {scheduledAgentId ? <ScheduledRunGlyph scheduledAgentId={scheduledAgentId} /> : null}
             {/* Weight marks a running turn, or one that wants you, the way
                 `workspaceRowEmphasis` weights a local row. */}
             <TruncatedText
