@@ -36,6 +36,7 @@ function slot(id: string, patch: Partial<WorktreePoolSlotView>): WorktreePoolSlo
     lastBranch: null,
     size: { bytes: GB, measuredAt: NOW, parts: [] },
     kept: null,
+    parked: null,
     ...patch,
   }
 }

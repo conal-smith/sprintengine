@@ -84,7 +84,10 @@ export function createWorktreePoolTools(deps: WorktreePoolToolsDeps): McpToolReg
         'When the project has turned dependency installs on, Studio runs the install before answering if the ' +
         'lockfile changed; the answer says whether it did, and otherwise run the project install yourself if ' +
         'dependencies are missing or the lockfile changed. Work in the returned path; the worktree stays yours ' +
-        'while you exist, and you can give it back early with worktree.release.',
+        'while you exist, and you can give it back early with worktree.release. Once it has sat clean, with ' +
+        'every commit pushed and nothing running in it, while your chat is idle, Studio may take it back for ' +
+        'another agent: your branch is kept, and if the path is gone when you return, lease a worktree again and ' +
+        'check your branch out there.',
       inputSchema: {
         type: 'object',
         properties: {

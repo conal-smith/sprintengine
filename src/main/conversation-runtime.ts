@@ -292,6 +292,15 @@ export type ConversationRuntimeOptions = {
   // agent), on the machine its CLI runs on (a WSL host's, or this one's). Null
   // leaves it out; the chat runs without Studio's tools rather than not at all.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
+  // Asked before a session starts and before every turn: brings the chat's
+  // folder back when the worktree pool gave it back while the chat sat idle
+  // (worktree-pool/chat-folder-guard.ts), so the agent never runs in a folder
+  // that is gone or on someone else's branch. A refusal refuses the start or
+  // the turn with its reason. Left out (a server with no pool), nothing is asked.
+  prepareChatFolder?: (input: {
+    workspaceId: string
+    workspaceRoot: string
+  }) => Promise<{ ok: true } | { ok: false; message: string }>
   // The platform this runtime runs on; tests stand in for another. Off
   // Windows a `wsl:` host id means nothing (a WSL server is handed the
   // runtimes a Windows front door built), so it is dropped at the start.
@@ -437,6 +446,7 @@ export class ConversationRuntime {
   private readonly randomId: () => string
   private readonly platform: NodeJS.Platform
   private readonly resolveSkills: ConversationSkillsResolver
+  private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
   private readonly attachmentStore: ConversationAttachmentStore
@@ -549,6 +559,7 @@ export class ConversationRuntime {
     })
     this.randomId = options.randomId ?? (() => Math.random().toString(36).slice(2, 10))
     this.resolveSkills = options.resolveSkills ?? createConversationSkillsResolver()
+    this.prepareChatFolder = options.prepareChatFolder ?? (() => Promise.resolve({ ok: true }))
     this.approvalRules = options.approvalRules ?? new ConversationApprovalRuleStore()
     this.attachmentStore = options.attachmentStore ?? new ConversationAttachmentStore()
     this.planStore = options.planStore ?? new ConversationPlanStore()
@@ -662,6 +673,13 @@ export class ConversationRuntime {
     if (cliRuntimes !== input.cliRuntimes) input = { ...input, cliRuntimes }
     this.startingTranscripts.add(path)
     try {
+      // The chat's worktree, given back while it sat idle, is brought back
+      // before anything is spawned in it.
+      const folder = await this.prepareChatFolder({
+        workspaceId: input.workspaceId.trim(),
+        workspaceRoot: input.workspaceRoot,
+      })
+      if (!folder.ok) return { ok: false, message: folder.message }
       return (await this.adoptLiveSession(input, path)) ?? (await this.startSessionNow(input))
     } finally {
       this.startingTranscripts.delete(path)
@@ -968,6 +986,16 @@ export class ConversationRuntime {
     // A turn needs some payload: text, an image, a mention, a skill or a file.
     if (!message && attachments.length === 0 && !input.mentions?.length && !input.skills?.length && !files.length)
       return { ok: false, message: 'Conversation turn message is required.' }
+    // A resting session respawns in the chat's folder for this turn: one the
+    // worktree pool gave back while the chat sat idle is brought back first,
+    // whoever sent the message. A busy session is working in it, so it is there.
+    if (!isSessionBusy(session)) {
+      const folder = await this.prepareChatFolder({
+        workspaceId: session.workspaceId,
+        workspaceRoot: session.workspaceRoot,
+      })
+      if (!folder.ok) return { ok: false, message: folder.message }
+    }
 
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }

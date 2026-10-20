@@ -19,7 +19,7 @@ import { bindGatewayConversation } from '../../server/tools/client-tool-gateway'
 import { defaultSlotGitRunner, parseSlotStatus, type SlotGitRunner } from './slot-git'
 import type { MeasureDiskUsage } from './disk-usage'
 import { createWorktreeInventory } from './worktree-inventory'
-import { createWorktreePoolService } from './worktree-pool-service'
+import { createWorktreePoolService, type PoolChat } from './worktree-pool-service'
 import { createWorktreePoolTools } from './worktree-pool-tools'
 
 const execFileAsync = promisify(execFile)
@@ -81,16 +81,26 @@ function makeService(
     userData?: string
     branchPrefix?: string
     recorded?: Array<[string, string]>
+    /** The chats on record, as worktree-services.ts reads them off the registry; left out, unknown. */
+    chats?: PoolChat[]
   } = {},
 ) {
   const live = options.live ?? []
+  /** Where a chat's session works now (a turn, a live child); also live, as `liveWorkPaths` has them. */
+  const sessions: string[] = []
+  /** Paths the pool said it gave back while their chat or agent still exists. */
+  const givenBack: string[] = []
+  const chats = options.chats
   const clock = { offset: 0 }
   const prefix = options.branchPrefix
   const service = createWorktreePoolService({
     store: createPoolStore(options.userData ?? userData),
     ...(options.git ? { git: options.git } : {}),
     ...(options.fetchBackoffMs !== undefined ? { fetchBackoffMs: options.fetchBackoffMs } : {}),
-    livePaths: () => live,
+    livePaths: () => [...live, ...sessions],
+    liveSessionPaths: () => sessions,
+    ...(chats ? { chats: () => chats } : {}),
+    onGivenBack: ({ path }) => givenBack.push(path),
     log: process.env.POOL_TEST_LOG ? (line) => console.log(line) : () => {},
     timers: false,
     fetchFreshMs: 0,
@@ -105,7 +115,7 @@ function makeService(
       },
     },
   })
-  return { service, live, clock }
+  return { service, live, sessions, givenBack, chats, clock }
 }
 
 type Harness = ReturnType<typeof makeService>
@@ -1978,4 +1988,288 @@ test('a ready slot unused for a day goes, kept number or not; one in use never d
     'the sweep removes the one a day unused; the leased one stays',
   )
   assert.equal(await exists(idle.path), false)
+})
+
+// ── Giving back slots whose chat still exists ──────────────────────────────
+
+/** A worktree chat whose folder is `leased`'s slot, on its branch: idle and off screen unless told otherwise. */
+function chatOn(
+  leased: { path: string; branch: string },
+  workspaceId: string,
+  patch: Partial<PoolChat> = {},
+): PoolChat {
+  return {
+    workspaceId,
+    folderPath: leased.path,
+    branch: leased.branch,
+    otherPaths: [],
+    open: false,
+    lastActiveAt: null,
+    ...patch,
+  }
+}
+
+/** The cleanup's sweep with `paths` still on record, the clock first moved on by `hours`. */
+async function sweep(
+  harness: Harness,
+  paths: string[],
+  hours = 0,
+  agents: { agentIds?: ReadonlySet<string>; agentKeys?: ReadonlySet<string> } = {},
+) {
+  harness.clock.offset += hours * HOUR
+  return harness.service.returnUnused({ repoRoot: repo, protectedPaths: paths, agentIds: new Set(), ...agents })
+}
+
+test('a full pool gives back a clean, idle chat’s slot to lease, keeping the chat’s branch and its path', async () => {
+  const harness = makeService({ chats: [] })
+  await harness.service.updateSettings({ maxSlots: 2 })
+  const first = await lease(harness, 'first')
+  const second = await lease(harness, 'second')
+  harness.chats!.push(chatOn(first, 'ws-1'), chatOn(second, 'ws-2'))
+  harness.clock.offset += 2 * HOUR
+
+  const third = await lease(harness, 'third')
+  assert.equal(third.created, true)
+  assert.notEqual(third.path, first.path, 'the path stays its chat’s, not the next lease’s')
+  assert.equal(await exists(first.path), false, 'the least recently used one was removed to make room')
+  assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/first'), 'its branch is kept')
+  assert.deepEqual(harness.givenBack, [first.path], 'its chat is told, so opening it brings the worktree back')
+  assert.equal(await git(second.path, 'branch', '--show-current'), 'agent/second', 'the other chat is untouched')
+  assert.equal((await snapshot(harness)).slots.length, 2, 'the pool is still within its limit')
+})
+
+test('a full pool refuses only when no slot can be given back, naming each slot and what holds it', async () => {
+  const harness = makeService({ chats: [] })
+  await harness.service.updateSettings({ maxSlots: 5 })
+  const dirty = await lease(harness, 'dirty')
+  const unpushed = await lease(harness, 'unpushed')
+  const working = await lease(harness, 'working')
+  const terminal = await lease(harness, 'terminal')
+  const onScreen = await lease(harness, 'on-screen')
+  harness.chats!.push(
+    chatOn(dirty, 'ws-1'),
+    chatOn(unpushed, 'ws-2'),
+    chatOn(working, 'ws-3'),
+    chatOn(terminal, 'ws-4'),
+    chatOn(onScreen, 'ws-5', { open: true }),
+  )
+  await writeFile(join(dirty.path, 'notes.txt'), 'wip\n')
+  await writeFile(join(unpushed.path, 'feature.txt'), 'feature\n')
+  await git(unpushed.path, 'add', 'feature.txt')
+  await git(unpushed.path, 'commit', '-q', '-m', 'feature')
+  harness.sessions.push(working.path)
+  harness.live.push(terminal.path)
+  harness.clock.offset += 2 * HOUR
+
+  const refused = await harness.service.lease({ repoRoot: repo, name: 'sixth' })
+  assert.equal(refused.ok ? null : refused.reason, 'full')
+  const message = refused.ok ? '' : refused.message
+  assert.match(message, /The pool already has 5 worktrees, and none can be given back now/)
+  assert.match(message, /app-01 \(agent\/dirty\): 1 uncommitted change;/)
+  assert.match(message, /app-02 \(agent\/unpushed\): it has commits not pushed/)
+  assert.match(message, /app-03 \(agent\/working\): a turn or a background agent is running in it/)
+  assert.match(message, /app-04 \(agent\/terminal\): a terminal is open in it/)
+  assert.match(message, /app-05 \(agent\/on-screen\): its chat is open on screen/)
+  for (const leased of [dirty, unpushed, working, terminal, onScreen]) {
+    assert.equal(await git(leased.path, 'branch', '--show-current'), leased.branch, `${leased.branch} is untouched`)
+  }
+  assert.equal(await readFile(join(dirty.path, 'notes.txt'), 'utf8'), 'wip\n')
+  assert.deepEqual(harness.givenBack, [])
+})
+
+test('the sweep gives back a clean, pushed slot whose chat still exists once it has sat unused for the idle period, not before', async () => {
+  const harness = makeService({ chats: [] })
+  const chat = await lease(harness, 'chat')
+  harness.chats!.push(chatOn(chat, 'ws-1'))
+  await mkdir(join(chat.path, 'node_modules', 'dep'), { recursive: true })
+  await writeFile(join(chat.path, 'node_modules', 'dep', 'index.js'), 'module.exports = 1\n')
+  await writeFile(join(chat.path, 'feature.txt'), 'feature\n')
+  await git(chat.path, 'add', 'feature.txt')
+  await git(chat.path, 'commit', '-q', '-m', 'feature')
+  await git(chat.path, 'push', '-q', 'origin', 'agent/chat')
+
+  let swept = await sweep(harness, [chat.path], 1)
+  assert.equal(swept[0]?.verdict, 'in-use')
+  assert.match(swept[0]?.detail ?? '', /^used 60 minutes ago$/)
+  await harness.service.updateSettings({ idleReturnMinutes: 240 })
+  swept = await sweep(harness, [chat.path], 2)
+  assert.equal(swept[0]?.verdict, 'in-use', 'three hours is within a four-hour period')
+
+  await harness.service.updateSettings({ idleReturnMinutes: 120 })
+  swept = await sweep(harness, [chat.path])
+  assert.equal(swept[0]?.verdict, 'returned')
+  const slot = await slotAt(harness, 'app-01')
+  assert.equal(slot.state, 'idle')
+  assert.equal(slot.parked?.branch, 'agent/chat', 'kept for its chat')
+  assert.equal(await git(chat.path, 'branch', '--show-current'), '', 'detached')
+  assert.equal(await lockReason(chat.path), null, 'unlocked')
+  assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/chat'), 'the branch is kept')
+  assert.equal(await exists(join(chat.path, 'node_modules', 'dep', 'index.js')), true, 'nothing in it is removed')
+  assert.deepEqual(harness.givenBack, [chat.path])
+})
+
+test('the sweep keeps a slot whose chat still exists while it is dirty, unpushed, running, on screen or recently used', async () => {
+  const harness = makeService({ chats: [] })
+  const dirty = await lease(harness, 'dirty')
+  const hidden = await lease(harness, 'hidden')
+  const unpushed = await lease(harness, 'unpushed')
+  const working = await lease(harness, 'working')
+  const terminal = await lease(harness, 'terminal')
+  const onScreen = await lease(harness, 'on-screen')
+  const recent = await lease(harness, 'recent')
+  const all = [dirty, hidden, unpushed, working, terminal, onScreen, recent]
+  harness.chats!.push(...all.map((leased, index) => chatOn(leased, `ws-${index}`, { open: leased === onScreen })))
+  await writeFile(join(dirty.path, 'README.md'), '# changed\n')
+  await git(hidden.path, 'update-index', '--assume-unchanged', 'README.md')
+  await writeFile(join(hidden.path, 'README.md'), '# hidden edit\n')
+  await writeFile(join(unpushed.path, 'feature.txt'), 'feature\n')
+  await git(unpushed.path, 'add', 'feature.txt')
+  await git(unpushed.path, 'commit', '-q', '-m', 'feature')
+  harness.sessions.push(working.path)
+  harness.live.push(terminal.path)
+  harness.clock.offset += 3 * HOUR
+  // Its chat said something half an hour ago.
+  harness.chats!.find((chat) => chat.folderPath === recent.path)!.lastActiveAt =
+    Date.now() + harness.clock.offset - HOUR / 2
+
+  const swept = await sweep(
+    harness,
+    all.map((leased) => leased.path),
+  )
+  const why = (leased: { path: string }) => swept.find((entry) => entry.path === leased.path)
+  for (const leased of all) assert.equal(why(leased)?.verdict, 'in-use', leased.path)
+  assert.equal(why(dirty)?.detail, '1 uncommitted change')
+  assert.match(why(hidden)?.detail ?? '', /^edits hidden from git status: README\.md$/)
+  assert.equal(why(unpushed)?.detail, 'it has commits not pushed')
+  assert.equal(why(working)?.detail, 'a turn or a background agent is running in it')
+  assert.equal(why(terminal)?.detail, 'a terminal is open in it')
+  assert.equal(why(onScreen)?.detail, 'its chat is open on screen')
+  assert.equal(why(recent)?.detail, 'used 30 minutes ago')
+  for (const leased of all) {
+    assert.equal(await git(leased.path, 'branch', '--show-current'), leased.branch, `${leased.branch} is still leased`)
+  }
+  assert.deepEqual(harness.givenBack, [])
+})
+
+test('a squash-merged branch whose remote branch is gone holds nothing only it has, and its slot is given back', async () => {
+  const harness = makeService({ chats: [] })
+  const chat = await lease(harness, 'merged')
+  harness.chats!.push(chatOn(chat, 'ws-1'))
+  await writeFile(join(chat.path, 'feature.txt'), 'feature\n')
+  await git(chat.path, 'add', 'feature.txt')
+  await git(chat.path, 'commit', '-q', '-m', 'feature')
+  // The pull request landed as one new commit on main; no remote branch has the chat's own commit.
+  await pushToOrigin('feature.txt', 'feature\n')
+  await git(repo, 'fetch', '-q', 'origin')
+  const swept = await sweep(harness, [chat.path], 3)
+  assert.equal(swept[0]?.verdict, 'returned', swept[0]?.detail ?? '')
+})
+
+test('a chat whose idle slot was given back gets it again on its branch, at the same path, when it comes back', async () => {
+  const harness = makeService({ chats: [] })
+  installWorktreePool(harness.service)
+  const chat = await lease(harness, 'chat')
+  harness.chats!.push(chatOn(chat, 'ws-1'))
+  await mkdir(join(chat.path, 'node_modules', 'dep'), { recursive: true })
+  await writeFile(join(chat.path, 'node_modules', 'dep', 'index.js'), 'module.exports = 1\n')
+  assert.equal((await sweep(harness, [chat.path], 3))[0]?.verdict, 'returned')
+  assert.equal(harness.service.awaitsChat(chat.path, 'agent/chat'), true, 'a turn in it would bring it back first')
+
+  // Kept for the chat: another lease makes a slot of its own rather than take it.
+  const other = await lease(harness, 'other')
+  assert.notEqual(other.path, chat.path)
+
+  const restored = await restoreGitWorktree({ repoRoot: repo, path: chat.path, branchName: 'agent/chat' })
+  assert.equal(restored.ok, true, restored.ok ? '' : restored.message)
+  assert.equal(await git(chat.path, 'branch', '--show-current'), 'agent/chat')
+  assert.equal(await exists(join(chat.path, 'node_modules', 'dep', 'index.js')), true, 'as warm as it was left')
+  const slot = await slotAt(harness, 'app-01')
+  assert.equal(slot.state, 'leased')
+  assert.equal(slot.lease?.branch, 'agent/chat')
+  assert.equal(slot.parked, null)
+  assert.equal(harness.service.awaitsChat(chat.path, 'agent/chat'), false)
+})
+
+test('a chat whose given-back slot was removed for room comes back to the same path: in the pool, or outside it when off', async () => {
+  const harness = makeService({ chats: [] })
+  installWorktreePool(harness.service)
+  await harness.service.updateSettings({ maxSlots: 2 })
+  const first = await lease(harness, 'first')
+  const second = await lease(harness, 'second')
+  harness.chats!.push(chatOn(first, 'ws-1'), chatOn(second, 'ws-2', { open: true }))
+  harness.clock.offset += 2 * HOUR
+  await lease(harness, 'third')
+  assert.equal(await exists(first.path), false, 'removed to make room')
+  assert.equal(harness.service.reservesPath(first.path), true)
+
+  // A new lease never takes the path kept for the chat.
+  await harness.service.updateSettings({ maxSlots: 4 })
+  const fourth = await lease(harness, 'fourth')
+  assert.notEqual(fourth.path, first.path)
+
+  const restored = await restoreGitWorktree({ repoRoot: repo, path: first.path, branchName: 'agent/first' })
+  assert.equal(restored.ok, true, restored.ok ? '' : restored.message)
+  assert.equal(await git(first.path, 'branch', '--show-current'), 'agent/first')
+  assert.equal((await slotAt(harness, 'app-01')).state, 'leased', 'a pool slot again, at its old path')
+  assert.notEqual(await lockReason(first.path), null, 'locked as in use')
+  assert.equal(harness.service.reservesPath(first.path), false)
+
+  // Given back and removed again, with the pool turned off meanwhile: a plain
+  // worktree at the same path.
+  const again = await sweep(harness, [first.path, second.path], 3)
+  assert.equal(again.find((entry) => entry.path === first.path)?.verdict, 'returned')
+  await harness.service.updateSettings({ enabled: false })
+  assert.equal(await exists(first.path), false, 'turning the pool off removed it')
+  const plain = await restoreGitWorktree({ repoRoot: repo, path: first.path, branchName: 'agent/first' })
+  assert.equal(plain.ok, true, plain.ok ? '' : plain.message)
+  assert.equal(await git(first.path, 'branch', '--show-current'), 'agent/first')
+  assert.equal(harness.service.ownsPath(first.path), false, 'outside the pool')
+})
+
+test('a slot kept for a chat becomes anyone’s once the chat is gone', async () => {
+  const harness = makeService({ chats: [] })
+  const chat = await lease(harness, 'chat')
+  harness.chats!.push(chatOn(chat, 'ws-1'))
+  assert.equal((await sweep(harness, [chat.path], 3))[0]?.verdict, 'returned')
+  assert.equal((await slotAt(harness, 'app-01')).parked?.branch, 'agent/chat')
+  // The chat settled: nothing on record names the path now.
+  harness.chats!.splice(0)
+  await sweep(harness, [])
+  assert.equal((await slotAt(harness, 'app-01')).parked, null)
+  const next = await lease(harness, 'next')
+  assert.equal(next.path, chat.path, 'reused')
+})
+
+test('a slot an agent leased for itself is taken back while its chat is idle, never while that chat runs a turn', async () => {
+  const harness = makeService({ chats: [] })
+  const leased = await harness.service.lease({
+    repoRoot: repo,
+    name: 'mcp',
+    owner: 'agent-1',
+    agentId: 'agent-1',
+    workspaceId: 'ws-1',
+  })
+  assert.ok(leased.ok)
+  // The agent's chat works in the project's own checkout.
+  harness.chats!.push({
+    workspaceId: 'ws-1',
+    folderPath: repo,
+    branch: null,
+    otherPaths: [],
+    open: false,
+    lastActiveAt: null,
+  })
+  harness.sessions.push(repo)
+  const agents = { agentIds: new Set(['agent-1']), agentKeys: new Set([agentLeaseKey('ws-1', 'agent-1')]) }
+  let swept = await sweep(harness, [repo], 3, agents)
+  assert.equal(swept[0]?.verdict, 'in-use')
+  assert.equal(swept[0]?.detail, 'its agent’s chat has a turn running')
+
+  harness.sessions.splice(0)
+  swept = await sweep(harness, [repo], 0, agents)
+  assert.equal(swept[0]?.verdict, 'returned')
+  assert.equal(await exists(leased.path), false, 'removed, so the agent finds it gone rather than detached')
+  assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/mcp'), 'its branch is kept')
+  const next = await lease(harness, 'next')
+  assert.notEqual(next.path, leased.path, 'its path is not handed to another agent while it exists')
 })

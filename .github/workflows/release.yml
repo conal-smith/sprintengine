@@ -297,10 +297,12 @@ jobs:
           # CSC_LINK is a "Developer ID Application" certificate exported as a
           # base64 .p12; APPLE_TEAM_ID is the team it was issued to. Check the
           # certificate's expiry in Apple's developer portal before a release.
-          # build.mac.notarize is true, so the CSC_* pair and the APPLE_* trio
-          # are all load-bearing: a certificate without notarisation credentials
-          # signs the app and then fails the notarise step. Never add WIN_CSC_*
-          # or AZURE_* here.
+          # The afterSign hook (scripts/release/notarize-mac.mjs, in place of
+          # build.mac.notarize) notarizes with the APPLE_* trio and staples,
+          # retrying a staple that loses its connection to Apple, so the CSC_*
+          # pair and the APPLE_* trio are all load-bearing: a certificate
+          # without notarisation credentials signs an app Gatekeeper refuses.
+          # Never add WIN_CSC_* or AZURE_* here.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -351,6 +353,20 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: npx electron-builder --linux --publish never "-c.publish.channel=${CHANNEL}"
+
+      # The packaged app.asar may only carry what main and preload load, within
+      # a size budget: a renderer package listed under `dependencies` packages
+      # green and adds its whole node_modules tree to every download (they
+      # made up some 330 MB of each app.asar until 0.8.0). Guarded like the
+      # icon step: a promotion may build a commit from before the script existed.
+      - name: Check what app.asar ships
+        shell: bash
+        run: |
+          if [ -f scripts/release/check-app-asar.mjs ]; then
+            node scripts/release/check-app-asar.mjs dist
+          else
+            echo "This commit predates the app.asar check; skipping it."
+          fi
 
       # Named files only: dist/ also holds builder-debug.yml and the unpacked
       # app, neither of which belongs on a release.

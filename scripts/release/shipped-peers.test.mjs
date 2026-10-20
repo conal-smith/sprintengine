@@ -41,6 +41,12 @@ const PROVIDED_PEERS_OF = {
     '@anthropic-ai/sdk': 'inlined in the entry the app loads',
     '@modelcontextprotocol/sdk': 'inlined in the entry the app loads',
   },
+  // Main runs these on @xterm/headless (terminal-replay-snapshot.ts). Their
+  // bundles never load @xterm/xterm; the peer serves their type declarations.
+  // The renderer's @xterm/xterm is bundled by Vite. A test below holds the
+  // bundles to that.
+  '@xterm/addon-serialize': { '@xterm/xterm': 'types only; main pairs it with @xterm/headless' },
+  '@xterm/addon-unicode11': { '@xterm/xterm': 'types only; main pairs it with @xterm/headless' },
 }
 
 function readJson(path) {
@@ -99,6 +105,17 @@ test('the peers allowed per dependency are still peers of it', () => {
     for (const peer of Object.keys(peers)) {
       assert.ok(peer in (entry.peerDependencies ?? {}), `${peer} is no longer a peer of ${name}; drop it.`)
     }
+  }
+})
+
+test('the xterm addons main loads do not import @xterm/xterm', () => {
+  for (const name of ['@xterm/addon-serialize', '@xterm/addon-unicode11']) {
+    const main = readJson(join(ROOT, 'node_modules', name, 'package.json')).main
+    const bundle = readFileSync(join(ROOT, 'node_modules', name, main), 'utf8')
+    assert.ok(
+      !bundle.includes('"@xterm/xterm') && !bundle.includes("'@xterm/xterm"),
+      `${name} (${main}) now loads @xterm/xterm; add it to package.json dependencies and the app.asar allowlist.`,
+    )
   }
 })
 

@@ -86,7 +86,7 @@ producer that needs a toast to stay says so with `autoDismissMs: false` (the
 app-update steps). (The shipped kit names the danger tone `error`; the class
 here follows the token grammar, `status.danger`.)
 
-**The action row, five consumers.** Owner ruling 2026-09-04: the CLI-update
+**The action row, six consumers.** Owner ruling 2026-09-04: the CLI-update
 toast ("Update available: Codex 0.153.3")
 carries `.ds-toast-actions` with **Settings** (ghost) and **Update** (primary),
 and `.ds-toast-glyph` — the agent CLI's icon — in place of the tone's mark. It
@@ -161,7 +161,18 @@ away from the same box, so a toast that times out unpressed loses nothing. A
 second ⌘S replaces it in place, so Undo always means the latest stash, and the
 toast goes when the composer it would undo into does. When the stash could not
 be written to the device it says so in the description (warn mark) and keeps
-its Undo. These five are the only toasts in the system with buttons.
+its Undo.
+
+**The action row's sixth consumer (2026-10-20).** Export chat, from a chat
+tab's menu, writes the conversation to a file where the save dialog said and
+reports it: "Chat exported" (good mark), the file's name as its description,
+and one **Reveal in Finder** (ghost; "Show in Explorer" on Windows, "Show in
+file manager" on Linux, the app's one name for that move). It is a polite
+report on the tone's own timer, and missing it loses nothing: the file is
+where the person just chose to put it. Pressing the button takes the toast
+down and shows the file in its folder. Its copying rows report "Chat copied"
+without a button, as every copy does. These six are the only toasts in the
+system with buttons.
 
 **In a browser tab (2026-10-03).** A web tab has no installer: the server it
 talks to is updated, and the tab is a reload away from the new version. So the
