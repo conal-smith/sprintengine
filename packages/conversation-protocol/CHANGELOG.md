@@ -13,6 +13,15 @@
 
 ### Added
 
+- **A send says when it was written.** `composedAt` (epoch ms) and
+  `confirmedStale` are optional members of a `send` command, beside any other.
+  `isStaleConversationSend` says whether a desktop refuses one at a time: it
+  was written more than `CONVERSATION_STALE_SEND_MS` (30 minutes) ago and the
+  person has not confirmed it. Such a send is refused with the new `stale`
+  code, which joined `ConversationWireErrorCode`. `parseConversationClientMessage`
+  keeps both members and refuses a malformed one; the first version's
+  `parseConversationClientFrame` drops them, as a desktop from before them
+  does. A pinned file: the phone's copy changes with it.
 - **A listed chat says what its checkout carries, and whether it is a
   worktree.** `changes` is an optional member of `ConversationThread`,
   `ConversationWireChanges` (`{ added, updated, removed, scope?, uncommitted? }`):

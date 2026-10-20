@@ -73,6 +73,31 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
     return id(value.requestId) ? { type: 'watchQueued', requestId: value.requestId } : null
   if (value.type === 'command' && record(value.command)) {
     const command = value.command
+    // When the message was written, and whether the person confirmed one
+    // written long ago, ride beside whatever else the send says: read here,
+    // and the send without them is read as any other.
+    if (command.kind === 'send' && (command.composedAt !== undefined || command.confirmedStale !== undefined)) {
+      const { composedAt, confirmedStale } = command
+      if (
+        composedAt !== undefined &&
+        !(typeof composedAt === 'number' && Number.isSafeInteger(composedAt) && composedAt >= 0)
+      )
+        return null
+      if (confirmedStale !== undefined && confirmedStale !== true) return null
+      const frame = parseConversationClientMessage({
+        ...value,
+        command: { ...command, composedAt: undefined, confirmedStale: undefined },
+      })
+      if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
+      return {
+        ...frame,
+        command: {
+          ...frame.command,
+          ...(composedAt === undefined ? {} : { composedAt: composedAt as number }),
+          ...(confirmedStale === true ? { confirmedStale: true as const } : {}),
+        },
+      }
+    }
     if (command.kind === 'cancelQueued') {
       return id(value.commandId) && id(command.queuedId)
         ? { type: 'command', commandId: value.commandId, command: { kind: 'cancelQueued', queuedId: command.queuedId } }
