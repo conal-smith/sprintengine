@@ -405,6 +405,12 @@ An older client never sends either, and its sends are never stale. `stale` is
 an error code a client from before it reads as any refusal with a message;
 the code joined the pinned `ConversationWireErrorCode` union, so both copies
 and both pins moved with it.
+A desktop also remembers, across a restart, the commands its held messages
+came in on, while each is held and for the 500 most recent after it has gone,
+so the same `queue` command offered again (its answer lost, or the desktop
+restarted) is answered as held and never held or sent a second time
+(`scheduled-messages.json` keeps `sources` on a message and a top-level
+`heldSources`; a file without them reads as before).
 Create PR on a paired machine's chat is `chat-create-pull-request`
 (2026-10-18), gateway tools beside `conversation.mark_unread` and, like it,
 without the `conversation-` prefix: `conversation.pull_request_state`
