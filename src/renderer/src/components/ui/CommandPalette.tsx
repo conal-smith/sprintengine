@@ -74,6 +74,13 @@ import { getExtensionsSurfaceHost } from '../workspace/globalSurface/extensions/
 import { dispatchExtensionsSurfaceTarget } from '../workspace/globalSurface/extensions/extensionsSurfaceTarget'
 import { showToast } from '../../store/toastStore'
 import { dispatchPanelCommandEvent } from '../../utils/panelCommands'
+import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
+import {
+  pauseAllScheduledAgents,
+  resumeAllScheduledAgents,
+  setScheduledAgentPaused,
+} from '../../utils/scheduledAgentsPause'
+import { scheduledAgentPaletteCommands } from '../palette/scheduledAgentsCommands'
 import { WorkingMark } from './WorkingMark'
 import { ExtensionIcon } from './ExtensionIcon'
 import { FileTypeGlyph } from './FileTypeGlyph'
@@ -274,6 +281,9 @@ export default function CommandPalette({
   const keybindingSettings = useWorkspaceStore((state) => state.appSettings.keybindings)
   const moduleEnablement = useWorkspaceStore((state) => state.appSettings.modules)
   const usageLimitsShown = useWorkspaceStore((state) => state.appSettings.appearance.usageLimits)
+  // Scheduled agents, for their pause rows: gone with their module.
+  const scheduledAgents = useScheduledAgents()
+  const scheduledAgentsPause = useScheduledAgentsPause()
   const keybindingPlatform = platformKeybindingsFromApiPlatform(window.api.platform)
   const shortcutFor = (commandId: string): string | undefined =>
     getEffectiveKeybindingLabel(commandId, keybindingSettings, keybindingPlatform) ?? undefined
@@ -634,11 +644,30 @@ export default function CommandPalette({
         : []),
     ]
 
+    // Pause every scheduled agent for a while, or one of them; or resume.
+    const scheduledAgentCommands: UngroupedCommand[] = selectModuleEnabled(moduleEnablement, 'scheduled-agents')
+      ? scheduledAgentPaletteCommands(scheduledAgents, scheduledAgentsPause, Date.now(), {
+          pauseAll: (choice) => {
+            void pauseAllScheduledAgents(choice)
+            onClose()
+          },
+          resumeAll: () => {
+            void resumeAllScheduledAgents()
+            onClose()
+          },
+          setPaused: (agent, paused) => {
+            void setScheduledAgentPaused(agent, paused)
+            onClose()
+          },
+        })
+      : []
+
     const registryCommands: Command[] = [
       ...panelToggleCommands,
       ...gitCommands,
       ...usageCommands,
       ...moduleCommands,
+      ...scheduledAgentCommands,
     ].map((command) => ({
       ...command,
       group: 'commands' as const,
@@ -792,6 +821,8 @@ export default function CommandPalette({
     moduleEnablement,
     usageLimitsShown,
     chatPullRequests,
+    scheduledAgents,
+    scheduledAgentsPause,
   ])
 
   // ── Handing a result to an agent ────────────────────────────────────────

@@ -69,6 +69,7 @@ export type ContextMenuAction =
   // preset table, not a new member of this union.
   | `snooze:${SnoozePresetId}`
   | 'wake'
+  | 'toggle-schedule-pause'
   | 'clear-color'
   | `type-action:${string}`
 
@@ -86,6 +87,7 @@ export function WorkspaceContextMenu({
   remoteSettle = false,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
+  schedule = null,
   onClose,
   onSelect,
   onPickColor,
@@ -111,6 +113,11 @@ export function WorkspaceContextMenu({
   canMarkUnread?: boolean
   /** The pull request Studio is watching for the chat, by number: Stop watching stops it. Null offers nothing. */
   watchedPullRequestNumber?: number | null
+  /**
+   * The schedule here that started this chat, and whether it is paused: the
+   * menu offers to pause it, or resume it. Null for every other chat.
+   */
+  schedule?: { paused: boolean } | null
   onClose: () => void
   onSelect: (action: ContextMenuAction) => void
   onPickColor: (color: HighlightColor) => void
@@ -177,6 +184,17 @@ export function WorkspaceContextMenu({
           as it is. Settle ends the watch too, with the chat. */}
       {watchedPullRequestNumber !== null ? (
         <MenuItem onClick={() => onSelect('stop-watching')}>Stop watching #{watchedPullRequestNumber}</MenuItem>
+      ) : null}
+      {/* A run's chat is where a person notices a schedule doing too much:
+          this stops its next runs from here, and leaves this chat (and any
+          run still going) as it is. */}
+      {schedule ? (
+        <MenuItem
+          hint={schedule.paused ? undefined : 'This chat carries on'}
+          onClick={() => onSelect('toggle-schedule-pause')}
+        >
+          {schedule.paused ? 'Resume this schedule' : 'Pause this schedule'}
+        </MenuItem>
       ) : null}
       {/* Rest by hand (settled-chats, 2026-09-07). Un-settle also holds the
           row out of the sweep until it sees new activity. A row born on a

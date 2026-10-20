@@ -879,6 +879,10 @@ export type ScheduledAgentRun = { at: number; workspaceId: string; agentId: stri
  * - **The previous run is still working** (a turn open, or waiting on an
  *   approval), or still starting. The time is skipped, not queued: the next
  *   one counts on from it.
+ * - **The person paused it** (`pausedAt`), or paused every scheduled agent
+ *   for a while. Its times pass without a run, and are not made up when it
+ *   resumes: it runs next at its first time after that. `nextRunAt` is null
+ *   while it is paused.
  *
  * Each run's chat is owned by the module that created the scheduled agent, so
  * its conversation service reaches it (`onRun` names the chat), and its
@@ -924,6 +928,12 @@ export type ScheduledAgent = {
   updatedAt: number
   lastRun: ScheduledAgentLastRun | null
   lastFailureSeenAt: number | null
+  /**
+   * When the person paused it in the app; absent while it runs on its
+   * schedule. A run already going when it was paused carries on, and
+   * `runNow` still starts one. Absent on a host older than pausing.
+   */
+  pausedAt?: number
 }
 
 /**

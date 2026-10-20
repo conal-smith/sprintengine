@@ -14,6 +14,14 @@
 // that cannot be understood is kept aside as `.corrupt-<time>` and the list
 // starts empty; and an entry that no longer validates is held back, written
 // back as it was, rather than dropped by the next change.
+//
+// Pausing added two fields and no version: an entry's `pausedAt`, and the
+// file's `pausedAll` (every schedule paused, since and until when). A file
+// without them is every schedule running, as it always was. The version stays
+// at 1 because a build that reads a higher one keeps the whole file aside as
+// not its own, and an older app would lose every schedule over two fields it
+// can do without; reading this file, it drops them and runs its schedules,
+// which is what it did before there was a pause.
 
 import { readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -26,12 +34,13 @@ import {
   type ScheduledAgent,
   type ScheduledAgentDraft,
   type ScheduledAgentLastRun,
+  type ScheduledAgentsPause,
 } from '../../shared/scheduled-agents'
 import { isRecord } from '../../shared/records'
 
 const FILE_VERSION = 1
 
-type StoreFile = { version: typeof FILE_VERSION; agents: ScheduledAgent[] }
+type StoreFile = { version: typeof FILE_VERSION; agents: ScheduledAgent[]; pausedAll?: ScheduledAgentsPause }
 
 export function scheduledAgentsFilePath(userDataDir: string): string {
   return join(userDataDir, 'scheduled-agents.json')
@@ -59,6 +68,11 @@ export type ScheduledAgentsStore = {
    */
   failRun(id: string, workspaceId: string, message: string): Promise<boolean>
   markFailureSeen(id: string): Promise<void>
+  /** Paused at `at`, or running on its schedule again (null). Null when there is no such scheduled agent. */
+  setPaused(id: string, at: number | null): Promise<ScheduledAgent | null>
+  /** Every scheduled agent paused, as the file says it, expired or not; null when they are not. */
+  pausedAll(): ScheduledAgentsPause | null
+  setPausedAll(pause: ScheduledAgentsPause | null): Promise<void>
 }
 
 export function createScheduledAgentsStore(options: ScheduledAgentsStoreOptions): ScheduledAgentsStore {
@@ -67,6 +81,7 @@ export function createScheduledAgentsStore(options: ScheduledAgentsStoreOptions)
   let agents: ScheduledAgent[] = []
   // Entries in the file this build would not schedule, kept as they were.
   let heldBack: unknown[] = []
+  let pausedAll: ScheduledAgentsPause | null = null
   // Why the file could not be read, while it could not: nothing is written over it.
   let unreadable: string | null = null
   let ready: Promise<void> | null = null
@@ -94,6 +109,7 @@ export function createScheduledAgentsStore(options: ScheduledAgentsStoreOptions)
     if (parsed) {
       agents = parsed.agents
       heldBack = parsed.heldBack
+      pausedAll = parsed.pausedAll
       return
     }
     // Truncated, hand-edited, or written by a version this build does not
@@ -117,7 +133,11 @@ export function createScheduledAgentsStore(options: ScheduledAgentsStoreOptions)
   }
 
   const persist = (): Promise<void> => {
-    const snapshot: StoreFile = { version: FILE_VERSION, agents: [...agents, ...heldBack] as ScheduledAgent[] }
+    const snapshot: StoreFile = {
+      version: FILE_VERSION,
+      agents: [...agents, ...heldBack] as ScheduledAgent[],
+      ...(pausedAll ? { pausedAll } : {}),
+    }
     writing = writing
       .catch(() => undefined)
       .then(() => writeFileAtomically(options.filePath, `${JSON.stringify(snapshot, null, 2)}\n`))
@@ -189,6 +209,23 @@ export function createScheduledAgentsStore(options: ScheduledAgentsStoreOptions)
       replace(id, { ...current, lastFailureSeenAt: now() })
       await persist()
     },
+    async setPaused(id, at) {
+      await writable()
+      const current = agents.find((agent) => agent.id === id)
+      if (!current) return null
+      // Not an edit: the schedule is as it was, so `updatedAt` is too.
+      const { pausedAt: _was, ...rest } = current
+      const next: ScheduledAgent = at === null ? rest : { ...rest, pausedAt: at }
+      replace(id, next)
+      await persist()
+      return next
+    },
+    pausedAll: () => pausedAll,
+    async setPausedAll(pause) {
+      await writable()
+      pausedAll = pause
+      await persist()
+    },
   }
 }
 
@@ -200,7 +237,7 @@ function parseStoreFile(
   input: unknown,
   now: number,
   warn?: (message: string) => void,
-): { agents: ScheduledAgent[]; heldBack: unknown[] } | null {
+): { agents: ScheduledAgent[]; heldBack: unknown[]; pausedAll: ScheduledAgentsPause | null } | null {
   if (!isRecord(input) || !Array.isArray(input.agents)) return null
   if (typeof input.version === 'number' && input.version > FILE_VERSION) return null
   const agents: ScheduledAgent[] = []
@@ -224,9 +261,20 @@ function parseStoreFile(
       updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : now,
       lastRun: parseLastRun(entry.lastRun),
       lastFailureSeenAt: typeof entry.lastFailureSeenAt === 'number' ? entry.lastFailureSeenAt : null,
+      ...(isInstant(entry.pausedAt) ? { pausedAt: entry.pausedAt } : {}),
     })
   }
-  return { agents, heldBack }
+  return { agents, heldBack, pausedAll: parsePausedAll(input.pausedAll) }
+}
+
+const isInstant = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+
+// Anything but a pause this build would have written is no pause: a schedule
+// that runs when it should not have is seen, and one that never runs is not.
+function parsePausedAll(input: unknown): ScheduledAgentsPause | null {
+  if (!isRecord(input) || !isInstant(input.since)) return null
+  if (input.until !== null && !isInstant(input.until)) return null
+  return { since: input.since, until: input.until }
 }
 
 function parseLastRun(input: unknown): ScheduledAgentLastRun | null {

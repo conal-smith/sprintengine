@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { IconButton, Tooltip } from '../../ui'
+import { Badge, ContextMenu, IconButton, MenuDivider, MenuItem, PauseGlyph, PlayGlyph, Tooltip } from '../../ui'
 import { FOCUS_RING_CLASS } from '../../ui/tokens'
 import { ScheduleGlyph } from '../../AppIcons'
 import CliIcon from '../../CliIcon'
@@ -9,6 +9,7 @@ import {
   scheduledAgentTitle,
   type ScheduledAgentView,
 } from '../../../../../shared/scheduled-agents'
+import { pausedSinceWords } from '../../../utils/scheduledAgentsPause'
 import { ProjectLine, type FlatProjectLine } from './rowParts'
 import { SELECTED_ROW_ACCENT, SELECTION_EDGE_CLASS } from './rowStyle'
 
@@ -50,19 +51,26 @@ export function scheduledAgentFailureUnseen(agent: ScheduledAgentView): string |
  * schedule, never what a chat is doing. While its latest run is going the line
  * says so — "Run in progress", or "Run waiting on you" — as a fact about the
  * schedule; the working mark and the gold surface stay on the run's own chat,
- * which is the thing that is working. A run that did not start says why until
- * the schedule is opened; otherwise the line is the schedule in words.
+ * which is the thing that is working. Pausing leaves that run alone, so it is
+ * said first even of a paused schedule. A run that did not start says why
+ * until the schedule is opened; a paused one says since when; otherwise the
+ * line is the schedule in words.
  */
 export function scheduledAgentStatusLine(
   agent: ScheduledAgentView,
   runInProgress: 'working' | 'needs-input' | null,
+  now: number = Date.now(),
 ): { text: string; tone: 'default' | 'error' } {
   if (runInProgress === 'working') return { text: 'Run in progress', tone: 'default' }
   if (runInProgress === 'needs-input') return { text: 'Run waiting on you', tone: 'default' }
   const failure = scheduledAgentFailureUnseen(agent)
   if (failure) return { text: `Last run failed — ${failure}`, tone: 'error' }
+  if (agent.pausedAt !== undefined) return { text: pausedSinceWords(agent.pausedAt, now), tone: 'default' }
   return { text: scheduledAgentScheduleWords(agent.schedule) ?? agent.schedule.cron, tone: 'default' }
 }
+
+/** What the row's right-click menu asks the sidebar to do. */
+type ScheduledAgentRowAction = 'open' | 'run-now' | 'toggle-pause' | 'close'
 
 /**
  * A scheduled agent's row in the sidebar's Scheduled section: the same card a
@@ -70,8 +78,14 @@ export function scheduledAgentStatusLine(
  * project line on top (the row no longer sits under its project's header);
  * the clock before the title; under it the status line above. In the seat,
  * when it runs next rather than when it last finished. Opening it opens the
- * schedule's editor, where its runs are listed; × on hover closes it, which
- * stops the schedule.
+ * schedule's editor, where its runs are listed; on hover, pause (or resume)
+ * and × to close it, which stops the schedule for good. The same are on its
+ * right-click menu, with Run now.
+ *
+ * Paused — on its own, or with every other — the row is quiet: its title and
+ * mark in muted ink, the pause mark for the clock, and "Paused" in the seat
+ * where the next run would be. Paused on its own, the status line says since
+ * when; a pause of them all is said once, over the section.
  */
 export function ScheduledAgentRow({
   agent,
@@ -79,8 +93,11 @@ export function ScheduledAgentRow({
   project,
   runInProgress,
   selected,
+  pausedAll = false,
   onOpen,
   onClose,
+  onTogglePause,
+  onRunNow,
 }: {
   agent: ScheduledAgentView
   now: number
@@ -90,18 +107,45 @@ export function ScheduledAgentRow({
   runInProgress: 'working' | 'needs-input' | null
   /** Open in the door this window is showing. */
   selected: boolean
+  /** Every scheduled agent is paused at once: this one too, whatever its own state. */
+  pausedAll?: boolean
   onOpen: () => void
   onClose: () => void
+  /** Pause it, or resume it when it is paused. Absent, the row offers neither. */
+  onTogglePause?: () => void
+  /** Start a run now, paused or not. Absent, its menu does not offer it. */
+  onRunNow?: () => void
 }) {
+  const [menu, setMenu] = React.useState<{ x: number; y: number } | null>(null)
   const title = scheduledAgentTitle(agent.prompt, agent.name)
   const words = scheduledAgentScheduleWords(agent.schedule) ?? agent.schedule.cron
-  const status = scheduledAgentStatusLine(agent, runInProgress)
-  const next = nextRunLabel(agent.nextRunAt, now)
+  const status = scheduledAgentStatusLine(agent, runInProgress, now)
+  const ownPause = agent.pausedAt !== undefined
+  const paused = ownPause || pausedAll
+  const next = paused ? null : nextRunLabel(agent.nextRunAt, now)
   const nextFull = agent.nextRunAt === null ? null : new Date(agent.nextRunAt).toLocaleString()
+  const pauseLabel = ownPause ? 'Resume schedule' : 'Pause schedule'
+  const pauseTip = ownPause
+    ? pausedAll
+      ? 'Resume — it runs again once scheduled agents are no longer all paused'
+      : 'Resume — it runs next at its next time; times missed while paused are not made up'
+    : 'Pause — no runs at its times until resumed; a run already going carries on'
+  const select = (action: ScheduledAgentRowAction) => {
+    setMenu(null)
+    if (action === 'open') onOpen()
+    else if (action === 'run-now') onRunNow?.()
+    else if (action === 'toggle-pause') onTogglePause?.()
+    else onClose()
+  }
 
   const seat = (
     <span className="relative ml-auto flex h-5 min-w-[44px] shrink-0 items-center justify-end pl-2">
       <span className="inline-flex items-center gap-1 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+        {paused ? (
+          <Badge tone="neutral" ariaLabel={ownPause ? 'Paused' : 'Paused with every scheduled agent'}>
+            Paused
+          </Badge>
+        ) : null}
         {next ? (
           <Tooltip content={`Next run ${nextFull}`}>
             <span className="text-meta tabular-nums text-[color:var(--text-muted)]">
@@ -111,9 +155,26 @@ export function ScheduledAgentRow({
           </Tooltip>
         ) : null}
       </span>
-      {/* The one row action, revealed on hover and on focus so the keyboard
-          can reach it: close, which is how a scheduled agent is switched off. */}
-      <span className="pointer-events-none absolute inset-y-0 right-0 inline-flex items-center opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+      {/* The row's actions, revealed on hover and on focus so the keyboard
+          can reach them: pause or resume, which keeps the schedule and stops
+          its runs a while; and close, which is how a scheduled agent is
+          switched off for good. */}
+      <span className="pointer-events-none absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        {onTogglePause ? (
+          <Tooltip content={pauseTip}>
+            <IconButton
+              tone="quiet"
+              aria-label={`${pauseLabel}: ${title}`}
+              data-scheduled-agent-pause={ownPause ? 'resume' : 'pause'}
+              onClick={(event) => {
+                event.stopPropagation()
+                onTogglePause()
+              }}
+            >
+              {ownPause ? <PlayGlyph className="icon-xs" /> : <PauseGlyph className="icon-xs" />}
+            </IconButton>
+          </Tooltip>
+        ) : null}
         <Tooltip content="Close — stops the schedule">
           <IconButton
             tone="quiet"
@@ -144,9 +205,14 @@ export function ScheduledAgentRow({
       aria-current={selected ? 'true' : undefined}
       aria-label={`Scheduled agent: ${title}, in ${project.name}. ${words}.${
         status.text === words ? '' : ` ${status.text}.`
-      }`}
+      }${paused && !ownPause ? ' Paused with every scheduled agent.' : ''}`}
       data-scheduled-agent={agent.id}
+      data-paused={paused ? 'true' : undefined}
       onClick={onOpen}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        setMenu({ x: event.clientX, y: event.clientY })
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
@@ -159,12 +225,20 @@ export function ScheduledAgentRow({
         // Selected as a chat row is: the neutral fill and the edge ring, no bar.
         selected
           ? `border-l-transparent ${SELECTED_ROW_ACCENT.bg} ${SELECTED_ROW_ACCENT.text} ${SELECTION_EDGE_CLASS}`
-          : 'border-l-transparent text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]'
+          : paused
+            ? 'border-l-transparent text-[color:var(--text-muted)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-default)]'
+            : 'border-l-transparent text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]'
       }`}
     >
       <ProjectLine project={project}>{seat}</ProjectLine>
       <div className="flex min-w-0 items-center gap-1.5">
-        <ScheduleGlyph className="icon-xs shrink-0 text-[color:var(--accent-primary)]" />
+        {/* The schedule's clock in the accent while it runs on its times; the
+            pause mark in quiet ink while it does not. */}
+        {paused ? (
+          <PauseGlyph className="icon-xs shrink-0 text-[color:var(--text-subtle)]" />
+        ) : (
+          <ScheduleGlyph className="icon-xs shrink-0 text-[color:var(--accent-primary)]" />
+        )}
         <span className={`min-w-0 flex-1 truncate ${status.tone === 'error' ? 'font-semibold' : ''}`}>{title}</span>
       </div>
       <div className="flex h-5 min-w-0 items-center gap-2 overflow-hidden text-meta text-[color:var(--text-subtle)]">
@@ -176,6 +250,32 @@ export function ScheduledAgentRow({
           {status.text}
         </span>
       </div>
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          ariaLabel={`Scheduled agent actions: ${title}`}
+          onClose={() => setMenu(null)}
+          surfaceClassName="min-w-[220px]"
+        >
+          <MenuItem onClick={() => select('open')}>Open</MenuItem>
+          {/* Asked for, so it runs paused or not. */}
+          {onRunNow ? <MenuItem onClick={() => select('run-now')}>Run now</MenuItem> : null}
+          {onTogglePause ? (
+            <MenuItem
+              hint={ownPause ? undefined : 'Runs going carry on'}
+              onClick={() => select('toggle-pause')}
+              icon={ownPause ? <PlayGlyph className="icon-sm" /> : <PauseGlyph className="icon-sm" />}
+            >
+              {ownPause ? 'Resume schedule' : 'Pause schedule'}
+            </MenuItem>
+          ) : null}
+          <MenuDivider />
+          <MenuItem variant="danger" onClick={() => select('close')}>
+            Close schedule
+          </MenuItem>
+        </ContextMenu>
+      ) : null}
     </div>
   )
 }

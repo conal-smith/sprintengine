@@ -123,6 +123,7 @@ const WEB_TUNNEL_SINGLE = new Set([
   'github:list-repos',
   'scheduled-agents:list',
   'scheduled-agents:mark-seen',
+  'scheduled-agents:pause-state',
 ])
 
 /** Whether an owner's web tab may use a server-owned tunnel channel. */
