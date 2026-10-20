@@ -89,7 +89,9 @@
       "!out/server/**",
       "!out/wsl-server/**",
       "!out/web/**",
-      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**",
+      "!node_modules/docx/dist/{charts,html,layout,macros,math,shapes,watermarks}.*",
+      "!node_modules/docx/dist/index.{mjs,iife.js,umd.cjs,d.ts,d.cts}"
     ],
     "asarUnpack": [
       "node_modules/@vscode/ripgrep-*/bin/**"
@@ -296,6 +298,7 @@
     "@xterm/headless": "6.1.0-beta.303",
     "@xterm/xterm": "6.1.0-beta.303",
     "diff": "9.0.0",
+    "docx": "^9.13.0",
     "dompurify": "^3.4.17",
     "electron-updater": "^6.8.9",
     "flexlayout-react": "^0.11.1",

@@ -194,6 +194,8 @@ import {
 import { loadWholeConversation } from './agentChat/conversationReplay'
 import { ConversationReplayView, type ConversationReplaySource } from './agentChat/conversationReplayView'
 import { onChatReplayRequest, takeChatReplayRequest } from './agentChat/chatReplayRequests'
+import { chatExportSupported, exportChatOrToast } from './agentChat/chatExport'
+import type { ChatExportAction } from '../../../../shared/chat-export'
 import { useConversationScrollRestore } from './agentChat/conversationScrollRestore'
 import { useComposerSkillReader } from './agentChat/composerSkillReader'
 import { nextConversationEffort } from './agentChat/conversationEffort'
@@ -2737,6 +2739,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     focusFallback: () => composerRef.current?.focus(),
   })
   const openChatFind = chatFind.openFind
+  // Export chat asks this before it offers itself: a chat with no message has
+  // nothing to export. Earlier pages not read in yet are messages too.
+  const hasMessagesRef = useRef(false)
+  hasMessagesRef.current = hasMore || timelineRows.some((row) => row.kind === 'user' || row.kind === 'assistant')
+  const exportable = transport.kind === 'local' && chatExportSupported()
   useEffect(
     () =>
       registerMountedChatView({
@@ -2756,8 +2763,14 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         restartSession: () => void restartSessionRef.current(),
         openFind: openChatFind,
         openSideQuestion: () => openSideQuestionRef.current(),
+        hasMessages: () => hasMessagesRef.current,
+        // Main reads a local chat's transcript; a chat on another machine has
+        // none here to read.
+        ...(exportable
+          ? { exportChat: (action: ChatExportAction) => void exportChatOrToast({ workspaceId, agentId, action }) }
+          : {}),
       }),
-    [workspaceId, agentId, stepTurn, openChatFind],
+    [workspaceId, agentId, stepTurn, openChatFind, exportable],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]
