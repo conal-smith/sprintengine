@@ -50,6 +50,15 @@ const PATHSPEC_CHARS = 24_000
 // conversion Linux git does not make. A trusted entry would put LF in the
 // turn's "before" for a CRLF file, so its diff would show every line and
 // revert would write LF. The inode it does not know makes git read the file.
+// On Windows every command that walks or writes the work tree also turns on
+// long paths: Git for Windows leaves `core.longpaths` off by default, and then
+// a file whose full path passes 260 characters fails the snapshot's `add` with
+// "Filename too long", so the turn gets no checkpoint and cannot be rewound.
+// It is set per command, never written to the repository's config.
+export function longPathsConfig(platform: NodeJS.Platform): string[] {
+  return platform === 'win32' ? ['-c', 'core.longpaths=true'] : []
+}
+const LONG_PATHS_CONFIG = longPathsConfig(process.platform)
 const SNAPSHOT_CONFIG = [
   '-c',
   'core.splitIndex=false',
@@ -59,6 +68,7 @@ const SNAPSHOT_CONFIG = [
   'core.fsmonitor=false',
   '-c',
   'core.checkStat=default',
+  ...LONG_PATHS_CONFIG,
 ]
 // A snapshot's `git add` writes only the throwaway index (its lock is in the
 // same temp folder, removed after) and loose objects git prunes on its own, so
@@ -441,7 +451,7 @@ export class ConversationCheckpoints {
   }
 
   private async checkSize(root: string): Promise<string | null> {
-    const paths = (await this.git(root, ['ls-files', '--others', '--exclude-standard', '-z']))
+    const paths = (await this.git(root, [...LONG_PATHS_CONFIG, 'ls-files', '--others', '--exclude-standard', '-z']))
       .split('\0')
       .filter((path) => path && !isSidecar(path))
     if (paths.length > this.limits.files) return 'Checkpoints skipped: too many untracked files.'
@@ -584,7 +594,11 @@ export class ConversationCheckpoints {
    * than the files in it.
    */
   private async unbornRepositories(root: string, env: NodeJS.ProcessEnv): Promise<string[]> {
-    const listed = await runGitCommand(root, ['ls-files', '--others', '--exclude-standard', '-z'], env)
+    const listed = await runGitCommand(
+      root,
+      [...LONG_PATHS_CONFIG, 'ls-files', '--others', '--exclude-standard', '-z'],
+      env,
+    )
     if (!listed.ok) return []
     const candidates = listed.stdout
       .split('\0')
