@@ -33,6 +33,28 @@ test('an SSH alias resolves through the first matching Host block', () => {
   assert.equal(resolveSshHostName('github-work', ''), null)
 })
 
+test('an SSH config value is read the way ssh splits it', () => {
+  const config = `
+Host "github-personal" 'github-oss'
+  HostName github.com # personal account
+
+Host github-quoted
+  HostName "github.com"
+
+Host "github-broken
+  HostName evil.example.com
+
+Host github-escaped
+  HostName github\\ .com
+`
+  assert.equal(resolveSshHostName('github-personal', config), 'github.com', 'a trailing comment is not the value')
+  assert.equal(resolveSshHostName('github-oss', config), 'github.com', 'single quotes group a pattern')
+  assert.equal(resolveSshHostName('github-quoted', config), 'github.com')
+  assert.equal(resolveSshHostName('github-broken', config), null, 'an unterminated quote matches nothing')
+  assert.equal(resolveSshHostName('"github-broken', config), null)
+  assert.equal(resolveSshHostName('github-escaped', config), 'github .com', 'a backslash escapes a space')
+})
+
 test('GitHub remotes are read in every URL form', () => {
   const resolve = (alias: string) => resolveSshHostName(alias, SSH_CONFIG)
   assert.equal(githubRepositoryOf('git@github.com:acme/app.git'), 'acme/app')

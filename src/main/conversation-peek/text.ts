@@ -37,14 +37,6 @@ export type CollapsedPeekText = {
 }
 
 /**
- * Placeholders Claude Code substitutes for a pasted image inside the person's
- * own text (`[Image #26] What happened? You removed the backdrops.`) and the
- * companion line it writes for a dropped screenshot. The card shows text only,
- * so a placeholder naming an image it cannot show is noise in the quote.
- */
-const IMAGE_PLACEHOLDER_PATTERN = /\[Image(?:\s*#\d+|:[^\]\n]{0,200})\]/g
-
-/**
  * Wrappers the CLI puts around something that is not a person speaking:
  * a slash-command invocation, a background task report, the echo of a `!` bash
  * line. The fragment is removed and the rest of the message kept.
@@ -107,7 +99,9 @@ export function collapsePeekText(input: string): CollapsedPeekText {
     // with the diff rather than surviving as a label.
     .replace(patterns.fencedBlock, ' ')
     .replace(INJECTED_TAG_PATTERN, ' ')
-    .replace(IMAGE_PLACEHOLDER_PATTERN, ' ')
+    // The card shows text only, so a placeholder naming an image it cannot
+    // show is noise in the quote.
+    .replace(patterns.imagePlaceholder, ' ')
 
   const lines = withoutBulk.split('\n').map((line) => {
     const wholeLine = WHOLE_LINE_PATH_PATTERN.exec(line)

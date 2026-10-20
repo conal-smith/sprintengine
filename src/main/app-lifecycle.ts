@@ -308,6 +308,9 @@ export function registerAppLifecycle({
       if (existing.isMinimized()) existing.restore()
       existing.focus()
     } else {
+      // Not once the quit's shutdown is running: a window opened against
+      // services that are stopping flashes up and is gone when the app exits.
+      if (shutdownRun) return
       createMainWindow({ diagnosticsEnabled })
     }
     backgroundPresence.onWindowOpened()
@@ -670,6 +673,9 @@ export function registerAppLifecycle({
     openChatLinkFrom(process.argv)
 
     app.on('activate', () => {
+      // A Dock click while the quit's shutdown runs opens nothing, as for the
+      // tray above.
+      if (shutdownRun) return
       if (BrowserWindow.getAllWindows().every((win) => isCanvasWorkerWindow(win))) {
         createMainWindow({ diagnosticsEnabled })
       }

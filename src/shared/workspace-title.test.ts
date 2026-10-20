@@ -160,3 +160,10 @@ test('workspace-title', async () => {
 
   main()
 })
+
+test('a pasted image placeholder is never the title', () => {
+  assert.equal(deriveWorkspaceTitle('[Image #1]'), null, 'a prompt that is only a picture names nothing')
+  assert.equal(deriveWorkspaceTitle('[Image #1] [Image #2]'), null)
+  assert.equal(deriveWorkspaceTitle('[Image: source: /Users/dev/Desktop/shot.png]'), null)
+  assert.equal(deriveWorkspaceTitle('[Image #1] fix the header spacing'), 'Fix the header spacing')
+})
