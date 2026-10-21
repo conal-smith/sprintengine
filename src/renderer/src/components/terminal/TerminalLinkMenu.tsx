@@ -8,7 +8,7 @@ import { isLoopbackUrl } from '../../../../shared/browser'
 import { openUrlInPane } from '../workspace/pane/browser/openInPane'
 import { dispatchFileReveal } from '../../utils/fileReveal'
 import { dispatchEditorFocusEvent } from '../../utils/editorFocus'
-import { basename } from '../../utils/paths'
+import { basename, clipboardPath } from '../../utils/paths'
 import { isImageFile } from '../../utils/files'
 import {
   backlogRelativePath,
@@ -93,7 +93,7 @@ export function TerminalLinkMenu({
             }
             case 'copy-path': {
               if (target.kind !== 'file') return
-              await window.api.clipboardWriteText(target.resolvedPath)
+              await window.api.clipboardWriteText(clipboardPath(target.resolvedPath))
               return
             }
             case 'open-browser': {
