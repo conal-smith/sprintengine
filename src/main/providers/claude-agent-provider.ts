@@ -13,11 +13,18 @@
 // is ESM-only and the main bundle is CJS, so the SDK is loaded via dynamic
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
-import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
+import {
+  applyClaudeTaskTool,
+  claudeTaskResultFromText,
+  claudeTaskTodos,
+  isClaudeTaskTool,
+  readStoredClaudeTasks,
+  type ClaudeTaskList,
+} from './claude-task-list'
 import type { ChildProcess } from 'child_process'
 import { spawnClaudeLocalProcess } from './claude-local-process'
 import { randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openConfinedExistingFile, readBoundedConversationFile } from '../conversation-file-access'
@@ -304,6 +311,16 @@ type SessionState = {
   // first reported (mapSdkMessage). Null until its first init.
   cliMode: string | null
   cliSpawnMode: string | null
+  // The permission mode the live child was spawned with, and whether its
+  // first init named another where that was bypass: Claude Code's own
+  // settings (`permissions.disableBypassPermissionsMode`) can refuse it, and
+  // the child then starts in a mode that asks.
+  requestedSpawnMode: string | null
+  bypassRefused: boolean
+  // That refusal has been said in this chat once already.
+  bypassRefusalNoted?: boolean
+  // Claude Code's task list as this app has read it (mapSdkMessage).
+  claudeTasks?: ClaudeTaskList
   // Session-level events (resume cursor updates) that arrived while no turn
   // stream was open to carry them; flushed at the next turn start.
   pendingSessionEvents: ConversationEvent[]
@@ -651,6 +668,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.childMode = null
     state.cliMode = null
     state.cliSpawnMode = null
+    state.requestedSpawnMode = null
+    state.bypassRefused = false
     state.childPid = null
     state.spawnedAt = null
     state.commandOutputTails?.stopAll()
@@ -1006,13 +1025,21 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // WSL machine's file is under its own Linux home, out of reach here.
     let savedCostUsd = 0
     if (state.providerSessionId && !wslTarget) {
-      const check = await ensureResumableTranscript(
-        resolveClaudeConfigDir(homedir(), env),
-        state.workspaceRoot,
-        state.providerSessionId,
-      )
+      const configDir = resolveClaudeConfigDir(homedir(), env)
+      const check = await ensureResumableTranscript(configDir, state.workspaceRoot, state.providerSessionId)
       state.resumeNote = transcriptCheckNote(check)
       if ((check.kind === 'ok' || check.kind === 'repaired') && check.savedCostUsd) savedCostUsd = check.savedCostUsd
+      // The chat's task list is held in memory, so a chat resumed after the
+      // app restarted would start its next task tool row from an empty list:
+      // a new task shown alone, an update shown as no list at all. It starts
+      // from the list the CLI left on disk instead, the one the resumed
+      // session goes on writing. Shown only; one that cannot be read is
+      // left as before.
+      if (state.claudeTasks === undefined) {
+        const listId = env.CLAUDE_CODE_TASK_LIST_ID?.trim() || state.providerSessionId
+        const stored = await readStoredClaudeTasks(configDir, listId)
+        if (stored && state.claudeTasks === undefined) state.claudeTasks = stored
+      }
       try {
         assertSpawnWanted(state, generation)
       } catch (error) {
@@ -1175,6 +1202,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.queryCostUsd = savedCostUsd
     state.childPreset = state.permissionPreset
     state.childMode = ownSdkMode(state)
+    state.requestedSpawnMode = permissionMode ?? null
+    state.bypassRefused = false
     state.inputQueue = inputQueue
     state.abort = abort
     void pump(state, q)
@@ -1377,8 +1406,12 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // show. The child has to run under bypass, so a live switch to bypass
     // answers the rest of the reply too; and the chat has to still be on it,
     // so a stricter mode chosen while a child that could not take it goes on
-    // bypassing holds whatever that child still asks about.
+    // bypassing holds whatever that child still asks about. A child whose own
+    // settings refused bypass runs in a mode that asks on purpose: while the
+    // chat is on Bypass, what it asks goes to the person, and the runtime does
+    // not answer it as Bypass either (`mustAsk`).
     const bypassable =
+      !(state.bypassRefused && state.permissionPreset === 'bypass') &&
       state.mode !== 'plan' &&
       state.mode !== 'ask' &&
       toolName !== 'AskUserQuestion' &&
@@ -1546,6 +1579,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         childMode: null,
         cliMode: null,
         cliSpawnMode: null,
+        requestedSpawnMode: null,
+        bypassRefused: false,
         pendingSessionEvents: [],
         onSessionEvent: input.onSessionEvent ?? null,
         continuationSequence: 0,
@@ -2120,12 +2155,39 @@ async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skill
       if (!/^[\w.-]+$/.test(id) || id === '.' || id === '..') throw new Error(`Attached skill ${id} is invalid.`)
       const source = await realpath(join(workspaceRoot, '.claude', 'skills', id))
       await cp(source, join(dir, 'skills', id), { recursive: true })
+      const staged = join(dir, 'skills', id, 'SKILL.md')
+      const text = await readFile(staged, 'utf8').catch(() => null)
+      const usable = text === null ? null : withoutModelInvocationGuard(text)
+      if (usable !== null && usable !== text) {
+        // Removed first: a SKILL.md the skill links to elsewhere is copied as
+        // the link, and writing through it would change the skill's own file.
+        await rm(staged, { force: true })
+        await writeFile(staged, usable)
+      }
     }
     return dir
   } catch (error) {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
     throw error
   }
+}
+
+/**
+ * A skill's SKILL.md without its `disable-model-invocation` key, the rest of
+ * the file as it was. Claude Code's Skill tool refuses a skill marked so
+ * unless the person typed `/<name>` in the message itself, and an attached
+ * skill is named in the note the chat puts ahead of the message, never typed:
+ * the model was told to use it and could not. Attaching it is the person
+ * asking for it, so the staged copy drops the key.
+ */
+function withoutModelInvocationGuard(text: string): string {
+  const open = /^---[ \t]*\r?\n/.exec(text)
+  if (!open) return text
+  const rest = text.slice(open[0].length)
+  const close = /^---[ \t]*(?:\r?\n|$)/m.exec(rest)
+  if (!close) return text
+  const front = rest.slice(0, close.index).replace(/^disable-model-invocation[ \t]*:.*(?:\r?\n|$)/gm, '')
+  return `${open[0]}${front}${rest.slice(close.index)}`
 }
 
 /**
@@ -2675,6 +2737,9 @@ export function mapSdkMessage(
     // chat set accounts for.
     cliMode?: string | null
     cliSpawnMode?: string | null
+    requestedSpawnMode?: string | null
+    bypassRefused?: boolean
+    bypassRefusalNoted?: boolean
     // A compaction is under way: the CLI repeats its `compacting` status every
     // half minute while it summarises, and the transcript hears it once.
     compacting?: boolean
@@ -2711,10 +2776,18 @@ export function mapSdkMessage(
     // Pictures being written for steps this message reported; the caller
     // waits for them before the events go out, so no path names a missing file.
     toolImageWrites?: Promise<void>[]
-    // Claude Code's task list as the main chain's task tools left it, and
-    // those calls still waiting for their results (claude-task-list.ts).
+    // Claude Code's task list as the task tools left it, those calls still
+    // waiting for their results (an agent's with the lane it runs in), and
+    // the main chain's latest task tool row (claude-task-list.ts).
     claudeTasks?: ClaudeTaskList
-    taskToolCalls?: Map<string, { name: string; input: Record<string, unknown> }>
+    taskToolCalls?: Map<string, { name: string; input: Record<string, unknown>; parentToolUseId?: string }>
+    taskToolRow?: {
+      turnId: string
+      toolUseId: string
+      name: string
+      input: Record<string, unknown>
+      output?: ConversationToolOutputPayload
+    }
     // The model refused and the CLI answered on its fallback model, already
     // noted (it may say so mid-turn and again as the turn ends); and why the
     // model refused when no fallback ran, for the turn's end to say. Both
@@ -2778,6 +2851,26 @@ export function mapSdkMessage(
   const apiKeySource = init ? normalizeApiKeySource(message.apiKeySource) : null
   if (init && typeof message.model === 'string' && message.model) state.contextModel = message.model
   if (init && typeof message.permissionMode === 'string') {
+    // Asked for bypass and started in another mode: the person's (or their
+    // organisation's) Claude Code settings turn bypass off, and the CLI fell
+    // back to a mode that asks without saying so. Said once per chat.
+    if (
+      state.cliSpawnMode == null &&
+      state.requestedSpawnMode === 'bypassPermissions' &&
+      message.permissionMode !== 'bypassPermissions'
+    ) {
+      state.bypassRefused = true
+      if (turnId && !state.bypassRefusalNoted) {
+        state.bypassRefusalNoted = true
+        events.push(
+          eventFor(state, 'command_output', {
+            turnId,
+            adapterNote: true,
+            output: 'Claude Code’s settings turn off bypass permissions here, so actions will ask for approval.',
+          }),
+        )
+      }
+    }
     state.cliSpawnMode ??= message.permissionMode
     state.cliMode = message.permissionMode
   }
@@ -3030,10 +3123,19 @@ export function mapSdkMessage(
         const toolInput = asRecord(block.input) ?? {}
         // A main-chain task tool's row is a todo row carrying the list as it
         // stands, and is stamped again once its result says what changed.
-        // An agent's task tools are its own bookkeeping, not the chat's plan.
+        // An agent writes the same list (Claude Code keeps one per session,
+        // its agents' included), so what its creates and updates change is
+        // the chat's plan too; its own row stays the tool it is, in its lane.
         const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
-        if (taskTool)
-          (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+        if (taskTool) {
+          ;(state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+          if (turnId) state.taskToolRow = { turnId, toolUseId: block.id as string, name: block.name, input: toolInput }
+        } else if (
+          parentToolUseId &&
+          typeof block.id === 'string' &&
+          (block.name === 'TaskCreate' || block.name === 'TaskUpdate')
+        )
+          (state.taskToolCalls ??= new Map()).set(block.id, { name: block.name, input: toolInput, parentToolUseId })
         const kind = taskTool ? 'todo' : inferConversationToolKind(block.name)
         const display = kind === 'mcp' && typeof block.id === 'string' ? displays.get(block.id) : undefined
         const payload: ConversationToolStartedPayload = {
@@ -3130,32 +3232,43 @@ export function mapSdkMessage(
         if (taskCall) {
           state.taskToolCalls!.delete(toolUseId!)
           const tasks = state.claudeTasks ?? new Map()
+          const structured = oneResult ? message.tool_use_result : undefined
+          const result =
+            taskCall.parentToolUseId && structured === undefined
+              ? claudeTaskResultFromText(taskCall.name, output)
+              : structured
           const next =
             block.is_error === true || declined
               ? tasks
-              : applyClaudeTaskTool(
-                  tasks,
-                  taskCall.name,
-                  taskCall.input,
-                  oneResult ? message.tool_use_result : undefined,
-                )
+              : applyClaudeTaskTool(tasks, taskCall.name, taskCall.input, result)
           // The row is announced again with the list the call left, ahead of
           // its result: a step reported twice keeps its place and its start.
-          if (next !== tasks) {
-            state.claudeTasks = next
+          // An agent's call has no todo row of its own, so the main chain's
+          // latest one in this turn, which the todo strip reads, is announced
+          // again instead, and its result with it when it had one: a row
+          // announced again reads as running until a result closes it.
+          const row = !taskCall.parentToolUseId
+            ? { turnId, toolUseId: toolUseId!, name: taskCall.name, input: taskCall.input, output: undefined }
+            : state.taskToolRow?.turnId === turnId
+              ? state.taskToolRow
+              : undefined
+          if (next !== tasks) state.claudeTasks = next
+          if (next !== tasks && row) {
             events.push(
               eventFor(state, 'tool_started', {
-                turnId,
-                toolCallId: toolUseId,
-                tool: taskCall.name,
-                toolUseId,
-                name: taskCall.name,
+                turnId: row.turnId,
+                toolCallId: row.toolUseId,
+                tool: row.name,
+                toolUseId: row.toolUseId,
+                name: row.name,
                 kind: 'todo',
-                input: JSON.parse(JSON.stringify({ ...taskCall.input, todos: claudeTaskTodos(next) })),
+                input: JSON.parse(JSON.stringify({ ...row.input, todos: claudeTaskTodos(next) })),
               } satisfies ConversationToolStartedPayload),
             )
+            if (row.output) events.push(eventFor(state, 'tool_output', row.output))
           }
         }
+        if (toolUseId && state.taskToolRow?.toolUseId === toolUseId) state.taskToolRow.output = payload
         events.push(eventFor(state, 'tool_output', payload))
       }
       break
