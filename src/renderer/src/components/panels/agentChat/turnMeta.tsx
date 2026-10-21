@@ -9,9 +9,11 @@ import { apiKeyBillingNotice } from '../../../../../shared/conversation/apiKeySo
 import { CONVERSATION_DEFAULT_MODEL_ID } from '../../../../../shared/conversation-harness'
 import { CompactGlyph } from './toolRows/ToolKindGlyph'
 import { formatTokenCount } from '../../../utils/tokenFormat'
+import { GhostButton } from '../../ui'
 
 type AssistantEntry = Extract<TranscriptEntry, { kind: 'assistant' }>
 type CompactionEntry = Extract<TranscriptEntry, { kind: 'compaction' }>
+type HandoffEntry = Extract<TranscriptEntry, { kind: 'handoff' }>
 
 // A provider's model id as the footer names it. The dated snapshot suffix is
 // noise next to the family and version; the harness's "default" is not a name.
@@ -76,7 +78,9 @@ export function TurnMeta({ entry, modelSwitched = false }: { entry: AssistantEnt
   )
 }
 
-// "Context compacted · automatically · 182k → 24k tokens".
+// "Context compacted · automatically · 182k → 24k tokens". Studio's own
+// compaction before the cache expired says so: the CLI calls it a manual one,
+// since what it was sent was `/compact`, but nobody asked for it.
 export function compactionLabel(entry: CompactionEntry): string {
   const tokens =
     entry.preTokens === undefined
@@ -84,13 +88,36 @@ export function compactionLabel(entry: CompactionEntry): string {
       : entry.postTokens === undefined
         ? `from ${formatTokenCount(entry.preTokens)} tokens`
         : `${formatTokenCount(entry.preTokens)} → ${formatTokenCount(entry.postTokens)} tokens`
-  const trigger = entry.trigger === 'auto' ? 'automatically' : entry.trigger === 'manual' ? 'on request' : undefined
+  const trigger = entry.beforeCacheExpiry
+    ? 'automatically, before the cache expired'
+    : entry.trigger === 'auto'
+      ? 'automatically'
+      : entry.trigger === 'manual'
+        ? 'on request'
+        : undefined
   return ['Context compacted', trigger, tokens].filter(Boolean).join(' · ')
 }
 
+// "Handed off to a new session · 221k tokens left behind".
+export function handoffLabel(entry: HandoffEntry): string {
+  const left = entry.preTokens !== undefined ? `${formatTokenCount(entry.preTokens)} tokens left behind` : undefined
+  return ['Handed off to a new session', left].filter(Boolean).join(' · ')
+}
+
 // A seam across the transcript column: a hairline either side of a quiet
-// label. The view's own furniture, never something said in the chat.
-function TimelineSeam({ label, ariaLabel, glyph }: { label: string; ariaLabel: string; glyph?: ReactNode }) {
+// label. The view's own furniture, never something said in the chat. An
+// action, where the seam has one, sits after the label, in its quiet line.
+function TimelineSeam({
+  label,
+  ariaLabel,
+  glyph,
+  action,
+}: {
+  label: string
+  ariaLabel: string
+  glyph?: ReactNode
+  action?: ReactNode
+}) {
   return (
     <div
       role="separator"
@@ -101,6 +128,7 @@ function TimelineSeam({ label, ariaLabel, glyph }: { label: string; ariaLabel: s
       <span className="flex shrink-0 items-center gap-1.5">
         {glyph}
         {label}
+        {action}
       </span>
       <span className="flex-1 border-t border-[color:var(--border-subtle)]" />
     </div>
@@ -118,6 +146,38 @@ export function CompactionDivider({ entry }: { entry: CompactionEntry }) {
       ariaLabel={label}
       glyph={<CompactGlyph className="icon-xs shrink-0 text-[color:var(--text-disabled)]" />}
     />
+  )
+}
+
+// Past this line the agent is a new session that has the conversation above
+// only as a file of its messages, which its first message pointed it at. The
+// history stays as it was; the seam says where the agent's memory of it
+// changed. Open file shows the file the new session was given.
+export function HandoffDivider({ entry, onOpenFile }: { entry: HandoffEntry; onOpenFile?: (path: string) => void }) {
+  const label = handoffLabel(entry)
+  return (
+    <TimelineSeam
+      label={label}
+      ariaLabel={label}
+      glyph={<HandoffGlyph className="icon-xs shrink-0 text-[color:var(--text-disabled)]" />}
+      action={
+        onOpenFile ? (
+          <GhostButton size="xs" className="-my-1 ml-1" onClick={() => onOpenFile(entry.path)}>
+            Open file
+          </GhostButton>
+        ) : undefined
+      }
+    />
+  )
+}
+
+// A page handed across: what the new session is given in place of the old one.
+function HandoffGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M4 2.5h5l3 3v8H4z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M6.5 9.5h3M8.5 8 10 9.5 8.5 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   )
 }
 

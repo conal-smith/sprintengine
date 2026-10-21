@@ -127,6 +127,14 @@ export type ChatExportMeta = {
   exportedAt: number
   locale: string
   timeZone: string
+  /**
+   * The words alone: the person's messages, the replies' prose, and the
+   * questions and plans the person answered, which are their words too. No
+   * step, no agent sent off, no permission given, no command the CLI ran:
+   * what a handoff gives a new session (chat-export-handoff.ts), which has
+   * the files to look at for itself.
+   */
+  messagesOnly?: boolean
 }
 
 export type ChatExportSource = {
@@ -219,6 +227,7 @@ function messageOf(
       }
     }
     case 'commandOutput': {
+      if (meta.messagesOnly) return null
       // A command the CLI ran by itself (`/context`): what it was, not what it printed.
       const entry = row.entry
       const text = entry.note ? entry.output.trim() : entry.command ? `Ran /${entry.command}` : ''
@@ -262,11 +271,13 @@ function assistantParts(
       for (const part of before) prose(part.text)
     }
     // An agent the turn sent off is a line of its own, after the work.
-    if (!tool.subagentLane) run.push(tool)
+    if (!tool.subagentLane && !meta.messagesOnly) run.push(tool)
   }
   flush()
-  for (const lane of tools.filter((tool) => tool.subagentLane)) parts.push({ kind: 'agent', text: agentLine(lane) })
-  for (const decision of row.decisions) parts.push(...decisionParts(decision))
+  if (!meta.messagesOnly)
+    for (const lane of tools.filter((tool) => tool.subagentLane)) parts.push({ kind: 'agent', text: agentLine(lane) })
+  for (const decision of row.decisions)
+    if (!meta.messagesOnly || answeredInWords(decision)) parts.push(...decisionParts(decision))
   prose(entry.text)
   if (entry.status === 'failed') {
     const reason = entry.failureDetail?.trim() || entry.failureReason?.trim()
@@ -384,6 +395,12 @@ function decisionParts(row: ConversationDecisionRow): ExportPart[] {
       : DECISION_VERB[entry.status]
   if (!verdict) return []
   return [{ kind: 'note', text: `${verdict}: ${firstLine(entry.summary)}` }]
+}
+
+// A question answered or a plan decided: the person's own words about the
+// work. A permission is about a step, which a messages-only export leaves out.
+function answeredInWords(row: ConversationDecisionRow): boolean {
+  return row.kind !== 'decisionGroup' && (row.entry.requestKind === 'question' || row.entry.requestKind === 'plan')
 }
 
 function latestModel(entries: readonly TranscriptEntry[]): string | undefined {

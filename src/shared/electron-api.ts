@@ -239,6 +239,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -1330,6 +1332,9 @@ export type ElectronApi = {
   // Take the conversation back to before one of its user messages ("Edit from
   // here"); gated on the provider's `rewind` capability.
   conversationRewindToTurn: (input: ConversationRewindInput) => Promise<ConversationRewindResult>
+  // Hand the chat off to a fresh session pointed at a file of its messages,
+  // instead of compacting it; gated on the provider's `handoff` capability.
+  conversationHandoff: (input: ConversationHandoffInput) => Promise<ConversationHandoffResult>
   // Start a new chat holding this one up to an earlier message ("Fork from
   // here"); gated on the provider's `fork` capability.
   conversationForkAtTurn: (input: ConversationForkInput) => Promise<ConversationForkResult>

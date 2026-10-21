@@ -133,6 +133,7 @@ import type {
   ConversationSessionEventSink,
   MockAdapterApprovalInput,
   MockAdapterForkInput,
+  MockAdapterHandoffInput,
   MockAdapterModelInput,
   MockAdapterPermissionInput,
   MockAdapterRewindInput,
@@ -289,6 +290,11 @@ type SessionState = {
   // Set by a rewind: the next child resumes `providerSessionId` only up to
   // this entry, as a fork. Cleared once a child has started from it.
   resumeAt: string | null
+  // The file a handoff saved the conversation's messages to, for as long as
+  // this session is the one the handoff began: every child it spawns may read
+  // it unasked. `owed` until a message has pointed the session at it
+  // (handoffSeedText); a message that is a command does not.
+  handoff: { path: string; owed: boolean } | null
   query: Query | null
   inputQueue: PushStream<SDKUserMessage> | null
   abort: AbortController | null
@@ -1071,7 +1077,9 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // also lets a `defaultMode` of bypassPermissions in the user's own
       // settings stand under `none`, which is that CLI's own default.
       allowDangerouslySkipPermissions: true,
-      ...(state.allowedTools?.length ? { allowedTools: state.allowedTools } : {}),
+      ...(state.allowedTools?.length || state.handoff
+        ? { allowedTools: [...(state.allowedTools ?? []), ...(state.handoff ? [handoffReadRule(state)] : [])] }
+        : {}),
       systemPrompt: { type: 'preset', preset: 'claude_code', ...(systemAppend ? { append: systemAppend } : {}) },
       // Never the repository's own settings. `.claude/settings.json` and
       // `settings.local.json` can carry allow rules, which would answer tool
@@ -1540,6 +1548,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       steer: true,
       rewind: true,
       fork: true,
+      handoff: true,
       stopSubagent: true,
       sideQuestion: true,
     },
@@ -1568,6 +1577,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         settledChainUuid: null,
         openToolUseIds: new Set(),
         resumeAt: (input.resumeSessionId?.trim() && input.resumeSessionAt?.trim()) || null,
+        handoff: input.handoffPath?.trim() ? { path: input.handoffPath.trim(), owed: true } : null,
         query: null,
         inputQueue: null,
         abort: null,
@@ -1721,17 +1731,24 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // Skills that wait for background work are not loaded yet, so the note
       // does not name them.
       const skillsLoaded = !waiting.includes('the attached skills')
-      if (!turn.queue.closed)
+      // A handoff's pointer goes ahead of the first message that is not a
+      // command, once: a command is the CLI's to run, and read after the
+      // pointer it would be prose. It waits for the next message instead.
+      const seed = state.handoff?.owed && !opensWithCommand ? handoffSeedText(state) : null
+      const message =
+        input.skills?.length && skillsLoaded && !opensWithCommand
+          ? `Use the attached skills: ${input.skills.map(attachedSkillName).join(', ')}.\n\n${input.message}`
+          : input.message
+      if (!turn.queue.closed) {
         pushUserMessage(
           state,
-          buildUserMessageContent(
-            input.skills?.length && skillsLoaded && !opensWithCommand
-              ? `Use the attached skills: ${input.skills.map(attachedSkillName).join(', ')}.\n\n${input.message}`
-              : input.message,
-            input.attachments,
-            opensWithCommand,
-          ),
+          buildUserMessageContent(seed ? `${seed}\n\n${message}` : message, input.attachments, opensWithCommand),
         )
+        if (seed && state.handoff) {
+          state.handoff.owed = false
+          turn.queue.push(eventFor(state, 'session_updated', { historySeeded: true }))
+        }
+      }
 
       try {
         for await (const event of turn.queue) yield event
@@ -1995,6 +2012,31 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.lastChainUuid = input.cursor?.at ?? null
       state.settledChainUuid = input.cursor?.at ?? null
       state.pendingSessionEvents = []
+      // Back to the start of a handed-off session, its pointer is owed again;
+      // anywhere else is a session that has its conversation already.
+      state.handoff = input.handoffPath ? { path: input.handoffPath, owed: true } : null
+      state.lastActivityAt = now()
+      return { ok: true }
+    },
+
+    // Hand an idle session off: its child goes, and the next one starts a new
+    // provider session, which the next message that is not a command points
+    // at the file of the conversation's messages. The provider session it
+    // leaves stays on disk as it was, so going back to a message before the
+    // handoff resumes it there.
+    async handoff(input: MockAdapterHandoffInput): Promise<ConversationProviderPermissionResult> {
+      const state = sessions.get(input.sessionId)
+      if (!state) return { ok: false, message: 'Conversation session is not registered with the Claude provider.' }
+      if (state.turn) return { ok: false, message: 'Stop the running turn before handing the chat off.' }
+      if (backgroundWorkRunning(state))
+        return { ok: false, message: 'Work this chat started is still running. Hand the chat off once it has finished.' }
+      disposeChild(state)
+      state.providerSessionId = null
+      state.resumeAt = null
+      state.lastChainUuid = null
+      state.settledChainUuid = null
+      state.pendingSessionEvents = []
+      state.handoff = { path: input.handoffPath, owed: true }
       state.lastActivityAt = now()
       return { ok: true }
     },
@@ -3751,6 +3793,34 @@ function subagentLaneFields(
 // later rewind can go back to it (ConversationProviderCursor). Absent until
 // this process has seen an entry of the session: a point it cannot name is no
 // point to go back to.
+// The file a handoff saved, as the agent's own machine spells it: a chat whose
+// `claude` runs in WSL reads this computer's files under `/mnt/<drive>`.
+function handoffAgentPath(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string {
+  const path = state.handoff?.path ?? ''
+  return isWslHostId(state.cliRuntimes?.['claude-code']?.hostId) && isWindowsPath(path) ? toWslPath(path) : path
+}
+
+/**
+ * What a handed-off session's first message opens with, the person's words
+ * following after a blank line. The wording is the person's choice (owner
+ * ruling 2026-10-21) and nothing is added to it.
+ */
+function handoffSeedText(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string {
+  return `You're picking up a conversation from an earlier session, which was handed off to save cost. The text of that conversation (messages only, no tool calls) is at \`${handoffAgentPath(state)}\`. Read it to see where things stood.`
+}
+
+/**
+ * The allow rule for reading that one file, so the session's first step does
+ * not stop on a permission card for a file Studio handed it: Claude Code's
+ * `Read(//…)` names a path from the root of the filesystem, a Windows one as
+ * `//c/…`.
+ */
+function handoffReadRule(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string {
+  const path = handoffAgentPath(state).replace(/\\/gu, '/')
+  const posix = /^[A-Za-z]:\//u.test(path) ? `/${path[0]!.toLowerCase()}${path.slice(2)}` : path
+  return `Read(/${posix.startsWith('/') ? posix : `/${posix}`})`
+}
+
 function providerCursorPayload(state: { providerSessionId: string | null; lastChainUuid?: string | null }): {
   providerCursor?: { sessionId: string; at: string }
 } {

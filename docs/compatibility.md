@@ -46,7 +46,9 @@ made side by side take one each. The backend wire went from 2 to 3 when
 `sendTurn` took `origin` (a message Studio sends a chat itself), and to 4 when
 it took `files` (a message's files attached by path), both on 2026-10-07. It
 went to 5 when `sendTurn` took `composedAt` and `confirmedStale` and could
-answer `stale` (2026-10-20).
+answer `stale` (2026-10-20), and to 6 when it gained `handoffConversation`, a
+chat handed off to a fresh session, and `sendTurn`'s `origin` the reason
+`auto-compact` (2026-10-21).
 
 A session's summary, which that wire pushes with every chat event, carries
 three optional clocks a reader must not count on: `lastTurnEndedAt` (when
@@ -482,6 +484,9 @@ stream, the server frames `call` and `cancel`, and the client frames `reply`
 and `progress`. A Studio sends `call` only to a connection that offered a
 toolset, and the SDK sends `reply` only to a Studio that advertised the
 capability, so neither end is handed a frame type it does not know.
+`conversation-handoff` (2026-10-21) adds the owner-only
+`conversation.handoff`, a chat handed off to a fresh session instead of
+compacted, answered with the path of the file its messages were saved to.
 `files-write` adds the owner-only `files.*` by root, which the canvas uses
 over a Studio's boards. The `store` root kind (2026-10-16), the project's
 store in the person's home where a Studio keeps the captures, recordings and
