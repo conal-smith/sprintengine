@@ -140,7 +140,7 @@ test('run-card', async () => {
       },
       installSkill: async (input) => {
         calls.push(`installSkill ${input.skillId}`)
-        return { ok: true, dirName: 'browser', harnesses: ['claude'], paths: [], fileCount: 1 }
+        return { ok: true, dirName: 'browser', harnesses: ['claude'], paths: [], fileCount: 1, scope: 'workspace' }
       },
       installPlugin: async (input) => {
         calls.push(`installPlugin ${input.pluginId}`)

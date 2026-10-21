@@ -5,6 +5,7 @@ import type { ConversationImageAttachment, ConversationStoredImageAttachment } f
 import type {
   ConversationApprovalKind,
   ConversationBackgroundTask,
+  ConversationGoal,
   ConversationQuestion,
   ConversationSessionStatus,
   ConversationEvent,
@@ -21,6 +22,7 @@ import { normalizeApiKeySource } from './apiKeySource.js'
 import { applyPromptCacheEvent, type PromptCacheReading } from './promptCache.js'
 import { isBackgroundLaunchAck, readSubagentStatus } from './subagents.js'
 import { readBackgroundTasks } from './backgroundTasks.js'
+import { readConversationGoal } from './goal.js'
 
 // ── Pure projection ─────────────────────────────────────────────────────────
 
@@ -77,6 +79,9 @@ export type TranscriptToolEntry = {
   // Which kind of agent was spawned ('Explore', 'general-purpose', a custom
   // agent id) when the call named one; the lane's label.
   subagentType?: string
+  // An MCP tool's own title and its server's name, where the provider sent them.
+  displayTitle?: string
+  serverName?: string
   // The lane this call ran inside, when it is a subagent's own tool call.
   parentToolUseId?: string
   // Tool calls made inside this lane, in the order they started.
@@ -152,6 +157,9 @@ export type TranscriptEntry =
       // The provider's last call failed and it is waiting to try again. Cleared
       // by whatever the turn reports next, so it is only ever the latest word.
       retry?: TurnRetry
+      // The provider is summarising the conversation. Cleared by the summary
+      // landing or by whatever else the turn reports next.
+      compacting?: true
       costUsd?: number
       durationMs?: number
       numTurns?: number
@@ -303,6 +311,9 @@ export type ConversationProjection = {
   // The shells and monitors the session's process still runs after its turn
   // ended, as it last reported them: what the agent is waiting on.
   backgroundTasks: ConversationBackgroundTask[]
+  // The goal the agent keeps working toward by itself, as it last reported
+  // it; null for none.
+  goal: ConversationGoal | null
   // What each kind of agent this session can spawn is for, by type name
   // ('Explore', 'Plan', a custom agent), as the provider described them.
   agentTypes: Record<string, string>
@@ -518,6 +529,7 @@ export type TurnAccumulator = {
   reasoningOpenedAt?: number
   reasoningMs?: number
   retry?: TurnRetry
+  compacting?: true
   costUsd?: number
   durationMs?: number
   numTurns?: number
@@ -558,6 +570,8 @@ export type ToolAccumulator = {
   removedLines?: number
   subagentLane?: boolean
   subagentType?: string
+  displayTitle?: string
+  serverName?: string
   parentToolUseId?: string
   agent?: TranscriptAgentState
   messages?: TranscriptAgentMessage[]
@@ -630,6 +644,7 @@ export function projectConversation(
   let apiKeySource: string | null = null
   let sessionNotice: string | null = null
   let backgroundTasks: ConversationBackgroundTask[] = []
+  let goal: ConversationGoal | null = null
   const agentTypes: Record<string, string> = {}
   let promptCache: PromptCacheReading | null = null
   // Reverts still in effect, oldest first. Each covers the turns from its
@@ -694,7 +709,16 @@ export function projectConversation(
       const turn = turns.get(turnId)
       if (turn?.retry) turn.retry = undefined
     }
+    // So does a compaction notice, but a usage report can land mid-summary.
+    if (turnId && event.type !== 'context_compacting' && event.type !== 'usage_updated') {
+      const turn = turns.get(turnId)
+      if (turn?.compacting) turn.compacting = undefined
+    }
     switch (event.type) {
+      case 'context_compacting': {
+        if (turnId) ensureTurn(turnId).compacting = true
+        break
+      }
       case 'turn_retrying': {
         const attempt = readNumber(event.payload, 'attempt')
         const maxAttempts = readNumber(event.payload, 'maxAttempts')
@@ -717,8 +741,10 @@ export function projectConversation(
         // false-alarm the API-key banner after a restart).
         apiKeySource = null
         sessionNotice = null
-        // A new session's process runs nothing yet.
+        // A new session's process runs nothing yet, and says its goal again
+        // once it has read the thread's.
         backgroundTasks = []
+        goal = null
         break
       }
       case 'session_updated': {
@@ -729,6 +755,8 @@ export function projectConversation(
         const notice = readString(event.payload, 'notice')
         if (notice) sessionNotice = notice
         backgroundTasks = readBackgroundTasks(event.payload) ?? backgroundTasks
+        const reportedGoal = readConversationGoal(event.payload)
+        if (reportedGoal !== undefined) goal = reportedGoal
         if (Array.isArray(event.payload?.agents))
           for (const agent of event.payload.agents) {
             const name = readString(agent as Record<string, unknown>, 'name')
@@ -854,6 +882,8 @@ export function projectConversation(
           removedLines: readNumber(event.payload, 'removedLines'),
           subagentLane: readBoolean(event.payload, 'subagentLane'),
           subagentType: readString(event.payload, 'subagentType'),
+          displayTitle: readString(event.payload, 'displayTitle') ?? turn.tools.get(id)?.displayTitle,
+          serverName: readString(event.payload, 'serverName') ?? turn.tools.get(id)?.serverName,
           parentToolUseId,
         }
         const pendingMessage = pendingMessages.get(id)
@@ -1081,6 +1111,7 @@ export function projectConversation(
           closeReasoning(turn, event.createdAt)
           turn.status = interrupted ? 'interrupted' : 'failed'
           turn.retry = undefined
+          turn.compacting = undefined
           turn.failureReason = reason
           turn.failureDetail = readString(event.payload, 'message') ?? turn.failureDetail
           turn.completedAt = event.createdAt
@@ -1184,6 +1215,7 @@ export function projectConversation(
       reasoningDurationMs: turn.reasoningMs,
       reasoningLive: turn.reasoningOpenedAt !== undefined ? true : undefined,
       ...(turn.retry ? { retry: turn.retry } : {}),
+      ...(turn.compacting ? { compacting: true as const } : {}),
       costUsd: turn.costUsd,
       durationMs: turn.durationMs,
       numTurns: turn.numTurns,
@@ -1251,6 +1283,7 @@ export function projectConversation(
     apiKeySource,
     sessionNotice,
     backgroundTasks,
+    goal,
     agentTypes,
     revertedAfterSeq: reverts.at(-1)?.afterSeq ?? null,
     promptCache,
@@ -1375,6 +1408,8 @@ export function nestSubagentLanes(turn: TurnAccumulator, index: LaneIndex): Tran
       // stamp the flag (older event streams, or a renamed spawn tool).
       ...(tool.subagentLane || children.length > 0 ? { subagentLane: true } : {}),
       ...(tool.subagentType ? { subagentType: tool.subagentType } : {}),
+      ...(tool.displayTitle ? { displayTitle: tool.displayTitle } : {}),
+      ...(tool.serverName ? { serverName: tool.serverName } : {}),
       ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
       ...(children.length > 0 ? { children } : {}),
       ...(tool.agent ? { agent: tool.agent } : {}),

@@ -2,6 +2,8 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
+import { conversationWorkingRoot } from '../../shared/agent-state'
+import { getWorkspaceChangeSummary } from '../../main/workspace-change-summary'
 import { isMachinePath } from '../../shared/machine-paths'
 import { isWorkspaceTombstoned } from '../../shared/workspace-registry'
 import { effectiveAgentLaunchSettings } from '../../shared/launch-settings'
@@ -16,6 +18,7 @@ import { createConversationGatewayHost } from '../../main/automation/tailnet/tai
 import { resolveCheckoutForCwd } from '../../main/checkout-resolve'
 import {
   conversationBranchesOf,
+  conversationCheckoutsOf,
   conversationHostOf,
   conversationPullRequestsOf,
   tailnetSelfMachine,
@@ -35,6 +38,7 @@ import { startedDependencyInstall } from '../../main/worktree-pool/dependency-in
 import { installGitHostResolver, withGitHost } from '../../main/git-run'
 import { createHostRegistry, installHostRegistry } from '../../main/hosts/host-registry'
 import { createAgentLaunchSettingsStore } from '../../main/launch-settings-store'
+import { setWorktreeBranchPrefixReader } from '../../main/worktree-branch-prefix'
 import { readDiscoveredCliModelCatalogs } from '../../main/model-discovery/service'
 import { listPluginRegistryEntries } from '../../main/plugin-registry-instance'
 import { powerActivity } from '../../main/power-activity'
@@ -42,6 +46,7 @@ import { getSharedCredentialStore } from '../../main/secret-store'
 import { createWorkspaceRegistryService } from '../../main/workspace-registry-service'
 import { createWorkspaceRegistryStore } from '../../main/workspace-registry-store'
 import { createWorkspaceSyncService } from '../../main/workspace-sync-service'
+import { startWorkspaceStoreMigration } from '../../main/workspace-store-migration'
 import { knownCliAvailability } from '../../main/cli-availability'
 import { createChatTitler } from '../../main/text-generation/chat-titler'
 import { generateChatTitle } from '../../main/text-generation/text-generation-service'
@@ -104,6 +109,12 @@ export type StudioCoreOptions = {
    * its `claude` runs on. Null for no gateway entry.
    */
   resolveStudioMcpServer?: ConversationRuntimeOptions['resolveStudioMcpServer']
+  /**
+   * Brings a chat's folder back before an agent runs in it, where this
+   * process keeps a worktree pool that may have given it back
+   * (main/worktree-pool/chat-folder-guard.ts). A server keeps no pool.
+   */
+  prepareChatFolder?: ConversationRuntimeOptions['prepareChatFolder']
   /**
    * The agent terminals this process runs, for the gateway's launch cap: an
    * agent may start agents only at its own preset or stricter. A server has
@@ -169,6 +180,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     resolveUserDataDir: () => platform.paths.dataDir(),
     logDiagnostic: logDiagnostic('agents'),
   })
+  // The prefix every worktree branch this process names starts with, and the
+  // ones its cleanup recognises: read from the record on each use, so a
+  // change in Settings ▸ Worktrees names the next one.
+  setWorktreeBranchPrefixReader(() => effectiveAgentLaunchSettings(agentLaunchSettings.get()).worktreeBranchPrefix)
 
   // The machines this computer offers (shared/execution-host.ts): this one,
   // and on Windows each WSL distribution. One registry, installed for the whole
@@ -238,8 +253,19 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     attachmentStore: new ConversationAttachmentStore(dataDir),
     planStore: new ConversationPlanStore(dataDir),
     ...(options.resolveStudioMcpServer ? { resolveStudioMcpServer: options.resolveStudioMcpServer } : {}),
+    ...(options.prepareChatFolder ? { prepareChatFolder: options.prepareChatFolder } : {}),
   })
   conversationRuntime.startIdleSweep(powerActivity)
+  // Each project's state lives in its store in the person's home, on the
+  // machine its chats run on (main/workspace-store.ts). An older build kept it
+  // in `<project>/.sprintengine/`: moved out the first time a folder reaches
+  // the store, and in the background, from the next turn of the loop, for
+  // every project the registry holds, so a chat's history is in place before
+  // anyone opens it.
+  startWorkspaceStoreMigration(
+    () => workspaceSyncService.getSnapshot().state.workspaces.map((workspace) => workspace.folderPath),
+    { log: (message) => console.info(`[workspace-store] ${message}`) },
+  )
   const wslServers =
     process.platform === 'win32' && options.wslServers
       ? options.wslServers({ readHostSettings: () => agentLaunchSettings.get().hosts })
@@ -529,6 +555,22 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
           return record && !record.environment ? (record.folderPath ?? null) : null
         },
         resolveCheckoutForCwd,
+      ),
+    // The chat's own folder (its worktree, when the agent works in one),
+    // counted from the sidebar's shared reading; again only on this computer.
+    checkoutsOf: (keys: Array<{ workspaceId: string; agentId: string; live: boolean }>) =>
+      conversationCheckoutsOf(
+        keys,
+        ({ workspaceId, agentId }) => {
+          const record = workspaceRegistry.getRecord(workspaceId)
+          if (!record || record.environment) return null
+          const agent = record.agents[agentId]
+          const path = conversationWorkingRoot(agent, record.folderPath)
+          if (!path) return null
+          const agentWorktree = agent?.execution?.mode === 'worktree' && Boolean(agent.execution.cwd?.trim())
+          return { path, worktree: agentWorktree || Boolean(record.worktree) }
+        },
+        (checkoutPath) => getWorkspaceChangeSummary({ checkoutPath }),
       ),
   }
   // A chat's rest and its person-clocks, written for a paired device to the

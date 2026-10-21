@@ -62,8 +62,9 @@ import { runGitCommand } from './git-run'
  * so the caller's `watch` hands those directories to the distribution's
  * helper (git-repo-watch-ipc.ts), whose events arrive here the same way.
  *
- * Our own reads cannot wake it: they run with `GIT_OPTIONAL_LOCKS=0`
- * (git-run.ts), so `git status` never rewrites the index it is watching.
+ * Our own polling cannot wake it: it runs with `GIT_OPTIONAL_LOCKS=0`
+ * (git-run.ts), so `git status` never rewrites the index it is watching, and
+ * compares with the working tree through `git diff-index`, which never does.
  */
 
 export type { GitCheckoutChange, GitCheckoutChangeKind }

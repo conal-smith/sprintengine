@@ -11,12 +11,21 @@
 // (`resolveCheckoutForCwd`), which remembers its answer against that file: a
 // folder's first list runs one git to find where its HEAD lives, and every
 // list after that only looks at the file.
+//
+// The files a live chat's checkout carries are the one count that runs git:
+// they come from the shared change-summary reading the sidebar's own lines
+// take, which holds each checkout's answer for a few seconds and queues its
+// reads, and only a chat with a live session is counted, as the sidebar
+// draws a line only for one.
 
 import {
   CONVERSATION_MAX_PULL_REQUESTS,
+  type ConversationThread,
+  type ConversationWireChanges,
   type ConversationWireHost,
   type ConversationWirePullRequest,
 } from '../../../../packages/conversation-protocol/src/serverFrames'
+import type { WorkspaceChangeSummary } from '../../../shared/ipc/git'
 import type { StudioPullRequest } from '../../../../packages/studio-protocol/src/pull-requests'
 import { mapWithLimit } from '../../../shared/concurrency'
 import { executionHostLabel, isWslHostId, LOCAL_HOST_ID, workspaceHostIdOf } from '../../../shared/execution-host'
@@ -134,4 +143,38 @@ export function conversationPullRequestsOf(found: readonly StudioPullRequest[]):
     url: entry.url,
     title: entry.title,
   }))
+}
+
+/** How many chats' checkouts a list counts at once; the shared reading queues its own git reads too. */
+const CHANGE_READS_AT_ONCE = 4
+
+/** The files a change summary counts, as a listed chat carries them; null when git could not split them. */
+export function conversationChangesOf(summary: WorkspaceChangeSummary): ConversationWireChanges | null {
+  if (!summary.files) return null
+  const uncommitted = summary.uncommitted?.files
+  return { ...summary.files, scope: summary.scope, ...(uncommitted ? { uncommitted: { ...uncommitted } } : {}) }
+}
+
+/**
+ * Where each listed chat works: in a worktree of its project or not, and,
+ * for a chat with a live session, the files its checkout carries, as this
+ * desktop's sidebar line and composer strip count them. `checkoutOf` names
+ * the chat's working folder on this disk (null for one on another machine,
+ * or with no folder) and whether it is a worktree. A count that cannot be
+ * read is left out rather than listed as a zero.
+ */
+export async function conversationCheckoutsOf(
+  keys: ReadonlyArray<{ workspaceId: string; agentId: string; live: boolean }>,
+  checkoutOf: (key: { workspaceId: string; agentId: string }) => { path: string; worktree: boolean } | null,
+  summarize: (checkoutPath: string) => Promise<WorkspaceChangeSummary>,
+): Promise<Map<string, Pick<ConversationThread, 'changes' | 'worktree'>>> {
+  const read = await mapWithLimit(keys, CHANGE_READS_AT_ONCE, async (key) => {
+    const checkout = checkoutOf(key)
+    if (!checkout) return null
+    const summary = key.live ? await summarize(checkout.path).catch(() => null) : null
+    const changes = summary ? conversationChangesOf(summary) : null
+    const entry = { ...(changes ? { changes } : {}), ...(checkout.worktree ? { worktree: true } : {}) }
+    return Object.keys(entry).length > 0 ? ([`${key.workspaceId}:${key.agentId}`, entry] as const) : null
+  })
+  return new Map(read.filter((entry): entry is NonNullable<typeof entry> => entry !== null))
 }

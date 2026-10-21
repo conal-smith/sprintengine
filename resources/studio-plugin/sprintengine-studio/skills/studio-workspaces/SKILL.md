@@ -1,6 +1,6 @@
 ---
 name: studio-workspaces
-description: Read and drive SprintEngine Studio's workspaces, agents, terminals, git checkouts and the editor and the workspace browser pane through the workspace_*, agent_*, terminal_*, editor_* and browser_* tools. Use when asked what workspaces or agents exist, to open a workspace or launch an agent, to start or list the agent terminals on this machine, to inspect a workspace's branches and worktrees, to show the person specific files, lines or your diff in their editor, to drive or screenshot the in-app browser, or to check the mobile companion snapshot or tailnet pairing.
+description: Read and drive SprintEngine Studio's workspaces, agents, terminals, git checkouts and the editor and the workspace browser pane through the workspace_*, agent_*, terminal_*, editor_* and browser_* tools. Use when asked what workspaces or agents exist, to open a workspace or launch an agent, to start or list the agent terminals on this machine or read a terminal's output (a dev server's errors, a test run's failures), to inspect a workspace's branches and worktrees, to show the person specific files, lines or your diff in their editor, to drive or screenshot the in-app browser, or to check the mobile companion snapshot or tailnet pairing.
 ---
 
 # Workspaces and terminals
@@ -61,6 +61,21 @@ resolved. Follow the agent with `agent_status` or `terminal_list`.
 directory, workspace, whether the process is live or the session is paused, and
 the agent phase when the CLI reports one. It reads the terminal runtime and
 never writes.
+
+`terminal_read` with `{sessionId}` reads what a terminal printed — a dev
+server's error, a watcher's rebuild, a test run's failure — as plain text with
+the escapes stripped: the newest 200 lines by default (`lines`, at most 2000),
+with `truncated: true` when older output was left out. Every answer carries a
+`cursor`, an opaque string; pass it back as `since`, unchanged, and the next
+read returns only what the terminal printed after it, so follow a running
+server by polling with the last cursor rather than reading its whole log each
+time. A cursor from before the session was resumed or respawned reads the
+newest output instead, with `truncated: true`. A paused or exited session
+still reads the output it left, and `state` (`running`, `paused`, `exited`,
+`failed`) and `exitCode` say how it ended. A full-screen program such as an
+agent CLI reads as the stream that drew it, so for an agent's progress prefer
+`agent_status`. It reads only sessions `terminal_list` lists and never types
+into the terminal.
 
 These terminal tools and the launch tools above are served to agents on this
 machine only, never to a paired machine over the tailnet — a paired device

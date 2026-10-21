@@ -4,6 +4,8 @@ import { installStudioPlatform } from '../server/platform/platform'
 import { claimAppInstance, configureDevUserData } from './app-instance'
 import { createElectronPlatform } from './platform/electron-platform'
 import { attachStartupTimeline } from './startup-timeline'
+import { avoidHyprlandColorManagerCrash } from './hyprland-color-manager'
+import { ensureGuiLocale } from './gui-locale'
 import { REMOVE_INTEGRATIONS_FLAG } from '../shared/integration-removal'
 import { buildStamp } from 'virtual:sprintengine-build-stamp'
 import { COMPILE_CACHE_PRUNE_DELAY_MS, compileCacheBuildKey, enableMainCompileCache } from './compile-cache'
@@ -52,6 +54,10 @@ if (!claimAppInstance(app)) {
     .then(({ runHeadlessRemoval }) => runHeadlessRemoval(app))
     .catch(() => app.exit(3))
 } else {
+  // Chromium features are fixed once the app is ready.
+  avoidHyprlandColorManagerCrash(app)
+  // Before the app is imported, so every terminal and agent it spawns inherits it.
+  ensureGuiLocale()
   // Must be registered before the app is ready.
   protocol.registerSchemesAsPrivileged([
     {

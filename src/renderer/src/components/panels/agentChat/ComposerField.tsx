@@ -51,21 +51,6 @@ export type ComposerKeyEvent = {
   stopPropagation(): void
 }
 
-/**
- * Whether a key belongs to an input method rather than to the composer: a key
- * pressed while a composition is open, or the one that commits or cancels it.
- * WebKit sends the committing Enter (and the Escape that drops a candidate
- * list) with `isComposing` already false, but still as keyCode 229, so the
- * flag alone lets that Enter send half-typed words.
- */
-export function isImeKey(
-  event:
-    Pick<KeyboardEvent, 'isComposing' | 'keyCode'> | { nativeEvent: Pick<KeyboardEvent, 'isComposing' | 'keyCode'> },
-): boolean {
-  const native = 'nativeEvent' in event ? event.nativeEvent : event
-  return native.isComposing || native.keyCode === 229
-}
-
 type Props = {
   value: string
   /** The draft after an edit, and the caret after it. */

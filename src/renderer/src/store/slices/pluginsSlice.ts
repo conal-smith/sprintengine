@@ -1,4 +1,7 @@
+import { isDraft, original } from 'immer'
+
 import type { PluginCatalogEntry, PluginCatalogStatus } from '../../types/workspace'
+import { reuseUnchanged } from '../../utils/reuseUnchanged'
 
 // `resumeCapabilitiesForCli` moved to the shared resume-capability module
 // (main-process consumers resolve caps from
@@ -87,7 +90,14 @@ export function createPluginsSlice(
       const result = await api.pluginsList()
       set((state) => {
         if (result.ok) {
-          state.pluginCatalogEntries = result.plugins
+          // Main hands back the whole answer on every read, and a background
+          // re-read usually finds nothing new: what reads the same keeps its
+          // object, so the window's return re-renders only what moved.
+          const previous = isDraft(state.pluginCatalogEntries)
+            ? original(state.pluginCatalogEntries)
+            : state.pluginCatalogEntries
+          const next = reuseUnchanged(previous, result.plugins)
+          if (next !== previous) state.pluginCatalogEntries = next
           state.pluginCatalogStatus = 'ready'
           state.pluginCatalogError = null
         } else if (!background) {

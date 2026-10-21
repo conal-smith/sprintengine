@@ -37,6 +37,9 @@ import type {
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
@@ -77,6 +80,8 @@ import {
   parseSetModelInput,
   parseMcpServerActionInput,
   parseStopSubagentInput,
+  parseSideQuestionInput,
+  parseCancelSideQuestionInput,
   parseSetPermissionInput,
   parseStartSessionInput,
   parseTranscriptInput,
@@ -119,6 +124,10 @@ export type ConversationIpcHandlers = {
   setModel?(input: ConversationSetModelInput): Promise<ConversationSessionActionResult>
   mcpServerAction?(input: ConversationMcpServerActionInput): Promise<ConversationMcpServerActionResult>
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult>
+  askSideQuestion?(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult>
+  cancelSideQuestion?(
+    input: ConversationCancelSideQuestionInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }>
   stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult>
   suspendSession?(input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult>
   terminalHandoff?(input: ConversationTerminalHandoffInput): Promise<ConversationTerminalHandoffResult>
@@ -164,6 +173,7 @@ const BROADCAST_EVENT_TYPES: ReadonlySet<ConversationEventType> = new Set<Conver
   'approval_resolved',
   'usage_updated',
   'context_compacted',
+  'context_compacting',
   'command_output',
   'turn_completed',
   'turn_failed',
@@ -371,6 +381,14 @@ export function createConversationIpcHandlers(
     },
     stopSubagent(input: ConversationStopSubagentInput): Promise<ConversationSessionActionResult> {
       return runtime.stopSubagent(input)
+    },
+    askSideQuestion(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult> {
+      return runtime.askSideQuestion(input)
+    },
+    cancelSideQuestion(
+      input: ConversationCancelSideQuestionInput,
+    ): Promise<{ ok: true } | { ok: false; message: string }> {
+      return runtime.cancelSideQuestion(input)
     },
     stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
       return runtime.stopSession(input)
@@ -816,6 +834,34 @@ export function registerConversationIpc(
       if (!handlers.stopSubagent) return { ok: false, message: 'Stopping one agent is unavailable.' }
       try {
         return await handlers.stopSubagent(parsed.input)
+      } catch (err) {
+        return { ok: false, message: formatError(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'conversation:sessions:side-question',
+    async (_, input: unknown): Promise<ConversationSideQuestionResult> => {
+      const parsed = parseSideQuestionInput(input)
+      if (!parsed.ok) return parsed
+      if (!handlers.askSideQuestion) return { ok: false, message: 'Side questions are unavailable.' }
+      try {
+        return await handlers.askSideQuestion(parsed.input)
+      } catch (err) {
+        return { ok: false, message: formatError(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'conversation:sessions:cancel-side-question',
+    async (_, input: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
+      const parsed = parseCancelSideQuestionInput(input)
+      if (!parsed.ok) return parsed
+      if (!handlers.cancelSideQuestion) return { ok: false, message: 'Side questions are unavailable.' }
+      try {
+        return await handlers.cancelSideQuestion(parsed.input)
       } catch (err) {
         return { ok: false, message: formatError(err) }
       }

@@ -75,7 +75,25 @@ test('workspacePaneFloat', async () => {
     }
   })
 
-  check('only a browser tab carries a float', () => {
+  check('a canvas tab carries a float too: a board an agent draws on floats', () => {
+    const state = normalizeWorkspacePaneState({
+      open: false,
+      activeTabId: 'tab-1',
+      tabs: [
+        {
+          id: 'tab-1',
+          kind: 'canvas',
+          canvas: { path: 'plan.excalidraw' },
+          float: { x: 1, y: 2, width: 400, height: 300 },
+          floating: true,
+        },
+      ],
+    })
+    assert.deepEqual(state?.tabs[0]?.float, { x: 1, y: 2, width: 400, height: 300 })
+    assert.equal(state?.tabs[0]?.floating, true)
+  })
+
+  check('only a browser or canvas tab carries a float', () => {
     const state = normalizeWorkspacePaneState({
       open: true,
       activeTabId: 'tab-1',

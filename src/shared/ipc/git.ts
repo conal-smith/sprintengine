@@ -435,8 +435,9 @@ export type AgentWorktreeCleanupReport = {
   defaultRef: string | null
   entries: AgentWorktreeCleanupEntry[]
   /**
-   * `agent/` branches no worktree has checked out whose work is on the default
-   * branch: deleted (or, on a dry run, the ones that would be).
+   * Studio's branches (under the person's branch prefix or `agent/`) no
+   * worktree has checked out whose work is on the default branch: deleted
+   * (or, on a dry run, the ones that would be).
    */
   deletedBranches?: string[]
   dryRun: boolean
@@ -463,13 +464,40 @@ export type GitHubRepoListResult =
   | { ok: true; repos: GitHubRepoSummary[] }
   | { ok: false; reason: 'no_token' | 'unauthorized' | 'network'; message: string }
 
-export type GitHubCloneInput = {
+export type RepositoryCloneInput = {
   url: string
   parentDir: string
   folderName: string
+  /** The branch to check out; absent or null clones the remote's default. */
+  branch?: string | null
+  /** Names this clone for its progress events and for `cancelRepositoryClone`. */
+  cloneId?: string
 }
 
-export type GitHubCloneResult = { ok: true; path: string } | { ok: false; message: string }
+export type RepositoryCloneResult =
+  | { ok: true; path: string }
+  | {
+      ok: false
+      message: string
+      /**
+       * `exists`: the folder is taken — and when it is already a clone of this
+       * repository, `existingPath` is where, so it can be opened instead.
+       */
+      reason?: 'invalid' | 'exists' | 'cancelled' | 'failed'
+      existingPath?: string
+    }
+
+export type CloneProgressStage = 'connecting' | 'counting' | 'receiving' | 'resolving' | 'checkout'
+
+/** One step of a running clone, as `git clone --progress` reports it. */
+export type CloneProgress = {
+  cloneId: string
+  stage: CloneProgressStage
+  /** Through the stage, 0–100; null while git has not said. */
+  percent: number | null
+  /** git's transfer detail beside the count, e.g. `12.30 MiB | 5.00 MiB/s`. */
+  detail: string | null
+}
 
 export type GitConflictFileContent = {
   path: string

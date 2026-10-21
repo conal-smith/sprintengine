@@ -1,4 +1,5 @@
 import { runGit } from './git-utils'
+import { githubRepositoryOf } from './workspace-git-info'
 
 export type GitHubRepoRef = {
   owner: string
@@ -34,20 +35,17 @@ async function getGitHubRepoRef(repoRoot: string): Promise<GitHubRepoRef | null>
   return null
 }
 
+/**
+ * The GitHub repository a remote URL names, by the same reading the workspace
+ * view uses (`githubRepositoryOf`): any SSH user (`org-123@github.com:` for
+ * certificate auth, not only `git@`), credentials in an https URL, `http`,
+ * `git+ssh` and a trailing slash all count.
+ */
 export function githubRepoFromRemote(remoteUrl: string): GitHubRepoRef | null {
-  const trimmed = remoteUrl.trim()
-  if (!trimmed) return null
-
-  const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/)
-  if (sshMatch) return buildGitHubRepoRef(sshMatch[1], sshMatch[2])
-
-  const sshUrlMatch = trimmed.match(/^ssh:\/\/git@github\.com\/([^/]+)\/(.+?)(?:\.git)?$/)
-  if (sshUrlMatch) return buildGitHubRepoRef(sshUrlMatch[1], sshUrlMatch[2])
-
-  const httpsMatch = trimmed.match(/^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/)
-  if (httpsMatch) return buildGitHubRepoRef(httpsMatch[1], httpsMatch[2])
-
-  return null
+  const slug = githubRepositoryOf(remoteUrl)
+  if (!slug) return null
+  const [owner = '', repo = ''] = slug.split('/')
+  return buildGitHubRepoRef(owner, repo)
 }
 
 function buildGitHubRepoRef(owner: string, repo: string): GitHubRepoRef {

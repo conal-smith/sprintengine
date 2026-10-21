@@ -178,3 +178,73 @@ test('columnResizeDrag', async () => {
 
   await suiteRun
 })
+
+// A flick: the last move is still waiting for its frame when the pointer comes
+// up. The callers commit whatever `onDrag` last drew, so a release that only
+// cancelled the frame left the column short of where the pointer let go.
+function flickHarness() {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'http://localhost',
+    pretendToBeVisual: true,
+  })
+  const anyGlobal = globalThis as unknown as Record<string, unknown>
+  anyGlobal.window = dom.window
+  anyGlobal.document = dom.window.document
+  const handle = dom.window.document.createElement('div')
+  dom.window.document.body.appendChild(handle)
+  const log: string[] = []
+  startColumnResizeDrag(
+    {
+      currentTarget: handle,
+      pointerId: 1,
+      clientX: 500,
+      preventDefault: () => {},
+    } as unknown as Parameters<typeof startColumnResizeDrag>[0],
+    {
+      onDrag: (x) => log.push(`drag ${x}`),
+      onDragEnd: () => log.push('end'),
+    },
+  )
+  const dispatch = (type: string, clientX: number): void => {
+    const event = new dom.window.MouseEvent(type, { bubbles: true, clientX })
+    Object.defineProperty(event, 'pointerId', { value: 1 })
+    dom.window.dispatchEvent(event)
+  }
+  const nextFrame = () => new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()))
+  return { dom, log, dispatch, nextFrame }
+}
+
+test('a release before the next frame still draws the width where the pointer let go', async () => {
+  const { log, dispatch, nextFrame } = flickHarness()
+  dispatch('pointermove', 380)
+  dispatch('pointerup', 360)
+  assert.deepEqual(log, ['drag 360', 'end'])
+  await nextFrame()
+  assert.deepEqual(log, ['drag 360', 'end'], 'the cancelled frame does not draw again after the commit')
+})
+
+test('a release where the last frame already drew adds no second write', async () => {
+  const { log, dispatch, nextFrame } = flickHarness()
+  dispatch('pointermove', 420)
+  await nextFrame()
+  dispatch('pointerup', 420)
+  assert.deepEqual(log, ['drag 420', 'end'])
+})
+
+test('an interrupted drag commits what was drawn and does not chase the pending move', async () => {
+  const { dom, log, dispatch, nextFrame } = flickHarness()
+  dispatch('pointermove', 420)
+  await nextFrame()
+  dispatch('pointermove', 300)
+  dom.window.dispatchEvent(new dom.window.Event('blur'))
+  await nextFrame()
+  assert.deepEqual(log, ['drag 420', 'end'])
+})
+
+test('a cancelled pointer is not a release, so its x is not drawn', async () => {
+  const { log, dispatch, nextFrame } = flickHarness()
+  dispatch('pointermove', 420)
+  dispatch('pointercancel', 0)
+  await nextFrame()
+  assert.deepEqual(log, ['end'])
+})

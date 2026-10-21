@@ -194,7 +194,6 @@ function describeRecording(recording: FinishedRecording): Record<string, unknown
   return {
     recordingId: recording.recordingId,
     tabId: recording.tabId,
-    workspacePath: recording.workspacePath,
     ...(recording.path ? { path: recording.path } : {}),
     mimeType: recording.mimeType,
     bytes: recording.bytes,
@@ -654,7 +653,7 @@ export function createBrowserTools(deps: BrowserToolsDeps): McpToolRegistration[
     {
       name: 'browser.actions',
       description:
-        'What happened to a browser tab lately: your actions with their outcome (succeeded / failed / interrupted) and the moments the person took the page back. Newest last. Read-only.',
+        'What happened to a browser tab lately: your actions with their outcome (succeeded / failed / interrupted), the files the page downloaded while you drove it (`download`, with the `path` each was saved to), and the moments the person took the page back. Newest last. Read-only.',
       inputSchema: {
         type: 'object',
         properties: { tabId: TARGET_PROPERTIES.tabId, workspaceId: TARGET_PROPERTIES.workspaceId },
@@ -801,7 +800,7 @@ export function createBrowserTools(deps: BrowserToolsDeps): McpToolRegistration[
       description:
         'Start recording the tab to a video (WebM) as the person sees it, with your cursor drawn in, until browser.record_stop or `maxSeconds`. ' +
         'The person is shown that the tab is being recorded and can stop it. The pane is brought forward: a tab that is hidden records no new frames. ' +
-        "The video is saved under .sprintengine/browser/recordings/ in the project's own folder (the checkout a worktree was cut from, not the worktree); browser.record_stop answers its absolute path.",
+        "The video is saved in Studio's store for the project, in the person's home folder (~/.sprintengine/workspaces/<project>/browser/recordings/), not in the project or your worktree; browser.record_stop answers its absolute path.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -834,7 +833,6 @@ export function createBrowserTools(deps: BrowserToolsDeps): McpToolRegistration[
             tabId: recording.tabId,
             startedAt: recording.startedAt,
             maxDurationMs: recording.maxDurationMs,
-            workspacePath: recording.workspacePath,
             ...(recording.path ? { path: recording.path } : {}),
           },
         })
@@ -843,7 +841,7 @@ export function createBrowserTools(deps: BrowserToolsDeps): McpToolRegistration[
     {
       name: 'browser.record_stop',
       description:
-        "Stop recording the tab and save the video. Answers the file (`path`, absolute as your machine spells it, which is the one to open, and `workspacePath`, relative to the project's own folder), " +
+        'Stop recording the tab and save the video. Answers the file (`path`, absolute as your machine spells it: open it from there, it is not in the project), ' +
         'its length, size and why it stopped. A recording that already ended at its limit, or that the person stopped, is answered the same way.',
       inputSchema: {
         type: 'object',

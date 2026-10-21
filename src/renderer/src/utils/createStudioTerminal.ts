@@ -9,7 +9,7 @@ import '@xterm/xterm/css/xterm.css'
 
 import { TERMINAL_RECENT_SCROLLBACK_LINES } from '../../../shared/terminal-history'
 import { TERMINAL_CELL_GEOMETRY_OPTIONS, TERMINAL_UNICODE_VERSION } from '../../../shared/terminal-options'
-import { MONO_FONT_STACK } from './fonts'
+import { currentCodeFontStack, followCodeFont } from './fonts'
 import { logPerfEvent } from './perfDiagnostics'
 import { attachTerminalOsc52Clipboard } from './terminalOsc52Clipboard'
 import { createTerminalSearchHandle, type TerminalSearchHandle } from './terminalSearch'
@@ -30,7 +30,7 @@ import { readTerminalWebglPresence, terminalWebglBudget, watchTerminalPresence }
  * the same option literal.
  *
  * What this owns: the option block, the Unicode width table, the theme (and
- * its live re-tint binding), the font, the scrollback, the fit addon, the
+ * its live re-tint binding), the font (and its live change from Settings), the scrollback, the fit addon, the
  * web-links addon, the write-only OSC 52 clipboard, the search addon, the WebGL
  * renderer and its context-loss fallback, the `linkHandler` every OSC 8
  * hyperlink goes through, OSC handler registration, and the watch that tells a
@@ -130,6 +130,14 @@ export type StudioTerminal = {
    * See `terminalWebglRenderer.ts`. Idempotent: a second call does nothing.
    */
   loadWebglRenderer: () => void
+  /**
+   * Follows the code font: once its face has loaded the terminal draws in it,
+   * and again each time Settings ▸ Appearance changes it, without a reload.
+   * `onApplied` runs after each change of face, which is the pane's moment to
+   * fit — the cell size has changed under a container that has not. Call it
+   * once, after `term.open()`; the subscription ends in `dispose`.
+   */
+  followCodeFont: (onApplied: () => void) => void
   /** Which renderer is painting this pane. `'webgl'` only while WebGL holds. */
   webglRendererState: () => WebglRendererState
   /**
@@ -150,7 +158,7 @@ export function createStudioTerminal({
   const terminal = new Terminal({
     ...TERMINAL_CELL_GEOMETRY_OPTIONS,
     theme: getTerminalTheme(),
-    fontFamily: MONO_FONT_STACK,
+    fontFamily: currentCodeFontStack(),
     // Kept in step with the size `waitForMonoFontReady` preloads: a terminal
     // that fits itself against a fallback face reflows once the real one lands.
     fontSize: 13,
@@ -279,12 +287,24 @@ export function createStudioTerminal({
     terminal.loadAddon(webLinksAddon)
   }
 
+  let unfollowCodeFont: (() => void) | null = null
+  const followCodeFontHere = (onApplied: () => void): void => {
+    if (unfollowCodeFont) return
+    unfollowCodeFont = followCodeFont((stack) => {
+      // An unchanged family is no re-measure in xterm, so the first delivery —
+      // the face the terminal was built with, now loaded — only fits.
+      terminal.options.fontFamily = stack
+      onApplied()
+    })
+  }
+
   return {
     terminal,
     fitAddon,
     linkRoots: terminalSurfaceLinkRoots(surface),
     loadWebLinks,
     loadSearch,
+    followCodeFont: followCodeFontHere,
     loadWebglRenderer,
     webglRendererState: () => webglState,
     dispose: () => {
@@ -301,6 +321,7 @@ export function createStudioTerminal({
       searchAddon?.dispose()
       for (const disposable of oscDisposables) disposable.dispose()
       scrollAwayWatch?.dispose()
+      unfollowCodeFont?.()
       unbindTerminalTheme()
       terminal.dispose()
     },

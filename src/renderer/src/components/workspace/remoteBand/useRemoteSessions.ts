@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useWindowPageVisible } from '../../../utils/windowActivity'
 import { useTailnetPresence, type TailnetPresence } from '../topbar/useTailnetPresence'
+import { publishRemoteConversationList } from './remoteConversationFacts'
 import { remoteLinkStateOf, shouldBrowse, type RemoteBrowseEntry, type RemoteLinkState } from './remoteSessionsModel'
 
 // The reads behind the sidebar's Remote band (remote-sessions-in-the-sidebar,
@@ -106,6 +107,8 @@ export function useRemoteSessions({ enabled: wanted }: { enabled: boolean }): Re
           wantList && (result === null || result.reachable)
             ? await window.api.meshConversationList(connectionId).catch(() => null)
             : null
+        // The tab of a pane open on one of these chats draws from the same list.
+        if (listed?.ok) publishRemoteConversationList(connectionId, listed.conversations)
         setBrowses((current) =>
           withEntry(current, connectionId, (entry) => {
             // A list read on its own keeps the rows it has when it fails: the

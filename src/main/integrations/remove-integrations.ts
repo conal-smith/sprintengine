@@ -33,16 +33,19 @@ import { agentWorktreeLockOwner } from '../agent-worktree-lock'
 import { withConfigFileLock, writeFileAtomically } from '../config-file-write'
 import type { GitCommandResult } from '../git'
 import { runGitCommand } from '../git-utils'
+import { runGitWorktreeListPorcelain } from '../git-worktree-list'
 import {
   isManagedStudioGatewayEntry,
   removeCodexManagedServers,
   RETIRED_SPRINTENGINE_MCP_SERVER_ID,
 } from '../mcp-config-service'
 import { isOwnUrlHandlerEntry } from '../linux-url-handler'
+import { hashSkillDirectory, MANAGED_SKILL_MANIFEST_FILE, readManagedSkillManifest } from '../builtin-skills'
 import { readSkillProvenance } from '../skills/install'
 import { removeSettingsKey, STUDIO_PLUGIN_ID, STUDIO_PLUGIN_SOURCE_ID } from '../skills/studio-plugin'
 import { KNOWLEDGE_ACTIVITY_HOOK_TAG, scanForIntegrations, type ScanHome, type ScanRoot } from './integration-scan'
 import { LAUNCHER_POINTER_NAME, POSIX_LAUNCHER_NAME, WINDOWS_EMPTY_MCP_NAME, WINDOWS_LAUNCHER_NAME } from './launcher'
+import { LAUNCH_SKILL_COPY_MARKER } from './launch-integration'
 import { ledgerKey, type IntegrationLedger, type IntegrationLedgerEntry } from './ledger'
 import {
   removeLegacySharedExcludeLines,
@@ -311,11 +314,15 @@ async function committedVersionMentions(
 
 /**
  * Whether a file this removal leaves empty may be deleted: the app created it,
- * and git does not track it (a committed file, even an empty one, is the
- * project's).
+ * or it was found by the scan in a repository, where nobody can say who made
+ * it and an untracked file with nothing left in it is only clutter in
+ * `git status`; and git does not track it (a committed file, even an empty
+ * one, is the project's). A write the app saw land in an existing file
+ * (`createdFile: false`) leaves that file behind.
  */
 async function mayDeleteEmpty(entry: IntegrationLedgerEntry, runGit: RunGit): Promise<boolean> {
-  if (entry.createdFile !== true) return false
+  const foundInRepository = entry.source === 'scan' && entry.repo !== undefined && entry.createdFile === undefined
+  if (entry.createdFile !== true && !foundInRepository) return false
   return !(await isTrackedByGit(entry.path, runGit))
 }
 
@@ -515,7 +522,7 @@ async function turnOffWorktreeConfigIfUnused(worktree: string, runGit: RunGit): 
 async function removeWorktreeLock(entry: IntegrationLedgerEntry, runGit: RunGit): Promise<Result> {
   const repo = entry.repo
   if (!repo || !existsSync(repo)) return skip('The repository is gone.')
-  const listing = await runGit(repo, ['worktree', 'list', '--porcelain', '-z'])
+  const listing = await runGitWorktreeListPorcelain(runGit, repo)
   if (!listing.ok) return { status: 'failed', reason: listing.message ?? 'git could not list the worktrees.' }
   const records = listing.stdout.split('\0\0')
   const target = entry.path.split('\\').join('/')
@@ -564,6 +571,22 @@ async function removeKnownMarketplace(entry: IntegrationLedgerEntry): Promise<Re
       }) || false,
     async () => false,
   )
+}
+
+/**
+ * A skill a launch copied where its CLI reads the person's own skills
+ * (`ensureUserLevelSkillCopy`): removed while it is still the app's untouched
+ * copy — its managed manifest names it, and its bytes hash to what was
+ * written. One someone edited, or replaced with their own, stays.
+ */
+async function removeLaunchSkillCopy(path: string): Promise<Result> {
+  if (!existsSync(path)) return skip(ALREADY_GONE)
+  const manifest = await readManagedSkillManifest(path)
+  if (!manifest || manifest.id !== basename(path)) return skip('It is no longer Studio’s copy.')
+  const current = await hashSkillDirectory(path, new Set([MANAGED_SKILL_MANIFEST_FILE]))
+  if (current !== manifest.installedSkillHash) return skip('It was changed since Studio copied it, so it was kept.')
+  await rm(path, { recursive: true, force: true })
+  return removed
 }
 
 /**
@@ -687,6 +710,7 @@ async function removeEntry(
       return removed
     }
     case 'skill-copy': {
+      if (entry.marker === LAUNCH_SKILL_COPY_MARKER) return removeLaunchSkillCopy(entry.path)
       if ((await readSkillProvenance(entry.path))?.sourceId !== STUDIO_PLUGIN_SOURCE_ID) {
         return skip(existsSync(entry.path) ? 'It is no longer Studio’s copy.' : ALREADY_GONE)
       }

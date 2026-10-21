@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
 import { readdir, readFile, stat } from 'fs/promises'
-import { join } from 'path'
+import { homedir } from 'os'
+import { join, resolve } from 'path'
 import type {
   BuiltinSkill,
   SkillHarness,
@@ -41,14 +42,22 @@ type SkillFrontmatter = {
   description?: string
 }
 
-export function createWorkspaceSkillsService(): WorkspaceSkillsService {
+export function createWorkspaceSkillsService(options: { homeDir?: string } = {}): WorkspaceSkillsService {
   return {
     async listWorkspaceSkills(input): Promise<WorkspaceSkillsListResult> {
-      const workspaceRoot = input.workspaceRoot?.trim()
-      if (!workspaceRoot || !existsSync(workspaceRoot)) {
+      const workspaceRoot = input.workspaceRoot?.trim() || null
+      if (workspaceRoot && !existsSync(workspaceRoot)) {
         return { ok: false, message: 'Workspace root does not exist.' }
       }
-      return { ok: true, skills: listWorkspaceSkills(workspaceRoot) }
+      if (!workspaceRoot && !input.includeGlobal) {
+        return { ok: false, message: 'Workspace root does not exist.' }
+      }
+      // The folder's copies first, then the ones every project reads: a skill
+      // in both is one row, and the copy nearest the work is the one it shows.
+      const roots = [workspaceRoot, input.includeGlobal ? (options.homeDir ?? homedir()) : null].filter(
+        (root): root is string => root !== null,
+      )
+      return { ok: true, skills: listWorkspaceSkills(roots) }
     },
   }
 }
@@ -138,22 +147,26 @@ export function createAgentCapabilityService(options: {
    * the surface must be able to say so rather than present it as live.
    */
   freshness?: Pick<CapabilityWatcher, 'diagnosticsFor'>
+  /** The home folder whose harness directories hold the skills every project reads. */
+  homeDir?: string
 }): AgentCapabilityService {
   return {
-    async resolve({ workspaceRoot, pluginId }): Promise<AgentCapabilitiesResult> {
-      const root = workspaceRoot?.trim()
-      if (!root || !existsSync(root)) {
+    async resolve({ workspaceRoot, pluginId, includeGlobal }): Promise<AgentCapabilitiesResult> {
+      const root = workspaceRoot?.trim() || null
+      if (root ? !existsSync(root) : !includeGlobal) {
         return { ok: false, message: 'Workspace root does not exist.' }
       }
+      const home = includeGlobal ? (options.homeDir ?? homedir()) : null
 
       const plugins = options.listPlugins()
       const binding = buildHarnessMap(plugins).byPlugin.get(pluginId)
       // The two halves are independent declarations: cursor declares an MCP
       // config and no skill integration at all, so a CLI with nothing to read
-      // for skills still has servers to answer for.
+      // for skills still has servers to answer for. Servers are a workspace's
+      // configuration, so with no folder there are none to resolve.
       const [skills, mcp] = await Promise.all([
-        resolveSkills(options, plugins, binding, pluginId, root),
-        resolveServers(options, pluginId, root),
+        resolveSkills(options, plugins, binding, pluginId, [root, home]),
+        root ? resolveServers(options, pluginId, root) : Promise.resolve<ResolvedMcpServers>(NO_SERVERS),
       ])
 
       return {
@@ -161,11 +174,11 @@ export function createAgentCapabilityService(options: {
         support: binding?.support ?? 'unsupported',
         harnessId: binding?.harnessId ?? '',
         skills: skills.skills,
-        servers: withReportedStatus(mcp.servers, mcpServerStatusFor(pluginId, root)),
+        servers: root ? withReportedStatus(mcp.servers, mcpServerStatusFor(pluginId, root)) : [],
         diagnostics: [
           ...skills.diagnostics,
           ...mcp.diagnostics,
-          ...(options.freshness?.diagnosticsFor(root, pluginId) ?? []),
+          ...(root ? (options.freshness?.diagnosticsFor(root, pluginId) ?? []) : []),
         ],
       }
     },
@@ -212,7 +225,7 @@ async function resolveSkills(
   plugins: PluginRegistryListEntry[],
   binding: HarnessBinding | undefined,
   pluginId: string,
-  workspaceRoot: string,
+  roots: ReadonlyArray<string | null>,
 ): Promise<{ skills: AgentSkill[]; diagnostics: CapabilityDiagnostic[] }> {
   // A CLI that declares no skill integration, one that declares `unsupported`,
   // and one with no workspace install target are all legitimate answers with
@@ -220,23 +233,31 @@ async function resolveSkills(
   if (!binding || binding.support === 'unsupported' || !binding.skillsDir) {
     return { skills: [], diagnostics: [] }
   }
+  const relativeDir = binding.skillsDir.split('/')
 
   const integration = plugins.find((plugin) => plugin.id === pluginId)?.skillIntegration
-  const skillsDir = join(workspaceRoot, ...binding.skillsDir.split('/'))
-  const read = await options.reader.read(skillsDir)
-
-  if (!read.ok) {
-    return {
-      skills: [],
-      diagnostics:
-        read.reason === 'unreadable'
-          ? [{ capability: 'skills', reason: 'unreadable', path: skillsDir, message: read.message }]
-          : [],
+  // The workspace's directory first, then the home folder's: the CLI reads
+  // both, a name in both is one skill, and the nearer copy is the one listed.
+  // A workspace opened on the home folder is one directory, read once.
+  const skillsDirs = roots
+    .filter((root): root is string => root !== null)
+    .map((root) => resolve(root, ...relativeDir))
+    .filter((dir, index, all) => all.indexOf(dir) === index)
+  const found = new Map<string, RawSkill>()
+  const diagnostics: CapabilityDiagnostic[] = []
+  for (const skillsDir of skillsDirs) {
+    const read = await options.reader.read(skillsDir)
+    if (!read.ok) {
+      if (read.reason === 'unreadable') {
+        diagnostics.push({ capability: 'skills', reason: 'unreadable', path: skillsDir, message: read.message })
+      }
+      continue
     }
+    for (const skill of read.skills) if (!found.has(skill.id)) found.set(skill.id, skill)
   }
 
   return {
-    skills: read.skills
+    skills: Array.from(found.values())
       .map((skill): AgentSkill => ({
         id: skill.id,
         name: skill.name,
@@ -247,9 +268,11 @@ async function resolveSkills(
         pluginIds: binding.pluginIds,
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    diagnostics: [],
+    diagnostics,
   }
 }
+
+const NO_SERVERS: ResolvedMcpServers = { servers: [], diagnostics: [] }
 
 async function resolveServers(
   options: {
@@ -310,10 +333,38 @@ function formatFsError(error: unknown): string {
 // no CLI is in play, and the Extensions inventory.
 // ---------------------------------------------------------------------------
 
-function listWorkspaceSkills(workspaceRoot: string): WorkspaceSkill[] {
+function listWorkspaceSkills(roots: readonly string[]): WorkspaceSkill[] {
   const builtinById = new Map<string, BuiltinSkill>(BUILTIN_SKILLS.map((skill) => [skill.id, skill]))
 
+  // A workspace opened on the home folder itself is both roots; reading it
+  // twice would only re-find every skill.
+  const distinctRoots = roots.map((root) => resolve(root)).filter((root, index, all) => all.indexOf(root) === index)
   const installed = new Map<string, WorkspaceSkill>()
+  for (const root of distinctRoots) collectInstalledSkills(root, builtinById, installed)
+
+  const skills = Array.from(installed.values())
+
+  for (const builtin of BUILTIN_SKILLS) {
+    if (installed.has(builtin.id)) continue
+    skills.push({
+      id: builtin.id,
+      name: builtin.name,
+      description: builtin.description,
+      source: 'builtin',
+      harnesses: [],
+      installState: 'available',
+      version: builtin.version,
+    })
+  }
+
+  return skills.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function collectInstalledSkills(
+  workspaceRoot: string,
+  builtinById: ReadonlyMap<string, BuiltinSkill>,
+  installed: Map<string, WorkspaceSkill>,
+): void {
   for (const harness of SKILL_PACK_HARNESSES) {
     const skillsDir = join(workspaceRoot, SKILL_HARNESS_DIR[harness], 'skills')
     for (const dirName of listSkillDirs(skillsDir)) {
@@ -340,23 +391,6 @@ function listWorkspaceSkills(workspaceRoot: string): WorkspaceSkill[] {
       )
     }
   }
-
-  const skills = Array.from(installed.values())
-
-  for (const builtin of BUILTIN_SKILLS) {
-    if (installed.has(builtin.id)) continue
-    skills.push({
-      id: builtin.id,
-      name: builtin.name,
-      description: builtin.description,
-      source: 'builtin',
-      harnesses: [],
-      installState: 'available',
-      version: builtin.version,
-    })
-  }
-
-  return skills.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 function buildInstalledSkill(input: {

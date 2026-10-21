@@ -1372,3 +1372,44 @@ test('the held messages are asked for after each fence, and never of a machine t
     vi.useRealTimers()
   }
 })
+
+test('a message steered from here into a turn its chat cannot take is held there, and goes when the turn ends', async () => {
+  const h = await startHarness({ holdQueued: true })
+  const asked: string[] = []
+  const stopListening = h.runtime.onEvent((event) => {
+    if (event.type === 'user_message' && event.workspaceId === workspaceId && event.agentId === agentId)
+      asked.push(String(event.payload?.text ?? ''))
+  })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.equal(listed.steerSends, true, 'the machine says it takes a steer')
+    assert.equal(listed.conversations[0]?.capabilities?.steer, false, 'and that this chat’s provider cannot')
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+
+    void h.mesh.conversationCommand({ key, command: { kind: 'send', message: 'stream' } })
+    await h.provider.turnStarted()
+    assert.equal(
+      (await h.mesh.conversationSend({ key, message: 'Both.', steer: true, queue: true })).ok,
+      false,
+      'steered or queued, not both',
+    )
+    // Answered at once, with the machine's word that it waits for the turn.
+    const steered = await h.mesh.conversationSend({ key, message: 'Keep it to one file.', steer: true })
+    assert.equal(steered.ok, true, steered.ok ? '' : steered.message)
+    assert.match((steered.ok && steered.notice) || '', /queued and goes when this turn ends/)
+    await waitFor(() => pane.of('queued').at(-1)?.messages.length === 1, 'the window sees what is held there')
+
+    h.provider.nextTurn()
+    h.provider.push(null)
+    await h.provider.turnStarted()
+    assert.deepEqual(asked, ['stream', 'Keep it to one file.'], 'sent once the turn ended, never lost')
+    h.provider.push(null)
+  } finally {
+    stopListening()
+    await h.close()
+  }
+})

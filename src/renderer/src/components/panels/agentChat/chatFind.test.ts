@@ -109,6 +109,13 @@ test('a plan is searched as its card shows it: the title once, then the body', (
   expect(segment).toEqual({ key: 'plan:r1', text: 'ship it build test' })
 })
 
+test('a follow-up Codex suggests is searched as its label, not the prompt behind it', () => {
+  const [segment] = chatFindSegments(
+    reply('t1', '- :codex-followup[Prepare print version]{prompt="Make a print-ready version of the report"}'),
+  )
+  expect(segment).toEqual({ key: 'reply:t1', text: 'prepare print version' })
+})
+
 test('the count stops at the cap and says there were more', () => {
   const rows = [reply('t1', 'x '.repeat(30)), reply('t2', 'x '.repeat(30))]
   const capped = findInChat(rows, query('x'), 40)
@@ -178,4 +185,19 @@ test('the count reads as a find bar says it', () => {
 test('a row that has not changed is not read again', () => {
   const row = user('u1', 'cached text')
   expect(chatFindSegments(row)).toBe(chatFindSegments(row))
+})
+
+test('a link is read as its innermost bracket, as the page draws it', () => {
+  expect(markdownSearchText('[a [b](https://example.com/b) c')).toBe('[a b c')
+  expect(markdownSearchText('[ref][1] and [a [ref][2]')).toBe('ref and [a ref')
+})
+
+test('a long line of brackets that never close is read in one pass', () => {
+  // A pasted test log: every colour code opens a bracket and none closes.
+  const log = '\x1b[32m PASS \x1b[39m src/a.test.ts '.repeat(12_000)
+  const unclosed = '[x](https://example.com/'.repeat(12_000)
+  const started = performance.now()
+  expect(markdownSearchText(log)).toBe(log)
+  expect(markdownSearchText(unclosed)).toBe(unclosed)
+  expect(performance.now() - started).toBeLessThan(1_000)
 })

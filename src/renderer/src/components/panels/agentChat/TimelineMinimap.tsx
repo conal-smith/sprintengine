@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState, type JSX, type TransitionEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX, type TransitionEvent } from 'react'
 import { IconButton } from '../../ui'
 import { OVERLAY_SURFACE_CLASS } from '../../ui/tokens'
+import { markdownPreviewText } from '../../../utils/markdownPreviewText'
 import {
   TURN_MINIMAP_MIN_TURNS,
   turnPreviewText,
@@ -76,7 +77,12 @@ function MinimapPreview({
   count: number
 }): JSX.Element {
   const prompt = turnPreviewText(mark.prompt, 160) ?? 'Prompt with attachments only'
-  const reply = turnPreviewText(replyText, 240)
+  // The reply is markdown and the preview has no room to render it, so it
+  // shows the words. The prompt is what the person typed, shown as typed.
+  const reply = useMemo(
+    () => turnPreviewText(replyText === null ? null : markdownPreviewText(replyText), 240),
+    [replyText],
+  )
   return (
     <span
       aria-hidden="true"
@@ -103,12 +109,45 @@ function MinimapPreview({
  * through the same turns.
  */
 export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }): JSX.Element | null {
-  const { marks, jump, step, reply } = navigation
+  const { marks, jump, step, reply, wheel } = navigation
   const { current, hasPrevious, hasNext } = useTurnPosition(navigation)
   const [hovered, setHovered] = useState<number | null>(null)
+  // A wheel over the strip or its buttons scrolls the transcript beneath. The
+  // listener is the DOM's own, not React's: React's wheel listener is passive,
+  // and the forwarded wheel has to stop the browser scrolling anything else.
+  const navRef = useRef<HTMLElement | null>(null)
+  const shown = marks.length >= TURN_MINIMAP_MIN_TURNS
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    nav.addEventListener('wheel', wheel, { passive: false })
+    return () => nav.removeEventListener('wheel', wheel)
+  }, [wheel, shown])
   // The strip opens out from under a still pointer, so the turn it rests on
   // is read again once the strip has finished growing.
   const pointerYRef = useRef<number | null>(null)
+  // A text selection dragged right past the end of a line reaches the strip
+  // with the button still held. Taking the pointer there would open the strip
+  // and its preview and pull the selection over the rest of the conversation,
+  // so a press that began elsewhere passes through to the text underneath
+  // until the button comes up. A press on the strip itself still scrubs.
+  const pressedOnStripRef = useRef(false)
+  const [passThrough, setPassThrough] = useState(false)
+  useEffect(() => {
+    // The button can come up outside the window, where no mouseup arrives;
+    // the next move without it held ends the press all the same.
+    const release = (event: MouseEvent) => {
+      if (event.type === 'mousemove' && event.buttons !== 0) return
+      pressedOnStripRef.current = false
+      setPassThrough(false)
+    }
+    window.addEventListener('mouseup', release)
+    window.addEventListener('mousemove', release)
+    return () => {
+      window.removeEventListener('mouseup', release)
+      window.removeEventListener('mousemove', release)
+    }
+  }, [])
   // The minimap re-renders with every streamed token; its ticks only change
   // with the prompts, the reader's turn and the pointer.
   const ticks = useMemo(
@@ -124,7 +163,7 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
       )),
     [marks, current, hovered],
   )
-  if (marks.length < TURN_MINIMAP_MIN_TURNS) return null
+  if (!shown) return null
   const count = marks.length
   const hoveredMark = hovered !== null ? (marks[hovered] ?? null) : null
   const expanded = hovered !== null
@@ -133,10 +172,11 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
     return minimapIndexAtPointer(count, rect.top, rect.height, pointerY)
   }
   const spacing = expanded ? TICK_SPACING_EXPANDED_PX : TICK_SPACING_PX
-  const stepClass =
-    'pointer-events-auto opacity-0 transition-opacity duration-150 group-hover/minimap:opacity-100 group-focus-within/minimap:opacity-100'
+  const pointerEvents = passThrough ? 'pointer-events-none' : 'pointer-events-auto'
+  const stepClass = `${pointerEvents} opacity-0 transition-opacity duration-150 group-hover/minimap:opacity-100 group-focus-within/minimap:opacity-100`
   return (
     <nav
+      ref={navRef}
       aria-label="Conversation turns"
       data-testid="timeline-minimap"
       className="group/minimap pointer-events-none absolute inset-y-0 right-3 z-[var(--z-float)] flex flex-col items-end justify-center gap-2"
@@ -155,9 +195,19 @@ export function TimelineMinimap({ navigation }: { navigation: TurnNavigation }):
         role="presentation"
         data-minimap-strip=""
         data-expanded={expanded || undefined}
-        className={`pointer-events-auto relative cursor-pointer transition-[height,width] duration-150 ease-out ${expanded ? 'w-8' : 'w-4'}`}
+        data-pass-through={passThrough || undefined}
+        className={`${pointerEvents} relative cursor-pointer transition-[height,width] duration-150 ease-out ${expanded ? 'w-8' : 'w-4'}`}
         style={{ height: `min(${(count - 1) * spacing}px, calc(100% - 6rem))` }}
+        onMouseDown={() => {
+          pressedOnStripRef.current = true
+        }}
         onMouseMove={(event) => {
+          if (event.buttons !== 0 && !pressedOnStripRef.current) {
+            pointerYRef.current = null
+            setHovered(null)
+            setPassThrough(true)
+            return
+          }
           pointerYRef.current = event.clientY
           setHovered(indexAt(event.currentTarget, event.clientY))
         }}

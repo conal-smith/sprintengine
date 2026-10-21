@@ -82,6 +82,8 @@ import { normalizeExecutionHostId, type ExecutionHostId } from '../../shared/exe
 import { newAgentIdSuffix } from '../../shared/agent-ids'
 import type { StartedDependencyInstall } from '../worktree-pool/dependency-install'
 import { installProjection } from './conversation-tools'
+import type { TerminalOutputTail } from '../terminal-output-tail'
+import { terminalPlainText } from './terminal-plain-text'
 
 // The automation tool surface. v1: workspace.create / workspace.list /
 // workspace.status / agent.launch / agent.status; the read expansion adds
@@ -118,9 +120,32 @@ const CALLER_PRESET_CAP_SENTENCE =
   "Called by an agent of this app, the launch runs no looser than that agent's own preset: a looser one " +
   'is refused with "permission_escalation", and an omitted one takes the stricter of the two.'
 
+// What one `terminal.read` hands back. Lines are what a caller asks for, and
+// two hundred is a screenful or four of a dev server's log — enough to hold the
+// error and what led up to it. The character cap bounds the answer whatever the
+// line length, since one minified stack line can be longer than a whole log.
+// The raw window read from the buffer is wider than the character cap because
+// escapes and redraws are thrown away on the way: a coloured log is often half
+// escapes, and a progress bar's every frame shrinks to its last.
+const TERMINAL_READ_DEFAULT_LINES = 200
+const TERMINAL_READ_MAX_LINES = 2_000
+const TERMINAL_READ_MAX_CHARS = 64 * 1024
+const TERMINAL_READ_RAW_BYTES = 256 * 1024
+
 export type AutomationBackends = {
   getWorkspaceSyncSnapshot(): WorkspaceSyncSnapshot
   listTerminalSessions(): TerminalSessionSnapshot[]
+  /**
+   * The newest raw output of one terminal session, at most `maxBytes` of it
+   * and, with `since`, only what came after that cursor
+   * (terminal-output-tail.ts). `undefined` when the runtime holds no such
+   * session. Absent, `terminal.read` answers that this machine does not serve
+   * terminal output.
+   */
+  readTerminalOutputTail?(
+    sessionId: string,
+    options: { maxBytes: number; since?: string },
+  ): TerminalOutputTail | undefined
   /** Compose and spawn an agent in main. */
   launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult>
   /**
@@ -1119,12 +1144,14 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
               type: 'string',
               description:
                 'The ref the new worktree branches from (a branch name from workspace.checkout, e.g. "main"). ' +
-                "Defaults to the workspace checkout's HEAD.",
+                'Leave it out: the worktree then branches from the default branch on origin, freshly fetched, ' +
+                'which is where every chat starts.',
             },
           },
           additionalProperties: false,
           description:
-            'Isolate the agent in a git worktree on an "agent/<name>" branch instead of the workspace checkout.',
+            'Isolate the agent in a git worktree on a "<prefix>/<name>" branch (the branch prefix set in Settings ▸ ' +
+            'Worktrees, "agent" unless changed) instead of the workspace checkout.',
         },
         notifyParent: {
           type: 'boolean',
@@ -1458,6 +1485,101 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           })),
       )
       return success({ terminals: sessions })
+    },
+  }
+
+  // What a terminal printed, for an agent following a dev server's errors, a
+  // watcher's rebuilds or a test run's failures in a terminal it did not start.
+  // It reads only a session `terminal.list` lists: the id is looked up in that
+  // same list, never in the runtime directly, so the two tools cannot disagree
+  // about which terminals a caller may see. Like the rest of the family it is
+  // served on the local socket only (`localOnlyGatewayToolReason`), and it is a
+  // read — not audited as a mutation, and on `workspace:read` were it ever
+  // offered to a paired device.
+  const terminalRead: McpToolRegistration = {
+    name: 'terminal.read',
+    description:
+      'Read the recent output of a terminal session in this app as plain text, escapes stripped: the newest ' +
+      `"lines" lines (default ${TERMINAL_READ_DEFAULT_LINES}, at most ${TERMINAL_READ_MAX_LINES}) and at most ` +
+      `${TERMINAL_READ_MAX_CHARS} characters, with "truncated" true when older output was left out. Every answer ` +
+      'carries a "cursor"; pass it back as "since" to read only what the terminal printed after that read, which ' +
+      'is how to follow a dev server or a test run without reading its log again. A cursor from before the ' +
+      'session was resumed or respawned reads the newest output instead, with "truncated" true. A paused or ' +
+      'exited session ' +
+      'still reads the output it left, and "state" and "exitCode" say how it ended. A full-screen program (an ' +
+      'agent CLI, an editor) reads as the stream that drew it, so its redraws can repeat lines. Session ids come from ' +
+      'terminal.list or terminal.create. Reads the terminal runtime; never types into the terminal. Served on ' +
+      'this machine only, never to a paired device.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string', description: 'Terminal session id, from terminal.list or terminal.create.' },
+        lines: {
+          type: 'integer',
+          minimum: 1,
+          maximum: TERMINAL_READ_MAX_LINES,
+          description: `How many of the newest lines to return; default ${TERMINAL_READ_DEFAULT_LINES}.`,
+        },
+        since: {
+          type: 'string',
+          description:
+            'The "cursor" an earlier terminal.read of this session answered with, passed back as it was: only ' +
+            'output printed after it is read. Omit for the newest output.',
+        },
+      },
+      required: ['sessionId'],
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const sessionId = requireString(args, 'sessionId')
+      if (typeof sessionId !== 'string') return sessionId
+      const lines = optionalBoundedInteger(args, 'lines', 1, TERMINAL_READ_MAX_LINES)
+      if (typeof lines === 'object') return lines
+      // Opaque: the tail reader parses it and reads one this session's stream
+      // did not hand out as no cursor, so only its type is checked here.
+      const since = args.since
+      if (since !== undefined && (typeof since !== 'string' || since.length === 0)) {
+        return failure('invalid_arguments', '"since" must be a cursor an earlier terminal.read answered with.')
+      }
+      if (!backends.readTerminalOutputTail) {
+        return failure('unavailable', 'This machine does not serve terminal output.')
+      }
+      const session = backends.listTerminalSessions().find((candidate) => candidate.sessionId === sessionId)
+      if (!session) {
+        return failure(
+          'unknown_terminal',
+          `No terminal session "${sessionId}" is open in this app; a closed terminal's output is not kept. ` +
+            'Call terminal.list for the sessions it holds.',
+        )
+      }
+      const read = backends.readTerminalOutputTail(sessionId, {
+        maxBytes: TERMINAL_READ_RAW_BYTES,
+        ...(since !== undefined ? { since } : {}),
+      })
+      // Listed a moment ago and gone now: closed between the two reads.
+      if (!read) {
+        return failure('unknown_terminal', `Terminal session "${sessionId}" closed before its output could be read.`)
+      }
+      const plain = terminalPlainText(read.text, {
+        maxLines: lines ?? TERMINAL_READ_DEFAULT_LINES,
+        maxChars: TERMINAL_READ_MAX_CHARS,
+      })
+      const ended = session.activity.kind === 'exited' || session.activity.kind === 'failed' ? session.activity : null
+      return success({
+        sessionId,
+        kind: session.kind,
+        workspaceId: session.workspaceId ?? null,
+        agentName: session.agentName ?? null,
+        // One word for what the process is doing, so a caller polling a dev
+        // server learns it died from the same answer that carries its last
+        // words. Paused is not ended: a parked agent resumes where it was.
+        state: session.processAlive ? 'running' : session.suspended ? 'paused' : (ended?.kind ?? 'exited'),
+        exitCode: ended ? ended.exitCode : null,
+        text: plain.text,
+        lineCount: plain.lineCount,
+        truncated: read.truncated || plain.truncated,
+        cursor: read.cursor,
+      })
     },
   }
 
@@ -2131,7 +2253,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           properties: { name: { type: 'string', description: 'Worktree/branch name; defaults to the agent name.' } },
           additionalProperties: false,
           description:
-            'Isolate the agent in a git worktree on an "agent/<name>" branch instead of the workspace checkout.',
+            'Isolate the agent in a git worktree on a "<prefix>/<name>" branch (the branch prefix set in Settings ▸ ' +
+            'Worktrees, "agent" unless changed) instead of the workspace checkout.',
         },
         instructions: {
           type: 'string',
@@ -2287,23 +2410,32 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
   }
 
   // What a caller reads about a scheduled agent: the record, its schedule in
-  // words, and when it runs next as an ISO instant.
+  // words, whether it is paused (and since when), and when it runs next as an
+  // ISO instant — null while it is paused, on its own or with every other.
+  const isoOrNull = (at: number | null | undefined) => (typeof at === 'number' ? new Date(at).toISOString() : null)
   const scheduledAgentForCaller = (agent: ScheduledAgentView) => ({
     ...agent,
     scheduleWords: scheduledAgentScheduleWords(agent.schedule),
-    nextRunAt: agent.nextRunAt === null ? null : new Date(agent.nextRunAt).toISOString(),
+    paused: agent.pausedAt !== undefined,
+    pausedAt: isoOrNull(agent.pausedAt),
+    nextRunAt: isoOrNull(agent.nextRunAt),
   })
 
   const scheduledAgentList: McpToolRegistration = {
     name: 'schedule.list',
     description:
       'List the scheduled agents on this computer: each is a prompt and a cron schedule, and each time the ' +
-      'schedule comes round a new chat starts in its project with that prompt. Read-only.',
+      'schedule comes round a new chat starts in its project with that prompt. `paused` is true for one the ' +
+      'person paused; `pausedAll` says whether every scheduled agent is paused, and until when. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => {
       const service = scheduledAgentsOrFailure()
       if (!('list' in service)) return service
-      return success({ scheduledAgents: service.list().map(scheduledAgentForCaller) })
+      const pause = service.pausedAll()
+      return success({
+        scheduledAgents: service.list().map(scheduledAgentForCaller),
+        pausedAll: pause ? { since: isoOrNull(pause.since), until: isoOrNull(pause.until) } : null,
+      })
     },
   }
 
@@ -2456,6 +2588,66 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     },
   }
 
+  const scheduledAgentPause: McpToolRegistration = {
+    name: 'schedule.pause',
+    description:
+      'Pause a scheduled agent: it starts no run at its scheduled times until it is resumed. A run already ' +
+      'going is left to finish, and schedule.run still starts one. Refused to a chat a scheduled agent started.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Scheduled agent id from schedule.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: async (args, context) => {
+      const refused = refuseScheduledRunCaller(context, 'pause')
+      if (refused) return refused
+      const id = requireString(args, 'id')
+      if (typeof id !== 'string') return id
+      const service = scheduledAgentsOrFailure()
+      if (!('pause' in service)) return service
+      if (!service.get(id)) return failure('unknown_scheduled_agent', `No scheduled agent "${id}".`)
+      const paused = await service.pause(id)
+      if (!paused.ok) return failure('scheduled_agent_invalid', paused.message)
+      return success({ scheduledAgent: scheduledAgentForCaller(paused.agent) })
+    },
+  }
+
+  const scheduledAgentResume: McpToolRegistration = {
+    name: 'schedule.resume',
+    description:
+      'Resume a paused scheduled agent. It runs next at its first scheduled time from now: the times that ' +
+      'passed while it was paused are not made up. Called by an agent of this app, the scheduled agent must ' +
+      'launch no looser than that agent\'s own preset, or it is refused with "permission_escalation". ' +
+      'Refused to a chat a scheduled agent started.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Scheduled agent id from schedule.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: async (args, context) => {
+      const refused = refuseScheduledRunCaller(context, 'resume')
+      if (refused) return refused
+      const id = requireString(args, 'id')
+      if (typeof id !== 'string') return id
+      const service = scheduledAgentsOrFailure()
+      if (!('resume' in service)) return service
+      const agent = service.get(id)
+      if (!agent) return failure('unknown_scheduled_agent', `No scheduled agent "${id}".`)
+      // Resumed, it starts runs on its own preset with nobody watching, as
+      // schedule.run would start one now: held to the same ceiling.
+      const refusal = refuseScheduledAgentRun(
+        agent.permissionPreset,
+        launchPermissionCeiling(context, backends.resolveAgentPermissionPreset),
+      )
+      if (refusal) return failure(refusal.code, refusal.message)
+      const resumed = await service.resume(id)
+      if (!resumed.ok) return failure('scheduled_agent_invalid', resumed.message)
+      return success({ scheduledAgent: scheduledAgentForCaller(resumed.agent) })
+    },
+  }
+
   return [
     workspaceCheckout,
     workspaceExtensions,
@@ -2468,6 +2660,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     agentStatus,
     cliRuntimeList,
     terminalList,
+    terminalRead,
     terminalCreate,
     backlogList,
     backlogRead,
@@ -2482,6 +2675,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     scheduledAgentCreate,
     scheduledAgentDelete,
     scheduledAgentRun,
+    scheduledAgentPause,
+    scheduledAgentResume,
   ]
 }
 
@@ -2845,6 +3040,21 @@ function optionalStringArray(value: unknown): string[] | undefined {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+/** An optional whole-number argument within [min, max]: the number, undefined when omitted, or the refusal. */
+function optionalBoundedInteger(
+  args: Record<string, unknown>,
+  key: string,
+  min: number,
+  max: number,
+): number | undefined | McpToolResult {
+  const value = args[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    return failure('invalid_arguments', `"${key}" must be a whole number from ${min} to ${max} when provided.`)
+  }
+  return value
 }
 
 function firstInvalidOptionalString(args: Record<string, unknown>, keys: string[]): McpToolResult | null {

@@ -1,8 +1,9 @@
 import type { BrowserController } from '../../../../../../shared/browser'
+import { paneKindFloats } from '../../../../store/slices/workspacePaneSlice'
 import type { WorkspacePaneState } from '../../../../types/workspace'
 
 // When the floating player comes up by itself: an agent opening or driving a
-// page in a pane the person has closed. The pane would take the chat's width;
+// page, or drawing on a board, in a pane the person has closed. The pane would take the chat's width;
 // the player shows the page in a corner and leaves the chat where it was.
 //
 // Pure decisions over the pane record and the controller history the main
@@ -107,7 +108,8 @@ export function createAgentBrowserTracker(): AgentBrowserTracker {
 export const agentBrowserTracker = createAgentBrowserTracker()
 
 /**
- * Whether the agent taking `tabId` should bring it up as the player.
+ * Whether the agent taking `tabId` — a page it drives, or a board it draws
+ * on — should bring it up as the player.
  *
  * Only into a closed pane: an open pane already shows the page, or shows what
  * the person chose instead. Never over a player already up — the person is
@@ -117,7 +119,7 @@ export const agentBrowserTracker = createAgentBrowserTracker()
 export function shouldFloatForAgent(pane: WorkspacePaneState | undefined, tabId: string): boolean {
   if (!pane || pane.open) return false
   const tab = pane.tabs.find((candidate) => candidate.id === tabId)
-  if (!tab || tab.kind !== 'browser' || tab.poppedOut) return false
+  if (!tab || !paneKindFloats(tab.kind) || tab.poppedOut) return false
   return !pane.tabs.some((candidate) => candidate.floating)
 }
 

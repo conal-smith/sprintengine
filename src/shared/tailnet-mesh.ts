@@ -1,6 +1,7 @@
 import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
 import type { ConversationQueuedMessage, ConversationThread } from '../../packages/conversation-protocol/src/public'
 import type { ConversationSessionFrame } from './conversation-runtime'
+import { conversationPhaseWorking, phaseWithBackgroundWork } from './conversation/phase'
 import type { RepositoryIdentity } from './repository-identity'
 import type { TailnetRemoteStatus, TailnetScope } from './tailnet'
 
@@ -93,6 +94,30 @@ export type MeshWorkspaceCheckoutResult =
 /** A paired machine's `workspace.extensions` answer for one of its projects. */
 export type MeshWorkspaceExtensionsResult =
   | { ok: true; extensions: import('./workspace-extensions').WorkspaceExtensions }
+  | { ok: false; code: string; message: string }
+
+/**
+ * A paired machine's answers to its chat's Create PR (`chat-create-pull-request`),
+ * one per step, as the shell's own channels answer them for a chat here
+ * (`createPullRequestState`, `draftPullRequestText`, `pushForPullRequest`,
+ * `createPullRequest`). The state carries no path on that machine: its
+ * `gitRoot` is null. `text_generation_off` is a machine whose own text
+ * generation is off, where the person writes the text themselves.
+ */
+export type MeshPullRequestStateResult =
+  | { ok: true; state: import('./git/pull-request-create').CreatePullRequestState | null }
+  | { ok: false; code: string; message: string }
+export type MeshPullRequestDraftResult =
+  { ok: true; title: string; body: string } | { ok: false; code: string; message: string }
+export type MeshPullRequestPushResult = { ok: true; pushed: boolean } | { ok: false; code: string; message: string }
+/**
+ * A creation's end, as `createPullRequest` answers it, except that a pull
+ * request created there was recorded there as the chat's: `recorded` says
+ * whether that landed, and why not.
+ */
+export type MeshPullRequestCreateResult =
+  | Exclude<import('./git/pull-request-create').CreatePullRequestOutcome, { ok: false } | { kind: 'created' }>
+  | { ok: true; kind: 'created'; url: string; recorded: { ok: true } | { ok: false; message: string } }
   | { ok: false; code: string; message: string }
 
 /**
@@ -335,6 +360,12 @@ export const MESH_VISIT_CONVERSATION_CHANNEL = 'mesh:visit-conversation'
 /** One remote workspace's checkout facts (branch, branches, worktrees) over `workspace.checkout`. */
 export const MESH_WORKSPACE_CHECKOUT_CHANNEL = 'mesh:workspace-checkout'
 export const MESH_WORKSPACE_EXTENSIONS_CHANNEL = 'mesh:workspace-extensions'
+/** A remote chat's Create PR, one channel per step (`chat-create-pull-request`). */
+export const MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL = 'mesh:conversation-pull-request-state'
+export const MESH_CONVERSATION_PULL_REQUEST_DRAFT_CHANNEL = 'mesh:conversation-pull-request-draft'
+export const MESH_CONVERSATION_PULL_REQUEST_DRAFT_CANCEL_CHANNEL = 'mesh:conversation-pull-request-draft-cancel'
+export const MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL = 'mesh:conversation-pull-request-push'
+export const MESH_CONVERSATION_PULL_REQUEST_CREATE_CHANNEL = 'mesh:conversation-pull-request-create'
 
 /**
  * What forgetting a machine did, from the Mesh's side.
@@ -417,6 +448,14 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * `sendSkills`: the machine advertises `conversation-send-skills` and
  * `workspace-extensions` — a message to one of its chats may carry its skills,
  * listed for the composer by `meshWorkspaceExtensions`.
+ *
+ * `steerSends`: the machine advertises `conversation-steer-sends` — a message
+ * may go into the turn one of its chats is running, where that chat's provider
+ * takes one (its listed `capabilities.steer`). False for a machine that does
+ * not, where a message sent mid-turn waits for the turn to end.
+ *
+ * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
+ * chat of its own offers Create PR here, every step run over there.
  */
 export type MeshConversationListResult =
   | {
@@ -428,6 +467,8 @@ export type MeshConversationListResult =
       lifecycle?: boolean
       queuedSends?: boolean
       sendSkills?: boolean
+      steerSends?: boolean
+      createPullRequest?: boolean
     }
   | { ok: false; code: string; message: string }
 
@@ -448,10 +489,20 @@ export type MeshConversationCommand =
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }
 
-/** Whether a machine's listed phase is a turn in flight, one waiting on a person, or neither. */
-export function meshConversationPresence(phase: MeshConversation['phase']): 'running' | 'needs-input' | 'idle' {
-  if (phase === 'starting' || phase === 'running') return 'running'
-  if (phase === 'waiting_for_approval' || phase === 'waiting_for_input') return 'needs-input'
+/**
+ * Whether a machine's listed chat is at work, waiting on a person, or neither.
+ * A turn in flight is at work, and so is a chat whose turn is over while its
+ * `backgroundWork` goes on, as the machine's own sidebar counts it
+ * (`phaseWithBackgroundWork`). A machine from before it listed background work
+ * says only the turn's phase, which is read as before.
+ */
+export function meshConversationPresence(
+  phase: MeshConversation['phase'],
+  backgroundWork?: MeshConversation['backgroundWork'] | null,
+): 'running' | 'needs-input' | 'idle' {
+  const counted = phaseWithBackgroundWork(phase, Boolean(backgroundWork))
+  if (conversationPhaseWorking(counted)) return 'running'
+  if (counted === 'waiting_for_approval' || counted === 'waiting_for_input') return 'needs-input'
   return 'idle'
 }
 

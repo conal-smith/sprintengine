@@ -5,18 +5,17 @@ import { comparablePath } from '../../shared/host-paths'
 import { pathInside } from '../agent-worktree-keep-checks'
 import type { GitWorktreeEntry } from '../git'
 import { pathExists } from '../git-utils'
-import { parseGitWorktreePorcelain } from '../git-worktree-list'
+import { parseGitWorktreePorcelain, runGitWorktreeListPorcelain } from '../git-worktree-list'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import type { SlotRecord } from './pool-store'
 import { hasSlotMarker } from './slot-git'
+import { poolSlotNumber, poolSlotStemForContainer } from '../../shared/worktree-pool-slot-name'
 import { type PoolContext, type PoolRuntime, tail, messageOf } from './pool-context'
 import { forgetRegistration } from './pool-slot-steps'
 import { returnSlot } from './pool-return'
 import { evictSlot } from './pool-eviction'
 
 /** Crash recovery (worktree-pool-service.ts): finishing or holding what a previous run left mid-step. */
-
-const SLOT_NAME = /^pool-(\d{2,})$/u
 
 // ── Recovery ─────────────────────────────────────────────────────────────
 
@@ -29,7 +28,7 @@ const SLOT_NAME = /^pool-(\d{2,})$/u
  */
 export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<void> {
   const record = pool.record
-  const listed = await ctx.git(record.repoRoot, ['worktree', 'list', '--porcelain', '-z'])
+  const listed = await runGitWorktreeListPorcelain(ctx.git, record.repoRoot)
   if (!listed.ok) throw new Error(`git worktree list failed: ${tail(listed.message) ?? 'no reason given'}`)
   const registered = new Map<string, GitWorktreeEntry>()
   for (const entry of parseGitWorktreePorcelain(listed.stdout)) registered.set(comparablePath(entry.path), entry)
@@ -115,7 +114,8 @@ export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<
   }
   for (const path of goneFromDisk) await forgetRegistration(ctx, pool, path)
 
-  // `pool-NN` worktrees in our container with no record: the record was lost.
+  // Slot-named worktrees (`<project>-NN`, or `pool-NN` from before slots were
+  // named after their project) in our container with no record: the record was lost.
   // A leased-looking one is adopted as leased (the next sweep decides), and
   // anything else as held. None is ever reset on this evidence alone.
   const known = new Set(survivors.map((slot) => comparablePath(slot.path)))
@@ -124,9 +124,9 @@ export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<
     if (known.has(key) || released.has(key)) continue
     if (comparablePath(dirname(entry.path)) !== comparablePath(pool.containerPath)) continue
     const name = basename(entry.path)
-    if (!SLOT_NAME.test(name)) continue
+    if (poolSlotNumber(name, poolSlotStemForContainer(pool.containerPath)) === null) continue
     // A worktree merely NAMED like a slot (an agent or a person called it
-    // `pool-01`) is not the pool's to adopt: only one the pool marked is.
+    // `pool-01` or `<project>-01`) is not the pool's to adopt: only one the pool marked is.
     if (!(await hasSlotMarker(ctx.git, entry.path))) continue
     // Another Studio profile's lease: the container is shared, the records
     // are not. Adopting it would have this profile return (detach, unlock)
@@ -167,6 +167,7 @@ export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<
       lastBranch: null,
       size: null,
       kept: null,
+      parked: null,
     })
     ctx.log(`${entry.path}: adopted into the pool (${leased ? 'leased' : 'held'})`)
   }

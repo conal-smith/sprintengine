@@ -2,12 +2,15 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import { clientSupports } from '../clientCapabilities'
 import { setClockFormat } from '../utils/clockFormat'
+import { applyAppearanceFonts } from '../utils/fonts'
+import { setReplyStreaming } from '../utils/replyStreaming'
 import {
   colorSchemeForResolvedTheme,
   DEFAULT_CHAT_CONTRAST,
   effectiveWindowMaterial,
   LIGHT_SURFACE_THEMES,
   normalizeChatContrast,
+  type AppearanceSettings,
   type AppTheme,
   type ChatWidth,
   type ColorScheme,
@@ -145,17 +148,23 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
   const windowMaterial = useWorkspaceStore((s) => s.appSettings.appearance.windowMaterial)
   const chatContrast = useWorkspaceStore((s) => s.appSettings.appearance.chatContrast)
   const chatWidth = useWorkspaceStore((s) => s.appSettings.appearance.chatWidth)
+  const interfaceFont = useWorkspaceStore((s) => s.appSettings.appearance.interfaceFont)
+  const codeFont = useWorkspaceStore((s) => s.appSettings.appearance.codeFont)
 
   useEffect(() => {
     applyWindowMaterial(windowMaterial, mirrorToMain)
   }, [mirrorToMain, windowMaterial])
 
-  // The Clock setting, followed as the store changes rather than after the
-  // render that changed it: a stamp re-rendered by the change must already
-  // read the new clock (utils/clockFormat.ts).
+  // The Clock and Show replies settings, followed as the store changes rather
+  // than after the render that changed them: a stamp re-rendered by the change
+  // must already read the new clock (utils/clockFormat.ts).
   useEffect(() => {
-    setClockFormat(useWorkspaceStore.getState().appSettings.appearance.clockFormat)
-    return useWorkspaceStore.subscribe((state) => setClockFormat(state.appSettings.appearance.clockFormat))
+    const follow = (appearance: AppearanceSettings) => {
+      setClockFormat(appearance.clockFormat)
+      setReplyStreaming(appearance.replyStreaming)
+    }
+    follow(useWorkspaceStore.getState().appSettings.appearance)
+    return useWorkspaceStore.subscribe((state) => follow(state.appSettings.appearance))
   }, [])
 
   // Before paint, as the boot script (public/boot-theme.js) stamps them before the
@@ -164,6 +173,14 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
     if (typeof document === 'undefined') return
     applyChatAppearance(document.documentElement, chatContrast, chatWidth)
   }, [chatContrast, chatWidth])
+
+  // The two fonts, before paint too, and before the panes' own effects run: a
+  // terminal or an editor mounting in the same commit is built in the chosen
+  // code face rather than built in the default and changed a moment later.
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return
+    applyAppearanceFonts(document.documentElement, { interfaceFont, codeFont })
+  }, [interfaceFont, codeFont])
 
   useEffect(() => {
     applyTheme(resolveTheme(theme), mirrorToMain)

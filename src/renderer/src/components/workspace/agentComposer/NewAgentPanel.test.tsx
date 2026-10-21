@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { JSDOM } from 'jsdom'
+import { standInImageDecoding } from '../../../../../../tests/image-decoding'
 import { bundledPermissionModes } from '../../../../../../tests/permission-modes'
 import {
   composerDisabled,
@@ -46,6 +47,7 @@ test('NewAgentPanel', async () => {
   anyGlobal.KeyboardEvent = dom.window.KeyboardEvent
   anyGlobal.FileReader = dom.window.FileReader
   anyGlobal.File = dom.window.File
+  const imageDecoding = standInImageDecoding(dom.window)
   anyGlobal.getComputedStyle = dom.window.getComputedStyle
   // jsdom has no `CSS`; the skill type-ahead escapes a row id with it to keep
   // the highlighted row in view.
@@ -715,7 +717,7 @@ test('NewAgentPanel', async () => {
               },
               reasoningSelection: { levels: [{ id: 'low' }, { id: 'high' }] },
             },
-            { id: 'kimi-code', displayName: 'Kimi Code', source: 'bundled', version: 1, binary: 'kimi' },
+            { id: 'acme-cli', displayName: 'Acme CLI', source: 'bundled', version: 1, binary: 'acme' },
           ],
         })
         useWorkspaceStore.setState({
@@ -790,7 +792,7 @@ test('NewAgentPanel', async () => {
 
     await check('with no CLI that can run as a chat, Chat agent offers the install route', async () => {
       seedStore({
-        plugins: [{ id: 'kimi-code', displayName: 'Kimi Code', source: 'bundled', version: 1, binary: 'kimi' }],
+        plugins: [{ id: 'acme-cli', displayName: 'Acme CLI', source: 'bundled', version: 1, binary: 'acme' }],
       })
       const view = await render({ initialSelection: { kind: 'conversation' } })
       assert.ok(view.text().includes('No agent CLI on this machine can run as a chat.'))
@@ -1552,6 +1554,44 @@ test('NewAgentPanel', async () => {
     )
 
     await check(
+      "a remote machine's project list holds its projects, never the worktrees its chats run in",
+      async () => {
+        seedStore()
+        resetRememberedMachineForTests()
+        meshConnections = [machine('m1', 'Air')]
+        meshBrowseAnswer = (id) => ({
+          connectionId: id,
+          reachable: true,
+          unreachableReason: null,
+          unauthorized: false,
+          scopes: [],
+          workspaces: [
+            workspace('w1', 'alpha', '/Users/dev/alpha'),
+            workspace('w2', 'slot', '/Users/dev/.sprintengine-worktrees/alpha/pool-01'),
+            workspace('w3', 'cut', '/Users/dev/.sprintengine-worktrees/alpha/chat-k_iq'),
+            // Open over there only through a worktree chat: still its project.
+            workspace('w4', 'cut', '/Users/dev/.sprintengine-worktrees/beta/chat-3kmu'),
+          ],
+          gaps: [],
+        })
+        const view = await remoteRender()
+        await settle()
+        await pickMachine(view, 'Air')
+        await click(buttonWithText(view.container, 'Choose a project'))
+        const projects = dom.window.document.querySelector('[role="menu"][aria-label="Project on Air"]')
+        assert.ok(projects, 'the remote project list opens')
+        const rows = [...projects!.querySelectorAll('[role="menuitemradio"]')].map((row) =>
+          [...row.querySelectorAll('span.block')].map((span) => span.textContent?.trim()),
+        )
+        assert.deepEqual(rows, [
+          ['alpha', '/Users/dev/alpha'],
+          ['beta', '/Users/dev/beta'],
+        ])
+        view.unmount()
+      },
+    )
+
+    await check(
       "on Windows this computer's machines lead the dropdown, a pick rides the launch, and a WSL folder picks its distribution",
       async () => {
         seedStore()
@@ -1843,8 +1883,12 @@ test('NewAgentPanel', async () => {
           typeIntoComposer(textarea, 'fix the build')
         })
 
-        // Drop an image: it goes with the launch, as the image it is.
+        // Drop an image: it goes with the launch, as the image it is, shrunk
+        // the way the chat's composer shrinks one.
         useToastStore.setState({ toasts: [] })
+        imageDecoding.decoded = { width: 3136, height: 2352 }
+        imageDecoding.encodedBytes = 900
+        imageDecoding.drawn.length = 0
         const file = new dom.window.File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' })
         const box = textarea.closest('[class*="relative"]')!
         const dropEvent = new dom.window.Event('drop', { bubbles: true, cancelable: true })
@@ -1854,8 +1898,14 @@ test('NewAgentPanel', async () => {
         await act(async () => {
           box.dispatchEvent(dropEvent)
         })
-        await settle()
-        await settle()
+        // Reading the image takes several timer hops (decode, encode, read
+        // back), so a fixed count of settles lost the race on a loaded CI Mac
+        // and Enter launched before the image was staged. Waited for instead:
+        // the strip offers to remove it once it is staged.
+        for (let i = 0; i < 50 && !view.container.querySelector('[aria-label="Remove shot.png"]'); i += 1) {
+          await settle()
+        }
+        assert.ok(view.container.querySelector('[aria-label="Remove shot.png"]'), 'the dropped image is staged')
         const enter = () =>
           act(async () => {
             textarea.dispatchEvent(
@@ -1883,6 +1933,18 @@ test('NewAgentPanel', async () => {
         assert.equal(images?.[0]?.mediaType, 'image/png')
         assert.equal(images?.[0]?.name, 'shot.png')
         assert.ok(typeof images?.[0]?.dataBase64 === 'string' && images[0].dataBase64.length > 0, 'as its bytes')
+        assert.deepEqual(
+          imageDecoding.drawn,
+          [{ width: 1568, height: 1176 }],
+          'drawn at the long edge a vision model uses, not the 3136px it was taken at',
+        )
+        assert.equal(images?.[0]?.byteLength, 900, 'and those are the bytes that go')
+        assert.equal(
+          Buffer.from(String(images?.[0]?.dataBase64), 'base64').length,
+          900,
+          'the shrunk image, not the file as dropped',
+        )
+        imageDecoding.decoded = { width: 400, height: 300 }
         assert.equal('path' in (images?.[0] ?? {}), false, 'and not as a path on this disk, which names nothing there')
         assert.equal(
           remoteLaunches[0]?.remoteWorkspaceRoot,
@@ -2284,71 +2346,19 @@ test('NewAgentPanel', async () => {
           setter.call(nameField, 'login-fix')
           nameField!.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
         })
-        const trigger = view.container.querySelector('[data-remote-worktree-trigger="true"]')
-        assert.match(trigger?.textContent ?? '', /from\s*main/, 'cut from the checkout’s branch')
+        assert.equal(
+          view.container.querySelector('[data-remote-worktree-trigger="true"]'),
+          null,
+          'no picker of a branch or worktree to start from: a worktree is cut from the default branch on origin',
+        )
+        assert.equal(
+          view.container.querySelector('[data-composer-branch]'),
+          null,
+          'nor a branch it is said to be cut from',
+        )
         await sendWithEnter(view, 'fix the build')
         assert.equal(remoteLaunches.length, 1, 'the chat travels')
         assert.deepEqual(remoteLaunches[0]?.worktree, { kind: 'new', name: 'login-fix' })
-        view.unmount()
-        resetNewChatDraftsForTests()
-      },
-    )
-
-    await check(
-      'picking a worktree the remote project already has turns the chip off, and the chat starts in it',
-      async () => {
-        const { writeNewChatDraft, resetNewChatDraftsForTests } = await import('./newChatDraft')
-        seedStore()
-        resetRememberedMachineForTests()
-        resetNewChatDraftsForTests()
-        writeNewChatDraft('win-remote-pick', { prompt: '' })
-        meshConnections = [machine('m1', 'Air')]
-        meshBrowseAnswer = worktreeMachineBrowse(ALL_WORKTREE_CAPABILITIES)
-        meshCheckoutAnswer = checkoutWithWorktrees
-        const remoteLaunches: Array<Record<string, unknown>> = []
-        const view = await remoteRender({
-          draftKey: 'win-remote-pick',
-          onLaunchRemote: async (launch: Record<string, unknown>) => {
-            remoteLaunches.push(launch)
-          },
-        })
-        await settle()
-        await pickMachine(view, 'Air')
-        await settle()
-        await click(view.container.querySelector('[data-remote-worktree-trigger="true"]'))
-        const menu = dom.window.document.querySelector('[role="menu"][aria-label="Worktree on Air"]')
-        assert.ok(menu, 'the worktree picker opens')
-        const rows = [...menu!.querySelectorAll('[data-remote-worktree-option]')]
-        assert.deepEqual(
-          rows.map((row) => row.getAttribute('data-remote-worktree-option')),
-          ['checkout', '/srv/.sprintengine-worktrees/alpha/search'],
-          'the checkout, then each worktree the project has there',
-        )
-        await click(rows[1])
-        await settle()
-        assert.equal(
-          view.container.querySelector('[data-worktree-chip]')?.getAttribute('data-worktree-chip'),
-          'off',
-          'a chat runs in one place, so the chip turns off',
-        )
-        assert.match(
-          view.container.querySelector('[data-remote-worktree-trigger="true"]')?.textContent ?? '',
-          /feat\/search/,
-        )
-        await sendWithEnter(view, 'carry on with search')
-        assert.equal(remoteLaunches.length, 1)
-        assert.deepEqual(remoteLaunches[0]?.worktree, {
-          kind: 'existing',
-          path: '/srv/.sprintengine-worktrees/alpha/search',
-        })
-        assert.equal(remoteLaunches[0]?.branch, 'feat/search', 'on the branch that worktree is on')
-
-        // Turning the chip back on puts the picked worktree back.
-        await click(view.container.querySelector('[data-worktree-chip] button'))
-        assert.match(
-          view.container.querySelector('[data-remote-worktree-trigger="true"]')?.textContent ?? '',
-          /from\s*main/,
-        )
         view.unmount()
         resetNewChatDraftsForTests()
       },
@@ -2674,6 +2684,26 @@ test('NewAgentPanel', async () => {
             appSettings: { ...state.appSettings, recentWorkspaceFolders: [], projectUsage: {} },
           }) as never,
       )
+    })
+
+    // A chat's worktree is how it is isolated, not a place the person chose:
+    // the chip names the project it was cut from, never the slot.
+    await check('the project chip names a worktree folder by its project, not the slot', async () => {
+      seedStore()
+      resetRememberedMachineForTests()
+      meshConnections = []
+      const view = await render({
+        folderPath: '/w/.sprintengine-worktrees/app/pool-01',
+        projectOptions: [{ path: '/w/app', label: 'app' }],
+        onSelectProject: () => {},
+        onBrowseProject: () => {},
+      })
+      await settle()
+      const trigger = view.container.querySelector<HTMLButtonElement>('[data-project-trigger="true"]')
+      assert.ok(trigger, 'the scope line carries the project chip')
+      assert.match(trigger!.textContent ?? '', /\bapp\b/u)
+      assert.doesNotMatch(trigger!.textContent ?? '', /pool-01/u)
+      view.unmount()
     })
 
     // ── One colour per project, on the scope line ────────────────────────────
@@ -3570,6 +3600,64 @@ test('NewAgentPanel', async () => {
       const refused = useToastStore.getState().toasts.find((toast) => toast.title === 'Did not run')
       assert.equal(refused?.description, 'Its last run is still working.')
       door.view.unmount()
+    })
+
+    await check('a paused scheduled agent’s editor says so, and its Pause button resumes it', async () => {
+      seedStore()
+      const api = (dom.window as unknown as { api: Record<string, unknown> }).api
+      api.markScheduledAgentFailureSeen = async () => ({ ok: true })
+      const resumed: string[] = []
+      const paused: string[] = []
+      const agent = {
+        id: 'sa-9',
+        prompt: 'Refresh the forecast.',
+        schedule: { cron: '0 21 * * 0', timezone: 'UTC' },
+        folderPath: '/proj',
+        hostId: null,
+        cli: 'claude-code',
+        cliModel: null,
+        permissionPreset: null,
+        skills: [],
+        mcpServers: [],
+        worktree: null,
+        ownerModuleId: null,
+        createdAt: 0,
+        updatedAt: 0,
+        lastRun: null,
+        lastFailureSeenAt: null,
+        nextRunAt: null,
+      }
+      api.resumeScheduledAgent = async (id: string) => {
+        resumed.push(id)
+        return { ok: true, agent: { ...agent, nextRunAt: Date.now() + 3_600_000 } }
+      }
+      api.pauseScheduledAgent = async (id: string) => {
+        paused.push(id)
+        return { ok: true, agent: { ...agent, pausedAt: Date.now() } }
+      }
+      const door = await scheduleDoor({ editingScheduledAgent: { ...agent, pausedAt: Date.now() - 60_000 } })
+      const tray = door.view.container.querySelector('[data-schedule-paused-tray]')
+      assert.match(tray?.textContent ?? '', /^Paused since .*Run now still runs it\.$/u)
+      const toggle = door.view.container.querySelector<HTMLElement>('[data-schedule-editor-pause]')
+      assert.equal(toggle?.textContent, 'Resume')
+      await act(async () => {
+        toggle!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      })
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      assert.deepEqual(resumed, ['sa-9'])
+      door.view.unmount()
+
+      // Running on its schedule, there is no tray, and the button pauses.
+      const running = await scheduleDoor({ editingScheduledAgent: agent })
+      assert.equal(running.view.container.querySelector('[data-schedule-paused-tray]'), null)
+      const pause = running.view.container.querySelector<HTMLElement>('[data-schedule-editor-pause]')
+      assert.equal(pause?.textContent, 'Pause')
+      await act(async () => {
+        pause!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      })
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      assert.deepEqual(paused, ['sa-9'])
+      running.view.unmount()
     })
 
     // ── Extension mode ──────────────────────────────────────────────────────

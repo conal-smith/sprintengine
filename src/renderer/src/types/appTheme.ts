@@ -4,7 +4,11 @@
 // `src/renderer/src/assets/index.css` under the `:root[data-theme="..."]`
 // blocks. The catalogue was cut to eleven on 2026-09-06 (owner): a picker of
 // nineteen read as a wall, and the themes that went were the ones nobody could
-// tell apart from a neighbour. This file owns everything else: the id list, user-facing labels,
+// tell apart from a neighbour. It has since grown to fifteen (2026-10-13) with
+// four community palettes people ask for by name — Nord, Dracula, and
+// Catppuccin's Mocha and Latte — each distinct from every theme beside it and
+// recognisable on sight; the ruling still stands for anything that is not.
+// This file owns everything else: the id list, user-facing labels,
 // the resolved-vs-user-preference relationship, type unions, normalizer, and
 // the Select option list that the picker renders.
 //
@@ -13,8 +17,11 @@
 //   2. Add the matching `:root[data-theme="<id>"]` block in index.css.
 //   3. Only if it paints a light surface: add the literal id to LIGHT_SURFACES
 //      in the boot script in `src/renderer/public/boot-theme.js` (it can't import bundled
-//      code). LIGHT_SURFACE_THEMES below derives itself from the swatches.
-// Nothing else needs to change.
+//      code), and to each light-surface selector list in index.css (the
+//      date-picker glyph, the git lanes and ref pills, the highlight
+//      palettes). LIGHT_SURFACE_THEMES below derives itself from the swatches.
+// Nothing else needs to change; `appTheme.registry.test.ts` fails if a step is
+// missed.
 
 export type AppTheme =
   | 'system'
@@ -29,6 +36,10 @@ export type AppTheme =
   | 'lantern'
   | 'tokyo-night'
   | 'rose-pine'
+  | 'nord'
+  | 'dracula'
+  | 'catppuccin-mocha'
+  | 'catppuccin-latte'
 
 // The concrete themes that <html data-theme="…"> can actually carry. `system`
 // is a user preference that resolves to one of these at mount time.
@@ -219,6 +230,58 @@ export const APP_THEMES: readonly AppThemeDescriptor[] = [
       textStrong: '#e0d4dc',
     },
   },
+  {
+    id: 'nord',
+    label: 'Nord',
+    resolved: 'nord',
+    description: 'Arctic blue-grey, frost accent',
+    swatches: {
+      bgApp: '#242c38',
+      bgSurface: '#283040',
+      bgSurfaceRaised: '#2c3440',
+      accent: '#88c0d0',
+      textStrong: '#ecf0f4',
+    },
+  },
+  {
+    id: 'dracula',
+    label: 'Dracula',
+    resolved: 'dracula',
+    description: 'Dark violet, neon pink accent',
+    swatches: {
+      bgApp: '#181820',
+      bgSurface: '#20202c',
+      bgSurfaceRaised: '#282838',
+      accent: '#fc78c4',
+      textStrong: '#f8f8f0',
+    },
+  },
+  {
+    id: 'catppuccin-mocha',
+    label: 'Catppuccin Mocha',
+    resolved: 'catppuccin-mocha',
+    description: 'Deep pastel night, mauve accent',
+    swatches: {
+      bgApp: '#10101c',
+      bgSurface: '#181824',
+      bgSurfaceRaised: '#1c1c2c',
+      accent: '#cca8f8',
+      textStrong: '#ccd4f4',
+    },
+  },
+  {
+    id: 'catppuccin-latte',
+    label: 'Catppuccin Latte',
+    resolved: 'catppuccin-latte',
+    description: 'Soft pastel day, mauve accent',
+    swatches: {
+      bgApp: '#dce0e8',
+      bgSurface: '#e4e8f0',
+      bgSurfaceRaised: '#f0f0f4',
+      accent: '#8838f0',
+      textStrong: '#484c64',
+    },
+  },
 ]
 
 const APP_THEME_IDS: readonly AppTheme[] = APP_THEMES.map((t) => t.id)
@@ -248,8 +311,8 @@ export function colorSchemeForResolvedTheme(resolved: ResolvedAppTheme): ColorSc
   return hexLuminance(bgApp) > 0.5 ? 'light' : 'dark'
 }
 
-// The themes that paint a light surface: today `light`, `paper`, `vellum`, and
-// `herbarium`. Derived from the same swatch luminance as the scheme above so a
+// The themes that paint a light surface: today `light`, `paper`, `vellum`,
+// `herbarium` and `catppuccin-latte`. Derived from the same swatch luminance as the scheme above so a
 // theme can never be light by one measure and dark by the other; a theme with
 // no swatch counts as dark, matching the app's dark-default :root.
 //
@@ -344,16 +407,35 @@ export function isClockFormat(value: unknown): value is ClockFormat {
   return typeof value === 'string' && (CLOCK_FORMATS as readonly string[]).includes(value)
 }
 
+// How a reply streaming in is drawn: `live`, each word as it arrives, or
+// `paragraph`, each block once it is finished (shared/conversation/
+// markdownSegments.ts, `createParagraphHold`), so text never reflows under the
+// reader. Either way the whole reply is drawn once it ends.
+const REPLY_STREAMING_MODES = ['live', 'paragraph'] as const
+export type ReplyStreaming = (typeof REPLY_STREAMING_MODES)[number]
+export const DEFAULT_REPLY_STREAMING: ReplyStreaming = 'live'
+
+export function isReplyStreaming(value: unknown): value is ReplyStreaming {
+  return typeof value === 'string' && (REPLY_STREAMING_MODES as readonly string[]).includes(value)
+}
+
 export type AppearanceSettings = {
   theme: AppTheme
   windowMaterial: WindowMaterial
   chatContrast: number
   chatWidth: ChatWidth
   clockFormat: ClockFormat
+  replyStreaming: ReplyStreaming
   // Draw each spawned agent as a small character that moves while it works.
   // Off, an agent is a working mark while it runs and a lifecycle glyph after.
   agentCharacters: boolean
   // Show a subscription's usage limits (the five-hour and weekly windows the
   // agents report) on a Claude or Codex chat's composer strip.
   usageLimits: boolean
+  // The families put in front of the design system's two stacks: the
+  // interface's (`--sem-font-family-ui`) and code's (`--sem-font-family-mono`,
+  // which the terminals and editors draw in too). Free text, cleaned by
+  // `normalizeFontFamilyPreference`; empty is the bundled face.
+  interfaceFont: string
+  codeFont: string
 }

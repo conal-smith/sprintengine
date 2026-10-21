@@ -79,7 +79,11 @@ import {
   TruncatedText,
 } from '../ui'
 import type { WorkspaceSkill } from '../../../../shared/electron-api'
-import { CONVERSATION_DEFAULT_MODEL_ID, cliForConversationProvider } from '../../../../shared/conversation-harness'
+import {
+  CONVERSATION_DEFAULT_MODEL_ID,
+  cliForConversationProvider,
+  conversationSignIn,
+} from '../../../../shared/conversation-harness'
 import { isLooserCliPermissionPreset, parseCliPermissionPreset } from '../../../../shared/cli-permission-preset'
 import { parseCliPermissionModeId } from '../../../../shared/cli-permission-mode'
 import { pickRandomAgentName } from '../../../../shared/agent-names'
@@ -127,6 +131,7 @@ import { ComposerPlusMenu } from '../workspace/agentComposer/ComposerPlusMenu'
 import { unwatchPullRequest, usePullRequestsOfConversation } from '../workspace/useConversationPullRequests'
 import { useLocalServersOfConversation } from '../workspace/useLocalServers'
 import { useCreatePullRequestState } from './agentChat/createPullRequest'
+import { localPullRequestHost } from './agentChat/pullRequestHost'
 import { conversationContextReading } from './agentChat/contextReading'
 import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
@@ -161,7 +166,24 @@ import { pasteIntoComposer } from '../../utils/clipboardPasteBridge'
 
 /** ⌘⌥⏎ in the composer: send, then New chat (see the registry). */
 const SEND_AND_NEW_COMMAND = 'chat.sendAndNew'
+
+/** System Settings on Privacy & Security › Files and Folders; says so when it would not open. */
+function openMacosPrivacySettings(): void {
+  void window.api
+    .openExternal(MACOS_FILES_AND_FOLDERS_SETTINGS_URL)
+    .then((result) => {
+      if (!result.ok) showToast({ tone: 'error', title: 'System Settings did not open', description: result.message })
+    })
+    .catch((error: unknown) =>
+      showToast({
+        tone: 'error',
+        title: 'System Settings did not open',
+        description: error instanceof Error ? error.message : String(error),
+      }),
+    )
+}
 import { settleDisclosureResize, useStickToBottom } from './agentChat/useStickToBottom'
+import { TRANSCRIPT_FOOT, TRANSCRIPT_SCROLL_PADDING_CLASS, TranscriptHead } from './agentChat/transcriptEnds'
 import { ConversationRowFrame } from './agentChat/conversationRowFrame'
 import {
   type ChatOpening,
@@ -173,6 +195,8 @@ import {
 import { loadWholeConversation } from './agentChat/conversationReplay'
 import { ConversationReplayView, type ConversationReplaySource } from './agentChat/conversationReplayView'
 import { onChatReplayRequest, takeChatReplayRequest } from './agentChat/chatReplayRequests'
+import { chatExportSupported, exportChatOrToast } from './agentChat/chatExport'
+import type { ChatExportAction } from '../../../../shared/chat-export'
 import { useConversationScrollRestore } from './agentChat/conversationScrollRestore'
 import { useComposerSkillReader } from './agentChat/composerSkillReader'
 import { nextConversationEffort } from './agentChat/conversationEffort'
@@ -184,8 +208,12 @@ import {
 } from './agentChat/imageAttachments'
 import { ConversationPendingDock, coversComposer, type ApprovalModeSwitch } from './agentChat/pendingDock'
 import { QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
+import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './agentChat/followUpDispatch'
+import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
+import { PROMPT_STASH_COMMAND, usePromptStash } from './agentChat/promptStashPicker'
 import { BackgroundTasksTrayRow } from './agentChat/backgroundTasksRow'
+import { GoalTrayRow } from './agentChat/goalTrayRow'
 import { WorktreeInstallTrayRow } from './agentChat/worktreeInstallRow'
 import { StudioConnectionNotice } from './agentChat/studioConnectionNotice'
 import { ConversationTodoStrip } from './agentChat/todoProgressStrip'
@@ -193,7 +221,8 @@ import { TimelineRow, type TimelineChrome } from './agentChat/timelineRows'
 import { UnreadDivider } from './agentChat/turnMeta'
 import { editFromHereDraft, type EditFromHereDraft } from './agentChat/editFromHere'
 import { forkChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
-import { EmptyChatState, ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
+import { SideQuestionDrawer, useSideQuestion, type SideQuestionApi } from './agentChat/sideQuestion'
+import { ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
 import { PendingFirstMessage } from './agentChat/pendingFirstMessage'
 import { withRequestedTurn, type RequestedTurnRowCache } from './agentChat/requestedTurnRow'
 import { ComposerActionButton, ComposerContextMenu, type ComposerMenuState } from './agentChat/composerControls'
@@ -246,6 +275,7 @@ export type {
   UserTurn,
 } from './agentChat/conversationProjection'
 import { clientSupports, hostPlatform } from '../../clientCapabilities'
+import { MACOS_FILES_AND_FOLDERS_SETTINGS_URL } from '../../../../shared/conversation/macosPrivacyFolders'
 import { useFileDropTarget } from '../../hooks/useFileDropTarget'
 import { ComposerDropOverlay } from './agentChat/ComposerDropOverlay'
 
@@ -282,7 +312,11 @@ export {
   resolvePermissionMode,
   resolvePermissionPreset,
 } from './agentChat/chatPermissions'
-import { MODEL_PICKER_TOGGLE_COMMAND, registerMountedChatView } from './agentChat/mountedChatViews'
+import {
+  MODEL_PICKER_TOGGLE_COMMAND,
+  registerMountedChatView,
+  SIDE_QUESTION_COMMAND,
+} from './agentChat/mountedChatViews'
 import { useChatFind } from './agentChat/useChatFind'
 import { FindBar } from '../find/FindBar'
 export {
@@ -359,6 +393,12 @@ const COMPOSER_CLASS = 'max-h-[280px] min-h-[40px] w-full'
 // appears when there is one to repeat.
 type ComposerActionError = string | { message: string; retry: QueuedTurn }
 
+// A message's words as the runtime records them: one kind of line break, no
+// space at either end.
+function steeredText(text: string): string {
+  return text.replace(/\r\n?/gu, '\n').trim()
+}
+
 function composerErrorMessage(error: ComposerActionError | null): string | null {
   return typeof error === 'string' ? error : (error?.message ?? null)
 }
@@ -404,6 +444,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // chats would sit at their creation time for ever while every CLI chat moved.
   const recordUserMessage = binding.recordUserMessage
   const appCliRuntimes = useWorkspaceStore((s) => s.appSettings.cliRuntimes)
+  // What Enter does while the agent works: queue the message, or steer the
+  // turn with it (followUpDispatch.ts). Read alone, so a change elsewhere in
+  // the settings does not render the chat again.
+  const followUpBehavior = useWorkspaceStore((s) => s.appSettings.followUpBehavior)
   const hostSettings = useWorkspaceStore((s) => s.appSettings.hosts)
   // A chat in a workspace on a WSL machine runs that machine's `claude`. One
   // that records no machine runs where its folder defaults to, as the router
@@ -567,6 +611,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // Steers whose `user_message` is in the conversation while their send has
   // not settled yet.
   const landedSteerIdsRef = useRef(new Set<string>())
+  // A steer to a chat on a paired machine has no echoed id to land by: its
+  // words, and how many of the chat's messages were already in when it went,
+  // are what its own message is known by when it arrives.
+  const steerLandingRef = useRef<{ id: string; text: string; before: number } | null>(null)
   // The composer's right-click menu (1793); null when closed. Opening it snapshots
   // the click point, the field's selection, and the clipboard, so the menu's
   // enable states describe the moment the user asked for it.
@@ -1509,79 +1557,126 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     !draftMetadata.skillIds.length &&
     !draftMetadata.files.length
 
+  // What "send it now" does for the queued message: a steer where both the
+  // transport and the provider take one, else stop the turn and let the queue
+  // send it the moment the session is free.
+  const canSteer = transport.capabilities.steer && capabilities?.steer === true
+  const queuedSendNow = queuedTurnSendNow({
+    canSteer,
+    activeTurn: projection.activeTurn,
+    awaitingApproval: projection.awaitingApproval,
+    stopping: pending === 'stopping',
+    steering: steeringTurnId !== null,
+  })
+  // Whether a message committed now may go into the turn, or stop it, rather
+  // than wait for it: the person's choice decides which only while this holds.
+  const sendNowAvailable = operate && !queuedSendNow.disabled
+  // Set further down, beside the "Send now" it shares with the queued row.
+  const steerTurnRef = useRef<(turn: QueuedTurn) => Promise<void>>(async () => undefined)
+
   // Composer submit (Enter or the send affordance). Sends immediately when the
-  // session is idle. While a turn runs the message queues, where it stays in
-  // sight: the flush effect below sends it the moment the session unlocks,
-  // and "Send now" hands it to the running turn only when the person asks.
-  // Handing every mid-turn Enter straight to the turn lost messages the
-  // running turn never took in, with nothing left in the queue to show for
-  // them, so the queue is the default and a steer is always a choice.
-  const submitComposer = useCallback((): boolean => {
-    const text = draft.trim()
-    // Typed while a New chat is still setting up, before its first message
-    // has gone: queued behind it, as a reply typed while a turn runs is. Any
-    // other chat that cannot send yet keeps the words where they are.
-    if (readiness.kind !== 'ready') {
-      if (!startupHolding || (!text && attachments.length === 0 && !draftMetadata.files.length)) return false
-      const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
-      setQueuedTurn(turn)
-      clearDraft()
-      setAttachments([])
-      setActionError(queuedDropNotice(dropped))
-      return true
-    }
-    if (
-      !text &&
-      attachments.length === 0 &&
-      !draftMetadata.mentions.length &&
-      !draftMetadata.skillIds.length &&
-      !draftMetadata.files.length
-    )
-      return false
-    // A time is picked: the draft is scheduled, whatever the turn is doing.
-    if (sendAt !== null) {
-      void scheduleDraftRef.current()
-      return true
-    }
-    // A command Studio answers itself, or one it will not send, is handled
-    // here whatever the turn is doing: it never reaches the CLI or the queue.
-    if (runAppCommandRef.current(text, attachments.length + draftMetadata.files.length)) return true
-    if (isConversationBusy(projection.activeTurn, projection.awaitingApproval, pending) || steeringTurnId !== null) {
-      if (handsQueueToHost && text) {
+  // session is idle. While a turn runs the message queues by default, where it
+  // stays in sight: the flush effect below sends it the moment the session
+  // unlocks. Handing every mid-turn Enter straight to the turn lost messages
+  // the running turn never took in, with nothing left in the queue to show for
+  // them, so a steer is always a choice: the person's, in Settings ▸ Agents,
+  // or for one message by Primary+Enter (`commitComposerNow`). A steer the
+  // turn cannot take now queues instead, and one the runtime refuses goes back
+  // to the queue, so a message is never lost to the race with the turn's end.
+  const commitDraft = useCallback(
+    (forceQueue: boolean): boolean => {
+      const text = draft.trim()
+      // Typed while a New chat is still setting up, before its first message
+      // has gone: queued behind it, as a reply typed while a turn runs is. Any
+      // other chat that cannot send yet keeps the words where they are.
+      if (readiness.kind !== 'ready') {
+        if (!startupHolding || (!text && attachments.length === 0 && !draftMetadata.files.length)) return false
+        const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
+        setQueuedTurn(turn)
         clearDraft()
-        setActionError(null)
-        void handToHost(text)
+        setAttachments([])
+        setActionError(queuedDropNotice(dropped))
         return true
       }
-      // The cap is the IPC boundary's; trimming to it is right, hiding the trim
-      // is not — the user must know which images did not make the queue.
-      const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
-      setQueuedTurn(turn)
-      clearDraft()
+      if (
+        !text &&
+        attachments.length === 0 &&
+        !draftMetadata.mentions.length &&
+        !draftMetadata.skillIds.length &&
+        !draftMetadata.files.length
+      )
+        return false
+      // A time is picked: the draft is scheduled, whatever the turn is doing.
+      if (sendAt !== null) {
+        void scheduleDraftRef.current()
+        return true
+      }
+      // A command Studio answers itself, or one it will not send, is handled
+      // here whatever the turn is doing: it never reaches the CLI or the queue.
+      if (runAppCommandRef.current(text, attachments.length + draftMetadata.files.length)) return true
+      if (isConversationBusy(projection.activeTurn, projection.awaitingApproval, pending) || steeringTurnId !== null) {
+        const dispatch = forceQueue
+          ? 'queue'
+          : resolveComposerDispatch({
+              busy: true,
+              behavior: followUpBehavior,
+              alternate: false,
+              canSteer,
+              sendNowAvailable,
+            })
+        if (dispatch === 'steer') {
+          // The draft alone: a message already queued keeps its place.
+          const { turn, dropped } = queueComposerDraft(null, text, attachments, draftMetadata)
+          clearDraft()
+          setAttachments([])
+          setActionError(queuedDropNotice(dropped))
+          void steerTurnRef.current(turn)
+          return true
+        }
+        if (handsQueueToHost && text) {
+          clearDraft()
+          setActionError(null)
+          void handToHost(text)
+          return true
+        }
+        // The cap is the IPC boundary's; trimming to it is right, hiding the trim
+        // is not — the user must know which images did not make the queue.
+        const { turn, dropped } = queueComposerDraft(queuedTurn, text, attachments, draftMetadata)
+        setQueuedTurn(turn)
+        clearDraft()
+        setAttachments([])
+        setActionError(queuedDropNotice(dropped))
+        return true
+      }
+      void sendTurn(text, attachments, draftMetadata, true)
       setAttachments([])
-      setActionError(queuedDropNotice(dropped))
       return true
-    }
-    void sendTurn(text, attachments, draftMetadata, true)
-    setAttachments([])
-    return true
-  }, [
-    readiness.kind,
-    startupHolding,
-    attachments,
-    draft,
-    draftMetadata,
-    clearDraft,
-    projection.activeTurn,
-    projection.awaitingApproval,
-    pending,
-    queuedTurn,
-    steeringTurnId,
-    sendTurn,
-    sendAt,
-    handsQueueToHost,
-    handToHost,
-  ])
+    },
+    [
+      readiness.kind,
+      startupHolding,
+      attachments,
+      draft,
+      draftMetadata,
+      clearDraft,
+      projection.activeTurn,
+      projection.awaitingApproval,
+      pending,
+      queuedTurn,
+      steeringTurnId,
+      sendTurn,
+      sendAt,
+      handsQueueToHost,
+      handToHost,
+      followUpBehavior,
+      canSteer,
+      sendNowAvailable,
+    ],
+  )
+  const submitComposer = useCallback((): boolean => commitDraft(false), [commitDraft])
+  // The draft to the queue, whatever Enter would do with it: Primary+Enter's
+  // commit where Steer is the person's choice.
+  const submitQueued = () => commitDraft(true)
 
   // Open the composer's right-click menu (1793). The clipboard read is awaited
   // before opening so Paste is never offered against an empty clipboard, and the
@@ -1939,6 +2034,59 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     [stopSubagentEnabled, sessionId, transport, forgetLostSession],
   )
 
+  // A side question (sideQuestion.tsx), asked of the chat's session — started
+  // first when this view holds none, as a send starts it — and kept out of the
+  // chat. The session a question went to is remembered by its id, so closing
+  // the drawer calls it off there; one closed before its session started is
+  // never asked.
+  const sideQuestionEnabled =
+    operate &&
+    capabilities?.sideQuestion === true &&
+    typeof transport.askSideQuestion === 'function' &&
+    typeof transport.cancelSideQuestion === 'function'
+  // Held across the API's renewals: starting the session for a question
+  // renews it, and the drawer's close must still find where that one went.
+  const sideQuestionsAsked = useRef(new Map<string, string>())
+  const sideQuestionsCalledOff = useRef(new Set<string>())
+  const sideQuestionApi = useMemo<SideQuestionApi | null>(() => {
+    if (!sideQuestionEnabled) return null
+    const askedOf = sideQuestionsAsked.current
+    const calledOff = sideQuestionsCalledOff.current
+    return {
+      async ask({ requestId, question, history }) {
+        const started = await ensureSession()
+        if (calledOff.delete(requestId))
+          return { ok: false, cancelled: true, message: 'The side question was called off.' }
+        if (!started) return { ok: false, message: 'The chat could not be started to answer it.' }
+        askedOf.set(requestId, started)
+        try {
+          const result = await transport.askSideQuestion!({
+            sessionId: started,
+            requestId,
+            question,
+            ...(history.length ? { history } : {}),
+          })
+          if (!result.ok && !result.cancelled && forgetLostSession(result))
+            return { ok: false, message: 'The chat’s session ended. Ask again to start it.' }
+          return result
+        } finally {
+          askedOf.delete(requestId)
+        }
+      },
+      cancel(requestId) {
+        const asked = askedOf.get(requestId)
+        if (!asked) {
+          calledOff.add(requestId)
+          return
+        }
+        void transport.cancelSideQuestion!({ sessionId: asked, requestId }).catch(() => undefined)
+      },
+    }
+  }, [sideQuestionEnabled, ensureSession, transport, forgetLostSession])
+  const sideQuestion = useSideQuestion(sideQuestionApi)
+  // Whether it opened: a chat with no reply yet has nothing to ask about.
+  const openSideQuestionRef = useRef<(question?: string) => boolean>(() => false)
+
   // Send a queued message into the running turn (a steer). It skips sendTurn's
   // `pending` latch on purpose: that latch belongs to the send whose turn is
   // running, which settles only when this one takes the turn over. The bubble
@@ -1962,29 +2110,55 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     const text = turn.text.trim()
     const files = attachedFilesOf(metadata.files)
     const localTurnId = `user-${userTurns.length}-${Date.now()}`
+    // An optimistic bubble only where the runtime echoes its id back, as for
+    // any send: a paired machine's chat draws the message from its own event.
+    const optimistic = transport.capabilities.optimisticTurns
     setActionError(null)
     setSteeringTurnId(localTurnId)
-    pendingUserScrollIdRef.current = `user:${localTurnId}`
-    setUserTurns((current) => [
-      ...current,
-      {
-        id: localTurnId,
-        text,
-        createdAt: Date.now(),
-        mentions: metadata.mentions,
-        ...(files.length > 0 ? { files } : {}),
-        skills: metadata.skillIds,
-        ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
-      },
-    ])
+    steerLandingRef.current = optimistic
+      ? null
+      : {
+          id: localTurnId,
+          text: steeredText(text),
+          before: shapeEntries.filter((entry) => entry.kind === 'user' && entry.seq !== undefined).length,
+        }
+    if (optimistic) {
+      pendingUserScrollIdRef.current = `user:${localTurnId}`
+      setUserTurns((current) => [
+        ...current,
+        {
+          id: localTurnId,
+          text,
+          createdAt: Date.now(),
+          mentions: metadata.mentions,
+          ...(files.length > 0 ? { files } : {}),
+          skills: metadata.skillIds,
+          ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
+        },
+      ])
+    }
     recordUserMessage?.(Date.now())
     // The send settles only when the turn the steer opened does, so a failure
     // can arrive after the message was already written to the conversation.
     // Queueing that one again would send it twice; only a message that never
-    // landed goes back to the head of the queue.
+    // landed goes back to the head of the queue. Where the landing cannot be
+    // seen (no echoed id: a paired machine, which holds a steer its turn
+    // could not take for the turn's end itself), a refused one goes back to
+    // the composer instead, for the person to send again or not.
     const requeue = (message: string) => {
       setActionError(message)
       if (landedSteerIdsRef.current.has(localTurnId)) return
+      if (!optimistic) {
+        setDraft((current) => restoreRefusedText(current, turn.text))
+        setDraftMetadata((current) => ({
+          skillIds: [...new Set([...turn.metadata.skillIds, ...current.skillIds])],
+          mentions: [...turn.metadata.mentions, ...current.mentions],
+          files: [...new Set([...turn.metadata.files, ...current.files])],
+        }))
+        if (turn.attachments.length)
+          setAttachments((current) => [...turn.attachments, ...current].slice(0, MAX_ATTACHMENTS_PER_TURN))
+        return
+      }
       setUserTurns((current) => current.filter((entry) => entry.id !== localTurnId))
       putBackQueued(turn)
     }
@@ -2009,34 +2183,29 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       requeue(err instanceof Error ? err.message : 'Could not send the message.')
     } finally {
       landedSteerIdsRef.current.delete(localTurnId)
+      if (steerLandingRef.current?.id === localTurnId) steerLandingRef.current = null
       setSteeringTurnId((current) => (current === localTurnId ? null : current))
     }
   }
+  steerTurnRef.current = steerTurn
 
   // The steer is delivered once its own `user_message` replaces the optimistic
   // bubble; the queue may hand over the next one from then on. The id is kept
   // until its send settles, so a late failure knows the message is already in.
   useEffect(() => {
     if (steeringTurnId === null) return
-    const landed = shapeEntries.some(
-      (entry) => entry.kind === 'user' && entry.id === steeringTurnId && entry.seq !== undefined,
-    )
+    const landing = steerLandingRef.current?.id === steeringTurnId ? steerLandingRef.current : null
+    const landed = landing
+      ? shapeEntries
+          .filter((entry) => entry.kind === 'user' && entry.seq !== undefined)
+          .slice(landing.before)
+          .some((entry) => entry.kind === 'user' && steeredText(entry.text) === landing.text)
+      : shapeEntries.some((entry) => entry.kind === 'user' && entry.id === steeringTurnId && entry.seq !== undefined)
     if (!landed) return
     landedSteerIdsRef.current.add(steeringTurnId)
     setSteeringTurnId(null)
   }, [steeringTurnId, shapeEntries])
 
-  // What "send it now" does for the queued message: a steer where both the
-  // transport and the provider take one, else stop the turn and let the queue
-  // send it the moment the session is free.
-  const canSteer = transport.capabilities.steer && capabilities?.steer === true
-  const queuedSendNow = queuedTurnSendNow({
-    canSteer,
-    activeTurn: projection.activeTurn,
-    awaitingApproval: projection.awaitingApproval,
-    stopping: pending === 'stopping',
-    steering: steeringTurnId !== null,
-  })
   const sendQueuedNow = (turn: QueuedTurn) => {
     if (queuedSendNow.disabled || !operate) {
       setQueuedTurn(turn)
@@ -2079,8 +2248,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     }
   }
 
-  // ⌘↵ / Ctrl+↵: commit and send now. Idle, that is an ordinary send; while
-  // the agent works, the draft joins the queue and the queue goes at once.
+  // ⌘↵ / Ctrl+↵ (and a Primary-click on send): the other of what Enter does
+  // while the agent works. Idle, that is an ordinary send. With Steer chosen,
+  // the draft queues. Otherwise the draft joins the queue and the queue goes
+  // at once: steered into the turn, or, where the provider cannot take it,
+  // sent once the turn is stopped. With nothing typed, the queue goes now.
   const commitComposerNow = () => {
     // A time is picked: ⌘↵ schedules, as Enter does.
     if (sendAt !== null) {
@@ -2098,6 +2270,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       draftMetadata.mentions.length > 0 ||
       draftMetadata.skillIds.length > 0 ||
       draftMetadata.files.length > 0
+    const dispatch = resolveComposerDispatch({
+      busy: true,
+      behavior: followUpBehavior,
+      alternate: true,
+      canSteer,
+      sendNowAvailable,
+    })
+    if (hasDraft && dispatch === 'queue') {
+      submitQueued()
+      return
+    }
     if (!hasDraft) {
       if (queuedTurn) sendQueuedNow(queuedTurn)
       // What the machine running the chat holds goes when the turn ends there,
@@ -2105,7 +2288,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       else if (hostQueue?.messages.some((message) => message.failure === undefined)) stopForHostQueue()
       return
     }
-    if (handsQueueToHost && text) {
+    // Held by the machine running the chat, then let go by stopping its turn.
+    // A steer goes into that turn instead, through the queue below.
+    if (handsQueueToHost && text && dispatch !== 'steer') {
       clearDraft()
       setActionError(null)
       void handToHost(text).then((held) => {
@@ -2186,8 +2371,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     void sendTurn(failedSend.text, failedSend.attachments, failedSend.metadata, fromDraft, rest !== null)
     setAttachments((current) => (current === failedSend.attachments ? [] : current))
   }
-  // Only this machine's Claude chat signs in through its CLI; a paired
-  // machine's chat would need signing in over there.
+  // Only this machine's chats on a CLI Studio can open a sign-in for (Claude
+  // Code, Kimi Code) sign in through it; a paired machine's chat would need
+  // signing in over there.
   // A chat on an SSH machine signs in there, whichever CLI it runs (phase 8).
   // With the SSH machines preview off, such a chat has nowhere to sign in:
   // this computer's CLI is not the one the chat runs.
@@ -2201,7 +2387,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     (!machineId || sshMachinesOn) &&
     (machineId
       ? cliForConversationProvider(conversation?.providerId)
-      : cliForConversationProvider(conversation?.providerId) === 'claude-code')
+      : conversationSignIn(cliForConversationProvider(conversation?.providerId)))
       ? conversation?.providerId
       : undefined
   const signIn = useCallback(async () => {
@@ -2257,6 +2443,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // the message it gave back: neither can send (Send and Enter wait on ready).
   const composerInputDisabled =
     !ready && !startupHolding && readiness.kind !== 'preparing-worktree' && readiness.kind !== 'worktree-failed'
+  // While the agent works the send queues or steers, by the person's choice,
+  // and a Primary-click does the other: the button, Enter and the menu's
+  // Send all read it from here.
+  const followUpPresentation = followUpSendPresentation({
+    behavior: followUpBehavior,
+    canSteer,
+    sendNowAvailable,
+    ...(queuedSendNow.reason ? { unavailableReason: queuedSendNow.reason } : {}),
+    clickModifier: primaryClickModifier(window.api?.platform),
+    shortcutLabel: sendNowShortcutLabel,
+  })
   // One rule for both send affordances — the footer button and the right-click
   // menu's Send item (1793) — so they can never label or gate a commit
   // differently from each other or from Enter.
@@ -2267,6 +2464,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     sending,
     hasText: draft.trim().length > 0 || draftMetadata.mentions.length > 0 || draftMetadata.skillIds.length > 0,
     attachmentCount: attachments.length + draftMetadata.files.length,
+    busyLabel: followUpPresentation.labels[followUpPresentation.action],
   })
 
   // The runtime binds a session to one provider/model, so the model is editable
@@ -2542,6 +2740,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     focusFallback: () => composerRef.current?.focus(),
   })
   const openChatFind = chatFind.openFind
+  // Export chat asks this before it offers itself: a chat with no message has
+  // nothing to export. Earlier pages not read in yet are messages too.
+  const hasMessagesRef = useRef(false)
+  hasMessagesRef.current = hasMore || timelineRows.some((row) => row.kind === 'user' || row.kind === 'assistant')
+  const exportable = transport.kind === 'local' && chatExportSupported()
   useEffect(
     () =>
       registerMountedChatView({
@@ -2560,11 +2763,24 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         },
         restartSession: () => void restartSessionRef.current(),
         openFind: openChatFind,
+        openSideQuestion: () => openSideQuestionRef.current(),
+        hasMessages: () => hasMessagesRef.current,
+        // Main reads a local chat's transcript; a chat on another machine has
+        // none here to read.
+        ...(exportable
+          ? { exportChat: (action: ChatExportAction) => void exportChatOrToast({ workspaceId, agentId, action }) }
+          : {}),
       }),
-    [workspaceId, agentId, stepTurn, openChatFind],
+    [workspaceId, agentId, stepTurn, openChatFind, exportable],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]
+    if (!keybinding) return null
+    const platform = window.api.platform === 'darwin' ? 'darwin' : window.api.platform === 'win32' ? 'windows' : 'linux'
+    return renderKeybinding(keybinding, platform)
+  }, [keybindingSettings])
+  const sideQuestionShortcutLabel = useMemo(() => {
+    const keybinding = getEffectiveKeybindings(SIDE_QUESTION_COMMAND, keybindingSettings)[0]
     if (!keybinding) return null
     const platform = window.api.platform === 'darwin' ? 'darwin' : window.api.platform === 'win32' ? 'windows' : 'linux'
     return renderKeybinding(keybinding, platform)
@@ -2621,10 +2837,20 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       models: chatCliOption?.modelSelection?.options ?? [],
       efforts: capabilities?.reasoningEfforts ?? [],
       attachments: attachmentCount,
+      sideQuestion: sideQuestionApi !== null,
     })
     if (!action) return false
     if (action.kind === 'refuse') {
       setPermissionNotice(action.notice)
+      return true
+    }
+    if (action.kind === 'sideQuestion') {
+      if (!openSideQuestionRef.current(action.question)) {
+        setPermissionNotice('A side question asks about the chat so far. Send the chat a message first.')
+        return true
+      }
+      clearDraft()
+      setCommandHint(null)
       return true
     }
     clearDraft()
@@ -2754,8 +2980,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         model: Boolean(chatCli),
         effort: Boolean(capabilities?.reasoningEfforts?.length),
         terminal: resumesInTerminal,
+        sideQuestion: sideQuestionApi !== null,
       }),
-    [chatCli, capabilities?.reasoningEfforts?.length, resumesInTerminal],
+    [chatCli, capabilities?.reasoningEfforts?.length, resumesInTerminal, sideQuestionApi],
   )
   const conversationCommands = useConversationCommands(
     chatCli,
@@ -2806,6 +3033,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         removeContextTrigger(range)
         if (command.name === 'effort') cycleEffortRef.current()
         if (command.name === 'terminal') resumeInTerminalRef.current()
+        if (command.name === 'btw' && !openSideQuestionRef.current())
+          setPermissionNotice('A side question asks about the chat so far. Send the chat a message first.')
         return
       }
       // Everything else is text the CLI expands when the message goes out —
@@ -2841,6 +3070,36 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       }))
       removeContextTrigger(range)
     },
+  })
+  // ⌘S sets the draft aside, or on an empty box lists what was set aside
+  // (agentChat/promptStashPicker.tsx). A stashed prompt comes back ahead of
+  // anything typed since, the way "Edit from here" brings a message back.
+  const stashPicker = usePromptStash({
+    stashKeys: getEffectiveKeybindings(PROMPT_STASH_COMMAND, keybindingSettings),
+    platform: keyPlatform,
+    content: () => ({
+      text: draft,
+      files: draftMetadata.files,
+      mentions: draftMetadata.mentions,
+      images: attachments,
+    }),
+    clear: () => {
+      clearDraft()
+      setAttachments([])
+      detachRecall()
+    },
+    restore: ({ prompt, images }) => {
+      restoreDraftRef.current({
+        text: prompt.text,
+        files: prompt.files,
+        skills: [],
+        mentions: prompt.mentions,
+        attachments: images,
+      })
+      return true
+    },
+    acceptsImages: imagesEnabled,
+    empty: !draft.trim() && !attachments.length && !draftMetadata.files.length && !draftMetadata.mentions.length,
   })
 
   const pendingApprovalEntries = shape.pendingApprovals
@@ -2893,6 +3152,33 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const forkFromHere = useCallback((target: ForkFromHereTarget) => forkRef.current(target), [])
   const onFork =
     operate && capabilities?.fork === true && typeof transport.fork === 'function' ? forkFromHere : undefined
+  // The Files and Folders setting is this Mac's, so only a chat that runs on
+  // it, in a window that can reach System Settings, offers to open it.
+  const onOpenPrivacySettings =
+    transport.kind === 'local' && !machineId && hostPlatform() === 'darwin' && clientSupports('reveal-in-folder')
+      ? openMacosPrivacySettings
+      : undefined
+  // A side question is offered once the chat has a reply to ask about, and
+  // carried on in a chat of its own where the chat can be forked here: from
+  // its newest reply, once no turn runs, as Fork from here is.
+  const sideQuestionOffered = sideQuestionApi !== null && latestTurnId !== undefined
+  openSideQuestionRef.current = (question) => {
+    if (!sideQuestionOffered) return false
+    sideQuestion.show(question)
+    return true
+  }
+  const sideQuestionMenuRow = useMemo(
+    () => ({ onAsk: () => void openSideQuestionRef.current(), shortcut: sideQuestionShortcutLabel }),
+    [sideQuestionShortcutLabel],
+  )
+  const continueSideQuestion =
+    onFork && latestTurnId
+      ? {
+          disabled: projection.activeTurn ? 'Available once the chat’s turn ends' : null,
+          onContinue: (question: string) =>
+            forkFromHere({ side: 'assistant', turnId: latestTurnId, draft: { text: question } }),
+        }
+      : undefined
   const chrome: TimelineChrome =
     oldChrome &&
     oldChrome.assistantName === assistantName &&
@@ -2901,6 +3187,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     oldChrome.onRetry === retry &&
     oldChrome.retryDisabled === composerDisabled &&
     oldChrome.onSignIn === onSignIn &&
+    oldChrome.onOpenPrivacySettings === onOpenPrivacySettings &&
     oldChrome.checkpointsEnabled === (capabilities?.checkpoints === true) &&
     oldChrome.conversationRunning === projection.activeTurn &&
     oldChrome.checkpointSeqs === stableCheckpointSeqs &&
@@ -2915,6 +3202,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           onRetry: retry,
           retryDisabled: composerDisabled,
           onSignIn,
+          onOpenPrivacySettings,
           platform: hostPlatform(),
           checkpointsEnabled: capabilities?.checkpoints === true,
           conversationRunning: projection.activeTurn,
@@ -3151,6 +3439,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     workspace: binding.workspace,
     workspaceRoot,
     transport,
+    listed: binding.listed ?? null,
   })
   // ── Scheduling the next message ──────────────────────────────────────────
   // Offered for a chat that runs on this computer, as its usage-limit resume
@@ -3212,10 +3501,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     setSendAt(null)
   }
   // The pull requests this conversation opened, from the record the sidebar
-  // reads. A chat on a paired machine has its record there, not here.
-  const conversationPullRequests = usePullRequestsOfConversation(
-    transport.kind === 'remote' ? null : { workspaceId, agentId },
-  )
+  // reads. A chat on a paired machine has its record there, and its machine
+  // lists them with the chat.
+  const localPullRequests = usePullRequestsOfConversation(transport.kind === 'remote' ? null : { workspaceId, agentId })
+  const conversationPullRequests =
+    transport.kind === 'remote' ? (binding.listed?.pullRequests ?? localPullRequests) : localPullRequests
   // The person's "Stop watching" on the strip's pull request: the record's
   // change comes back through the list above, so nothing is held here.
   const stopWatchingPullRequest = useCallback(
@@ -3243,11 +3533,23 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       ? usageLimitProviderOf(conversation?.providerId)
       : null
   const stripUsageLimits = useUsageLimitSnapshot(usageProvider)
-  // "Create PR" works in this computer's checkout only: a chat on a paired
-  // machine, WSL or an SSH machine (the strip names its machine) has no git
-  // or `gh` here.
+  // "Create PR" works in this computer's checkout, or on the paired machine a
+  // remote chat runs on, which does every step in its own checkout (owner
+  // ruling 2026-10-18) where it says it can and this pairing may drive the
+  // chat. A chat on WSL or an SSH machine (the strip names its machine) has
+  // no git or `gh` here, and nothing there answers for them.
   const createPullRequestCwd =
     transport.kind !== 'remote' && transport.capabilities.localFiles && !stripFacts.machine ? workspaceRoot : null
+  const remotePullRequestHost =
+    transport.kind === 'remote' && transport.capabilities.hostPullRequests && operate
+      ? (transport.pullRequestHost ?? null)
+      : null
+  const pullRequestHost = useMemo(
+    () =>
+      remotePullRequestHost ??
+      (createPullRequestCwd ? localPullRequestHost(createPullRequestCwd, { workspaceId, agentId }) : null),
+    [remotePullRequestHost, createPullRequestCwd, workspaceId, agentId],
+  )
   // A turn ending moves the transcript's shape, and a token never does: read
   // when the shape moves, not on every streamed frame, which scanned back over
   // the whole running turn's events each time.
@@ -3262,7 +3564,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const [createPullRequestAsk, setCreatePullRequestAsk] = useState(0)
   const createPullRequestState = useCreatePullRequestState(
     // Not asked while the conversation owns an open pull request: the slot is that one's.
-    conversationPullRequests.some((pr) => pr.state === 'open') ? null : createPullRequestCwd,
+    conversationPullRequests.some((pr) => pr.state === 'open') ? null : pullRequestHost,
     [
       lastTurnEnd,
       stripFacts.branch?.name ?? '',
@@ -3277,16 +3579,16 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const [createPullRequestHeld, setCreatePullRequestHeld] = useState(false)
   const createPullRequest = useMemo(
     () =>
-      createPullRequestCwd && (createPullRequestState?.readiness.ready || createPullRequestHeld)
+      pullRequestHost && (createPullRequestState?.readiness.ready || createPullRequestHeld)
         ? {
-            cwd: createPullRequestCwd,
-            conversation: { workspaceId, agentId },
+            host: pullRequestHost,
             onSettled: () => setCreatePullRequestAsk((count) => count + 1),
             onHoldChange: setCreatePullRequestHeld,
             ready: createPullRequestState?.readiness.ready === true,
+            forge: createPullRequestState?.forge ?? null,
           }
         : null,
-    [createPullRequestCwd, createPullRequestState, createPullRequestHeld, workspaceId, agentId],
+    [pullRequestHost, createPullRequestState, createPullRequestHeld],
   )
   return (
     <ConversationLinkProvider
@@ -3315,6 +3617,14 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               onPrevious={chatFind.findPrevious}
               onClose={chatFind.close}
               inputRef={chatFind.inputRef}
+            />
+          ) : null}
+          {sideQuestionApi ? (
+            <SideQuestionDrawer
+              state={sideQuestion}
+              chatName={agent?.name || 'this chat'}
+              shortcut={sideQuestionShortcutLabel}
+              continueInChat={continueSideQuestion}
             />
           ) : null}
           <div
@@ -3353,16 +3663,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   onSwitchModel={() => setModelMenuOpen(true)}
                   {...(binding.worktreeActions ? { worktreeActions: binding.worktreeActions } : {})}
                 />
-              ) : supportsTools ? (
-                <EmptyChatState
-                  assistantName={assistantName}
-                  onSuggestion={(text) => {
-                    setDraft(text)
-                    composerRef.current?.focus()
-                  }}
-                />
               ) : (
-                // Model providers are a plain chat — no tool contract to explain.
+                // A new chat starts from the New chat panel, which sends its
+                // first message; a chat with none yet only says so.
                 <div className="flex h-full items-center justify-center">
                   <p className="max-w-[280px] text-center text-meta leading-5 text-[color:var(--text-muted)]">
                     No messages yet. Send a prompt to start the conversation.
@@ -3412,25 +3715,31 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                 // was neither the kit's colour nor its shape.
                 // The gutter, not a narrower list, draws the chat width setting's
                 // column: the scroller stays pane-wide so its scrollbar does too.
-                className={`chat-column-gutter h-full overflow-y-auto py-4 focus:outline-none ${FOCUS_RING_INSET_CLASS}`}
+                // No padding or margin of its own above or below the rows: the
+                // list cannot see one, and its end would stop short of it. The
+                // gap at either end is the list's header and footer
+                // (transcriptEnds.tsx).
+                className={`chat-column-gutter h-full overflow-y-auto ${TRANSCRIPT_SCROLL_PADDING_CLASS} focus:outline-none ${FOCUS_RING_INSET_CLASS}`}
                 tabIndex={0}
-                contentContainerClassName="space-y-1"
                 ListHeaderComponent={
-                  hasMore ? (
-                    <div className="flex justify-center pb-3">
-                      <OutlineButton
-                        size="xs"
-                        busy={loadingEarlier}
-                        disabled={loadingEarlier}
-                        onClick={() => {
-                          void loadEarlier().catch(() => undefined)
-                        }}
-                      >
-                        {loadingEarlier ? 'Loading earlier…' : 'Load earlier'}
-                      </OutlineButton>
-                    </div>
-                  ) : null
+                  <TranscriptHead>
+                    {hasMore ? (
+                      <div className="flex justify-center pb-3">
+                        <OutlineButton
+                          size="xs"
+                          busy={loadingEarlier}
+                          disabled={loadingEarlier}
+                          onClick={() => {
+                            void loadEarlier().catch(() => undefined)
+                          }}
+                        >
+                          {loadingEarlier ? 'Loading earlier…' : 'Load earlier'}
+                        </OutlineButton>
+                      </div>
+                    ) : null}
+                  </TranscriptHead>
                 }
+                ListFooterComponent={TRANSCRIPT_FOOT}
                 aria-live="off"
                 onScroll={handleLogScroll}
                 onFirstVisibleItemChanged={({ key }) => {
@@ -3544,6 +3853,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   stopping={pending === 'stopping'}
                 />
               ) : null}
+              {/* The goal the agent keeps working toward by itself, turn after
+                turn, and where it stands: during its turns as between them.
+                Only for a live session, which says its goal again once it has
+                read the thread's. */}
+              {sessionId !== null ? <GoalTrayRow goal={projection.goal} seed={sessionId} /> : null}
               {requestPending ? null : (
                 <>
                   <ConversationTodoStrip entries={shapeEntries} activeTurn={projection.activeTurn} />
@@ -3700,6 +4014,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   {composerError}
                 </ComposerTrayRow>
               ) : null}
+              {/* The stash ⌘S opened, against the box it restores into. */}
+              {stashPicker.picker}
             </ComposerTray>
 
             {/*
@@ -3766,7 +4082,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               <div className="px-5 pb-1 pt-4">
                 <ComposerField
                   ref={composerRef}
-                  contentAttributes={{ 'aria-label': `Message ${label}`, ...contextPicker.comboboxProps }}
+                  contentAttributes={{
+                    'aria-label': `Message ${label}`,
+                    ...contextPicker.comboboxProps,
+                    ...stashPicker.comboboxProps,
+                  }}
                   value={draft}
                   historyScope={`${workspaceId}\0${agentId}`}
                   onBlur={flushDraft}
@@ -3811,6 +4131,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing) return
                     if (contextPicker.handleKeyDown(event)) return
+                    if (stashPicker.handleKeyDown(event)) return
                     if (
                       event.key === 'Backspace' &&
                       event.currentTarget.selectionStart === 0 &&
@@ -3891,12 +4212,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     onFiles={onPickedFiles}
                   />
                 ) : null}
-                {imagesEnabled || filesEnabled || supportsSkills || scheduleOption ? (
+                {imagesEnabled || filesEnabled || supportsSkills || scheduleOption || sideQuestionOffered ? (
                   <ComposerPlusMenu
                     placement="top-start"
                     onAttach={imagesEnabled || filesEnabled ? openFilePicker : undefined}
                     schedule={scheduleOption}
                     skills={plusMenuSkills}
+                    sideQuestion={sideQuestionOffered ? sideQuestionMenuRow : undefined}
                   />
                 ) : null}
                 {/* The tags: when the message is to go, then each skill attached to the next turn. */}
@@ -3963,24 +4285,40 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     Schedule
                     <ScheduleGlyph className="icon-sm" />
                   </SendButton>
-                ) : projection.activeTurn && !operate ? null : projection.activeTurn ? (
-                  <ComposerActionButton
-                    tone="neutral"
-                    ariaLabel={pending === 'stopping' ? 'Stopping' : 'Stop responding'}
-                    onClick={() => void interrupt()}
-                    disabled={stopDisabledForPending(pending)}
-                  >
-                    <StopGlyph className="icon-sm shrink-0" />
-                  </ComposerActionButton>
-                ) : (
-                  <ComposerActionButton
-                    tone="accent"
-                    ariaLabel={sendAction.label}
-                    onClick={submitComposer}
-                    disabled={sendAction.disabled}
-                  >
-                    <SendGlyph className="icon-sm shrink-0" />
-                  </ComposerActionButton>
+                ) : projection.activeTurn && !operate ? null : (
+                  <>
+                    {projection.activeTurn ? (
+                      <ComposerActionButton
+                        tone="neutral"
+                        ariaLabel={pending === 'stopping' ? 'Stopping' : 'Stop responding'}
+                        onClick={() => void interrupt()}
+                        disabled={stopDisabledForPending(pending)}
+                      >
+                        <StopGlyph className="icon-sm shrink-0" />
+                      </ComposerActionButton>
+                    ) : null}
+                    {/* While the agent works, the send says whether it queues
+                        or steers. With nothing typed, Stop stands alone. */}
+                    {composerBusy || startupHolding ? (
+                      projection.activeTurn && sendAction.disabled ? null : (
+                        <FollowUpSendButton
+                          presentation={followUpPresentation}
+                          platform={window.api?.platform}
+                          disabled={sendAction.disabled}
+                          onSend={(alternate) => (alternate ? commitComposerNow() : void submitComposer())}
+                        />
+                      )
+                    ) : (
+                      <ComposerActionButton
+                        tone="accent"
+                        ariaLabel={sendAction.label}
+                        onClick={submitComposer}
+                        disabled={sendAction.disabled}
+                      >
+                        <SendGlyph className="icon-sm shrink-0" />
+                      </ComposerActionButton>
+                    )}
+                  </>
                 )}
               </div>
               {/*

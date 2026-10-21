@@ -10,6 +10,8 @@ import {
   type ConversationWireModels,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
+import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
+import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
   ConversationKey,
@@ -29,8 +31,16 @@ import { randomUUID } from 'node:crypto'
 import { DEFAULT_AGENT_SPAWN_PERMISSION_PRESET } from '../../../shared/launch-settings'
 import { parseCliPermissionModeId } from '../../../shared/cli-permission-mode'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
+import { stat } from 'node:fs/promises'
+import type { ConversationAttachedFile } from '../../../shared/conversation/attachedFiles'
 import { openConfinedExistingFile } from '../../conversation-file-access'
-import { conversationImageFileOf, conversationImagePathOf } from './tailnet-conversation-images'
+import {
+  conversationImageFileOf,
+  conversationImagePathOf,
+  sniffConversationImage,
+  type ConversationImageMediaType,
+} from './tailnet-conversation-images'
+import { ConversationAttachmentStore } from '../../conversation-attachment-store'
 import {
   ATTACHABLE_IMAGE_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -51,21 +61,27 @@ const MAX_SPENT_UPLOAD_REFS = 256
  */
 const IMAGE_PATH_TTL_MS = 10 * 60_000
 const MAX_IMAGE_PATHS = 256
-const wireCapabilities = (session: ConversationSessionSummary) =>
-  session.capabilities
+const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities'] | undefined) =>
+  capabilities
     ? {
-        images: session.capabilities.images,
-        approvals: session.capabilities.approvals,
-        questions: session.capabilities.questions,
-        planMode: session.capabilities.planMode,
-        interrupt: session.capabilities.interrupt,
-        checkpoints: session.capabilities.checkpoints === true,
-        ...(session.capabilities.permissionPresets
-          ? { permissionPresets: [...session.capabilities.permissionPresets] }
-          : {}),
-        ...(session.capabilities.permissionModes ? { permissionModes: [...session.capabilities.permissionModes] } : {}),
+        images: capabilities.images,
+        approvals: capabilities.approvals,
+        questions: capabilities.questions,
+        planMode: capabilities.planMode,
+        interrupt: capabilities.interrupt,
+        checkpoints: capabilities.checkpoints === true,
+        ...(capabilities.permissionPresets ? { permissionPresets: [...capabilities.permissionPresets] } : {}),
+        ...(capabilities.permissionModes ? { permissionModes: [...capabilities.permissionModes] } : {}),
+        // Whether a `send` that says `steer` can go into the turn now running
+        // (`conversation-steer-sends`); a client offers Steer only where it can.
+        steer: capabilities.steer === true,
       }
     : undefined
+
+const capabilitiesOf = (capabilities: ConversationSessionSummary['capabilities'] | undefined) => {
+  const wire = wireCapabilities(capabilities)
+  return wire ? { capabilities: wire } : {}
+}
 
 export async function readBoundedConversationUpload(path: string, expectedBytes: number): Promise<Buffer> {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 1 || expectedBytes > MAX_ATTACHMENT_BYTES)
@@ -117,6 +133,19 @@ export type ConversationGatewayHost = {
    * step, or the step shows no picture.
    */
   toolImagePath?(key: ConversationKey, toolUseId: string): Promise<ConversationToolImagePath>
+  /**
+   * A picture the person sent with one of the chat's messages, by the `ref`
+   * its `user_message` recorded. Read only from this machine's attachment
+   * store, and only from the chat's own folder there: a ref naming another
+   * chat's picture is `unknown_image`, as one that is gone is.
+   */
+  sentImage?(key: ConversationKey, ref: string): Promise<ConversationSentImage>
+  /**
+   * Keep what a device uploaded for one chat's next send, under an id only
+   * that device can spend. A picture is read into the turn; a `file` (any
+   * type, `conversation-message-files`) is attached to the message by its
+   * path, which then stays where the upload put it.
+   */
   registerUpload?(input: {
     deviceId: string
     sessionId: string
@@ -124,6 +153,7 @@ export type ConversationGatewayHost = {
     name: string
     mediaType: string
     bytes: number
+    kind?: 'file'
     dispose?: () => void
   }): string
   /**
@@ -172,6 +202,10 @@ function relay(
 
 export type ConversationToolImagePath =
   { ok: true; path: string } | { ok: false; code: 'unknown_conversation' | 'unknown_image' }
+
+export type ConversationSentImage =
+  | { ok: true; mediaType: ConversationImageMediaType; bytes: Buffer }
+  | { ok: false; code: 'unknown_conversation' | 'unknown_image' }
 
 /**
  * How a command ended. `code` names a refusal the wire has a word for (a model
@@ -239,6 +273,17 @@ export type ConversationListMarks = {
    * list asked for again runs no git.
    */
   branchesOf?: (workspaceIds: string[]) => Promise<Map<string, string>>
+  /**
+   * Where each chat works, keyed `workspaceId:agentId`: whether in a worktree
+   * of its project, and, for a chat whose session is `live`, the files its
+   * checkout carries. Counted from the shared reading the sidebar's lines
+   * take, held for a few seconds, so a list asked for again runs no git; and
+   * only for a live chat, as the sidebar draws a line only for one. A chat
+   * left out, or a count that could not be read, lists without it.
+   */
+  checkoutsOf?: (
+    keys: Array<{ workspaceId: string; agentId: string; live: boolean }>,
+  ) => Promise<Map<string, Pick<ConversationThread, 'changes' | 'worktree'>>>
 }
 
 const restingRecord = (record: ConversationListWorkspace | null): boolean =>
@@ -247,15 +292,58 @@ const restingRecord = (record: ConversationListWorkspace | null): boolean =>
 const epoch = (value: number | null | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+/** When the turn a live session is running began, left out between turns. */
+function turnStartOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'turnStartedAt'> {
+  return epoch(summary?.turnStartedAt) ? { turnStartedAt: Math.trunc(summary.turnStartedAt) } : {}
+}
+
+/**
+ * When a live session's stretch of work began, as the runtime keeps it
+ * (`workingSince`, conversation/workingStretch.ts): the number this desktop's
+ * own sidebar counts "working for" from. Present whenever the session reads
+ * as working, its background work included, so a turn the chat opens by
+ * itself does not restart a paired machine's count, and the gap between two
+ * of them does not stop it.
+ */
+function workingSinceOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'workingSince'> {
+  if (!summary || !epoch(summary.workingSince)) return {}
+  return conversationPhaseWorking(conversationSummaryPhase(summary))
+    ? { workingSince: Math.trunc(summary.workingSince) }
+    : {}
+}
+
+/**
+ * What a live session still has working after its turn ended, from the same
+ * readings the desktop's sidebar counts it working by
+ * (`conversationSummaryPhase`): its background agents, and the background
+ * tasks that will wake its agent. Left out when there is neither. The listed
+ * `phase` stays the turn's own: a device that holds sends while a turn runs
+ * would otherwise hold them for as long as a background agent works.
+ */
+function backgroundWorkOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'backgroundWork'> {
+  if (!summary) return {}
+  const agents = wholeNumber(summary.backgroundAgents) ?? 0
+  const monitors = (summary.backgroundTasks ?? []).filter((task) => backgroundTasksWakeAgent([task])).length
+  return agents > 0 || monitors > 0 ? { backgroundWork: { agents, monitors } } : {}
+}
+
 /** A listed chat's lifecycle members, each left out when there is nothing true to say. */
 function lifecycleOf(
   record: ConversationListWorkspace | null,
   lastTurnEndedAt: number | undefined,
+  now: number,
 ): Pick<
   ConversationThread,
-  'chatTitle' | 'lastUserMessageAt' | 'lastTurnEndedAt' | 'lastVisitedAt' | 'visitRewoundAt'
+  | 'chatTitle'
+  | 'lastUserMessageAt'
+  | 'lastTurnEndedAt'
+  | 'lastVisitedAt'
+  | 'visitRewoundAt'
+  | 'scheduledAgentId'
+  | 'snoozedUntil'
 > {
   const chatTitle = record?.name.trim()
+  const scheduledAgentId = record?.scheduledAgentId?.trim()
   return {
     ...(chatTitle ? { chatTitle } : {}),
     ...(epoch(record?.lastUserMessageAt) ? { lastUserMessageAt: record.lastUserMessageAt } : {}),
@@ -263,6 +351,12 @@ function lifecycleOf(
     ...(epoch(record?.lastVisitedAt) ? { lastVisitedAt: record.lastVisitedAt } : {}),
     // Read only from the record, which only Mark unread's own command stamps.
     ...(epoch(record?.visitRewoundAt) ? { visitRewoundAt: record.visitRewoundAt } : {}),
+    // How the chat began, which this desktop's row marks with the schedule's clock.
+    ...(scheduledAgentId ? { scheduledAgentId } : {}),
+    // Only a snooze still ahead: one that has run out is a row awake here.
+    ...(epoch(record?.snoozedUntil) && record.snoozedUntil > now
+      ? { snoozedUntil: Math.trunc(record.snoozedUntil) }
+      : {}),
   }
 }
 
@@ -297,6 +391,10 @@ export type ConversationListWorkspace = {
   lastVisitedAt?: number | null
   /** When Mark unread last moved `lastVisitedAt` back. */
   visitRewoundAt?: number | null
+  /** The schedule whose run started the chat; absent for one a person or an agent started. */
+  scheduledAgentId?: string | null
+  /** When a snoozed chat wakes; absent, or past, for one that is awake. */
+  snoozedUntil?: number | null
 }
 
 /**
@@ -435,6 +533,7 @@ export function createConversationGatewayHost(
       name: string
       mediaType: string
       bytes: number
+      kind?: 'file'
       at: number
       dispose?: () => void
     }
@@ -442,6 +541,12 @@ export function createConversationGatewayHost(
   const discardUpload = (id: string) => {
     uploads.get(id)?.dispose?.()
     uploads.delete(id)
+  }
+  // A sent file stays on disk: the message names its path, and the agent may
+  // read it in any later turn. Only its reference goes.
+  const spendUpload = (id: string) => {
+    if (uploads.get(id)?.kind === 'file') uploads.delete(id)
+    else discardUpload(id)
   }
   // Images an accepted send already carried, by upload id. Their files are
   // gone; a retry of that same command is answered from the runtime's receipt
@@ -571,7 +676,8 @@ export function createConversationGatewayHost(
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
   const withMarks = async (listed: ConversationThread[]): Promise<ConversationThread[]> => {
-    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf) return listed
+    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf && !marks.checkoutsOf)
+      return listed
     const machines = new Map<string, ConversationWireHost | null>()
     let read: ((workspaceId: string) => ConversationWireHost | null) | undefined
     try {
@@ -602,13 +708,28 @@ export function createConversationGatewayHost(
     if (marks.branchesOf && listed.length > 0) {
       branches = await marks.branchesOf([...new Set(listed.map((thread) => thread.workspaceId))]).catch(() => null)
     }
+    let checkouts: Map<string, Pick<ConversationThread, 'changes' | 'worktree'>> | null = null
+    if (marks.checkoutsOf && listed.length > 0) {
+      checkouts = await marks
+        .checkoutsOf(
+          listed.map((thread) => ({
+            workspaceId: thread.workspaceId,
+            agentId: thread.agentId,
+            live: Boolean(thread.sessionId),
+          })),
+        )
+        .catch(() => null)
+    }
     return listed.map((thread) => {
       const host = machineOf(thread.workspaceId)
       const branch = branches?.get(thread.workspaceId)
+      const checkout = checkouts?.get(`${thread.workspaceId}:${thread.agentId}`)
       return {
         ...thread,
         ...(host ? { host } : {}),
         ...(branch ? { branch } : {}),
+        ...(checkout?.changes ? { changes: checkout.changes } : {}),
+        ...(checkout?.worktree ? { worktree: true } : {}),
         ...(pullRequests ? { pullRequests: pullRequests.get(`${thread.workspaceId}:${thread.agentId}`) ?? [] } : {}),
       }
     })
@@ -634,6 +755,7 @@ export function createConversationGatewayHost(
   }
   return {
     async list() {
+      const now = Date.now()
       const result = api.listSessions()
       const all = result.ok ? result.sessions : []
       const live = all.filter((session) => session.status !== 'stopped').sort((a, b) => b.updatedAt - a.updatedAt)
@@ -678,8 +800,17 @@ export function createConversationGatewayHost(
             lastSeq: thread.lastSeq,
             ...permissionFor(key, sessions),
             ...(models ? { models } : {}),
-            ...(summary ? { sessionId: summary.sessionId, capabilities: wireCapabilities(summary) } : {}),
-            ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt)),
+            ...(summary ? { sessionId: summary.sessionId } : {}),
+            // What the chat can do, from its session when it has one and
+            // otherwise from its provider, as a chat here reads it before its
+            // first turn. A chat at rest used to be listed with none, so a
+            // client read it as taking no pictures, and a screenshot dropped
+            // into it went over as the path of a file on the other machine.
+            ...capabilitiesOf(summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
+            ...turnStartOf(summary),
+            ...workingSinceOf(summary),
+            ...backgroundWorkOf(summary),
+            ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt), now),
             ...replyPreviewOf(sessions, thread.lastAssistantText),
           })
         }
@@ -704,8 +835,11 @@ export function createConversationGatewayHost(
           ...permissionFor(summary, sessions),
           ...(models ? { models } : {}),
           sessionId: summary.sessionId,
-          capabilities: wireCapabilities(summary),
-          ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary)),
+          ...capabilitiesOf(summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
+          ...turnStartOf(summary),
+          ...workingSinceOf(summary),
+          ...backgroundWorkOf(summary),
+          ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary), now),
           ...replyPreviewOf(sessions),
         })
       }
@@ -716,8 +850,16 @@ export function createConversationGatewayHost(
         const record = recordOf(thread.workspaceId)
         return record ? workspaceLastUserMessageAt(record) : thread.updatedAt
       }
+      // And the key itself, on each chat the sidebar here keeps a record of,
+      // so a device that interleaves these rows with its own puts each where
+      // it sits here, not by a fallback of its own.
       const listed = [...byId.values()]
         .map(wholeNumbers)
+        .map((thread) => {
+          const record = registry.lifecycleList ? recordOf(thread.workspaceId) : null
+          const recencyAt = record ? workspaceLastUserMessageAt(record) : null
+          return epoch(recencyAt) ? { ...thread, recencyAt: Math.trunc(recencyAt) } : thread
+        })
         .sort((a, b) =>
           registry.lifecycleList ? orderOf(b) - orderOf(a) || b.updatedAt - a.updatedAt : b.updatedAt - a.updatedAt,
         )
@@ -789,6 +931,30 @@ export function createConversationGatewayHost(
       )
       return found
     },
+    async sentImage(key, ref) {
+      const live = sessionFor(key)
+      if (!live && !(await threadFor(key))) return { ok: false, code: 'unknown_conversation' }
+      // The store keeps each chat's pictures in a folder named from the chat
+      // itself, so the folder is the authorisation: a ref is served only from
+      // this chat's own, or from its live session's where that session runs in
+      // another folder (a New chat's pool worktree). The store then refuses
+      // anything that is not exactly a name it chose.
+      const sessionRoot =
+        live && typeof runtime.sessionWorkspaceRoot === 'function' ? runtime.sessionWorkspaceRoot(live.sessionId) : null
+      const folders = new Set([
+        ConversationAttachmentStore.folderFor(key),
+        ...(sessionRoot ? [ConversationAttachmentStore.folderFor({ ...key, workspaceRoot: sessionRoot })] : []),
+      ])
+      const slash = ref.indexOf('/')
+      if (slash < 0 || !folders.has(ref.slice(0, slash))) return { ok: false, code: 'unknown_image' }
+      const read = await runtime.readAttachment(ref).catch(() => null)
+      if (!read?.ok) return { ok: false, code: 'unknown_image' }
+      const bytes = Buffer.from(read.dataBase64, 'base64')
+      // The store wrote it under the sender's own cap; its first bytes, not its
+      // name, say what it is served as.
+      const mediaType = bytes.length <= MAX_ATTACHMENT_BYTES ? sniffConversationImage(bytes.subarray(0, 12)) : null
+      return mediaType ? { ok: true, mediaType, bytes } : { ok: false, code: 'unknown_image' }
+    },
     registerUpload(input) {
       for (const [id, entry] of uploads) if (Date.now() - entry.at > UPLOAD_TTL_MS) discardUpload(id)
       const ownIds = [...uploads].filter(([, entry]) => entry.deviceId === input.deviceId).map(([id]) => id)
@@ -815,6 +981,29 @@ export function createConversationGatewayHost(
       // repeat after a dropped connection holds it once.
       if (command.kind === 'send' && command.queue && held)
         return Promise.resolve(held.hold(chat, command.message, JSON.stringify([deviceId, commandId])))
+      // A steer the running turn cannot take is held for the turn's end, as a
+      // queued send is, and answered at once with a notice saying so: the
+      // person's words are never lost to a provider that cannot take them, or
+      // to a turn that ended on their way. A held message is its words alone,
+      // so one with pictures or skills is refused busy instead, which a phone
+      // sends again as it does any send made mid-turn.
+      const steer = command.kind === 'send' && command.steer === true
+      const holdInstead = (reason: string): ConversationGatewayCommandResult => {
+        if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length)
+          return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
+        const holding = held.hold(chat, command.message, JSON.stringify([deviceId, commandId]))
+        return holding.ok
+          ? { ok: true, notice: `${reason.replace(/\.$/u, '')}, so it is queued and goes when this turn ends.` }
+          : holding
+      }
+      // Whether there is a turn for a steer to join. Without one it is an
+      // ordinary send, and waits its turn behind any send being prepared.
+      const live = steer ? sessionFor(key) : undefined
+      const joinsTurn = live?.status === 'active' || live?.status === 'awaiting_approval'
+      // Not asked of a provider that cannot take one: the runtime would only
+      // refuse it, after resolving its skills and mentions.
+      if (joinsTurn && live?.capabilities?.steer !== true)
+        return Promise.resolve(holdInstead('This agent cannot take a message while it is working.'))
       const stamp = fingerprint ? { commandFingerprint: fingerprint } : {}
       const execute = async (): Promise<ConversationGatewayCommandResult> => relay(await run())
       const run = async (): Promise<ConversationGatewayCommandResult | ConversationSessionActionResult> => {
@@ -846,13 +1035,16 @@ export function createConversationGatewayHost(
             const turnEffort =
               effort && session.capabilities?.reasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}
             const ids = command.uploadIds ?? []
-            if (ids.length > MAX_ATTACHMENTS_PER_TURN) return { ok: false, message: 'Too many image attachments.' }
+            if (ids.length > MAX_ATTACHMENTS_PER_TURN) return { ok: false, message: 'Too many attachments.' }
             // Skills the paired machine's composer attached, resolved against
             // this machine's folder as its own chips are (conversation-skills.ts).
             const turnSkills = command.skills?.length ? { skills: command.skills.map((id) => ({ id })) } : {}
             const retry =
               ids.length > 0 &&
               ids.every((id) => spent.get(id)?.deviceId === deviceId && spent.get(id)?.commandId === commandId)
+            // Into the running turn, where there is one; with none, the runtime
+            // sends it as the next turn, as an ordinary send.
+            const turnSteer = steer ? { steer: true } : {}
             if (retry)
               return api.send({
                 sessionId: session.sessionId,
@@ -861,13 +1053,30 @@ export function createConversationGatewayHost(
                 attachments: [],
                 ...turnEffort,
                 ...turnSkills,
+                ...turnSteer,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
               })
             chatSessions.add(session.sessionId)
             const attachments: ConversationImageAttachment[] = []
+            const files: ConversationAttachedFile[] = []
             for (const id of ids) {
               const upload = uploads.get(id)
+              if (upload?.kind === 'file') {
+                if (
+                  upload.deviceId !== deviceId ||
+                  !chatSessions.has(upload.sessionId) ||
+                  Date.now() - upload.at > UPLOAD_TTL_MS
+                )
+                  return { ok: false, message: 'File upload reference is unavailable.' }
+                // The file is attached by path, so it must still be the one
+                // that was received: not removed, replaced or grown since.
+                const present = await stat(upload.path).catch(() => null)
+                if (!present?.isFile() || present.size !== upload.bytes)
+                  return { ok: false, message: 'File upload changed after receipt.' }
+                files.push({ path: upload.path })
+                continue
+              }
               if (
                 !upload ||
                 upload.deviceId !== deviceId ||
@@ -901,14 +1110,20 @@ export function createConversationGatewayHost(
             // it gave up on would still wake a settled chat).
             const noteUserMessage = registry.noteUserMessage
             const sessionId = session.sessionId
-            const stopWatching: (() => unknown) | null = noteUserMessage
-              ? runtime.onEvent((event) => {
-                  if (event.type !== 'user_message' || event.sessionId !== sessionId) return
-                  if (event.payload?.commandId !== commandId) return
-                  stopWatching?.()
-                  noteUserMessage(key.workspaceId, event.createdAt > 0 ? event.createdAt : Date.now())
-                })
-              : null
+            // A steer's send settles when the turn it opened ends, so it can
+            // fail after its message is in the chat; that one is not held a
+            // second time.
+            let landed = false
+            const stopWatching: (() => unknown) | null =
+              noteUserMessage || steer
+                ? runtime.onEvent((event) => {
+                    if (event.type !== 'user_message' || event.sessionId !== sessionId) return
+                    if (event.payload?.commandId !== commandId) return
+                    landed = true
+                    stopWatching?.()
+                    noteUserMessage?.(key.workspaceId, event.createdAt > 0 ? event.createdAt : Date.now())
+                  })
+                : null
             let sent: ConversationSessionActionResult
             try {
               sent = await api.send({
@@ -916,8 +1131,10 @@ export function createConversationGatewayHost(
                 commandId,
                 message: command.message,
                 attachments,
+                ...(files.length ? { files } : {}),
                 ...turnEffort,
                 ...turnSkills,
+                ...turnSteer,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
               })
@@ -925,14 +1142,25 @@ export function createConversationGatewayHost(
               stopWatching?.()
             }
             // Accepted: the images are in the turn now, so their staged files
-            // are removed rather than left for the hour-long expiry. A refused
-            // send keeps them for a retry.
+            // are removed rather than left for the hour-long expiry, and the
+            // files are the message's, so only their references go. A refused
+            // send keeps both for a retry.
             if (sent.ok) {
               for (const id of ids) {
-                discardUpload(id)
+                spendUpload(id)
                 spent.set(id, { deviceId, commandId })
               }
               while (spent.size > MAX_SPENT_UPLOAD_REFS) spent.delete(spent.keys().next().value!)
+            }
+            if (!sent.ok && steer) {
+              // In the chat already, and its turn then failed: the message was
+              // taken, and what became of the turn is in the transcript. Said
+              // as a refusal, a client would send the same words again.
+              if (landed)
+                return { ok: true, notice: `It reached the agent, and then: ${sent.message.replace(/\.$/u, '')}.` }
+              // The turn could not take it (one awaiting an answer, one that
+              // ended on the way): it waits for the turn's end instead.
+              return holdInstead(sent.message)
             }
             return sent
           }
@@ -992,7 +1220,12 @@ export function createConversationGatewayHost(
       // waiting on them. Only turn preparation is serialized and deduplicated.
       if (command.kind !== 'send') return execute()
       const id = JSON.stringify([key.workspaceId, key.agentId])
-      const pending = sending.get(id)
+      // A steer goes beside the send whose turn it joins, which is still
+      // waiting on that turn here: queued behind it, it would wait for the
+      // very end it was sent to beat. With no turn running yet, a send being
+      // prepared goes first, and the steer is busy behind it, as a send is.
+      const beside = steer && joinsTurn
+      const pending = beside ? undefined : sending.get(id)
       if (pending)
         return pending.commandId === commandId && pending.deviceId === deviceId
           ? pending.promise
@@ -1016,7 +1249,7 @@ export function createConversationGatewayHost(
         if (sending.get(id)?.promise === promise) sending.delete(id)
         if (hasImages) imageSends--
       })
-      sending.set(id, { commandId, deviceId, promise })
+      if (!beside) sending.set(id, { commandId, deviceId, promise })
       return promise
     },
   }

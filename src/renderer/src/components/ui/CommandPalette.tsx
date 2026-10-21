@@ -10,11 +10,13 @@ import { isCommandEnabled, isCommandIdEnabled, type CommandAvailabilityContext }
 import type { CommandScope, ModuleCommandContext } from '../../commands/types'
 import { getRendererHost, selectModuleEnabled } from '../../modules'
 import {
+  clampPaletteSelection,
   commandMatchesQuery,
   composeRestingPage,
   groupInScope,
   orderPaletteCommands,
   PALETTE_SCOPE_ORDER,
+  stepPaletteSelection,
   workspaceSearchKeywords,
   workspaceSwitchRowId,
   type PaletteCommandGroup,
@@ -72,6 +74,13 @@ import { getExtensionsSurfaceHost } from '../workspace/globalSurface/extensions/
 import { dispatchExtensionsSurfaceTarget } from '../workspace/globalSurface/extensions/extensionsSurfaceTarget'
 import { showToast } from '../../store/toastStore'
 import { dispatchPanelCommandEvent } from '../../utils/panelCommands'
+import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
+import {
+  pauseAllScheduledAgents,
+  resumeAllScheduledAgents,
+  setScheduledAgentPaused,
+} from '../../utils/scheduledAgentsPause'
+import { scheduledAgentPaletteCommands } from '../palette/scheduledAgentsCommands'
 import { WorkingMark } from './WorkingMark'
 import { ExtensionIcon } from './ExtensionIcon'
 import { FileTypeGlyph } from './FileTypeGlyph'
@@ -85,6 +94,7 @@ import {
   type InstalledSkillsPanelHandle,
 } from '../palette/InstalledSkillsPanel'
 import { OVERLAY_SHELL_CHROME_CLASS, overlayWidthStyle } from './tokens'
+import { isImeKey } from '../../utils/imeKey'
 
 // The four canonical source groups the global-search palette organizes results
 // into (T6), plus the two disk-backed groups: Files (name matches, plus the
@@ -271,6 +281,9 @@ export default function CommandPalette({
   const keybindingSettings = useWorkspaceStore((state) => state.appSettings.keybindings)
   const moduleEnablement = useWorkspaceStore((state) => state.appSettings.modules)
   const usageLimitsShown = useWorkspaceStore((state) => state.appSettings.appearance.usageLimits)
+  // Scheduled agents, for their pause rows: gone with their module.
+  const scheduledAgents = useScheduledAgents()
+  const scheduledAgentsPause = useScheduledAgentsPause()
   const keybindingPlatform = platformKeybindingsFromApiPlatform(window.api.platform)
   const shortcutFor = (commandId: string): string | undefined =>
     getEffectiveKeybindingLabel(commandId, keybindingSettings, keybindingPlatform) ?? undefined
@@ -631,11 +644,30 @@ export default function CommandPalette({
         : []),
     ]
 
+    // Pause every scheduled agent for a while, or one of them; or resume.
+    const scheduledAgentCommands: UngroupedCommand[] = selectModuleEnabled(moduleEnablement, 'scheduled-agents')
+      ? scheduledAgentPaletteCommands(scheduledAgents, scheduledAgentsPause, Date.now(), {
+          pauseAll: (choice) => {
+            void pauseAllScheduledAgents(choice)
+            onClose()
+          },
+          resumeAll: () => {
+            void resumeAllScheduledAgents()
+            onClose()
+          },
+          setPaused: (agent, paused) => {
+            void setScheduledAgentPaused(agent, paused)
+            onClose()
+          },
+        })
+      : []
+
     const registryCommands: Command[] = [
       ...panelToggleCommands,
       ...gitCommands,
       ...usageCommands,
       ...moduleCommands,
+      ...scheduledAgentCommands,
     ].map((command) => ({
       ...command,
       group: 'commands' as const,
@@ -702,6 +734,7 @@ export default function CommandPalette({
             {
               id: 'go-to-file',
               label: 'Go to file',
+              shortcut: shortcutFor('search.goToFile'),
               mark: { kind: 'go-to-file' as const },
               group: 'actions' as const,
               run: () => selectScope('files'),
@@ -788,6 +821,8 @@ export default function CommandPalette({
     moduleEnablement,
     usageLimitsShown,
     chatPullRequests,
+    scheduledAgents,
+    scheduledAgentsPause,
   ])
 
   // ── Handing a result to an agent ────────────────────────────────────────
@@ -1292,12 +1327,21 @@ export default function CommandPalette({
     return map
   }, [visible])
 
+  // The rows can change under the highlight without a keystroke: disk search
+  // keeps the previous query's rows up through its pause, and its answer can be
+  // shorter than the list the person has just arrowed down. The highlight is
+  // pulled back onto the list, and the pulled-back index is what is kept, so a
+  // list that grows again does not jump the highlight to the row that was lost.
+  const highlighted = clampPaletteSelection(selected, visible.length)
+  if (highlighted !== selected) setSelected(highlighted)
+
   // Keep the highlighted row in view as the selection moves by keyboard.
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [selected])
+  }, [highlighted])
 
   const handleKey = (event: React.KeyboardEvent) => {
+    if (isImeKey(event)) return
     // The inventory's rows are the panel's; only the step back to All below is
     // the palette's own in that tab.
     if (scope === 'skills' && event.key !== 'Backspace') {
@@ -1306,14 +1350,14 @@ export default function CommandPalette({
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setSelected((current) => Math.min(current + 1, visible.length - 1))
+      setSelected((current) => stepPaletteSelection(current, visible.length, 1))
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setSelected((current) => Math.max(current - 1, 0))
+      setSelected((current) => stepPaletteSelection(current, visible.length, -1))
     }
     if (event.key === 'Enter') {
-      if (!actionBusy) visible[selected]?.run()
+      if (!actionBusy) visible[highlighted]?.run()
     }
     if (event.key === 'Backspace' && !query) {
       // Backspace at an empty query steps back one state: out of the "which
@@ -1368,7 +1412,11 @@ export default function CommandPalette({
   }
 
   const activeOptionId =
-    scope === 'skills' ? skillsActiveOptionId : visible[selected] ? `palette-option-${visible[selected].id}` : undefined
+    scope === 'skills'
+      ? skillsActiveOptionId
+      : visible[highlighted]
+        ? `palette-option-${visible[highlighted].id}`
+        : undefined
   // One id per scope, so the strip's `aria-controls` and the combobox's both
   // resolve to the list that is showing — the results ARE the tab's panel.
   const resultsId = `command-palette-panel-${scope}`
@@ -1527,7 +1575,7 @@ export default function CommandPalette({
                     </div>
                     {group.items.map((command, position) => {
                       const index = flatIndexById.get(command.id) ?? -1
-                      const isSelected = index === selected
+                      const isSelected = index === highlighted
                       const textHit = group.key === 'content' && command.path !== undefined
                       // A text hit sits under its file, the way a search tool
                       // lists them: one heading per file — its kind glyph, its

@@ -267,3 +267,13 @@ export function splitTreePath(path: string): { directory: string; name: string }
   if (index < 0) return { directory: '', name: path }
   return { directory: index === 0 ? path.slice(0, 1) : path.slice(0, index), name: path.slice(index + 1) }
 }
+
+/**
+ * Where a path is after `fromPath` was renamed or moved to `toPath`: the new
+ * path for it or anything under it, the path itself otherwise.
+ */
+export function movedTreePath(path: string, fromPath: string, toPath: string): string {
+  if (path === fromPath) return toPath
+  const prefix = `${fromPath}${pathSeparatorFor(fromPath)}`
+  return path.startsWith(prefix) ? `${toPath}${path.slice(fromPath.length)}` : path
+}

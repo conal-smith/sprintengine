@@ -31,7 +31,7 @@ export type VersionControlProviderSpec = {
   label: string
   /** The binary, named on a state line that has to say what is missing. */
   binary: string
-  /** Mono mark. The repo ships no brand logo for either provider, and a two-or
+  /** Mono mark. The repo ships no brand logo for any provider, and a two-or
    *  three-letter mono monogram is the house stand-in (see `Monogram` in
    *  TrackerConnectionsTab); it reads as the binary's own name rather than as a
    *  decorative glyph. */
@@ -64,6 +64,26 @@ const PROVIDER_SPECS: Record<VersionControlProviderId, VersionControlProviderSpe
     section: 'forge',
     installCommand: { darwin: 'brew install gh', win32: 'winget install GitHub.cli' },
     authCommand: 'gh auth login',
+  },
+  glab: {
+    id: 'glab',
+    label: 'GitLab',
+    binary: 'glab',
+    monogram: 'gl',
+    section: 'forge',
+    installCommand: { darwin: 'brew install glab', win32: 'winget install glab.glab' },
+    authCommand: 'glab auth login',
+  },
+  // tea answers for Forgejo and Codeberg too, which share Gitea's API. No
+  // Windows command: tea ships there as a download, not a package.
+  tea: {
+    id: 'tea',
+    label: 'Gitea and Forgejo',
+    binary: 'tea',
+    monogram: 'tea',
+    section: 'forge',
+    installCommand: { darwin: 'brew install tea' },
+    authCommand: 'tea login add',
   },
 }
 

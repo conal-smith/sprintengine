@@ -56,7 +56,9 @@ import { rememberClosedLayoutTab } from '../../utils/recentlyClosedTabs'
 import { getHighlightSwatch } from '../../utils/highlight'
 import { resolveWorkspaceWorktree } from '../../utils/workspaceWorktree'
 import { ChatGlyph } from '../AppIcons'
-import { MachineGlyph } from '../ui'
+import { AgentPill, MachineGlyph } from '../ui'
+import { useAgentFileTrail } from '../panels/useAgentFileTrail'
+import { normalizePathKey } from '../../hooks/useGitStatus'
 import { resolveMachineIdentity, type MachineIdentity } from '../../../../shared/machine-identity'
 import { distroOfHostId, isWslHostId } from '../../../../shared/execution-host'
 import { useMachineIdentity, useWorkspaceMachineRef } from '../../hooks/useMachineIdentity'
@@ -74,6 +76,8 @@ import { TabPromptPeek } from './TabPromptPeek'
 import { ChatAppToolsMenuItems } from './ChatAppToolsMenuItems'
 import { chatResumesInTerminal, resumeChatInTerminalOrToast } from '../panels/agentChat/resumeInTerminal'
 import { requestChatReplay } from '../panels/agentChat/chatReplayRequests'
+import { chatExportSupported, chatHasMessages } from '../panels/agentChat/chatExport'
+import { ChatExportMenuItems } from './ChatExportMenuItems'
 import { ModuleContributionBoundary } from '../../modules/ModuleContributionBoundary'
 import { GitBranchGlyph } from './WorkspaceActions'
 import { remotePaneTabLabel } from './remoteBand/remoteSessionsModel'
@@ -93,8 +97,12 @@ import {
 import {
   canonicalMeshPaneComponent,
   isMeshConversationPane,
+  meshConversationPresence,
+  meshConversationSessionId,
   MESH_CONVERSATION_COMPONENT,
 } from '../../../../shared/tailnet-mesh'
+import { remoteConversationFactsKey, useRemoteConversationFacts } from './remoteBand/remoteConversationFacts'
+import { isImeKey } from '../../utils/imeKey'
 
 const EMPTY_LAYOUT_MODEL: IJsonModel = { global: {}, borders: [], layout: { type: 'row', children: [] } }
 
@@ -177,6 +185,8 @@ type TabMenuState = {
   agentId: string | null
   /** The tab's chat, when it is one: what "Replay conversation" plays. */
   chatId: string | null
+  /** Export chat for the tab's chat, where this shell can export one, and whether the chat is still empty. */
+  chatExport: { empty: boolean } | null
 }
 
 /**
@@ -253,6 +263,25 @@ function agentTabStatusDot(session: TerminalSessionSnapshot | undefined): AgentT
     return { tone: 'error', pulse: false, label: 'Failed' }
   }
   return null
+}
+
+// A chat's tab mark for its phase: the two waits and a failure each say so,
+// a running turn is the working mark, and a chat at rest has none. One rule
+// for a chat here and a chat followed from a paired machine, so the two tabs
+// read alike.
+function conversationPhaseDot(phase: string | null | undefined, working: boolean): AgentTabActivityDot | null {
+  if (phase === 'waiting_for_approval') return { tone: 'warn', pulse: false, label: 'Needs approval' }
+  if (phase === 'waiting_for_input') return { tone: 'warn', pulse: false, label: 'Asked a question' }
+  if (phase === 'failed') return { tone: 'error', pulse: false, label: 'Failed' }
+  if (working) return { tone: 'good', pulse: true, label: 'Working' }
+  return null
+}
+
+/** What a tab's corner shows for its dot: the working mark for work, else the dot itself. */
+function activityDotMark(dot: AgentTabActivityDot | null, seed: string | undefined): React.ReactNode {
+  if (!dot) return null
+  if (dot.tone === 'good' && dot.pulse) return <WorkingMark label={dot.label} seed={seed} />
+  return <StatusDot tone={dot.tone} pulse={dot.pulse} label={dot.label} />
 }
 
 // The kit's loading state at panel scale (spinner/component.md): the UI face,
@@ -373,6 +402,13 @@ function WorkspaceLayoutBody({
   conversationSessions: conversationSessionsProp = NO_CONVERSATION_SESSIONS,
 }: Props) {
   const conversationSessions = useConversationTabSessions(conversationSessionsProp)
+  // The sessions as handed in, read when the tab menu opens: whether a chat
+  // has a message yet is not part of what the strip holds them by.
+  const conversationSessionsRef = useRef(conversationSessionsProp)
+  conversationSessionsRef.current = conversationSessionsProp
+  // What each paired machine last listed about its chats, for the tab of a
+  // pane open on one: the same mark, clock and card a local chat's tab wears.
+  const remoteFacts = useRemoteConversationFacts()
   const layoutModel = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.layoutModel)
   const workspaceMode = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.mode ?? 'standard')
   // The machine this workspace runs on, for the mark its chat and terminal
@@ -418,6 +454,9 @@ function WorkspaceLayoutBody({
   const editorOpenFiles = useWorkspaceStore(
     (s) => s.workspaces.find((w) => w.id === workspaceId)?.editorState?.openFiles ?? EMPTY_OPEN_FILES,
   )
+  // Files an agent in this workspace is reading or editing, as the Files tree
+  // marks them: an editor tab on one wears the agent pill.
+  const agentFileTrail = useAgentFileTrail(workspaceId, null)
   // Worktree-backed workspace (a worktree opened as a workspace). The branch
   // glyph is workspace-level on the tabs below: every
   // terminal/agent tab earns it when the workspace is worktree-backed, because
@@ -956,6 +995,15 @@ function WorkspaceLayoutBody({
     [closeTabWithCleanup, findTabNodeFromElement],
   )
 
+  // A middle-click closes a tab on its auxclick, after the button comes back
+  // up. Left alone, that release has Chromium on Linux paste the primary
+  // selection into the focused field (the composer) as the tab closes.
+  const handleMouseUpCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 1) return
+    if (!(event.target instanceof Element) || !event.target.closest('.flexlayout__tab_button')) return
+    event.preventDefault()
+  }, [])
+
   const closeOtherTabsInSet = useCallback(
     (node: TabNode) => {
       const parent = node.getParent()
@@ -1046,6 +1094,10 @@ function WorkspaceLayoutBody({
         resumableChatId: tabAgentId && chatResumesInTerminal(tabAgent, store.pluginCatalogEntries) ? tabAgentId : null,
         agentId: tabAgentId,
         chatId: tabAgentId && tabAgent?.runtimeKind === 'conversation' ? tabAgentId : null,
+        chatExport:
+          tabAgentId && tabAgent?.runtimeKind === 'conversation' && chatExportSupported()
+            ? { empty: chatHasMessages(workspaceId, tabAgentId, conversationSessionsRef.current) === false }
+            : null,
       })
     },
     [workspaceId],
@@ -1146,6 +1198,7 @@ function WorkspaceLayoutBody({
             onDoubleClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 commitRename()
@@ -1225,8 +1278,28 @@ function WorkspaceLayoutBody({
                 session.agentId === ((node.getConfig() as { agentId?: string } | undefined)?.agentId ?? node.getId()),
             )
           : undefined
+      const meshConfig = isMeshConversationPane(tabComponentId)
+        ? (node.getConfig() as
+            | {
+                connectionId?: string
+                machineName?: string
+                remoteWorkspaceId?: string
+                remoteAgentId?: string
+                remoteSessionId?: string
+              }
+            | undefined)
+        : undefined
+      const meshSessionId =
+        meshConfig?.remoteSessionId ??
+        (meshConfig?.remoteWorkspaceId && meshConfig.remoteAgentId
+          ? meshConversationSessionId(meshConfig.remoteWorkspaceId, meshConfig.remoteAgentId)
+          : null)
+      const meshFacts =
+        meshConfig?.connectionId && meshSessionId
+          ? remoteFacts.get(remoteConversationFactsKey(meshConfig.connectionId, meshSessionId))
+          : undefined
       const isLiveTab = Boolean(
-        liveTabSession?.processAlive || (tabConversation && tabConversation.status !== 'stopped'),
+        liveTabSession?.processAlive || (tabConversation && tabConversation.status !== 'stopped') || meshFacts?.live,
       )
 
       // A remote pane's tab says its agent's name, and the machine mark after
@@ -1268,9 +1341,16 @@ function WorkspaceLayoutBody({
       if (node.getComponent() === 'file-editor') {
         const config = node.getConfig() as { filePath?: string } | undefined
         const file = editorOpenFiles.find((openFile) => openFile.path === config?.filePath)
+        const agentHere = config?.filePath ? agentFileTrail.marks.has(normalizePathKey(config.filePath)) : false
         renderValues.content = (
           <span className="inline-flex min-w-0 items-center gap-1">
             {tabContent}
+            {agentHere ? (
+              <>
+                <span className="sr-only">, an agent is using this</span>
+                <AgentPill />
+              </>
+            ) : null}
             {file?.isDirty && (
               <span
                 className="shrink-0 text-[color:var(--tone-warn)]"
@@ -1324,25 +1404,77 @@ function WorkspaceLayoutBody({
             return
           }
         } else if (isMeshConversationPane(componentId)) {
-          // A pane on another machine's conversation is a chat, and wears the
-          // machine's own mark after its name (remote-sessions-in-the-sidebar,
-          // epic decision 4; owner ruling 2026-10-04): the same message means
-          // different things on two machines, and the tab's name alone is one
-          // truncation away from not saying so.
-          const config = node.getConfig() as { machineName?: string } | undefined
+          // A pane on another machine's conversation is a chat, and its tab is
+          // a chat's tab: the CLI's mark before its name, the working mark or
+          // how long since its last turn after, and the same card on hover
+          // (owner, 2026-10-17). The one difference is the machine's own mark
+          // after the name (remote-sessions-in-the-sidebar, epic decision 4;
+          // owner ruling 2026-10-04): the same message means different things
+          // on two machines, and the tab's name alone is one truncation away
+          // from not saying so. Until that machine's list has been read, the
+          // tab wears the chat glyph and no clock.
+          const machineName = meshConfig?.machineName
+          const cli = meshFacts?.cli ?? null
+          const runtimeLabel = cli ? `${labelForCliRuntime(cli)} chat` : null
           renderValues.leading = (
-            <span className={`${TAB_CHIP_CLASS} text-[color:var(--text-muted)]`} title="Chat" aria-label="Chat">
-              <ChatGlyph className={TAB_CHIP_GLYPH_CLASS} />
+            <span
+              className={`${TAB_CHIP_CLASS} text-[color:var(--text-muted)]`}
+              title={runtimeLabel ?? 'Chat'}
+              aria-label={runtimeLabel ?? 'Chat'}
+            >
+              {cli ? (
+                <CliIcon cli={cli} className={TAB_CHIP_GLYPH_CLASS} />
+              ) : (
+                <ChatGlyph className={TAB_CHIP_GLYPH_CLASS} />
+              )}
             </span>
           )
-          const identity = config?.machineName
-            ? resolveMachineIdentity({ kind: 'paired', name: config.machineName }, machineMarks)
+          const identity = machineName
+            ? resolveMachineIdentity({ kind: 'paired', name: machineName }, machineMarks)
             : null
+          const machineMark = tabMachineMark(identity, machineName ?? 'a paired machine')
+          if (!meshFacts || !meshSessionId) {
+            renderValues.content = (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                {tabContent}
+                {machineMark}
+              </span>
+            )
+            return
+          }
+          const working = meshConversationPresence(meshFacts.phase) === 'running'
+          const dot = conversationPhaseDot(meshFacts.phase, working)
+          const finishedAt = working ? null : meshFacts.lastTurnEndedAt
+          const remoteIdentity: AgentTabIdentity = {
+            name: node.getName(),
+            status: dot
+              ? { kind: working ? 'working' : 'attention', label: dot.label }
+              : finishedAt !== null
+                ? {
+                    kind: 'idle',
+                    label: 'Idle',
+                    aged: { label: tabRecencyLabel('finished'), since: finishedAt },
+                  }
+                : { kind: 'idle', label: 'Idle' },
+            agent: {
+              sessionId: meshSessionId,
+              agentId: meshConfig?.remoteAgentId ?? null,
+              cli,
+              model: meshFacts.modelId,
+              pullRequests: meshFacts.pullRequests,
+              activeSubagents: 0,
+              contextUsage: null,
+            },
+          }
           renderValues.content = (
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              {tabContent}
-              {tabMachineMark(identity, config?.machineName ?? 'a paired machine')}
-            </span>
+            // No pull request lookup: the checkout is on that machine, whose
+            // list already names the chat's pull requests.
+            <AgentTabIdentityPopover identity={remoteIdentity} lookupPullRequests={false}>
+              {tabNameSpan}
+              {machineMark}
+              {activityDotMark(dot, meshSessionId)}
+              {finishedAt !== null ? <TabRecencyText at={finishedAt} label={tabRecencyLabel('finished')} /> : null}
+            </AgentTabIdentityPopover>
           )
           return
         }
@@ -1370,15 +1502,7 @@ function WorkspaceLayoutBody({
       const isWorking =
         conversationPhase === 'running' || conversationPhase === 'starting' || isSessionWorking(agentSession)
       const activityDot: AgentTabActivityDot | null =
-        conversationPhase === 'waiting_for_approval'
-          ? { tone: 'warn', pulse: false, label: 'Needs approval' }
-          : conversationPhase === 'waiting_for_input'
-            ? { tone: 'warn', pulse: false, label: 'Asked a question' }
-            : conversationPhase === 'failed'
-              ? { tone: 'error', pulse: false, label: 'Failed' }
-              : isWorking
-                ? { tone: 'good', pulse: true, label: 'Working' }
-                : agentTabStatusDot(agentSession)
+        conversationPhaseDot(conversationPhase, isWorking) ?? agentTabStatusDot(agentSession)
 
       // A chat names the CLI it rides with the same brand mark a terminal
       // agent's tab wears: which harness is the at-a-glance fact, and chat or
@@ -1503,13 +1627,7 @@ function WorkspaceLayoutBody({
       // tab's own card use, so "working" reads one way everywhere.
       const trailing = (
         <>
-          {activityDot ? (
-            activityDot.tone === 'good' && activityDot.pulse ? (
-              <WorkingMark label={activityDot.label} seed={agentSessionId ?? undefined} />
-            ) : (
-              <StatusDot tone={activityDot.tone} pulse={activityDot.pulse} label={activityDot.label} />
-            )
-          ) : null}
+          {activityDotMark(activityDot, agentSessionId ?? undefined)}
           {recencyIndicator}
           <PromptCacheMark reading={agentPromptCache} working={isWorking} />
         </>
@@ -1603,6 +1721,7 @@ function WorkspaceLayoutBody({
       )
     },
     [
+      agentFileTrail,
       commitRename,
       editorOpenFiles,
       hideTab,
@@ -1621,6 +1740,7 @@ function WorkspaceLayoutBody({
       workspaceMachineIdentity,
       workspaceMachineName,
       machineMarks,
+      remoteFacts,
     ],
   )
 
@@ -1730,7 +1850,11 @@ function WorkspaceLayoutBody({
     // the layout rather than covering its tab strips. The layout's own box is
     // always the same element, whether or not a note is showing, so a note
     // arriving never remounts a terminal.
-    <div className="relative flex h-full flex-col" onMouseDownCapture={handleMouseDownCapture}>
+    <div
+      className="relative flex h-full flex-col"
+      onMouseDownCapture={handleMouseDownCapture}
+      onMouseUpCapture={handleMouseUpCapture}
+    >
       <AgentRevealStrip workspaceId={workspaceId} />
       <div className="relative min-h-0 flex-1">
         <Layout
@@ -1799,6 +1923,14 @@ function WorkspaceLayoutBody({
             >
               Replay conversation
             </MenuItem>
+          ) : null}
+          {tabMenu.chatId && tabMenu.chatExport ? (
+            <ChatExportMenuItems
+              workspaceId={workspaceId}
+              agentId={tabMenu.chatId}
+              empty={tabMenu.chatExport.empty}
+              onDone={() => setTabMenu(null)}
+            />
           ) : null}
           {tabMenu.resumableChatId ? (
             <MenuItem

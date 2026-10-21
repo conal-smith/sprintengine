@@ -100,7 +100,7 @@ test('a cleared draft starts the undo history again; a draft set from outside un
 })
 
 test('a key is the input method’s while it composes, and as the keyCode 229 that commits it', async () => {
-  const { isImeKey } = await import('./ComposerField')
+  const { isImeKey } = await import('../../../utils/imeKey')
   const key = (init: { isComposing?: boolean; keyCode?: number }) =>
     ({ isComposing: init.isComposing ?? false, keyCode: init.keyCode ?? 13 }) as KeyboardEvent
   expect(isImeKey(key({}))).toBe(false)

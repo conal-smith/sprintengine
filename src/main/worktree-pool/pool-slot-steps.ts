@@ -2,9 +2,9 @@ import type { WorktreePoolHeldReason } from '../../shared/ipc/worktree-pool'
 import { comparablePath } from '../../shared/host-paths'
 import { agentWorktreeLockOwner } from '../agent-worktree-lock'
 import { pathExists } from '../git-utils'
-import { parseGitWorktreePorcelain } from '../git-worktree-list'
+import { parseGitWorktreePorcelain, runGitWorktreeListPorcelain } from '../git-worktree-list'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
-import type { SlotRecord } from './pool-store'
+import { RESERVED_PATHS_MAX, type ReservedPath, type SlotRecord } from './pool-store'
 import { type PoolContext, type PoolRuntime, messageOf } from './pool-context'
 
 /**
@@ -23,7 +23,7 @@ export async function lockReasonOf(
   pool: PoolRuntime,
   path: string,
 ): Promise<string | null | undefined> {
-  const listed = await ctx.git(pool.record.repoRoot, ['worktree', 'list', '--porcelain', '-z'])
+  const listed = await runGitWorktreeListPorcelain(ctx.git, pool.record.repoRoot)
   if (!listed.ok) return undefined
   const entry = parseGitWorktreePorcelain(listed.stdout).find(
     (candidate) => comparablePath(candidate.path) === comparablePath(path),
@@ -73,6 +73,9 @@ export async function hold(
     slot.state = 'held'
     slot.held = { reason, detail, changedPaths: extra.changedPaths ?? null, branch, since: ctx.now() }
     slot.lease = null
+    // Held is a person's to sort out, whoever it was kept for: their chat
+    // finds it held when it comes back (`reclaim`), and is told so.
+    slot.parked = null
     slot.op = null
     if (reason === 'error' || reason === 'recovery') slot.error = detail
     await ctx.persist(pool)
@@ -130,7 +133,26 @@ export async function forgetSlotsGoneFromDisk(ctx: PoolContext, pool: PoolRuntim
   }
   await ctx.withPool(pool, async () => {
     pool.record.slots = pool.record.slots.filter((slot) => !gone.includes(slot))
+    // One kept for a chat leaves its path to that chat, as a removal would.
+    for (const slot of gone) if (slot.parked) reservePath(pool, { ...slot.parked, path: slot.path })
     await ctx.persist(pool)
   })
   for (const slot of gone) ctx.log(`${slot.path}: gone from disk; dropped from the pool`)
+}
+
+/**
+ * Keep a removed parked slot's path free for whoever it was kept for: no new
+ * slot is made there, and their return makes one there again (`reclaim`).
+ * Under the pool's mutex; the caller persists.
+ */
+export function reservePath(pool: PoolRuntime, reserved: ReservedPath): void {
+  const others = pool.record.reservedPaths.filter(
+    (entry) => comparablePath(entry.path) !== comparablePath(reserved.path),
+  )
+  pool.record.reservedPaths = [...others, reserved].slice(-RESERVED_PATHS_MAX)
+}
+
+/** The reservation on a path, if one is kept for it. */
+export function reservationAt(pool: PoolRuntime, path: string): ReservedPath | undefined {
+  return pool.record.reservedPaths.find((entry) => comparablePath(entry.path) === comparablePath(path))
 }

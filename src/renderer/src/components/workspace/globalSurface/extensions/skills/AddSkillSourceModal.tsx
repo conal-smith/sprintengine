@@ -35,6 +35,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../../../ui/Modal
 import { addedRepoKeys } from './discoverModel'
 import { SkillsDiscover } from './SkillsDiscover'
 import { pluralSkills } from './skillsSurfaceModel'
+import { isImeKey } from '../../../../../utils/imeKey'
 
 type AddPhase =
   | { kind: 'idle' }
@@ -149,6 +150,7 @@ export function AddSkillSourceModal({
           disabled={phase.kind === 'scanning' || phase.kind === 'added'}
           onChange={(event) => setRepo(event.target.value)}
           onKeyDown={(event) => {
+            if (isImeKey(event)) return
             if (event.key === 'Enter') void scan()
           }}
           // `owner/repo` is github.com; any other git host is named by the

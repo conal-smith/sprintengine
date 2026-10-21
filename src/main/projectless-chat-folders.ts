@@ -1,9 +1,9 @@
 import { mkdir } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { projectlessChatFolderName, projectlessChatsRootIn } from '../shared/projectless-chats'
 import { randomId } from '../shared/random-id'
+import { studioStoreHome } from './workspace-store'
 
 // The folders chats started without a project run in
 // (shared/projectless-chats.ts says why each has one). Made here, in main,
@@ -11,6 +11,7 @@ import { randomId } from '../shared/random-id'
 // "No project", and a fresh folder in it for each chat that starts there.
 
 export type ProjectlessChatFolderDeps = {
+  /** The home folder; the one the workspace stores are under (workspace-store.ts) when not given. */
   home?: () => string
   makeDir?: (path: string, options?: { recursive?: boolean }) => Promise<unknown>
   now?: () => Date
@@ -19,7 +20,7 @@ export type ProjectlessChatFolderDeps = {
 
 /** `~/.sprintengine/chats`, made if it is not there yet. */
 export async function ensureProjectlessChatsRoot(deps: ProjectlessChatFolderDeps = {}): Promise<string> {
-  const root = projectlessChatsRootIn((deps.home ?? homedir)())
+  const root = projectlessChatsRootIn((deps.home ?? studioStoreHome)())
   await (deps.makeDir ?? mkdir)(root, { recursive: true })
   return root
 }

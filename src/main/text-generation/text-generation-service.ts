@@ -57,15 +57,19 @@ import {
   claudeChatTitleInvocation,
   claudeTextInvocation,
   codexChatTitleInvocation,
+  codexMcpListInvocation,
   codexTextInvocation,
   codexTextPrompt,
+  readClaudeErrorResult,
   readClaudeStructuredStdout,
   readClaudeTextStdout,
+  readCodexEnabledMcpServers,
   readCodexTextUsage,
   type ChatTitleInvocation,
   type ClaudeTextAnswer,
 } from './backends'
 import { runCommand, type RunCommand } from './run-command'
+import { hasClaudeManagedMcpConfig } from '../claude-managed-mcp'
 
 export type TextGenerationServiceDeps = {
   detect?: (cli: string, runtime?: { command?: string; hostId?: ExecutionHostId }) => Promise<CliDetectResult>
@@ -74,9 +78,14 @@ export type TextGenerationServiceDeps = {
   /** Where scratch directories are made. Defaults to the OS temp dir. */
   scratchRoot?: string
   now?: () => number
+  /** Whether an administrator's `managed-mcp.json` is installed; read from disk by default. */
+  managedMcpConfig?: () => boolean
 }
 
 const SCRATCH_PREFIX = 'sprintengine-text-'
+// `codex mcp list` only reads the config, and answers in about a second with
+// servers configured; a listing slower than this is not worth the call's wait.
+const CODEX_MCP_LIST_TIMEOUT_MS = 10_000
 
 export async function generateChatTitle(
   request: ChatTitleRequest,
@@ -197,12 +206,14 @@ export async function generateHeadlessText(
     if (cli === 'codex') {
       const outputPath = path.join(scratch, 'last-message.txt')
       await writeFile(outputPath, '', 'utf8')
+      const mcpServersOff = await listCodexMcpServers(binaryPath.path, run, common)
       const outcome = await run({
         ...codexTextInvocation({
           binaryPath: binaryPath.path,
           model,
           reasoning: request.engine.reasoning,
           outputPath,
+          mcpServersOff,
         }),
         ...common,
         stdin: request.system ? codexTextPrompt(request.system, request.prompt) : request.prompt,
@@ -219,6 +230,7 @@ export async function generateHeadlessText(
           model,
           reasoning: request.engine.reasoning,
           ...(request.system ? { system: request.system } : {}),
+          managedMcpConfig: (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
         }),
         ...common,
         stdin: request.prompt,
@@ -226,6 +238,8 @@ export async function generateHeadlessText(
       const failure = runFailure(cli, outcome)
       if (failure) return failure
       answer = readClaudeTextStdout(outcome.stdout)
+      const reason = answer ? null : readClaudeErrorResult(outcome.stdout)
+      if (reason) return { ok: false, code: 'guardrail', message: `${cli} answered with an error: ${lastLine(reason)}` }
     }
     if (!answer) return { ok: false, code: 'guardrail', message: `${cli} returned no usable answer.` }
     return { ok: true, text: answer.text, usage: answer.usage, model: answer.model ?? model, ms: now() - startedAt }
@@ -279,6 +293,13 @@ async function runStructuredJob<T>(
       reasoning: engine.reasoning,
       schemaJson: JSON.stringify(job.schema),
       scratch,
+      managedMcpConfig: engine.cli !== 'codex' && (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
+      listMcpServers: () =>
+        listCodexMcpServers(binaryPath.path, run, {
+          cwd: scratch,
+          env,
+          ...(job.signal ? { signal: job.signal } : {}),
+        }),
     })
     const outcome = await run({
       ...backend.invocation,
@@ -292,7 +313,11 @@ async function runStructuredJob<T>(
     if (failure) return failure
     const value = job.read(await backend.readAnswer(outcome.stdout))
     if (value === null) {
-      return { ok: false, code: 'guardrail', message: `${engine.cli} returned no usable ${job.nothing}.` }
+      const reason = engine.cli === 'codex' ? null : readClaudeErrorResult(outcome.stdout)
+      const message = reason
+        ? `${engine.cli} answered with an error: ${lastLine(reason)}`
+        : `${engine.cli} returned no usable ${job.nothing}.`
+      return { ok: false, code: 'guardrail', message }
     }
     return { ok: true, value, ms: now() - startedAt }
   } catch (error) {
@@ -313,21 +338,55 @@ type PreparedBackend = {
 // together, and the run itself is one line above.
 async function prepareBackend(
   cli: string,
-  input: { binaryPath: string; model: string; reasoning: string | undefined; schemaJson: string; scratch: string },
+  input: {
+    binaryPath: string
+    model: string
+    reasoning: string | undefined
+    schemaJson: string
+    scratch: string
+    managedMcpConfig: boolean
+    listMcpServers: () => Promise<string[]>
+  },
 ): Promise<PreparedBackend> {
   if (cli === 'codex') {
     const schemaPath = path.join(input.scratch, 'schema.json')
     const outputPath = path.join(input.scratch, 'last-message.txt')
     await writeFile(schemaPath, input.schemaJson, 'utf8')
     await writeFile(outputPath, '', 'utf8')
+    const mcpServersOff = await input.listMcpServers()
     return {
-      invocation: codexChatTitleInvocation({ ...input, schemaPath, outputPath }),
+      invocation: codexChatTitleInvocation({ ...input, schemaPath, outputPath, mcpServersOff }),
       readAnswer: async () => await readFile(outputPath, 'utf8'),
     }
   }
   return {
     invocation: claudeChatTitleInvocation(input),
     readAnswer: async (stdout) => readClaudeStructuredStdout(stdout),
+  }
+}
+
+// The MCP servers the person's Codex config would start, so the call can turn
+// each off by name. Listed afresh every call: a server added a minute ago is
+// one a cached list would let start. Any failure (an older CLI without
+// `mcp list --json`, a timeout, output that is not the list) is no names, and
+// the call runs with plugins and apps off but the servers as configured,
+// never a text generation that fails over a listing.
+async function listCodexMcpServers(
+  binaryPath: string,
+  run: RunCommand,
+  context: { cwd: string; env: Record<string, string>; signal?: AbortSignal },
+): Promise<string[]> {
+  try {
+    const outcome = await run({
+      ...codexMcpListInvocation(binaryPath),
+      ...context,
+      stdin: '',
+      timeoutMs: CODEX_MCP_LIST_TIMEOUT_MS,
+    })
+    if (outcome.code !== 0 || outcome.timedOut || outcome.spawnError) return []
+    return readCodexEnabledMcpServers(outcome.stdout)
+  } catch {
+    return []
   }
 }
 
@@ -422,6 +481,12 @@ function runFailure(
   }
   if (outcome.timedOut) return { ok: false, code: 'timeout', message: `${cli} did not answer in time.` }
   if (outcome.code !== 0) {
+    // Claude's own reason is in its stdout envelope; stderr then carries at
+    // most a wrapper's notice, and a bare stdout fallback is the raw JSON.
+    const claudeReason = cli === 'codex' ? null : readClaudeErrorResult(outcome.stdout)
+    if (claudeReason) {
+      return { ok: false, code: 'transport', message: `${cli} exited ${outcome.code}: ${lastLine(claudeReason)}` }
+    }
     const detail = outcome.stderr.trim() || outcome.stdout.trim()
     return {
       ok: false,

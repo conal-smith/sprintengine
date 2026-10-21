@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
+import { meshConversationSessionId } from '../../../../../shared/tailnet-mesh'
+import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type {
   MeshConversation,
   MeshConversationAccess,
@@ -9,8 +11,14 @@ import type {
   MeshQueuedMessage,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
+import {
+  publishRemoteConversationList,
+  useRemoteConversationFactsOf,
+} from '../../workspace/remoteBand/remoteConversationFacts'
 import { ConversationChatBody } from '../AgentChatView'
+import { remoteFileCountsOf } from '../../workspace/terminalLines'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
+import { publishRemoteChat } from './remoteChatRegistry'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
 import type { ChatReadiness } from './chatStates'
 import {
@@ -31,6 +39,8 @@ import {
 // Readiness is the link's: live and allowed to operate is ready; live and
 // read-only shows the conversation with the composer closed and says why; a
 // link that is reconnecting keeps the transcript on screen and says so.
+
+const NO_PULL_REQUESTS: readonly BranchPullRequest[] = []
 
 type Props = {
   /** The workspace here that holds this pane. */
@@ -117,6 +127,9 @@ function remoteConversationSession(
       // list says; a machine that does not offer model switching never will.
       liveModelSwitch: modelSwitch && thread?.models?.liveModelSwitch === true,
       checkpoints: capabilities?.checkpoints ?? false,
+      // Whether its provider takes a message mid-turn, where the list says;
+      // the transport offers it only for a machine that takes a steer.
+      steer: capabilities?.steer === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
     },
@@ -147,6 +160,10 @@ export default function RemoteConversationPanel({
   // holds for this chat, as it last said.
   const [queuedSends, setQueuedSends] = useState(false)
   const [sendSkills, setSendSkills] = useState(false)
+  // The machine opens a pull request for one of its chats (Create PR).
+  const [hostPullRequests, setHostPullRequests] = useState(false)
+  // The machine takes a message into a turn one of its chats is running.
+  const [steerSends, setSteerSends] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -169,6 +186,10 @@ export default function RemoteConversationPanel({
   queuedSendsRef.current = queuedSends
   const sendSkillsRef = useRef(sendSkills)
   sendSkillsRef.current = sendSkills
+  const hostPullRequestsRef = useRef(hostPullRequests)
+  hostPullRequestsRef.current = hostPullRequests
+  const steerSendsRef = useRef(steerSends)
+  steerSendsRef.current = steerSends
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -178,6 +199,10 @@ export default function RemoteConversationPanel({
       access: null,
       onLink: setLink,
       onQueued: setHostQueued,
+      // A pull request Create PR opened there is in the machine's list now:
+      // read it again, so the strip says "Open PR #N" without waiting for the
+      // sidebar's next read.
+      onPullRequestRecorded: () => setListVersion((version) => version + 1),
     })
     const capabilities = base.capabilities
     const setModel = base.setModel
@@ -201,6 +226,8 @@ export default function RemoteConversationPanel({
           permissionModes: permissionModesRef.current,
           hostQueue: queuedSendsRef.current,
           skills: sendSkillsRef.current,
+          steer: steerSendsRef.current,
+          hostPullRequests: hostPullRequestsRef.current,
         }
       },
       ...(setModel
@@ -232,11 +259,15 @@ export default function RemoteConversationPanel({
       .meshConversationList(connectionId)
       .then((result) => {
         if (cancelled || !result.ok) return
+        // The pane's tab reads its mark, model and clock off this list too.
+        publishRemoteConversationList(connectionId, result.conversations)
         setListedAccess(result.access)
         setListedModelSwitch(result.modelSwitch === true)
         setPermissionModes(result.permissionModes === true)
         setQueuedSends(result.queuedSends === true)
         setSendSkills(result.sendSkills === true)
+        setHostPullRequests(result.createPullRequest === true)
+        setSteerSends(result.steerSends === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -259,6 +290,20 @@ export default function RemoteConversationPanel({
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
   }, [])
+  // The branch, changed files and pull requests the strip under the composer draws, from
+  // the newest list either this pane or the sidebar read: the sidebar reads
+  // the machine again whenever it says its chats changed, so a pull request
+  // the agent opens mid-conversation reaches the strip without a reopen.
+  const facts = useRemoteConversationFactsOf(connectionId, meshConversationSessionId(remoteWorkspaceId, remoteAgentId))
+  const listed = useMemo(() => {
+    const pullRequests = facts?.pullRequests ?? NO_PULL_REQUESTS
+    return {
+      branch: facts?.branch ?? null,
+      worktree: facts?.worktree ?? false,
+      files: remoteFileCountsOf(facts?.changes ?? null, pullRequests)?.files ?? null,
+      pullRequests,
+    }
+  }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(() => remoteConversationSession(thread, key, modelSwitch), [thread, key, modelSwitch])
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
@@ -281,8 +326,16 @@ export default function RemoteConversationPanel({
       // machine again; a third line saying both was the same fact once more.
       ...(engine ? { engine } : {}),
       hostQueue: { machineName, messages: hostQueued },
+      listed,
     }),
-    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued],
+    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued, listed],
+  )
+
+  // The Agents tab beside it reads the chat through this transport, as it
+  // reads a local chat through its record.
+  useEffect(
+    () => publishRemoteChat(workspaceId, { agentId: remoteAgentId, transport, binding }),
+    [workspaceId, remoteAgentId, transport, binding],
   )
 
   return (

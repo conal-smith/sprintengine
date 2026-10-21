@@ -8,6 +8,7 @@ import { registerTelemetryIpc } from './ipc/telemetry-ipc'
 import { registerQuitConfirmationIpc } from './ipc/quit-confirmation-ipc'
 import { registerAgentNotificationsIpc } from './ipc/agent-notifications-ipc'
 import { registerAgentBrowserToolsIpc } from './ipc/agent-browser-tools-ipc'
+import { registerArtifactsIpc } from './ipc/artifacts-ipc'
 import { registerKeepAwakeIpc } from './ipc/keep-awake-ipc'
 import { registerAuthIpc } from './ipc/auth-ipc'
 import {
@@ -25,6 +26,9 @@ import { registerTextGenerationIpc } from './ipc/text-generation-ipc'
 import { registerPullRequestCreateIpc } from './ipc/pull-request-create-ipc'
 import { registerCommitMessageIpc } from './ipc/commit-message-ipc'
 import { registerClipboardIpc } from './ipc/clipboard-ipc'
+import { registerChatExportIpc } from './ipc/chat-export-ipc'
+import { getPluginRegistry } from './plugin-registry-instance'
+import type { ConversationTranscriptInput } from '../shared/conversation-runtime'
 import { registerConversationPeekIpc } from './ipc/conversation-peek-ipc'
 import { registerAgentCompactIpc } from './ipc/agent-compact-ipc'
 import { registerDiagnosticsIpc } from './ipc/diagnostics-ipc'
@@ -103,6 +107,8 @@ export type CoreIpcOptions = {
     studioConnections: RemoteWindowConnector
     /** A model discovery pass, run by the server, which keeps the catalog cache. */
     discoverModels(input: CliModelDiscoveryInput): Promise<unknown>
+    /** A chat's transcript and pictures for Export chat, read by the server, which holds the chats. */
+    readChatExportSource(key: ConversationTranscriptInput): Promise<unknown>
   }
 }
 
@@ -156,6 +162,32 @@ export function registerCoreIpc(
   else if (services.studioRpcService) registerStudioConnectionIpc(ipcMain, services.studioRpcService)
   registerAppMenuIpc(ipcMain)
   registerClipboardIpc(ipcMain)
+  // Export chat (a chat tab's menu): the chat read where the chats run, written
+  // or copied here, where the window and its dialogs are.
+  registerChatExportIpc(ipcMain, {
+    run: async (input, sender) => {
+      const [{ exportChat }, { parseChatExportSourceWire, readChatExportSource }] = await Promise.all([
+        import('./chat-export/chat-export-electron'),
+        import('./chat-export/chat-export-source'),
+      ])
+      return exportChat(input, {
+        sender,
+        workspaces: () => services.workspaceSyncService.getSnapshot().state.workspaces,
+        readSource: async (key) => {
+          if (!options.server) return readChatExportSource(services.conversations, key)
+          const answer = await options.server.readChatExportSource(key)
+          const source = parseChatExportSourceWire((answer as { source?: unknown } | null)?.source)
+          if (source) return { ok: true, source }
+          const message = (answer as { message?: unknown } | null)?.message
+          return { ok: false, message: typeof message === 'string' ? message : 'The chat could not be read.' }
+        },
+        cliDisplayName: (cli) =>
+          getPluginRegistry()
+            .loaded()
+            .find((plugin) => plugin.manifest.id === cli)?.manifest.displayName ?? null,
+      })
+    },
+  })
   registerCliRuntimeIpc(
     ipcMain,
     options.server ? { discoverModels: (input) => options.server!.discoverModels(input) } : {},
@@ -258,6 +290,11 @@ export function registerCoreIpc(
     void services.desktopShell?.refreshToolsets()
   })
   registerKeepAwakeIpc(ipcMain, services.keepAwakeStore, () => services.agentKeepAwake.refresh())
+  registerArtifactsIpc(ipcMain, {
+    store: services.artifactsSettingsStore,
+    setUp: services.setUpArtifacts,
+    consent: services.artifactsSetupConsent,
+  })
   registerMarketplaceRegistryIpc(ipcMain)
   registerHostedSourcesFeedIpc(ipcMain)
   registerHostedCardFeedIpc(ipcMain)

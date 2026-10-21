@@ -9,14 +9,15 @@ import { join } from 'node:path'
 
 import { DEFAULT_SKILL_INSTALL_MAX_FILES, DEFAULT_SKILL_INSTALL_MAX_TOTAL_BYTES } from './install'
 import {
+  LEGACY_PLUGIN_WORKSPACE_DIR,
   PLUGIN_PROVENANCE_FILE,
-  PLUGIN_WORKSPACE_DIR,
   installPluginDirectory,
   pluginDirectoryName,
   pluginDirectoryPath,
   readPluginDirectoryProvenance,
   uninstallPluginDirectory,
 } from './plugin-directory'
+import { workspaceStorePath } from '../workspace-store'
 import { test } from 'vitest'
 
 test('plugin-directory', async () => {
@@ -47,7 +48,7 @@ test('plugin-directory', async () => {
     })
     assert.equal(result.ok, true)
     if (!result.ok) return
-    assert.equal(result.root, join(root, PLUGIN_WORKSPACE_DIR, 'telegram'))
+    assert.equal(result.root, pluginDirectoryPath(root, 'telegram'))
     assert.equal(result.dirName, 'telegram')
     assert.equal(result.fileCount, TELEGRAM.length)
     for (const file of TELEGRAM) {
@@ -98,7 +99,7 @@ test('plugin-directory', async () => {
   /** Someone else's directory of the same name is never written over. */
   async function anotherOwnersDirectoryIsRefusedNotOverwritten(): Promise<void> {
     const root = await workspace()
-    const target = join(root, PLUGIN_WORKSPACE_DIR, 'telegram')
+    const target = pluginDirectoryPath(root, 'telegram')
     await mkdir(target, { recursive: true })
     await writeFile(join(target, 'mine.txt'), 'hand made', 'utf8')
 
@@ -145,7 +146,7 @@ test('plugin-directory', async () => {
     assert.equal(tooMany.ok, false)
     if (tooMany.ok) return
     assert.ok(tooMany.message.includes(String(DEFAULT_SKILL_INSTALL_MAX_FILES)), tooMany.message)
-    assert.equal(existsSync(join(root, PLUGIN_WORKSPACE_DIR, 'telegram')), false, 'nothing was written')
+    assert.equal(existsSync(pluginDirectoryPath(root, 'telegram')), false, 'nothing was written')
 
     const tooBig = await installPluginDirectory({
       workspaceRoot: root,
@@ -159,7 +160,7 @@ test('plugin-directory', async () => {
     if (tooBig.ok) return
     assert.ok(tooBig.message.includes('larger than 32 bytes'), tooBig.message)
     assert.equal(
-      existsSync(join(root, PLUGIN_WORKSPACE_DIR, 'telegram')),
+      existsSync(pluginDirectoryPath(root, 'telegram')),
       false,
       'the overflow was caught in staging, so no half-plugin reached the workspace',
     )
@@ -190,7 +191,8 @@ test('plugin-directory', async () => {
     assert.equal(pluginDirectoryName(''), '')
     assert.equal(pluginDirectoryName('a\\b'), '')
     assert.equal(pluginDirectoryPath('/w', '..'), '')
-    assert.equal(pluginDirectoryPath('/w', 'telegram'), join('/w', PLUGIN_WORKSPACE_DIR, 'telegram'))
+    // In the workspace's store, never the repository.
+    assert.equal(pluginDirectoryPath('/w', 'telegram'), workspaceStorePath('/w', 'claude-plugins', 'telegram'))
   }
 
   /** Remove takes the directory back out, and says nothing went when nothing was there. */
@@ -207,8 +209,8 @@ test('plugin-directory', async () => {
     const removed = await uninstallPluginDirectory({ workspaceRoot: root, pluginId: 'telegram' })
     assert.equal(removed.ok, true)
     if (!removed.ok) return
-    assert.deepEqual(removed.removedPaths, [join(root, PLUGIN_WORKSPACE_DIR, 'telegram')])
-    assert.equal(existsSync(join(root, PLUGIN_WORKSPACE_DIR, 'telegram')), false)
+    assert.deepEqual(removed.removedPaths, [pluginDirectoryPath(root, 'telegram')])
+    assert.equal(existsSync(pluginDirectoryPath(root, 'telegram')), false)
 
     const again = await uninstallPluginDirectory({ workspaceRoot: root, pluginId: 'telegram' })
     assert.equal(again.ok, true)
@@ -216,10 +218,27 @@ test('plugin-directory', async () => {
     assert.deepEqual(again.removedPaths, [], 'already gone is not a failure')
   }
 
+  /** A plugin an earlier build installed inside the workspace is still found, and taken out. */
+  async function anEarlierInstallInTheWorkspaceIsRemoved(): Promise<void> {
+    const root = await workspace()
+    const legacy = join(root, LEGACY_PLUGIN_WORKSPACE_DIR, 'telegram')
+    await mkdir(legacy, { recursive: true })
+    await writeFile(
+      join(legacy, PLUGIN_PROVENANCE_FILE),
+      JSON.stringify({ sourceId: 's', pluginId: 'telegram', commitSha: '' }),
+      'utf8',
+    )
+    const removed = await uninstallPluginDirectory({ workspaceRoot: root, pluginId: 'telegram' })
+    assert.equal(removed.ok, true)
+    if (!removed.ok) return
+    assert.deepEqual(removed.removedPaths, [legacy])
+    assert.equal(existsSync(legacy), false)
+  }
+
   /** A directory that now holds a different plugin is reported, not deleted. */
   async function aDirectoryThatMovedOnIsLeftAlone(): Promise<void> {
     const root = await workspace()
-    const target = join(root, PLUGIN_WORKSPACE_DIR, 'telegram')
+    const target = pluginDirectoryPath(root, 'telegram')
     await mkdir(target, { recursive: true })
     await writeFile(
       join(target, PLUGIN_PROVENANCE_FILE),
@@ -242,6 +261,7 @@ test('plugin-directory', async () => {
     await anEscapingPathStopsTheInstall()
     anUnusableIdIsRefused()
     await removeTakesItBackOut()
+    await anEarlierInstallInTheWorkspaceIsRemoved()
     await aDirectoryThatMovedOnIsLeftAlone()
     console.log('plugin directory tests passed')
   }

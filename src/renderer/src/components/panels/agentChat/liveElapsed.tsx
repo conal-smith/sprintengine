@@ -41,12 +41,14 @@ export function LiveElapsed({ startedAt }: { startedAt: number }) {
   return <span ref={textRef}>{initial}</span>
 }
 
-function formatElapsedMs(ms: number): string {
+export function formatElapsedMs(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds}s`
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`
+  // The step rows' own clock (`formatStepDuration`) moves up to hours here too.
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainingSeconds}s`
 }
 
 // Each formatter is built once: `toLocale*String` with options builds a fresh

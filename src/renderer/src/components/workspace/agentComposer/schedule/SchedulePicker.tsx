@@ -1,11 +1,12 @@
 import React from 'react'
 
 import { AttachmentChip } from '../../../ui/AttachmentChip'
-import { ChipButton, Input, LinkButton, Popover, SegmentedControl } from '../../../ui'
+import { ChipButton, GhostButton, Input, LinkButton, PauseGlyph, Popover, SegmentedControl } from '../../../ui'
 import { ScheduleGlyph } from '../../../AppIcons'
 import { ComposerTray, ComposerTrayRow } from '../../../panels/agentChat/composerTray'
 import { CRON_FIELD_NAMES, describeCronSchedule, parseCronSchedule } from '../../../../../../shared/cron'
-import { nextScheduledAgentRuns } from '../../../../../../shared/scheduled-agents'
+import { nextScheduledAgentRuns, type ScheduledAgentsPause } from '../../../../../../shared/scheduled-agents'
+import { pausedSinceWords, scheduledAgentsPauseWords } from '../../../../utils/scheduledAgentsPause'
 import {
   cronFromEditorState,
   editorStateFromCron,
@@ -152,6 +153,49 @@ export function ScheduleFailureTray({ failure, onDismiss }: { failure: string; o
     <ComposerTray>
       <ComposerTrayRow tone="error" onDismiss={onDismiss}>
         The last run did not start: {failure}
+      </ComposerTrayRow>
+    </ComposerTray>
+  )
+}
+
+/**
+ * Behind the editor of a paused schedule — paused on its own, or with every
+ * other — what that means, with the way out. Its own pause is said first: it is
+ * the one this editor's Resume ends; a pause of them all is ended from the
+ * Scheduled section, so here it is only said.
+ */
+export function SchedulePausedTray({
+  pausedAt,
+  pausedAll,
+  now,
+  onResume,
+}: {
+  pausedAt: number | undefined
+  pausedAll: ScheduledAgentsPause | null
+  now: number
+  onResume: () => void
+}) {
+  const sentence =
+    pausedAt !== undefined
+      ? `${pausedSinceWords(pausedAt, now)}: it starts no run at its times until you resume it. Run now still runs it.`
+      : pausedAll
+        ? `${scheduledAgentsPauseWords(pausedAll, now)}. Run now still runs this one.`
+        : null
+  if (!sentence) return null
+  return (
+    <ComposerTray>
+      <ComposerTrayRow
+        tone="warn"
+        glyph={<PauseGlyph className="icon-sm text-[color:var(--tone-warn)]" />}
+        actions={
+          pausedAt !== undefined ? (
+            <GhostButton size="xs" onClick={onResume}>
+              Resume
+            </GhostButton>
+          ) : undefined
+        }
+      >
+        <span data-schedule-paused-tray="">{sentence}</span>
       </ComposerTrayRow>
     </ComposerTray>
   )

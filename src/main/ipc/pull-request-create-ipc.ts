@@ -1,6 +1,10 @@
 import type { IpcMain } from 'electron'
 
-import type { PullRequestCheckoutPin } from '../../shared/git/pull-request-create'
+import {
+  PULL_REQUEST_BODY_MAX_CHARS,
+  PULL_REQUEST_TITLE_MAX_CHARS,
+  readPullRequestCheckoutPin,
+} from '../../shared/git/pull-request-create'
 import type { PullRequestTextRequest, PullRequestTextResult } from '../../shared/text-generation/contract'
 import { writeDiagnosticLog } from '../diagnostics-service'
 import { createPullRequestCreator, type PullRequestCreator } from '../pull-request-create'
@@ -57,11 +61,13 @@ export function registerPullRequestCreateIpc(ipcMain: IpcMain, deps: PullRequest
 
   ipcMain.handle('pull-request-create:draft-cancel', (_, draftId: unknown) => drafts.cancel(draftId))
 
+  // The pin is optional: a window that sends none (an older one) is pushed
+  // and created for as the checkout stands.
   ipcMain.handle('pull-request-create:push', async (_, cwd: unknown, pin: unknown) => {
     const folder = folderOf(cwd)
     if (!folder) return { ok: false, message: 'No checkout to push.' }
     return creator
-      .push(folder, pinOf(pin) ?? undefined)
+      .push(folder, readPullRequestCheckoutPin(pin) ?? undefined)
       .catch((error: unknown) => ({ ok: false, message: describe(error) }))
   })
 
@@ -74,24 +80,14 @@ export function registerPullRequestCreateIpc(ipcMain: IpcMain, deps: PullRequest
     return creator
       .create(
         folder,
-        { title: record.title.slice(0, 300), body: record.body.slice(0, 65_000) },
-        pinOf(record.pin) ?? undefined,
+        {
+          title: record.title.slice(0, PULL_REQUEST_TITLE_MAX_CHARS),
+          body: record.body.slice(0, PULL_REQUEST_BODY_MAX_CHARS),
+        },
+        readPullRequestCheckoutPin(record.pin) ?? undefined,
       )
       .catch((error: unknown) => ({ ok: false, message: describe(error) }))
   })
-}
-
-/**
- * The branch and commit the window confirmed, or nothing. Optional: a window
- * that sends none (an older one) is pushed and created for as the checkout
- * stands.
- */
-function pinOf(value: unknown): PullRequestCheckoutPin | null {
-  if (!value || typeof value !== 'object') return null
-  const { branch, headSha } = value as Record<string, unknown>
-  if (typeof branch !== 'string' || !branch || branch.length > 255 || branch.includes('\0')) return null
-  if (typeof headSha !== 'string' || !/^[0-9a-f]{7,64}$/iu.test(headSha)) return null
-  return { branch, headSha }
 }
 
 function readPullRequestDraftRequest(input: unknown): (DraftRequest & { cwd: string }) | null {

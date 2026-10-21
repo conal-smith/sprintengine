@@ -49,6 +49,10 @@ test('git-patch', async () => {
     assert.deepEqual(gitPatchArgs(['src/[id].tsx'], false), [
       'diff',
       '--no-color',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
       '--binary',
       '--',
       ':(literal)src/[id].tsx',
@@ -95,4 +99,39 @@ test('git-patch', async () => {
   }
 
   await suiteRun
+})
+
+test('a patch keeps its a/ b/ prefixes and git’s own rendering whatever the repo is set to', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'sprintengine-git-patch-pins-'))
+  const repo = join(root, 'repo')
+  const git = (args: string[]): string => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+  try {
+    execFileSync('git', ['init', '--quiet', '--initial-branch=main', repo], { encoding: 'utf8' })
+    git(['config', 'user.email', 'dev@example.com'])
+    git(['config', 'user.name', 'Dev'])
+    git(['config', 'commit.gpgsign', 'false'])
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    git(['add', '-A'])
+    git(['commit', '--quiet', '-m', 'base'])
+    // Settings a person may well have: prefix-free diffs, and a diff tool.
+    git(['config', 'diff.noprefix', 'true'])
+    git(['config', 'diff.external', 'echo external-tool-output'])
+    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n')
+    writeFileSync(join(repo, 'new.txt'), 'fresh\n')
+
+    const patch = await createGitPatch(repo, [join(repo, 'a.txt'), join(repo, 'new.txt')])
+    assert.equal(patch.ok, true, patch.message ?? '')
+    assert.ok(!patch.patch.includes('external-tool-output'), 'git wrote the patch, not the diff tool')
+    assert.match(patch.patch, /^--- a\/a\.txt$/m)
+    assert.match(patch.patch, /^\+\+\+ b\/a\.txt$/m)
+    assert.match(patch.patch, /^\+\+\+ b\/new\.txt$/m)
+
+    // And it applies: put the tree back, then replay the patch on it.
+    git(['checkout', '--', 'a.txt'])
+    rmSync(join(repo, 'new.txt'))
+    execFileSync('git', ['-C', repo, 'apply', '-'], { input: patch.patch })
+    assert.equal(git(['diff', '--no-ext-diff', '--stat']).includes('a.txt'), true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

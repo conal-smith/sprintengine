@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 
 import type { StudioClient } from '../../../../../packages/agent-sdk/src/index'
+import { prefersReducedMotion } from '../../components/panels/agentChat/reducedMotion'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { RootErrorBoundary } from '../../components/workspace/RootErrorBoundary'
 import { connectEmbed, EmbedUnavailable } from './embedClient'
@@ -50,10 +51,12 @@ function EmbedApp(): React.JSX.Element {
       const message = verdict.message
       if (message.type === 'theme') applyMode(message.mode)
       else if (message.type === 'token') setToken((current) => current ?? message.token)
+      // A glide only for someone who has not asked for less motion: an
+      // explicit 'smooth' is not toned down by the system setting.
       else
         document
           .querySelector(`[data-embed-turn="${CSS.escape(message.turnId)}"]`)
-          ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+          ?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     }
     window.addEventListener('message', onMessage)
     tell({ v: 1, type: 'ready', embedId })

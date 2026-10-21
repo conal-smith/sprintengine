@@ -310,10 +310,10 @@ function testRegistryHoldsOnlyWhatAMarketplaceCannotCarry(): void {
   assert.deepEqual(
     [...kinds.entries()].sort(),
     [
-      ['cli', 17],
+      ['cli', 18],
       ['module', 1],
     ],
-    'the registry is 17 agent CLI integrations and 1 capability module (Reviews)'
+    'the registry is 18 agent CLI integrations and 1 capability module (Reviews)'
   )
 }
 

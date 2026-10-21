@@ -2,7 +2,14 @@ import assert from 'node:assert/strict'
 
 import { afterEach, test, vi } from 'vitest'
 
-import { remeasureWhenMonoFontLoads } from './fonts'
+import {
+  MONO_FONT_STACK,
+  UI_FONT_STACK,
+  applyAppearanceFonts,
+  currentCodeFontStack,
+  followCodeFont,
+  remeasureWhenMonoFontLoads,
+} from './fonts'
 
 // A stand-in for `document.fonts`: `load` and `ready` settle when the test says
 // so, and `loadingdone` is an ordinary event the test can fire.
@@ -22,7 +29,19 @@ function stubFontFaceSet() {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
+// A stand-in for <html>: the custom properties written on its style.
+function fakeRoot() {
+  const properties = new Map<string, string>()
+  const style = {
+    setProperty: (name: string, value: string) => void properties.set(name, value),
+    removeProperty: (name: string) => void properties.delete(name),
+  }
+  return { root: { style } as unknown as HTMLElement, properties }
+}
+
 afterEach(() => {
+  // The code font is the window's: put the default back for the next case.
+  applyAppearanceFonts(fakeRoot().root, { interfaceFont: '', codeFont: '' })
   vi.unstubAllGlobals()
 })
 
@@ -70,4 +89,63 @@ test('is a no-op where there is no FontFaceSet', () => {
   const dispose = remeasureWhenMonoFontLoads(remeasure)
   dispose()
   assert.equal(remeasure.mock.calls.length, 0)
+})
+
+test('a chosen font overrides the value of its family token, ahead of the bundled stack', () => {
+  const { root, properties } = fakeRoot()
+  applyAppearanceFonts(root, { interfaceFont: 'IBM Plex Sans', codeFont: 'Fira Code' })
+  assert.equal(properties.get('--sem-font-family-ui'), `"IBM Plex Sans", ${UI_FONT_STACK}`)
+  assert.equal(properties.get('--sem-font-family-mono'), `"Fira Code", ${MONO_FONT_STACK}`)
+  assert.equal(currentCodeFontStack(), `"Fira Code", ${MONO_FONT_STACK}`)
+})
+
+test('back at the default, the override goes and the token’s own value stands', () => {
+  const { root, properties } = fakeRoot()
+  applyAppearanceFonts(root, { interfaceFont: 'IBM Plex Sans', codeFont: 'Fira Code' })
+  applyAppearanceFonts(root, { interfaceFont: '', codeFont: '' })
+  assert.equal(properties.size, 0)
+  assert.equal(currentCodeFontStack(), MONO_FONT_STACK)
+})
+
+test('a value that tries to leave the declaration is written as one quoted name', () => {
+  const { root, properties } = fakeRoot()
+  applyAppearanceFonts(root, { interfaceFont: 'x"; } body { display: none', codeFont: '' })
+  assert.equal(properties.get('--sem-font-family-ui'), `"x body display: none", ${UI_FONT_STACK}`)
+})
+
+test('an open terminal or editor gets a new code font once its face has loaded', async () => {
+  const { fonts, settle } = stubFontFaceSet()
+  const apply = vi.fn()
+  const unfollow = followCodeFont(apply)
+  settle()
+  await flush()
+  assert.deepEqual(apply.mock.calls, [[MONO_FONT_STACK]], 'the face in force, once loaded')
+
+  applyAppearanceFonts(fakeRoot().root, { interfaceFont: '', codeFont: 'Iosevka' })
+  await flush()
+  assert.deepEqual(apply.mock.calls.at(-1), [`"Iosevka", ${MONO_FONT_STACK}`])
+  assert.match(String(fonts.load.mock.calls.at(-1)?.[0]), /^13px "Iosevka"/)
+  unfollow()
+})
+
+test('a code font replaced before its face loaded is never delivered', async () => {
+  const { settle } = stubFontFaceSet()
+  const apply = vi.fn()
+  const unfollow = followCodeFont(apply)
+  applyAppearanceFonts(fakeRoot().root, { interfaceFont: '', codeFont: 'Iosevka' })
+  applyAppearanceFonts(fakeRoot().root, { interfaceFont: '', codeFont: 'Fira Code' })
+  settle()
+  await flush()
+  assert.deepEqual(apply.mock.calls, [[`"Fira Code", ${MONO_FONT_STACK}`]])
+  unfollow()
+})
+
+test('a surface that stopped following hears nothing more', async () => {
+  const { settle } = stubFontFaceSet()
+  const apply = vi.fn()
+  followCodeFont(apply)()
+  applyAppearanceFonts(fakeRoot().root, { interfaceFont: '', codeFont: 'Iosevka' })
+  settle()
+  await flush()
+  assert.equal(apply.mock.calls.length, 0)
 })

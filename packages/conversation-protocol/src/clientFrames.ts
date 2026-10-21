@@ -1,4 +1,5 @@
 import {
+  CONVERSATION_MAX_MESSAGE_CHARS,
   explainRejectedConversationFrame,
   parseConversationClientFrame,
   type ConversationClientFrame,
@@ -34,6 +35,26 @@ function id(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 200
 }
 
+// A question's text is its answer's key, because the CLI reads the answers
+// back by question, so a key is as long as the question it answers. The first
+// version capped a key at 200 characters, and a long question (a two-part one
+// most often) had its answer refused as an unsupported frame. A key may now be
+// as long as an answer; the frame's total stays the message limit.
+const MAX_QUESTION_CHARS = 20_000
+const MAX_ANSWER_CHARS = 20_000
+const MAX_ANSWERS = 64
+function questionAnswers(value: unknown): value is Record<string, string> {
+  if (!record(value)) return false
+  const entries = Object.entries(value)
+  if (entries.length > MAX_ANSWERS) return false
+  let chars = 0
+  for (const [key, answer] of entries) {
+    if (key.length > MAX_QUESTION_CHARS || typeof answer !== 'string' || answer.length > MAX_ANSWER_CHARS) return false
+    chars += key.length + answer.length
+  }
+  return chars <= CONVERSATION_MAX_MESSAGE_CHARS
+}
+
 /** Validate supported fields and strip unknown members, as `parseConversationClientFrame` does for the first version. */
 export function parseConversationClientMessage(value: unknown): ConversationClientMessage | null {
   if (!record(value)) return null
@@ -56,6 +77,14 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
       return id(value.commandId) && id(command.queuedId)
         ? { type: 'command', commandId: value.commandId, command: { kind: 'cancelQueued', queuedId: command.queuedId } }
         : null
+    }
+    // A steer is read as the send it rides on, and is never one held for
+    // later: the two ask for opposite things.
+    if (command.kind === 'send' && command.steer !== undefined) {
+      if (command.steer !== true || command.queue !== undefined) return null
+      const frame = parseConversationClientMessage({ ...value, command: { ...command, steer: undefined } })
+      if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
+      return { ...frame, command: { ...frame.command, steer: true } }
     }
     // Skills ride a message the chat runs now, not one held for later.
     if (command.kind === 'send' && command.skills !== undefined) {
@@ -90,6 +119,15 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
           }
         : null
     }
+    if (command.kind === 'answerQuestion') {
+      return id(value.commandId) && id(command.requestId) && questionAnswers(command.answers)
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: { kind: 'answerQuestion', requestId: command.requestId, answers: { ...command.answers } },
+          }
+        : null
+    }
     if (command.kind === 'setPermissionPreset' && command.permissionMode !== undefined) {
       if (!isConversationPermissionModeId(command.permissionMode)) return null
       const frame = parseConversationClientFrame(value)
@@ -107,6 +145,22 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
  */
 export function explainRejectedConversationMessage(value: unknown): ConversationFrameRejection {
   const rejection = explainRejectedConversationFrame(value)
+  // A question or an answer past its own limit is too large, not malformed.
+  const command = record(value) && value.type === 'command' && record(value.command) ? value.command : null
+  if (
+    rejection.code === 'invalid_frame' &&
+    command?.kind === 'answerQuestion' &&
+    record(command.answers) &&
+    Object.entries(command.answers).some(
+      ([key, answer]) =>
+        key.length > MAX_QUESTION_CHARS || (typeof answer === 'string' && answer.length > MAX_ANSWER_CHARS),
+    )
+  )
+    return {
+      ...rejection,
+      code: 'too_large',
+      message: `A question and its answer may each hold at most ${MAX_ANSWER_CHARS} characters.`,
+    }
   // A malformed command of a kind this contract added is a bad frame, not one
   // the desktop does not know.
   return rejection.code === 'unsupported_command' &&

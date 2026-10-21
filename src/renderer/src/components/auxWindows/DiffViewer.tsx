@@ -15,7 +15,7 @@ import { joinFilePath } from '../../utils/paths'
 import { BranchStepStrip, BRANCH_STEP_PANEL_ID } from './BranchStepStrip'
 import { branchItemsFrom, scopeNote, stripEntriesFrom, type BranchDiffItem } from './branchSteps'
 import { useBranchSteps } from './useBranchSteps'
-import { MONO_FONT_STACK, remeasureMonacoFontsOnLoad } from '../../utils/fonts'
+import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { buildDiffFileList, findDiffFocusIndex, type DiffFileItem } from './diffFileList'
 import {
@@ -95,6 +95,15 @@ import {
   type IncludeBoxState,
 } from './diffToolbarModel'
 import { formatDiffCount } from '../../utils/diffCount'
+import { DiffFileTree, DiffFileTreeColumn, FilesColumnGlyph } from './DiffFileTree'
+import {
+  DEFAULT_EDITOR_TREE_PREFS,
+  DIFF_PANE_TREE_PREFS_KEY,
+  DIFF_WINDOW_TREE_PREFS_KEY,
+  readTreeColumnPrefs,
+  writeTreeColumnPrefs,
+  type EditorTreePrefs,
+} from './editorTreePrefs'
 
 // The diff viewer: the changed-file list, a read-only Monaco DiffEditor, and
 // hunk navigation that flows across files. Two hosts render it — the
@@ -156,6 +165,10 @@ type Props = {
   focusStep?: BranchStepSelection | null
   /** Changes with every agent reveal, so the same range or filter can be shown twice. */
   revealKey?: string | null
+  /** The step an earlier mount had open, as the host keeps it (pane only). */
+  keptStep?: { step: BranchStepSelection; afterReveal: string | null } | null
+  /** The step open now changed; the host keeps it for the next mount. */
+  onKeepStep?: (kept: { step: BranchStepSelection; afterReveal: string | null }) => void
   /**
    * The diff tours this viewer holds, as its host keeps them across a remount:
    * the tour it had open (and whether it was playing), and a tour an agent has
@@ -559,12 +572,14 @@ export function DiffViewer({
   focusSide = 'modified',
   focusStep = null,
   revealKey = null,
+  keptStep = null,
+  onKeepStep,
   tourHost = null,
   onTourOfferTaken,
   onTourCurrentChange,
   visible = true,
 }: Props) {
-  const { status, repoState, repoRoot: gitRoot, refresh: refreshGitStatus } = useGitStatus(repoRoot)
+  const { status, directoryStatus, repoState, repoRoot: gitRoot, refresh: refreshGitStatus } = useGitStatus(repoRoot)
   // Ticks once per completed status read of this repository — the cue that the
   // working tree moved under the open file. Given the RESOLVED root so it joins
   // the subscription the line above already opened.
@@ -581,6 +596,8 @@ export function DiffViewer({
     branchSteps,
     status,
     focusStep && revealKey ? { selection: focusStep, key: revealKey } : null,
+    keptStep,
+    onKeepStep,
   )
   const stripEntries = useMemo(() => stripEntriesFrom(steps.snapshot), [steps.snapshot])
   const stepNote = useMemo(() => scopeNote(steps.snapshot), [steps.snapshot])
@@ -1190,8 +1207,9 @@ export function DiffViewer({
       if (takesNavigationKey(target) && tourHandleKeyRef.current(event)) return
       if (takesNavigationKey(target) && handleNavigationKey(event)) return
       // Escape inside the gear menu closes the MENU (the popover's own handler);
-      // it must not also take the window down with it.
-      if (event.key === 'Escape' && !target?.closest?.('[role="menu"]')) void window.api.windowClose()
+      // it must not also take the window down with it. Inside the file tree
+      // it means "back to the diff", which the tree does itself.
+      if (event.key === 'Escape' && !target?.closest?.('[role="menu"], [role="tree"]')) void window.api.windowClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -1311,7 +1329,12 @@ export function DiffViewer({
   const diffView = useWorkspaceStore((state) => (state.diffView === 'unified' ? 'unified' : 'side-by-side'))
   const [sessionPrefs, setSessionPrefs] = useState(DEFAULT_DIFF_EDITOR_PREFS)
   const editorPrefs = useMemo<DiffEditorPrefs>(() => ({ diffView, ...sessionPrefs }), [diffView, sessionPrefs])
-  const editorOptions = useMemo(() => diffEditorOptions(editorPrefs, MONO_FONT_STACK), [editorPrefs])
+  // The code font is a construction option too, and a live one: a change in
+  // Settings reaches the editor through the same `updateOptions` the wrapper
+  // makes for a new options object, and the effect below puts the live options
+  // and a playing tour's overrides back on top of it.
+  const codeFontFamily = useCodeFontFamily()
+  const editorOptions = useMemo(() => diffEditorOptions(editorPrefs, codeFontFamily), [editorPrefs, codeFontFamily])
 
   // ── The tour, played ────────────────────────────────────────────────────
   const [tourHostNode, setTourHostNode] = useState<HTMLElement | null>(null)
@@ -1366,7 +1389,7 @@ export function DiffViewer({
     // cursor is re-revealed rather than left to whatever the relayout produced.
     revealHunk(hunkIndexRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorPrefs, revealHunk, tourOptionsKey])
+  }, [editorPrefs, revealHunk, tourOptionsKey, codeFontFamily])
 
   const setDiffView = useCallback((next: DiffViewMode) => {
     // See auxSettingsWrite: an aux window may only write a setting after
@@ -1581,6 +1604,40 @@ export function DiffViewer({
     openFileSurface({ workspaceId, path: item.path, name })
   }, [currentItem, variant, workspaceId])
 
+  // ── The file tree ───────────────────────────────────────────────────────
+  // The files this diff holds, as the Files tree with a filter applied
+  // (DiffFileTree). Its column is shown or hidden, and sized, per host: the
+  // window's starts shown; the pane's starts hidden, because the pane's Diff
+  // tab is the narrow right-hand column and the Pager already steps the list
+  // there. Kept in this host's own localStorage key — never the settings
+  // envelope, which the window must not write (auxSettingsWrite.ts).
+  const treePrefsKey = variant === 'window' ? DIFF_WINDOW_TREE_PREFS_KEY : DIFF_PANE_TREE_PREFS_KEY
+  const [treePrefs, setTreePrefs] = useState<EditorTreePrefs>(() =>
+    readTreeColumnPrefs(treePrefsKey, { ...DEFAULT_EDITOR_TREE_PREFS, visible: variant === 'window' }),
+  )
+  const updateTreePrefs = useCallback(
+    (next: EditorTreePrefs) => {
+      setTreePrefs(next)
+      writeTreeColumnPrefs(treePrefsKey, next)
+    },
+    [treePrefsKey],
+  )
+  // A tour may read another checkout (a worktree agent's); its files are
+  // rooted where they were written.
+  const treeRoot = isTourItem(items[0]) ? items[0].repoRoot : (gitRoot ?? repoRoot)
+  // The tree's Open: any file, not only the one on screen — routed as the
+  // band's "Open in editor" is.
+  const openPathInEditor = useCallback(
+    (path: string, name: string) => {
+      if (variant === 'window') {
+        void openExternalFileWindow({ workspaceId: workspaceId ?? '', path, name })
+        return
+      }
+      if (workspaceId) openFileSurface({ workspaceId, path, name })
+    },
+    [variant, workspaceId],
+  )
+
   // ── The counter ─────────────────────────────────────────────────────────
   // Monaco's count, mirrored from the ref it writes into a callback so the
   // sentence has something to re-render on. It is only the FALLBACK total:
@@ -1685,6 +1742,18 @@ export function DiffViewer({
         {/* An agent's new tour, waiting: at the front of the band, where a narrow
             pane cannot clip it off. */}
         {tour.offerChip}
+        {/* The files column's switch, first in the band over the column it
+            opens — where the editor window's strip puts its own. The name says
+            the state, as the collapse toggle's does. */}
+        <Tooltip content={treePrefs.visible ? 'Hide changed files' : 'Show changed files'} placement="bottom">
+          <ToolbarButton
+            ariaLabel={treePrefs.visible ? 'Hide changed files' : 'Show changed files'}
+            onClick={() => updateTreePrefs({ ...treePrefs, visible: !treePrefs.visible })}
+          >
+            <FilesColumnGlyph />
+          </ToolbarButton>
+        </Tooltip>
+        <ToolbarDivider />
         <Tooltip content={`Previous change (${isMac ? '⇧F7' : 'Shift+F7'})`} placement="bottom">
           <ToolbarButton ariaLabel="Previous change" disabled={noFiles} onClick={() => navigate('prev')}>
             <PreviousDifferenceGlyph />
@@ -1968,6 +2037,23 @@ export function DiffViewer({
       ) : null}
 
       <div className="flex min-h-0 flex-1">
+        {treePrefs.visible ? (
+          <DiffFileTreeColumn prefs={treePrefs} onPrefsChange={updateTreePrefs}>
+            <DiffFileTree
+              items={items}
+              currentIndex={currentIndex}
+              rootPath={treeRoot}
+              workspaceId={workspaceId}
+              workspaceWindow={variant === 'pane'}
+              gitStatus={status}
+              directoryStatus={directoryStatus}
+              refreshGitStatus={refreshGitStatus}
+              onSelectIndex={goToFileIndex}
+              onOpenFile={openPathInEditor}
+              onEscape={() => diffEditorRef.current?.getModifiedEditor().focus()}
+            />
+          </DiffFileTreeColumn>
+        ) : null}
         {tour.stepList}
         <div
           ref={setTourHostNode}

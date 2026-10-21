@@ -7,7 +7,7 @@ import { runTailscale, runTailscaleResult, type TailscaleRun } from './tailscale
 // was the write side.
 //
 // The mechanism is `tailscale serve`, and the reason it is the right one is
-// binding. A dev server listens on 127.0.0.1 by default; the usual advice is to
+// binding. A dev server listens on loopback by default; the usual advice is to
 // pass `--host` so it binds 0.0.0.0, which also exposes it to whatever coffee-shop
 // LAN the laptop is on. `tailscale serve` never asks the dev server to move:
 // tailscaled proxies to loopback from inside the machine and publishes the result
@@ -88,7 +88,9 @@ export type TailscaleShareResult = { ok: true; share: TailscaleShare } | Tailsca
  */
 const STDERR_PATTERNS: ReadonlyArray<readonly [RegExp, TailscaleServeDiagnostic]> = [
   [
-    /https:\/\/tailscale\.com\/s\/https|https is not enabled|enable https|certificate.*not.*enabled/i,
+    // A tailnet that never turned Serve on gets "Serve is not enabled on your
+    // tailnet" and a `login.tailscale.com/f/serve` link to enable it.
+    /https:\/\/tailscale\.com\/s\/https|https is not enabled|enable https|certificate.*not.*enabled|serve is not enabled|login\.tailscale\.com\/f\/serve/i,
     'https-not-enabled',
   ],
   [/not logged in|logged out|needs? login|no valid node key/i, 'not-logged-in'],
@@ -128,7 +130,14 @@ export function describeServeDiagnostic(diagnostic: TailscaleServeDiagnostic): s
 }
 
 function failureFrom(run: Extract<TailscaleRun, { ok: false }>): TailscaleServeFailure {
-  const diagnostic = run.timedOut ? 'timeout' : classifyServeStderr(run.stderr)
+  // Serve asking for HTTPS to be enabled writes to stdout, not stderr.
+  const stderr = classifyServeStderr(run.stderr)
+  const said = stderr === 'unknown' ? classifyServeStderr(run.stdout) : stderr
+  // `killed` wins over the text: a child killed at the deadline may have
+  // written anything on its way out. Except the one thing serve says and then
+  // waits on: with Serve off for the tailnet it prints where to enable it and
+  // blocks until someone does, so that run always reaches the deadline.
+  const diagnostic = run.timedOut && said !== 'https-not-enabled' ? 'timeout' : said
   return { ok: false, diagnostic, message: describeServeDiagnostic(diagnostic) }
 }
 
@@ -171,7 +180,10 @@ export async function shareLocalPort(
   deps: TailscaleServeDeps = {},
 ): Promise<TailscaleShareResult> {
   const run = deps.run ?? runTailscaleResult
-  const localHost = input.localHost ?? '127.0.0.1'
+  // `localhost`, not `127.0.0.1`: a dev server bound to "localhost" by a Node
+  // release that prefers IPv6 listens on `::1` alone, and tailscaled (Go)
+  // dials every address the name resolves to where a literal tries only one.
+  const localHost = input.localHost ?? 'localhost'
   const dnsName = await readSelfDnsName(deps)
   if (!dnsName) {
     return { ok: false, diagnostic: 'unavailable', message: describeServeDiagnostic('unavailable') }

@@ -8,6 +8,7 @@ import { CodeBlock, COLLAPSE_AFTER_LINES, type CodeBlockProps } from './CodeBloc
 
 // The app's clipboard bridge, standing in for the main process.
 const written: string[] = []
+const rich: unknown[] = []
 
 let root: Root | null = null
 let host: HTMLElement | null = null
@@ -15,9 +16,13 @@ let host: HTMLElement | null = null
 beforeEach(() => {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   written.length = 0
+  rich.length = 0
   ;(window as unknown as { api: unknown }).api = {
     clipboardWriteText: async (text: string) => {
       written.push(text)
+    },
+    clipboardWriteRich: async (payload: unknown) => {
+      rich.push(payload)
     },
   }
 })
@@ -78,6 +83,13 @@ test('copy puts the raw code on the clipboard, without fences', async () => {
   await mount({ code: 'npm test\nnpm run build', language: 'bash' })
   await act(async () => buttonNamed('Copy code')!.click())
   expect(written).toEqual(['npm test\nnpm run build'])
+})
+
+test('copied code is plain text alone, with no rich flavour to paste as formatting', async () => {
+  await mount({ code: 'const a = 1', language: 'ts' })
+  await act(async () => buttonNamed('Copy code')!.click())
+  expect(written).toEqual(['const a = 1'])
+  expect(rich).toEqual([])
 })
 
 test('wrap is a toggle that says whether it is on', async () => {
@@ -156,4 +168,16 @@ test('the paste action is hidden while streaming, on other languages, and with n
 test('a surface action sits in the header beside the block’s own', async () => {
   await mount({ code: 'x', language: 'ts', actions: <span data-testid="extra">extra</span> })
   expect(header().querySelector('[data-testid="extra"]')).not.toBeNull()
+})
+
+test('Show source keeps its place beside Copy in both views, so a second click switches back', async () => {
+  await mount({ code: 'graph TD; A-->B', language: 'mermaid', drawing: <svg /> })
+  const actionNames = () =>
+    Array.from(host!.querySelectorAll('.ds-code-block__actions button')).map((button) =>
+      button.getAttribute('aria-label'),
+    )
+  expect(actionNames().slice(-2)).toEqual(['Show source', 'Copy code'])
+  await act(async () => buttonNamed('Show source')!.click())
+  expect(buttonNamed('Wrap lines')).not.toBeNull()
+  expect(actionNames().slice(-2)).toEqual(['Show source', 'Copy code'])
 })

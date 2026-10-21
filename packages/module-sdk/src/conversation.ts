@@ -24,6 +24,7 @@ export type ModuleConversationEventType =
   | 'approval_resolved'
   | 'usage_updated'
   | 'context_compacted'
+  | 'context_compacting'
   | 'command_output'
   // The turn ended. Its payload carries `ModuleConversationTurnCompletedPayload`:
   // `text` (the agent's last message) and `usage` (what the turn spent) where
@@ -56,7 +57,7 @@ export type ModuleConversationEvent = {
  * wrote to the cache is `cacheWriteTokens`, so the four add up to everything
  * the turn sent and received. A member the provider cannot report is absent,
  * never zero: Claude Code and Codex report all four, an ACP agent (Cursor,
- * OpenCode, Grok) what its own protocol carries.
+ * OpenCode, Grok, Kimi Code) what its own protocol carries.
  */
 export type ModuleConversationTurnUsage = {
   inputTokens?: number
@@ -244,8 +245,9 @@ export type ModuleConversationCreateInput = {
    * Start the chat in a fresh git worktree of `workspaceId`'s project instead
    * of its checkout, the way a scheduled agent's run with a worktree starts:
    * cut from the project's default branch (from the worktree pool where the
-   * app keeps one), on branch `agent/<name>-<suffix>` (the short suffix keeps
-   * each chat's branch its own; absent `name`, `agent/chat-<suffix>`), in a
+   * app keeps one), on branch `<prefix>/<name>-<suffix>` (the person's worktree
+   * branch prefix, `agent` unless they changed it; the short suffix keeps each
+   * chat's branch its own; absent `name`, `<prefix>/chat-<suffix>`), in a
    * new workspace of its own marked as a worktree of the project. The answer's
    * `workspaceId` is that new workspace, so address the chat by it. The chat
    * waits in the sidebar rather than taking the window. A project that is not
@@ -551,7 +553,7 @@ export type ModuleChatRuntimeOption = {
   /**
    * The chat runtime id: what `openChat`'s and `create`'s `cli`, a scheduled
    * agent's `cli` and a companion's `engine.cli` take (`claude-code`, `codex`,
-   * `cursor`, `opencode`, `grok`).
+   * `cursor`, `opencode`, `grok`, `kimi-code`).
    */
   id: string
   label: string
@@ -574,10 +576,10 @@ export type ModuleChatRuntimeOption = {
  *   runtimes the app can drive headlessly (another answers `unsupported`).
  *   Absent, the runtime the person chose for Studio's own text generation in
  *   Settings, else `claude-code`.
- * - `model`: a model id the runtime takes (`claude-haiku-4-5`, an alias such as
+ * - `model`: a model id the runtime takes (`claude-haiku-5-5`, an alias such as
  *   `haiku`, `gpt-5.6-luna`). Absent, the person's chosen model when the call
  *   runs on their chosen runtime, else that runtime's small default
- *   (`claude-haiku-4-5` for Claude Code, `gpt-5.6-luna` for Codex).
+ *   (`claude-haiku-5-5` for Claude Code, `gpt-5.6-luna` for Codex).
  * - `maxOutputTokens`: a cap on the answer, 1 to 64,000. Claude Code honours
  *   it; Codex has no output cap and ignores it.
  * - `json`: the answer must be one JSON value. The model is told so, the host

@@ -5,6 +5,7 @@
 import type { CliPermissionPreset } from '../../shared/cli-permission-preset'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
 import {
+  scheduledAgentsPauseHolds,
   validateScheduledAgentDraft,
   type ScheduledAgent,
   type ScheduledAgentDraft,
@@ -12,6 +13,7 @@ import {
   type ScheduledAgentRun,
   type ScheduledAgentView,
   type ScheduledAgentWriteResult,
+  type ScheduledAgentsPause,
 } from '../../shared/scheduled-agents'
 import { refuseScheduledAgentRun } from '../automation/launch-permission-cap'
 import { moduleConversationCeiling } from '../module-host/module-conversation-service'
@@ -40,6 +42,28 @@ export type ScheduledAgentsService = {
     options?: { ownerModuleId?: string },
   ): Promise<{ ok: true; run: ScheduledAgentLastRun } | { ok: false; message: string }>
   markFailureSeen(id: string): Promise<void>
+  /**
+   * Stop its runs at their times until it is resumed. A run already going is
+   * left alone, and Run now still runs it. Pausing a paused one keeps the time
+   * it was first paused at.
+   */
+  pause(id: string, options?: { ownerModuleId?: string }): Promise<ScheduledAgentWriteResult>
+  /** Run on its schedule again, from its first time after now: no time missed while paused is made up. */
+  resume(id: string, options?: { ownerModuleId?: string }): Promise<ScheduledAgentWriteResult>
+  /** Every scheduled agent paused at once, while that holds; null when it does not. */
+  pausedAll(): ScheduledAgentsPause | null
+  /**
+   * Pause every scheduled agent until `until` (null: until `resumeAll`). Each
+   * one's own pause is kept apart from this, so resuming them all leaves a
+   * schedule paused on its own paused. Pausing them all again moves the until
+   * and keeps when it began.
+   */
+  pauseAll(until: number | null): Promise<{ ok: true; pause: ScheduledAgentsPause } | { ok: false; message: string }>
+  /**
+   * End the pause of every scheduled agent. `ended`: only that pause, which
+   * came to its until — not one the person has set since.
+   */
+  resumeAll(ended?: ScheduledAgentsPause): Promise<{ ok: true } | { ok: false; message: string }>
   /** Called with the whole list after every change, including a run's outcome. */
   onChanged(listener: (agents: ScheduledAgentView[]) => void): () => void
   /** Something outside a write changed what the list says: a run finished, the computer woke. */
@@ -161,6 +185,74 @@ export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): 
       // Unsaved when the file could not be read; the failure is still shown.
       await deps.store.markFailureSeen(id).catch(() => undefined)
       changed()
+    },
+    async pause(id, options) {
+      await deps.store.load()
+      const agent = reachable(id, options?.ownerModuleId)
+      if (!agent) return notFound(id)
+      if (agent.pausedAt !== undefined) return { ok: true, agent: view(agent) }
+      let paused: ScheduledAgent | null
+      try {
+        paused = await deps.store.setPaused(id, now())
+      } catch (error) {
+        return refused(error)
+      }
+      if (!paused) return notFound(id)
+      changed()
+      return { ok: true, agent: view(paused) }
+    },
+    async resume(id, options) {
+      await deps.store.load()
+      const agent = reachable(id, options?.ownerModuleId)
+      if (!agent) return notFound(id)
+      if (agent.pausedAt === undefined) return { ok: true, agent: view(agent) }
+      let resumed: ScheduledAgent | null
+      try {
+        resumed = await deps.store.setPaused(id, null)
+      } catch (error) {
+        return refused(error)
+      }
+      if (!resumed) return notFound(id)
+      // Heard before it is viewed, so its next run is the one it now has.
+      changed()
+      return { ok: true, agent: view(resumed) }
+    },
+    pausedAll() {
+      const pause = deps.store.pausedAll()
+      return scheduledAgentsPauseHolds(pause, now()) ? pause : null
+    },
+    async pauseAll(until) {
+      const at = now()
+      if (until !== null && (typeof until !== 'number' || !Number.isFinite(until))) {
+        return { ok: false, message: 'Pause them until a time, or until they are resumed.' }
+      }
+      if (until !== null && until <= at) return { ok: false, message: 'That time has already passed.' }
+      await deps.store.load()
+      const current = deps.store.pausedAll()
+      const pause: ScheduledAgentsPause = {
+        since: current && scheduledAgentsPauseHolds(current, at) ? current.since : at,
+        until,
+      }
+      try {
+        await deps.store.setPausedAll(pause)
+      } catch (error) {
+        return refused(error)
+      }
+      changed()
+      return { ok: true, pause }
+    },
+    async resumeAll(ended) {
+      await deps.store.load()
+      const current = deps.store.pausedAll()
+      if (!current) return { ok: true }
+      if (ended && (current.since !== ended.since || current.until !== ended.until)) return { ok: true }
+      try {
+        await deps.store.setPausedAll(null)
+      } catch (error) {
+        return refused(error)
+      }
+      changed()
+      return { ok: true }
     },
     onChanged(listener) {
       listeners.add(listener)

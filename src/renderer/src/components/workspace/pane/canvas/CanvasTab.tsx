@@ -29,6 +29,9 @@ import { StudioSkillSuggestion } from '../../../studioSkills/StudioSkillSuggesti
 // alone — so a tab sitting on the picker never fetches a megabyte of editor,
 // and the boot chunk never sees it at all.
 const CanvasEditor = React.lazy(() => import('./CanvasEditor'))
+const CanvasMiniature = React.lazy(() =>
+  import('./CanvasEditor').then((module) => ({ default: module.CanvasMiniature })),
+)
 
 type CanvasTabProps = {
   workspaceId: string
@@ -68,9 +71,14 @@ export function CanvasTab({ workspaceId, tab, active }: CanvasTabProps) {
   // against a viewport that does not exist. Once it has been sized it STAYS
   // mounted: the pane closing again must not throw the board away.
   const [sized, setSized] = useState(false)
+  // Floating, the tab is a picture of the board (CanvasMiniature) laid over
+  // whatever editor it already has. A board that floats before it was ever
+  // opened in the pane builds no editor for the card's 320px: it is built when
+  // the pane opens on it.
+  const miniature = tab.floating === true
 
   useLayoutEffect(() => {
-    if (sized || !path) return
+    if (sized || !path || miniature) return
     const host = hostRef.current
     if (!host) return
     const measure = (): boolean => {
@@ -85,7 +93,7 @@ export function CanvasTab({ workspaceId, tab, active }: CanvasTabProps) {
     })
     observer.observe(host)
     return () => observer.disconnect()
-  }, [path, sized])
+  }, [miniature, path, sized])
 
   // Open the board and subscribe this window to it; close it on the way out, so
   // main stops pushing scenes to a tab that is gone. Re-runs on `attempt` for
@@ -263,12 +271,15 @@ export function CanvasTab({ workspaceId, tab, active }: CanvasTabProps) {
   // person answers it once (StudioSkillSuggestion); the host is measured, so the
   // editor takes the height back when it goes.
   return (
-    <div className="flex h-full w-full flex-col">
+    <div className="relative flex h-full w-full flex-col">
       <StudioSkillSuggestion
         skillId="studio-canvas"
         className="shrink-0 border-b border-[color:var(--border-subtle)] bg-[color:var(--bg-surface)] px-3 py-2"
       />
-      <div ref={hostRef} className="relative min-h-0 w-full flex-1 bg-[color:var(--bg-app)]">
+      <div
+        ref={hostRef}
+        className={`relative min-h-0 w-full flex-1 bg-[color:var(--bg-app)]${miniature ? ' isolate' : ''}`}
+      >
         {state.kind === 'error' ? (
           <EmptyState
             title="This board could not be opened"
@@ -310,6 +321,18 @@ export function CanvasTab({ workspaceId, tab, active }: CanvasTabProps) {
           onExport={(formats) => void runExport(formats)}
         />
       </div>
+      {/* Over the editor and the skill's offer, under the player's own
+          chrome (FloatingPlayerChrome, at `--z-float` in the same stacking
+          context). No tier of its own: it is the last positioned layer in
+          the tab, and the editor's host is isolated while it is up, so none
+          of the library's own stacking climbs over the picture. */}
+      {miniature && state.kind === 'ready' ? (
+        <div className="absolute inset-0">
+          <React.Suspense fallback={null}>
+            <CanvasMiniature board={state.board} theme={theme} />
+          </React.Suspense>
+        </div>
+      ) : null}
     </div>
   )
 }

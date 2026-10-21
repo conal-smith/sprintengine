@@ -1,8 +1,12 @@
 import type { Options, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk'
+import { rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 import type { ConversationCommand } from '../../shared/conversation/commands'
 import type { ConversationCliRuntimeOverrides } from '../../shared/conversation-runtime'
 import { isWslHostId } from '../../shared/execution-host'
+import { hasClaudeManagedMcpConfig } from '../claude-managed-mcp'
+import { stageProjectCommands } from '../claude-project-commands'
 
 /** The CLI id a Claude chat's command list is kept under. */
 export const CLAUDE_COMMANDS_CLI = 'claude-code'
@@ -166,6 +170,10 @@ export type ClaudeCommandsProbeDeps = {
   resolveExecutable?: (cliRuntimes?: ConversationCliRuntimeOverrides) => Promise<string>
   env?: () => Promise<Record<string, string>> | Record<string, string>
   timeoutMs?: number
+  /** Whether an administrator's `managed-mcp.json` is installed; read from disk by default. */
+  managedMcpConfig?: () => boolean
+  /** Where the folder's project-commands plugin is staged while it lists; the system's temp folder by default. */
+  tempDir?: string
 }
 
 const CLAUDE_COMMANDS_PROBE_TIMEOUT_MS = 20_000
@@ -178,9 +186,11 @@ const CLAUDE_COMMANDS_PROBE_TIMEOUT_MS = 20_000
  *
  * The options that decide which commands exist match a chat's session: the
  * same executable and environment (the person's login, no inherited API key),
- * the chat's folder as cwd, and `settingSources: ['user']` — a repository's
- * settings are never loaded, so its commands and skills are not listed, just
- * as a chat does not load them. The chat's attached-skills plugin is its own
+ * the chat's folder as cwd, `settingSources: ['user']` — a repository's
+ * settings are never loaded, so its skills are not listed, just as a chat does
+ * not load them — and the folder's `.claude/commands` staged as the plugin a
+ * chat there is given (claude-project-commands.ts), so they are listed as the
+ * `project:` commands a chat runs. The chat's attached-skills plugin is its own
  * per-chat state and is not part of a folder's list. What a probe does not
  * need is off: hooks (they would run the person's commands just to list) and
  * MCP servers (they would be started to be asked nothing). The prompts an MCP
@@ -197,13 +207,16 @@ export async function probeClaudeConversationCommands(
   const abort = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let session: CommandsQuery | undefined
+  // Unreadable commands leave the list without them, as a chat starts without them.
+  const staging = stageProjectCommands(deps.tempDir ?? tmpdir(), input.cwd).catch(() => null)
   try {
-    const [query, executable, env] = await Promise.all([
+    const [query, executable, env, projectCommands] = await Promise.all([
       (deps.loadQuery ?? defaultLoadQuery)(),
       (deps.resolveExecutable ?? defaultResolveExecutable)(input.cliRuntimes),
       (deps.env ?? defaultEnv)(),
+      staging,
     ])
-    const { noTurns } = await import('../model-discovery/agent-sdk-probe')
+    const { noTurns, probeEnv } = await import('../model-discovery/agent-sdk-probe')
     session = query({
       prompt: noTurns(abort.signal),
       options: {
@@ -211,9 +224,12 @@ export async function probeClaudeConversationCommands(
         pathToClaudeCodeExecutable: executable,
         settingSources: ['user'],
         settings: { disableAllHooks: true },
-        strictMcpConfig: true,
-        env,
+        // Claude refuses strict MCP mode beside an administrator's
+        // managed-mcp.json, which already keeps the person's own servers out.
+        ...((deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)() ? {} : { strictMcpConfig: true }),
+        env: probeEnv(env),
         abortController: abort,
+        ...(projectCommands ? { plugins: [{ type: 'local', path: projectCommands.dir }] } : {}),
       },
     })
     const deadline = new Promise<never>((_, reject) => {
@@ -241,6 +257,8 @@ export async function probeClaudeConversationCommands(
       // Already closed.
     }
     abort.abort()
+    const staged = await staging
+    if (staged) await rm(staged.dir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 

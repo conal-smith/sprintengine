@@ -10,6 +10,7 @@ import {
   buildUserMessageContent,
   CLAUDE_AGENT_PROVIDER_ID,
   CLAUDE_AGENT_SESSION_ENV_KEY,
+  describeSpawnFailure,
   createClaudeAgentProvider,
   mapSdkMessage,
   resultContextWindow,
@@ -2224,6 +2225,22 @@ test('a Claude compact boundary marks the transcript with what triggered it and 
   assert.deepEqual(mapSdkMessage(state, { type: 'system', subtype: 'status', session_id: 'native' }), [])
 })
 
+test('a Claude compacting status says so once per compaction, however often the CLI repeats it', () => {
+  const state = mapperState()
+  const status = (value: string | null) =>
+    mapSdkMessage(state, { type: 'system', subtype: 'status', status: value, session_id: 'native' })
+  const [compacting] = status('compacting')
+  assert.equal(compacting?.type, 'context_compacting')
+  assert.deepEqual(compacting?.payload, { turnId: 'turn_1' })
+  // The CLI sends it again every half minute while it summarises.
+  assert.deepEqual(status('compacting'), [])
+  mapSdkMessage(state, { type: 'system', subtype: 'compact_boundary', session_id: 'native' })
+  // The next compaction is its own.
+  assert.equal(status('compacting')[0]?.type, 'context_compacting')
+  assert.deepEqual(status(null), [])
+  assert.equal(status('compacting')[0]?.type, 'context_compacting')
+})
+
 test('a /compact reports the window as the summary left it, not as full as the last request was', () => {
   const state = mapperState()
   mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
@@ -2295,6 +2312,104 @@ test('a Claude API retry tells the turn why it has nothing yet and when the next
     retryInMs: 500,
     error: 'unknown',
   })
+})
+
+test('a hook that blocks the prompt says why in the transcript, and transcript-mode lines stay out', () => {
+  const state: Parameters<typeof mapSdkMessage>[0] = mapperState()
+  mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
+  const informational = (content: string, level: string) =>
+    mapSdkMessage(state, { type: 'system', subtype: 'informational', session_id: 'native', uuid: 'u', content, level })
+  assert.deepEqual(informational('Tool Bash running for 12s…', 'info'), [])
+  assert.deepEqual(informational('   ', 'warning'), [])
+  const reason = 'Prompt dropped by a hook: Deploys are frozen until Monday.'
+  const [note, ...rest] = informational(reason, 'warning')
+  assert.equal(rest.length, 0)
+  assert.equal(note?.type, 'command_output')
+  assert.deepEqual(note?.payload, { turnId: 'turn_1', adapterNote: true, output: reason })
+  // The CLI repeats the reason as the result's text; that adds no second note.
+  const ended = mapSdkMessage(state, {
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    session_id: 'native',
+    num_turns: 0,
+    result: reason,
+  })
+  assert.equal(ended.filter((event) => event.type === 'command_output').length, 0)
+})
+
+test('a refusal Claude answered on its fallback model is noted once, and the session reads the fallback model', () => {
+  const state: Parameters<typeof mapSdkMessage>[0] = mapperState()
+  mapSdkMessage(state, { type: 'system', subtype: 'init', session_id: 'native', model: 'claude-opus-4-7' })
+  const fallback = (extra: Record<string, unknown>) =>
+    mapSdkMessage(state, {
+      type: 'system',
+      subtype: 'model_refusal_fallback',
+      session_id: 'native',
+      trigger: 'refusal',
+      direction: 'retry',
+      original_model: 'claude-opus-4-7',
+      fallback_model: 'claude-sonnet-4-6',
+      request_id: null,
+      content: 'Opus 4.7 declined this request, so Sonnet 4.6 answered it.',
+      uuid: 'refusal-1',
+      ...extra,
+    })
+  // A subagent's answer came from the fallback; the session's model did not change.
+  const [local] = fallback({ scope: 'local' })
+  assert.equal(local?.type, 'command_output')
+  assert.deepEqual(local?.payload, {
+    turnId: 'turn_1',
+    adapterNote: true,
+    output: 'Opus 4.7 declined this request, so Sonnet 4.6 answered it.',
+  })
+  assert.equal(state.contextModel, 'claude-opus-4-7')
+  // The main thread's swap, said again as the turn ends: noted once, read as the session's.
+  assert.deepEqual(fallback({ scope: 'session' }), [])
+  assert.equal(state.contextModel, 'claude-sonnet-4-6')
+  mapSdkMessage(state, { type: 'result', subtype: 'success', is_error: false, session_id: 'native' })
+  // The next turn's refusal is noted again, in words of the adapter's own when the CLI sent none.
+  state.turn = { turnId: 'turn_2' }
+  assert.equal(
+    fallback({ content: '' })[0]?.payload?.output,
+    'The model declined to answer, so claude-sonnet-4-6 answered instead.',
+  )
+})
+
+test('a refusal no fallback answered says why with the turn’s failure', () => {
+  const state = mapperState()
+  const refused = mapSdkMessage(state, {
+    type: 'system',
+    subtype: 'model_refusal_no_fallback',
+    session_id: 'native',
+    original_model: 'claude-opus-4-7',
+    request_id: 'req_1',
+    api_refusal_explanation: 'The request asked for working exploit code.',
+    content: '',
+    uuid: 'refusal-2',
+  })
+  assert.deepEqual(refused, [])
+  const failed = mapSdkMessage(state, {
+    type: 'result',
+    subtype: 'success',
+    is_error: true,
+    session_id: 'native',
+    result: 'API Error: Claude declined to respond to this request.',
+  }).find((event) => event.type === 'turn_failed')
+  assert.equal(
+    failed?.payload?.message,
+    'API Error: Claude declined to respond to this request.\n\nThe request asked for working exploit code.',
+  )
+  // Said with that turn only.
+  state.turn = { turnId: 'turn_2' }
+  const next = mapSdkMessage(state, {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    session_id: 'native',
+    result: 'Something else failed.',
+  }).find((event) => event.type === 'turn_failed')
+  assert.equal(next?.payload?.message, 'Something else failed.')
 })
 
 test('Claude shell results say whether a command was declined, stopped or exited non-zero', () => {
@@ -2613,6 +2728,51 @@ test('a Claude agent resumed by SendMessage in a later child reports to the lane
   assert.equal(finished[0]?.payload?.toolUseId, 'toolu_agent', 'its answer lands in its own lane, not on SendMessage')
   assert.equal(finished[1]?.payload?.toolUseId, 'toolu_agent')
   assert.equal(finished[1]?.payload?.status, 'completed')
+})
+
+// The same agent after the app restarted: the session that spawned it is gone,
+// and only the lane the runtime read back from the transcript says where it ran.
+test('a Claude agent resumed by SendMessage after a restart reports to the lane the runtime knew it by', async () => {
+  const h = scriptedHarness()
+  try {
+    await h.adapter.startSession({ ...h.turn('turn_1'), knownSubagentLanes: [['task_swift', 'toolu_agent']] })
+    const first = reader((await h.adapter.sendTurn(h.turn('turn_1'))) as AsyncIterable<ConversationEvent>)
+    await promptsRead(h.prompts, 1)
+    h.emit(init)
+    h.emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'task_swift',
+      tool_use_id: 'toolu_send',
+      description: 'Build Swift macOS app',
+      task_type: 'local_agent',
+      subagent_type: 'general-purpose',
+      is_backgrounded: true,
+    })
+    h.emit({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task_swift',
+      tool_use_id: 'toolu_send',
+      status: 'completed',
+      summary: 'Built it.',
+    })
+    h.emit(success({ user_message_uuids: [h.uuidOf(0)] }))
+    await first.done
+
+    const statuses = first.events.filter((event) => event.type === 'subagent_status')
+    assert.deepEqual(
+      statuses.map((event) => [event.payload?.toolUseId, event.payload?.status, event.payload?.resumed]),
+      [
+        ['toolu_agent', 'running', true],
+        ['toolu_agent', 'completed', undefined],
+      ],
+    )
+    const answer = first.events.find((event) => event.type === 'tool_output' && event.payload?.backgroundResult)
+    assert.equal(answer?.payload?.toolUseId, 'toolu_agent', 'its answer lands in its own lane, not on SendMessage')
+  } finally {
+    await h.adapter.disposeAll()
+  }
 })
 
 // The order Claude Code streams one Monitor in: the call, the whole list of
@@ -3360,6 +3520,30 @@ test('a local command reported only on its result, or as system output, still sh
   )
 })
 
+test('a slash command whose `!` line Claude Code refused says why instead of ending with nothing', async () => {
+  const refusal =
+    'Shell command permission check failed for pattern "!`touch out.txt &amp;&amp; echo done`": touch in ' +
+    "'/Users/dev/app/out.txt' needs approval."
+  const events = await commandTurn('/project:deploy', (h) => {
+    h.emit({
+      type: 'user',
+      parent_tool_use_id: null,
+      isReplay: true,
+      message: { role: 'user', content: `<local-command-stderr>${refusal}</local-command-stderr>` },
+    })
+    h.emit(success({ user_message_uuids: [h.uuidOf(0)], num_turns: 0 }))
+  })
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ['turn_started', 'command_output', 'turn_completed'],
+  )
+  assert.equal(
+    events[1]?.payload?.output,
+    'Shell command permission check failed for pattern "!`touch out.txt && echo done`": touch in ' +
+      "'/Users/dev/app/out.txt' needs approval.",
+  )
+})
+
 test('/compact still marks the compaction, and what it printed is left to that divider', async () => {
   const events = await commandTurn('/compact', (h) => {
     h.emit({
@@ -3854,4 +4038,29 @@ test('an ask bypass would still have made is marked as one no mode answers', asy
   } finally {
     await h.adapter.disposeAll()
   }
+})
+
+test('a Claude Code start refused with EPERM in a folder macOS keeps private says where to allow it', () => {
+  const mac = { platform: 'darwin', home: '/Users/dev' }
+  const said = describeSpawnFailure(
+    null,
+    'Error: EPERM: operation not permitted, uv_cwd\n',
+    '/Users/dev/Desktop/app',
+    mac,
+  )
+  assert.match(said, /^Claude Code exited unexpectedly\. \(Error: EPERM: operation not permitted, uv_cwd\)/)
+  assert.match(said, /System Settings › Privacy & Security › Files and Folders\.$/)
+})
+
+test('a Claude Code failure that is not a privacy refusal says only what it said', () => {
+  const mac = { platform: 'darwin', home: '/Users/dev' }
+  assert.equal(
+    describeSpawnFailure(null, 'Error: EPERM: operation not permitted\n', '/Users/dev/code/app', mac),
+    'Claude Code exited unexpectedly. (Error: EPERM: operation not permitted)',
+  )
+  assert.equal(describeSpawnFailure(new Error('Not logged in.'), '', '/Users/dev/Documents/app', mac), 'Not logged in.')
+  assert.equal(
+    describeSpawnFailure(null, 'EPERM\n', '/home/dev/Documents/app', { platform: 'linux', home: '/home/dev' }),
+    'Claude Code exited unexpectedly. (EPERM)',
+  )
 })

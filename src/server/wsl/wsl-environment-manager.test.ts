@@ -497,6 +497,35 @@ for (const skipKills of [0, 1])
     })
   }, 60_000)
 
+test('a message sent while a hung server is being stopped starts a new server, not the hung one', async () => {
+  const home = fakeHome('hung-window')
+  // `wsl.exe` slow to say it exited, and the server it ran outliving it with
+  // its wire still open: the hung server has been stopped, and is not yet gone.
+  const { manager: wsl } = manager({
+    homes: { Ubuntu: home },
+    pingMs: 200,
+    closeDelayMs: 1_000,
+    orphanOnKill: true,
+    skipKills: 1,
+  })
+  const first = await wsl.connect('Ubuntu')
+  const pid = readServerPid(home)
+  process.kill(pid, 'SIGSTOP')
+  cleanups.push(() => {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Gone.
+    }
+  })
+  await waitFor(() => wsl.status('Ubuntu').state === 'unavailable', 10_000)
+  assert.equal(wsl.current('Ubuntu'), null, 'the hung server is not handed out')
+  const next = await wsl.connect('Ubuntu')
+  assert.notEqual(next, first)
+  assert.equal(wsl.status('Ubuntu').state, 'ready')
+  assert.notEqual(readServerPid(home), pid)
+}, 30_000)
+
 test('a WSL 1 distribution is refused with the command that converts it, and nothing is started', async () => {
   const home = fakeHome('wsl1')
   const { manager: wsl, runner } = manager({

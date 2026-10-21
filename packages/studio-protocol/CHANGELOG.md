@@ -4,6 +4,23 @@
 
 ### Added
 
+- **The project's store as a file root** (`files-write`, owners): a
+  `StudioFileRoot` may be `{ kind: 'store', workspaceId }`, the folder in the
+  person's home where Studio keeps a project's browser captures, recordings
+  and chat transcripts, which older builds kept in the project's
+  `.sprintengine/`. `files.roots` answers `store: true` where it is served; a
+  Studio built before it leaves the member out and refuses the kind, so a
+  client asks for it only where it is listed. A read of the workspace root's
+  `.sprintengine/…` that the folder no longer has is answered from the store,
+  so a client that learned such a path from an older Studio still finds the
+  file.
+
+- **A steered send** (`conversation-steer-sends`, in `welcome.conversation`):
+  `conversation.send` may say `steer: true`, read by the conversation lane's
+  own validator, and the message goes into the turn the conversation is
+  running where its provider takes one. A turn that cannot take it has the
+  Studio hold the message for the turn's end, answered with a `notice`.
+
 - **Pull request watches** (`pull-request-watch`, owners): `pullRequests.unwatch`
   stops a conversation's watch on one of its pull requests, and a listed
   `StudioPullRequest` may carry `watch` (`StudioPullRequestWatch`: when it
@@ -30,6 +47,10 @@
   `name_taken` and `not_offered` codes.
 - `worktree` among `STUDIO_RESERVED_TOOLSET_NAMES`: the worktree pool's
   `worktree.lease` and `worktree.release`, which a Studio's shell offers.
+- `artifacts` among `STUDIO_RESERVED_TOOLSET_NAMES`: `artifacts.publish`,
+  `list`, `search`, `get`, `update` and `delete`, which publish an agent's
+  HTML pages to the site set on Settings ▸ Artifacts, and which a Studio's
+  shell offers.
 
 - **The chat surface** (`chat.ts`): `session.*`, `uploads.*` (with
   `uploads.discard`), the

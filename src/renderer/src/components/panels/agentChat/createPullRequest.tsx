@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 
-import type { CreatePullRequestState, PullRequestCheckoutPin } from '../../../../../shared/git/pull-request-create'
+import {
+  pullRequestNoun,
+  type CreatePullRequestState,
+  type PullRequestCheckoutPin,
+} from '../../../../../shared/git/pull-request-create'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
-import { resolveStoreTextGenerationEngine } from '../../../store/generatedWorkspaceTitle'
-import { useWorkspaceStore } from '../../../store/workspaceStore'
+import type { PullRequestForge } from '../../../../../shared/git/pr-url'
 import { Field, GhostButton, PullRequestGlyph, Spinner } from '../../ui'
 import { Input, Textarea } from '../../ui/Input'
 import { Modal, ModalBody, ModalButton, ModalFooter, ModalHeader } from '../../ui/Modal'
-import { linkPullRequestToConversation } from '../../workspace/useConversationPullRequests'
+import { copyToClipboardWithToast } from '../../../utils/copyToClipboardWithToast'
+import type { PullRequestHost } from './pullRequestHost'
 
 // The chat's "Create PR" (owner ruling 2026-10-04), in the same slot at the
 // bottom of the chat as "Open PR #123", and never beside it. The slot shows:
@@ -25,13 +29,28 @@ import { linkPullRequestToConversation } from '../../workspace/useConversationPu
 // (Settings → Agents → Text generation), shows them, editable, and creates the
 // pull request only on "Create": it is outward-facing, so it is seen before it
 // is sent. The app then pushes the branch if its remote is behind and opens
-// the pull request itself — `gh pr create` on GitHub, or the forge's own
-// prefilled page on the others — and records it as this conversation's, which
-// flips the slot to "Open PR #N". Every step says where it is, and a failure
-// says why, on the strip.
+// the pull request itself — `gh pr create` on GitHub, `glab` on GitLab, `tea`
+// on Gitea, Forgejo and Codeberg — and records it as this conversation's,
+// which flips the slot to "Open PR #N". Where the forge's CLI is missing,
+// signed out or fails (and on Bitbucket) it opens the forge's own page with
+// the title and description filled in, and the strip says why; a description
+// the page could not take is put on the clipboard, so nothing written is
+// lost. A page the system would not open (Windows refuses a long address) is
+// never claimed opened: the title and description go on the clipboard and
+// the strip says so. Where the CLI probably opened the request but its
+// address is not known, the forge's list of requests opens instead, to find
+// it in. Every step says where it is, and a failure says why, on the strip.
 //
-// This computer's checkouts only: a chat on WSL, an SSH machine or a paired
-// machine draws no button, because its git and `gh` are not here.
+// GitLab calls them merge requests, and so does the control on a GitLab
+// checkout: "Create MR", "Create a merge request".
+//
+// Where the work is done is the host's (`pullRequestHost.ts`): this
+// computer's shell for a chat here, the paired machine for a chat there
+// (owner ruling 2026-10-18), which drafts with its own text generation
+// settings and records the pull request itself. Opening a page and the
+// clipboard stay here, in front of the person. A chat on WSL or an SSH
+// machine draws no button, because its git and `gh` are not here and nothing
+// there answers for them.
 
 /** Which control the slot draws. */
 export type PullRequestSlotChoice = 'open' | 'create' | 'merged' | null
@@ -48,12 +67,15 @@ export function pullRequestSlotChoice(
 }
 
 /**
- * Whether the checkout is ready to propose, asked of main when the chat opens,
- * when `refreshKey` changes (a turn ended, the branch or its changes moved, a
- * pull request moved) and when the window comes back to the front. Null asks
- * nothing and answers nothing.
+ * Whether the checkout is ready to propose, asked of its host when the chat
+ * opens, when `refreshKey` changes (a turn ended, the branch or its changes
+ * moved, a pull request moved) and when the window comes back to the front.
+ * Null asks nothing and answers nothing.
  */
-export function useCreatePullRequestState(cwd: string | null, refreshKey: string): CreatePullRequestState | null {
+export function useCreatePullRequestState(
+  host: PullRequestHost | null,
+  refreshKey: string,
+): CreatePullRequestState | null {
   const [state, setState] = useState<CreatePullRequestState | null>(null)
   // Asks overlap (a focus during a turn's end, a `gh` lookup that takes
   // seconds), and only the latest may answer: an earlier one landing last
@@ -61,20 +83,19 @@ export function useCreatePullRequestState(cwd: string | null, refreshKey: string
   const latest = useRef(0)
   const ask = useCallback(async () => {
     const asked = ++latest.current
-    const api = typeof window === 'undefined' ? undefined : window.api
-    if (!cwd || typeof api?.createPullRequestState !== 'function') {
+    if (!host) {
       setState(null)
       return
     }
     let next: CreatePullRequestState | null
     try {
-      next = await api.createPullRequestState(cwd)
+      next = await host.state()
     } catch {
       // A shell that cannot answer (the web client has no checkout here) draws no button.
       next = null
     }
     if (asked === latest.current) setState(next)
-  }, [cwd])
+  }, [host])
   useEffect(() => {
     void ask()
   }, [ask, refreshKey])
@@ -86,12 +107,59 @@ export function useCreatePullRequestState(cwd: string | null, refreshKey: string
   return state
 }
 
-type Progress = { step: 'pushing' | 'creating' | 'recording' } | { step: 'failed'; message: string } | null
+/** `noted`: the forge's page opened instead of the request being created here, and why. */
+type Progress = { step: 'pushing' | 'creating' | 'recording' } | { step: 'failed' | 'noted'; message: string } | null
 
-const STEP_WORDS: Record<'pushing' | 'creating' | 'recording', string> = {
-  pushing: 'Pushing the branch…',
-  creating: 'Opening the pull request…',
-  recording: 'Opening the pull request…',
+function stepWords(step: 'pushing' | 'creating' | 'recording', noun: string): string {
+  return step === 'pushing' ? 'Pushing the branch…' : `Opening the ${noun}…`
+}
+
+/** What the strip says when the forge's page opened: why, and where the description went if the page could not take it. */
+function pageNote(place: string, reason: string | undefined, descriptionCopied: boolean): string | null {
+  const note = reason ? `${place}’s page opened instead. ${reason}` : null
+  const copied = descriptionCopied ? 'The description is on the clipboard to paste into the page.' : null
+  if (note && copied) return `${note} ${copied}`
+  return note ?? copied
+}
+
+/**
+ * What the strip says when the forge's page would not open: that it did not,
+ * where the title and description went instead, and why the page was the
+ * way at all. `copied` names what reached the clipboard, null when nothing
+ * did (the copy says its own failure).
+ */
+function unopenedPageNote(
+  place: string,
+  reason: string | undefined,
+  copied: 'title' | 'title and description' | null,
+): string {
+  const lead = copied
+    ? `${place}’s page could not be opened, so the ${copied} ${copied === 'title' ? 'is' : 'are'} on the clipboard.`
+    : `${place}’s page could not be opened.`
+  return reason ? `${lead} ${reason}` : lead
+}
+
+/** What the strip says when the request's address is not known and the forge's list of them was to open. */
+function listNote(place: string, reason: string, noun: string, opened: boolean): string {
+  return opened
+    ? `${reason} ${place}’s ${noun} list opened, to look for it there.`
+    : `${reason} Look for it in ${place}’s ${noun} list.`
+}
+
+/**
+ * Whether the system opened `url` in the browser. The shell answers
+ * `{ ok: false }` when it would not (an address too long for Windows, no
+ * handler for it), and a shell with no bridge opens nothing.
+ */
+async function openedExternally(url: string): Promise<boolean> {
+  const open = typeof window === 'undefined' ? undefined : window.api?.openExternal
+  if (typeof open !== 'function') return false
+  try {
+    const result = await open(url)
+    return result?.ok !== false
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -99,14 +167,16 @@ const STEP_WORDS: Record<'pushing' | 'creating' | 'recording', string> = {
  * says on the strip.
  */
 export function CreatePullRequestControl({
-  cwd,
-  conversation,
+  host,
   onSettled,
   onHoldChange,
   ready = true,
+  forge = null,
 }: {
-  cwd: string
-  conversation: { workspaceId: string; agentId: string }
+  /** The machine whose checkout the pull request is opened from, and whose record keeps it. */
+  host: PullRequestHost
+  /** The forge the checkout's remote is on, whose own word for the request the control uses. */
+  forge?: PullRequestForge | null
   /**
    * Whether the checkout reads as ready for a pull request now. Held on a
    * failure once it is not (the pull request it opened exists), the control
@@ -126,6 +196,7 @@ export function CreatePullRequestControl({
 }): React.JSX.Element {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [progress, setProgress] = useState<Progress>(null)
+  const noun = pullRequestNoun(forge)
   const held = dialogOpen || progress !== null
   useEffect(() => {
     onHoldChange?.(held)
@@ -136,41 +207,73 @@ export function CreatePullRequestControl({
   // creation are refused once the checkout has moved off it.
   const create = async (text: { title: string; body: string }, pin: PullRequestCheckoutPin | null) => {
     setDialogOpen(false)
-    const api = window.api
     setProgress({ step: 'pushing' })
-    const pushed = await api.pushForPullRequest(cwd, pin ?? undefined).catch((error: unknown) => failed(error))
+    const pushed = await host.push(pin ?? undefined).catch((error: unknown) => failed(error))
     if (!pushed.ok) {
       setProgress({ step: 'failed', message: pushed.message })
       return
     }
     setProgress({ step: 'creating' })
-    const created = await api
-      .createPullRequest({ cwd, ...text, ...(pin ? { pin } : {}) })
-      .catch((error: unknown) => failed(error))
+    const created = await host.create(text, pin ?? undefined).catch((error: unknown) => failed(error))
     if (!created.ok) {
       setProgress({ step: 'failed', message: created.message })
       return
     }
-    if (created.kind === 'page' || created.kind === 'existing') {
+    if (created.kind === 'page' || created.kind === 'list' || created.kind === 'existing') {
       // A page: the forge opens it from there, and nothing exists to record
-      // yet. An existing one: the branch had it already, perhaps a
-      // teammate's, so it is shown, not claimed for this chat (whose merge
-      // would then settle it).
-      void api.openExternal?.(created.url)
-      setProgress(null)
+      // yet. A list: the request is probably there, but with no address
+      // there is nothing to record either. An existing one: the branch had
+      // it already, perhaps a teammate's, so it is shown, not claimed for
+      // this chat (whose merge would then settle it).
+      const opened = await openedExternally(created.url)
+      let note: string | null = null
+      if (created.kind === 'existing') {
+        if (!opened) note = `This branch already has a ${noun}, and it could not be opened.`
+      } else if (created.kind === 'list') {
+        note = listNote(created.place, created.reason, noun, opened)
+      } else if (opened) {
+        const copied =
+          created.descriptionLeftOut === true && text.body.trim() !== ''
+            ? await copyToClipboardWithToast(text.body, { success: 'silent' })
+            : false
+        note = pageNote(created.place, created.reason, copied)
+      } else {
+        // Nothing opened, so nothing was filled in anywhere: everything the
+        // person confirmed goes on the clipboard for them to take to the forge.
+        const described = text.body.trim() !== ''
+        const copied = await copyToClipboardWithToast(described ? `${text.title}\n\n${text.body}` : text.title, {
+          success: 'silent',
+        })
+        note = unopenedPageNote(
+          created.place,
+          created.reason,
+          copied ? (described ? 'title and description' : 'title') : null,
+        )
+      }
+      setProgress(note ? { step: 'noted', message: note } : null)
       onSettled()
       return
     }
     setProgress({ step: 'recording' })
-    const recorded = await linkPullRequestToConversation(conversation, created.url, text.title)
+    const recorded = await host.link(created.url, text.title)
     setProgress(recorded.ok ? null : { step: 'failed', message: recorded.message })
     onSettled()
   }
 
-  const busy = progress !== null && progress.step !== 'failed'
+  const busy = progress !== null && progress.step !== 'failed' && progress.step !== 'noted'
+  const said = progress?.step === 'failed' || progress?.step === 'noted'
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5" data-strip-create-pull-request="">
-      {progress?.step === 'failed' ? (
+      {progress?.step === 'noted' ? (
+        <span
+          role="status"
+          className="min-w-0 max-w-64 truncate text-meta text-[color:var(--text-muted)]"
+          title={progress.message}
+          data-create-pull-request-note=""
+        >
+          {progress.message}
+        </span>
+      ) : progress?.step === 'failed' ? (
         <span
           role="alert"
           className="min-w-0 max-w-64 truncate text-meta text-[color:var(--tone-error)]"
@@ -185,16 +288,16 @@ export function CreatePullRequestControl({
           className="inline-flex items-center gap-1.5 whitespace-nowrap text-meta text-[color:var(--text-subtle)]"
         >
           <Spinner size={12} />
-          {STEP_WORDS[progress.step]}
+          {stepWords(progress.step, noun)}
         </span>
       ) : null}
-      {busy ? null : progress?.step === 'failed' && !ready ? (
+      {busy ? null : said && !ready ? (
         <GhostButton
           size="xs"
           tone="subtle"
           // Read: the slot goes back to what the checkout says.
           onClick={() => setProgress(null)}
-          aria-label="Dismiss this Create PR failure"
+          aria-label={progress?.step === 'noted' ? 'Dismiss this note' : 'Dismiss this Create PR failure'}
           className="shrink-0 whitespace-nowrap"
         >
           Dismiss
@@ -207,16 +310,17 @@ export function CreatePullRequestControl({
             setProgress(null)
             setDialogOpen(true)
           }}
-          aria-label="Create a pull request from this branch"
+          aria-label={`Create a ${noun} from this branch`}
           className="shrink-0 gap-1.5 whitespace-nowrap"
         >
           <PullRequestGlyph state="open" className="icon-xs" />
-          Create PR
+          {forge === 'gitlab' ? 'Create MR' : 'Create PR'}
         </GhostButton>
       )}
       {dialogOpen ? (
         <CreatePullRequestDialog
-          cwd={cwd}
+          host={host}
+          noun={noun}
           onCancel={() => setDialogOpen(false)}
           onCreate={(text, pin) => void create(text, pin)}
         />
@@ -247,11 +351,14 @@ function failed(error: unknown): { ok: false; message: string } {
  * hand.
  */
 function CreatePullRequestDialog({
-  cwd,
+  host,
+  noun,
   onCancel,
   onCreate,
 }: {
-  cwd: string
+  host: PullRequestHost
+  /** "merge request" on GitLab, "pull request" elsewhere. */
+  noun: string
   onCancel: () => void
   onCreate: (text: { title: string; body: string }, pin: PullRequestCheckoutPin | null) => void
 }): React.JSX.Element {
@@ -262,7 +369,6 @@ function CreatePullRequestDialog({
   const [body, setBody] = useState('')
   const [drafting, setDrafting] = useState(true)
   const [draftError, setDraftError] = useState<string | null>(null)
-  const cliRuntimes = useWorkspaceStore((s) => s.appSettings.cliRuntimes)
   // The branch and commit the draft is written from, read as the dialog
   // opens: what "Create" confirms, and so all the push and creation may use.
   const pin = useRef<PullRequestCheckoutPin | null>(null)
@@ -270,9 +376,8 @@ function CreatePullRequestDialog({
   const [uncommitted, setUncommitted] = useState(0)
   useEffect(() => {
     let alive = true
-    if (typeof window.api?.createPullRequestState !== 'function') return
-    void window.api
-      .createPullRequestState(cwd)
+    void host
+      .state()
       .then((state) => {
         if (!alive) return
         if (state?.branch && state.headSha) pin.current = { branch: state.branch, headSha: state.headSha }
@@ -282,38 +387,32 @@ function CreatePullRequestDialog({
     return () => {
       alive = false
     }
-  }, [cwd])
+  }, [host])
 
   useEffect(() => {
     let alive = true
-    const engine = resolveStoreTextGenerationEngine()
-    if (!engine) {
-      setDrafting(false)
-      setDraftError(
-        'Text generation is off (Settings → Agents → Text generation), so write the title and description here.',
-      )
-      return
-    }
     // Named, so closing the dialog mid-draft stops the CLI writing it rather
     // than leaving it to run to its deadline for an answer nobody will read.
     const draftId =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const started = host.draft(draftId)
+    if ('refused' in started) {
+      setDrafting(false)
+      setDraftError(started.refused)
+      return
+    }
     let pending = true
-    // The style the title is written in (Settings → Agents → Text generation),
-    // read as the draft starts, like the engine.
-    const writingStyle = useWorkspaceStore.getState().appSettings.textGeneration.writingStyle
-    void window.api
-      .draftPullRequestText({ cwd, engine, draftId, writingStyle, ...(cliRuntimes ? { cliRuntimes } : {}) })
+    void started.written
       .then((result) => {
         pending = false
         if (!alive) return
         if (result.ok) {
-          setTitle((current) => current || result.value.title)
-          setBody((current) => current || result.value.body)
+          setTitle((current) => current || result.title)
+          setBody((current) => current || result.body)
         } else {
-          setDraftError(`The draft could not be written: ${result.message}`)
+          setDraftError(result.message)
         }
       })
       .catch((error: unknown) => {
@@ -325,11 +424,10 @@ function CreatePullRequestDialog({
       })
     return () => {
       alive = false
-      if (pending) void window.api.cancelPullRequestDraft?.(draftId)?.catch(() => undefined)
+      if (pending) void host.cancelDraft(draftId).catch(() => undefined)
     }
-    // Drafted once per opening; the runtimes only matter at that moment.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd])
+    // Drafted once per opening, by the host it opened on.
+  }, [host])
 
   const submit = (event?: React.FormEvent) => {
     event?.preventDefault()
@@ -340,7 +438,7 @@ function CreatePullRequestDialog({
   return (
     <Modal open onClose={onCancel} labelledBy={titleId} size="wide">
       <form onSubmit={submit}>
-        <ModalHeader title="Create a pull request" titleId={titleId} onClose={onCancel} />
+        <ModalHeader title={`Create a ${noun}`} titleId={titleId} onClose={onCancel} />
         <ModalBody className="flex flex-col gap-3">
           {drafting ? (
             <p role="status" className="inline-flex items-center gap-2 text-body text-[color:var(--text-muted)]">

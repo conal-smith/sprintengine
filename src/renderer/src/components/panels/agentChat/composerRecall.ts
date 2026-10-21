@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react'
-import { isImeKey, type ComposerKeyEvent } from './ComposerField'
+import { type ComposerKeyEvent } from './ComposerField'
+import { isImeKey } from '../../../utils/imeKey'
 
 export type ComposerRecall = { index: number | null; stashed: string }
 export const EMPTY_RECALL: ComposerRecall = { index: null, stashed: '' }

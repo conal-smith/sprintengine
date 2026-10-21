@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import {
   DEFAULT_WORKTREE_POOL_SETTINGS,
   dependencyInstallSettingFor,
   WORKTREE_INSTALL_COMMAND_MAX,
   WORKTREE_POOL_DISK_LIMIT_CHOICES_GB,
+  WORKTREE_POOL_IDLE_RETURN_CHOICES_MIN,
   WORKTREE_POOL_KEEP_IDLE_MAX,
   WORKTREE_POOL_MAX_SLOTS_CEILING,
   WORKTREE_POOL_MAX_SLOTS_MIN,
@@ -15,9 +16,14 @@ import {
   type WorktreePoolHeldAction,
   type WorktreePoolSettings,
 } from '../../../../shared/ipc/worktree-pool'
+import {
+  sanitizeWorktreeBranchPrefix,
+  worktreeBranchExample,
+  worktreeBranchPrefixWarning,
+} from '../../../../shared/worktree-branch'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { ChevronDownIcon } from '../AppIcons'
-import { samePath } from '../../utils/paths'
+import { clipboardPath, samePath } from '../../utils/paths'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
 import {
   ActionResultMessage,
@@ -60,6 +66,7 @@ import {
   type WorktreeProjectView,
   type WorktreeRow,
 } from './worktreesSettingsModel'
+import { isImeKey } from '../../utils/imeKey'
 
 /**
  * Settings ▸ Worktrees (owner, 2026-10-05): every worktree Studio's agents
@@ -84,6 +91,18 @@ const DISK_LIMIT_ITEMS = [
   { value: 'none', label: 'No limit' },
   ...WORKTREE_POOL_DISK_LIMIT_CHOICES_GB.map((gb) => ({ value: String(gb), label: `${gb} GB` })),
 ]
+
+/** `30 minutes`, `2 hours`, `1 day`: an idle period as the setting's menu says it. */
+function idlePeriodLabel(minutes: number): string {
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} day${minutes === 24 * 60 ? '' : 's'}`
+  if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`
+  return `${minutes} minutes`
+}
+
+const IDLE_RETURN_ITEMS = WORKTREE_POOL_IDLE_RETURN_CHOICES_MIN.map((minutes) => ({
+  value: String(minutes),
+  label: idlePeriodLabel(minutes),
+}))
 
 const STATE_TONE = {
   'in-use': 'accent',
@@ -672,6 +691,26 @@ export function WorktreesSettingsTab({
           />
         </SettingRow>
         <SettingRow
+          label="Give back idle worktrees after"
+          help="A chat's worktree goes back to the pool once it has sat this long clean, with every commit pushed and nothing running in it. Its branch is kept, and opening the chat checks it out again in the same place. A new chat that finds the pool full takes back one that is not in use rather than waiting."
+          disabled={!settings.enabled}
+        >
+          <Select
+            ariaLabel="Give back idle worktrees after"
+            items={
+              IDLE_RETURN_ITEMS.some((item) => item.value === String(settings.idleReturnMinutes))
+                ? IDLE_RETURN_ITEMS
+                : [
+                    ...IDLE_RETURN_ITEMS,
+                    { value: String(settings.idleReturnMinutes), label: idlePeriodLabel(settings.idleReturnMinutes) },
+                  ]
+            }
+            value={String(settings.idleReturnMinutes)}
+            disabled={!settings.enabled}
+            onChange={(value) => void updateSettings({ idleReturnMinutes: Number(value) })}
+          />
+        </SettingRow>
+        <SettingRow
           label="Disk limit"
           help="For all of the pool's worktrees together. Past it, the longest-unused ready ones are removed. Nothing in use or holding work is ever removed, and worktrees outside the pool don't count."
           disabled={!settings.enabled}
@@ -694,6 +733,11 @@ export function WorktreesSettingsTab({
             {'<project>/../.sprintengine-worktrees/<project>/'}
           </code>
         </SettingRow>
+      </SettingCard>
+
+      <SettingsSectionTitle className="mb-2">Branches</SettingsSectionTitle>
+      <SettingCard className="mb-6">
+        <BranchPrefixSetting />
       </SettingCard>
 
       <SettingsSectionTitle className="mb-2" count={totals.count}>
@@ -1016,7 +1060,7 @@ function WorktreeTableRow({
       onSelect: () => void window.api.showItemInFolder(row.path),
       disabled: row.state === 'missing',
     },
-    { id: 'copy', label: 'Copy path', onSelect: () => void navigator.clipboard?.writeText(row.path) },
+    { id: 'copy', label: 'Copy path', onSelect: () => void navigator.clipboard?.writeText(clipboardPath(row.path)) },
   ]
   if (row.state === 'ready') {
     menu.push(
@@ -1197,6 +1241,7 @@ function DependencyInstallSettings({
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
             onKeyDown={(event) => {
+              if (isImeKey(event)) return
               if (event.key === 'Enter') commit()
             }}
             className="w-64 font-mono"
@@ -1207,6 +1252,68 @@ function DependencyInstallSettings({
   )
 }
 
+/**
+ * What every new worktree's branch starts with: a chat's, an agent's, a
+ * scheduled run's, wherever Studio names one. Kept in main's launch settings,
+ * so a worktree main makes with no window open is named the same way. The
+ * prefix is kept as typed and saved, sanitized to what git accepts, when the
+ * field is left; the line under it names the branch the draft would make as
+ * it is typed, sanitized the same way, so what is saved is never a surprise.
+ */
+function BranchPrefixSetting() {
+  const saved = useWorkspaceStore((s) => s.appSettings.worktreeBranchPrefix)
+  const setWorktreeBranchPrefix = useWorkspaceStore((s) => s.setWorktreeBranchPrefix)
+  const [draft, setDraft] = useState(saved)
+  useEffect(() => setDraft(saved), [saved])
+  const inputId = useId()
+  const exampleId = useId()
+  const warningId = useId()
+  const commit = () => {
+    const prefix = sanitizeWorktreeBranchPrefix(draft)
+    setDraft(prefix)
+    if (prefix !== saved) setWorktreeBranchPrefix(prefix)
+  }
+  const prefix = sanitizeWorktreeBranchPrefix(draft)
+  // A name git keeps for itself, or a common remote's, said as it is typed.
+  const warning = worktreeBranchPrefixWarning(draft)
+  return (
+    <SettingRow
+      label="Branch prefix"
+      htmlFor={inputId}
+      help="What each new worktree’s branch starts with, or nothing when empty. Your own branches can share it: Studio only ever deletes a branch it made, once its work is merged and no chat uses it."
+    >
+      <div className="flex flex-col items-end gap-1">
+        <Input
+          id={inputId}
+          size="sm"
+          placeholder="No prefix"
+          value={draft}
+          spellCheck={false}
+          autoCapitalize="none"
+          autoCorrect="off"
+          aria-describedby={warning ? `${exampleId} ${warningId}` : exampleId}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (isImeKey(event)) return
+            if (event.key === 'Enter') commit()
+          }}
+          className="w-48 font-mono"
+        />
+        <span id={exampleId} aria-live="polite" className="text-meta text-[color:var(--text-muted)]">
+          New worktrees are named <span className="font-mono">{worktreeBranchExample(prefix)}</span>
+          {prefix ? '' : ', with no prefix'}
+        </span>
+        {warning ? (
+          <span id={warningId} role="status" className="max-w-xs text-right text-meta text-[color:var(--tone-warn)]">
+            {warning}
+          </span>
+        ) : null}
+      </div>
+    </SettingRow>
+  )
+}
+
 function usedBySub(row: WorktreeRow, now: number): string {
   const slot = row.slot
   if (row.state === 'in-use' && slot?.lease) {
@@ -1214,6 +1321,7 @@ function usedBySub(row: WorktreeRow, now: number): string {
     return `${how} · ${formatRelativeMsAgo(slot.lease.leasedAt, now)}`
   }
   if (row.state === 'held' && slot?.held) return `since ${formatRelativeMsAgo(slot.held.since, now)}`
+  if (row.state === 'ready' && slot?.parked) return `kept for its chat on ${slot.parked.branch}`
   if (row.state === 'ready' && slot?.kept) return `kept: ${slot.kept}`
   if (row.state === 'ready' && slot?.lastBranch) return `last on ${slot.lastBranch}`
   if (row.keptBecause && row.state === 'other') return row.keptBecause
@@ -1242,7 +1350,7 @@ function RowDetail({ row, now, actions, busy }: { row: WorktreeRow; now: number;
       slot?.lease
         ? {
             term: 'Leased',
-            description: `${formatRelativeMsAgo(slot.lease.leasedAt, now)}${slot.lease.agentId ? ', by the agent itself (worktree.lease)' : ''}. It comes back to the pool when its chat is done.`,
+            description: `${formatRelativeMsAgo(slot.lease.leasedAt, now)}${slot.lease.agentId ? ', by the agent itself (worktree.lease)' : ''}. It comes back to the pool when its chat is done, or once it has sat clean, pushed and unused for the idle period.`,
           }
         : null,
       slot ? { term: 'Leases served', description: String(slot.uses) } : null,

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { AGENT_TAB_CLASS, AgentPill } from './AgentPresence'
 import { Badge } from './Badge'
 import { Tooltip } from './Tooltip'
 import { TAB_DROP_MARKER_INSET_PX, TAB_REORDER_THRESHOLD_PX, tabReorderSlot, tabReorderTargetIndex } from './tabReorder'
@@ -44,6 +45,14 @@ export type TabItem<T extends string = string> = {
    *  bare number docked on a word is not a sentence, so the badge is always
    *  named — never `decorative`, because nothing else on the tab says this. */
   badgeLabel?: string
+  /**
+   * An agent is using what this tab shows right now: driving its page, drawing
+   * on its board, editing its file. The tab is outlined in the agent violet and
+   * wears an "Agent" pill after its label, the same violet and pill a Files
+   * tree row an agent is in wears, so "an agent is here" reads as one thing
+   * across the app. Say it in `ariaLabel` too; the pill is drawn for the eye.
+   */
+  agent?: boolean
 }
 
 type TabsProps<T extends string = string> = {
@@ -402,6 +411,16 @@ export function Tabs<T extends string = string>({
               if (!item.disabled) onChange(item.id)
             }}
             onPointerDown={onReorder ? (event) => beginDrag(item.id, event) : undefined}
+            // A strip that acts on a middle-click owns that button's release
+            // too: left alone, Chromium on Linux pastes the primary selection
+            // into the focused field (the composer) as the tab closes.
+            onMouseUp={
+              onItemAuxClick
+                ? (event) => {
+                    if (event.button === 1) event.preventDefault()
+                  }
+                : undefined
+            }
             onAuxClick={onItemAuxClick ? (event) => onItemAuxClick(item.id, event) : undefined}
             onContextMenu={onItemContextMenu ? (event) => onItemContextMenu(item.id, event) : undefined}
             className={[
@@ -437,6 +456,7 @@ export function Tabs<T extends string = string>({
               // document tab (a page title, a file), so it also caps its
               // width and truncates rather than letting one title own the row.
               closable ? 'max-w-[220px] pr-8' : '',
+              item.agent ? `rounded-sm ${AGENT_TAB_CLASS}` : '',
               // The corner count sits in reserved trailing padding rather than
               // overhanging the tab's box: this strip scrolls inside an
               // `overflow-x` container, which clips anything hanging past the
@@ -476,6 +496,7 @@ export function Tabs<T extends string = string>({
                 {item.count !== undefined ? (
                   <span className="tabular-nums text-micro text-[color:var(--text-muted)]">{item.count}</span>
                 ) : null}
+                {item.agent ? <AgentPill /> : null}
               </>
             )}
             <span

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { expect, test, vi } from 'vitest'
 import {
+  CODEX_GOAL_TURN_WAIT_MS,
   CODEX_INTERRUPT_GRACE_MS,
   createCodexConversationProvider,
   codexPermissionPolicy,
@@ -29,6 +30,7 @@ function fixture(
     env?: NodeJS.ProcessEnv
     account?: unknown
     resume?: (params: unknown) => unknown
+    unarchive?: (params: unknown) => unknown
     fork?: (params: unknown) => unknown
     // Codex refuses `turn/start` while this answers true.
     refuseTurn?: () => boolean
@@ -39,11 +41,19 @@ function fixture(
     resolveStudioMcpServer?: CodexConversationProviderOptions['resolveStudioMcpServer']
     // Codex never answers `initialize`.
     initializeTimesOut?: boolean
+    // Codex exits before it answers `initialize`, with this error.
+    initializeError?: string
+    // The machine the chat's `codex` runs on, and the folder it runs in.
+    platform?: NodeJS.Platform
+    homeDir?: string
+    workspaceRoot?: string
     readCodexLogBytes?: CodexConversationProviderOptions['readCodexLogBytes']
     // The answer to `account/rateLimits/read`.
     rateLimits?: () => unknown
     // The answer to `config/read`.
     configRead?: () => unknown
+    // The answer to `thread/goal/set`, `get` and `clear`.
+    goal?: (method: string, params: unknown) => unknown
   } = {},
 ) {
   let connection!: CodexRpcOptions
@@ -60,6 +70,8 @@ function fixture(
     saveGeneratedImage: setup.saveGeneratedImage,
     ...(setup.resolveStudioMcpServer ? { resolveStudioMcpServer: setup.resolveStudioMcpServer } : {}),
     ...(setup.readCodexLogBytes ? { readCodexLogBytes: setup.readCodexLogBytes } : {}),
+    ...(setup.platform ? { platform: setup.platform } : {}),
+    ...(setup.homeDir ? { homeDir: setup.homeDir } : {}),
     createTransport(options) {
       connection = options
       transports.created++
@@ -68,9 +80,11 @@ function fixture(
         async request(method, params) {
           calls.push({ method, params })
           if (method === 'initialize' && setup.initializeTimesOut) throw new Error('Codex initialize timed out.')
+          if (method === 'initialize' && setup.initializeError) throw new Error(setup.initializeError)
           if (method === 'account/read')
             return setup.account ?? { requiresOpenaiAuth: true, account: { type: 'chatgpt' } }
           if (method === 'thread/resume' && setup.resume) return setup.resume(params)
+          if (method === 'thread/unarchive' && setup.unarchive) return setup.unarchive(params)
           if (method === 'thread/fork') return setup.fork ? setup.fork(params) : { thread: { id: 'forked-thread' } }
           if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: 'native-thread' } }
           if (method === 'turn/start') {
@@ -84,6 +98,10 @@ function fixture(
           if (method === 'thread/compact/start') {
             resolveStarted()
             return {}
+          }
+          if (method.startsWith('thread/goal/')) {
+            if (method === 'thread/goal/set') resolveStarted()
+            return setup.goal ? setup.goal(method, params) : method === 'thread/goal/get' ? { goal: null } : {}
           }
           if (method === 'turn/interrupt' && !setup.silentInterrupt)
             await options.onMessage({
@@ -107,10 +125,13 @@ function fixture(
     agentId: 'agent',
     providerId: 'codex-agent',
     modelId: 'gpt-6-sol',
-    workspaceRoot: '/workspace/app',
+    workspaceRoot: setup.workspaceRoot ?? '/workspace/app',
     permissionPreset: 'none' as ConversationPermissionPreset,
   }
   const events: ConversationEvent[] = []
+  // What reaches the chat outside a send: the turns Codex starts by itself.
+  const sessionEvents: ConversationEvent[] = []
+  Object.assign(input, { onSessionEvent: (event: ConversationEvent) => sessionEvents.push(event) })
   const send = async (reasoningEffort?: string, mode?: 'default' | 'ask' | 'plan', message = 'Make a change.') => {
     for await (const event of (await adapter.sendTurn({
       ...input,
@@ -127,6 +148,7 @@ function fixture(
     adapter,
     input,
     events,
+    sessionEvents,
     send,
     get started() {
       return started
@@ -443,7 +465,11 @@ test('resume uses a stored thread cursor and crash terminates a running turn', a
   await f.started
   f.crash()
   await done
-  expect(f.calls.find((call) => call.method === 'thread/resume')?.params).toMatchObject({ threadId: 'previous-thread' })
+  expect(f.calls.find((call) => call.method === 'thread/resume')?.params).toMatchObject({
+    threadId: 'previous-thread',
+    // Only the thread's id is read back, so its history is not asked for.
+    excludeTurns: true,
+  })
   expect(f.events.at(-1)?.type).toBe('turn_failed')
   expect(f.adapter.listLiveSessions?.()[0]?.hasChildProcess).toBe(false)
 })
@@ -464,6 +490,109 @@ test('unowned threads and unknown server requests never get an implicit approval
   expect(f.replies).toHaveLength(2)
   expect(f.replies.every((reply) => typeof (reply.result as { error: string }).error === 'string')).toBe(true)
   expect(f.events.some((event) => event.type === 'approval_requested')).toBe(false)
+})
+
+test('an MCP server asking consent raises a card the person must answer, and Allow sends its form defaults', async () => {
+  const f = fixture()
+  await f.adapter.startSession(f.input)
+  const done = f.send()
+  await f.started
+  await f.message({
+    id: 30,
+    method: 'mcpServer/elicitation/request',
+    params: {
+      threadId: 'native-thread',
+      turnId: 'native-turn',
+      serverName: 'codex_apps',
+      message: 'Allow Codex to use Calendar?',
+      mode: 'form',
+      requestedSchema: {
+        type: 'object',
+        properties: { scope: { type: 'string', default: 'read' }, note: { type: 'string' } },
+        required: ['scope'],
+      },
+      _meta: { app_name: 'Calendar' },
+    },
+  })
+  await f.message({
+    id: 31,
+    method: 'mcpServer/elicitation/request',
+    params: { serverName: 'acme', message: 'Post to the acme channel?', mode: 'form', requestedSchema: {} },
+  })
+  expect(f.replies).toEqual([])
+  await f.adapter.resolveApproval({ ...f.input, turnId: 'turn', requestId: 'turn:30', approved: true })
+  await f.adapter.resolveApproval({ ...f.input, turnId: 'turn', requestId: 'turn:31', approved: false })
+  expect(f.replies).toEqual([
+    { id: 30, result: { action: 'accept', content: { scope: 'read' } } },
+    { id: 31, result: { action: 'decline' } },
+  ])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  const raised = f.events.filter((event) => event.type === 'approval_requested').map((event) => event.payload)
+  expect(raised[0]).toMatchObject({
+    requestId: 'turn:30',
+    kind: 'tool',
+    toolKind: 'mcp',
+    action: 'Use Calendar',
+    summary: 'Allow Codex to use Calendar?',
+    mustAsk: true,
+    suppressAlwaysAllowRule: true,
+  })
+  expect(raised[1]).toMatchObject({ requestId: 'turn:31', action: 'Use acme', summary: 'Post to the acme channel?' })
+})
+
+test('an MCP consent approving cannot answer is declined without a card', async () => {
+  const f = fixture()
+  await runTurn(f, [
+    {
+      id: 'url',
+      method: 'mcpServer/elicitation/request',
+      params: { serverName: 'acme', message: 'Sign in to acme', mode: 'url', url: 'https://example.com/auth' },
+    },
+    {
+      id: 'form',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        serverName: 'acme',
+        message: 'Which project?',
+        mode: 'form',
+        requestedSchema: { properties: { project: { type: 'string' } }, required: ['project'] },
+      },
+    },
+  ])
+  expect(f.replies).toEqual([
+    { id: 'url', result: { action: 'decline' } },
+    { id: 'form', result: { action: 'decline' } },
+  ])
+  expect(payloads(f.events, 'approval_requested')).toEqual([])
+})
+
+test('a subagent’s MCP consent is asked in its parent’s chat', async () => {
+  const f = fixture()
+  const child = 'child-thread'
+  const activity = {
+    id: 'call_spawn',
+    type: 'subAgentActivity',
+    kind: 'started',
+    agentThreadId: child,
+    agentPath: '/root/pong',
+  }
+  await f.adapter.startSession(f.input)
+  const done = f.send()
+  await f.started
+  await f.message({ method: 'item/started', params: { threadId: 'native-thread', item: activity } })
+  await f.message({
+    id: 40,
+    method: 'mcpServer/elicitation/request',
+    params: { threadId: child, serverName: 'acme', message: 'Read the acme wiki?', mode: 'form', requestedSchema: {} },
+  })
+  await f.adapter.resolveApproval({ ...f.input, turnId: 'turn', requestId: 'turn:40', approved: true })
+  expect(f.replies).toEqual([{ id: 40, result: { action: 'accept', content: {} } }])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  expect(payloads(f.events, 'approval_requested')).toEqual([
+    expect.objectContaining({ requestId: 'turn:40', summary: 'Read the acme wiki?' }),
+  ])
 })
 
 test('bypass is YOLO, auto is the workspace sandbox with auto-review past it, manual asks in a read-only sandbox, none sends nothing', () => {
@@ -842,6 +971,7 @@ test('a fork’s first connection branches the parent’s thread through the tur
     threadId: 'parent-thread',
     lastTurnId: 'turn-7',
     cwd: '/workspace/app',
+    excludeTurns: true,
   })
   expect(f.events.find((event) => event.type === 'session_updated')?.payload).toMatchObject({
     providerSessionId: 'forked-thread',
@@ -933,6 +1063,78 @@ test('a resume Codex refuses for now fails the turn and keeps the thread to resu
   expect(f.calls.map((call) => call.method)).not.toContain('thread/start')
 })
 
+test('a thread archived in Codex is unarchived and resumed, keeping its id', async () => {
+  let archived = true
+  const f = fixture({
+    resume: () => {
+      if (archived)
+        throw new CodexRpcError('session archived-thread is archived. Run `codex unarchive archived-thread`')
+      return { thread: { id: 'archived-thread' } }
+    },
+    unarchive: () => {
+      archived = false
+      return {}
+    },
+  })
+  await f.adapter.startSession({ ...f.input, resumeSessionId: 'archived-thread' })
+  const done = f.send()
+  await f.started
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  const threadCalls = f.calls.filter((call) => call.method.startsWith('thread/'))
+  expect(threadCalls.map((call) => call.method)).toEqual([
+    'thread/resume',
+    'thread/unarchive',
+    'thread/resume',
+    'thread/goal/get',
+  ])
+  expect(threadCalls[1]?.params).toEqual({ threadId: 'archived-thread' })
+  const update = f.events.find((event) => event.type === 'session_updated')
+  expect(update?.payload?.providerSessionId).toBe('archived-thread')
+  expect(update?.payload).not.toHaveProperty('notice')
+  expect(f.events.at(-1)?.type).toBe('turn_completed')
+})
+
+test('an archived thread Codex will not unarchive continues in a new thread with the conversation', async () => {
+  const f = fixture({
+    resume: () => {
+      throw new CodexRpcError('session archived-thread is archived. Run `codex unarchive archived-thread`')
+    },
+    unarchive: () => {
+      throw new CodexRpcError('could not move the rollout file')
+    },
+  })
+  await f.adapter.startSession({
+    ...f.input,
+    resumeSessionId: 'archived-thread',
+    fallbackHistory: [{ role: 'user', content: 'persisted question' }],
+  })
+  const done = f.send()
+  await f.started
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await done
+  const methods = f.calls.map((call) => call.method).filter((method) => method.startsWith('thread/'))
+  expect(methods).toEqual(['thread/resume', 'thread/unarchive', 'thread/start', 'thread/goal/get'])
+  const update = f.events.find((event) => event.type === 'session_updated')
+  expect(update?.payload?.providerSessionId).toBe('native-thread')
+  expect(String(update?.payload?.notice)).toContain('could not be resumed')
+  expect(JSON.stringify(f.calls.find((call) => call.method === 'turn/start')?.params)).toContain('persisted question')
+})
+
+test('a resume refused for another reason is not unarchived', async () => {
+  const f = fixture({
+    resume: () => {
+      throw new CodexRpcError('thread is busy with another turn')
+    },
+  })
+  await f.adapter.startSession({ ...f.input, resumeSessionId: 'kept-thread' })
+  await f.send()
+  const methods = f.calls.map((call) => call.method)
+  expect(methods).not.toContain('thread/unarchive')
+  expect(methods).not.toContain('thread/start')
+  expect(f.events.at(-1)).toMatchObject({ type: 'turn_failed' })
+})
+
 test('a resume that is never answered fails the turn instead of dropping the thread', async () => {
   const f = fixture({
     resume: () => {
@@ -964,6 +1166,36 @@ test('a start Codex never answers says what to run, and names a large log databa
   expect(words).toContain('Moving `~/.codex/logs_*.sqlite*` aside fixes it.')
   // Read on the machine the chat ran on: this one, here.
   expect(asked).toEqual([null])
+})
+
+const EPERM_EXIT = 'Codex process exited (1): Error: EPERM: operation not permitted, uv_cwd.'
+
+test('a start refused with EPERM in a folder macOS keeps private says where to allow it', async () => {
+  const f = fixture({
+    initializeError: EPERM_EXIT,
+    platform: 'darwin',
+    homeDir: '/Users/dev',
+    workspaceRoot: '/Users/dev/Documents/app',
+  })
+  await f.adapter.startSession(f.input)
+  await f.send()
+  const words = JSON.stringify((f.events.at(-1) as ConversationEvent).payload)
+  expect(words).toContain('EPERM: operation not permitted')
+  expect(words).toContain('System Settings › Privacy & Security › Files and Folders')
+})
+
+test('the same refusal off macOS, or in a folder macOS does not keep, says only what Codex said', async () => {
+  for (const setup of [
+    { platform: 'linux' as const, homeDir: '/home/dev', workspaceRoot: '/home/dev/Documents/app' },
+    { platform: 'darwin' as const, homeDir: '/Users/dev', workspaceRoot: '/Users/dev/code/app' },
+  ]) {
+    const f = fixture({ initializeError: EPERM_EXIT, ...setup })
+    await f.adapter.startSession(f.input)
+    await f.send()
+    const words = JSON.stringify((f.events.at(-1) as ConversationEvent).payload)
+    expect(words).toContain('EPERM')
+    expect(words).not.toContain('Privacy & Security')
+  }
 })
 
 test('a start Codex never answers with a small log database names only what to run', async () => {
@@ -1013,7 +1245,7 @@ test('a model switch rides the next turn without a reconnect, and the running tu
 
 const names = (cwd: string) => conversationCommandsFor('codex', cwd).commands.map((command) => command.name)
 
-test('Codex offers /compact as soon as a chat starts, and its skills once the app-server connects', async () => {
+test('Codex offers /compact and /goal as soon as a chat starts, and its skills once the app-server connects', async () => {
   const skills = {
     data: [
       { cwd: '/workspace/skills', skills: [{ name: 'release-notes', description: 'Release notes', enabled: true }] },
@@ -1022,13 +1254,13 @@ test('Codex offers /compact as soon as a chat starts, and its skills once the ap
   const f = fixture({ skills })
   f.input.workspaceRoot = '/workspace/skills'
   await f.adapter.startSession(f.input)
-  expect(names('/workspace/skills')).toEqual(['compact'])
+  expect(names('/workspace/skills')).toEqual(['compact', 'goal'])
   // A stand-in, not an answer: the folder's skills are still due to be asked for.
   expect(conversationCommandsFor('codex', '/workspace/skills').fetchedAt).toBe(0)
   const done = f.send()
   await f.started
-  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'release-notes'])
-  expect(conversationCommandsFor('codex', '/workspace/skills').commands[1]).toMatchObject({
+  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'goal', 'release-notes'])
+  expect(conversationCommandsFor('codex', '/workspace/skills').commands[2]).toMatchObject({
     insertText: '$release-notes ',
     source: 'skill',
   })
@@ -1038,12 +1270,39 @@ test('Codex offers /compact as soon as a chat starts, and its skills once the ap
   // A change on disk is announced outside any turn, and the list is read again from disk.
   skills.data[0].skills.push({ name: 'changelog', description: 'Changelogs', enabled: true })
   await f.message({ method: 'skills/changed', params: {} })
-  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'release-notes', 'changelog'])
+  await expect.poll(() => names('/workspace/skills')).toEqual(['compact', 'goal', 'release-notes', 'changelog'])
   expect(f.calls.filter((call) => call.method === 'skills/list').at(-1)?.params).toEqual({
     cwds: ['/workspace/skills'],
     forceReload: true,
   })
   expect(f.events.at(-1)?.type).toBe('turn_completed')
+})
+
+test('a $skill Codex listed goes to turn/start as the skill itself beside the text, an unknown one as text alone', async () => {
+  const path = '/workspace/skills/.codex/skills/release-notes/SKILL.md'
+  const f = fixture({
+    skills: { data: [{ cwd: '/workspace/skills', skills: [{ name: 'release-notes', path, enabled: true }] }] },
+  })
+  f.input.workspaceRoot = '/workspace/skills'
+  await f.adapter.startSession(f.input)
+  const message = 'Use $release-notes and $unknown for v2.'
+  const first = f.send(undefined, undefined, message)
+  await f.started
+  expect((f.calls.find((call) => call.method === 'turn/start')?.params as { input: unknown[] }).input).toEqual([
+    { type: 'text', text: message, text_elements: [] },
+    { type: 'skill', name: 'release-notes', path },
+  ])
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await first
+
+  f.nextTurn()
+  const second = f.send(undefined, undefined, 'No skill: $unknown costs $5.')
+  await f.started
+  expect((f.calls.filter((call) => call.method === 'turn/start').at(-1)?.params as { input: unknown[] }).input).toEqual(
+    [{ type: 'text', text: 'No skill: $unknown costs $5.', text_elements: [] }],
+  )
+  await f.message({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
+  await second
 })
 
 test('/compact at the start of a message compacts the thread natively instead of sending it as a turn', async () => {
@@ -1066,6 +1325,7 @@ test('/compact at the start of a message compacts the thread natively instead of
   await compacting
   expect(f.events.map((event) => [event.type, event.payload?.turnId, event.payload?.trigger])).toEqual([
     ['turn_started', 'turn', undefined],
+    ['context_compacting', 'turn', undefined],
     ['context_compacted', 'turn', 'manual'],
     ['turn_completed', 'turn', undefined],
   ])
@@ -1128,8 +1388,8 @@ test('Codex lists a folder before any chat there has started from an app-server 
       }),
     },
   )
-  expect(commands.map((command) => command.name)).toEqual(['compact', 'release-notes'])
-  expect(names('/workspace/probe')).toEqual(['compact', 'release-notes'])
+  expect(commands.map((command) => command.name)).toEqual(['compact', 'goal', 'release-notes'])
+  expect(names('/workspace/probe')).toEqual(['compact', 'goal', 'release-notes'])
   expect(calls).toEqual(['initialize', 'initialized', 'skills/list'])
   expect(closed).toBe(true)
 })
@@ -1559,13 +1819,21 @@ test('what Codex reports beside the reply is said in the turn, once', async () =
   ])
 })
 
+const GRACE = ['-c', 'mcp_optional_startup_grace_ms=10000']
+
 test('the handshake asks for the experimental API, and extra app-server arguments come from the environment', async () => {
   const f = fixture({ env: { SPRINTENGINE_CODEX_APP_SERVER_ARGS: `-c 'features.code_mode_host=false'` } })
   await runTurn(f, [])
   expect(f.calls.find((call) => call.method === 'initialize')?.params).toMatchObject({
     capabilities: { experimentalApi: true },
   })
-  expect(f.connection.args).toEqual(['-c', 'features.code_mode_host=false'])
+  expect(f.connection.args).toEqual(['-c', 'features.code_mode_host=false', ...GRACE])
+})
+
+test("Codex waits 10 s, not its own 1 s, for a new thread's MCP servers, so a cold npx server's tools are there from the first turn", async () => {
+  const f = fixture()
+  await runTurn(f, [])
+  expect(f.connection.args).toEqual(['-c', 'mcp_optional_startup_grace_ms=10000'])
 })
 
 test("a chat's own MCP servers reach Codex as config overrides for its app-server alone", async () => {
@@ -1588,6 +1856,7 @@ test("a chat's own MCP servers reach Codex as config overrides for its app-serve
   expect(f.connection.args).toEqual([
     '-c',
     'features.code_mode_host=false',
+    ...GRACE,
     '-c',
     'mcp_servers.railway={ "command" = "npx", "args" = ["-y", "@railway/mcp"], "env_vars" = ["RAILWAY_TOKEN"], "env" = { "RAILWAY_ENV" = "prod" } }',
   ])
@@ -1658,7 +1927,7 @@ test('a Codex chat whose gateway cannot be resolved still starts, with only its 
     },
   })
   await runTurn(f, [])
-  expect(f.connection.args).toEqual([])
+  expect(f.connection.args).toEqual(GRACE)
 })
 
 // A chat with the gateway is told to lease a worktree from the pool rather than
@@ -1957,4 +2226,273 @@ test('a turn that fails for another reason is no limit hit', async () => {
   await done
   stop()
   expect(hits).toEqual([])
+})
+
+// A thread goal as Codex reports it.
+const codexGoal = (objective: string, status = 'active') => ({
+  threadId: 'native-thread',
+  objective,
+  status,
+  tokenBudget: null,
+  tokensUsed: 0,
+  timeUsedSeconds: 0,
+  createdAt: 1,
+  updatedAt: 1,
+})
+
+// A Codex that keeps one goal, and answers the goal requests as Codex does.
+function goalCodex(initial: ReturnType<typeof codexGoal> | null = null) {
+  let goal = initial
+  return {
+    get goal() {
+      return goal
+    },
+    answer(method: string, params: unknown) {
+      const asked = params as { objective?: string; status?: string }
+      if (method === 'thread/goal/get') return { goal }
+      if (method === 'thread/goal/clear') {
+        const cleared = goal !== null
+        goal = null
+        return { cleared }
+      }
+      goal = { ...(goal ?? codexGoal('')), ...(asked.objective ? { objective: asked.objective } : {}) }
+      if (asked.status) goal.status = asked.status
+      return { goal }
+    },
+  }
+}
+
+// Connects the chat with one ordinary turn, so later turns find the thread.
+async function connected(f: ReturnType<typeof fixture>) {
+  await f.adapter.startSession(f.input)
+  const first = f.send()
+  await f.started
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'native-turn', status: 'completed' } } })
+  await first
+  f.nextTurn()
+  f.events.length = 0
+  f.sessionEvents.length = 0
+}
+
+// Codex starting a turn of its own toward the goal, and saying something in it.
+async function codexCarriesOn(f: ReturnType<typeof fixture>, nativeId: string, said: string) {
+  await f.message({ method: 'turn/started', params: { threadId: 'native-thread', turn: { id: nativeId } } })
+  await f.message({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'native-thread', itemId: `${nativeId}-msg`, delta: said },
+  })
+}
+
+test('/goal and an objective sets the goal Codex works toward, and the turn shows its first turn on it', async () => {
+  const codex = goalCodex()
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  const done = f.send(undefined, undefined, '/goal make the parser tests pass')
+  await f.started
+  expect(f.calls.find((call) => call.method === 'thread/goal/set')?.params).toEqual({
+    threadId: 'native-thread',
+    origin: 'user',
+    objective: 'make the parser tests pass',
+    status: 'active',
+  })
+  await codexCarriesOn(f, 'goal-turn-1', 'Running the parser tests.')
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-1', status: 'completed' } } })
+  await done
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+  expect(f.events.map((event) => [event.type, event.payload?.turnId])).toEqual([
+    ['turn_started', 'turn'],
+    ['session_updated', undefined],
+    ['content_delta', 'turn'],
+    ['turn_completed', 'turn'],
+  ])
+  expect(f.events[1]?.payload).toEqual({ goal: { objective: 'make the parser tests pass', status: 'active' } })
+  expect(f.events.at(-1)?.payload).toMatchObject({ text: 'Running the parser tests.' })
+})
+
+test('the turns Codex starts by itself toward the goal reach the chat as turns of their own', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await codexCarriesOn(f, 'goal-turn-2', 'Two tests still fail.')
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-2', status: 'completed' } } })
+  await codexCarriesOn(f, 'goal-turn-3', 'All pass now.')
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-3', status: 'completed' } } })
+  const turns = f.sessionEvents.filter((event) => event.type === 'turn_started')
+  expect(turns).toHaveLength(2)
+  const [second, third] = turns.map((event) => event.payload?.turnId as string)
+  expect(second).not.toBe(third)
+  // Each names the turn it follows, which the runtime may still be closing.
+  expect(turns[0]?.payload?.follows).toBe('turn')
+  expect(turns[1]?.payload?.follows).toBe(second)
+  expect(
+    f.sessionEvents
+      .filter((event) => event.type !== 'session_updated')
+      .map((event) => [event.type, event.payload?.turnId === second ? 'second' : 'third', event.payload?.text]),
+  ).toEqual([
+    ['turn_started', 'second', undefined],
+    ['content_delta', 'second', 'Two tests still fail.'],
+    ['turn_completed', 'second', 'Two tests still fail.'],
+    ['turn_started', 'third', undefined],
+    ['content_delta', 'third', 'All pass now.'],
+    ['turn_completed', 'third', 'All pass now.'],
+  ])
+  expect(f.events).toEqual([])
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+})
+
+test('Stop on a turn toward the goal pauses the goal before it interrupts, so Codex starts no next turn', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await codexCarriesOn(f, 'goal-turn-2', 'Working on it.')
+  await f.adapter.interrupt(f.input)
+  const asked = f.calls.filter((call) => call.method === 'thread/goal/set' || call.method === 'turn/interrupt')
+  expect(asked).toEqual([
+    { method: 'thread/goal/set', params: { threadId: 'native-thread', origin: 'user', status: 'paused' } },
+    { method: 'turn/interrupt', params: { threadId: 'native-thread', turnId: 'goal-turn-2' } },
+  ])
+  expect(codex.goal?.status).toBe('paused')
+  expect(f.sessionEvents.at(-1)).toMatchObject({ type: 'turn_completed', payload: { interrupted: true } })
+  expect(f.sessionEvents.find((event) => event.type === 'session_updated' && event.payload?.goal)?.payload).toEqual({
+    goal: { objective: 'make the parser tests pass', status: 'paused' },
+  })
+})
+
+test('Stop on a message turn pauses a running goal too, and with no goal only interrupts', async () => {
+  const codex = goalCodex(codexGoal('keep the docs current'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  const done = f.send(undefined, undefined, 'Also fix the typo.')
+  await f.started
+  await f.adapter.interrupt(f.input)
+  await done
+  expect(f.calls.filter((call) => call.method === 'thread/goal/set').map((call) => call.params)).toEqual([
+    { threadId: 'native-thread', origin: 'user', status: 'paused' },
+  ])
+
+  const plain = fixture()
+  await connected(plain)
+  const sent = plain.send()
+  await plain.started
+  await plain.adapter.interrupt(plain.input)
+  await sent
+  expect(plain.calls.some((call) => call.method === 'thread/goal/set')).toBe(false)
+  expect(plain.calls.at(-1)?.method).toBe('turn/interrupt')
+})
+
+test('a goal Codex clears tells the chat there is none any more', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await f.message({ method: 'thread/goal/cleared', params: { threadId: 'native-thread' } })
+  expect(f.sessionEvents.filter((event) => event.type === 'session_updated').map((event) => event.payload)).toEqual([
+    { goal: null },
+  ])
+})
+
+test('a resumed thread with a goal shows it, and Codex marking it met says so in the turn', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await f.adapter.startSession(f.input)
+  const done = f.send()
+  await f.started
+  await expect
+    .poll(() => f.events.find((event) => event.type === 'session_updated' && event.payload?.goal)?.payload)
+    .toEqual({ goal: { objective: 'make the parser tests pass', status: 'active' } })
+  await f.message({
+    method: 'thread/goal/updated',
+    params: {
+      threadId: 'native-thread',
+      turnId: 'native-turn',
+      goal: codexGoal('make the parser tests pass', 'complete'),
+    },
+  })
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'native-turn', status: 'completed' } } })
+  await done
+  expect(f.events.find((event) => event.type === 'command_output')?.payload).toMatchObject({
+    output: 'Codex met the goal and stopped working toward it.',
+    adapterNote: true,
+  })
+  expect(f.events.filter((event) => event.type === 'session_updated' && event.payload?.goal).at(-1)?.payload).toEqual({
+    goal: { objective: 'make the parser tests pass', status: 'complete' },
+  })
+})
+
+test('/goal alone says the goal, /goal pause pauses it and /goal clear clears it, each without a prompt', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  const said = async (message: string) => {
+    f.events.length = 0
+    await f.send(undefined, undefined, message)
+    expect(f.events.at(-1)?.type).toBe('turn_completed')
+    return f.events.find((event) => event.type === 'command_output')?.payload?.output
+  }
+  expect(await said('/goal')).toBe('Goal: make the parser tests pass (working)')
+  expect(await said('/goal pause')).toBe('Goal paused. Send /goal resume to carry on.')
+  expect(codex.goal?.status).toBe('paused')
+  expect(await said('/goal pause')).toBe('The goal is not running (paused), so there is nothing to pause.')
+  expect(await said('/goal clear')).toBe('Goal cleared. Codex no longer works toward it.')
+  expect(codex.goal).toBeNull()
+  expect(await said('/goal')).toBe(
+    'There is no goal in this chat. Send /goal and what Codex should achieve to set one.',
+  )
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+})
+
+test('a Codex without goals answers /goal with a message and is not sent it as text', async () => {
+  const f = fixture({
+    goal: () => {
+      throw new CodexRpcError('Invalid request: unknown variant `thread/goal/set`, expected one of `initialize`')
+    },
+  })
+  await connected(f)
+  await f.send(undefined, undefined, '/goal make the parser tests pass')
+  expect(f.events.at(-1)).toMatchObject({
+    type: 'turn_failed',
+    payload: { message: 'This version of Codex has no goals. Update Codex to use /goal.', refused: true },
+  })
+  expect(f.calls.filter((call) => call.method === 'turn/start')).toHaveLength(1)
+})
+
+test('a goal Codex does not start on at once ends the /goal turn, and its turn comes on its own later', async () => {
+  vi.useFakeTimers()
+  try {
+    const codex = goalCodex()
+    const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+    await connected(f)
+    const done = f.send(undefined, undefined, '/goal make the parser tests pass')
+    await vi.advanceTimersByTimeAsync(CODEX_GOAL_TURN_WAIT_MS)
+    await done
+    expect(f.events.at(-1)?.type).toBe('turn_completed')
+    expect(f.events.find((event) => event.type === 'command_output')?.payload?.output).toBe(
+      'Codex has the goal and starts on it as soon as it is free.',
+    )
+    await codexCarriesOn(f, 'goal-turn-1', 'Starting.')
+    expect(f.sessionEvents.find((event) => event.type === 'turn_started')?.payload?.follows).toBe('turn')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('a message sent before the chat took up a turn Codex started by itself joins that turn', async () => {
+  const codex = goalCodex(codexGoal('make the parser tests pass'))
+  const f = fixture({ goal: (method, params) => codex.answer(method, params) })
+  await connected(f)
+  await codexCarriesOn(f, 'goal-turn-2', 'Looking.')
+  const done = f.send(undefined, undefined, 'Also check the lexer.')
+  await f.started
+  // Its own turn is over here; the message's turn carries Codex's from now on.
+  expect(f.sessionEvents.at(-1)?.type).toBe('turn_completed')
+  await f.message({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'native-thread', itemId: 'goal-turn-2-msg-2', delta: 'The lexer is fine.' },
+  })
+  await f.message({ method: 'turn/completed', params: { turn: { id: 'goal-turn-2', status: 'completed' } } })
+  await done
+  expect(f.events.map((event) => [event.type, event.payload?.turnId])).toEqual([
+    ['turn_started', 'turn'],
+    ['content_delta', 'turn'],
+    ['turn_completed', 'turn'],
+  ])
 })

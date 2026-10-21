@@ -1,7 +1,7 @@
 // An ACP chat on a WSL machine, with a stand-in machine: every shipped agent
-// (Cursor, OpenCode, Grok) is started inside the distribution from the CLI
-// found there, with its preset's flags and variables, and is told the folder
-// as Linux names it. What would be `wsl.exe` is recorded, and a stand-in agent
+// (Cursor, OpenCode, Grok, Kimi Code) is started inside the distribution from
+// the CLI found there, with its preset's flags and variables, and is told the
+// folder as Linux names it. What would be `wsl.exe` is recorded, and a stand-in agent
 // on this machine answers the protocol in its place.
 
 import { spawn } from 'node:child_process'
@@ -34,7 +34,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line), p = m.params || {};
   if (!m.method) return;
   if (m.method === 'initialize') return send({ id: m.id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [], _meta: { availableCommands: [{ name: 'compact', description: 'Compact' }] } } });
-  if (m.method === 'session/new') { session = { cwd: p.cwd, mcpServers: p.mcpServers }; return send({ id: m.id, result: { sessionId: 'native' } }); }
+  // Kimi Code's session modes, which its presets are told as.
+  if (m.method === 'session/new') { session = { cwd: p.cwd, mcpServers: p.mcpServers }; return send({ id: m.id, result: { sessionId: 'native', modes: { currentModeId: 'default', availableModes: ['default', 'plan', 'auto', 'yolo'].map((id) => ({ id, name: id })) } } }); }
   if (m.method === 'session/prompt') {
     send({ method: 'session/update', params: { sessionId: 'native', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(session) } } } });
     return send({ id: m.id, result: { stopReason: 'end_turn' } });
@@ -180,6 +181,22 @@ test("Grok's handshake commands for a folder on a WSL machine are asked of that 
   expect(commands?.map((command) => command.name)).toEqual(['compact'])
   expect(spawned[0]?.file).toBe('wsl.exe')
   expect(decodedScript(spawned[0]!.args)).toContain('/home/dev/repo')
+})
+
+test("Grok's handshake on a WSL machine is started there with its self-updater off", async () => {
+  const spawned: Spawned[] = []
+  const grok = ACP_PROFILES.find((entry) => entry.cli === 'grok')!
+  await probeAcpConversationCommands(
+    grok,
+    { cwd: ROOT, cliRuntimes: { grok: { hostId: 'wsl:Ubuntu' } } },
+    {
+      prepareWslTarget: async () => WSL_TARGET,
+      detect: async () => '/home/dev/.local/bin/grok',
+      buildEnv: async () => ({}),
+      spawnChild: standInSpawn(spawned),
+    },
+  )
+  expect(decodedScript(spawned[0]!.args)).toContain('GROK_DISABLE_AUTOUPDATER=1')
 })
 
 // The stand-in in place of the script `wsl.exe` would run: it takes the

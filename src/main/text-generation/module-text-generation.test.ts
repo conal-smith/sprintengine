@@ -19,7 +19,7 @@ import { generateHeadlessText, type HeadlessTextRequest, type HeadlessTextResult
 // module, on the engine the person chose for Studio's text generation unless
 // the module names one.
 
-const CLAUDE = { cli: 'claude-code', model: 'claude-haiku-4-5', reasoning: 'low' }
+const CLAUDE = { cli: 'claude-code', model: 'claude-haiku-5-5', reasoning: 'low' }
 
 const envelope = (result: string, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -82,6 +82,13 @@ test('the free-text call shuts every door a title does, with the system prompt a
   )
 })
 
+test("the Claude call leaves strict MCP mode off beside an administrator's managed-mcp.json, which Claude would refuse", () => {
+  const args = claudeTextInvocation({ binaryPath: '/bin/claude', model: 'haiku', managedMcpConfig: true }).args
+  expect(args).not.toContain('--strict-mcp-config')
+  expect(args).toContain('--disable-slash-commands')
+  expect(args[args.indexOf('--tools') + 1]).toBe('')
+})
+
 test('the Codex call writes its last message to a file and reports its usage as JSON events', () => {
   expect(
     codexTextInvocation({
@@ -100,6 +107,10 @@ test('the Codex call writes its last message to a file and reports its usage as 
     'gpt-5.6-luna',
     '-c',
     'model_reasoning_effort="low"',
+    '-c',
+    'features.plugins=false',
+    '-c',
+    'features.apps=false',
     '--json',
     '--output-last-message',
     '/tmp/out.txt',
@@ -213,6 +224,9 @@ test('generateHeadlessText runs Codex with the instructions ahead of the prompt 
       }),
       env: () => ({ PATH: '/bin' }),
       run: async (input) => {
+        if (input.args.includes('mcp')) {
+          return { code: 0, stdout: '[{"name":"docs","enabled":true}]', stderr: '', timedOut: false, spawnError: null }
+        }
         runs.push(input)
         const outputPath = input.args[input.args.indexOf('--output-last-message') + 1]!
         const { writeFile } = await import('node:fs/promises')
@@ -239,6 +253,7 @@ test('generateHeadlessText runs Codex with the instructions ahead of the prompt 
   // unknown one is passed that would look like a cap and do nothing.
   expect(runs[0]!.args.join(' ')).not.toMatch(/max_output|output_tokens/)
   expect(runs[0]!.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined()
+  expect(runs[0]!.args).toContain('mcp_servers={"docs"={enabled=false}}')
 })
 
 test('a Codex call that writes no message has no usable answer', async () => {

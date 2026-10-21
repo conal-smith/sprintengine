@@ -33,6 +33,9 @@ import type {
   ConversationStartSessionResult,
   ConversationStopSessionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationSuspendSessionInput,
   ConversationTranscriptInput,
   ConversationTranscriptResult,
@@ -59,6 +62,17 @@ import { inferConversationToolKind } from '../shared/conversation/toolKind'
 import { isTurnlessSubagentStep, readSubagentStatus } from '../shared/conversation/subagents'
 import { readBackgroundTasks } from '../shared/conversation/backgroundTasks'
 import { applyFileActivityEvent } from '../shared/conversation/fileActivity'
+import {
+  conversationPhaseWorking,
+  conversationSessionWorking,
+  conversationSummaryPhase,
+} from '../shared/conversation/phase'
+import {
+  workingStretchOnReading,
+  workingStretchOnTurn,
+  workingStretchSince,
+  type WorkingStretch,
+} from '../shared/conversation/workingStretch'
 import {
   readToolDetail,
   writeToolDetail,
@@ -118,7 +132,7 @@ import { createCodexConversationProvider } from './providers/codex-conversation-
 import { ACP_PROFILES, createAcpConversationProvider } from './providers/acp-conversation-provider'
 import { leadingCommandFor } from './conversation-commands/leading-command'
 import { cliForConversationProvider } from '../shared/conversation-harness'
-import { workspaceSidecarPath } from './workspace-sidecar'
+import { workspaceStorePath } from './workspace-store'
 import {
   ConversationEventLog,
   type ConversationAppendOutcome,
@@ -150,8 +164,22 @@ type RuntimeSession = ConversationSessionSummary & {
   // The idle listeners were told this session came to rest, and it has not
   // been busy since (noteSettled).
   idleAnnounced?: boolean
+  // The stretch of work the chat is in (conversation/workingStretch.ts): begun
+  // by a person's message, carried through the turns the chat opens by
+  // itself, ended once it settles with nothing working. Reported as
+  // `workingSince`.
+  workingStretch?: WorkingStretch
   // Spawned agents still running, by spawning tool call.
   runningSubagents: Map<string, ConversationSubagentStatusPayload>
+  // Side questions being answered now, and when the last one ended. Neither
+  // moves `updatedAt`, which is the chat saying something; the idle sweep
+  // reads them beside it, so a child a side question started or is using is
+  // not ended under it.
+  sideQuestionsOpen?: number
+  sideQuestionAt?: number
+  // The tool call that first spawned each agent the chat has seen, by task:
+  // a provider started again resumes an agent in that lane.
+  subagentLanes: Map<string, string>
   workspaceRoot: string
   fileScope: string
   activeTurnId: string | null
@@ -264,6 +292,15 @@ export type ConversationRuntimeOptions = {
   // agent), on the machine its CLI runs on (a WSL host's, or this one's). Null
   // leaves it out; the chat runs without Studio's tools rather than not at all.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
+  // Asked before a session starts and before every turn: brings the chat's
+  // folder back when the worktree pool gave it back while the chat sat idle
+  // (worktree-pool/chat-folder-guard.ts), so the agent never runs in a folder
+  // that is gone or on someone else's branch. A refusal refuses the start or
+  // the turn with its reason. Left out (a server with no pool), nothing is asked.
+  prepareChatFolder?: (input: {
+    workspaceId: string
+    workspaceRoot: string
+  }) => Promise<{ ok: true } | { ok: false; message: string }>
   // The platform this runtime runs on; tests stand in for another. Off
   // Windows a `wsl:` host id means nothing (a WSL server is handed the
   // runtimes a Windows front door built), so it is dropped at the start.
@@ -376,6 +413,8 @@ function commandIdConflict(): ConversationSessionActionResult {
  * starts the chat's session again, which resumes it from its transcript, as
  * an app that restarts does.
  */
+const sideQuestionKey = (sessionId: string, requestId: string) => `${sessionId}\u0000${requestId}`
+
 function sessionNotFound(): ConversationSessionActionResult {
   return { ok: false, code: CONVERSATION_SESSION_NOT_FOUND, message: 'Conversation session is invalid.' }
 }
@@ -407,6 +446,7 @@ export class ConversationRuntime {
   private readonly randomId: () => string
   private readonly platform: NodeJS.Platform
   private readonly resolveSkills: ConversationSkillsResolver
+  private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
   private readonly attachmentStore: ConversationAttachmentStore
@@ -430,6 +470,8 @@ export class ConversationRuntime {
   // the ones the chat it was forked from was running with. Held for this run
   // only, as a session's own are; they are never written down.
   private readonly forkedMcpServers = new Map<string, ConversationMcpServer[]>()
+  // The side questions being answered, by session and the caller's request id.
+  private readonly sideQuestions = new Map<string, AbortController>()
   private readonly sequenceInitializations = new Map<string, Promise<void>>()
   private readonly listeners = new Set<ConversationRuntimeListener>()
   private readonly idleListeners = new Set<(summary: ConversationSessionSummary) => void>()
@@ -517,6 +559,7 @@ export class ConversationRuntime {
     })
     this.randomId = options.randomId ?? (() => Math.random().toString(36).slice(2, 10))
     this.resolveSkills = options.resolveSkills ?? createConversationSkillsResolver()
+    this.prepareChatFolder = options.prepareChatFolder ?? (() => Promise.resolve({ ok: true }))
     this.approvalRules = options.approvalRules ?? new ConversationApprovalRuleStore()
     this.attachmentStore = options.attachmentStore ?? new ConversationAttachmentStore()
     this.planStore = options.planStore ?? new ConversationPlanStore()
@@ -547,6 +590,7 @@ export class ConversationRuntime {
   // every event and at each place a turn lets go of the session; a check that
   // finds it busy re-arms the announcement for its next rest.
   private noteSettled(session: RuntimeSession): void {
+    this.noteWorkingStretch(session)
     const settled =
       this.sessions.get(session.sessionId) === session &&
       (session.status === 'ready' || session.status === 'failed') &&
@@ -566,6 +610,44 @@ export class ConversationRuntime {
         console.warn('[conversation-runtime] an idle listener failed:', error instanceof Error ? error.message : error)
       }
     }
+  }
+
+  // Read whether the chat still has anything in hand, after every event and
+  // at each place a turn lets go of the session (the same places as
+  // `noteSettled`): a stretch of work stops when nothing is left, background
+  // agents and monitors included. Reads the session's own fields, which are
+  // its summary's, so a streamed token does not build a summary to ask.
+  private noteWorkingStretch(session: RuntimeSession): void {
+    session.workingStretch = workingStretchOnReading(session.workingStretch, {
+      busy: conversationSessionWorking(session),
+      at: this.now(),
+      ...(session.activeTurnId !== null && session.turnStartedAt !== undefined
+        ? { startedAt: session.turnStartedAt }
+        : {}),
+    })
+  }
+
+  // A turn opened, from a send or by the chat itself: a person's message
+  // begins a new stretch, and anything else carries on the one in hand.
+  private openWorkingStretch(session: RuntimeSession, at: number, byPerson: boolean): void {
+    session.workingStretch = workingStretchOnTurn(session.workingStretch, { at, byPerson })
+  }
+
+  // The summary's `workingSince`: only while it reads as working, as the
+  // sidebar's count is drawn only then. Read as the next reading will leave
+  // the stretch, so a summary taken between a change and that reading says
+  // what the one after it does.
+  private workingSinceOf(session: RuntimeSession): Pick<ConversationSessionSummary, 'workingSince'> {
+    if (session.status === 'stopped' || !conversationPhaseWorking(conversationSummaryPhase(session))) return {}
+    const stretch = workingStretchOnReading(session.workingStretch, {
+      busy: true,
+      at: this.now(),
+      ...(session.activeTurnId !== null && session.turnStartedAt !== undefined
+        ? { startedAt: session.turnStartedAt }
+        : {}),
+    })
+    const since = workingStretchSince(stretch)
+    return since === undefined ? {} : { workingSince: since }
   }
   getProviderCapabilities(providerId: string) {
     return this.getAdapterForProviderId(providerId)?.capabilities
@@ -591,6 +673,13 @@ export class ConversationRuntime {
     if (cliRuntimes !== input.cliRuntimes) input = { ...input, cliRuntimes }
     this.startingTranscripts.add(path)
     try {
+      // The chat's worktree, given back while it sat idle, is brought back
+      // before anything is spawned in it.
+      const folder = await this.prepareChatFolder({
+        workspaceId: input.workspaceId.trim(),
+        workspaceRoot: input.workspaceRoot,
+      })
+      if (!folder.ok) return { ok: false, message: folder.message }
       return (await this.adoptLiveSession(input, path)) ?? (await this.startSessionNow(input))
     } finally {
       this.startingTranscripts.delete(path)
@@ -730,8 +819,15 @@ export class ConversationRuntime {
       ...(input.mcpServers?.length ? { mcpServers: input.mcpServers } : {}),
       toolDetailPaths: new Set(),
       runningSubagents: new Map(),
+      subagentLanes: new Map(),
       providerTurn: null,
     }
+    // The agents' lanes come from the transcript's last page, below, and from
+    // what this run's earlier sessions of the chat saw, which can reach back
+    // further.
+    for (const stale of previous)
+      for (const [taskId, toolUseId] of stale.subagentLanes)
+        if (!session.subagentLanes.has(taskId)) session.subagentLanes.set(taskId, toolUseId)
     await this.initializeSequence(input)
     const previousTranscript = await this.readRecentTranscript(input)
     let fallbackHistory: ConversationMessage[] | undefined
@@ -766,6 +862,7 @@ export class ConversationRuntime {
           ...(resume?.at ? { resumeSessionAt: resume.at } : {}),
           ...(resume?.seedFromHistory ? { seedFromHistory: true } : {}),
           ...(session.history ? { fallbackHistory: session.history } : fallbackHistory ? { fallbackHistory } : {}),
+          ...(session.subagentLanes.size > 0 ? { knownSubagentLanes: Array.from(session.subagentLanes) } : {}),
           // Continuation channel: the adapter opens a mirror turn here when its
           // child resumes after a `result` (background subagents completing).
           onSessionEvent: (event) => this.enqueueContinuationEvent(session, event),
@@ -889,11 +986,21 @@ export class ConversationRuntime {
     // A turn needs some payload: text, an image, a mention, a skill or a file.
     if (!message && attachments.length === 0 && !input.mentions?.length && !input.skills?.length && !files.length)
       return { ok: false, message: 'Conversation turn message is required.' }
+    // A resting session respawns in the chat's folder for this turn: one the
+    // worktree pool gave back while the chat sat idle is brought back first,
+    // whoever sent the message. A busy session is working in it, so it is there.
+    if (!isSessionBusy(session)) {
+      const folder = await this.prepareChatFolder({
+        workspaceId: session.workspaceId,
+        workspaceRoot: session.workspaceRoot,
+      })
+      if (!folder.ok) return { ok: false, message: folder.message }
+    }
 
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }
     const steerRefused = isSessionBusy(session) ? steerRefusal(session, adapter) : null
-    if (steerRefused) return { ok: false, message: steerRefused }
+    if (steerRefused) return steerBusy(steerRefused)
 
     if (input.mode === 'plan' && !session.capabilities?.planMode)
       return { ok: false, message: 'This provider does not support plan mode.' }
@@ -995,6 +1102,9 @@ export class ConversationRuntime {
     session.phase = 'running'
     session.updatedAt = this.now()
     session.turnStartedAt = session.updatedAt
+    // A message Studio sends the chat itself (a launched agent's notice, a
+    // resume after a usage limit) is not the person starting something new.
+    this.openWorkingStretch(session, session.turnStartedAt, !input.origin)
     // The provider starts the child again for this turn if it had rested.
     session.resting = undefined
     session.checkpointTurnSeq = null
@@ -1005,6 +1115,7 @@ export class ConversationRuntime {
       // Persist the user's side of the exchange so the JSONL transcript replays
       // as a complete conversation after a restart.
       try {
+        await this.enableCheckpointsIfRepository(session)
         const storedAttachments = await this.saveAttachments(session, attachments)
         await this.emit(
           session,
@@ -1058,13 +1169,37 @@ export class ConversationRuntime {
         // A steer may have moved the stream on to a later turn; the stream's
         // end is that turn's.
         const ownTurnId = providerTurn.turnId
-        const currentSession = this.sessions.get(input.sessionId)
+        const ownsTurn = (current: RuntimeSession | undefined): current is RuntimeSession =>
+          !!current &&
+          current.status !== 'stopped' &&
+          current.activeTurnId === ownTurnId &&
+          !current.canceledTurnIds.has(ownTurnId)
+        let currentSession = this.sessions.get(input.sessionId)
+        // A stateful adapter whose stream ended with no end to the turn and no
+        // card left open: nothing is running it any more, so it fails here.
+        // Leaving it active locked the chat behind a turn nothing was running —
+        // no Send, and a Stop with nothing to stop.
         if (
-          currentSession &&
-          currentSession.status !== 'stopped' &&
-          currentSession.activeTurnId === ownTurnId &&
-          !currentSession.canceledTurnIds.has(ownTurnId)
+          ownsTurn(currentSession) &&
+          currentSession.stateful &&
+          !emitted.completed &&
+          !emitted.failed &&
+          emitted.approvalsRequested <= emitted.approvalsResolved
         ) {
+          const ended = await this.emit(
+            currentSession,
+            this.eventForSession(currentSession, 'turn_failed', {
+              turnId: ownTurnId,
+              reason: 'provider',
+              message: "The agent's stream ended before the turn finished.",
+            }),
+            { turnId: ownTurnId },
+          )
+          if (ended) emitted.failed = true
+          // A Stop that landed while the failure waited to be written settles the turn itself.
+          currentSession = this.sessions.get(input.sessionId)
+        }
+        if (ownsTurn(currentSession)) {
           this.applyTurnState(currentSession, emitted, requestId)
           currentSession.activeTurnAbort = null
           // Record only a cleanly completed turn (no failure) into history, so a
@@ -1220,12 +1355,11 @@ export class ConversationRuntime {
     await session.continuationTail.catch(() => undefined)
     const handover = (this.emissionTails.get(path) ?? Promise.resolve())
       .catch(() => undefined)
-      .then(async (): Promise<ProviderTurn | string> => {
-        const refused =
-          session.status === 'stopped' || this.sessions.get(session.sessionId) !== session
-            ? 'Conversation is no longer available.'
-            : steerRefusal(session, adapter)
-        if (refused) return refused
+      .then(async (): Promise<ProviderTurn | ConversationSessionActionResult> => {
+        if (session.status === 'stopped' || this.sessions.get(session.sessionId) !== session)
+          return { ok: false, message: 'Conversation is no longer available.' }
+        const refused = steerRefusal(session, adapter)
+        if (refused) return steerBusy(refused)
         const running = session.providerTurn!
         const delivered = await adapter.steer!({
           ...session,
@@ -1233,7 +1367,7 @@ export class ConversationRuntime {
           message: input.providerMessage,
           ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         })
-        if (!delivered.ok) return delivered.message
+        if (!delivered.ok) return steerBusy(delivered.message)
         const storedAttachments = await this.saveAttachments(session, input.attachments)
         // The work since the running turn's first file change is one change,
         // under that turn's number; a turn with none yet takes the new one.
@@ -1270,13 +1404,13 @@ export class ConversationRuntime {
         return running
       })
     this.emissionTails.set(path, handover)
-    let outcome: ProviderTurn | string
+    let outcome: ProviderTurn | ConversationSessionActionResult
     try {
       outcome = await handover
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'The message could not be delivered.' }
     }
-    if (typeof outcome === 'string') return { ok: false, message: outcome }
+    if ('ok' in outcome) return outcome
     return outcome.ended
   }
 
@@ -1706,6 +1840,54 @@ export class ConversationRuntime {
     return { ok: true, session: this.toSummary(session) }
   }
 
+  /**
+   * A side question about the chat, answered from what its agent knows and
+   * added to nothing: no event is written or published for it, so it reaches
+   * neither the transcript, the history, the sidebar nor the phone, and a
+   * turn the chat is running goes on as it was. Asked again under the same
+   * `requestId` while one is out, it is refused; `cancelSideQuestion` calls
+   * it off, and it then answers `cancelled`.
+   */
+  async askSideQuestion(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult> {
+    const session = this.sessions.get(input.sessionId)
+    if (!session) return sessionNotFound() as ConversationSideQuestionResult
+    if (session.status === 'stopped') return { ok: false, message: 'Conversation session is stopped.' }
+    const adapter = this.getAdapterForProviderId(session.providerId)
+    if (!adapter?.askSideQuestion || session.capabilities?.sideQuestion !== true)
+      return { ok: false, message: 'This chat cannot answer a side question.' }
+    const key = sideQuestionKey(input.sessionId, input.requestId)
+    if (this.sideQuestions.has(key)) return { ok: false, message: 'That side question is already being answered.' }
+    const abort = new AbortController()
+    this.sideQuestions.set(key, abort)
+    session.sideQuestionsOpen = (session.sideQuestionsOpen ?? 0) + 1
+    const cancelled = { ok: false, cancelled: true, message: 'The side question was called off.' } as const
+    try {
+      const result = await adapter.askSideQuestion(session.sessionId, {
+        question: input.question,
+        history: input.history ?? [],
+        signal: abort.signal,
+      })
+      return abort.signal.aborted ? cancelled : result
+    } catch (error) {
+      if (abort.signal.aborted) return cancelled
+      return { ok: false, message: error instanceof Error ? error.message : 'The side question was not answered.' }
+    } finally {
+      this.sideQuestions.delete(key)
+      session.sideQuestionsOpen = Math.max(0, (session.sideQuestionsOpen ?? 1) - 1)
+      session.sideQuestionAt = this.now()
+    }
+  }
+
+  /** Call off a side question being answered; one already answered, or never asked, is nothing to call off. */
+  async cancelSideQuestion(
+    input: ConversationCancelSideQuestionInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const abort = this.sideQuestions.get(sideQuestionKey(input.sessionId, input.requestId))
+    if (!abort) return { ok: false, message: 'That side question is not being answered.' }
+    abort.abort()
+    return { ok: true }
+  }
+
   async stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
     if (input.commandId)
       return this.runCommand(
@@ -1980,7 +2162,8 @@ export class ConversationRuntime {
     const disposed: string[] = []
     for (const session of this.sessions.values()) {
       if (isSessionBusy(session) || session.runningSubagents.size > 0 || session.backgroundTasks) continue
-      if (now - session.updatedAt < this.idleThresholdMs) continue
+      if (session.sideQuestionsOpen) continue
+      if (now - Math.max(session.updatedAt, session.sideQuestionAt ?? 0) < this.idleThresholdMs) continue
       // An idle chat does not hold a file handle open for the rest of the run;
       // its next event reopens the stream.
       void this.eventLog.close(this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId))
@@ -2417,9 +2600,14 @@ export class ConversationRuntime {
         name: String(event.payload?.name ?? event.payload?.tool ?? ''),
         input: event.payload?.input as ConversationJsonValue | undefined,
         status: 'running',
+        ...(typeof event.payload?.displayTitle === 'string' ? { displayTitle: event.payload.displayTitle } : {}),
+        ...(typeof event.payload?.serverName === 'string' ? { serverName: event.payload.serverName } : {}),
       }).title
+    // Summarising the conversation is the step, until the summary lands.
+    else if (event.type === 'context_compacting') session.currentToolTitle = 'Compacting'
     // Streamed output (`partial`) arrives while the tool is still running.
     else if (
+      event.type === 'context_compacted' ||
       (ownStep && event.type === 'tool_output' && event.payload?.partial !== true) ||
       (event.type === 'turn_completed' && event.payload?.steered !== true) ||
       event.type === 'turn_failed'
@@ -2457,6 +2645,8 @@ export class ConversationRuntime {
           ...status,
         })
       else if (status) session.runningSubagents.delete(status.toolUseId)
+      if (status?.taskId && !session.subagentLanes.has(status.taskId))
+        session.subagentLanes.set(status.taskId, status.toolUseId)
       session.backgroundAgents = Array.from(session.runningSubagents.values()).filter(
         (agent) => agent.background,
       ).length
@@ -2466,7 +2656,10 @@ export class ConversationRuntime {
     // launched agent's notice, a resume after a usage limit) is not, and
     // neither moves the clock nor becomes the chat's first or last words.
     const fromPerson = event.type === 'user_message' && !readConversationMessageOrigin(event.payload?.origin)
-    if (event.type === 'user_message' && !fromPerson) {
+    // A turn the agent started straight after the last one (Codex working
+    // toward its goal) has a reply of its own, with no message to start it.
+    const followsTurn = event.type === 'turn_started' && typeof event.payload?.follows === 'string'
+    if ((event.type === 'user_message' && !fromPerson) || followsTurn) {
       session.lastAssistantText = ''
       session.lastAssistantTail = ''
     }
@@ -2713,6 +2906,23 @@ export class ConversationRuntime {
     // pendingRequestId path. A concurrently-completing sendTurn will see its own
     // turnId no longer active and skip its post-loop reset, so this stands.
     if (event.type === 'turn_started' && turnId && turnId !== session.activeTurnId) {
+      // A turn the agent starts the moment the one before it ended (Codex
+      // carrying on toward its goal) names that turn. When that is a send
+      // still letting go of the session, its end is already on the way: the
+      // new turn waits for it, rather than being taken for a race it lost.
+      const follows = typeof event.payload?.follows === 'string' ? event.payload.follows : null
+      const before = session.providerTurn
+      if (
+        follows &&
+        before &&
+        !before.continuation &&
+        session.activeTurnId === follows &&
+        before.streamTurnId === follows
+      ) {
+        await before.ended
+        const current = this.sessions.get(session.sessionId)
+        if (current !== session || current.status === 'stopped') return
+      }
       // A live turn owns the session. The continuation raced a send that the
       // busy guard could not see yet (the channel is serialized off the send
       // path), and the adapter has since taken the turn over — so this mirror
@@ -2729,6 +2939,9 @@ export class ConversationRuntime {
       session.checkpointCaptured = false
       session.updatedAt = this.now()
       session.turnStartedAt = session.updatedAt
+      // The same stretch of work, if the chat is still in one: what woke it
+      // was its own background agent or monitor, not the person.
+      this.openWorkingStretch(session, session.turnStartedAt, false)
       // Only a live child carries on by itself.
       session.resting = undefined
       // From here a steer can join it, as it joins a send's turn.
@@ -2821,7 +3034,7 @@ export class ConversationRuntime {
   }
 
   private toolDetailPath(input: ConversationToolDetailInput): string {
-    return workspaceSidecarPath(
+    return workspaceStorePath(
       input.workspaceRoot,
       'conversations',
       safeSegment(input.workspaceId),
@@ -3244,12 +3457,7 @@ export class ConversationRuntime {
   }
 
   private transcriptPath(workspaceRoot: string, workspaceId: string, agentId: string): string {
-    return workspaceSidecarPath(
-      workspaceRoot,
-      'conversations',
-      safeSegment(workspaceId),
-      `${safeSegment(agentId)}.jsonl`,
-    )
+    return workspaceStorePath(workspaceRoot, 'conversations', safeSegment(workspaceId), `${safeSegment(agentId)}.jsonl`)
   }
 
   // Replay the persisted transcript for one agent, bounded to the most recent
@@ -3444,6 +3652,22 @@ export class ConversationRuntime {
           ]),
         ),
     )
+  }
+
+  /**
+   * Checkpoints for a chat whose folder was not a repository when it started
+   * and is one now (`git init` since): whether a chat keeps them was decided
+   * once, at its start, so it would otherwise never offer Revert. Asked at
+   * each turn's start only while the chat has none, and that is one
+   * `rev-parse`; a chat that has them, or runs no tools, asks nothing. The
+   * chat's file scope moves to the repository too, so a revert there counts
+   * this chat among those sharing its files.
+   */
+  private async enableCheckpointsIfRepository(session: RuntimeSession): Promise<void> {
+    if (!session.capabilities?.tools || session.capabilities.checkpoints) return
+    if (!(await this.checkpoints.available(session.workspaceRoot))) return
+    session.fileScope = await this.checkpoints.fileScope(session.workspaceRoot)
+    await this.emit(session, this.eventForSession(session, 'session_updated', { capabilities: { checkpoints: true } }))
   }
 
   private async captureBeforeTool(session: RuntimeSession, name: string): Promise<void> {
@@ -4053,6 +4277,7 @@ export class ConversationRuntime {
       ...(session.activeTurnId !== null && session.turnStartedAt !== undefined
         ? { turnStartedAt: session.turnStartedAt }
         : {}),
+      ...this.workingSinceOf(session),
       ...(session.promptCache ? { promptCache: session.promptCache } : {}),
       ...(session.fileActivity?.length ? { fileActivity: session.fileActivity } : {}),
       // Only when the session carries one, so a session that never chose a
@@ -4128,6 +4353,15 @@ function busyRefusal(session: RuntimeSession): ConversationSessionActionResult {
       ? 'Conversation turn is awaiting approval.'
       : 'Conversation turn is already in progress.',
   }
+}
+
+// A steer the running turn could not take ran nothing: it is answered as busy,
+// as a send that met a turn is, so a retry under the same command id is run
+// again rather than answered from a receipt of the refusal. Once the turn is
+// over that retry goes as the next turn, so a client sending again cannot
+// meet the same refusal for ever.
+function steerBusy(message: string): ConversationSessionActionResult {
+  return { ok: false, code: 'busy', retryAfterMs: TURN_BUSY_RETRY_MS, message }
 }
 
 function isSessionBusy(session: RuntimeSession): boolean {

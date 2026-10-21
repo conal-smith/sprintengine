@@ -11,6 +11,7 @@ import { TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET } from '../../AppTitleBar'
 import { WindowControls } from '../../WindowControls'
 import { PaneHostContext } from '../paneHost'
 import { paneTabItem, paneTabLabel } from '../paneTabItem'
+import { useAgentPresentTabIds } from '../agentPresence'
 import { closePaneTabAndItsTerminal, paneTerminalSessionId } from '../paneTerminals'
 import { WorkspacePaneBody } from '../WorkspacePaneBody'
 import { adoptAgentFocusRequest } from '../agents/agentsPaneFocus'
@@ -225,6 +226,7 @@ export default function PanePopOutWindow({ popOutId, workspaceId }: Props) {
   }, [])
 
   const tabs = view?.tabs ?? []
+  const agentPresentTabIds = useAgentPresentTabIds(workspaceId, tabs)
   const closeTab = useCallback(
     (tabId: string) => {
       const tab = viewRef.current?.tabs.find((candidate) => candidate.id === tabId)
@@ -249,7 +251,7 @@ export default function PanePopOutWindow({ popOutId, workspaceId }: Props) {
 
   const ready = registryReady && view !== null && activeTabId !== null && tabs.length > 0
   const menuTabIndex = tabMenu ? tabs.findIndex((tab) => tab.id === tabMenu.tabId) : -1
-  const items = tabs.map((tab) => paneTabItem(tab, { diffCount }))
+  const items = tabs.map((tab) => paneTabItem(tab, { diffCount, agentPresent: agentPresentTabIds.has(tab.id) }))
   const lightsShowing = isMac && !windowState.isFullScreen
 
   return (

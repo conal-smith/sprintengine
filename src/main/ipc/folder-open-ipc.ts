@@ -78,11 +78,21 @@ export type FolderOpenIpcDependencies = {
 // editor whose id we cannot vouch for lists none and is found by name alone. The
 // CLI names are the shims each editor installs (or JetBrains Toolbox writes to
 // its scripts folder, `wellKnownCliDirs`). `cliArgs` go before the folder for a
-// shim that needs a subcommand to open the editor rather than its other tool.
-const EDITOR_LAUNCHERS: Record<
-  Exclude<FolderOpenTargetId, 'finder'>,
-  { cliNames: string[]; cliArgs?: string[]; macAppNames: string[]; macBundleIds: string[] }
-> = {
+// shim that needs a subcommand or flag to open the editor rather than its other
+// tool. An editor whose CLI name another program also answers to can set
+// `macAppFirst`, so on macOS its app decides whether it is installed and PATH
+// is only the fallback, and `notTheEditor`, to turn down the other program's
+// binary wherever it turns up so the search goes on past it.
+type EditorLauncherSpec = {
+  cliNames: string[]
+  cliArgs?: string[]
+  macAppNames: string[]
+  macBundleIds: string[]
+  macAppFirst?: true
+  notTheEditor?(candidate: string, probe: LauncherProbe): boolean
+}
+
+const EDITOR_LAUNCHERS: Record<Exclude<FolderOpenTargetId, 'finder'>, EditorLauncherSpec> = {
   vscode: {
     cliNames: ['code'],
     macAppNames: ['Visual Studio Code.app'],
@@ -98,8 +108,11 @@ const EDITOR_LAUNCHERS: Record<
     macAppNames: ['VSCodium.app'],
     macBundleIds: ['com.vscodium'],
   },
+  // `--classic`: when Cursor's Agents window is the one in front, a plain
+  // `cursor <folder>` opens the folder there rather than in the editor.
   cursor: {
     cliNames: ['cursor'],
+    cliArgs: ['--classic'],
     macAppNames: ['Cursor.app'],
     macBundleIds: ['com.todesktop.230313mzl4w4u92'],
   },
@@ -108,10 +121,16 @@ const EDITOR_LAUNCHERS: Record<
     macAppNames: ['Windsurf.app'],
     macBundleIds: ['com.exafunction.windsurf'],
   },
+  // OpenZFS's event daemon is also `zed` (/usr/sbin on Linux, /usr/local/zfs/bin
+  // on macOS), and handed a folder it starts the daemon rather than the editor.
+  // Distribution packages name Zed's CLI `zeditor` to stay clear of it, so that
+  // name is asked for first.
   zed: {
-    cliNames: ['zed'],
+    cliNames: ['zeditor', 'zed'],
     macAppNames: ['Zed.app', 'Zed Preview.app'],
     macBundleIds: ['dev.zed.Zed', 'dev.zed.Zed-Preview'],
+    macAppFirst: true,
+    notTheEditor: isZfsEventDaemon,
   },
   trae: {
     cliNames: ['trae'],
@@ -253,7 +272,10 @@ export async function listFolderOpenTargetAvailability(
 export async function resolveFolderOpenLauncherHere(target: FolderOpenTargetId): Promise<FolderOpenLauncher | null> {
   const probe: LauncherProbe = { platform: process.platform, env: process.env, exists: existsSync }
   const found = resolveFolderOpenLauncher(target, probe)
-  if (found || target === 'finder' || probe.platform !== 'darwin') return found
+  if (target === 'finder' || probe.platform !== 'darwin') return found
+  // An app-first editor's CLI is its fallback, taken only once Spotlight has no app either.
+  const foundApp = found?.kind === 'command' && found.command === '/usr/bin/open'
+  if (found && (foundApp || !EDITOR_LAUNCHERS[target].macAppFirst)) return found
   const located = await locateAppByBundleIdHere(EDITOR_LAUNCHERS[target].macBundleIds)
   return resolveFolderOpenLauncher(target, { ...probe, locateAppByBundleId: () => located })
 }
@@ -419,11 +441,19 @@ export function resolveFolderOpenLauncher(target: FolderOpenTargetId, probe: Lau
   if (target === 'finder') return { kind: 'reveal' }
 
   const spec = EDITOR_LAUNCHERS[target]
+  if (spec.macAppFirst && probe.platform === 'darwin') return fromMacApp(spec, probe) ?? fromCli(spec, probe)
+  return fromCli(spec, probe) ?? fromMacApp(spec, probe)
+}
+
+function fromCli(spec: EditorLauncherSpec, probe: LauncherProbe): FolderOpenLauncher | null {
   for (const cliName of spec.cliNames) {
-    const resolved = findOnPath(cliName, probe)
+    const resolved = findOnPath(cliName, probe, spec.notTheEditor)
     if (resolved) return commandLauncher(resolved, spec.cliArgs ?? [], probe)
   }
+  return null
+}
 
+function fromMacApp(spec: EditorLauncherSpec, probe: LauncherProbe): FolderOpenLauncher | null {
   const appBundle = findMacApp(spec.macAppNames, probe)
   if (appBundle) return { kind: 'command', command: '/usr/bin/open', args: ['-a', appBundle] }
 
@@ -464,7 +494,11 @@ function wellKnownCliDirs(probe: LauncherProbe): string[] {
   return home ? [posixPath.join(home, '.local/share/JetBrains/Toolbox/scripts')] : []
 }
 
-function findOnPath(name: string, probe: LauncherProbe): string | null {
+function findOnPath(
+  name: string,
+  probe: LauncherProbe,
+  notTheEditor?: EditorLauncherSpec['notTheEditor'],
+): string | null {
   const isWindows = probe.platform === 'win32'
   const pathValue = probe.env.PATH ?? probe.env.Path ?? ''
   const candidateNames = isWindows ? [`${name}.cmd`, `${name}.exe`, `${name}.bat`, name] : [name]
@@ -476,10 +510,24 @@ function findOnPath(name: string, probe: LauncherProbe): string | null {
     if (!dir) continue
     for (const candidateName of candidateNames) {
       const candidate = joinPath(dir, candidateName)
-      if (probe.exists(candidate)) return candidate
+      if (probe.exists(candidate) && !notTheEditor?.(candidate, probe)) return candidate
     }
   }
   return null
+}
+
+/**
+ * A `zed` that is OpenZFS's event daemon rather than the editor: one in an
+ * `sbin` directory (no editor installs there) or under a `zfs` folder, or one
+ * sitting beside `zpool`, which is how it shows on a distribution that has
+ * merged `/usr/sbin` into `/usr/bin`.
+ */
+function isZfsEventDaemon(candidate: string, probe: LauncherProbe): boolean {
+  const path = probe.platform === 'win32' ? windowsPath : posixPath
+  if (path.parse(candidate).name !== 'zed') return false
+  const dir = path.dirname(candidate)
+  if (dir.split(path.sep).some((segment) => segment === 'sbin' || segment === 'zfs')) return true
+  return probe.exists(path.join(dir, 'zpool'))
 }
 
 function findMacApp(appNames: string[], probe: LauncherProbe): string | null {

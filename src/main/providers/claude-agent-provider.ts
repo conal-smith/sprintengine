@@ -14,12 +14,21 @@
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
 import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
+import { spawnClaudeLocalProcess } from './claude-local-process'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openConfinedExistingFile, readBoundedConversationFile } from '../conversation-file-access'
+import {
+  projectCommandsFingerprint,
+  readProjectCommands,
+  stageProjectCommands,
+  STAGED_PLUGIN_PREFIX,
+  writeProjectCommandsPlugin,
+  type StagedProjectCommands,
+} from '../claude-project-commands'
 import { asRecord } from '../../shared/records'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
@@ -72,11 +81,16 @@ import {
 import { isBackgroundLaunchAck, isSubagentStep } from '../../shared/conversation/subagents'
 export { summarizeToolInput } from '../../shared/conversation/approvalSummary'
 import { cliStderrSummary, LOOKUP_TOOL_KINDS } from '../../shared/conversation/permissionModes'
+import { withMacosPrivacyFolderHint } from '../../shared/conversation/macosPrivacyFolders'
 import { wslShareSafeDirectoryEnv } from '../git-run'
+import { resolveClaudeConfigDir } from '../claude-config-dir'
+import { ensureResumableTranscript, transcriptCheckNote } from './claude-transcript-integrity'
+import { claudeTaskOutputRoot, createClaudeCommandOutput, type ClaudeCommandOutput } from './claude-command-output'
 import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/registry'
 import type { AgentMcpServerStatus } from '../../shared/skills'
 
 import type {
+  EffortLevel,
   Options,
   PermissionResult,
   Query,
@@ -94,6 +108,7 @@ import type {
   ConversationMcpServer,
   ConversationPermissionPreset,
   ConversationQuestion,
+  ConversationSideQuestionResult,
   ConversationSubagentMessagePayload,
   ConversationSubagentState,
   ConversationSubagentStatusPayload,
@@ -119,6 +134,7 @@ import type {
   MockAdapterTurnInput,
   ConversationProviderSteerResult,
   ConversationDisposeOptions,
+  ConversationProviderSideQuestionInput,
 } from './conversation-provider-adapter'
 
 export const CLAUDE_AGENT_PROVIDER_ID = 'claude-agent'
@@ -155,6 +171,11 @@ export type ClaudeAgentProviderOptions = {
   childAnswerTimeoutMs?: number
   // And how long it has to answer the registration of its MCP servers.
   mcpRegistrationTimeoutMs?: number
+  // Where a local child writes its task output, from its environment; tests
+  // point it at their own folder. Null turns live command output off.
+  claudeTaskOutputRoot?: (env: Record<string, string>) => string | null
+  // How often a running command's output file is read. Tests shorten it.
+  commandOutputPollMs?: number
   // The app's own MCP gateway on the machine the child runs on, handed to
   // every child. Null or absent leaves it out.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
@@ -166,6 +187,10 @@ export type ClaudeAgentProviderAdapter = ConversationProviderAdapter & {
   disposeChildProcess(sessionId: string, options?: ConversationDisposeOptions): boolean
   stopBackgroundTasks(sessionId: string): Promise<boolean>
   stopSubagent(sessionId: string, toolUseId: string): Promise<boolean>
+  askSideQuestion(
+    sessionId: string,
+    input: ConversationProviderSideQuestionInput,
+  ): Promise<ConversationSideQuestionResult>
   disposeAll(): Promise<void>
   setPermissionPreset(input: MockAdapterPermissionInput): Promise<ConversationProviderPermissionResult>
   setModel(input: MockAdapterModelInput): Promise<ConversationProviderPermissionResult>
@@ -239,6 +264,9 @@ type SessionState = {
   // The per-child plugin directory that carries the attached skills; removed
   // with the child that loaded it.
   skillPluginDir: string | null
+  // The per-child plugin carrying the project's own `.claude/commands`, and
+  // which files it was written from; removed with the child that loaded it.
+  projectCommands: StagedProjectCommands | null
   mode?: 'default' | 'plan' | 'ask'
   reasoningEffort?: string
   onBeforeTool?: (name: string) => Promise<void>
@@ -272,6 +300,10 @@ type SessionState = {
   // And the mode of Claude Code's own it runs at that preset, null for the
   // preset's own.
   childMode: string | null
+  // The permission mode the live child reports itself in, and the one it
+  // first reported (mapSdkMessage). Null until its first init.
+  cliMode: string | null
+  cliSpawnMode: string | null
   // Session-level events (resume cursor updates) that arrived while no turn
   // stream was open to carry them; flushed at the next turn start.
   pendingSessionEvents: ConversationEvent[]
@@ -287,6 +319,13 @@ type SessionState = {
   // The SDK reports cost as a running total for the life of one query() call;
   // the total already attributed to earlier turns of the live child.
   queryCostUsd: number
+  // What the check of a resumed session's file found that the conversation
+  // should be told, shown at the start of the turn that spawned the child.
+  resumeNote: string | null
+  // The live child's running Bash commands, read from the files it writes
+  // their output to (claude-command-output.ts). Null for a child whose files
+  // this machine cannot read.
+  commandOutputTails?: ClaudeCommandOutput | null
   // The child being spawned, while it is; see ensureQuery.
   spawning: Promise<void> | null
   // Bumped when the session is stopped or its child disposed from outside
@@ -319,7 +358,8 @@ type SessionState = {
   // The tool call that first spawned each agent this chat has seen, by task.
   // Kept across children: an agent resumed later (SendMessage, after the
   // child that ran it ended) reports under the resuming call, and its lane is
-  // still the one that spawned it.
+  // still the one that spawned it. Seeded from the ones the runtime knows, so
+  // that holds across a restart too.
   agentLanes: Map<string, string>
   // Shells, monitors and workflows the child runs, by task. The background
   // ones are what `session_updated` lists as `backgroundTasks`.
@@ -609,10 +649,16 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.query = null
     state.childPreset = null
     state.childMode = null
+    state.cliMode = null
+    state.cliSpawnMode = null
     state.childPid = null
     state.spawnedAt = null
+    state.commandOutputTails?.stopAll()
+    state.commandOutputTails = null
     if (state.skillPluginDir) removeSkillPlugin(state.skillPluginDir)
     state.skillPluginDir = null
+    if (state.projectCommands) removeSkillPlugin(state.projectCommands.dir)
+    state.projectCommands = null
     return hadChild
   }
 
@@ -655,15 +701,67 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   // background agent, shell or monitor works inside the child with no turn
   // open, so an idle turn alone does not say the child is free.
   function childIsIdle(state: SessionState): boolean {
-    if (state.turn) return false
-    for (const agent of state.subagents.values()) if (agent.background) return false
-    for (const tracked of state.tasks.values()) if (tracked.background) return false
-    return true
+    return !state.turn && !backgroundWorkRunning(state)
+  }
+
+  // A background agent, shell or monitor the live child runs: work that ends
+  // with the child, so a setting that would replace it waits for it instead.
+  function backgroundWorkRunning(state: SessionState): boolean {
+    if (!state.query) return false
+    for (const agent of state.subagents.values()) if (agent.background) return true
+    for (const tracked of state.tasks.values()) if (tracked.background) return true
+    return false
+  }
+
+  // Move the live child to another effort over the control channel, as
+  // /effort does, rather than respawning it. False when it cannot: no child,
+  // or a Claude Code that refuses or does not answer the request (one older
+  // than `apply_flag_settings`). No effort is the model's own default, which
+  // a null effortLevel goes back to.
+  async function applyEffortLive(state: SessionState, effort: string | undefined): Promise<boolean> {
+    const query = state.query
+    if (!query || typeof query.applyFlagSettings !== 'function') return false
+    const applied = await answeredWithin(
+      query.applyFlagSettings({ effortLevel: (effort ?? null) as EffortLevel | null }),
+      childAnswerTimeoutMs,
+      { rejectAsUnanswered: true },
+    )
+    return applied && state.query === query
+  }
+
+  // A child that does not run under the session's recorded preset is replaced
+  // before the next message (ensureQuery), unless background work runs in it.
+  // Then it is moved over the control channel instead: to the preset's own
+  // mode, or under `none`, whose mode no request names, to 'default', which
+  // asks before anything that changes something, until the work drains and
+  // the next message can respawn it. A child that will not move is replaced
+  // all the same: running a message under looser permissions than the person
+  // chose is worse than ending the work.
+  async function reconcilePresetWhileBusy(state: SessionState): Promise<void> {
+    const query = state.query
+    if (!query || childHonorsPreset(state) || !backgroundWorkRunning(state)) return
+    const target = nativePermissionMode(state, state.mode)
+    const moved = await answeredWithin(query.setPermissionMode(target ?? 'default'), childAnswerTimeoutMs, {
+      rejectAsUnanswered: true,
+    })
+    if (state.query !== query) return
+    if (!moved) {
+      disposeChild(state)
+      return
+    }
+    if (target !== undefined) {
+      state.childPreset = state.permissionPreset
+      state.childMode = ownSdkMode(state)
+    }
   }
 
   async function pump(state: SessionState, q: Query): Promise<void> {
     try {
       for await (const message of q as AsyncIterable<Record<string, unknown>>) {
+        if (state.query !== q) return
+        // A command's last output goes out ahead of its result, which replaces it.
+        const commandEnded = state.commandOutputTails?.observe(message)
+        if (commandEnded) await commandEnded
         if (state.query !== q) return
         if (state.interruptedSendUuids.size > 0) {
           // A new child exchange has begun, so whatever the stopped one left
@@ -710,7 +808,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
           eventFor(state, 'turn_failed', {
             turnId: state.turn.turnId,
             reason: 'provider',
-            message: describeSpawnFailure(error, state.stderrTail),
+            message: describeSpawnFailure(error, state.stderrTail, state.workspaceRoot),
             ...providerCursorPayload(state),
           }),
         ])
@@ -724,7 +822,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
             eventFor(state, 'turn_failed', {
               turnId: state.turn.turnId,
               reason: 'provider',
-              message: describeSpawnFailure(null, state.stderrTail),
+              message: describeSpawnFailure(null, state.stderrTail, state.workspaceRoot),
               ...providerCursorPayload(state),
             }),
           ])
@@ -830,7 +928,9 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // reconciled here, so the turn about to start runs under the preset the
     // session actually recorded. The respawn below resumes the same provider
     // session, so the conversation continues rather than restarting.
-    if (state.query && !childHonorsPreset(state)) disposeChild(state)
+    // One with background work in it was moved instead, or replaced, by
+    // reconcilePresetWhileBusy before the turn came here.
+    if (state.query && !childHonorsPreset(state) && !backgroundWorkRunning(state)) disposeChild(state)
     // A child still registering its servers is not ready for a message yet.
     if (state.query) return state.spawning ?? Promise.resolve()
     // Two callers racing past the check above would each stage a plugin folder
@@ -889,13 +989,40 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     const skillPlugin = state.skillIds?.length
       ? await stageAttachedSkills(tempDir, state.workspaceRoot, state.skillIds)
       : null
+    // A project whose commands cannot be read starts its chat without them.
+    const projectCommands = await stageProjectCommands(tempDir, state.workspaceRoot).catch(() => null)
     try {
       assertSpawnWanted(state, generation)
     } catch (error) {
       if (skillPlugin) removeSkillPlugin(skillPlugin)
+      if (projectCommands) removeSkillPlugin(projectCommands.dir)
       throw error
     }
     state.skillPluginDir = skillPlugin
+    state.projectCommands = projectCommands
+    const plugins = [skillPlugin, projectCommands?.dir].filter((dir): dir is string => Boolean(dir))
+    // A resume walks the session file back from its newest entry; a gap a
+    // crash left in it would bring back only the messages after the gap. A
+    // WSL machine's file is under its own Linux home, out of reach here.
+    let savedCostUsd = 0
+    if (state.providerSessionId && !wslTarget) {
+      const check = await ensureResumableTranscript(
+        resolveClaudeConfigDir(homedir(), env),
+        state.workspaceRoot,
+        state.providerSessionId,
+      )
+      state.resumeNote = transcriptCheckNote(check)
+      if ((check.kind === 'ok' || check.kind === 'repaired') && check.savedCostUsd) savedCostUsd = check.savedCostUsd
+      try {
+        assertSpawnWanted(state, generation)
+      } catch (error) {
+        if (skillPlugin) removeSkillPlugin(skillPlugin)
+        state.skillPluginDir = null
+        if (projectCommands) removeSkillPlugin(projectCommands.dir)
+        state.projectCommands = null
+        throw error
+      }
+    }
     const inputQueue = new PushStream<SDKUserMessage>()
     const abort = new AbortController()
     const permissionMode = nativePermissionMode(state, state.mode)
@@ -926,7 +1053,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // commands on this machine as soon as the session starts. Omitting the option loads every source,
       // so the list is always explicit. What the project contributes that the
       // agent does need arrives another way: its CLAUDE.md through the system
-      // prompt above, and attached skills as a plugin of their own.
+      // prompt above, attached skills as a plugin of their own, and the
+      // project's `.claude/commands` as another (claude-project-commands.ts).
       settingSources: ['user'],
       // Which is also why the app's MCP gateway is passed here rather than
       // read from the workspace's `.mcp.json`: a project's MCP servers are
@@ -938,9 +1066,11 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // Plain `--plugin-dir`, never `skipMcpDiscovery`: the SDK spells that
       // `--plugin-dir-no-mcp`, which a Claude Code older than the SDK does not
       // know, and the child exits on it. There is nothing to skip anyway: the
-      // staged plugin is written here with no `.mcp.json` and no `mcpServers`,
-      // so it can carry skills and nothing else.
-      ...(skillPlugin ? { plugins: [{ type: 'local', path: wslTarget ? toWslPath(skillPlugin) : skillPlugin }] } : {}),
+      // staged plugins are written here with no `.mcp.json` and no
+      // `mcpServers`, so they carry skills and commands and nothing else.
+      ...(plugins.length
+        ? { plugins: plugins.map((dir) => ({ type: 'local' as const, path: wslTarget ? toWslPath(dir) : dir })) }
+        : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
       env: withClaudeTaskTools(env),
       abortController: abort,
@@ -1010,7 +1140,39 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     }
     const q = sdkQuery({ prompt: inputQueue, options: queryOptions })
     state.query = q
-    state.queryCostUsd = 0
+    // A child in WSL writes its files inside that machine; only a local
+    // child's are read here.
+    const taskOutputRoot = wslTarget ? null : (options.claudeTaskOutputRoot ?? claudeTaskOutputRoot)(env)
+    state.commandOutputTails?.stopAll()
+    state.commandOutputTails = taskOutputRoot
+      ? createClaudeCommandOutput({
+          root: taskOutputRoot,
+          cwd: state.workspaceRoot,
+          ...(options.commandOutputPollMs !== undefined ? { pollMs: options.commandOutputPollMs } : {}),
+          emit: (chunk) => {
+            // Only into the turn the command runs in: a partial step must not
+            // open a turn of its own.
+            const turn = openTurn(state)
+            if (state.query !== q || !turn) return
+            deliver(state, [
+              eventFor(state, 'tool_output', {
+                turnId: turn.turnId,
+                toolCallId: chunk.toolUseId,
+                toolUseId: chunk.toolUseId,
+                output: chunk.output,
+                outputMode: 'append',
+                totalBytes: chunk.totalBytes,
+                partial: true,
+                status: 'ok',
+                isError: false,
+              } satisfies ConversationToolOutputPayload),
+            ])
+          },
+        })
+      : null
+    // A resumed child restores the session's saved cost total and reports it
+    // in its first result; only what it adds from here is this turn's.
+    state.queryCostUsd = savedCostUsd
     state.childPreset = state.permissionPreset
     state.childMode = ownSdkMode(state)
     state.inputQueue = inputQueue
@@ -1096,6 +1258,64 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // A tool the session was started pre-approved for stays pre-approved.
     if (state.allowedTools?.includes(toolName)) return false
     return !LOOKUP_TOOL_KINDS.has(claudeToolKind(toolName))
+  }
+
+  // Claude can enter plan mode on its own (EnterPlanMode), and a plan it then
+  // had rejected leaves it there. The chat's own mode says otherwise, so a
+  // reused child is moved back before the next message reaches it: to the
+  // preset's mode, or under `none` to 'default', unless the child started in
+  // plan mode, which is then the person's own default. One that will not move
+  // is replaced when nothing runs in the background, and otherwise stays in
+  // plan mode, which is the stricter of the two.
+  async function leaveStrayPlanMode(state: SessionState): Promise<void> {
+    const query = state.query
+    if (!query || state.cliMode !== 'plan' || nativePermissionMode(state, state.mode) === 'plan') return
+    const target = sdkPermissionMode(state)
+    if (target === undefined && state.cliSpawnMode === 'plan') return
+    const moved = await answeredWithin(query.setPermissionMode(target ?? 'default'), childAnswerTimeoutMs, {
+      rejectAsUnanswered: true,
+    })
+    if (state.query !== query) return
+    if (moved) state.cliMode = target ?? 'default'
+    else if (!backgroundWorkRunning(state)) {
+      disposeChild(state)
+      await ensureQuery(state)
+    }
+  }
+
+  // A child reads the project's commands when it starts. Before each message
+  // the folder is read again, and a change is written into the child's staged
+  // plugin and reloaded, as /reload-plugins does in a terminal, so the next
+  // message runs the command as it now stands. A child started while the
+  // project had none has no plugin to reload, and one whose CLI does not
+  // reload, or does not answer, is replaced (resumed) instead, unless
+  // background work runs in it: then the change waits for the next message.
+  async function refreshProjectCommands(state: SessionState, waiting: string[]): Promise<void> {
+    const query = state.query
+    if (!query || state.spawning) return
+    const files = await readProjectCommands(state.workspaceRoot).catch(() => null)
+    if (!files || state.query !== query) return
+    const staged = state.projectCommands
+    const fingerprint = projectCommandsFingerprint(files)
+    if (staged ? staged.fingerprint === fingerprint : files.length === 0) return
+    if (staged && typeof query.reloadPlugins === 'function') {
+      try {
+        await writeProjectCommandsPlugin(staged.dir, files)
+        staged.fingerprint = fingerprint
+        if (state.query !== query) return
+        // Held (it would change the tool list a cached prompt depends on,
+        // which only the person's own plugins can do): the commands then
+        // arrive with the next child, as the person's plugin change does.
+        const reloaded = await answeredWithin(query.reloadPlugins({ holdOnCacheImpact: true }), childAnswerTimeoutMs, {
+          rejectAsUnanswered: true,
+        })
+        if (reloaded || state.query !== query) return
+      } catch {
+        // Not written: the child is replaced below, and stages them afresh.
+      }
+    }
+    if (backgroundWorkRunning(state)) waiting.push('the project’s changed commands')
+    else disposeChild(state)
   }
 
   // Move the live child to another chat mode over the control channel rather
@@ -1221,10 +1441,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     })
     state.pendingPermissions.delete(requestId)
     let planTransitionError: string | undefined
-    if (decision.approved && plan !== null && state.mode === 'plan') {
+    // A plan Claude entered on its own (EnterPlanMode) leaves plan mode on
+    // approval too: the chat never chose it, so nothing else would.
+    if (decision.approved && plan !== null && (state.mode === 'plan' || state.cliMode === 'plan')) {
       try {
-        await state.query?.setPermissionMode(sdkPermissionMode(state) ?? 'default')
-        state.mode = 'default'
+        const target = sdkPermissionMode(state) ?? 'default'
+        await state.query?.setPermissionMode(target)
+        state.cliMode = target
+        if (state.mode === 'plan') state.mode = 'default'
       } catch (error) {
         decision.approved = false
         planTransitionError = error instanceof Error ? error.message : 'Could not leave plan mode.'
@@ -1284,6 +1508,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       rewind: true,
       fork: true,
       stopSubagent: true,
+      sideQuestion: true,
     },
     sessions: 'stateful',
     acceptsMcpServers: true,
@@ -1303,6 +1528,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         allowedTools: input.allowedTools,
         ...(input.mcpServers?.length ? { mcpServers: input.mcpServers } : {}),
         skillPluginDir: null,
+        projectCommands: null,
         onBeforeTool: input.onBeforeTool,
         providerSessionId: input.resumeSessionId?.trim() || null,
         lastChainUuid: null,
@@ -1318,12 +1544,15 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         pendingPermissions: new Map(),
         childPreset: null,
         childMode: null,
+        cliMode: null,
+        cliSpawnMode: null,
         pendingSessionEvents: [],
         onSessionEvent: input.onSessionEvent ?? null,
         continuationSequence: 0,
         lastActivityAt: now(),
         stderrTail: '',
         queryCostUsd: 0,
+        resumeNote: null,
         spawning: null,
         spawnGeneration: 0,
         pendingSendUuids: new Set(),
@@ -1331,7 +1560,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         textSeam: false,
         declinedToolUseIds: new Set(),
         subagents: new Map(),
-        agentLanes: new Map(),
+        agentLanes: new Map(input.knownSubagentLanes),
         tasks: new Map(),
         monitorCalls: new Map(),
         commandSkills: null,
@@ -1359,22 +1588,47 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         return
       }
       yield eventFor(state, 'turn_started', { turnId: input.turnId })
+      // What waits for the chat's background work, said once the turn opens.
+      const waiting: string[] = []
       try {
         const nextMode = input.mode ?? 'default'
+        // Each change below goes to the live child where it can, and
+        // replaces the child where it cannot, unless background work runs in
+        // it: that ends with the child, so the change waits, kept off the
+        // session's state so the next message tries it again.
         if (state.reasoningEffort !== input.reasoningEffort) {
-          disposeChild(state)
-          state.mode = nextMode
-          state.reasoningEffort = input.reasoningEffort
-        } else if (state.mode !== nextMode) {
-          if (!(await switchModeLive(state, nextMode))) disposeChild(state)
-          state.mode = nextMode
+          if (!state.query || (await applyEffortLive(state, input.reasoningEffort))) {
+            state.reasoningEffort = input.reasoningEffort
+          } else if (backgroundWorkRunning(state)) {
+            waiting.push('the new effort')
+          } else {
+            disposeChild(state)
+            state.reasoningEffort = input.reasoningEffort
+          }
+        }
+        if (state.mode !== nextMode) {
+          if (await switchModeLive(state, nextMode)) state.mode = nextMode
+          // Back to default from plan or ask: the child stays in the stricter
+          // mode meanwhile. Into plan or ask it never waits, since the turn
+          // would run with less care than the person asked for.
+          else if (nextMode === 'default' && backgroundWorkRunning(state)) waiting.push('default mode')
+          else {
+            disposeChild(state)
+            state.mode = nextMode
+          }
         }
         const skillIds = [...new Set(input.skills ?? [])].sort()
         if (JSON.stringify(skillIds) !== JSON.stringify(state.skillIds ?? [])) {
-          disposeChild(state)
-          state.skillIds = skillIds
+          if (backgroundWorkRunning(state)) waiting.push('the attached skills')
+          else {
+            disposeChild(state)
+            state.skillIds = skillIds
+          }
         }
+        await refreshProjectCommands(state, waiting)
+        await reconcilePresetWhileBusy(state)
         await ensureQuery(state)
+        await leaveStrayPlanMode(state)
       } catch (error) {
         yield eventFor(state, 'turn_failed', {
           turnId: input.turnId,
@@ -1397,6 +1651,18 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       state.turn = turn
       state.lastActivityAt = now()
       for (const pendingEvent of state.pendingSessionEvents.splice(0)) turn.queue.push(pendingEvent)
+      if (state.resumeNote) {
+        turn.queue.push(
+          eventFor(state, 'command_output', { turnId: input.turnId, adapterNote: true, output: state.resumeNote }),
+        )
+        state.resumeNote = null
+      }
+      if (waiting.length > 0)
+        turn.queue.push(
+          eventFor(state, 'session_updated', {
+            notice: waitingNotice(waiting),
+          }),
+        )
 
       const onAbort = (): void => {
         interruptChild(state)
@@ -1417,11 +1683,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // skills stay loaded for the command either way.
       const opensWithCommand =
         leadingCommandFor(input.message, { cli: CLAUDE_COMMANDS_CLI, cwd: state.workspaceRoot }) !== null
+      // Skills that wait for background work are not loaded yet, so the note
+      // does not name them.
+      const skillsLoaded = !waiting.includes('the attached skills')
       if (!turn.queue.closed)
         pushUserMessage(
           state,
           buildUserMessageContent(
-            input.skills?.length && !opensWithCommand
+            input.skills?.length && skillsLoaded && !opensWithCommand
               ? `Use the attached skills: ${input.skills.map(attachedSkillName).join(', ')}.\n\n${input.message}`
               : input.message,
             input.attachments,
@@ -1764,6 +2033,47 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       return answeredWithin(q.stopTask(agent.taskId), childAnswerTimeoutMs, { rejectAsUnanswered: true })
     },
 
+    // A side question is Claude Code's own /btw, asked over the control
+    // channel: the child answers it in one reply from the conversation it
+    // holds, refuses it every tool, writes nothing to its session file, and
+    // goes on with a turn it is running. A live child is asked as it is, under
+    // whatever preset it runs, since the answer runs nothing; one is started
+    // (resuming the session, as a message would) only when the chat has none.
+    // The cost joins the child's running total, so the next turn's result
+    // reports it once. Called off by the signal, which the SDK passes on.
+    async askSideQuestion(
+      sessionId: string,
+      input: ConversationProviderSideQuestionInput,
+    ): Promise<ConversationSideQuestionResult> {
+      const state = sessions.get(sessionId)
+      if (!state) return { ok: false, message: 'Conversation session is invalid.' }
+      try {
+        if (!state.query) await ensureQuery(state)
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : 'Claude Code could not be started.' }
+      }
+      const q = state.query as SideQuestionQuery | null
+      if (!q) return { ok: false, message: 'Claude Code is not running for this chat.' }
+      if (typeof q.askSideQuestion !== 'function') return { ok: false, message: SIDE_QUESTION_UNSUPPORTED }
+      state.lastActivityAt = now()
+      try {
+        const answer = await q.askSideQuestion(input.question, {
+          signal: input.signal,
+          ...(input.history.length
+            ? { history: input.history.map((entry) => ({ question: entry.question, response: entry.answer })) }
+            : {}),
+        })
+        const text = typeof answer?.response === 'string' ? answer.response.trim() : ''
+        return text ? { ok: true, answer: text } : { ok: false, message: 'Claude Code gave no answer to that.' }
+      } catch (error) {
+        if (state.query !== q) return { ok: false, message: 'Claude Code stopped before it answered.' }
+        const message = error instanceof Error ? error.message : String(error)
+        return { ok: false, message: /unsupported|not supported/i.test(message) ? SIDE_QUESTION_UNSUPPORTED : message }
+      } finally {
+        state.lastActivityAt = now()
+      }
+    },
+
     disposeChildProcess(sessionId: string, _options?: ConversationDisposeOptions): boolean {
       const state = sessions.get(sessionId)
       if (!state) return false
@@ -1796,14 +2106,10 @@ const ATTACHED_SKILLS_PLUGIN = 'attached-skills'
 // the user setting source still loads; only workspace skills are staged.
 const attachedSkillName = (id: string) => (id.includes(':') ? id : `${ATTACHED_SKILLS_PLUGIN}:${id}`)
 
-// Staged folders are named for the process that made them, so a sweep can
-// tell one a running app still uses from one a dead process left behind.
-const SKILL_PLUGIN_PREFIX = 'sprintengine-claude-skills-'
-
 async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skillIds: string[]): Promise<string | null> {
   skillIds = skillIds.filter((id) => !id.includes(':'))
   if (!skillIds.length) return null
-  const dir = await mkdtemp(join(tempDir, `${SKILL_PLUGIN_PREFIX}${process.pid}-`))
+  const dir = await mkdtemp(join(tempDir, `${STAGED_PLUGIN_PREFIX}${process.pid}-`))
   try {
     await mkdir(join(dir, '.claude-plugin'))
     await writeFile(
@@ -1833,12 +2139,12 @@ export async function sweepStaleSkillPlugins(tempDir: string): Promise<void> {
   const startedAt = Date.now() - process.uptime() * 1000
   const uid = process.getuid?.()
   for (const name of await readdir(tempDir)) {
-    if (!name.startsWith(SKILL_PLUGIN_PREFIX)) continue
+    if (!name.startsWith(STAGED_PLUGIN_PREFIX)) continue
     const path = join(tempDir, name)
     const info = await lstat(path).catch(() => null)
     if (!info?.isDirectory() || info.isSymbolicLink() || info.mtimeMs >= startedAt) continue
     if (uid !== undefined && info.uid !== uid) continue
-    const owner = /^(\d+)-/.exec(name.slice(SKILL_PLUGIN_PREFIX.length))?.[1]
+    const owner = /^(\d+)-/.exec(name.slice(STAGED_PLUGIN_PREFIX.length))?.[1]
     if (owner ? isRunning(Number(owner)) : Date.now() - info.mtimeMs < 24 * 60 * 60 * 1000) continue
     await rm(path, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -1885,6 +2191,54 @@ const MCP_REGISTRATION_TIMEOUT_MS = 90_000
 // How long, and how often, a server's state is read again after a sign-in.
 const MCP_SIGN_IN_WATCH_MS = 5 * 60_000
 const MCP_SIGN_IN_POLL_MS = 3_000
+
+// The titles Claude Code gives an assistant message's tool calls
+// (`tool_use_meta`, beside the message, never in it: an MCP tool's
+// `annotations.title` or a readable form of its wire name, and its server's
+// display name), by call id. Plain text only, kept short: the server wrote
+// it, and it is shown as a row's title on every device. The icon URL it may
+// carry is left: a row draws its kind's glyph, never a server's picture.
+const TOOL_DISPLAY_CHARS = 120
+
+function toolDisplays(meta: unknown): Map<string, { displayTitle?: string; serverName?: string }> {
+  const displays = new Map<string, { displayTitle?: string; serverName?: string }>()
+  if (!Array.isArray(meta)) return displays
+  const clean = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined
+    const text = value
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return text ? text.slice(0, TOOL_DISPLAY_CHARS) : undefined
+  }
+  for (const entry of meta.map(asRecord)) {
+    if (!entry || typeof entry.id !== 'string') continue
+    const displayTitle = clean(entry.display_name)
+    const serverName = clean(entry.server_display_name)
+    if (displayTitle || serverName)
+      displays.set(entry.id, { ...(displayTitle ? { displayTitle } : {}), ...(serverName ? { serverName } : {}) })
+  }
+  return displays
+}
+
+// "The new effort and the attached skills will apply …": what a turn left
+// waiting for the chat's background work, as the notice that says so.
+function waitingNotice(waiting: string[]): string {
+  const list = waiting.length > 1 ? `${waiting.slice(0, -1).join(', ')} and ${waiting.at(-1)}` : waiting[0]!
+  return `${list[0]!.toUpperCase()}${list.slice(1)} will apply to your messages once the background work in this chat finishes.`
+}
+
+// The SDK's `askSideQuestion`, which its typings do not declare yet: the
+// question, the side questions before it as `{ question, response }`, and an
+// abort signal; null when it was called off.
+type SideQuestionQuery = Query & {
+  askSideQuestion?(
+    question: string,
+    options?: { history?: Array<{ question: string; response: string }>; signal?: AbortSignal },
+  ): Promise<{ response: string | null; synthetic?: boolean } | null>
+}
+
+const SIDE_QUESTION_UNSUPPORTED = 'This version of Claude Code cannot answer side questions. Update it to ask one.'
 
 /**
  * Whether `promise` settled within `ms`. A rejection counts as an answer
@@ -2119,12 +2473,10 @@ function spawnLocalChild(spawnInput: SpawnOptions): ChildProcess {
   const launch = localLaunchToken(launchIdentityOfEnv(env))
   let child: ChildProcess
   try {
-    child = spawn(spawnInput.command, spawnInput.args, {
+    child = spawnClaudeLocalProcess(spawnInput.command, spawnInput.args, {
       cwd: spawnInput.cwd,
       env: claudeLocalChildEnv(env, launch?.token ?? null, spawnInput.cwd),
-      stdio: ['pipe', 'pipe', 'pipe'],
       signal: spawnInput.signal,
-      windowsHide: true,
     })
   } catch (error) {
     launch?.revoke()
@@ -2317,6 +2669,15 @@ export function mapSdkMessage(
     promptCacheTtl?: PromptCacheTtl | null
     commandOutputShown?: boolean
     compactedInExchange?: boolean
+    // The permission mode the child last said it runs in (its init's and its
+    // status messages' `permissionMode`), and the one its first init named:
+    // Claude can enter plan mode on its own (EnterPlanMode), which no mode the
+    // chat set accounts for.
+    cliMode?: string | null
+    cliSpawnMode?: string | null
+    // A compaction is under way: the CLI repeats its `compacting` status every
+    // half minute while it summarises, and the transcript hears it once.
+    compacting?: boolean
     // The context window's reading, carried between the messages that make
     // it up: the model the init named (whose `modelUsage` row is the main
     // chain's), and the size of the main chain's latest request — what it sent
@@ -2354,6 +2715,12 @@ export function mapSdkMessage(
     // those calls still waiting for their results (claude-task-list.ts).
     claudeTasks?: ClaudeTaskList
     taskToolCalls?: Map<string, { name: string; input: Record<string, unknown> }>
+    // The model refused and the CLI answered on its fallback model, already
+    // noted (it may say so mid-turn and again as the turn ends); and why the
+    // model refused when no fallback ran, for the turn's end to say. Both
+    // cleared at every result.
+    refusalFallbackNoted?: boolean
+    refusalExplanation?: string
   },
   message: Record<string, unknown>,
   // exchangeContinues: a `result` that answers only part of what the child was
@@ -2410,6 +2777,10 @@ export function mapSdkMessage(
   // is written to the transcript as is.
   const apiKeySource = init ? normalizeApiKeySource(message.apiKeySource) : null
   if (init && typeof message.model === 'string' && message.model) state.contextModel = message.model
+  if (init && typeof message.permissionMode === 'string') {
+    state.cliSpawnMode ??= message.permissionMode
+    state.cliMode = message.permissionMode
+  }
   const billing = init ? claudeBillingOf(apiKeySource) : null
   if (billing) {
     state.usageBilling = billing
@@ -2485,6 +2856,51 @@ export function mapSdkMessage(
         )
         break
       }
+      // The CLI is summarising the conversation, on /compact or on its own
+      // when the window filled. A summary takes a minute or more, and a turn
+      // that said "Thinking…" through it read as the model working.
+      if (message.subtype === 'status') {
+        if (typeof message.permissionMode === 'string') state.cliMode = message.permissionMode
+        const compacting = message.status === 'compacting'
+        if (compacting && !state.compacting) events.push(eventFor(state, 'context_compacting', { turnId }))
+        state.compacting = compacting
+        break
+      }
+      // The model refused, and the CLI answered again on its fallback model.
+      // The reply that follows is that model's, so the transcript says so, in
+      // the CLI's own words. When the swap is the session's (not only a
+      // subagent's or a side question's answer), the context window is read
+      // as the fallback model's from here.
+      if (message.subtype === 'model_refusal_fallback') {
+        const fallback = typeof message.fallback_model === 'string' ? message.fallback_model : ''
+        if (fallback && message.scope !== 'local') state.contextModel = fallback
+        const said = typeof message.content === 'string' ? message.content.trim() : ''
+        const output = said || (fallback ? `The model declined to answer, so ${fallback} answered instead.` : '')
+        if (output && !state.refusalFallbackNoted) {
+          state.refusalFallbackNoted = true
+          events.push(eventFor(state, 'command_output', { turnId, adapterNote: true, output }))
+        }
+        break
+      }
+      // A line the CLI shows its own user: a hook's word on the prompt (a
+      // UserPromptSubmit hook that blocks it says why only here), a model
+      // switch, a held session. Without it a blocked prompt ended a turn that
+      // said nothing at all. `info` lines are the CLI's transcript-mode
+      // detail (a tool's running time, "Compacting…"), shown elsewhere.
+      if (message.subtype === 'informational') {
+        const said = typeof message.content === 'string' ? message.content.trim() : ''
+        if (said && message.level !== 'info')
+          events.push(eventFor(state, 'command_output', { turnId, adapterNote: true, output: said }))
+        break
+      }
+      // The model refused and no fallback ran. The message has no words of its
+      // own; the API's explanation, when it gave one, goes with the turn's end.
+      if (message.subtype === 'model_refusal_no_fallback') {
+        const explanation =
+          typeof message.api_refusal_explanation === 'string' ? message.api_refusal_explanation.trim() : ''
+        if (explanation) state.refusalExplanation = explanation
+        break
+      }
       // The CLI summarised the conversation to free context, on /compact or
       // on its own when the window filled. The transcript marks the seam, since
       // the model no longer sees what came before it verbatim.
@@ -2496,6 +2912,7 @@ export function mapSdkMessage(
         break
       }
       state.compactedInExchange = true
+      state.compacting = false
       const metadata = asRecord(message.compact_metadata)
       const trigger = metadata?.trigger === 'manual' || metadata?.trigger === 'auto' ? metadata.trigger : undefined
       const preTokens = finiteNumber(metadata?.pre_tokens)
@@ -2590,6 +3007,7 @@ export function mapSdkMessage(
         break
       }
       const tracked = parentToolUseId ? state.subagents?.get(parentToolUseId) : undefined
+      const displays = toolDisplays(message.tool_use_meta)
       for (const rawBlock of content) {
         const block = asRecord(rawBlock)
         // What an agent says between its steps belongs to its own thread. A
@@ -2616,13 +3034,16 @@ export function mapSdkMessage(
         const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
         if (taskTool)
           (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+        const kind = taskTool ? 'todo' : inferConversationToolKind(block.name)
+        const display = kind === 'mcp' && typeof block.id === 'string' ? displays.get(block.id) : undefined
         const payload: ConversationToolStartedPayload = {
           turnId,
           toolCallId: typeof block.id === 'string' ? block.id : undefined,
           tool: block.name,
           toolUseId: typeof block.id === 'string' ? block.id : undefined,
           name: block.name,
-          kind: taskTool ? 'todo' : inferConversationToolKind(block.name),
+          kind,
+          ...display,
           input: JSON.parse(
             JSON.stringify({
               ...toolInput,
@@ -2645,6 +3066,14 @@ export function mapSdkMessage(
     case 'user': {
       const parentToolUseId = readParentToolUseId(message)
       const content = asRecord(message.message)?.content
+      // A slash command that stops before the model is asked, a `!` line of
+      // it refused by Claude Code's permission check above all, says why in a
+      // user message of the CLI's own making and nowhere else; the turn then
+      // ends with no reply. Claude Code 2.1.296 escapes the text as markup.
+      if (!parentToolUseId && typeof content === 'string' && /^\s*<local-command-stderr>/.test(content)) {
+        commandOutput(unescapeMarkup(stripLocalCommandTags(content)), undefined)
+        break
+      }
       if (!Array.isArray(content)) break
       // The structured result describes the message's one tool result; one
       // that answers several calls at once says nothing a task can be read from.
@@ -2738,6 +3167,10 @@ export function mapSdkMessage(
         commandOutput(message.result, message.local_command)
       state.commandOutputShown = false
       state.compactedInExchange = false
+      state.compacting = false
+      const refusalExplanation = state.refusalExplanation
+      state.refusalExplanation = undefined
+      state.refusalFallbackNoted = false
       const refusals = [...(state.usageRefusals?.values() ?? [])]
       const heardRefusal = refusals.length > 0 || state.assistantRateLimited === true
       const authFailed = state.assistantAuthFailed === true
@@ -2860,11 +3293,16 @@ export function mapSdkMessage(
             reason: typeof message.subtype === 'string' && message.subtype !== 'success' ? message.subtype : 'provider',
             message: missingForkPoint
               ? 'Claude Code could not go back to that earlier message because its session no longer has it, so this message was not answered. Send it again to continue from the latest point of the conversation; the agent will still remember the messages after the one you edited.'
-              : reported || 'Claude Code reported an error for this turn.',
+              : [reported || 'Claude Code reported an error for this turn.', refusalExplanation]
+                  .filter(Boolean)
+                  .join('\n\n'),
             ...providerCursorPayload(state),
           }),
         )
       } else {
+        // A refusal the CLI ended as an answer still says why.
+        if (refusalExplanation)
+          events.push(eventFor(state, 'command_output', { turnId, adapterNote: true, output: refusalExplanation }))
         // The CLI's `result` is the text of the turn's last assistant message.
         const text = typeof message.result === 'string' && message.result.trim() ? message.result : undefined
         events.push(
@@ -3146,6 +3584,12 @@ function stripLocalCommandTags(text: string): string {
   return text.replace(/<\/?local-command-(?:stdout|stderr)>/g, '')
 }
 
+const MARKUP_ENTITIES: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", amp: '&' }
+
+function unescapeMarkup(text: string): string {
+  return text.replace(/&(lt|gt|quot|apos|#39|amp);/g, (_, name: string) => MARKUP_ENTITIES[name]!)
+}
+
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
@@ -3278,10 +3722,22 @@ function extractResultText(content: unknown): string {
     .join('\n')
 }
 
-function describeSpawnFailure(error: unknown, stderrTail: string): string {
+/** Why the Claude Code child ended a turn it was in: its error, then the end of what it wrote on stderr. */
+export function describeSpawnFailure(
+  error: unknown,
+  stderrTail: string,
+  folder?: string | null,
+  machine: { platform: string; home: string } = { platform: process.platform, home: homedir() },
+): string {
   const base = error instanceof Error && error.message ? error.message : 'Claude Code exited unexpectedly.'
   const tail = cliStderrSummary(stderrTail)
-  return tail ? `${base} (${tail})` : base
+  // A project in Desktop, Documents, Downloads or iCloud Drive that macOS has
+  // not let the app into: the CLI dies with EPERM, and the fix is a setting.
+  return withMacosPrivacyFolderHint(tail ? `${base} (${tail})` : base, {
+    ...machine,
+    folder,
+    evidence: stderrTail,
+  })
 }
 
 /**

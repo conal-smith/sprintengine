@@ -13,8 +13,8 @@ const HANDSHAKE_COMMAND_CLIS = new Set(['grok'])
  * and publishes them. Only the CLIs that can answer without opening a
  * conversation are asked: Claude Code (its control channel answers with no
  * turn sent), Codex (its app-server lists skills with no thread) and Grok
- * (its ACP handshake carries the list). Cursor and OpenCode list
- * theirs only inside a session, which would leave an empty chat in their own
+ * (its ACP handshake carries the list). Cursor, OpenCode and Kimi Code
+ * list theirs only inside a session, which would leave an empty chat in their own
  * history, so they publish once a chat's session opens. Resolves null for a
  * CLI with no such way, or when asking failed (the failure is published).
  */

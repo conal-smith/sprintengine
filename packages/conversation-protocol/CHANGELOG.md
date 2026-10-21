@@ -2,7 +2,107 @@
 
 ## Unreleased
 
+### Changed
+
+- **A command led by shell grammar is not named after it.** `labelCommand`
+  read `if`, `for`, `[`, `{`, `(cd` or `!` as the program that ran ("Ran if",
+  "Ran ["). Control keywords, `test` and `[ … ]` conditions, `true`, `false`,
+  `:` and function definitions now label as "Ran command", and a subshell,
+  group, negation or `eval` is labelled by the command it holds. A pinned
+  file: the phone's copy changes with it.
+
 ### Added
+
+- **A listed chat says when its work began, how it began, and whether it
+  sleeps.** `workingSince`, `scheduledAgentId` and `snoozedUntil` are optional
+  members of `ConversationThread`. `workingSince` is when the chat's current
+  stretch of work began: the person's message that began it, held through the
+  turns the chat opens by itself while its `backgroundWork` goes on, where
+  `turnStartedAt` restarts with each. The desktop's own sidebar counts
+  "working for" from it, and lists it whenever it counts the chat as working.
+  `scheduledAgentId` names the schedule whose run started the chat, which the
+  desktop marks with the schedule's clock. `snoozedUntil` is when a chat the
+  person snoozed wakes, listed only while that is ahead. All three are absent
+  from a desktop built before they were listed. `parseConversationServerFrame`
+  keeps `workingSince` and `snoozedUntil` when each is a clock and
+  `scheduledAgentId` when it is an id, and leaves out anything else. The
+  pinned files are unchanged.
+- **A listed chat says what its checkout carries, and whether it is a
+  worktree.** `changes` is an optional member of `ConversationThread`,
+  `ConversationWireChanges` (`{ added, updated, removed, scope?, uncommitted? }`):
+  the files the chat's branch added, updated and removed, as the desktop's own
+  sidebar line and composer strip count them, whose changes they are
+  (`ConversationWireChangeScope`: `worktree`, `branch` or `folder`), and the
+  uncommitted ones alone.
+  Listed only for a chat with a live session. `worktree: true` says the chat
+  works in a git worktree of its project. Both are absent from a desktop built
+  before they were listed. `parseConversationServerFrame` keeps `changes` when
+  every count is whole and not negative (`parseConversationWireChanges`), and
+  `worktree` only when it is `true`. The pinned files are unchanged.
+- **A listed chat says what it still has working after its turn.**
+  `backgroundWork` is an optional member of `ConversationThread`,
+  `ConversationBackgroundWork` (`{ agents, monitors }`): the background agents
+  the chat launched that are still running, and the background tasks that will
+  wake its agent (a monitor with a deadline, or a task it is told about when it
+  ends). The desktop's own sidebar counts such a chat as working; its `phase`
+  stays the turn's, so a client that holds sends while a turn runs does not
+  hold them for background work. Absent when nothing works in the background,
+  and from a desktop built before it was listed.
+  `parseConversationServerFrame` keeps it when both counts are whole and one
+  is above zero, and leaves it out otherwise (`parseConversationBackgroundWork`).
+  The pinned files are unchanged.
+- **A session can have a goal.** `ConversationGoal` (`objective`, `status`)
+  is a goal the agent keeps working toward by itself, and
+  `ConversationGoalStatus` says where it stands. A `session_updated` event
+  carries it as `goal` when it changes, and `goal: null` once there is none.
+  The turns the agent starts toward it come as `turn_started` with no
+  `user_message` before them, as a turn an agent carries on with by itself
+  always has. No frame changed; the pinned files are unchanged.
+- **A listed chat says where the desktop's sidebar orders it, and when its
+  turn began.** `recencyAt` and `turnStartedAt` are optional members of
+  `ConversationThread`. `recencyAt` is the moment the desktop's own sidebar
+  sorts the chat by: `lastUserMessageAt` when a person has written to it, else
+  when the chat was made or last typed into there, which `lastUserMessageAt`
+  alone could not say. `turnStartedAt` is when the running turn began. Both are
+  absent from a desktop built before they were listed;
+  `parseConversationServerFrame` keeps each when it is a clock and leaves out
+  anything else. The pinned files are unchanged.
+- **A message can carry files, not only pictures.**
+  `CONVERSATION_MESSAGE_FILES_CAPABILITY` (`conversation-message-files`) names
+  a desktop whose upload route takes `kind=file`: a file of any type, which a
+  `send` names in `uploadIds` as it names a picture and which the message then
+  carries by its path on that desktop (`files` on the `user_message`). No
+  frame changed; a client without it offers pictures only. The pinned files
+  are unchanged.
+- **An uploaded picture is sized for the model by the desktop.**
+  `CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY` (`conversation-image-downscale`)
+  names a desktop that shrinks a picture uploaded for a chat on receipt, to the
+  1568px long edge its own composer sends, so its upload route takes up to
+  20 MB where it took 5 MB; what it keeps is still at most 5 MB. No frame
+  changed; a client without it keeps its upload under 5 MB itself. The pinned
+  files are unchanged.
+
+- **The pictures a person sent with a message can be fetched.**
+  `CONVERSATION_MESSAGE_IMAGES_CAPABILITY` (`conversation-message-images`)
+  names a desktop whose `GET /tailnet/v1/conversation-image` takes
+  `attachment`, the `ref` of an entry in a `user_message`'s `attachments`, in
+  place of `toolUseId`, and serves that picture when the chat kept it. No
+  frame changed; a client without it names the picture as before. The pinned
+  files are unchanged.
+- **A message may steer the turn that is running.**
+  `CONVERSATION_STEER_SENDS_CAPABILITY` (`conversation-steer-sends`) names a
+  desktop that takes `steer: true` on `send`: the message goes into the turn
+  the chat is running rather than waiting for it to end, where its provider
+  takes one, and the send is answered when that turn ends. A listed
+  `ConversationThread` says which chats can, as `capabilities.steer`. With no
+  turn running the send is an ordinary one; a turn that cannot take it has the
+  desktop hold the message as a queued one, answered at once with a `notice`,
+  or, for a message with `uploadIds` or `skills` that a held one cannot carry,
+  refused `busy`. Never beside `queue`. `parseConversationClientMessage` keeps
+  `steer` when it is `true` and refuses the frame otherwise;
+  `parseConversationServerFrame` keeps `capabilities.steer` when it is a
+  boolean. A desktop without the capability drops the member. The pinned files
+  are unchanged.
 
 - **A wake about a watched pull request is Studio's.** `pull-request-watch`
   joins `ConversationStudioMessageReason`: the desktop sent the chat news

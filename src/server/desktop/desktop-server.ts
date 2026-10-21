@@ -4,7 +4,9 @@ import { SHELL_TOOLSETS, serverAutomationTools } from './shell-toolsets'
 import type { TerminalSessionSnapshot } from '../../shared/electron-api'
 import { applyGatewayLaunchTokenChange, type LaunchTokenChange } from '../core/gateway-launch-tokens'
 import { createTailnetTools, type TailnetToolsFrontDoor } from '../../main/automation/tailnet/tailnet-tools'
+import { readChatExportSource } from '../../main/chat-export/chat-export-source'
 import { cliResumeCapabilities } from '../../main/cli-resume-capabilities'
+import { parseTranscriptInput } from '../../main/conversation-ipc-inputs'
 import { createConversationAttentionListener } from '../../main/conversation-attention'
 import { chatHandoffStart, createConversationTerminalHandoff } from '../../main/conversation-terminal-handoff'
 import { setDiagnosticsLogName, writeDiagnosticLog } from '../../main/diagnostics-service'
@@ -284,6 +286,9 @@ export const startDesktopServer: ServerStart = async ({ envelope, rpc, log, requ
       tailnetNotifier.onMeshEvent(event)
     },
     hasWindow: () => anyWindowVisible,
+    // A paired device's picture is shrunk by the shell, which has the image
+    // codec this process lacks.
+    downscaleUpload: (bytes, mediaType) => bridge.images.downscale(bytes, mediaType),
     resolveModuleTools: () => modules.mcpTools(),
     isModuleEnabled: (moduleId) => modules.isEnabled(moduleId),
     // The shell offers what acts on a screen or a terminal (6.3): an agent's
@@ -630,6 +635,12 @@ function serveShellRequests(deps: {
     return core.conversations
       .readPeekTranscript({ workspaceRoot, workspaceId: summary.workspaceId, agentId: summary.agentId })
       .catch(() => [])
+  })
+  // Export chat: the shell writes the file, the chats are here.
+  rpc.handle(SERVER_METHODS.conversationExportSource, async (params) => {
+    const parsed = parseTranscriptInput(params)
+    if (!parsed.ok) return parsed
+    return readChatExportSource(core.conversations, parsed.input)
   })
   rpc.handle(SERVER_METHODS.discoverModels, (params) =>
     discoverAndBroadcastCliModels((params ?? {}) as Parameters<typeof discoverAndBroadcastCliModels>[0]),

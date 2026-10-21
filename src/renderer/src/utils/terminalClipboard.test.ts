@@ -453,3 +453,61 @@ test('a pane paste override receives the paste instead of xterm', async () => {
   assert.equal(propagated, false, 'the event does not go on to the textarea xterm pastes from')
   dispose()
 })
+
+// Ctrl+C with a selection copies on Windows and Linux instead of reaching the
+// CLI as ^C, and leaves no selection behind so the next Ctrl+C interrupts.
+test('Ctrl+C copies a selection outside macOS, and interrupts once it is gone', async () => {
+  const copied: string[] = []
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      api: {
+        clipboardWriteText: async (text: string) => {
+          copied.push(text)
+        },
+        clipboardReadText: async () => '',
+      },
+    },
+  })
+  const ctrlC = () =>
+    Object.assign(new Event('keydown', { cancelable: true }), {
+      key: 'c',
+      code: 'KeyC',
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    }) as KeyboardEvent
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    copied.length = 0
+    let selection = 'npm ERR! code ELIFECYCLE'
+    const container = new EventTarget() as HTMLElement
+    const dispose = bindTerminalClipboardHandlers({
+      container,
+      focusTerminal: () => {},
+      platform,
+      term: {
+        getSelection: () => selection,
+        hasSelection: () => Boolean(selection),
+        clearSelection: () => {
+          selection = ''
+        },
+      } as never,
+    })
+    const first = ctrlC()
+    container.dispatchEvent(first)
+    await Promise.resolve()
+    if (platform === 'darwin') {
+      assert.equal(first.defaultPrevented, false, 'macOS leaves Ctrl+C to the shell')
+      assert.deepEqual(copied, [])
+    } else {
+      assert.equal(first.defaultPrevented, true, `${platform}: the key does not reach the CLI`)
+      assert.deepEqual(copied, ['npm ERR! code ELIFECYCLE'])
+      assert.equal(selection, '', 'and the selection is cleared')
+      const second = ctrlC()
+      container.dispatchEvent(second)
+      assert.equal(second.defaultPrevented, false, 'so the next Ctrl+C is the interrupt')
+    }
+    dispose()
+  }
+})

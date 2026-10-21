@@ -2,6 +2,7 @@ import React from 'react'
 
 import { CloseIconButton, Input } from '../../../ui'
 import { formatScheduleTime, parseScheduleTime, type ScheduleTime } from './scheduleEditor'
+import { isImeKey } from '../../../../utils/imeKey'
 
 /**
  * One time of day, typed: "9", "9:30", "9pm", "21:00". Read on Enter or when
@@ -36,6 +37,7 @@ export function TimeField({
         onChange={(event) => setText(event.currentTarget.value)}
         onBlur={commit}
         onKeyDown={(event) => {
+          if (isImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commit()

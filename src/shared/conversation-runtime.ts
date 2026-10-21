@@ -25,6 +25,8 @@ export type {
   ConversationCursor,
   ConversationEvent,
   ConversationEventType,
+  ConversationGoal,
+  ConversationGoalStatus,
   ConversationJsonValue,
   ConversationMessageOrigin,
   ConversationPage,
@@ -100,6 +102,15 @@ export type ConversationSessionSummary = {
   // carried on by itself. A message steered into a running turn does not move
   // it. Absent between turns, so a "working for" count needs no event stream.
   turnStartedAt?: number
+  // When the chat's current stretch of work began (conversation/
+  // workingStretch.ts): the person's message that began it, carried through
+  // the turns the chat opens by itself while a background agent or a monitor
+  // still works, where `turnStartedAt` restarts with each. The sidebar's
+  // "working for" count, here and on a paired machine. Present only while the
+  // summary reads as working (`conversationSummaryPhase` running or
+  // starting), and absent from a server built before it, where the sidebar
+  // keeps its own reading.
+  workingSince?: number
   // When the chat began waiting on the person: the request (an approval or a
   // question) that stopped it, by the event's own time, so a resume restores
   // it from the transcript. A second card while one is up does not move it.
@@ -373,6 +384,27 @@ export type ConversationStopSubagentInput = {
   toolUseId: string
 }
 
+/**
+ * A side question about a chat: answered from what the chat's agent knows, and
+ * kept out of the conversation. Neither the question nor its answer enters the
+ * agent's context, the transcript or the chat's history, and a turn the chat
+ * is running goes on undisturbed. `requestId` is the caller's, so the question
+ * can be called off while it is answered (`cancelSideQuestion`). `history` is
+ * the side questions asked before it in the same aside, oldest first, so a
+ * follow-up can lean on them.
+ */
+export type ConversationSideQuestionInput = {
+  sessionId: string
+  requestId: string
+  question: string
+  history?: ConversationSideQuestionExchange[]
+}
+export type ConversationSideQuestionExchange = { question: string; answer: string }
+/** `cancelled`: called off before it was answered, which says nothing to the person. */
+export type ConversationSideQuestionResult =
+  { ok: true; answer: string } | { ok: false; message: string; cancelled?: true; code?: string }
+export type ConversationCancelSideQuestionInput = { sessionId: string; requestId: string }
+
 export type ConversationStopSessionInput = {
   // What the command was, hashed by whoever named its id: a receipt keeps it,
   // and the same id coming back for a different command is refused rather
@@ -513,6 +545,10 @@ export type ConversationCapabilities = {
   // One agent the chat spawned can be stopped by itself, leaving the chat,
   // its turn and its other agents running. Without it a lane offers no Stop.
   stopSubagent?: boolean
+  // A side question can be asked about the chat and answered from its
+  // context without entering it, even while a turn runs. Without it the
+  // action is not offered.
+  sideQuestion?: boolean
 }
 export type ConversationCheckpointFile = {
   path: string

@@ -44,6 +44,14 @@ const ROOTS = [
   'v2/FileChangeRequestApprovalParams',
   'v2/ToolRequestUserInputParams',
   'v2/ThreadForkParams',
+  'v2/ThreadGoalSetParams',
+  'v2/ThreadGoalSetResponse',
+  'v2/ThreadGoalGetParams',
+  'v2/ThreadGoalGetResponse',
+  'v2/ThreadGoalClearParams',
+  'v2/ThreadGoalClearResponse',
+  'v2/ThreadGoalUpdatedNotification',
+  'v2/ThreadGoalClearedNotification',
 ]
 
 const version = execFileSync(codex, ['--version'], { encoding: 'utf8' }).trim()

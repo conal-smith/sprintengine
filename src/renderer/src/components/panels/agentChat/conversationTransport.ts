@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react'
 import { windowStudioClient } from '../../../studio/windowStudioClient'
 import { ipcChatServices, type ChatServices } from './chatServices'
 import { createStudioChatServices, createStudioConversationParts } from './studioChat'
+import { remotePullRequestHost, type PullRequestHost } from './pullRequestHost'
 import type {
   ConversationAttachmentInput,
   ConversationAttachmentResult,
@@ -21,6 +22,9 @@ import type {
   ConversationSessionSummary,
   ConversationSetModelInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationSetPermissionInput,
   ConversationStartSessionInput,
   ConversationStartSessionResult,
@@ -115,6 +119,13 @@ export type ConversationTransportCapabilities = {
    * advertises taking them (`conversation-send-skills`).
    */
   skills: boolean
+  /**
+   * The machine the chat runs on opens a pull request for it: Create PR asks
+   * it through `pullRequestHost`, where it advertises that
+   * (`chat-create-pull-request`). False here, where the chat's checkout is
+   * this computer's and Create PR asks this computer's shell.
+   */
+  hostPullRequests: boolean
 }
 
 /** What an action answers: the local session API's result, or a remote command's. */
@@ -129,6 +140,8 @@ export type ConversationTransport = {
   machineName?: string
   /** Where a remote chat's skills and MCP servers are listed: the machine and the project there. */
   remoteExtensions?: { connectionId: string; workspaceId: string }
+  /** Where a remote chat's Create PR does its work, used where `capabilities.hostPullRequests` is. */
+  pullRequestHost?: PullRequestHost
   capabilities: ConversationTransportCapabilities
   subscribe(input: ConversationSubscribeInput, cb: (frame: ConversationSessionFrame) => void): () => void
   loadEarlier(input: ConversationLoadEarlierInput): Promise<ConversationPageResult>
@@ -186,6 +199,17 @@ export type ConversationTransport = {
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
   /**
+   * Ask a side question about the chat: answered from its context, added to
+   * nothing, a running turn left as it was. Absent where the transport
+   * cannot, as `stopSubagent` is. Offered only where the provider declares
+   * `sideQuestion` as well.
+   */
+  askSideQuestion?(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult>
+  /** Call off a side question still being answered. Present wherever `askSideQuestion` is. */
+  cancelSideQuestion?(
+    input: ConversationCancelSideQuestionInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }>
+  /**
    * The Studio this window belongs to: providers, files, plans and command
    * lists. The same for every chat in the window, whichever machine it runs on.
    */
@@ -212,6 +236,7 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   // The chat runs here: its queue is on the machine that sends it already.
   hostQueue: false,
   skills: true,
+  hostPullRequests: false,
 }
 
 type LocalParts = Omit<ConversationTransport, 'kind' | 'capabilities' | 'services'>
@@ -239,6 +264,8 @@ const ipcConversationParts: Required<
   startSession: (input) => window.api.conversationSessionStart(input),
   revert: (input) => window.api.conversationRevertToTurn(input),
   stopSubagent: (input) => window.api.conversationSessionStopSubagent(input),
+  askSideQuestion: (input) => window.api.conversationSessionAskSideQuestion(input),
+  cancelSideQuestion: (input) => window.api.conversationSessionCancelSideQuestion(input),
 }
 
 // One Studio implementation per window object, so its client and the
@@ -321,6 +348,12 @@ export const localConversationTransport: ConversationTransport = {
   get stopSubagent() {
     return localParts().stopSubagent
   },
+  get askSideQuestion() {
+    return localParts().askSideQuestion
+  },
+  get cancelSideQuestion() {
+    return localParts().cancelSideQuestion
+  },
   services: windowServices,
 }
 
@@ -348,6 +381,8 @@ export function createRemoteConversationTransport(input: {
   access: MeshConversationAccess | null
   onLink?: (link: MeshConversationLink) => void
   onQueued?: (messages: MeshQueuedMessage[]) => void
+  /** The machine recorded a pull request Create PR opened there as the chat's. */
+  onPullRequestRecorded?: () => void
 }): ConversationTransport {
   const { key } = input
   return {
@@ -369,16 +404,19 @@ export function createRemoteConversationTransport(input: {
       reportsPreset: false,
       // Turned on from the machine's list, when it advertises the four modes.
       permissionModes: false,
-      // The Fleet's send carries the message and its images, and no steer; a
-      // steer would need the wire to say so, so a remote Send now stops the
-      // turn and sends after.
+      // Turned on from the machine's list, when it takes a message into a
+      // running turn (`conversation-steer-sends`). Without it a remote Send
+      // now stops the turn and sends after.
       steer: false,
       // Turned on from the machine's list, when it advertises queued sends.
       hostQueue: false,
       // Turned on from the machine's list, when it takes skills with a message.
       skills: false,
+      // Turned on from the machine's list, when it opens pull requests for its chats.
+      hostPullRequests: false,
     },
     remoteExtensions: { connectionId: key.connectionId, workspaceId: key.workspaceId },
+    pullRequestHost: remotePullRequestHost(key, () => input.onPullRequestRecorded?.()),
     subscribe: (subscription, cb) =>
       window.api.onMeshConversationSession({ key, turnLimit: subscription.turnLimit }, (frame) => {
         if (frame.type === 'link') input.onLink?.(frame)
@@ -400,6 +438,7 @@ export function createRemoteConversationTransport(input: {
           // The machine resolves them against its own folder, as its own
           // composer's chips are.
           ...(turn.skills?.length ? { skills: turn.skills.map((skill) => skill.id) } : {}),
+          ...(turn.steer ? { steer: true } : {}),
         }),
       ),
     queue: async (turn) =>

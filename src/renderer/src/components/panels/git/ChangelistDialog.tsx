@@ -17,6 +17,7 @@ import { Checkbox, Field, Input, Textarea } from '../../ui'
 // for it by path, and this one follows that rather than widening the barrel for
 // a single caller.
 import { Modal, ModalBody, ModalButton, ModalFooter, ModalHeader } from '../../ui/Modal'
+import { isImeKey } from '../../../utils/imeKey'
 
 export type ChangelistDialogValue = {
   name: string
@@ -97,6 +98,7 @@ export function ChangelistDialog({
               // Enter submits from the one-line field, the way it does in every
               // other single-line form in the product. The textarea below does
               // not, because a comment has paragraphs.
+              if (isImeKey(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 submit()

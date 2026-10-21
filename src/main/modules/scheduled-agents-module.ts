@@ -24,6 +24,7 @@ import type { ExecutionHostId } from '../../shared/execution-host'
 import {
   SCHEDULED_AGENTS_CHANGED_CHANNEL,
   SCHEDULED_AGENTS_IPC,
+  SCHEDULED_AGENTS_PAUSE_CHANGED_CHANNEL,
   scheduledAgentTitle,
   type ScheduledAgentView,
 } from '../../shared/scheduled-agents'
@@ -45,8 +46,12 @@ export function createScheduledAgentsModule(
   platform: Pick<StudioPlatform, 'paths' | 'clients'>,
   getModulePermissions: (moduleId: string) => readonly string[] | undefined,
 ): CapabilityModule {
-  const broadcastScheduledAgents = (agents: ScheduledAgentView[]): void =>
+  const broadcastScheduledAgents = (agents: ScheduledAgentView[], service: ScheduledAgentsService): void => {
     platform.clients.publish(SCHEDULED_AGENTS_CHANGED_CHANNEL, agents)
+    // Said with every change rather than only its own: a pause ending at its
+    // time is a change too, and a window that missed one hears the next.
+    platform.clients.publish(SCHEDULED_AGENTS_PAUSE_CHANGED_CHANNEL, service.pausedAll())
+  }
   return {
     manifest: {
       id: 'scheduled-agents',
@@ -117,6 +122,14 @@ export function createScheduledAgentsModule(
         isRunWorking: (workspaceId) => {
           const listed = conversations.listSessions({ workspaceId })
           return listed.ok && isRunChatWorking(listed.sessions)
+        },
+        pausedAll: () => store.pausedAll(),
+        // A pause of everything that came to its until ends; the schedules
+        // count on from now, so nothing missed while it held runs.
+        onPauseAllEnded: (pause) => {
+          void service?.resumeAll(pause).then((ended) => {
+            if (!ended.ok) console.warn(`[scheduled-agents] ${ended.message}`)
+          })
         },
         // A skipped time is not a failed run — nothing was tried, and the
         // schedule's card has nothing to say about it — but it is written down,
@@ -194,7 +207,7 @@ export function createScheduledAgentsModule(
       host.provideService(ScheduledAgentsModuleServiceToken, () =>
         createScheduledAgentsModuleRegistry(scheduledAgents, getModulePermissions),
       )
-      const unsubscribe = scheduledAgents.onChanged(broadcastScheduledAgents)
+      const unsubscribe = scheduledAgents.onChanged((agents) => broadcastScheduledAgents(agents, scheduledAgents))
       host.onShutdown(unsubscribe)
 
       const idOf = (input: unknown): string => (isRecord(input) && typeof input.id === 'string' ? input.id : '')
@@ -221,6 +234,19 @@ export function createScheduledAgentsModule(
         await scheduledAgents.markFailureSeen(idOf(input))
         return { ok: true }
       })
+      host.registerIpc(SCHEDULED_AGENTS_IPC.pause, async (_event, input: unknown) => scheduledAgents.pause(idOf(input)))
+      host.registerIpc(SCHEDULED_AGENTS_IPC.resume, async (_event, input: unknown) =>
+        scheduledAgents.resume(idOf(input)),
+      )
+      host.registerIpc(SCHEDULED_AGENTS_IPC.pauseState, async () => {
+        await store.load()
+        return scheduledAgents.pausedAll()
+      })
+      host.registerIpc(SCHEDULED_AGENTS_IPC.pauseAll, async (_event, input: unknown) =>
+        // Checked by the service: a time to come, or null for until resumed.
+        scheduledAgents.pauseAll((isRecord(input) ? (input.until ?? null) : null) as number | null),
+      )
+      host.registerIpc(SCHEDULED_AGENTS_IPC.resumeAll, async () => scheduledAgents.resumeAll())
 
       let releaseWakeOnResume: (() => void) | null = null
       host.registerSidecar(

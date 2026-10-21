@@ -7,7 +7,8 @@ import WorkspacePane from './WorkspacePane'
 import { openUrlInPane, rewriteUnroutableHost } from './browser/openInPane'
 import { agentBrowserTracker, shouldFloatAgentOpen } from './browser/agentBrowserFloat'
 import { useAgentBrowserAutoFloat } from './browser/useAgentBrowserAutoFloat'
-import { OFFSCREEN_LAYER_STYLE } from './WorkspacePaneBody'
+import { hiddenBrowserLayerStyle } from './WorkspacePaneBody'
+import { useRecordingWorkspaceIds } from './browser/recordingTabs'
 import { revealPoppedOutTab, showPaneTab, usePanePopOutHost } from './popout/panePopOutHost'
 
 // The pane column (browser-pane epic): the full-height column on the shell
@@ -116,6 +117,7 @@ export function WorkspacePaneColumn({
       .join('\n'),
   )
   const ids = mountedIds ? mountedIds.split('\n') : []
+  const recordingWorkspaceIds = useRecordingWorkspaceIds()
 
   // browser.open from an agent: the window SHOWING that workspace answers —
   // opens the tab, shows the pane — so the person sees what the agent is
@@ -230,11 +232,13 @@ export function WorkspacePaneColumn({
             key={workspaceId}
             // Inactive panes park offscreen rather than `invisible`: a browser
             // guest under visibility:hidden blanks for good on macOS
-            // (WorkspacePaneBody.OFFSCREEN_LAYER_STYLE).
-            // No stacking tier: every layer but the active one is offscreen,
-            // so nothing can paint over the front pane.
+            // (WorkspacePaneBody.OFFSCREEN_LAYER_STYLE). One with a tab being
+            // recorded waits behind the front pane instead, so the tab keeps
+            // painting (WorkspacePaneBody.hiddenBrowserLayerStyle).
+            // No stacking tier: every layer but the active one is offscreen
+            // or under it, so nothing can paint over the front pane.
             className="absolute inset-0"
-            style={active ? { pointerEvents: 'auto' } : OFFSCREEN_LAYER_STYLE}
+            style={active ? { pointerEvents: 'auto' } : hiddenBrowserLayerStyle(recordingWorkspaceIds.has(workspaceId))}
             aria-hidden={!active}
             // Agents still drive this pane's browser tabs: their input goes to
             // each guest over CDP, which `inert` does not touch (verified; see

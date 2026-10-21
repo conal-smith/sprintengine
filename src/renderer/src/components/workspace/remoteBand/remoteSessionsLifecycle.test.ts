@@ -10,6 +10,9 @@ import {
   readFollowedRemoteRests,
   remoteLifecycleWritable,
   remoteRestToFollow,
+  remoteRowRecency,
+  chatRecencyOf,
+  interleaveChats,
   unattachedConversations,
   type RemoteBrowseEntry,
 } from './remoteSessionsModel'
@@ -237,7 +240,24 @@ test('a row opened from a chat its machine has settled follows that settle', () 
     browses: new Map([['c1', entry([remoteWorkspace('resting', 'Done', 4_000), remoteWorkspace('open', 'Going')])]]),
     followed: new Map(),
   })
-  assert.deepEqual(due, [{ workspaceId: 'here-1', settledAt: 4_000 }])
+  assert.deepEqual(due, [{ workspaceId: 'here-1', settledAt: 4_000, settled: true }])
+})
+
+test('a row started from New chat follows its own chat, not the project chat it was started from', () => {
+  // Stored before the fix: `workspaceId` named the project's seat over there
+  // (an old chat, resting), and only the session id named the chat started.
+  const started = {
+    ...opened('here-1', 'c1', 'seat'),
+    remoteOrigin: { ...opened('here-1', 'c1', 'seat').remoteOrigin!, sessionId: 'conversation:new-chat:agent-9' },
+  } as Workspace
+  const browses = new Map([
+    ['c1', entry([remoteWorkspace('seat', 'Old chat', 4_000), remoteWorkspace('new-chat', 'New chat')])],
+  ])
+  assert.deepEqual(remoteRestToFollow({ workspaces: [started], browses, followed: new Map() }), [])
+  // One already hidden by the seat's settle comes back: its own chat is not resting.
+  assert.deepEqual(remoteRestToFollow({ workspaces: [started], browses, followed: new Map([['here-1', 4_000]]) }), [
+    { workspaceId: 'here-1', settledAt: 4_000, settled: false },
+  ])
 })
 
 test('a settle already followed is not followed again, so a row brought back here stays', () => {
@@ -248,7 +268,7 @@ test('a settle already followed is not followed again, so a row brought back her
   assert.deepEqual(remoteRestToFollow({ ...input, followed: new Map([['here-1', 4_000]]) }), [])
   // Settled over there again, later: followed again.
   assert.deepEqual(remoteRestToFollow({ ...input, followed: new Map([['here-1', 3_000]]) }), [
-    { workspaceId: 'here-1', settledAt: 4_000 },
+    { workspaceId: 'here-1', settledAt: 4_000, settled: true },
   ])
 })
 
@@ -277,8 +297,19 @@ test('a settle followed before a restart is not followed again after it, so a ro
   // Settled over there again, later: followed again.
   const settledAgain = new Map([['c1', entry([remoteWorkspace('resting', 'Done', 9_000)])]])
   assert.deepEqual(remoteRestToFollow({ workspaces, browses: settledAgain, followed: afterRestart }), [
-    { workspaceId: 'here-1', settledAt: 9_000 },
+    { workspaceId: 'here-1', settledAt: 9_000, settled: true },
   ])
+})
+
+test('a row resting because it followed its machine comes back when that machine brings the chat back', () => {
+  const workspaces = [opened('here-1', 'c1', 'chat'), opened('here-2', 'c1', 'other')]
+  const back = new Map([['c1', entry([remoteWorkspace('chat', 'Done'), remoteWorkspace('other', 'Going')])]])
+  assert.deepEqual(remoteRestToFollow({ workspaces, browses: back, followed: new Map([['here-1', 4_000]]) }), [
+    { workspaceId: 'here-1', settledAt: 4_000, settled: false },
+  ])
+  // A machine that has not answered yet, or no longer lists the chat, says nothing about it.
+  const silent = new Map([['c1', entry([remoteWorkspace('other', 'Going')])]])
+  assert.deepEqual(remoteRestToFollow({ workspaces, browses: silent, followed: new Map([['here-1', 4_000]]) }), [])
 })
 
 test('what is kept names only rows still here, and anything unreadable reads as nothing followed', () => {
@@ -291,4 +322,79 @@ test('what is kept names only rows still here, and anything unreadable reads as 
   assert.deepEqual([...readFollowedRemoteRests('[4000]')], [])
   assert.deepEqual([...readFollowedRemoteRests(null)], [])
   assert.deepEqual([...readFollowedRemoteRests('{"a":1,"b":"x"}')], [['a', 1]])
+})
+
+test('a row sits where its machine’s own sidebar sits it, by the key that machine sends', () => {
+  const [group] = band([
+    [
+      mini,
+      {
+        conversations: [
+          // Written to long ago; busy since. Never written to, made later.
+          chat('written', { updatedAt: 99_000, lastUserMessageAt: 1_000, recencyAt: 1_000 }),
+          chat('made', { updatedAt: 10, recencyAt: 3_000 }),
+        ],
+      },
+    ],
+  ])
+  assert.deepEqual(
+    group!.rows.map((row) => [row.workspaceId, row.recencyAt]),
+    [
+      ['written', 1_000],
+      ['made', 3_000],
+    ],
+    'its key, not `updatedAt`, which an agent working moves',
+  )
+})
+
+test('opening a paired machine’s chat here does not move it: it keeps its machine’s place', () => {
+  const [group] = band([[mini, { conversations: [chat('remote-1', { updatedAt: 2_000, recencyAt: 1_000 })] }]])
+  // Opened just now: made here at the click, never written to from here.
+  const openedNow = { ...opened('here-1', 'c1', 'remote-1'), createdAt: 50_000 } as Workspace
+  const listed = conversationsOf(group!).map((conversation) => ({ ...conversation, attachedWorkspaceId: 'here-1' }))
+  const recency = chatRecencyOf(new Map([['here-1', listed[0]!]]))
+  assert.equal(recency(openedNow), 1_000, 'not 50 000, the moment it was opened')
+  const local = { id: 'local', name: 'local', createdAt: 1, lastUserMessageAt: 1_500 } as unknown as Workspace
+  assert.deepEqual(
+    interleaveChats([openedNow, local], [], recency).map((row) => (row.kind === 'local' ? row.workspace.id : '')),
+    ['local', 'here-1'],
+    'so a local chat written to since stays above it',
+  )
+  // Written to here afterwards: that counts, as on a local chat.
+  assert.equal(recency({ ...openedNow, lastUserMessageAt: 60_000 } as Workspace), 60_000)
+  // Its machine has said nothing yet: the creation here stands in.
+  assert.equal(chatRecencyOf(new Map())(openedNow), 50_000)
+})
+
+test('a row opened from a paired machine draws that machine’s clocks', () => {
+  const [group] = band([
+    [
+      mini,
+      {
+        conversations: [
+          chat('remote-1', { phase: 'completed', updatedAt: 9_000, lastTurnEndedAt: 4_000, lastUserMessageAt: 3_000 }),
+        ],
+      },
+    ],
+  ])
+  const [conversation] = conversationsOf(group!)
+  assert.deepEqual(remoteRowRecency(undefined, conversation!), {
+    hasRunning: false,
+    idleSince: 4_000,
+    lastInputAt: 3_000,
+    workingSince: null,
+  })
+  const here = { hasRunning: false, idleSince: 6_000, lastInputAt: 5_500, workingSince: null }
+  assert.deepEqual(remoteRowRecency(here, conversation!), here, 'the later clock of the two')
+
+  const [busy] = band([
+    [mini, { conversations: [chat('remote-2', { phase: 'running', updatedAt: 9_000, turnStartedAt: 7_000 })] }],
+  ])
+  const [working] = conversationsOf(busy!)
+  assert.deepEqual(remoteRowRecency(undefined, working!), {
+    hasRunning: true,
+    idleSince: null,
+    lastInputAt: null,
+    workingSince: 7_000,
+  })
 })

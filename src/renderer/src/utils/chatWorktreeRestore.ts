@@ -1,4 +1,6 @@
+import { isStudioBranch } from '../../../shared/worktree-branch'
 import { repoRootFromWorktreePath } from '../../../shared/worktree-paths'
+import { isPoolSlotPath as isPoolSlotFolder } from '../../../shared/worktree-pool-slot-name'
 import { showToast } from '../store/toastStore'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import type { Workspace, WorkspaceId } from '../types/workspace'
@@ -17,10 +19,11 @@ import { isSettledWorkspace } from './workspaceSettle'
  * makes the chat whole again rather than a new checkout somewhere else.
  *
  * Asked of every chat that might need it: one marked `worktree.reclaimedAt`
- * by the sweep, settled or not by now, and a settled chat on an `agent/`
- * branch whose folder is gone (a sweep whose report never reached the store
- * still removed it; the sweep takes no other branch, so no other worktree is
- * recreated this way). Anything else answers at once. A marked chat always
+ * by the sweep, settled or not by now, and a settled chat on what looks like
+ * one of Studio's branches (the person's prefix or `agent/`, `isStudioBranch`)
+ * whose folder is gone (a sweep whose report never reached the store still
+ * removed it). Taking a person's own branch for Studio's here costs only a
+ * worktree brought back at the chat's own path. Anything else answers at once. A marked chat always
  * asks main, which knows a worktree from whatever else may sit at the path;
  * an unmarked one is satisfied by its folder being there, unless that folder
  * is a worktree pool slot, which outlives any one chat and is asked about too. One restore per
@@ -38,24 +41,13 @@ const refused = new Set<WorkspaceId>()
 // The reason last shown for each chat whose restore failed.
 const reasonShown = new Map<WorkspaceId, string>()
 
-// The only branches the agent worktree cleanup removes a worktree of
-// (agent-worktree-cleanup.ts): a `sprintengine/<slug>` worktree opened as a
-// workspace, or one named by hand, never went that way.
-const AGENT_BRANCH_PREFIX = 'agent/'
-
-// A worktree pool slot's folder (`<container>/pool-NN`, worktree-pool/). Its
-// path outlives any one chat: once the cleanup gave it back it may be idle in
-// the pool or another chat's now, so finding it on disk says nothing about
-// whether it is this chat's worktree.
-const POOL_SLOT_NAME = /^pool-\d{2,}$/u
-
+// A worktree pool slot's folder (`<container>/<project>-NN`, or `pool-NN` from
+// before slots took their project's name; worktree-pool/). Its path outlives
+// any one chat: once the cleanup gave it back it may be idle in the pool or
+// another chat's now, so finding it on disk says nothing about whether it is
+// this chat's worktree.
 function isPoolSlotPath(path: string): boolean {
-  const name =
-    path
-      .replace(/[\\/]+$/u, '')
-      .split(/[\\/]/u)
-      .pop() ?? ''
-  return POOL_SLOT_NAME.test(name) && repoRootFromWorktreePath(path) !== null
+  return isPoolSlotFolder(path) && repoRootFromWorktreePath(path) !== null
 }
 
 type RestoreCandidate = Workspace & { folderPath: string; worktree: { branch: string } }
@@ -65,7 +57,11 @@ function restoreCandidate(workspace: Workspace | undefined): workspace is Restor
   // A chat on another machine has its folder there, and its own way back.
   if (workspace.environment || workspace.remoteOrigin) return false
   if (workspace.worktree.reclaimedAt !== undefined) return true
-  return isSettledWorkspace(workspace) && workspace.worktree.branch.startsWith(AGENT_BRANCH_PREFIX)
+  // The branches the agent worktree cleanup may remove a worktree of
+  // (agent-worktree-cleanup.ts): a `sprintengine/<slug>` worktree opened as a
+  // workspace, or one named by hand, never went that way.
+  const prefix = useWorkspaceStore.getState().appSettings.worktreeBranchPrefix
+  return isSettledWorkspace(workspace) && isStudioBranch(workspace.worktree.branch, prefix)
 }
 
 /**

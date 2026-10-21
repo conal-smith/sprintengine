@@ -4,7 +4,7 @@ import { test } from 'vitest'
 
 import type { Workspace } from '../../../types/workspace'
 import { getNextWorkspaceId } from './layoutTabActions'
-import { drawnSidebarChatIds, numberedChatIds } from './numberedChats'
+import { drawnSidebarChatIds, numberedChatIds, numberedChatRows } from './numberedChats'
 
 const NOW = 1_000_000
 
@@ -82,4 +82,39 @@ test('next and previous step through the drawn order from the chat on screen, ev
   assert.equal(getNextWorkspaceId(order, 'ws-on-screen', 1), 'ws-a', 'the sleeping row is passed over')
   assert.equal(getNextWorkspaceId(order, 'ws-on-screen', -1), 'ws-b')
   assert.equal(getNextWorkspaceId(order, 'ws-a', 1), 'ws-b', 'and it wraps')
+})
+
+test('the numbered rows are the rows the number keys open, in order', () => {
+  const dom = new JSDOM(`
+    <nav role="tree" data-workspace-tree>
+      <div role="treeitem" data-row-key="starred-ws-b" data-workspace-id="ws-b"></div>
+      <div role="treeitem" data-row-key="folder:acme">acme</div>
+      <div role="treeitem" data-row-key="ws-a" data-workspace-id="ws-a"></div>
+      <div role="treeitem" data-row-key="ws-settled" data-workspace-id="ws-settled"></div>
+      <div role="treeitem" data-row-key="ws-b" data-workspace-id="ws-b"></div>
+      <div role="treeitem" data-row-key="ws-c" data-workspace-id="ws-c"></div>
+    </nav>
+  `)
+  const workspaces = [
+    workspace('ws-a'),
+    workspace('ws-b'),
+    workspace('ws-c'),
+    workspace('ws-settled', { settledAt: NOW - 10 }),
+  ]
+  const rows = numberedChatRows(dom.window.document, workspaces, NOW)
+  // A starred chat is numbered where it is first drawn, and only there.
+  assert.deepEqual(
+    rows.map((row) => row.rowKey),
+    ['starred-ws-b', 'ws-a', 'ws-c'],
+  )
+  // Row N is exactly the chat Primary+N switches to.
+  assert.deepEqual(
+    rows.map((row) => row.workspaceId),
+    numberedChatIds(drawnSidebarChatIds(dom.window.document), workspaces, NOW),
+  )
+})
+
+test('with no sidebar tree there are no numbered rows to label', () => {
+  const dom = new JSDOM(`<nav role="tree"><div role="treeitem" data-workspace-id="ws-a"></div></nav>`)
+  assert.deepEqual(numberedChatRows(dom.window.document, [workspace('ws-a')], NOW), [])
 })

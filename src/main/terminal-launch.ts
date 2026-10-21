@@ -31,6 +31,7 @@ import { launchArgBudgetFor, quoteWindowsCommandLineArg } from './launch-arg-bud
 import { RAISE_OOM_SCORE_SHELL_LINE } from './agent-oom-score'
 import { CLI_EXITED_OSC } from './deferred-prompt-delivery'
 import { buildLaunchStatusLineSetting } from './agent-state'
+import { usableLocalLauncherRef } from './integrations/launcher'
 import { resolveAgentStateSocketPath } from './agent-state-service'
 import { installedStudioPlatform, studioPlatform } from '../server/platform/platform'
 import { getPluginManifest } from './plugin-registry-instance'
@@ -38,7 +39,13 @@ import { getColorScheme } from './color-scheme-store'
 import { ensureManagedRuntimeShims, withManagedRuntimePath } from './managed-runtime'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, studioEnvEntry, withoutStudioEnv } from '../shared/studio-env'
 import { withoutInheritedSessionEnv } from './inherited-session-env'
-import { lastKnownLoginShellPath, withUserShellPath } from './login-shell-path'
+import { mergeJsonEnvValue } from './json-env-value'
+import {
+  lastKnownLoginShellPath,
+  lastKnownLoginShellEnv,
+  withLoginShellEnv,
+  withUserShellPath,
+} from './login-shell-path'
 import { isWindowsPath, toWslPath, wslToWindowsPath } from '../shared/host-paths'
 import { wslDistroArgs, wslDistroForPath, wslSessionPidFileCommand, wslSessionPidKey } from './hosts/wsl-distro'
 import type { HostLaunchFile, HostLaunchTarget } from './hosts/execution-host'
@@ -107,6 +114,19 @@ export function applyTerminalCapabilityDefaults(env: Record<string, string>): vo
   env.FORCE_HYPERLINK = env.FORCE_HYPERLINK || '1'
 }
 
+/**
+ * Drops the variables naming the tmux, screen or Zellij pane the app was
+ * started from — `npm run dev` in a tmux pane, an AppImage launched from one.
+ * A terminal or agent here is not inside that pane: inherited, `tmux` refuses
+ * to nest, `tmux split-window` splits the person's outside pane, and a CLI that
+ * checks `$TMUX` believes it is in their session. screen's `WINDOW` is a
+ * common enough name that it goes only alongside screen's own `STY`.
+ */
+export function withoutInheritedMultiplexerEnv(env: Record<string, string | undefined>): void {
+  if (env.STY !== undefined) delete env.WINDOW
+  for (const key of ['TMUX', 'TMUX_PANE', 'STY', 'ZELLIJ', 'ZELLIJ_SESSION_NAME', 'ZELLIJ_PANE_ID']) delete env[key]
+}
+
 export function getTerminalEnv(): Record<string, string> {
   // Without the markers of a Claude Code session the app itself may have been
   // started from: inherited, they make every `claude` this app launches (or a
@@ -119,16 +139,22 @@ export function getTerminalEnv(): Record<string, string> {
   )
 
   delete env.ELECTRON_RUN_AS_NODE
+  withoutInheritedMultiplexerEnv(env)
   applyTerminalCapabilityDefaults(env)
 
   // The person's own PATH, not the one the app was started with: opened from
   // Finder or the Dock, that is launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, and
   // an agent's shell then has no Homebrew, no `/usr/local/bin` and no `npx`.
-  const userEnv = withUserShellPath(env, {
-    platform: process.platform,
-    loginPath: lastKnownLoginShellPath(),
-    exists: existsSync,
-  })
+  // Its certificate trust and provider settings too, for the same reason: see
+  // LOGIN_SHELL_ENV_VARIABLES.
+  const userEnv = withLoginShellEnv(
+    withUserShellPath(env, {
+      platform: process.platform,
+      loginPath: lastKnownLoginShellPath(),
+      exists: existsSync,
+    }),
+    lastKnownLoginShellEnv(),
+  )
 
   // Surface CLIs installed into the managed npm prefix (e.g. Codex) on PATH so
   // launched agent sessions can find them. The shims themselves stay out of the
@@ -224,9 +250,9 @@ export function setLaunchPluginDirsResolver(resolver: (() => string[]) | null): 
  * hook. Until the helper has written it, a WSL launch passes none, and the
  * workspace installer (which asks the same host) carries agent state instead.
  *
- * Native Windows is still left on the workspace install, and the predicate in
- * app-services agrees, so the two can never each think the other registers the
- * hook.
+ * A native Windows launch takes this machine's copy, as macOS and Linux do;
+ * the predicate in app-services asks the same thing, so the two can never each
+ * think the other registers the hook.
  */
 function pluginDirsForLaunch(cli: AgentCli, target: HostLaunchTarget, skills: readonly string[] = []): string[] {
   if (target.kind === 'wsl') {
@@ -327,12 +353,24 @@ function launchSettingsForLaunch(
     socketPath,
     homeDir: homedir(),
     env: process.env,
+    // As the copy's own hooks do on Windows (`hookLauncher` in
+    // agent-integration-home.ts): no Node on PATH is assumed there.
+    launcher: process.platform === 'win32' ? usableLocalLauncherRef(homedir()) : null,
   })
   return statusLine ? { statusLine } : undefined
 }
 
-export function launchPluginsSupportedOnThisPlatform(platform: NodeJS.Platform = process.platform): boolean {
-  return platform !== 'win32'
+/**
+ * Whether this platform takes the app's plugin directories at launch. Every
+ * platform does now. Native Windows was held back when the flag arrived,
+ * because the copy then shared one set of substituted paths with WSL launches
+ * and a Linux `claude` would have been handed `C:/…`; a WSL launch has had its
+ * own copy inside the distribution since, so a native one gets this machine's,
+ * with its hooks and status line run through the launcher. Kept a function so
+ * the installers keep asking the same question the launch flag does.
+ */
+export function launchPluginsSupportedOnThisPlatform(_platform: NodeJS.Platform = process.platform): boolean {
+  return true
 }
 
 /**
@@ -438,34 +476,12 @@ export function mergeProviderLaunchEnv(
   return next
 }
 
-/**
- * `next` merged over `existing` when both are JSON objects, else `next`.
- *
- * Shallow on objects and concatenating on arrays, which is what "add my entry to
- * your list" needs and all this channel is for. Anything that does not parse —
- * the overwhelming majority of env values — takes the plain replacement path, so
- * this is invisible to every other manifest.
- */
-function mergeJsonEnvValue(existing: string | undefined, next: string): string {
-  if (!existing) return next
-  const left = parseJsonObject(existing)
-  const right = parseJsonObject(next)
-  if (!left || !right) return next
-  const merged: Record<string, unknown> = { ...left }
-  for (const [key, value] of Object.entries(right)) {
-    const previous = merged[key]
-    merged[key] = Array.isArray(previous) && Array.isArray(value) ? [...previous, ...value] : value
-  }
-  return JSON.stringify(merged)
-}
-
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
-  } catch {
-    return null
-  }
+/** The manifest's variables, each with the value the launch's environment ended up with. */
+function mergedLaunchExports(
+  providerLaunchEnv: Record<string, string>,
+  env: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(Object.entries(providerLaunchEnv).map(([key, value]) => [key, env[key] ?? value]))
 }
 
 /**
@@ -1351,6 +1367,41 @@ export function cleanupHostContextFile(contextPath: string | undefined): Promise
 /** What a manifest's `contextInjection` templates render against. */
 export type HostContextRenderInputs = { contextFile?: string; contextText?: string }
 
+/** What a launch builder renders against: the host context, and the flags `integration` carries. */
+type LaunchRenderInputs = HostContextRenderInputs & { integrationArgs?: string[] }
+
+/** See `integration` on `getShellLaunchConfig`. */
+export type LaunchIntegrationRender = {
+  args?: string[]
+  env?: Record<string, string>
+  settings?: Record<string, unknown>
+  pluginDirs?: string[]
+}
+
+function integrationRenderInputs(integration: LaunchIntegrationRender | undefined): LaunchRenderInputs {
+  return integration?.args && integration.args.length > 0 ? { integrationArgs: integration.args } : {}
+}
+
+// Only beside the app's own directories: a launch that is not handed those (a
+// CLI that takes none, a build whose copy failed) is not handed these either,
+// so it never loads a skill plugin without the hook and gateway it rides with.
+function withIntegrationPluginDirs(dirs: string[], integration: LaunchIntegrationRender | undefined): string[] {
+  if (dirs.length === 0 || !integration?.pluginDirs?.length) return dirs
+  return [...dirs, ...integration.pluginDirs.filter((dir) => !dirs.includes(dir))]
+}
+
+// Claude Code takes ONE `--settings` (a second replaces the first outright,
+// measured against 2.1.296 on 2026-10-16), so what the integration adds joins
+// the status line in the same document rather than riding a flag of its own.
+function withIntegrationSettings(
+  settings: Record<string, unknown> | undefined,
+  integration: LaunchIntegrationRender | undefined,
+): Record<string, unknown> | undefined {
+  const extra = integration?.settings
+  if (!extra || Object.keys(extra).length === 0) return settings
+  return { ...settings, ...extra }
+}
+
 export function hostContextRenderInputs(
   delivery: HostContextDelivery,
   target: 'windows' | 'wsl' | null,
@@ -1396,7 +1447,7 @@ function buildWslShellScript(
   managedMcpEnv?: Record<string, string>,
   providerLaunchEnv?: Record<string, string>,
   cliReasoning?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   host: WslLaunchTarget = DEFAULT_WSL_TARGET,
   planOptions: AgentLaunchPlanOptions = { budget: launchArgBudgetFor('wsl') },
   onPlan?: (plan: PlannedAgentLaunch) => void,
@@ -1521,11 +1572,22 @@ export function getShellLaunchConfig(
      * `bundledSkillDeliveredAtLaunch`, which answers from the same copy.
      */
     launchSkills?: readonly string[]
+    /**
+     * What the app hands this launch through the CLI's own per-launch channels
+     * instead of the repository: its flags (`--mcp-config <file>`, Codex's
+     * `-c` overrides), its environment (OpenCode's `OPENCODE_CONFIG_CONTENT`),
+     * settings for the one `--settings` document and plugin directories beside
+     * the app's own (`integrations/launch-integration.ts`). This machine only:
+     * a WSL launch is built from what its helper wrote inside the distribution.
+     */
+    integration?: LaunchIntegrationRender
   } = {},
 ): ShellLaunchConfig {
   assertExistingDirectory(cwd)
 
   const cliRuntime = getCliRuntimeSettings(cli, cliRuntimes)
+  // Never on WSL: what it would name are this machine's files.
+  const integration = launchHost.kind === 'wsl' ? undefined : hostContextOptions.integration
 
   // The host's own context for this launch (an attached design system, the
   // project's Knowledge Graph), built here so EVERY
@@ -1576,7 +1638,10 @@ export function getShellLaunchConfig(
 
   if (launchHost.kind === 'windows') {
     const windowsCwd = wslToWindowsPath(cwd)
-    const windowsHostContext = hostContextRenderInputs(hostContext, 'windows', [cwd, memoryRootPath])
+    const windowsHostContext = {
+      ...hostContextRenderInputs(hostContext, 'windows', [cwd, memoryRootPath]),
+      ...integrationRenderInputs(integration),
+    }
     const shellInitialPrompt = normalizeTextPaths(launchPrompt, 'windows', [
       cwd,
       memoryRootPath,
@@ -1602,8 +1667,8 @@ export function getShellLaunchConfig(
         cliModel,
         cliReasoning,
         windowsHostContext,
-        pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills),
-        launchSettingsForLaunch(cli, cwd, launchHost),
+        withIntegrationPluginDirs(pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills), integration),
+        withIntegrationSettings(launchSettingsForLaunch(cli, cwd, launchHost), integration),
         launchPlanOptions(launchHost, sessionId, cwd),
         (plan) => {
           promptDelivery = plan.promptDelivery
@@ -1615,11 +1680,14 @@ export function getShellLaunchConfig(
       command: 'powershell.exe',
       args: ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', startupScriptPath],
       env: mergeProviderLaunchEnv(
-        {
-          ...getTerminalEnv(),
-          ...managedMcpEnv,
-        },
-        providerLaunchEnv,
+        mergeProviderLaunchEnv(
+          {
+            ...getTerminalEnv(),
+            ...managedMcpEnv,
+          },
+          providerLaunchEnv,
+        ),
+        integration?.env,
       ),
       cwd: windowsCwd,
       pathStyle: 'windows',
@@ -1671,8 +1739,23 @@ export function getShellLaunchConfig(
 
   const shellPath = getPosixShellPath()
   const shellName = shellPath.split(/[\\/]/).at(-1)
+  const env = mergeProviderLaunchEnv(
+    mergeProviderLaunchEnv(
+      {
+        ...getTerminalEnv(),
+        ...managedMcpEnv,
+      },
+      providerLaunchEnv,
+    ),
+    integration?.env,
+  )
   const launchCommand = [
-    buildLaunchShellBootstrap(managedMcpEnv, providerLaunchEnv),
+    // The script re-exports the manifest's variables after the login profile,
+    // and with the values the launch merged: OpenCode's config document is
+    // said to by the person, the host context, a permission preset and the
+    // launch integration at once, and exporting only the manifest's share
+    // would drop the integration's MCP table and agent-state plugin.
+    buildLaunchShellBootstrap(managedMcpEnv, mergedLaunchExports(providerLaunchEnv, env)),
     buildAgentLaunchCommand(
       cli,
       sessionId,
@@ -1683,9 +1766,9 @@ export function getShellLaunchConfig(
       cliModel,
       cliReasoning,
       resolvedBinaryPath,
-      hostContextRenderInputs(hostContext, null, []),
-      pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills),
-      launchSettingsForLaunch(cli, cwd, launchHost),
+      { ...hostContextRenderInputs(hostContext, null, []), ...integrationRenderInputs(integration) },
+      withIntegrationPluginDirs(pluginDirsForLaunch(cli, launchHost, hostContextOptions.launchSkills), integration),
+      withIntegrationSettings(launchSettingsForLaunch(cli, cwd, launchHost), integration),
       launchPlanOptions(launchHost, sessionId, cwd),
       (plan) => {
         promptDelivery = plan.promptDelivery
@@ -1701,13 +1784,7 @@ export function getShellLaunchConfig(
     command: shellPath,
     args: isLoginShell(shellName) ? ['-l', startupScriptPath] : [startupScriptPath],
     cwd,
-    env: mergeProviderLaunchEnv(
-      {
-        ...getTerminalEnv(),
-        ...managedMcpEnv,
-      },
-      providerLaunchEnv,
-    ),
+    env,
     pathStyle: 'posix',
     startupScriptPath,
     ...(hostContextPath ? { hostContextPath } : {}),
@@ -1803,7 +1880,7 @@ export function buildNativeAgentLaunchPowerShellScript(
   cliPermissionPreset: CliPermissionSetting = 'none',
   cliModel?: string,
   cliReasoning?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   pluginDirs: string[] = [],
   launchSettings?: Record<string, unknown>,
   planOptions: AgentLaunchPlanOptions = { budget: launchArgBudgetFor('windows') },
@@ -1891,7 +1968,7 @@ export function buildCodexLegacyNativeAgentLaunchPowerShellScript(
   cliPermissionPreset: CliPermissionSetting = 'none',
   cliModel?: string,
   cliReasoning?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   colorScheme?: 'light' | 'dark',
   // Fit the launch to the Windows command line (`planAgentLaunch`). Absent
   // renders it as-is, which is what the script's own tests pin.
@@ -1964,7 +2041,7 @@ function buildAgentLaunchCommand(
   cliModel?: string,
   cliReasoning?: string,
   resolvedBinaryPath?: string,
-  hostContext: HostContextRenderInputs = {},
+  hostContext: LaunchRenderInputs = {},
   pluginDirs: string[] = [],
   launchSettings?: Record<string, unknown>,
   planOptions: AgentLaunchPlanOptions = { budget: launchArgBudgetFor('posix') },

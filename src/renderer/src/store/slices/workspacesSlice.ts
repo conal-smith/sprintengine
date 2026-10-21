@@ -1095,7 +1095,9 @@ export function createWorkspacesSlice(
           held: heldIds.has(ws.id),
           context: {
             pullRequests: pullRequestsByWorkspaceId?.[ws.id],
+            pullRequestsUnread: pullRequestsByWorkspaceId === undefined,
             settleOnMerge: current.appSettings.settleOnPullRequestMerge,
+            keepWithOpenPullRequest: current.appSettings.keepChatsWithOpenPullRequest,
           },
         })
         if (decision === 'none') continue

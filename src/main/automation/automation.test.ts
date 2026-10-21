@@ -304,9 +304,12 @@ test('automation', async () => {
       'schedule.create',
       'schedule.delete',
       'schedule.list',
+      'schedule.pause',
+      'schedule.resume',
       'schedule.run',
       'terminal.create',
       'terminal.list',
+      'terminal.read',
       'workspace.checkout',
       'workspace.create',
       'workspace.extensions',
@@ -2283,6 +2286,7 @@ test('automation', async () => {
     const agents: ScheduledAgentView[] = [scheduledAgentView({ id: 'sa-1' })]
     const service = {
       list: () => agents,
+      pausedAll: () => null,
       get: (id: string) => agents.find((agent) => agent.id === id) ?? null,
       create: async (input: unknown): Promise<ScheduledAgentWriteResult> => {
         calls.created.push(input)
@@ -2398,6 +2402,8 @@ test('automation', async () => {
       ['schedule.create', { workspaceId: 'ws-1', prompt: 'x', cron: '0 9 * * *' }],
       ['schedule.delete', { id: 'sa-1' }],
       ['schedule.run', { id: 'sa-1' }],
+      ['schedule.pause', { id: 'sa-1' }],
+      ['schedule.resume', { id: 'sa-1' }],
     ] as const) {
       const result = await tool(withoutModule, name).handler(args as Record<string, unknown>)
       assert.equal(result.isError, true)

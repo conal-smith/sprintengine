@@ -46,6 +46,7 @@ export function SkillPage({
   availability,
   workspaceRoot = null,
   onInstall,
+  onInstallInWorkspace,
   onInstallForUse,
   onRemove,
   onClose,
@@ -57,7 +58,10 @@ export function SkillPage({
   availability: SkillInstallAvailability
   /** The workspace the skill would be used in. Null when no folder is open. */
   workspaceRoot?: string | null
+  /** Install for every agent in every chat and project — the default. */
   onInstall: () => void
+  /** Install into the open folder only. Offered only when a folder is open. */
+  onInstallInWorkspace?: () => void
   /**
    * Install and say whether it landed, for the one action that does both. The
    * page offers "Install and use" only when a host supplies this — a button
@@ -102,8 +106,8 @@ export function SkillPage({
       <div className="border-t border-[color:var(--border-subtle)]">
         <ModalFooter>
           <p className="mr-auto min-w-0 text-meta leading-5 text-[color:var(--text-subtle)]">
-            Installing copies this skill&apos;s files into the skills directory of every agent CLI on this machine,
-            inside the open workspace.
+            Installing copies this skill&apos;s files into your home folder, where every agent CLI on this machine reads
+            it — in every chat and project, with or without a folder.
           </p>
           {installed ? (
             <span className="text-meta font-medium text-[color:var(--accent-primary)]">Installed</span>
@@ -117,6 +121,13 @@ export function SkillPage({
               the workspace the accent moves to what a person came here to do
               with it, and Install steps back to the outline it now is: a
               refresh of something they already have. */}
+          {/* The narrower install, for a skill that belongs to one project. Quiet,
+              because the default is what almost everyone wants. */}
+          {!installed && onInstallInWorkspace ? (
+            <LinkButton onClick={onInstallInWorkspace} disabled={!availability.enabled || installing}>
+              This project only
+            </LinkButton>
+          ) : null}
           {installed ? (
             <OutlineButton size="md" onClick={onInstall} disabled={!availability.enabled || installing}>
               {installing ? 'Installing…' : 'Reinstall'}

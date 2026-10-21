@@ -54,7 +54,7 @@ afterAll(async () => {
   if (scratch) await rm(scratch, { recursive: true, force: true })
 })
 
-test('a worktree is cut in five git processes and seeded from .worktreeinclude', async () => {
+test('a worktree is cut in five git processes, six for the first, and seeded from .worktreeinclude', async () => {
   const container = join(scratch, 'worktrees')
   const before = spawnTotal()
   const created = await createGitWorktree({
@@ -67,8 +67,21 @@ test('a worktree is cut in five git processes and seeded from .worktreeinclude',
   })
   assert.ok(created.ok, created.ok ? '' : created.message)
   assert.equal(created.data.branch, 'agent/first')
-  // root, check-ref-format, rev-parse --verify, worktree add, worktree list.
-  assert.equal(spawnTotal() - before, 5, 'resolve the root once and list once')
+  // root, check-ref-format, rev-parse --verify, worktree add, worktree list,
+  // and for the repository's first worktree, config --get checkout.workers.
+  // No submodule update: the repository has no .gitmodules, which is looked
+  // for on disk, so a repository without submodules pays nothing for them.
+  assert.equal(spawnTotal() - before, 6, 'resolve the root once and list once')
+  const beforeNext = spawnTotal()
+  const next = await createGitWorktree({
+    repoRoot: repo,
+    containerPath: container,
+    destinationPath: join(container, 'next'),
+    branchName: 'agent/next',
+    baseRef: 'HEAD',
+  })
+  assert.ok(next.ok, next.ok ? '' : next.message)
+  assert.equal(spawnTotal() - beforeNext, 5, 'checkout.workers is read once per repository')
 
   const seeded = join(container, 'first')
   assert.equal(await readFile(join(seeded, '.env'), 'utf8'), 'TOKEN=placeholder\n')
@@ -76,6 +89,43 @@ test('a worktree is cut in five git processes and seeded from .worktreeinclude',
   const link = join(seeded, 'deps', 'pkg', 'bin', 'run')
   assert.ok((await lstat(link)).isSymbolicLink(), 'a symlink is recreated, not followed')
   assert.equal(await readlink(link), '../index.js')
+})
+
+test('a worktree of a repository with submodules has them checked out, in one more git process', async () => {
+  const library = join(scratch, 'library')
+  const app = join(scratch, 'app-with-submodule')
+  await mkdir(library, { recursive: true })
+  await git(library, 'init', '-q', '-b', 'main')
+  await writeFile(join(library, 'lib.txt'), 'library\n')
+  await git(library, 'add', '.')
+  await git(library, 'commit', '-q', '-m', 'library')
+  await mkdir(app, { recursive: true })
+  await git(app, 'init', '-q', '-b', 'main')
+  // Git refuses a submodule from a local path unless file transport is allowed.
+  await git(app, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', library, 'vendor/library')
+  await git(app, 'commit', '-q', '-m', 'add the library')
+  const allowFile = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'protocol.file.allow', GIT_CONFIG_VALUE_0: 'always' }
+  const saved = Object.fromEntries(Object.keys(allowFile).map((key) => [key, process.env[key]]))
+  Object.assign(process.env, allowFile)
+  try {
+    const container = join(scratch, 'submodule-worktrees')
+    const before = spawnTotal()
+    const created = await createGitWorktree({
+      repoRoot: app,
+      containerPath: container,
+      destinationPath: join(container, 'with-library'),
+      branchName: 'agent/with-library',
+      baseRef: 'HEAD',
+    })
+    assert.ok(created.ok, created.ok ? '' : created.message)
+    assert.equal(spawnTotal() - before, 7, 'the six of a first worktree, and the submodule update')
+    assert.equal(await readFile(join(container, 'with-library', 'vendor', 'library', 'lib.txt'), 'utf8'), 'library\n')
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 })
 
 test('a branch that is already checked out is refused with the worktree that holds it', async () => {
@@ -105,4 +155,79 @@ test('a filesystem that refuses to clone falls back to a plain copy', async () =
   })
   assert.deepEqual(modes, [constants.COPYFILE_FICLONE, 0], 'a clone is asked for first, then a plain copy')
   assert.equal(await readFile(join(scratch, 'clone-target', 'nested', 'file.txt'), 'utf8'), 'content\n')
+})
+
+test('a branch named agent is named as what refuses an agent worktree, and nothing is made', async () => {
+  const blocked = join(scratch, 'blocked')
+  await mkdir(blocked, { recursive: true })
+  await git(blocked, 'init', '-q', '-b', 'main')
+  await writeFile(join(blocked, 'README.md'), '# blocked\n')
+  await git(blocked, 'add', '.')
+  await git(blocked, 'commit', '-q', '-m', 'init')
+  await git(blocked, 'branch', 'agent')
+  const container = join(scratch, 'blocked-worktrees')
+  const created = await createGitWorktree({
+    repoRoot: blocked,
+    containerPath: container,
+    destinationPath: join(container, 'fix'),
+    branchName: 'agent/fix',
+    baseRef: 'HEAD',
+  })
+  assert.equal(created.ok, false)
+  assert.match(created.ok ? '' : created.message, /A branch named “agent” in this repository blocks/)
+  assert.equal(await git(blocked, 'branch', '--list', 'agent/*'), '')
+})
+
+test('a branch named like a part of a chosen prefix is named as what refuses the worktree', async () => {
+  const blocked = join(scratch, 'blocked-prefix')
+  await mkdir(blocked, { recursive: true })
+  await git(blocked, 'init', '-q', '-b', 'main')
+  await writeFile(join(blocked, 'README.md'), '# blocked\n')
+  await git(blocked, 'add', '.')
+  await git(blocked, 'commit', '-q', '-m', 'init')
+  await git(blocked, 'branch', 'jane/wip')
+  const container = join(scratch, 'blocked-prefix-worktrees')
+  const created = await createGitWorktree({
+    repoRoot: blocked,
+    containerPath: container,
+    destinationPath: join(container, 'fix'),
+    branchName: 'jane/wip/fix',
+    baseRef: 'HEAD',
+  })
+  assert.equal(created.ok, false)
+  assert.match(
+    created.ok ? '' : created.message,
+    /A branch named “jane\/wip” in this repository blocks Studio’s jane\/wip\/… branches/,
+  )
+})
+
+test('an agent worktree whose branch would hide a remote’s is refused; one a person names is theirs', async () => {
+  const shadow = join(scratch, 'shadow')
+  await mkdir(shadow, { recursive: true })
+  await git(shadow, 'init', '-q', '-b', 'main')
+  await writeFile(join(shadow, 'README.md'), '# shadow\n')
+  await git(shadow, 'add', '.')
+  await git(shadow, 'commit', '-q', '-m', 'init')
+  await git(shadow, 'remote', 'add', 'origin', 'https://github.com/acme/app.git')
+  const container = join(scratch, 'shadow-worktrees')
+  const make = (branchName: string, agentLockOwner?: string) =>
+    createGitWorktree({
+      repoRoot: shadow,
+      containerPath: container,
+      destinationPath: join(container, branchName.replace(/\//gu, '-')),
+      branchName,
+      baseRef: 'HEAD',
+      ...(agentLockOwner ? { agentLockOwner } : {}),
+    })
+  for (const branch of ['origin/main', 'ORIGIN/fix', 'remotes/fix']) {
+    const refused = await make(branch, branch)
+    assert.equal(refused.ok, false, branch)
+    assert.match(
+      refused.ok ? '' : refused.message,
+      /would hide the branches of this repository’s remote “origin”|a name git keeps for itself/u,
+    )
+  }
+  assert.equal(await git(shadow, 'branch', '--list', 'origin/*', 'ORIGIN/*', 'remotes/*'), '', 'nothing was made')
+  const own = await make('origin/by-hand')
+  assert.equal(own.ok, true, own.ok ? '' : own.message)
 })

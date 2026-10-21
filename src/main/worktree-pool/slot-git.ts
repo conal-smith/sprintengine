@@ -2,6 +2,7 @@ import { lstat, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { GitCommandResult } from '../git'
 import { runGitCommand, type GitRunOptions } from '../git-run'
+import { branchNamespaceParents, isReservedFirstComponent, remoteShadowedBy } from '../../shared/worktree-branch'
 
 /**
  * The git a pool slot needs, and nothing a slot does not. Every call goes
@@ -201,6 +202,38 @@ export async function revParseCommit(run: SlotGitRunner, cwd: string, ref: strin
   return /^[0-9a-f]{40,64}$/iu.test(value) ? value : null
 }
 
+// The repository's `checkout.workers`, by repository root: read once per run.
+const checkoutWorkersByRepo = new Map<string, Promise<string>>()
+
+/**
+ * `-c checkout.workers=<n>` for a git that writes a whole working tree
+ * (`worktree add`, `read-tree -u`). Unset, git checks a tree out one file at a
+ * time; with it, git writes files on as many workers as the machine has cores
+ * (0), and a large tree lands several times faster. A value the person set
+ * themselves is kept. Read once per repository and remembered for the run, so
+ * only the first checkout in a repository pays for the read; a read that
+ * failed is not remembered. A git older than 2.32 ignores the key.
+ */
+export async function parallelCheckoutConfig(run: SlotGitRunner, repoRoot: string): Promise<string[]> {
+  let workers = checkoutWorkersByRepo.get(repoRoot)
+  if (!workers) {
+    workers = run(repoRoot, ['config', '--get', 'checkout.workers']).then(
+      (result) => {
+        const value = result.stdout.trim()
+        // Unset answers exit 1 with nothing on stderr; anything else is a failed read.
+        if (!result.ok && result.stderr.trim()) checkoutWorkersByRepo.delete(repoRoot)
+        return result.ok && /^-?\d+[kmg]?$/iu.test(value) ? value : '0'
+      },
+      () => {
+        checkoutWorkersByRepo.delete(repoRoot)
+        return '0'
+      },
+    )
+    checkoutWorkersByRepo.set(repoRoot, workers)
+  }
+  return ['-c', `checkout.workers=${await workers}`]
+}
+
 /**
  * How long a lease waits for its fetch. The fetch sits on the launch path of a
  * new chat, so a slow or unreachable remote must not hold the chat up: past
@@ -210,7 +243,11 @@ export const LEASE_FETCH_TIMEOUT_MS = 10_000
 
 /**
  * Bring `origin/<branch>` up to date, once. Only the one branch the pool bases
- * on is fetched, without tags: a base to fork from, not a pull.
+ * on is fetched, without tags: a base to fork from, not a pull. Nor does it
+ * start git's automatic gc, which a fetch otherwise may: this one sits on the
+ * launch path of a new chat, and a gc it set off would hold the repository
+ * and slow the git calls that follow. `--no-auto-gc` is git 2.23, the
+ * release that brought the `switch` every lease runs.
  */
 export async function fetchBase(
   run: SlotGitRunner,
@@ -223,10 +260,8 @@ export async function fetchBase(
   const [, remote, branch] = match
   return run(
     repoRoot,
-    ['fetch', '--no-tags', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
-    {
-      timeoutMs,
-    },
+    ['fetch', '--no-tags', '--no-auto-gc', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+    { timeoutMs },
   )
 }
 
@@ -395,4 +430,53 @@ export async function resolveAgentForkBase(run: SlotGitRunner, repoRoot: string)
   if (!ref) return null
   if (ref.includes('/')) await fetchBase(run, repoRoot, ref)
   return ref
+}
+
+/**
+ * Said when a branch stands where a worktree branch would go: `agent` in the
+ * way of `agent/<name>`, or `jane` in the way of `jane/wip/<name>`. Git keeps
+ * `agent/<name>` as a file under a folder `agent`, and a branch named `agent`
+ * is a file by that name, so it refuses each one ("cannot lock ref …
+ * 'refs/heads/agent' exists"). Studio says so before it tries rather than
+ * naming the branch something else: the prefix is the person's choice, and a
+ * branch under another one is not what they asked for.
+ */
+export function branchBlockedMessage(blocker: string): string {
+  return `A branch named “${blocker}” in this repository blocks Studio’s ${blocker}/… branches. Rename it (git branch -m ${blocker} <new-name>), or choose another branch prefix in Settings ▸ Worktrees, to start chats in a worktree.`
+}
+
+/**
+ * The existing branch that stops git making `branch`, one of its parents
+ * (`branchNamespaceParents`), or null when none does. One `rev-parse` per
+ * parent, the shortest first: a branch under the default prefix asks one.
+ */
+export async function branchBlockedBy(run: SlotGitRunner, repoRoot: string, branch: string): Promise<string | null> {
+  for (const parent of branchNamespaceParents(branch)) {
+    const found = await run(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${parent}`])
+    if (found.ok && found.stdout.trim().length > 0) return parent
+  }
+  return null
+}
+
+/**
+ * Why Studio will not make `branch` in this repository, when its first part
+ * would make another name mean two things, or null. A local `origin/main`
+ * hides the remote's `origin/main` (git reads a local branch first), so the
+ * cleanup's merge test and a fork base would read Studio's branch instead of
+ * the remote's; a first part git keeps for itself (`refs`, `remotes`, …)
+ * muddles its own names the same way. Refused rather than named otherwise,
+ * as a blocking branch is (`branchBlockedMessage`). Remotes are per
+ * repository, so this asks git for them: one process, only for a branch with a
+ * `/` in it.
+ */
+export async function branchShadowing(run: SlotGitRunner, repoRoot: string, branch: string): Promise<string | null> {
+  if (!branch.includes('/')) return null
+  const first = branch.split('/', 1)[0]!
+  if (isReservedFirstComponent(first)) {
+    return `Studio’s branch “${branch}” would start with “${first}”, a name git keeps for itself. Choose another branch prefix in Settings ▸ Worktrees, or another worktree name.`
+  }
+  const remotes = await run(repoRoot, ['remote'])
+  const remote = remotes.ok ? remoteShadowedBy(branch, remotes.stdout.split(/\r?\n/).filter(Boolean)) : null
+  if (!remote) return null
+  return `A branch “${branch}” would hide the branches of this repository’s remote “${remote}”, and git would read Studio’s branch in their place. Choose another branch prefix in Settings ▸ Worktrees, or another worktree name.`
 }

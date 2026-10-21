@@ -71,6 +71,30 @@ export function parseGitWorktreePorcelain(output: string): GitWorktreeEntry[] {
 }
 
 /**
+ * `git worktree list --porcelain -z`, the one way every caller reads the list.
+ * Git before 2.36 has no `-z` for this command and refuses the whole call
+ * ("unknown switch `z'"), which left a pool unable to recover at startup and
+ * every lock lookup unanswered on a machine still on an older git. There the
+ * call is made again without it, and each newline becomes the NUL `-z` would
+ * have written, so a caller splitting records on `\0\0` reads the same shape.
+ * Only a path holding a newline is lost that way, and only on such a git.
+ */
+export async function runGitWorktreeListPorcelain<R extends { ok: boolean; stdout: string; stderr?: string }>(
+  run: (cwd: string, args: string[]) => Promise<R>,
+  cwd: string,
+): Promise<R> {
+  const nul = await run(cwd, ['worktree', 'list', '--porcelain', '-z'])
+  if (nul.ok || !refusedNulFlag(nul)) return nul
+  const lines = await run(cwd, ['worktree', 'list', '--porcelain'])
+  return lines.ok ? { ...lines, stdout: lines.stdout.replace(/\r?\n/g, '\0') } : lines
+}
+
+function refusedNulFlag(result: { stdout: string; stderr?: string; message?: string | null }): boolean {
+  const text = `${result.stderr ?? ''}\n${result.message ?? ''}\n${result.stdout}`
+  return /unknown switch [`']z'/.test(text)
+}
+
+/**
  * `resolvedRoot` says the caller already holds git's own answer for the root
  * (it just resolved it), so the listing does not spend a process asking again.
  */
@@ -83,7 +107,7 @@ export async function listGitWorktrees(
     : await resolveRepoRoot(repoRoot)
   if (!root.ok) return root
 
-  const result = await runGitCommand(root.data, ['worktree', 'list', '--porcelain', '-z'])
+  const result = await runGitWorktreeListPorcelain(runGitCommand, root.data)
   if (!result.ok) {
     return {
       ok: false,

@@ -8,6 +8,7 @@ import {
   type BrowserViewport,
 } from '../../../../../../shared/browser-devices'
 import { IconButton, Input, Select, Tooltip } from '../../../ui'
+import { isImeKey } from '../../../../utils/imeKey'
 
 // The device toolbar: a second, dismissable band under the browser toolbar
 // (the one case the panel-header rule allows a second band — off by default,
@@ -65,6 +66,7 @@ function SizeField({ label, value, onCommit }: { label: string; value: number; o
       onChange={(event) => setDraft(event.currentTarget.value)}
       onBlur={commit}
       onKeyDown={(event) => {
+        if (isImeKey(event)) return
         if (event.key === 'Enter') {
           event.preventDefault()
           commit()

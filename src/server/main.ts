@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util'
 
 import { readStudioEnv } from '../shared/studio-env'
 import { writeDiagnosticLog } from '../main/diagnostics-service'
+import { ignoreMacosTypeOfServiceEinval, raiseConnectAttemptTimeout } from '../main/network-defaults'
 import { defaultServerLocations } from './platform/studio-paths'
 import { installFatalHandlers } from './bootstrap/fatal'
 import { startHeadlessServer } from './bootstrap/headless'
@@ -647,5 +648,7 @@ export function serverBoot(build: { commit: string | null; builtAt: string } | n
 }
 
 if (require.main === module) {
+  raiseConnectAttemptTimeout()
+  ignoreMacosTypeOfServiceEinval()
   void main(process.argv.slice(2)).then((code) => process.exit(code))
 }

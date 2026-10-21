@@ -22,9 +22,21 @@ import { spawn } from 'node:child_process'
  * the transfer to `git-remote-https`, and a hook is a shell with children of
  * its own. Signalling the negative pid ends the whole group, so a timed-out
  * fetch does not leave its transport helper holding the connection open.
+ *
+ * Once Node has seen the child exit, its pid is no longer the child's: Windows
+ * hands a freed pid to the next process it starts, so `taskkill /T` on it can
+ * end an unrelated tree, and it could not reach the dead child's orphans
+ * anyway (they no longer list it as their parent). A deadline that fires after
+ * `exit` but before the pipes close — a grandchild still holding stdout — is
+ * the path that gets here, and it skips the tree kill.
  */
 export function killProcessTree(
-  child: { pid?: number; kill(signal?: NodeJS.Signals | number): boolean },
+  child: {
+    pid?: number
+    exitCode?: number | null
+    signalCode?: NodeJS.Signals | null
+    kill(signal?: NodeJS.Signals | number): boolean
+  },
   deps: {
     platform?: NodeJS.Platform
     runTaskkill?: (pid: number) => void
@@ -43,6 +55,7 @@ export function killProcessTree(
     }
   }
   if (platform === 'win32' && typeof child.pid === 'number' && child.pid > 0) {
+    if (child.exitCode != null || child.signalCode != null) return
     const runTaskkill = deps.runTaskkill ?? defaultRunTaskkill
     try {
       runTaskkill(child.pid)

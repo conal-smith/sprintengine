@@ -16,6 +16,7 @@ import {
   conversationsOf,
   openSpecOfConversation,
   remoteConversationTitle,
+  remoteOriginChatWorkspaceId,
   remoteLinkStateOf,
   branchPullRequestsOfWire,
   remoteFinishUnseen,
@@ -189,7 +190,14 @@ test('remoteSessionsModel', async () => {
     error: null,
     at: 1,
     conversations: [
-      chat('bea', { title: 'Bea', chatTitle: 'Ship the docs', phase: 'completed', updatedAt: 2_000 }),
+      // A chat of its own over there, so a workspace of its own.
+      chat('bea', {
+        workspaceId: 'rw2',
+        title: 'Bea',
+        chatTitle: 'Ship the docs',
+        phase: 'completed',
+        updatedAt: 2_000,
+      }),
       chat('ada', {
         title: 'Ada',
         chatTitle: 'Fix the relay',
@@ -213,7 +221,7 @@ test('remoteSessionsModel', async () => {
   const airGroup = band[0]!
   assert.deepEqual(
     airGroup.rows.map((row) => row.sessionId),
-    [adaSession, beaSession],
+    [adaSession, meshConversationSessionId('rw2', 'bea')],
     'chats, the one last written to first',
   )
   const ada = airGroup.rows[0]!
@@ -314,8 +322,8 @@ test('remoteSessionsModel', async () => {
 
   // ── conversationsOf ──────────────────────────────────────────────────────
   // A row is a CONVERSATION (owner, 2026-09-11): each chat is one row titled
-  // with its own name, carrying its agent as the one line it draws — two chats
-  // in one remote workspace are two rows.
+  // with its own name, carrying a line per agent in it. A chat over there is
+  // its workspace, so two workspaces are two rows.
   const chats = conversationsOf(airGroup)
   assert.deepEqual(
     chats.map((entry) => entry.title),
@@ -333,7 +341,55 @@ test('remoteSessionsModel', async () => {
   assert.equal(relay.workspaceRoot, '/Users/air/relay', 'and carries the folder it files under')
   assert.equal(relay.repository?.canonicalKey, 'github.com/acme/relay')
   assert.equal(relay.attachedWorkspaceId, 'w1')
-  assert.notEqual(chats[0]!.key, chats[1]!.key, 'each chat is keyed on its own session')
+  assert.notEqual(chats[0]!.key, chats[1]!.key, 'each chat is keyed on its own workspace')
+
+  // Two agents in one chat are one row with two lines, as that machine's own
+  // sidebar draws them. A window here following one of them is the chat's
+  // window: the other agent is not a second copy of the chat beside it.
+  {
+    const twoAgents = buildRemoteBand({
+      connections: [air],
+      browses: new Map([
+        [
+          'c1',
+          {
+            ...answered,
+            conversations: [
+              chat('cal', { title: 'Cal', chatTitle: 'Fix the relay', phase: 'running', lastUserMessageAt: 5_000 }),
+              chat('ada', { title: 'Ada', chatTitle: 'Fix the relay', phase: 'completed', lastUserMessageAt: 3_000 }),
+            ],
+          },
+        ],
+      ]),
+      reachability,
+      workspaces: [local, stamped],
+    })
+    const [one, ...more] = conversationsOf(twoAgents[0]!)
+    assert.equal(more.length, 0, 'one chat, one row')
+    assert.equal(one!.title, 'Fix the relay')
+    assert.deepEqual(
+      one!.agents.map((agent) => agent.title),
+      ['Ada', 'Cal'],
+      'a line per agent, the one w1 follows first',
+    )
+    assert.equal(one!.attachedWorkspaceId, 'w1', 'the chat is the window one of its agents is open in')
+    assert.equal(openSpecOfConversation(one!).attachedWorkspaceId, 'w1', 'so opening it focuses that window')
+    assert.equal(one!.activity, 'working', 'its marks say what any agent in it is doing')
+    assert.equal(one!.recencyAt, 5_000, 'and it sits by the agent last written to')
+    assert.deepEqual(unattachedConversations(twoAgents, true, [local, stamped]), [], 'no second row beside w1')
+    assert.deepEqual(
+      attachedConversations(twoAgents, [local, stamped])
+        .get('w1')!
+        .agents.map((agent) => agent.title),
+      ['Ada', 'Cal'],
+      'w1 draws both agents’ lines instead',
+    )
+    assert.equal(
+      chatRecencyOf(attachedConversations(twoAgents, [local, stamped]))({ ...stamped, createdAt: 0 }),
+      5_000,
+      'the window here sorts by it too',
+    )
+  }
 
   // ── unattachedConversations ──────────────────────────────────────────────
   // A chat a window here is already showing is NOT a row of its own: that window
@@ -425,6 +481,18 @@ test('remoteSessionsModel', async () => {
   )
   assert.equal(titled('sprintengine', 'sprintengine'), 'sprintengine', 'a row already named for its chat is left alone')
   assert.equal(titled('Ship the release', 'sprintengine'), 'Ship the release', 'a name a person chose is theirs')
+  const listedAs = (name: string, workspaceName: string, listed: string) =>
+    remoteConversationTitle({ name, remoteOrigin: { workspaceName } as never }, listed)
+  assert.equal(
+    listedAs('New chat', 'New chat', 'Fix the release script'),
+    'Fix the release script',
+    'a row still named as it was born follows the title its machine gives the chat',
+  )
+  assert.equal(
+    listedAs('Ship the release', 'New chat', 'Fix the release script'),
+    'Ship the release',
+    'a row renamed here keeps the name',
+  )
   assert.equal(
     titled(' · sprintengine', 'sprintengine'),
     ' · sprintengine',
@@ -452,8 +520,13 @@ test('chats on a paired machine are rows of their own, with the presence their p
     lastConnectedAt: null,
     pairedVia: 'request',
   }
-  const chat = (agentId: string, phase: MeshConversation['phase'], title: string): MeshConversation => ({
-    workspaceId: 'rw1',
+  const chat = (
+    agentId: string,
+    phase: MeshConversation['phase'],
+    title: string,
+    workspaceId = 'rw1',
+  ): MeshConversation => ({
+    workspaceId,
     agentId,
     title,
     phase,
@@ -471,8 +544,8 @@ test('chats on a paired machine are rows of their own, with the presence their p
     at: 1,
     conversations: [
       chat('a-running', 'running', 'Profile the importer'),
-      chat('a-waiting', 'waiting_for_approval', 'Rename the store'),
-      chat('a-done', 'completed', 'Write the changelog'),
+      chat('a-waiting', 'waiting_for_approval', 'Rename the store', 'rw2'),
+      chat('a-done', 'completed', 'Write the changelog', 'rw3'),
     ],
   }
   const opened = {
@@ -491,7 +564,7 @@ test('chats on a paired machine are rows of their own, with the presence their p
           {
             type: 'tab',
             component: 'mesh-conversation',
-            config: { connectionId: 'c-mini', remoteSessionId: meshConversationSessionId('rw1', 'a-done') },
+            config: { connectionId: 'c-mini', remoteSessionId: meshConversationSessionId('rw3', 'a-done') },
           },
         ],
       },
@@ -513,14 +586,13 @@ test('chats on a paired machine are rows of their own, with the presence their p
   )
   // A pane already following a chat here is the window a click focuses.
   assert.equal(group.rows[2].attachedWorkspaceId, 'local-1')
-  // Each chat is a conversation of its own, titled with its own name, even
-  // when they stand in one workspace over there.
+  // Each chat is a conversation of its own, titled with its own name.
   const conversations = conversationsOf(group)
   assert.deepEqual(
     conversations.map((conversation) => conversation.title),
     ['Profile the importer', 'Rename the store', 'Write the changelog'],
   )
-  assert.deepEqual(openSpecOfConversation(conversations[1]).conversation, { workspaceId: 'rw1', agentId: 'a-waiting' })
+  assert.deepEqual(openSpecOfConversation(conversations[1]).conversation, { workspaceId: 'rw2', agentId: 'a-waiting' })
   assert.equal(meshConversationPresence('waiting_for_input'), 'needs-input')
   assert.equal(meshConversationPresence('starting'), 'running')
   assert.equal(meshConversationPresence('failed'), 'idle')
@@ -589,6 +661,109 @@ test('chats on a paired machine are rows of their own, with the presence their p
   assert.equal(remoteFinishUnseen({ ...finish, activity: 'needs-input' }), false)
 })
 
+// One chat on the Mac mini, as its list carries it, read into the row this
+// machine's sidebar draws for it.
+const miniConnection: MeshConnection = {
+  id: 'c-mini',
+  machineName: 'mac-mini',
+  endpoint: 'mac-mini.tail1234.ts.net:8471',
+  deviceId: 'tnd_mini',
+  deviceName: 'dev-macbook-air',
+  scopes: ['conversation:read', 'conversation:operate'],
+  pairedAt: '2026-09-05T00:00:00.000Z',
+  lastConnectedAt: null,
+  pairedVia: 'request',
+}
+function rowOfListed(over: Partial<MeshConversation>) {
+  const listed: MeshConversation = {
+    workspaceId: 'rw1',
+    agentId: 'agent-1',
+    title: 'Nightly triage',
+    phase: 'completed',
+    updatedAt: 9_000,
+    createdAt: 1_000,
+    providerId: 'claude-agent',
+    modelId: 'opus',
+    turnCount: 3,
+    lastSeq: 40,
+    ...over,
+  }
+  const [group] = buildRemoteBand({
+    connections: [miniConnection],
+    browses: new Map([
+      [miniConnection.id, { browse: null, loading: false, error: null, at: 1, conversations: [listed] }],
+    ]),
+    reachability: new Map(),
+    workspaces: [],
+  })
+  return group!.rows[0]!
+}
+
+test('a chat whose turn is over while its background agent works reads as working, counted from when its work began', () => {
+  const t0 = 1_000_000
+  const row = rowOfListed({
+    phase: 'completed',
+    backgroundWork: { agents: 1, monitors: 0 },
+    workingSince: t0,
+    updatedAt: t0 + 14 * 60_000,
+  })
+  assert.equal(row.activity, 'working')
+  assert.equal(row.status.label, 'Running')
+  assert.equal(row.since, t0, 'the stretch of work, not the last thing that moved')
+
+  // A turn the chat opened by itself is counted from the same start, not its own.
+  const woken = rowOfListed({
+    phase: 'running',
+    backgroundWork: { agents: 1, monitors: 0 },
+    turnStartedAt: t0 + 14 * 60_000,
+    workingSince: t0,
+  })
+  assert.equal(woken.activity, 'working')
+  assert.equal(woken.since, t0)
+
+  // A monitor that will wake the agent keeps it working too, from an idle phase as from a finished one.
+  assert.equal(rowOfListed({ phase: 'idle', backgroundWork: { agents: 0, monitors: 1 } }).activity, 'working')
+  // A turn waiting on the person still waits, whatever works behind it.
+  assert.equal(
+    rowOfListed({ phase: 'waiting_for_approval', backgroundWork: { agents: 1, monitors: 0 } }).activity,
+    'needs-input',
+  )
+  assert.equal(meshConversationPresence('completed', { agents: 2, monitors: 0 }), 'running')
+  assert.equal(
+    meshConversationPresence('failed', { agents: 2, monitors: 0 }),
+    'idle',
+    'a failure is the turn’s own word',
+  )
+})
+
+test('a machine from before it said when the work began reads as it did', () => {
+  // Neither member: the turn's phase alone, and the turn's own start.
+  const running = rowOfListed({ phase: 'running', turnStartedAt: 7_000, updatedAt: 9_000 })
+  assert.equal(running.activity, 'working')
+  assert.equal(running.since, 7_000)
+  const done = rowOfListed({ phase: 'completed', updatedAt: 9_000 })
+  assert.equal(done.activity, 'idle')
+  assert.equal(done.since, 9_000)
+  assert.equal(rowOfListed({ phase: 'running', updatedAt: 9_000 }).since, 9_000, 'with no turn start, the last move')
+  // A machine that lists background work but no stretch: working, from what it does say.
+  const background = rowOfListed({ phase: 'completed', backgroundWork: { agents: 1, monitors: 0 }, updatedAt: 9_000 })
+  assert.equal(background.activity, 'working')
+  assert.equal(background.since, 9_000)
+})
+
+test('a remote row carries the schedule that started its chat and its snooze, and a sleeping chat is not marked finished', () => {
+  const t0 = 1_000_000
+  const run = rowOfListed({ scheduledAgentId: 'sa-1', lastTurnEndedAt: t0 + 60_000, lastVisitedAt: t0 })
+  assert.equal(run.scheduledAgentId, 'sa-1')
+  assert.equal(remoteFinishUnseen(run, t0 + 120_000), true, 'a run nobody opened finished unseen')
+  assert.equal(rowOfListed({}).scheduledAgentId, null)
+
+  const sleeping = rowOfListed({ lastTurnEndedAt: t0 + 60_000, lastVisitedAt: t0, snoozedUntil: t0 + 3_600_000 })
+  assert.equal(sleeping.snoozedUntil, t0 + 3_600_000)
+  assert.equal(remoteFinishUnseen(sleeping, t0 + 120_000), false, 'asleep over there, so not news here')
+  assert.equal(remoteFinishUnseen(sleeping, t0 + 3_600_001), true, 'news again once it wakes')
+})
+
 test('interleaveChats: a paired machine’s chats sit among the local ones by when each was last written to', () => {
   const local = (id: string, lastUserMessageAt: number) =>
     ({ id, createdAt: 0, lastUserMessageAt }) as unknown as Workspace
@@ -617,4 +792,13 @@ test('interleaveChats: a paired machine’s chats sit among the local ones by wh
     ['opened', 'now', 'hour'],
     'an opened remote chat is as recent as its machine says it was written to',
   )
+})
+
+test('a remote-born row names its chat by the session it was stamped with', () => {
+  assert.equal(
+    remoteOriginChatWorkspaceId({ workspaceId: 'seat', sessionId: 'conversation:new-chat:agent-9' }),
+    'new-chat',
+  )
+  assert.equal(remoteOriginChatWorkspaceId({ workspaceId: 'ws:1', sessionId: 'conversation:ws:1:agent-9' }), 'ws:1')
+  assert.equal(remoteOriginChatWorkspaceId({ workspaceId: 'seat' }), 'seat', 'a row born before the stamp')
 })

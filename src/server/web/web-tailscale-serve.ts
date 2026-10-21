@@ -178,7 +178,9 @@ export async function serveWebOnTailnet(input: {
       )
     input.log?.(`[web] replacing this server's own tailscale serve mapping from an earlier run on port ${servePort}`)
   }
-  const shared = await shareLocalPort({ localPort, servePort }, input.deps)
+  // The web listener binds 127.0.0.1 (web-listener.ts), so its address is
+  // named rather than left to whatever `localhost` resolves to first.
+  const shared = await shareLocalPort({ localPort, servePort, localHost: '127.0.0.1' }, input.deps)
   if (!shared.ok) throw new Error(shared.message)
   writeRecord(runDir, { servePort, localPort })
   const origin = new URL(shared.share.url).origin

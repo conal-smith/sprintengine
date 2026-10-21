@@ -1,4 +1,7 @@
+import { isDraft, original } from 'immer'
+
 import type { AgentCli, AgentCliAvailabilityMap, CliRuntimeSettings } from '../../../../shared/electron-api'
+import { reuseUnchanged } from '../../utils/reuseUnchanged'
 
 // Whether the detected-availability map is trustworthy yet. Pickers only filter
 // out uninstalled CLIs once this is `ready` with at least one installed entry;
@@ -98,7 +101,12 @@ export function createCliAvailabilitySlice(
       })
       set((state) => {
         if (result.ok) {
-          state.cliAvailability = result.availability
+          // Main hands back the whole answer on every read, and a background
+          // re-read usually finds nothing new: what reads the same keeps its
+          // object, so the window's return re-renders only what moved.
+          const previous = isDraft(state.cliAvailability) ? original(state.cliAvailability) : state.cliAvailability
+          const next = reuseUnchanged(previous, result.availability)
+          if (next !== previous) state.cliAvailability = next
           state.cliAvailabilityStatus = 'ready'
           state.cliAvailabilityError = null
           state.cliAvailabilityCheckedAt = Date.now()

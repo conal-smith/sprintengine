@@ -94,3 +94,105 @@ test('an open popover closes when its trigger is hidden, and stays open while it
     }
   }
 })
+
+// A surface whose content grows after it opened (a menu stepping into a taller
+// view) must be placed again, or it runs off the bottom of the window.
+test('a surface that grows after opening is measured again and flips above its trigger', async () => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'http://localhost',
+    pretendToBeVisual: true,
+  })
+  const previous = Object.getOwnPropertyDescriptors(globalThis)
+  const observers: Array<() => void> = []
+  class FakeResizeObserver {
+    constructor(private readonly callback: () => void) {}
+    observe(): void {
+      observers.push(this.callback)
+    }
+    disconnect(): void {}
+    unobserve(): void {}
+  }
+  let surfaceHeight = 120
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute('role') === 'menu' ? surfaceHeight : 0
+    },
+  })
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    MutationObserver: dom.window.MutationObserver,
+    ResizeObserver: FakeResizeObserver,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  }
+  Object.assign(globalThis, globals)
+  try {
+    const { act, createElement } = await import('react')
+    const { createRoot } = await import('react-dom/client')
+    const { Popover } = await import('./Popover')
+    const layer = dom.window.document.createElement('div')
+    dom.window.document.body.appendChild(layer)
+    const root = createRoot(layer)
+    const vh = dom.window.innerHeight
+    await act(async () =>
+      root.render(
+        createElement(Popover, {
+          open: true,
+          onOpenChange: () => undefined,
+          ariaLabel: 'Project',
+          popupRole: 'menu',
+          placement: 'bottom-start',
+          renderTrigger: ({ ref, triggerProps }) =>
+            createElement(
+              'span',
+              {
+                ref: ((node: HTMLElement | null) => {
+                  if (node) {
+                    // Two thirds of the way down the window.
+                    node.getBoundingClientRect = () =>
+                      ({
+                        top: vh * 0.66,
+                        bottom: vh * 0.66 + 20,
+                        left: 10,
+                        right: 90,
+                        width: 80,
+                        height: 20,
+                      }) as DOMRect
+                  }
+                  ;(ref as { current: HTMLElement | null }).current = node
+                }) as never,
+                ...triggerProps,
+              },
+              'Project',
+            ),
+          children: createElement('p', null, 'Steps'),
+        }),
+      ),
+    )
+    const surface = dom.window.document.querySelector<HTMLElement>('[role="menu"]')!
+    expect(surface.style.top, 'it fits below the trigger at first').not.toBe('')
+    expect(observers.length, 'the surface is watched for size').toBeGreaterThan(0)
+
+    surfaceHeight = Math.round(vh * 0.5)
+    await act(async () => {
+      for (const callback of observers) callback()
+    })
+    expect(surface.style.top, 'no longer pinned below the trigger').toBe('')
+    expect(surface.style.bottom, 'anchored above it instead').not.toBe('')
+    await act(async () => root.unmount())
+  } finally {
+    Reflect.deleteProperty(dom.window.HTMLElement.prototype, 'offsetHeight')
+    dom.window.close()
+    for (const key of Object.keys(globals)) {
+      if (previous[key]) Object.defineProperty(globalThis, key, previous[key])
+      else Reflect.deleteProperty(globalThis, key)
+    }
+  }
+})

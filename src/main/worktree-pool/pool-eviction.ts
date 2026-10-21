@@ -7,7 +7,7 @@ import { MEASURE_CONCURRENCY } from './disk-usage'
 import type { SlotRecord } from './pool-store'
 import { commitIsReachable, readSlotStatus } from './slot-git'
 import { type PoolContext, type PoolRuntime, tail } from './pool-context'
-import { hold, forgetRegistration } from './pool-slot-steps'
+import { hold, forgetRegistration, reservePath } from './pool-slot-steps'
 
 /** Evicting idle slots (worktree-pool-service.ts), and measuring them against the disk limit. */
 
@@ -142,9 +142,12 @@ export async function evictSlot(
     }
     await ctx.withPool(pool, async () => {
       pool.record.slots = pool.record.slots.filter((candidate) => candidate !== slot)
+      // Kept for a chat that still exists: its path stays free for it, and
+      // its return makes a slot there again (`reclaim`).
+      if (slot.parked) reservePath(pool, { ...slot.parked, path: slot.path })
       await ctx.persist(pool)
     })
-    ctx.log(`${slot.path}: evicted (${why})`)
+    ctx.log(`${slot.path}: evicted (${why})${slot.parked ? `; its path is kept for ${slot.parked.branch}` : ''}`)
     return true
   } finally {
     pool.busy.delete(slot.id)
@@ -164,6 +167,13 @@ const IDLE_SLOT_EXPIRY_MS = 24 * 60 * 60_000
  * Remove the least recently used idle slots beyond the kept number, beyond
  * what `maxSlots` leaves room for beside the slots in use, and every idle
  * slot unused for `IDLE_SLOT_EXPIRY_MS`.
+ *
+ * A slot parked for a chat is not a spare: no lease can take it as it
+ * stands, so the kept number neither keeps nor removes it, and it counts
+ * among the slots in use. It goes when it has been unused for a day, as any
+ * idle slot does, or when the pool is turned off, its path kept for its chat
+ * either way; a lease that finds the pool full may take it sooner
+ * (pool-idle.ts `makeRoom`).
  */
 export async function evictOverLimit(ctx: PoolContext, pool: PoolRuntime): Promise<void> {
   const { keepIdle, enabled, maxSlots } = await ctx.getSettings()
@@ -171,12 +181,14 @@ export async function evictOverLimit(ctx: PoolContext, pool: PoolRuntime): Promi
   const idle = pool.record.slots
     .filter((slot) => slot.state === 'idle' && !pool.busy.has(slot.id))
     .sort((a, b) => usedAt(b) - usedAt(a))
-  const others = pool.record.slots.length - idle.length
+  const spares = idle.filter((slot) => !slot.parked)
+  const others = pool.record.slots.length - spares.length
   const limit = enabled ? Math.min(keepIdle, Math.max(0, maxSlots - others)) : 0
   const now = ctx.now()
   const chats = chatsKey(ctx)
-  for (const [index, slot] of idle.entries()) {
-    const over = index >= limit
+  let index = 0
+  for (const slot of idle) {
+    const over = slot.parked ? !enabled : index++ >= limit
     if (!over && now - usedAt(slot) < IDLE_SLOT_EXPIRY_MS) continue
     if (ctx.stopped) return
     // Kept last time for the same reasons: every return and every settings
@@ -302,10 +314,12 @@ export async function clearIgnored(
   })
   if (!began) return { ok: false, message: 'Only a worktree that is ready to reuse can be cleared.' }
   try {
-    // Never the app's sidecar: it holds the history of chats that ran here,
-    // which a settled chat reopened on this slot reads again. `-e` with a
-    // negation takes the folder out of the ignored set for this run (a
-    // pathspec exclusion does not stop `clean` removing an ignored folder).
+    // Never the sidecar an older build wrote: until the store's one-time move
+    // has taken it (workspace-store-migration.ts), it holds the history of
+    // chats that ran here, which a settled chat reopened reads again. This
+    // build writes nothing there. `-e` with a negation takes the folder out of
+    // the ignored set for this run (a pathspec exclusion does not stop `clean`
+    // removing an ignored folder).
     const cleaned = await ctx.git(slot.path, ['clean', '-fdX', '--quiet', '-e', '!/.sprintengine/'])
     if (!cleaned.ok) return { ok: false, message: cleaned.message ?? 'git clean failed.' }
     ctx.log(`${slot.path}: ignored files cleared`)

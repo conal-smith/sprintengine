@@ -2,12 +2,29 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import MonacoEditor, { OnMount } from '@monaco-editor/react'
 import type * as Monaco from 'monaco-editor'
 import { useWorkspaceStore } from '../../store/workspaceStore'
-import { getGitEntry, useGitStatus } from '../../hooks/useGitStatus'
+import { getGitEntry, normalizePathKey, useGitStatus } from '../../hooks/useGitStatus'
+import { useAgentFileTrail } from './useAgentFileTrail'
 import { getGitLineChanges, type GitLineChange } from '../../utils/gitDiff'
 import { renderMarkdown } from '../../utils/markdown'
 import { isImageFile } from '../../utils/files'
 import { basename, isPathOrChild, trimPath } from '../../utils/paths'
-import { getEditorBuffer, hasEditorBuffer, setEditorBuffer, subscribeEditorBuffer } from '../../utils/editorBuffers'
+import {
+  getEditorBuffer,
+  getEditorDiskBaseline,
+  hasEditorBuffer,
+  setEditorBuffer,
+  setEditorDiskBaseline,
+  subscribeEditorBuffer,
+} from '../../utils/editorBuffers'
+import {
+  applyDiskContentToEditor,
+  classifyDiskChange,
+  oneAtATime,
+  readFileOnDisk,
+  unseenDiskContent,
+  type DiskRead,
+} from '../../utils/editorDiskSync'
+import { watchFileOnDisk } from '../../utils/fileDiskWatch'
 import { removeFileTabsForPath } from '../../utils/modelRegistry'
 import { EDITOR_FOCUS_EVENT } from '../../utils/editorFocus'
 import {
@@ -17,10 +34,22 @@ import {
   revealEditorRange,
   takeEditorLanding,
 } from '../../utils/agentEditorReveal'
-import { MONO_FONT_STACK, remeasureMonacoFontsOnLoad } from '../../utils/fonts'
+import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
-import { ContextMenu, EmptyState, IconButton, InlineNotice, MenuDivider, MenuItem, Spinner, Tooltip } from '../ui'
+import {
+  AgentEdge,
+  ContextMenu,
+  EmptyState,
+  IconButton,
+  InlineNotice,
+  MenuDivider,
+  MenuItem,
+  Spinner,
+  Tooltip,
+  useConfirmDialog,
+} from '../ui'
+import { EditorDiskNotice, overwriteOnDiskConfirmation, type EditorDiskNoticeState } from './editor/EditorDiskNotice'
 
 // The editor's three non-content states, each in its own kit idiom so a failed
 // read never renders like an empty pane (principles.md → Accessibility;
@@ -58,11 +87,22 @@ const MARKDOWN_PREVIEW_MAX_CHARS = 2 * 1024 * 1024
 // selection and tab count can both change while the menu is up.
 type EditorMenuState = { x: number; y: number; hasSelection: boolean; canCloseOtherEditorTabs: boolean }
 
+// What the file on disk did that the person has to know about: changed under
+// unsaved edits (holding what it changed to), or gone.
+type DiskNotice = EditorDiskNoticeState & { path: string }
+
 // The chord Monaco already binds for its clipboard and select-all actions.
 // Read per render, never once at module load: preload publishes `window.api`
 // after this module is first evaluated.
 function editorModifier(): string {
   return typeof window !== 'undefined' && window.api?.platform === 'darwin' ? '⌘' : 'Ctrl+'
+}
+
+function openFileState(workspaceId: string, path: string) {
+  return useWorkspaceStore
+    .getState()
+    .workspaces.find((w) => w.id === workspaceId)
+    ?.editorState?.openFiles.find((f) => f.path === path)
 }
 
 function readCssVar(name: string): string {
@@ -72,6 +112,7 @@ function readCssVar(name: string): string {
 
 export default function EditorPanel({ workspaceId, filePath }: Props) {
   const monacoTheme = useMonacoBaseTheme()
+  const codeFontFamily = useCodeFontFamily()
   const editorState = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.editorState)
   const folderPath = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.folderPath ?? null)
   const setActiveFile = useWorkspaceStore((s) => s.setActiveFile)
@@ -80,9 +121,18 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
   const markFileClean = useWorkspaceStore((s) => s.markFileClean)
   const closeFile = useWorkspaceStore((s) => s.closeFile)
   const { repoRoot, status: gitStatus, refresh: refreshGitStatus } = useGitStatus(folderPath)
+  const { confirm } = useConfirmDialog()
+  // The save command is bound once, at mount; it asks through whatever the
+  // provider hands out now.
+  const confirmRef = useRef(confirm)
+  confirmRef.current = confirm
 
   const openFiles = editorState?.openFiles ?? []
   const activeFilePath = filePath ?? editorState?.activeFilePath ?? null
+  // An agent in this workspace reading or editing the file, as the Files tree
+  // marks it: the editor wears the agent edge, its tab the pill.
+  const agentTrail = useAgentFileTrail(workspaceId, null)
+  const agentHere = activeFilePath !== null && agentTrail.marks.has(normalizePathKey(activeFilePath))
   const activeFile = openFiles.find((f) => f.path === activeFilePath)
   const isImage = Boolean(activeFilePath && activeFile && isImageFile(activeFile.path || activeFile.name))
   const activeFileHasRuntimeBuffer = activeFilePath ? hasEditorBuffer(workspaceId, activeFilePath) : false
@@ -102,6 +152,10 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
   const [markdownMode, setMarkdownMode] = useState<'preview' | 'source'>('preview')
   const [restoringFilePath, setRestoringFilePath] = useState<string | null>(null)
   const [editorMenu, setEditorMenu] = useState<EditorMenuState | null>(null)
+  const [diskNotice, setDiskNotice] = useState<DiskNotice | null>(null)
+  // Set while a reload from disk edits the model, so the onChange it fires is
+  // not taken for the person typing.
+  const applyingDiskContentRef = useRef(false)
   // Bumped on every Monaco mount, so the landing effect below runs once the
   // editor it drives exists.
   const [editorMountTick, setEditorMountTick] = useState(0)
@@ -273,9 +327,42 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
       const file = ws?.editorState?.openFiles.find((f) => f.path === pathToSave)
       if (!file) return
       if (isImageFile(file.path || file.name)) return
+      // A clean buffer is what was read off disk, and by now perhaps older than
+      // what is there: an agent may have rewritten the file since. Writing it
+      // back would put the old version over theirs, so ⌘S on it does nothing.
+      if (!file.isDirty) return
       if (!hasEditorBuffer(workspaceId, file.path) && typeof file.content !== 'string') return
-      await window.api.writefile(file.path, getEditorBuffer(workspaceId, file.path, file.content ?? ''))
-      markFileClean(workspaceId, file.path)
+      // A file that changed on disk since this tab last read or wrote it — and
+      // the watch has not said so yet, or cannot (an SSH machine's folder) —
+      // is not written over without asking.
+      const unseen = unseenDiskContent(
+        await readFileOnDisk(window.api, file.path),
+        getEditorDiskBaseline(workspaceId, file.path),
+        getEditorBuffer(workspaceId, file.path, file.content ?? ''),
+      )
+      if (unseen !== null) {
+        const overwrite = await confirmRef.current(overwriteOnDiskConfirmation(file.name))
+        if (!overwrite) {
+          setDiskNotice({ path: file.path, kind: 'changed', content: unseen })
+          return
+        }
+      }
+      const content = getEditorBuffer(workspaceId, file.path, file.content ?? '')
+      // The baseline moves before the write, so the watch event the write
+      // itself causes reads as this tab's own save and not as someone's edit.
+      const previousBaseline = getEditorDiskBaseline(workspaceId, file.path)
+      setEditorDiskBaseline(workspaceId, file.path, content)
+      try {
+        await window.api.writefile(file.path, content)
+      } catch (error) {
+        if (previousBaseline !== undefined) setEditorDiskBaseline(workspaceId, file.path, previousBaseline)
+        throw error
+      }
+      setDiskNotice(null)
+      // Typed into while the write was in flight: what is on screen is not what
+      // was written, and stays unsaved — a clean flag over it would let the
+      // next reload from disk take those keystrokes away.
+      if (getEditorBuffer(workspaceId, file.path, content) === content) markFileClean(workspaceId, file.path)
       void refreshGitStatus()
     })
   }
@@ -298,6 +385,7 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
         const content = await window.api.readfile(activeFilePath)
         if (cancelled || hasEditorBuffer(workspaceId, activeFilePath)) return
         setEditorBuffer(workspaceId, activeFilePath, content)
+        setEditorDiskBaseline(workspaceId, activeFilePath, content)
       } catch (error) {
         if (cancelled) return
         setContentLoadError({
@@ -313,6 +401,90 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
       cancelled = true
     }
   }, [activeFile, activeFileContentReady, activeFilePath, workspaceId])
+
+  // Puts what is on disk into the tab: the model first, as an edit over just
+  // the lines that changed (caret, scroll and undo survive it), then the
+  // buffer, which then already matches what the editor shows.
+  const takeDiskContent = (path: string, content: string): void => {
+    const editor = editorRef.current
+    if (editor) {
+      applyingDiskContentRef.current = true
+      try {
+        applyDiskContentToEditor(editor, content)
+      } finally {
+        applyingDiskContentRef.current = false
+      }
+    }
+    setEditorBuffer(workspaceId, path, content)
+    setEditorDiskBaseline(workspaceId, path, content)
+    markFileClean(workspaceId, path)
+    setDiskNotice((notice) => (notice?.path === path ? null : notice))
+  }
+
+  const applyDiskRead = (path: string, read: DiskRead): void => {
+    const file = openFileState(workspaceId, path)
+    if (!file || read.kind === 'unreadable') return
+    if (read.kind === 'missing') {
+      setDiskNotice({ path, kind: 'deleted' })
+      return
+    }
+    const change = classifyDiskChange({
+      disk: read.content,
+      buffer: getEditorBuffer(workspaceId, path, file.content ?? ''),
+      baseline: getEditorDiskBaseline(workspaceId, path),
+      dirty: file.isDirty,
+    })
+    if (change === 'reload') {
+      takeDiskContent(path, read.content)
+      return
+    }
+    if (change === 'conflict') {
+      setDiskNotice({ path, kind: 'changed', content: read.content })
+      return
+    }
+    if (change === 'in-sync') {
+      setEditorDiskBaseline(workspaceId, path, read.content)
+      if (file.isDirty) markFileClean(workspaceId, path)
+    }
+    setDiskNotice((notice) => (notice?.path === path ? null : notice))
+  }
+  const applyDiskReadRef = useRef(applyDiskRead)
+  applyDiskReadRef.current = applyDiskRead
+
+  // The file under the tab, kept in step with disk: an agent's edit to a clean
+  // tab shows up in it, one to a tab with unsaved edits asks first. Checked
+  // once when the watch starts too, for whatever changed while this tab was
+  // not mounted to hear it. A folder that cannot be watched (an SSH machine's)
+  // leaves the tab as it was before there was a watch.
+  const watchesDisk = Boolean(activeFilePath && activeFile && !isImage && activeFileContentReady)
+  useEffect(() => {
+    if (!watchesDisk || !activeFilePath) return
+    const path = activeFilePath
+    let disposed = false
+    const check = oneAtATime(async () => {
+      const read = await readFileOnDisk(window.api, path)
+      if (!disposed) applyDiskReadRef.current(path, read)
+    })
+    const stop = watchFileOnDisk(path, check)
+    check()
+    return () => {
+      disposed = true
+      stop()
+    }
+  }, [activeFilePath, watchesDisk])
+
+  const reloadFromDisk = async (path: string): Promise<void> => {
+    const read = await readFileOnDisk(window.api, path)
+    if (read.kind === 'content') takeDiskContent(path, read.content)
+    else if (read.kind === 'missing') setDiskNotice({ path, kind: 'deleted' })
+  }
+
+  // The person keeps their edits over the agent's: what the agent wrote becomes
+  // the baseline, so the notice goes and the next save overwrites it on purpose.
+  const keepMine = (notice: DiskNotice): void => {
+    if (notice.kind === 'changed') setEditorDiskBaseline(workspaceId, notice.path, notice.content)
+    setDiskNotice(null)
+  }
 
   useEffect(() => {
     if (!isImage || !activeFilePath) {
@@ -663,8 +835,17 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
     )
   }
 
+  const visibleDiskNotice = diskNotice?.path === activeFilePath ? diskNotice : null
+
   return (
     <div className="flex flex-col h-full bg-[color:var(--bg-app)]">
+      {visibleDiskNotice ? (
+        <EditorDiskNotice
+          notice={visibleDiskNotice}
+          onReload={() => void reloadFromDisk(visibleDiskNotice.path)}
+          onKeepMine={() => keepMine(visibleDiskNotice)}
+        />
+      ) : null}
       <div className="relative flex-1 overflow-hidden">
         {markdownModeToggle}
         {showPreview ? (
@@ -690,7 +871,7 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
               theme={monacoTheme}
               options={{
                 fontSize: 13,
-                fontFamily: MONO_FONT_STACK,
+                fontFamily: codeFontFamily,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 renderLineHighlight: 'gutter',
@@ -703,6 +884,7 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
                 padding: { top: isMarkdown ? 44 : 12 },
               }}
               onChange={(value) => {
+                if (applyingDiskContentRef.current) return
                 if (value !== undefined && activeFilePath) {
                   setEditorBuffer(workspaceId, activeFilePath, value)
                   if (!activeFile.isDirty) updateFileContent(workspaceId, activeFilePath, value)
@@ -712,6 +894,7 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
             />
           </div>
         )}
+        {agentHere ? <AgentEdge /> : null}
       </div>
       {editorMenu ? (
         <ContextMenu

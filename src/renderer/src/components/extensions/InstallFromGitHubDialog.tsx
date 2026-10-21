@@ -25,6 +25,7 @@ import { installNeedsWorkspace, trustReviewFromVerify } from '../settings/instal
 import { GhostButton, InlineNotice, Input, LinkButton, PrimaryButton, Spinner, TruncatedText } from '../ui'
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../ui/Modal'
 import { ExtensionTrustReview, trustCodeRequired, trustReviewReady } from './ExtensionTrustReview'
+import { isImeKey } from '../../utils/imeKey'
 
 type Phase =
   | { kind: 'idle' }
@@ -177,6 +178,7 @@ export function InstallFromGitHubDialog({
             if (phase.kind !== 'idle') setPhase({ kind: 'idle' })
           }}
           onKeyDown={(event) => {
+            if (isImeKey(event)) return
             if (event.key === 'Enter' && phase.kind === 'idle') void resolve()
           }}
           placeholder="https://github.com/owner/repo"

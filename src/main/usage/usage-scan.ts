@@ -20,7 +20,7 @@ import { basename, dirname, join, sep } from 'node:path'
 //   under `<data>/storage/message/<session>/`.
 // - Gemini CLI's chat recordings, `<home>/tmp/<project>/chats/session-*.json`.
 // - Grok's session updates, `<home>/sessions/<cwd>/<session>/updates.jsonl`.
-// - Studio's chat transcripts, `<root>/.sprintengine/conversations/<ws>/<agent>.jsonl`.
+// - Studio's chat transcripts, `<store>/conversations/<ws>/<agent>.jsonl` (workspace-store.ts).
 //   Their `turn_completed` events carry the turn's usage when the runtime
 //   reported it, the cost when it reported that, and the agent CLI session the
 //   turn ran (`providerCursor.sessionId`), which is the only link between a
@@ -37,10 +37,18 @@ import { basename, dirname, join, sep } from 'node:path'
 export type UsageSourceId = 'studio' | 'claude-code' | 'codex' | 'opencode' | 'gemini' | 'grok'
 
 /**
- * One hour of one model's usage in one session:
- * `[hourStartMs, model, link, input, output, cacheRead, cacheWrite, requests, costUsd]`.
+ * A speed tier billed above the model's list price: Claude Code's fast mode
+ * (`usage.speed: 'fast'`), and Codex's priority and ultrafast service tiers.
+ * Standard speed is the absence of one.
+ */
+export type UsageSpeed = 'fast' | 'ultrafast'
+
+/**
+ * One hour of one model's usage in one session at one speed:
+ * `[hourStartMs, model, link, input, output, cacheRead, cacheWrite, requests, costUsd, speed?]`.
  * `link` is the agent CLI session a Studio turn ran, '' elsewhere. `input` is
- * fresh input only; cache reads and writes are apart from it.
+ * fresh input only; cache reads and writes are apart from it. `speed` is last
+ * and absent at standard speed, so a bucket without one reads as it always did.
  */
 export type UsageBucket = [
   hour: number,
@@ -52,6 +60,7 @@ export type UsageBucket = [
   cacheWrite: number,
   requests: number,
   costUsd: number,
+  speed?: UsageSpeed,
 ]
 
 /** One session's aggregate, as the cache keeps it per group of files. */
@@ -118,42 +127,88 @@ const GROK_PROVIDER = 'grok-agent'
 // ── Reading lines ────────────────────────────────────────────────────────────
 
 /**
- * Stream a file's lines without holding the file. `keep` is a cheap substring
- * test run before a line is handed on, so the many lines a reader does not care
- * about (tool output, attachments) are never JSON-parsed.
+ * Stream a file's lines without holding the file. `keep` is a cheap test of a
+ * line's raw bytes, run before the line is decoded and handed on, so the many
+ * lines a reader does not care about (tool output, attachments: most of a
+ * log's bytes) are never decoded, let alone JSON-parsed. The markers a reader
+ * looks for are ASCII, and in UTF-8 an ASCII byte only ever stands for itself,
+ * so a marker is in a line's bytes exactly when it is in the decoded line,
+ * whatever else the line holds. A line keeps a CRLF's carriage return, which
+ * JSON reads as whitespace.
  */
 export async function forEachLine(
   path: string,
-  keep: (line: string) => boolean,
+  keep: (line: Buffer) => boolean,
   onLine: (line: string) => void,
-  options: { yieldEveryBytes?: number } = {},
+  options: { yieldEveryBytes?: number; chunkBytes?: number } = {},
 ): Promise<void> {
-  const stream = createReadStream(path, { encoding: 'utf8', highWaterMark: 1 << 20 })
-  let carry = ''
+  const stream = createReadStream(path, { highWaterMark: options.chunkBytes ?? 1 << 20 })
+  // The start of a line that runs past the chunks read so far, joined once its end comes.
+  let carry: Buffer[] = []
+  let carried = 0
+  const take = (line: Buffer) => {
+    if (line.length && keep(line)) onLine(line.toString('utf8'))
+  }
   let sinceYield = 0
   try {
-    for await (const chunk of stream as AsyncIterable<string>) {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
       sinceYield += chunk.length
-      const text = carry + chunk
       let from = 0
-      for (let at = text.indexOf('\n', from); at >= 0; at = text.indexOf('\n', from)) {
-        const line = text.slice(from, at)
+      let at = chunk.indexOf(NEWLINE)
+      if (carry.length && at >= 0) {
+        take(Buffer.concat([...carry, chunk.subarray(0, at)]))
+        carry = []
+        carried = 0
         from = at + 1
-        if (line && keep(line)) onLine(line)
+        at = chunk.indexOf(NEWLINE, from)
       }
-      carry = text.slice(from)
-      // A single line longer than 64 MB is not one any reader here wants.
-      if (carry.length > 64 << 20) carry = ''
+      for (; at >= 0; at = chunk.indexOf(NEWLINE, from)) {
+        take(chunk.subarray(from, at))
+        from = at + 1
+      }
+      if (from < chunk.length) {
+        // A tail is copied, so the chunk it came in is not held for it.
+        carry.push(from === 0 ? chunk : Buffer.from(chunk.subarray(from)))
+        carried += chunk.length - from
+        // A single line longer than 64 MB is not one any reader here wants.
+        if (carried > 64 << 20) {
+          carry = []
+          carried = 0
+        }
+      }
       if (options.yieldEveryBytes && sinceYield >= options.yieldEveryBytes) {
         sinceYield = 0
         await new Promise((resolve) => setImmediate(resolve))
       }
     }
-    if (carry && keep(carry)) onLine(carry)
+    if (carry.length) take(Buffer.concat(carry))
   } finally {
     stream.destroy()
   }
 }
+
+const NEWLINE = 0x0a
+
+/** A line's test for any of `markers`, each an ASCII string, as raw bytes. */
+function markers(...texts: string[]): (line: Buffer) => boolean {
+  const encoded = texts.map((text) => Buffer.from(text, 'latin1'))
+  return (line) => encoded.some((marker) => line.includes(marker))
+}
+
+// What each reader keeps a line for.
+const CLAUDE_REPLY = markers('"type":"assistant"')
+const CLAUDE_TITLE = markers('"type":"custom-title"', '"type":"ai-title"', '"type":"summary"')
+const CODEX_RECORD = markers(
+  '"session_meta"',
+  '"turn_context"',
+  '"token_usage_record"',
+  '"token_count"',
+  '"thread_settings_applied"',
+)
+const CODEX_USER_MESSAGE = markers('"user_message"')
+const CODEX_THREAD_NAME = markers('thread_name')
+const STUDIO_TURN = markers('"turn_completed"')
+const GROK_TURN = markers('turn_completed')
 
 function parseJson(line: string): Record<string, unknown> | null {
   try {
@@ -331,19 +386,36 @@ function blankEntry(group: Group, providerId: string): UsageCacheEntry {
   }
 }
 
-/** Add one request (or one turn) to the entry's hour bucket for its model and link. */
+/** Add one request (or one turn) to the entry's hour bucket for its model, link and speed. */
 function addUsage(
   buckets: Map<string, UsageBucket>,
   at: number,
   model: string,
   link: string,
   counts: [input: number, output: number, cacheRead: number, cacheWrite: number, requests: number, costUsd: number],
+  speed?: UsageSpeed,
 ): void {
   const hour = hourOf(at)
-  const key = `${hour}|${model}|${link}`
-  const bucket = buckets.get(key) ?? [hour, model, link, 0, 0, 0, 0, 0, 0]
+  const key = `${hour}|${model}|${link}|${speed ?? ''}`
+  let bucket = buckets.get(key)
+  if (!bucket) {
+    bucket = [hour, model, link, 0, 0, 0, 0, 0, 0]
+    if (speed) bucket.push(speed)
+  }
   for (let index = 0; index < 6; index += 1) bucket[3 + index] = (bucket[3 + index] as number) + counts[index]!
   buckets.set(key, bucket)
+}
+
+// Claude Code stamps each reply's usage with the speed it ran at.
+const claudeSpeed = (usage: Record<string, unknown>): UsageSpeed | undefined =>
+  usage.speed === 'fast' ? 'fast' : undefined
+
+// Codex's service tier, as its thread settings name it: `fast` is the
+// configuration's word for the API's `priority`.
+function codexSpeed(tier: unknown): UsageSpeed | undefined {
+  if (tier === 'priority' || tier === 'fast') return 'fast'
+  if (tier === 'ultrafast') return 'ultrafast'
+  return undefined
 }
 
 /**
@@ -363,19 +435,22 @@ function addUsage(
 export async function foldClaude(group: Group, yieldEveryBytes?: number): Promise<UsageCacheEntry> {
   const entry = blankEntry(group, CLAUDE_PROVIDER)
   const sessionId = basename(group.main, '.jsonl')
-  const requests = new Map<string, { at: number; model: string; counts: number[] }>()
+  const requests = new Map<string, { at: number; model: string; counts: number[]; speed?: UsageSpeed }>()
   let anonymous = 0
+  // The name a person gave with `/rename` wins over the CLI's own title, which
+  // the CLI writes again after it on every save. An empty one clears it.
+  let named: string | null | undefined
   for (const file of group.files) {
     const isMain = file === group.main && file.endsWith(`${sep}${sessionId}.jsonl`)
     await forEachLine(
       file,
-      (line) =>
-        line.includes('"type":"assistant"') ||
-        (isMain && (line.includes('"type":"ai-title"') || line.includes('"type":"summary"') || !entry.cwd)),
+      (line) => CLAUDE_REPLY(line) || (isMain && (CLAUDE_TITLE(line) || !entry.cwd)),
       (line) => {
         const record = parseJson(line)
         if (!record) return
         entry.cwd ??= str(record.cwd)
+        if (isMain && record.type === 'custom-title' && typeof record.customTitle === 'string')
+          named = str(record.customTitle)
         if (isMain && record.type === 'ai-title') entry.title = str(record.aiTitle) ?? entry.title
         if (isMain && record.type === 'summary' && !entry.title) entry.title = str(record.summary)
         if (record.type !== 'assistant') return
@@ -397,21 +472,24 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
         const messageId = str(message.id)
         const requestId = str(record.requestId)
         const key = messageId || requestId ? `${messageId ?? ''}|${requestId ?? ''}` : `anon:${anonymous++}`
+        const speed = claudeSpeed(usage)
         const known = requests.get(key)
         if (known) {
           // A later block of the same reply: its usage is the more complete one.
           for (let index = 0; index < 4; index += 1)
             known.counts[index] = Math.max(known.counts[index]!, counts[index]!)
-        } else requests.set(key, { at, model, counts })
+          known.speed ??= speed
+        } else requests.set(key, { at, model, counts, ...(speed ? { speed } : {}) })
       },
       { yieldEveryBytes },
     )
   }
   const buckets = new Map<string, UsageBucket>()
-  for (const { at, model, counts } of requests.values()) {
-    addUsage(buckets, at, model, '', [counts[0]!, counts[1]!, counts[2]!, counts[3]!, 1, 0])
+  for (const { at, model, counts, speed } of requests.values()) {
+    addUsage(buckets, at, model, '', [counts[0]!, counts[1]!, counts[2]!, counts[3]!, 1, 0], speed)
   }
   entry.sessionId = sessionId
+  entry.title = named ?? entry.title
   entry.buckets = [...buckets.values()]
   return entry
 }
@@ -424,6 +502,13 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
  * `token_count` events, whose running `total_token_usage` is differenced
  * (a total that went down means the count restarted). Codex's `input_tokens`
  * includes the cached part, which is taken out.
+ *
+ * The service tier a response was billed at comes from the
+ * `thread_settings_applied` event Codex writes ahead of a turn, and holds
+ * until the next one. Codex writes none ahead of a thread's first turn, so
+ * the responses before the first carry the tier it names: settings change
+ * between turns far more rarely than they stay put. A rollout with none (an
+ * `exec` run, an app-server thread) is read at standard speed.
  */
 export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise<UsageCacheEntry> {
   const entry = blankEntry(group, CODEX_PROVIDER)
@@ -431,16 +516,21 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
   const responses = new Set<string>()
   const buckets = new Map<string, UsageBucket>()
   let hasRecords = false
-  const fallback: Array<{ at: number; model: string; counts: [number, number, number, number, number, number] }> = []
+  // `null` until the first thread settings say; what came before them is kept
+  // aside and given the first tier named.
+  let speed: UsageSpeed | undefined | null = null
+  let firstSpeed: UsageSpeed | undefined
+  const early: Array<{ at: number; model: string; counts: [number, number, number, number, number, number] }> = []
+  const fallback: Array<{
+    at: number
+    model: string
+    counts: [number, number, number, number, number, number]
+    speed: UsageSpeed | undefined | null
+  }> = []
   let previousTotal: number[] | null = null
   await forEachLine(
     group.main,
-    (line) =>
-      line.includes('"session_meta"') ||
-      line.includes('"turn_context"') ||
-      line.includes('"token_usage_record"') ||
-      line.includes('"token_count"') ||
-      (!entry.title && line.includes('"user_message"')),
+    (line) => CODEX_RECORD(line) || (!entry.title && CODEX_USER_MESSAGE(line)),
     (line) => {
       const record = parseJson(line)
       if (!record) return
@@ -455,6 +545,18 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
         entry.cwd ??= str(payload.cwd)
         return
       }
+      if (payload?.type === 'thread_settings_applied') {
+        const settings = rec(payload.thread_settings)
+        if (settings && 'service_tier' in settings) {
+          const named = codexSpeed(settings.service_tier)
+          if (speed === null) {
+            firstSpeed = named
+            for (const item of early.splice(0)) addUsage(buckets, item.at, item.model, '', item.counts, named)
+          }
+          speed = named
+        }
+        return
+      }
       const at = timeOf(record.timestamp)
       if (at === null) return
       if (record.type === 'token_usage_record' && payload) {
@@ -466,14 +568,16 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
         const input = num(usage.input_tokens)
         const cached = Math.min(input, num(usage.cached_input_tokens))
         const written = Math.min(input - cached, num(usage.cache_write_input_tokens))
-        addUsage(buckets, at, str(payload.model) ?? model, '', [
+        const counts: [number, number, number, number, number, number] = [
           input - cached - written,
           num(usage.output_tokens),
           cached,
           written,
           1,
           0,
-        ])
+        ]
+        if (speed === null) early.push({ at, model: str(payload.model) ?? model, counts })
+        else addUsage(buckets, at, str(payload.model) ?? model, '', counts, speed)
         return
       }
       if (payload?.type === 'token_count') {
@@ -491,7 +595,7 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
         if (delta.every((value) => value === 0)) return
         const cached = Math.min(delta[0]!, delta[1]!)
         const written = Math.min(delta[0]! - cached, delta[2]!)
-        fallback.push({ at, model, counts: [delta[0]! - cached - written, delta[3]!, cached, written, 1, 0] })
+        fallback.push({ at, model, counts: [delta[0]! - cached - written, delta[3]!, cached, written, 1, 0], speed })
         return
       }
       if (record.type === 'event_msg' && payload?.type === 'user_message' && !entry.title) {
@@ -500,7 +604,11 @@ export async function foldCodex(group: Group, yieldEveryBytes?: number): Promise
     },
     { yieldEveryBytes },
   )
-  if (!hasRecords) for (const item of fallback) addUsage(buckets, item.at, item.model, '', item.counts)
+  // No thread settings at all: standard speed.
+  for (const item of early) addUsage(buckets, item.at, item.model, '', item.counts)
+  if (!hasRecords)
+    for (const item of fallback)
+      addUsage(buckets, item.at, item.model, '', item.counts, item.speed === null ? firstSpeed : item.speed)
   if (!entry.sessionId) entry.sessionId = basename(group.main, '.jsonl')
   entry.buckets = [...buckets.values()]
   return entry
@@ -528,31 +636,27 @@ export async function foldStudio(
   entry.sessionId = agentId
   entry.cwd = dir.root
   entry.title = titles.get(agentId) ?? null
-  await forEachLine(
-    group.main,
-    (line) => line.includes('"turn_completed"'),
-    (line) => {
-      const record = parseJson(line)
-      if (!record || record.type !== 'turn_completed') return
-      entry.providerId = str(record.providerId) ?? entry.providerId
-      const payload = rec(record.payload)
-      const at = typeof record.createdAt === 'number' ? record.createdAt : timeOf(record.createdAt)
-      if (!payload || at === null) return
-      const link = str(rec(payload.providerCursor)?.sessionId) ?? ''
-      if (link) links.add(link)
-      const usage = rec(payload.usage)
-      const counts: [number, number, number, number, number, number] = [
-        num(usage?.inputTokens),
-        num(usage?.outputTokens),
-        num(usage?.cacheReadTokens),
-        num(usage?.cacheWriteTokens),
-        usage ? 1 : 0,
-        num(payload.costUsd),
-      ]
-      if (!usage && counts[5] === 0) return
-      addUsage(buckets, at, str(record.modelId) ?? 'default', link, counts)
-    },
-  )
+  await forEachLine(group.main, STUDIO_TURN, (line) => {
+    const record = parseJson(line)
+    if (!record || record.type !== 'turn_completed') return
+    entry.providerId = str(record.providerId) ?? entry.providerId
+    const payload = rec(record.payload)
+    const at = typeof record.createdAt === 'number' ? record.createdAt : timeOf(record.createdAt)
+    if (!payload || at === null) return
+    const link = str(rec(payload.providerCursor)?.sessionId) ?? ''
+    if (link) links.add(link)
+    const usage = rec(payload.usage)
+    const counts: [number, number, number, number, number, number] = [
+      num(usage?.inputTokens),
+      num(usage?.outputTokens),
+      num(usage?.cacheReadTokens),
+      num(usage?.cacheWriteTokens),
+      usage ? 1 : 0,
+      num(payload.costUsd),
+    ]
+    if (!usage && counts[5] === 0) return
+    addUsage(buckets, at, str(record.modelId) ?? 'default', link, counts)
+  })
   entry.studio = { workspaceId: dir.workspaceId, agentId, root: dir.root, links: [...links].slice(0, 500) }
   entry.buckets = [...buckets.values()]
   return entry
@@ -588,16 +692,12 @@ async function studioTitles(dir: string, cache: Map<string, Map<string, string>>
 async function codexTitles(codexHome: string): Promise<Map<string, string>> {
   const titles = new Map<string, string>()
   try {
-    await forEachLine(
-      join(codexHome, 'session_index.jsonl'),
-      (line) => line.includes('thread_name'),
-      (line) => {
-        const record = parseJson(line)
-        const id = str(record?.id)
-        const name = str(record?.thread_name)
-        if (id && name) titles.set(id, name.slice(0, 160))
-      },
-    )
+    await forEachLine(join(codexHome, 'session_index.jsonl'), CODEX_THREAD_NAME, (line) => {
+      const record = parseJson(line)
+      const id = str(record?.id)
+      const name = str(record?.thread_name)
+      if (id && name) titles.set(id, name.slice(0, 160))
+    })
   } catch {
     // No index: a session is titled by its first message.
   }
@@ -944,30 +1044,26 @@ export async function foldGrok(group: Group): Promise<UsageCacheEntry> {
       num(usage.costUsdTicks) / GROK_TICKS_PER_USD,
     ])
   }
-  await forEachLine(
-    group.main,
-    (line) => line.includes('turn_completed'),
-    (line) => {
-      const record = parseJson(line)
-      const params = rec(record?.params)
-      const update = rec(params?.update)
-      const usage = rec(update?.usage)
-      if (!record || !update || !usage || update.sessionUpdate !== 'turn_completed') return
-      const at = timeOf(rec(params?._meta)?.agentTimestampMs) ?? timeOf(record.timestamp)
-      if (at === null) return
-      const turn = str(update.promptId) ?? str(params?.promptId) ?? str(record.prompt_id)
-      if (turn) {
-        if (seen.has(turn)) return
-        seen.add(turn)
-      }
-      const perModel = Object.entries(rec(usage.modelUsage) ?? {})
-      if (perModel.length === 0) return add(at, str(usage.model) ?? fallbackModel, usage)
-      for (const [model, value] of perModel) {
-        const modelUsage = rec(value)
-        if (modelUsage) add(at, model, modelUsage)
-      }
-    },
-  )
+  await forEachLine(group.main, GROK_TURN, (line) => {
+    const record = parseJson(line)
+    const params = rec(record?.params)
+    const update = rec(params?.update)
+    const usage = rec(update?.usage)
+    if (!record || !update || !usage || update.sessionUpdate !== 'turn_completed') return
+    const at = timeOf(rec(params?._meta)?.agentTimestampMs) ?? timeOf(record.timestamp)
+    if (at === null) return
+    const turn = str(update.promptId) ?? str(params?.promptId) ?? str(record.prompt_id)
+    if (turn) {
+      if (seen.has(turn)) return
+      seen.add(turn)
+    }
+    const perModel = Object.entries(rec(usage.modelUsage) ?? {})
+    if (perModel.length === 0) return add(at, str(usage.model) ?? fallbackModel, usage)
+    for (const [model, value] of perModel) {
+      const modelUsage = rec(value)
+      if (modelUsage) add(at, model, modelUsage)
+    }
+  })
   entry.buckets = [...buckets.values()]
   return entry
 }

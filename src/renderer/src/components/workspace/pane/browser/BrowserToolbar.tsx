@@ -3,6 +3,7 @@ import React, { useEffect, useImperativeHandle, useRef, useState, forwardRef } f
 import type { BrowserTabState } from '../../../../../../shared/browser'
 import { normalizeBrowserUrlInput } from '../../../../../../shared/browser'
 import { IconButton, Input, Tooltip } from '../../../ui'
+import { isImeKey } from '../../../../utils/imeKey'
 
 // The browser tab's one band of chrome (panel-header geometry, 34px): back ·
 // forward · reload/stop · the address field · the right cluster. Loading is a
@@ -113,6 +114,7 @@ export const BrowserToolbar = forwardRef<BrowserToolbarHandle, BrowserToolbarPro
         onChange={(event) => setDraft(event.currentTarget.value)}
         onFocus={(event) => event.currentTarget.select()}
         onKeyDown={(event) => {
+          if (isImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             submit()

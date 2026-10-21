@@ -57,6 +57,38 @@ export const CONVERSATION_QUEUED_SENDS_CAPABILITY = 'conversation-queued-sends' 
  * if it is not there and keeps them on the chat.
  */
 export const CONVERSATION_SEND_SKILLS_CAPABILITY = 'conversation-send-skills' as const
+/**
+ * A message may be steered into the turn that is running, as its own
+ * composer's Steer does: `send` takes `steer`, and a listed chat says whether
+ * its provider takes a message mid-turn (`capabilities.steer`). A steer the
+ * turn cannot take is not lost: the desktop holds it as a queued message, or,
+ * where a held message could not carry it, refuses it `busy` as any send made
+ * mid-turn was.
+ */
+export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as const
+/**
+ * The pictures a person sent with a message are served beside the step
+ * pictures `conversation-images` names: `GET conversation-image` takes
+ * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
+ * in place of `toolUseId`. Only a picture kept for that chat is served. A
+ * client without it names the picture instead of showing it.
+ */
+export const CONVERSATION_MESSAGE_IMAGES_CAPABILITY = 'conversation-message-images' as const
+/**
+ * A message may carry files of any type, not only pictures: the upload route
+ * beside the socket takes `kind=file`, and a `send` naming that upload's id
+ * in `uploadIds` attaches the file to the message by its path on the desktop,
+ * which the `user_message` records in `files`. No frame changed. A client
+ * without it offers pictures only.
+ */
+export const CONVERSATION_MESSAGE_FILES_CAPABILITY = 'conversation-message-files' as const
+/**
+ * A picture uploaded for a chat (`POST upload`) is shrunk by the desktop on
+ * receipt to the long edge its own composer sends (1568px), so the route takes
+ * one up to 20MB as it arrives; what is kept is still at most 5MB. A client
+ * without it keeps its upload under 5MB itself.
+ */
+export const CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY = 'conversation-image-downscale' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -74,6 +106,10 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_LIFECYCLE_CAPABILITY,
   CONVERSATION_QUEUED_SENDS_CAPABILITY,
   CONVERSATION_SEND_SKILLS_CAPABILITY,
+  CONVERSATION_STEER_SENDS_CAPABILITY,
+  CONVERSATION_MESSAGE_IMAGES_CAPABILITY,
+  CONVERSATION_MESSAGE_FILES_CAPABILITY,
+  CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

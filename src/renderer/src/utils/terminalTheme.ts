@@ -116,6 +116,22 @@ export function isLightTerminalBackground(): boolean {
   return isLightBackground(readVar('--terminal-bg', readVar('--bg-app', '#08090b')))
 }
 
+// A theme that is someone else's published palette (Nord, Dracula,
+// Catppuccin) carries its own sixteen ANSI colours, because a Dracula terminal
+// whose greens were not Dracula's would not be Dracula. It declares them in its
+// index.css block as `--terminal-ansi-<name>` (`brightBlack` is
+// `--terminal-ansi-bright-black`), and each one it declares replaces the
+// stock palette's colour; a theme that declares none keeps the stock palette
+// whole. Read off the same `:root` as the rest, so a theme change re-tints them.
+function themeAnsiOverrides(): ITheme {
+  const overrides: ITheme = {}
+  for (const key of ANSI_COLOR_KEYS) {
+    const value = readVar(`--terminal-ansi-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`, '')
+    if (value) overrides[key] = value
+  }
+  return overrides
+}
+
 export function getTerminalTheme(): ITheme {
   // Terminals read from dedicated --terminal-* tokens so they can sit deeper
   // than the panel chrome. Fall back to the surface scale tokens for any theme
@@ -128,7 +144,12 @@ export function getTerminalTheme(): ITheme {
   }
   // A light terminal surface needs the light ANSI palette or colored/bold agent
   // output washes out; dark surfaces keep xterm's default palette untouched.
-  return { ...base, ...(isLightBackground(background) ? LIGHT_TERMINAL_ANSI : DARK_TERMINAL_ANSI) }
+  // Either way a theme's own ANSI colours, where it has them, go on top.
+  return {
+    ...base,
+    ...(isLightBackground(background) ? LIGHT_TERMINAL_ANSI : DARK_TERMINAL_ANSI),
+    ...themeAnsiOverrides(),
+  }
 }
 
 export function getTerminalAnsiPalette(): string[] {

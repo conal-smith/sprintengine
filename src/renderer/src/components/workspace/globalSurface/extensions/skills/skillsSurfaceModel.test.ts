@@ -96,14 +96,11 @@ test('skillsSurfaceModel', async () => {
 
   // ── Installing ───────────────────────────────────────────────────────────────
 
-  run('with no workspace, Install is disabled and states why', () => {
-    const none = deriveInstallAvailability(null, 3)
-    assert.equal(none.enabled, false)
-    assert.match(String(none.reason), /Open a workspace/)
-    const nothingPicked = deriveInstallAvailability('/proj', 0)
+  run('Install never waits on a folder: it installs for every project', () => {
+    const nothingPicked = deriveInstallAvailability(0)
     assert.equal(nothingPicked.enabled, false)
     assert.equal(nothingPicked.reason, null)
-    assert.deepEqual(deriveInstallAvailability('/proj', 2), { enabled: true, reason: null })
+    assert.deepEqual(deriveInstallAvailability(2), { enabled: true, reason: null })
   })
 
   run('a batch install reports what actually happened, failures named', () => {

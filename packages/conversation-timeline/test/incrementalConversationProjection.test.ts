@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import type { ConversationEvent, ConversationEventType } from '../src/protocol.js'
 import { projectConversation } from '../src/conversationProjection.js'
-import { deriveConversationTimelineRows } from '../src/conversationTimeline.js'
+import { deriveConversationTimelineRows, retryLabel } from '../src/conversationTimeline.js'
 import {
   applyEvent,
   createConversationProjectionState,
@@ -405,6 +405,60 @@ test('a retry notice is the working line until the turn says anything else, in b
   ])
   const assistant = state.projection.entries.find((entry) => entry.kind === 'assistant')
   assert.equal(assistant?.kind === 'assistant' ? assistant.retry : 'missing', undefined)
+})
+
+test('a retry after a 403 says access was refused, not that the sign-in failed', () => {
+  const retry = { attempt: 1, maxAttempts: 10 }
+  assert.equal(
+    retryLabel({ ...retry, error: 'authentication_failed', status: 403 }),
+    'Access refused · retrying (1 of 10)…',
+  )
+  assert.equal(retryLabel({ ...retry, status: 403 }), 'Access refused · retrying (1 of 10)…')
+  assert.equal(
+    retryLabel({ ...retry, error: 'authentication_failed', status: 401 }),
+    'Couldn’t authenticate · retrying (1 of 10)…',
+  )
+})
+
+test('a compaction is the working line until the summary lands or the turn goes on, in both folds', () => {
+  const working = (entries: ReturnType<typeof projectConversation>['entries']) =>
+    deriveConversationTimelineRows(entries, true).find((row) => row.kind === 'working')
+  const events = [
+    event('user_message', 1, { turnId: 'a', text: '/compact' }),
+    event('turn_started', 2, { turnId: 'a' }),
+    event('context_compacting', 3, { turnId: 'a' }),
+    // A usage report can land mid-summary; the summary is still the step.
+    event('usage_updated', 4, { turnId: 'a', contextUsed: 180_000 }),
+    event('context_compacted', 5, { turnId: 'a', trigger: 'manual', postTokens: 12_000 }),
+    // On its own when the window filled, then the reply carries on.
+    event('context_compacting', 6, { turnId: 'a' }),
+    event('content_delta', 7, { turnId: 'a', text: 'Hello' }),
+  ]
+  const labels: (string | undefined)[] = []
+  let state = createConversationProjectionState()
+  const prefix: ConversationEvent[] = []
+  for (const item of events) {
+    state = applyEvent(state, item)
+    prefix.push(item)
+    assert.deepEqual(state.projection, projectConversation(prefix))
+    const row = working(state.projection.entries)
+    labels.push(row?.kind === 'working' ? row.label : undefined)
+  }
+  assert.deepEqual(labels.slice(1), [
+    'Thinking…',
+    'Compacting…',
+    'Compacting…',
+    'Thinking…',
+    'Compacting…',
+    'Replying…',
+  ])
+  const failed = projectConversation([
+    event('turn_started', 1, { turnId: 'a' }),
+    event('context_compacting', 2, { turnId: 'a' }),
+    event('turn_failed', 3, { reason: 'interrupted' }),
+  ])
+  const assistant = failed.entries.find((entry) => entry.kind === 'assistant')
+  assert.equal(assistant?.kind === 'assistant' ? assistant.compacting : 'missing', undefined)
 })
 
 test('a turn that gives up after retrying shows the failure, not the retry', () => {

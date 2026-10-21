@@ -1,6 +1,7 @@
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { PANEL_COMMAND_EVENT } from '../../../utils/panelCommands'
 import { QUOTE_SELECTION_COMMAND } from './quoteSelection'
+import type { ChatExportAction } from '../../../../../shared/chat-export'
 
 // Which mounted chat view answers a whole-window model-picker shortcut (see
 // the effect inside AgentChatView). Mount order; the focused view wins.
@@ -22,6 +23,12 @@ export type MountedChatView = {
   openFind?: () => void
   /** Set a quote into the composer where its caret is, and put the keyboard there. */
   insertQuote?: (text: string) => void
+  /** Open the side question drawer (`chat.sideQuestion`); absent where the chat cannot answer one. */
+  openSideQuestion?: () => void
+  /** Whether the conversation has a message in it yet: what Export chat offers itself on. */
+  hasMessages?: () => boolean
+  /** Export the conversation (`chat.export.*`); absent where the chat cannot be exported. */
+  exportChat?: (action: ChatExportAction) => void
 }
 const mountedChatViews: MountedChatView[] = []
 export const MODEL_PICKER_TOGGLE_COMMAND = 'chat.modelPicker.toggle'
@@ -29,6 +36,15 @@ const CHAT_FIND_COMMAND = 'chat.find'
 const RESUME_IN_TERMINAL_COMMAND = 'chat.resumeInTerminal'
 const REPLAY_COMMAND = 'chat.replay.start'
 const RESTART_SESSION_COMMAND = 'chat.restartSession'
+export const SIDE_QUESTION_COMMAND = 'chat.sideQuestion'
+/** The palette's Export chat commands, by the export each asks for. */
+export const CHAT_EXPORT_COMMANDS: Readonly<Record<string, ChatExportAction>> = {
+  'chat.export.copy': 'copy',
+  'chat.export.copyMarkdown': 'copy-markdown',
+  'chat.export.pdf': 'pdf',
+  'chat.export.docx': 'docx',
+  'chat.export.markdown': 'markdown',
+}
 
 /**
  * Answer `chat.modelPicker.toggle` (⌘⇧M, or the palette row) with ONE chat
@@ -84,6 +100,15 @@ function onModelPickerPanelCommand(event: Event): void {
         .find((view) => view.workspaceId === useWorkspaceStore.getState().activeWorkspaceId)
     responder?.startReplay?.()
   }
+  const exportAction = detail?.id ? CHAT_EXPORT_COMMANDS[detail.id] : undefined
+  if (exportAction) {
+    const responder =
+      mountedChatViews.find((view) => view.isFocused()) ??
+      [...mountedChatViews]
+        .reverse()
+        .find((view) => view.workspaceId === useWorkspaceStore.getState().activeWorkspaceId)
+    responder?.exportChat?.(exportAction)
+  }
   if (detail?.id === RESTART_SESSION_COMMAND) {
     const responder =
       mountedChatViews.find((view) => view.isFocused()) ??
@@ -91,6 +116,14 @@ function onModelPickerPanelCommand(event: Event): void {
         .reverse()
         .find((view) => view.workspaceId === useWorkspaceStore.getState().activeWorkspaceId)
     responder?.restartSession?.()
+  }
+  if (detail?.id === SIDE_QUESTION_COMMAND) {
+    const responder =
+      mountedChatViews.find((view) => view.isFocused()) ??
+      [...mountedChatViews]
+        .reverse()
+        .find((view) => view.workspaceId === useWorkspaceStore.getState().activeWorkspaceId)
+    responder?.openSideQuestion?.()
   }
   // From the keyboard the shell only takes ⌘F inside a chat
   // (`shellTakesChordFrom`), so the focused view answers; from the palette,

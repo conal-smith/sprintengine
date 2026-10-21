@@ -133,6 +133,34 @@ and adds, each behind its capability:
   refused `busy` as before; it refuses `cancelQueued` as `unsupported_command`
   and `watchQueued` as `invalid_frame`, each under its id. A desktop sends
   `queued` frames only to a client that asked.
+- `conversation-steer-sends`: a `send` with `steer: true` goes into the turn
+  that is running, where the chat's provider takes a message mid-turn (a
+  listed thread's `capabilities.steer`), and is answered when that turn ends.
+  With no turn running it is an ordinary send. A turn that cannot take it has
+  the desktop hold it as a `queue` send is held, answered at once with a
+  `notice`; one with `uploadIds` or `skills`, which cannot be held, is refused
+  `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
+  a send made while a turn runs is refused `busy` as before.
+
+`conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
+names no frame. A `user_message`'s `attachments` record each picture the
+person sent as `{ id, mediaType, name?, byteLength, ref }`, and a desktop that
+advertises it serves one at `GET /tailnet/v1/conversation-image` by its `ref`
+(`attachment=<ref>` in place of `toolUseId`). A client without it names the
+picture rather than drawing it.
+
+`conversation-message-files` (`CONVERSATION_MESSAGE_FILES_CAPABILITY`) names
+no frame either. The desktop's upload route takes `kind=file`, a file of any
+type, and a `send` names its `uploadId` in `uploadIds` beside any picture's.
+The desktop attaches it to the message by its path there, so the
+`user_message` lists it in `files` (`{ path }`). A client without it offers
+pictures only.
+
+`conversation-image-downscale` (`CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY`)
+names no frame either. A desktop that advertises it shrinks each picture
+uploaded for a chat to a 1568px long edge on receipt, so its upload route takes
+up to 20 MB as it arrives and keeps at most 5 MB. A client without it holds an
+upload to 5 MB itself.
 
 `ConversationCreateRequest` is what starting a conversation takes, with
 `allowedTools` — tools the chat may use without asking — beside the preset.

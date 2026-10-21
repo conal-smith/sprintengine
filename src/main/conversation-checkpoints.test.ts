@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict'
-import { copyFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, vi } from 'vitest'
-import { ConversationCheckpoints } from './conversation-checkpoints'
+import { ConversationCheckpoints, longPathsConfig } from './conversation-checkpoints'
 import { runGitCommand } from './git-utils'
 import { ConversationRuntime } from './conversation-runtime'
 import { createMockConversationProvider } from './providers/mock-conversation-provider'
@@ -709,4 +721,148 @@ test('a turn whose own files would overflow one command line is diffed in batche
   } finally {
     await rm(f.directory, { recursive: true, force: true })
   }
+})
+
+test('a repository with no commit inside the work tree is left out, and the turn keeps its checkpoint', async () => {
+  const f = await repository()
+  try {
+    // What an agent's `git init` leaves: one at the top, one inside a folder git has not seen.
+    for (const nested of ['scratch', join('tools', 'generated')]) {
+      await mkdir(join(f.root, nested), { recursive: true })
+      await git(join(f.root, nested), ['init'])
+      await writeFile(join(f.root, nested, 'notes.txt'), 'nested\n')
+    }
+    await writeFile(join(f.root, 'tools', 'build.sh'), 'echo build\n')
+    const checkpoints = new ConversationCheckpoints()
+    const pre = await checkpoints.capture(f.key, 1, 'pre')
+    assert.ok(pre.ok, JSON.stringify(pre))
+    await writeFile(join(f.root, 'existing.txt'), 'agent edit\n')
+    const post = await checkpoints.capture(f.key, 1, 'post')
+    assert.ok(post.ok, JSON.stringify(post))
+    const files = await git(f.root, ['ls-tree', '-r', '--name-only', post.ref])
+    assert.deepEqual(files.trim().split('\n'), ['.gitignore', 'deleted.txt', 'existing.txt', 'tools/build.sh'])
+    assert.deepEqual(await turnFiles(checkpoints, f.key, 1), ['existing.txt'])
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+// An unreadable file fails the add for a reason of its own; root, and Windows, read it anyway.
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a snapshot that fails for another reason still fails, with git’s own error',
+  async () => {
+    const f = await repository()
+    const secret = join(f.root, 'locked', 'secret.txt')
+    try {
+      await mkdir(join(f.root, 'locked'))
+      await writeFile(secret, 'x\n')
+      await chmod(secret, 0o000)
+      const captured = await new ConversationCheckpoints().capture(f.key, 1, 'pre')
+      assert.equal(captured.ok, false)
+      assert.match(captured.ok ? '' : captured.message, /secret\.txt/)
+    } finally {
+      await chmod(secret, 0o644).catch(() => {})
+      await rm(f.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+test('a folder that becomes a repository after its chat started keeps checkpoints from the next turn', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'conversation-checkpoints-later-'))
+  const root = join(directory, 'project')
+  await mkdir(root)
+  await writeFile(join(root, 'notes.txt'), 'original\n')
+  const key = { workspaceRoot: root, workspaceId: 'workspace', agentId: 'agent' }
+  const adapter = {
+    ...createMockConversationProvider(),
+    async *sendTurn(
+      input: import('./providers/conversation-provider-adapter').MockAdapterTurnInput,
+    ): AsyncIterable<ConversationEvent> {
+      const envelope = {
+        id: '',
+        sessionId: input.sessionId,
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        createdAt: 0,
+      }
+      yield {
+        ...envelope,
+        type: 'tool_started',
+        payload: { turnId: input.turnId, tool: 'Write', toolCallId: input.turnId, input: { path: 'notes.txt' } },
+      }
+      await writeFile(join(root, 'notes.txt'), `${input.message}\n`)
+      yield { ...envelope, type: 'turn_completed', payload: { turnId: input.turnId } }
+    },
+  }
+  const runtime = new ConversationRuntime({ adapters: [adapter], getProviderById: () => undefined })
+  try {
+    const started = await runtime.startSession({ ...key, providerId: 'mock-provider', modelId: 'mock-model' })
+    assert.ok(started.ok)
+    assert.equal(started.session.capabilities?.checkpoints, false)
+    const sessionId = started.session.sessionId
+    assert.ok((await runtime.sendTurn({ sessionId, message: 'before git' })).ok)
+
+    await git(root, ['init'])
+    await git(root, ['config', 'user.name', 'Developer'])
+    await git(root, ['config', 'user.email', 'dev@example.com'])
+    await git(root, ['add', '.'])
+    await git(root, ['commit', '-m', 'Initial files'])
+    const turned = await runtime.sendTurn({ sessionId, message: 'after git' })
+    assert.ok(turned.ok)
+    assert.equal(turned.session.capabilities?.checkpoints, true)
+    assert.ok((await runtime.sendTurn({ sessionId, message: 'once more' })).ok)
+
+    const replay = await runtime.readTranscript(key)
+    assert.ok(replay.ok)
+    const enabled = replay.events.filter(
+      (event) =>
+        event.type === 'session_updated' &&
+        (event.payload?.capabilities as { checkpoints?: boolean } | undefined)?.checkpoints === true,
+    )
+    assert.equal(enabled.length, 1, 'said once, as the first turn in the repository starts')
+    const completed = replay.events.filter((event) => event.type === 'turn_completed')
+    assert.deepEqual(
+      completed.map((event) => event.payload?.checkpointAvailable),
+      [undefined, true, true],
+      'the turn before git init has no checkpoint; the ones after have',
+    )
+  } finally {
+    await runtime.shutdown()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('capture and revert leave a split index the repository still uses in place', async () => {
+  const f = await repository()
+  try {
+    // A repository on a split index whose shared files expire at once: any
+    // split write in it deletes every shared index file older than now.
+    await git(f.root, ['config', 'core.splitIndex', 'true'])
+    await git(f.root, ['config', 'splitIndex.sharedIndexExpire', 'now'])
+    await git(f.root, ['update-index', '--split-index'])
+    const gitDir = join(f.root, '.git')
+    const past = new Date(Date.now() - 60_000)
+    for (const name of await readdir(gitDir))
+      if (name.startsWith('sharedindex.')) await utimes(join(gitDir, name), past, past)
+    const checkpoints = new ConversationCheckpoints()
+    await writeFile(join(f.root, 'untracked.txt'), 'new\n')
+    assert.ok((await checkpoints.capture(f.key, 1, 'pre')).ok)
+    await writeFile(join(f.root, 'existing.txt'), 'after\n')
+    assert.ok((await checkpoints.capture(f.key, 1, 'post')).ok)
+    assert.ok((await previewThenRevert((input) => checkpoints.revert(input), { key: f.key, turnSeq: 1 })).ok)
+    assert.equal(await readFile(join(f.root, 'existing.txt'), 'utf8'), 'original\n')
+    // The repository's own index still reads.
+    assert.match(await git(f.root, ['ls-files', '--cached']), /existing\.txt/)
+    await git(f.root, ['status', '--porcelain'])
+  } finally {
+    await rm(f.directory, { recursive: true, force: true })
+  }
+})
+
+test('checkpoint git commands turn on long paths on Windows only', () => {
+  assert.deepEqual(longPathsConfig('win32'), ['-c', 'core.longpaths=true'])
+  assert.deepEqual(longPathsConfig('darwin'), [])
+  assert.deepEqual(longPathsConfig('linux'), [])
 })

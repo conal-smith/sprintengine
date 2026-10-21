@@ -1661,19 +1661,21 @@ test('AgentChatView', async () => {
     'a recorded change is information; the error line stays for actual failures',
   )
 
-  // A message committed while the agent works waits in the queue, where it
-  // can be seen, sent now or taken back. Handing it to the running turn on
-  // Enter lost messages that turn never took in, so only "Send now" steers.
+  // A message committed while the agent works waits in the queue by default,
+  // where it can be seen, sent now or taken back. Handing every one to the
+  // running turn on Enter lost messages that turn never took in, so a steer on
+  // Enter is the person's choice (followUpDispatch.ts), never Enter's own.
   const submitSource = chatViewSource.slice(
-    chatViewSource.indexOf('const submitComposer = useCallback('),
+    chatViewSource.indexOf('const commitDraft = useCallback('),
     chatViewSource.indexOf('const openComposerMenu = useCallback('),
   )
   assert.match(submitSource, /setQueuedTurn\(turn\)/, 'a busy submit queues the message')
-  assert.doesNotMatch(
+  assert.match(
     submitSource,
-    /steerTurn\(|steerOnSend/,
-    'a busy submit never hands the message to the running turn',
+    /resolveComposerDispatch\(\{[\s\S]*?behavior: followUpBehavior[\s\S]*?if \(dispatch === 'steer'\)/,
+    'a busy submit steers only where the person chose it',
   )
+  assert.doesNotMatch(submitSource, /steerOnSend/, 'nothing else hands the message to the running turn')
   assert.doesNotMatch(
     chatViewSource,
     /useEffect\(\(\) => \{\s*if \(queuedTurn === null[^}]*\}\s*if \(steer/,
@@ -2015,4 +2017,11 @@ test('a draft folded into the queue keeps the queued message first and every att
     mentions: [mention],
     files: ['/Users/dev/Desktop/crash.log', '/Users/dev/Desktop/spec.pdf'],
   })
+})
+
+test('a busy commit is named by what the follow-up choice makes it, and an idle one still sends', () => {
+  const busySend = { ready: true, busy: true, sending: false, hasText: true, attachmentCount: 0 }
+  assert.equal(composerSendAction({ ...busySend, busyLabel: 'Steer message' }).label, 'Steer message')
+  assert.equal(composerSendAction({ ...busySend, busy: false, busyLabel: 'Steer message' }).label, 'Send message')
+  assert.equal(composerSendAction({ ...busySend, sending: true, busyLabel: 'Steer message' }).label, 'Sending')
 })

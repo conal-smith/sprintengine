@@ -186,20 +186,28 @@ test('what counts as loopback, and what a CONNECT may name', () => {
 
 test('a plain request is passed on once: a second one on the connection never reaches whoever answered the first', async () => {
   // A site that answers with keep-alive, sends an early hint first, and
-  // writes down every byte it is sent after its answer.
+  // writes down every byte it is sent after its answer. It answers once the
+  // whole request is in, its body framed by its Content-Length as a server
+  // frames it: TCP keeps no write boundaries, so the body may come on its own.
   const after: string[] = []
   const hostile = createServer((socket) => {
+    // The forward ends the connection under it, by design.
+    socket.on('error', () => undefined)
     let seen = ''
     let answered = false
     socket.on('data', (chunk) => {
-      seen += chunk.toString('latin1')
       if (answered) {
         after.push(chunk.toString('latin1'))
         socket.destroy()
         return
       }
-      if (!seen.includes('\r\n\r\n')) return
+      seen += chunk.toString('latin1')
+      const headEnd = seen.indexOf('\r\n\r\n')
+      if (headEnd === -1) return
+      const requestEnd = headEnd + 4 + Number(/\r\nContent-Length: (\d+)/iu.exec(seen.slice(0, headEnd))?.[1] ?? 0)
+      if (seen.length < requestEnd) return
       answered = true
+      if (seen.length > requestEnd) after.push(seen.slice(requestEnd))
       socket.write(
         'HTTP/1.1 103 Early Hints\r\nConnection: keep-alive\r\n\r\n' +
           'HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\nKeep-Alive: timeout=60\r\n\r\nhello',
@@ -213,6 +221,7 @@ test('a plain request is passed on once: a second one on the connection never re
   try {
     const answer = await new Promise<string>((resolve) => {
       const socket = connect({ host: '127.0.0.1', port })
+      socket.on('error', () => undefined)
       let out = ''
       socket.on('data', (chunk) => {
         out += chunk.toString('latin1')

@@ -284,7 +284,7 @@ export function describePluginFilesPlan(plugin: ScannedPlugin): string | null {
   if (!plugin.componentsKnown || !pluginNeedsOwnFiles(plugin)) return null
   const servers = plugin.components.mcpServers.filter(referencesPluginRoot).map((server) => server.id)
   const named = servers.length === 1 ? servers[0] : servers.join(', ')
-  return `The plugin's own files are copied into .sprintengine/claude-plugins/${plugin.id}, because ${named} ${
+  return `The plugin's own files are copied into this project's folder under ~/.sprintengine/workspaces (claude-plugins/${plugin.id}), not into the project, because ${named} ${
     servers.length === 1 ? 'runs' : 'run'
   } from the plugin's directory. \${CLAUDE_PLUGIN_ROOT} is resolved to where they land; Remove deletes them again.`
 }

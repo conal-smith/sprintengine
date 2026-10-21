@@ -17,6 +17,7 @@ import { cliRuntimeApi } from './api/cli-runtime'
 import { cliModelDiscoveryApi } from './api/cli-model-discovery'
 import { textGenerationApi } from './api/text-generation'
 import { clipboardApi } from './api/clipboard'
+import { chatExportApi } from './api/chat-export'
 import { conversationApi } from './api/conversation'
 import { conversationCommandsApi } from './api/conversation-commands'
 import { usageLimitsApi } from './api/usage-limits'
@@ -30,6 +31,7 @@ import { credentialApi } from './api/credential'
 import { designSystemApi } from './api/design-system'
 import { filesystemApi } from './api/filesystem'
 import { gitApi } from './api/git'
+import { artifactsApi } from './api/artifacts'
 import { marketplaceApi } from './api/marketplace'
 import { hostedSourcesFeedApi } from './api/hosted-sources-feed'
 import { hostedCardFeedApi } from './api/hosted-card-feed'
@@ -86,6 +88,7 @@ export const apiModules = {
   ...startupApi,
   ...buildStampApi,
   ...appearanceApi,
+  ...artifactsApi,
   ...authApi,
   ...automationApi,
   ...studioLocalAppsApi,
@@ -96,6 +99,7 @@ export const apiModules = {
   ...backlogApi,
   ...builtinSkillsApi,
   ...clipboardApi,
+  ...chatExportApi,
   ...cliRuntimeApi,
   ...cliModelDiscoveryApi,
   ...textGenerationApi,

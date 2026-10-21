@@ -54,7 +54,12 @@ time of the approval or question that stopped it; absent while nothing is
 asked). Each is additive, with no bump: a server of the same wire version
 built before one existed leaves it out, and the desktop reads that absence
 as it did before the member: a "working for" count and the next chat that
-needs you (`nextWaitingChat.ts`) both fall back to `updatedAt`.
+needs you (`nextWaitingChat.ts`) both fall back to `updatedAt`. A fourth,
+`workingSince` (2026-10-20: when the chat's current stretch of work began,
+held through the turns it opens by itself while a background agent or a
+monitor works; present only while the summary reads as working), is additive
+the same way: a server built before it leaves it out, and the desktop counts
+"working for" from its own reading of the turns, as it did before.
 
 The summary also carries `fileActivity`: the files the chat's tool calls are
 reading and editing, and the ones they finished with in the last minute, which
@@ -70,6 +75,15 @@ working, the composer names nothing it waits on, and that server's own idle
 sweep is the one that decides whether its child lives. Stop between turns is the
 same `interrupt` the wires already carry: a server built before it answers as
 it always did, that the session has no active turn, and the chat says so.
+
+So is `goal`: the goal a Codex chat keeps working toward by itself, which a
+`session_updated` event carries when it changes, and as null once there is
+none. A server built before it never sends it, and its chats have no goal to
+show. A client built before it skips the member, as it skips any it does not
+know; the turns Codex starts toward the goal reach it as `turn_started` with no
+`user_message` before them, which every client already takes for a turn an
+agent carried on with by itself. That event's `follows`, the turn it came
+straight after, is read by the desktop's own runtime and by nothing else.
 
 ## The support window
 
@@ -210,7 +224,8 @@ same wire also ran through a hosted relay; the relay was removed on 2026-09-27
 (owner ruling) and the package with it. Its published `4.x` versions stay on
 npm, and wire version 4 is what this tree still speaks, unchanged.
 
-The phone app keeps its own copy of these types. Nothing compares the two
+The phone app keeps its own copy of these types, in
+`mobile/src/shared/mobile-control/protocol.ts`. Nothing compares the two
 automatically any more, so a change that crosses the wire is made on both sides
 in the same coordinated change, and the version integer is still the only thing
 a peer sees.
@@ -235,6 +250,16 @@ Each degrades on a desktop without it to something that desktop already does:
 `hello` and `resolvePlan` are refused under their ids, and an unknown
 `permissionMode` member is dropped, so the preset's own mode runs.
 
+An `answerQuestion`'s answers are keyed by each question's whole text, which
+is how the CLI reads them back. The first version capped a key at 200
+characters, so a long question's answer was refused as `invalid_frame`. Since
+2026-10-16 a desktop accepts a key as long as an answer (20,000 characters),
+with the frame's total still the message limit. Only the validator widened:
+a client sends the same frame to either desktop, and an older one goes on
+refusing a long question as it always did. The first version's reader in
+`index.ts` is unchanged, since the phone carries it byte for byte; the wider
+rule is in `clientFrames.ts`, the server half.
+
 The initial `0.1.0` contract requires the `conversations` capability. Additive
 optional fields preserve that contract. Model switching is one such addition: its own
 `conversation-models` capability, a `models` catalog on a listed thread, the
@@ -245,11 +270,55 @@ The pictures a chat's steps show are another: the `conversation-images`
 capability names a plain `GET /tailnet/v1/conversation-image` beside the socket
 rather than a frame, so it changes neither the frame contract nor this package.
 A client that does not see it says the picture is on the other machine, and an
-older desktop answers the route 404. The machine each chat runs on (`host`),
+older desktop answers the route 404. The pictures a person sent with a message
+are the `conversation-message-images` capability (2026-10-16), on the same
+route: `attachment`, the `ref` an entry of a `user_message`'s `attachments`
+records, in place of `toolUseId`. Those entries (`{ id, mediaType, name?,
+byteLength, ref }`) were on the wire before it, an optional member with no
+capability; the capability only says the bytes can be fetched. A client that
+does not see it names the picture, and an older desktop answers the request
+400, since it names no `toolUseId`. Files of any type with a message are the
+`conversation-message-files` capability (2026-10-17): the upload route takes
+`kind=file`, and the `uploadIds` a `send` already carried name that upload as
+they name a picture's, so neither the route's path nor any frame changed. The
+message records it in `files` (`{ path }`), a member `user_message` carried
+before for files dropped on the desktop. A client that does not see it offers
+pictures only; an older desktop refuses a file `415 invalid_media_type`, as it
+always did. A file is kept as it came: `conversation-image-downscale`
+applies to pictures only. A desktop that shrinks an uploaded picture for the
+model on receipt advertises `conversation-image-downscale`
+(2026-10-17): its `POST /tailnet/v1/upload` takes up to 20 MB as the bytes
+arrive, where it took 5 MB, and keeps at most 5 MB, sized to its composer's
+1568px long edge. Nothing in the request or the answer changed shape. A client
+that does not see it holds its upload to 5 MB, as before, and an older desktop
+refuses a larger one `413 too_large`, as it always did. Only a desktop has the
+image codec, so a standalone Studio server leaves it out, and the Studio RPC,
+whose own uploads are kept as they came, never lists it. The machine each chat runs on (`host`),
 its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
 send them (`docs/conversations.md`, "Machines and pull requests in the list").
+A listed chat's `backgroundWork` (2026-10-17: `{ agents, monitors }`, the
+background agents still running and the monitors that will wake its agent) is
+another, beside a `phase` left as the turn's own: the desktop's sidebar counts
+such a chat as working, but a phone of that date holds a plain send while the
+listed phase says `running`, so the phase could not carry it. An older phone
+ignores the member and shows the chat as finished, as before; a phone that
+reads it shows the chat working without holding sends.
+`workingSince` (2026-10-20) is another, beside `turnStartedAt`: when the
+chat's stretch of work began, the person's message that began it, held
+through the turns the chat opens by itself while its `backgroundWork` goes on,
+which is the number the desktop's own sidebar counts "working for" from. It
+is listed whenever the desktop counts the chat as working, background work
+included. A client that does not read it counts from `turnStartedAt`, as
+before, and restarts with each turn the chat opens by itself; a client that
+reads it falls back to `turnStartedAt` for a desktop that does not send it.
+So are `scheduledAgentId` (the schedule whose run started the chat, which
+the desktop marks with the schedule's clock) and `snoozedUntil` (when a chat
+the person snoozed on the desktop wakes, listed only while that is ahead): a
+client that reads them draws the clock, and leaves a sleeping chat unmarked
+by "finished, unseen" until it wakes, as the desktop's own row does; an older
+client ignores both.
 The context a chat has spent (`contextWindow` and `contextUsed` on a
 `usage_updated` event) is the same kind of member: a phone that does not read
 them shows no context ring, and one that does draws none for a desktop that
@@ -264,7 +333,11 @@ most eight, a browser screenshot most often) are the same kind of member: the
 bytes were never on the wire and still are not, an older phone shows the
 step's words as before, and a reader that knows the member can say the step
 returned pictures but cannot fetch them, since `conversation-image` serves a
-step's picture by the step's input and not by this list. So is `origin` on a `user_message`
+step's picture by the step's input and not by this list. An MCP step's own
+title and its server's name (`displayTitle` and `serverName` on a
+`tool_started`, 2026-10-13: plain text, at most 120 characters each) are the
+same kind of member: a reader that does not know them titles the step from
+its wire name, as every reader did before. So is `origin` on a `user_message`
 payload (`ConversationMessageOrigin`, 2026-10-07), which marks a message the
 desktop sent a chat itself — a launched agent's notice, a resume after a usage limit —
 as Studio's: a reader that does not know it shows the message as the person's,
@@ -317,7 +390,33 @@ frames only to a client that asked, so a phone that never asks never sees
 one. A client asks whenever the desktop has not said it lacks the
 capability, since an older desktop's refusal is harmless. The Studio RPC does
 not advertise it: its conversation topic carries no `queued` frames, and its
-`conversation.cancelQueued` method is an owner's only. Breaking frame changes require a new
+`conversation.cancelQueued` method is an owner's only.
+A steered message is the `conversation-steer-sends` capability (2026-10-14):
+a `send` that says `steer: true` goes into the turn the chat is running, where
+its provider takes one, and each listed chat says whether it does as
+`capabilities.steer`, an optional boolean. With no turn running the send is an
+ordinary one; a turn that cannot take it has the desktop hold the message as a
+`queue` send is held, answered at once with a `notice`, or, for a message with
+`uploadIds` or `skills` that a held one cannot carry, refused `busy` as a
+mid-turn send always was, and run as the next turn when sent again once the
+turn is over. One that reached the chat is answered as taken, its turn's end
+in the `notice`, even when that turn then fails. `steer` is never beside `queue`. All of it is
+additive: a desktop without the capability drops `steer`, so the send is
+refused `busy` mid-turn as before, and a client sends it only where it is
+advertised. The Studio RPC advertises it too: its `conversation.send` reads
+the lane's own validator and reaches the same host.
+Create PR on a paired machine's chat is `chat-create-pull-request`
+(2026-10-18), gateway tools beside `conversation.mark_unread` and, like it,
+without the `conversation-` prefix: `conversation.pull_request_state`
+(`conversation:read`) and `conversation.pull_request_draft`, `_draft_cancel`,
+`_push` and `_create` (`conversation:operate`). Each names the chat by
+`workspaceId` and `agentId`, never a folder; the machine reads the chat's
+checkout from its own record, drafts with its own text generation settings,
+and records a pull request it creates as the chat's, so its next list carries
+it. All of it is additive: a client offers Create PR under a machine's chats
+only where it is advertised, and an older machine answers the tools "Unknown
+tool". The Studio RPC does not advertise it, having no method for them.
+Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.
 Both ESM and CommonJS tarball consumers and Node16 declarations are checked by
@@ -359,7 +458,15 @@ and `progress`. A Studio sends `call` only to a connection that offered a
 toolset, and the SDK sends `reply` only to a Studio that advertised the
 capability, so neither end is handed a frame type it does not know.
 `files-write` adds the owner-only `files.*` by root, which the canvas uses
-over a Studio's boards. `pull-requests` adds the owner-only `pullRequests.*`
+over a Studio's boards. The `store` root kind (2026-10-16), the project's
+store in the person's home where a Studio keeps the captures, recordings and
+transcripts older builds kept in `<project>/.sprintengine/`, is additive under
+it with no capability of its own: `files.roots` answers `store: true` where it
+is served, a Studio built before it leaves the member out and refuses the kind
+as `invalid_params`, and a client asks for it only where it is listed. An old
+client's read of `.sprintengine/…` under the `workspace` root that the folder
+no longer has is answered from the store, so a path it learned from an older
+Studio still finds its file. `pull-requests` adds the owner-only `pullRequests.*`
 methods and stream, and `pull-request-tool-calls` the one method a client that
 runs its own agents forwards their tool calls with, `pullRequests.noteToolCall`,
 and `pull-request-link` `pullRequests.link`, which records a pull request an

@@ -22,8 +22,9 @@ export const WORKTREE_RELEASE_TOOL = 'worktree.release'
 
 /** The worktree-name rule `agentWorktreePaths` applies, said to the agent. */
 const NAME_DESCRIPTION =
-  'A short name for the work, e.g. "fix-login-redirect". The worktree is put on the branch `agent/<name>`; it ' +
-  'must not exist yet.'
+  'A short name for the work, e.g. "fix-login-redirect". The worktree is put on the branch `<prefix>/<name>`, ' +
+  'the prefix being the one set in Studio’s Settings ▸ Worktrees (`agent` unless changed, possibly none); the ' +
+  'lease answers with the branch it made. It must not exist yet.'
 
 export type WorktreePoolToolsDeps = {
   pool: Pick<WorktreePoolService, 'lease' | 'release' | 'leaseAt'>
@@ -83,7 +84,10 @@ export function createWorktreePoolTools(deps: WorktreePoolToolsDeps): McpToolReg
         'When the project has turned dependency installs on, Studio runs the install before answering if the ' +
         'lockfile changed; the answer says whether it did, and otherwise run the project install yourself if ' +
         'dependencies are missing or the lockfile changed. Work in the returned path; the worktree stays yours ' +
-        'while you exist, and you can give it back early with worktree.release.',
+        'while you exist, and you can give it back early with worktree.release. Once it has sat clean, with ' +
+        'every commit pushed and nothing running in it, while your chat is idle, Studio may take it back for ' +
+        'another agent: your branch is kept, and if the path is gone when you return, lease a worktree again and ' +
+        'check your branch out there.',
       inputSchema: {
         type: 'object',
         properties: {

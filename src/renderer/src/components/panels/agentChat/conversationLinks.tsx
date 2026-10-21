@@ -6,15 +6,17 @@ import { TerminalLinkMenu } from '../../terminal/TerminalLinkMenu'
 import { openFileSurface } from '../../../utils/openFileSurface'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { availableFolderOpenTargets, resolveFolderOpenPrimary } from '../../workspace/openInEditorTargets'
-import { resolveTerminalFileReferencePath } from '../../../utils/terminalFileLinks'
+import { resolveTerminalFileReferencePath, withoutRepeatedWorkspacePrefix } from '../../../utils/terminalFileLinks'
 import { showToast } from '../../../store/toastStore'
 import { StreamingMarkdown } from './StreamingMarkdown'
+import { useReplyStreaming } from '../../../utils/replyStreaming'
 import { ConversationCodeBlock, ConversationReplyCodeBlock } from './ConversationCodeBlock'
 import { ConversationImage } from './ConversationImage'
 import { renderMarkdown } from '../../../utils/markdown'
 import { FOCUS_RING_CLASS } from '../../ui/tokens'
 import { useConversationTransport } from './conversationTransport'
-import { hostPlatform } from '../../../clientCapabilities'
+import { clientSupports, hostPlatform } from '../../../clientCapabilities'
+import { revealLabel } from '../../../utils/revealLabel'
 
 export type ConversationLinkContext = { workspaceId: string; cwd: string; workspaceRoot: string; agentId?: string }
 const LinkContext = createContext<ConversationLinkContext | null>(null)
@@ -58,11 +60,14 @@ function rememberPathKind(path: string, kind: 'file' | 'other'): void {
 // extension reads as one (nearly always right, and it keeps the text from
 // changing under the reader); one without — `/Users/dev/project` — reads as text,
 // because it is far more often a folder. The answer then settles it either way.
-function useExistingFile(resolved: string | null | undefined, path: string | null): boolean {
+// A fallback candidate passes `guessFromName: false`: it is a link only once
+// the disk has said it is a file, never on the strength of its extension.
+function useExistingFile(resolved: string | null | undefined, path: string | null, guessFromName = true): boolean {
   const files = useConversationTransport().services.files
   const guess = (): boolean => {
     const known = resolved ? knownPathKind(resolved) : undefined
     if (known) return known === 'file'
+    if (!guessFromName) return false
     return /\.[A-Za-z0-9]+$/u.test((resolved ?? path ?? '').split(/[\\/]/).at(-1) ?? '')
   }
   const [isFile, setIsFile] = useState(guess)
@@ -128,17 +133,22 @@ export const ConversationFileLink = React.memo(function ConversationFileLink({
     cwd: context?.cwd,
     platform: hostPlatform() || 'darwin',
   })
-  const resolved =
-    target?.type === 'file'
-      ? resolveTerminalFileReferencePath(target.path, {
-          executionRoot: context?.cwd,
-          workspaceRoot: context?.workspaceRoot,
-        })
-      : null
-  const existingFile = useExistingFile(
-    target?.type === 'file' && localFiles ? resolved : null,
+  const roots = { executionRoot: context?.cwd, workspaceRoot: context?.workspaceRoot }
+  const literal = target?.type === 'file' ? resolveTerminalFileReferencePath(target.path, roots) : null
+  const literalIsFile = useExistingFile(
+    target?.type === 'file' && localFiles ? literal : null,
     target?.type === 'file' ? target.path : null,
   )
+  // A path from the repository's root, in a workspace opened at a subfolder of
+  // it, is tried without the folders it repeats once the literal path is not
+  // a file here.
+  const base = context?.cwd || context?.workspaceRoot
+  const repeated =
+    target?.type === 'file' && !literalIsFile && base ? withoutRepeatedWorkspacePrefix(target.path, base) : null
+  const fallback = repeated ? resolveTerminalFileReferencePath(repeated, roots) : null
+  const fallbackIsFile = useExistingFile(localFiles ? fallback : null, null, false) && fallback !== null
+  const existingFile = literalIsFile || fallbackIsFile
+  const resolved = !literalIsFile && fallbackIsFile ? fallback : literal
   if (!target || (target.type === 'file' && !localFiles)) return <>{givenLabel ?? token}</>
   if (target.type === 'url') {
     const href = /^[a-z]+:/i.test(target.href) ? target.href : `https://${target.href}`
@@ -241,6 +251,9 @@ export const ConversationFileLink = React.memo(function ConversationFileLink({
           column={target.col}
           onClose={() => setMenu(null)}
           onError={report}
+          // The link is a file on this disk (`localFiles` above), so the
+          // system's file manager can show it, as an attached file's card does.
+          revealInSystemLabel={clientSupports('reveal-in-folder') ? revealLabel(hostPlatform()) : undefined}
         />
       ) : null}
     </>
@@ -402,6 +415,9 @@ export function ConversationMarkdown({
 }) {
   const streamed = useRef(streaming)
   if (streaming) streamed.current = true
+  // Show replies: a paragraph at a time holds what is still being written,
+  // and draws it all once the message ends.
+  const hold = useReplyStreaming() === 'paragraph' && streaming
   // What a person typed shows as they typed it; an agent's reply typesets its
   // math and draws its diagrams. A `$$` or a ```mermaid fence in a message is
   // far more often a question about the syntax than a request to draw it.
@@ -415,7 +431,7 @@ export function ConversationMarkdown({
       renderText: conversationText,
       renderLink,
       renderImage,
-      ...(userText ? { userText } : {}),
+      ...(userText ? { userText } : { repairFileLinks: true }),
     }),
     [streaming, userText, tone, size],
   )
@@ -423,5 +439,5 @@ export function ConversationMarkdown({
   // it; its text has not changed, so neither has its parse.
   const settled = !streamed.current
   const rendered = useMemo(() => (settled ? renderMarkdown(text, options) : null), [settled, text, options])
-  return settled ? <>{rendered}</> : <StreamingMarkdown source={text} options={options} />
+  return settled ? <>{rendered}</> : <StreamingMarkdown source={text} options={options} hold={hold} />
 }

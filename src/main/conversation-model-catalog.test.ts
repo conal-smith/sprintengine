@@ -82,3 +82,21 @@ test('an unreadable discovery cache reads as none, and a long catalog is cut to 
   assert.equal(options.length, CONVERSATION_MAX_MODEL_OPTIONS)
   assert.equal(options[0]?.id, 'm0', 'an id longer than the wire takes is dropped, not cut')
 })
+
+test('past the wire bound the ids the person added are kept, and the CLI fills the rest in its order', async () => {
+  const long = catalogWith({
+    readDiscovered: async () => ({
+      'claude-code': discovered(
+        Array.from({ length: CONVERSATION_MAX_MODEL_OPTIONS + 50 }, (_, index) => ({ id: `m${index}` })),
+      ),
+    }),
+    userModels: (cli) => (cli === 'claude-code' ? ['acme/my-model', 'm3'] : undefined),
+  })
+  const ids = ((await long('claude-agent'))?.options ?? []).map((option) => option.id)
+  assert.equal(ids.length, CONVERSATION_MAX_MODEL_OPTIONS)
+  assert.equal(ids[ids.length - 1], 'acme/my-model', 'the added id is kept, where the merge puts it')
+  assert.deepEqual(ids.slice(0, 3), ['m0', 'm1', 'm2'])
+  // `m3` was reported by the CLI as well; it is one row, in the CLI's place.
+  assert.equal(ids.filter((id) => id === 'm3').length, 1)
+  assert.equal(ids[ids.length - 2], `m${CONVERSATION_MAX_MODEL_OPTIONS - 2}`)
+})

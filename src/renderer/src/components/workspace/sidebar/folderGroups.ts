@@ -8,7 +8,11 @@ import { type FolderIdentityMap, folderIdentityKey } from '../useFolderRepositor
 import { workspaceProjectRoot } from '../../../utils/workspaceWorktree'
 import { shortMachineName } from '../../remote/machineRowModel'
 import { isMeshConversationPane } from '../../../../../shared/tailnet-mesh'
-import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
+import {
+  isProjectlessChatsRoot,
+  PROJECTLESS_CHATS_LABEL,
+  projectlessScopeOf,
+} from '../../../../../shared/projectless-chats'
 
 export type FolderGroup = {
   key: string
@@ -55,7 +59,7 @@ export type LocalGroupHeader = { key: string; folderPath: string; missing: boole
 export function resolveGroups(
   workspaces: readonly Workspace[],
   identities: FolderIdentityMap,
-): { keys: Map<string, string>; headers: Map<string, LocalGroupHeader> } {
+): { keys: Map<string, string>; headers: Map<string, LocalGroupHeader>; projectlessKey: string | null } {
   // The local twin per repository, chosen by a rule that does not move when
   // rows are reordered or a chat is added: a plain checkout over a worktree
   // (a worktree shares its checkout's remote, and is its own header), then
@@ -91,6 +95,13 @@ export function resolveGroups(
     const local = localByIdentity.get(repository.canonicalKey)
     if (local) keys.set(workspace.id, local.key)
   }
+  // A chat started without a project on another machine joins this window's
+  // own "No project" header when it has one: neither is in a project, and two
+  // headers of that name would read as two places.
+  const projectlessKey = localProjectlessKey(workspaces)
+  if (projectlessKey) {
+    for (const [id, key] of keys) if (key === PROJECTLESS_GROUP_KEY) keys.set(id, projectlessKey)
+  }
   // Two passes, because a header is a folder's own statement first. A row
   // that IS the folder speaks for it — path and missing-ness both — so a
   // plain workspace of the project always wins the header over a worktree
@@ -113,7 +124,16 @@ export function resolveGroups(
     if (!folderPath) continue
     headers.set(key, { key, folderPath, missing: false })
   }
-  return { keys, headers }
+  return { keys, headers, projectlessKey }
+}
+
+/** The key of this window's own "No project" header, or null when it has none. */
+function localProjectlessKey(workspaces: readonly Workspace[]): string | null {
+  for (const workspace of workspaces) {
+    if (workspace.remoteOrigin || workspace.environment) continue
+    if (isProjectlessChatsRoot(workspaceProjectRoot(workspace))) return groupKeyOf(workspace)
+  }
+  return null
 }
 
 export function normalizeFolder(value: string): string {
@@ -140,6 +160,12 @@ export function folderDisplayName(value: string | null): string {
 }
 
 /**
+ * The header chats started without a project on other machines share when
+ * this window has no "No project" header of its own for them to join.
+ */
+export const PROJECTLESS_GROUP_KEY = 'projectless'
+
+/**
  * Which header a row files under. Local rows group by folder exactly as they
  * always have; a remote-born row (`workspace.remoteOrigin`, the durable
  * provenance record — the mark rides the workspace, not a live pane, so
@@ -154,10 +180,19 @@ export function folderDisplayName(value: string | null): string {
  * it is a worktree on its own line instead.
  */
 export function groupKeyOf(workspace: Workspace): string {
-  // A row on an SSH machine (phase 8) files under that machine's folder: the
-  // same path on this computer is another folder.
-  if (workspace.environment) return `ssh:${workspace.environment.id}:${folderKey(workspace.folderPath)}`
+  // A chat started without a project on another machine is in no project
+  // there either: its folder is that one chat's, so keying by it gave every
+  // such chat a header of its own, named after the folder. They share one
+  // "No project" header, which `resolveGroups` folds into this window's own
+  // when it has one.
+  if (workspace.environment) {
+    if (projectlessScopeOf(workspace.folderPath)) return PROJECTLESS_GROUP_KEY
+    // A row on an SSH machine (phase 8) files under that machine's folder: the
+    // same path on this computer is another folder.
+    return `ssh:${workspace.environment.id}:${folderKey(workspace.folderPath)}`
+  }
   const origin = workspace.remoteOrigin
+  if (origin && projectlessScopeOf(origin.workspaceRoot)) return PROJECTLESS_GROUP_KEY
   // A remote row files under its PROJECT, not under itself (owner,
   // 2026-09-11). Keyed by the repository where the machine could name one — so
   // two chats in one checkout over there share a header, and the same
@@ -238,6 +273,7 @@ export function remoteProjectName(workspaceRoot: string | null, machineName: str
   // chat over there IS somewhere, and a header spelled "No folder" would both
   // lie and collide with the local folderless group's name.
   if (!workspaceRoot?.trim()) return shortMachineName(machineName)
+  if (projectlessScopeOf(workspaceRoot)) return PROJECTLESS_CHATS_LABEL
   return folderDisplayName(workspaceRoot)
 }
 

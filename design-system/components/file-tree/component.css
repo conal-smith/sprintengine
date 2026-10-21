@@ -188,6 +188,32 @@
   opacity: 0.8;
 }
 
+/* Display only: what a filtered tree knows about a file beyond its status —
+ * the diff's `+N −N`, in the diff surface's own inks. It takes the row's end;
+ * the badge follows it. */
+.ds-file-tree-meta {
+  flex: none;
+  display: flex;
+  gap: var(--sem-space-xs);
+  margin-left: auto;
+  font-family: var(--sem-font-family-mono);
+  font-size: var(--sem-font-size-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-file-tree-meta-added {
+  color: var(--sem-color-diff-added);
+}
+
+.ds-file-tree-meta-removed {
+  color: var(--sem-color-diff-removed);
+}
+
+.ds-file-tree-meta + .ds-file-tree-badge,
+.ds-file-tree-agent + .ds-file-tree-meta {
+  margin-left: 0;
+}
+
 /* ── Agent trail ─────────────────────────────────────────────────────────
  * Where an agent is at work: the file it is reading or editing, and each
  * closed folder on the way down to one. A wash on the ROW (the wash channel;

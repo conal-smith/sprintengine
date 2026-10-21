@@ -2,7 +2,22 @@
 
 ## 0.1.0 (unreleased)
 
+### Changed
+
+- `formatStepDuration` moves up to hours from an hour on ("6h 59m 50s"),
+  where it read "419m 50s".
+
+- `retryLabel` reads a 403 as "Access refused", where it read "Couldn’t
+  authenticate", whatever category the provider filed it under.
+
 ### Added
+
+- The projection carries `goal`: the goal the session's agent keeps working
+  toward by itself (`objective`, `status`), as the latest `session_updated`
+  that named one said it, null once one says `goal: null`, and emptied when a
+  session starts. `readConversationGoal` is the reader, and
+  `CONVERSATION_GOAL_STATUS_WORDS` says each status in a word or two
+  ("Working", "Paused", "Met").
 
 - The projection carries `backgroundTasks`: the shells, monitors and workflows
   the session's process still runs after its turn ended, as the latest

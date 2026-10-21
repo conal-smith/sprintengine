@@ -2,6 +2,7 @@ import type { SafeStorage } from 'electron'
 
 import type { AgentLaunchRequest, AgentLaunchResult } from '../shared/agent-launch'
 import type { Notifier } from '../server/platform/notifier'
+import { downscaleConversationImage, type ImageCodec } from './conversation-image-downscale'
 import {
   utf8Bytes,
   utf8Text,
@@ -33,6 +34,8 @@ export type InProcessShellBridgeDeps = {
   analytics: (event: ShellAnalyticsEvent) => void
   /** The shell's integrations gate: the launcher and plugin home written. */
   integrationsReady: () => Promise<void>
+  /** The image codec uploads are shrunk with (`nativeImage` in the app). */
+  imageCodec: ImageCodec
 }
 
 export function createInProcessShellBridge(deps: InProcessShellBridgeDeps): ShellBridge {
@@ -72,5 +75,8 @@ export function createInProcessShellBridge(deps: InProcessShellBridgeDeps): Shel
       deps.analytics(event)
     },
     integrationsReady: () => deps.integrationsReady(),
+    images: {
+      downscale: async (bytes, mediaType) => downscaleConversationImage(deps.imageCodec, bytes, mediaType),
+    },
   }
 }

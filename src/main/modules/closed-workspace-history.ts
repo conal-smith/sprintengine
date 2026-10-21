@@ -6,8 +6,8 @@ import type { ModuleWorkspaceView } from '../../shared/modules/workspace-view'
 // The workspaces closed on this machine, for `WorkspaceContextService.list({
 // includeClosed: true })`. Closing a workspace removes its record from the
 // registry outright (only a bare tombstone id is kept, for a day), so without
-// this a module could not tie anything it kept — a chat transcript under the
-// project's `.sprintengine/`, its own storage — back to a project that is no
+// this a module could not tie anything it kept — a chat transcript in the
+// project's store, its own storage — back to a project that is no
 // longer open.
 //
 // It records what the registry said about a workspace the moment it left:

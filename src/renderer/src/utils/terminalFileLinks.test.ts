@@ -328,3 +328,98 @@ test('terminalFileLinks', async () => {
 
   await suiteRun
 })
+
+// A compiler's diagnostic: the colon after the position starts the message.
+// Read as part of the path, it named a file that does not exist, so the link
+// opened "File does not exist" instead of the file at that line.
+for (const [line, path, position] of [
+  ['./main.go:10:5: undefined: x', './main.go', [10, 5]],
+  ['src/app.ts:12:3: error TS2304', 'src/app.ts', [12, 3]],
+  ['src/app.ts:12: warning', 'src/app.ts', [12, undefined]],
+  ['in src/app.ts: no exports', 'src/app.ts', [undefined, undefined]],
+  ['/repo/README.md:', '/repo/README.md', [undefined, undefined]],
+] as const) {
+  test(`a path ending in a colon links without it: ${line}`, () => {
+    const [reference] = findTerminalFileReferences(line, { workspaceRoot: '/repo' })
+    assert.equal(reference?.path, path)
+    assert.equal(
+      reference?.text,
+      `${path}${position[0] ? `:${position[0]}` : ''}${position[1] ? `:${position[1]}` : ''}`,
+    )
+    assert.equal(reference?.line, position[0])
+    assert.equal(reference?.column, position[1])
+  })
+}
+
+test('a web address after a path is not taken into the path', () => {
+  const references = findTerminalFileReferences('see src/app.ts: https://example.com/a:b', { workspaceRoot: '/repo' })
+  assert.deepEqual(
+    references.map((reference) => reference.text),
+    ['src/app.ts'],
+  )
+})
+
+test('a quoted path with spaces in it is one reference, its line inside or after the quotes', () => {
+  const roots = { workspaceRoot: '/repo', executionRoot: null }
+  const [inside, ...more] = findTerminalFileReferences('Error in "/Users/dev/My Project/src/index.ts:12:3"', roots)
+  assert.equal(more.length, 0)
+  assert.equal(inside?.path, '/Users/dev/My Project/src/index.ts')
+  assert.equal(inside?.line, 12)
+  assert.equal(inside?.column, 3)
+  assert.equal(inside?.startIndex, 'Error in "'.length)
+  assert.equal(inside?.text, '/Users/dev/My Project/src/index.ts:12:3')
+
+  const [after] = findTerminalFileReferences("at 'C:\\Program Files\\app\\main.ts':7", roots)
+  assert.equal(after?.path, 'C:\\Program Files\\app\\main.ts')
+  assert.equal(after?.line, 7)
+
+  const [relative] = findTerminalFileReferences('"docs/My Notes/a.md"', roots)
+  assert.equal(relative?.resolvedPath, '/repo/docs/My Notes/a.md')
+})
+
+test('a quoted path without a space, and quoted prose, read as before', () => {
+  const roots = { workspaceRoot: '/repo', executionRoot: null }
+  const plain = findTerminalFileReferences('"src/index.ts:4" and "lib/a.ts"', roots)
+  assert.deepEqual(
+    plain.map((reference) => [reference.path, reference.line]),
+    [
+      ['src/index.ts', 4],
+      ['lib/a.ts', undefined],
+    ],
+  )
+  // A quote that holds no separator is not a path, and the path after it still links.
+  const prose = findTerminalFileReferences('said "hello there" then src/b.ts', roots)
+  assert.deepEqual(
+    prose.map((reference) => reference.path),
+    ['src/b.ts'],
+  )
+  // Apostrophes inside words quote nothing.
+  assert.deepEqual(
+    findTerminalFileReferences("it's in src/main.ts and that's it", roots).map((reference) => reference.path),
+    ['src/main.ts'],
+  )
+  // A quoted URL with a space is still the web-link provider's.
+  assert.equal(findTerminalFileReferences('"https://example.com/a b"', roots).length, 0)
+})
+
+// A folder or file named outside ASCII is still a path. `\w` stopped at the
+// first accented letter, so these printed as plain text with no link.
+for (const [line, path, position] of [
+  ['wrote données/rapport.md:3 just now', 'données/rapport.md', 3],
+  ['see src/日本語.ts for the strings', 'src/日本語.ts', undefined],
+  ['moved docs/ünits/a.md', 'docs/ünits/a.md', undefined],
+  ['in src/café.ts:12', 'src/café.ts', 12],
+  ['żółć\\main.ts:7 failed', 'żółć\\main.ts', 7],
+] as const) {
+  test(`a relative path with non-ASCII names links whole: ${path}`, () => {
+    const references = findTerminalFileReferences(line, { workspaceRoot: '/repo' })
+    assert.equal(references.length, 1)
+    assert.equal(references[0]?.path, path)
+    assert.equal(references[0]?.line, position)
+    assert.equal(references[0]?.startIndex, line.indexOf(path))
+  })
+}
+
+test('a word with non-ASCII letters and no separator is still not a path', () => {
+  assert.equal(findTerminalFileReferences('le rapport était prêt.md', { workspaceRoot: '/repo' }).length, 0)
+})

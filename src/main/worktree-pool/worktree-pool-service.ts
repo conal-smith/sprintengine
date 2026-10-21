@@ -10,6 +10,8 @@ import { comparablePath } from '../../shared/host-paths'
 import { LOCAL_HOST_ID } from '../../shared/execution-host'
 import { worktreeContainerPath } from '../../shared/worktree-paths'
 import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
+import { worktreeBranchLedger, type WorktreeBranchLedger } from '../worktree-branch-ledger'
+import { worktreeBranchPrefix } from '../worktree-branch-prefix'
 import { measureDiskUsage, type MeasureDiskUsage } from './disk-usage'
 import {
   acquireInstanceLock,
@@ -27,9 +29,13 @@ import { defaultSlotGitRunner, type SlotGitRunner } from './slot-git'
 import { messageOf, type PoolContext, type PoolRuntime, type ResolvedRepo } from './pool-context'
 import { clearIgnored, enforceDiskLimit, evictOverLimit, evictSlot, measure } from './pool-eviction'
 import { heldAction } from './pool-held-actions'
-import { FETCH_FAILURE_BACKOFF_MS, FETCH_FRESH_MS, lease, reclaim } from './pool-lease'
+import { FETCH_FAILURE_BACKOFF_MS, FETCH_FRESH_MS, catchUp, lease, reclaim, type CatchUpOutcome } from './pool-lease'
 import { recoverPool } from './pool-recovery'
 import { release, returnUnused } from './pool-return'
+import type { PoolChat } from './pool-idle'
+import { reservationAt } from './pool-slot-steps'
+
+export type { PoolChat } from './pool-idle'
 
 /**
  * The pool of reusable agent worktrees.
@@ -69,7 +75,8 @@ import { release, returnUnused } from './pool-return'
  * A slot lives at `<repo-parent>/.sprintengine-worktrees/<repo>/pool-NN` and
  * keeps that path for its whole life: virtual environments and build caches
  * record absolute paths and do not survive a move. A leased slot is on
- * `agent/<slug>` and locked with the agent worktree lock
+ * `<prefix>/<slug>` (the person's branch prefix, `agent` unless changed) and
+ * locked with the agent worktree lock
  * (agent-worktree-lock.ts), so git's own `prune` and `remove`, another Studio
  * profile's cleanup and the Worktree manager all leave it alone.
  *
@@ -143,18 +150,56 @@ export type WorktreePoolServiceDeps = {
   /** How much disk a slot takes (disk-usage.ts). */
   measure?: MeasureDiskUsage
   /**
+   * The person's worktree branch prefix (Settings ▸ Worktrees), read on each
+   * lease: a lease asked for by name is put on `<prefix>/<name>`. The
+   * process's own (`worktree-branch-prefix.ts`) unless given.
+   */
+  branchPrefix?: () => string
+  /**
+   * Where a branch the pool makes (a lease's, a held or rescued slot's) is
+   * written down as one Studio made: the cleanup deletes a merged branch only
+   * when it is there or under `agent/`. The profile's own unless given.
+   */
+  branchLedger?: Pick<WorktreeBranchLedger, 'record'>
+  /**
    * The ids of every chat on record that is not settled (the workspace
    * registry), or null when unknown. A slot holding the history of one of them
    * is never removed (agent-worktree-keep-checks.ts); a settled chat counts
    * as deleted.
    */
   knownWorkspaceIds?: () => Iterable<string> | null
+  /**
+   * The chats on record that are not settled, or are open in a window, with
+   * the folders they name, whether one is on screen, and when each was last
+   * active (worktree-services.ts, from the workspace registry). Null or left
+   * out: unknown, and no slot a chat may be using is given back while it
+   * exists (pool-idle.ts).
+   */
+  chats?: () => readonly PoolChat[] | null
+  /**
+   * Where a chat's session is working now: a running turn, or a live child
+   * with its background agents and monitors (`liveConversationWorkspaceRoots`).
+   * Also among `livePaths`; asked apart so a slot kept for one can say so.
+   */
+  liveSessionPaths?: () => string[] | Promise<string[]>
+  /**
+   * A slot was given back while its chat or agent still exists (pool-idle.ts):
+   * the chat whose folder it is is marked, so opening it brings its worktree
+   * back (`worktree.reclaimedAt`). Never throws into the pool.
+   */
+  onGivenBack?: (slot: { repoRoot: string; path: string; branch: string }) => void
 }
 
 export type WorktreePoolLeaseInput = {
   repoRoot: string
-  /** The name the branch is derived from: `agent/<slug>`. */
+  /** The name the branch is derived from, under the person's branch prefix: `<prefix>/<slug>`. */
   name: string
+  /**
+   * The branch itself, when the caller already named it (`agentWorktreePaths`,
+   * through git.ts): taken as it is, so a worktree's branch is the one its
+   * caller recorded even if the prefix changed in between.
+   */
+  branch?: string
   /** Who the slot's lock names: the agent's id, or the branch while there is no agent yet. */
   owner?: string | null
   /** The agent that asked for the worktree itself (MCP), which keeps it while it exists. */
@@ -243,6 +288,16 @@ export type WorktreePoolReturnInput = {
 
 export type WorktreePoolService = ReturnType<typeof createWorktreePoolService>
 
+/** A lease's catch-up ({@link catchUp}), as a window's pool action answers it. */
+export function catchUpResult(outcome: CatchUpOutcome): WorktreePoolActionResult {
+  if (outcome.kind === 'moved') return { ok: true, message: outcome.note ?? `Moved to ${outcome.ref}.` }
+  if (outcome.kind === 'current') return { ok: true, message: outcome.note }
+  if (outcome.kind === 'worked-in') return { ok: true, message: 'Left as it is: it has been worked in.' }
+  if (outcome.kind === 'not-found') return { ok: false, message: 'No such lease.' }
+  if (outcome.kind === 'busy') return { ok: false, message: 'Another Studio is using this pool.' }
+  return { ok: false, message: outcome.message }
+}
+
 export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   const git = deps.git ?? defaultSlotGitRunner
   const now = deps.now ?? Date.now
@@ -251,6 +306,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   const fetchFreshMs = deps.fetchFreshMs ?? FETCH_FRESH_MS
   const fetchBackoffMs = deps.fetchBackoffMs ?? FETCH_FAILURE_BACKOFF_MS
   const measureSize = deps.measure ?? measureDiskUsage
+  const branchPrefix = deps.branchPrefix ?? worktreeBranchPrefix
+  const branchLedger = deps.branchLedger ?? worktreeBranchLedger()
   const pools = new Map<string, PoolRuntime>()
   const resolvedRepos = new Map<string, Promise<ResolvedRepo | null>>()
   let settings: WorktreePoolSettings | null = null
@@ -280,6 +337,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     fetchFreshMs,
     fetchBackoffMs,
     measureSize,
+    branchPrefix,
+    recordBranch: (repoRoot, branch) => branchLedger.record(repoRoot, branch).catch(() => undefined),
     pools,
     stopping,
     get stopped() {
@@ -404,6 +463,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
       createdAt: now(),
       slots: [],
       releasedPaths: [],
+      reservedPaths: [],
     }
     const pool = runtimeFor(record)
     await persist(pool)
@@ -502,6 +562,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
         lastBranch: slot.lastBranch,
         size: slot.size,
         kept: slot.kept,
+        parked: slot.parked ? { branch: slot.parked.branch, since: slot.parked.since } : null,
       })),
     }
   }
@@ -528,6 +589,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
 
   async function action(input: WorktreePoolActionInput): Promise<WorktreePoolActionResult> {
     if (input.kind === 'release') return releaseAction(input.leaseId)
+    if (input.kind === 'catch-up') return catchUpResult(await catchUp(ctx, input.leaseId))
     const pool = await poolFor(input.repoRoot, false)
     if (!pool) return { ok: false, message: 'This repository has no worktree pool.' }
     if (!(await ready(pool))) return { ok: false, message: 'Another Studio is using this pool.' }
@@ -587,6 +649,34 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
   }
 
   /**
+   * Whether a path is kept free for the chat whose parked slot was removed
+   * there: git.ts asks the pool to make it again (`reclaim`) before it would
+   * put a plain worktree there. Not a slot: the cleanup does not hand it over.
+   */
+  function reservesPath(path: string): boolean {
+    for (const pool of pools.values()) if (reservationAt(pool, path)) return true
+    return false
+  }
+
+  /**
+   * Whether the chat on `branch` whose folder is `path` must have its
+   * worktree brought back before an agent runs there: a slot is at the path
+   * and is not leased to that branch (given back, idle or parked, or someone
+   * else's since), or the path is reserved for it with no slot. Main's
+   * conversation runtime asks before every turn, and brings the worktree back
+   * first (git.ts `restoreGitWorktree`), or refuses the turn with the reason.
+   * In memory only, so asking costs nothing.
+   */
+  function awaitsChat(path: string, branch: string): boolean {
+    for (const pool of pools.values()) {
+      const slot = pool.record.slots.find((candidate) => comparablePath(candidate.path) === comparablePath(path))
+      if (slot) return !(slot.state === 'leased' && slot.lease?.branch === branch)
+      if (reservationAt(pool, path)) return true
+    }
+    return false
+  }
+
+  /**
    * Stop, wait up to `waitMs` (ten seconds unless the caller is short of time)
    * for the steps in flight, and give each pool's lock up.
    */
@@ -623,6 +713,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     lease: (input: WorktreePoolLeaseInput) => track(lease(ctx, input)),
     reclaim: (input: Parameters<typeof reclaim>[1]) => track(reclaim(ctx, input)),
     release: (leaseId: string) => track(release(ctx, leaseId)),
+    catchUp: (leaseId: string) => track(catchUp(ctx, leaseId)),
     returnUnused: (input: WorktreePoolReturnInput) => track(returnUnused(ctx, input)),
     leaseAt,
     action: (input: WorktreePoolActionInput) => track(action(input)),
@@ -635,6 +726,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     updateSettings: (patch: Partial<WorktreePoolSettings>) => track(updateSettings(patch)),
     measure: (repoRoot?: string) => track(measure(ctx, repoRoot)),
     ownsPath,
+    reservesPath,
+    awaitsChat,
     shutdown,
   }
 }

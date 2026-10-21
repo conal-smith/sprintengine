@@ -40,7 +40,9 @@ beforeAll(() => {
   anyGlobal.MouseEvent = dom.window.MouseEvent
   anyGlobal.IS_REACT_ACT_ENVIRONMENT = true
   ;(dom.window as unknown as Record<string, unknown>).api = new Proxy(
-    { platform: 'darwin' } as Record<string, unknown>,
+    // A subscription answers with its unsubscribe, as the preload's do: the
+    // agent pill reads the chats' file trail, which subscribes on mount.
+    { platform: 'darwin', onConversationEvent: () => () => {} } as Record<string, unknown>,
     {
       get: (target, key: string) => (key in target ? target[key] : () => Promise.resolve(undefined)),
     },
@@ -159,4 +161,85 @@ test('"Bring back" docks the tab into the pane, on screen', async () => {
   const pane = useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === 'ws-popped')?.paneState
   assert.equal(pane?.tabs.find((tab) => tab.id === 'away')?.poppedOut, undefined)
   assert.equal(pane?.activeTabId, 'away')
+})
+
+// A browser tab out of view is parked outside the window, where it paints
+// nothing. One being recorded must keep painting, so it waits under the app
+// instead, still out of reach of the pointer, the keyboard and a screen reader.
+
+test('a hidden browser layer is parked outside the window, or under the app while it records', async () => {
+  const { hiddenBrowserLayerStyle } = await import('./WorkspacePaneBody')
+  assert.equal(hiddenBrowserLayerStyle(false).transform, 'translateX(-100000px)')
+  const recording = hiddenBrowserLayerStyle(true)
+  assert.equal(recording.transform, undefined, 'inside the window, where Chromium composites it')
+  assert.equal(recording.zIndex, 'var(--z-parked)')
+  assert.equal(recording.pointerEvents, 'none')
+  assert.equal(recording.visibility, 'visible', 'visibility:hidden blanks a macOS guest for good')
+})
+
+test('a browser tab recording behind another stays in place, out of reach', async () => {
+  const { useRecordingTabsStore } = await import('./browser/recordingTabs')
+  const paneTabs = [
+    { id: 'front', kind: 'browser' },
+    { id: 'recorded', kind: 'browser' },
+    { id: 'idle', kind: 'browser' },
+  ] as WorkspacePaneTab[]
+  act(() => useRecordingTabsStore.getState().begin('rec-1', 'recorded', 'ws-popped'))
+  try {
+    const body = await renderBody(paneTabs, 'front')
+    const recorded = body.querySelector<HTMLElement>('#pane-ws-popped-panel-recorded')!
+    const idle = body.querySelector<HTMLElement>('#pane-ws-popped-panel-idle')!
+    assert.equal(recorded.style.transform, '')
+    assert.equal(recorded.style.pointerEvents, 'none')
+    assert.equal(recorded.hasAttribute('inert'), true)
+    assert.equal(recorded.getAttribute('aria-hidden'), 'true')
+    assert.equal(idle.style.transform, 'translateX(-100000px)')
+
+    act(() => useRecordingTabsStore.getState().end('rec-1'))
+    assert.equal(recorded.style.transform, 'translateX(-100000px)', 'parked again once the recording ends')
+  } finally {
+    act(() => useRecordingTabsStore.getState().end('rec-1'))
+  }
+})
+
+// Dragging a tab reorders the strip. A browser layer moved in the tree
+// detaches its <webview>, which reloads the page, so the layers never move.
+
+test('reordering the tabs leaves every layer where it is in the tree', async () => {
+  const browser = { id: 'tab-a', kind: 'browser' } as WorkspacePaneTab
+  const terminal = { id: 'tab-b', kind: 'terminal', terminalId: 'term-b' } as WorkspacePaneTab
+  const body = await renderBody([browser, terminal], 'tab-b')
+  const browserLayer = body.querySelector('#pane-ws-popped-panel-tab-a')!
+  const removed: Node[] = []
+  const observer = new dom.window.MutationObserver((records) => {
+    for (const record of records) removed.push(...record.removedNodes)
+  })
+  observer.observe(body, { childList: true })
+  try {
+    const { WorkspacePaneBody } = await import('./WorkspacePaneBody')
+    for (const order of [
+      [terminal, browser],
+      [browser, terminal],
+    ]) {
+      await act(async () => {
+        root?.render(
+          React.createElement(WorkspacePaneBody, {
+            workspaceId: 'ws-popped',
+            tabs: order,
+            activeTabId: 'tab-b',
+            selectedTabId: 'tab-b',
+          }),
+        )
+      })
+      observer.takeRecords().forEach((record) => removed.push(...record.removedNodes))
+    }
+    assert.deepEqual(
+      removed.map((node) => (node as Element).id),
+      [],
+      'no layer was taken out of the tree and put back',
+    )
+    assert.equal(body.querySelector('#pane-ws-popped-panel-tab-a'), browserLayer)
+  } finally {
+    observer.disconnect()
+  }
 })

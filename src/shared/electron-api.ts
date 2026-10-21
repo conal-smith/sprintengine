@@ -2,6 +2,12 @@ import type { ClientCapability } from './client-capabilities'
 import type { AttachedFilePreview } from './attached-files'
 import type { ChatLink } from './deep-link'
 import type { AgentNotificationMode } from './agent-notifications'
+import type {
+  ArtifactsSettingsView,
+  ArtifactsSetupInput,
+  ArtifactsSetupQuestionView,
+  ArtifactsSetupResult,
+} from './artifacts'
 import type { PreviewOpenAnswer, PreviewPort, PreviewSummary, WebDevicesStatus } from './web-client'
 import type {
   SshEnvironmentResult,
@@ -12,6 +18,7 @@ import type {
 } from './ssh-environments'
 import type { SshPreviewStatus } from './ssh-preview'
 import type { ServerMode } from './server-mode'
+import type { ChatExportInput, ChatExportResult } from './chat-export'
 import type { StudioServerInfo, StudioServerStatus } from './studio-server-status'
 import type { EditorRevealAck, EditorRevealRequest, EditorStateQuery, EditorStateReply } from './editor-reveal'
 import type {
@@ -153,6 +160,10 @@ import type {
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
   MeshWorkspaceExtensionsResult,
+  MeshPullRequestCreateResult,
+  MeshPullRequestDraftResult,
+  MeshPullRequestPushResult,
+  MeshPullRequestStateResult,
   MeshEvent,
   MeshLiveState,
   MeshPairResult,
@@ -169,6 +180,7 @@ import type {
   ScheduledAgentLastRun,
   ScheduledAgentView,
   ScheduledAgentWriteResult,
+  ScheduledAgentsPause,
 } from './scheduled-agents'
 // Write-back config + IPC contracts: schema owned by T10, IPC surface
 // consumed by the T11 settings UI. Re-exported through the single electron-api
@@ -194,6 +206,9 @@ import type {
   ConversationSetModelInput,
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
+  ConversationCancelSideQuestionInput,
+  ConversationSideQuestionInput,
+  ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
   ConversationSetPermissionInput,
   ConversationProvidersListInput,
@@ -366,8 +381,9 @@ import type {
   GitFileStageResult,
   GitGraphOptions,
   GitGraphSnapshot,
-  GitHubCloneInput,
-  GitHubCloneResult,
+  CloneProgress,
+  RepositoryCloneInput,
+  RepositoryCloneResult,
   GitHubRepoListResult,
   GitHubTokenStatus,
   GitHunkRef,
@@ -1026,6 +1042,10 @@ export type ElectronApi = {
    * `queue`: hand the message to the machine to hold until the chat's turn
    * ends, and answer once it holds it. Needs `conversation-queued-sends`
    * there, and words alone: a held message carries no images.
+   *
+   * `steer`: hand the message to the turn the chat is running, answered when
+   * that turn ends. Needs `conversation-steer-sends` there; a turn that cannot
+   * take it has the machine hold it for the turn's end, answered with a notice.
    */
   meshConversationSend: (input: {
     key: MeshConversationKey
@@ -1034,6 +1054,7 @@ export type ElectronApi = {
     queue?: boolean
     /** That machine's skill ids the chat runs with this message (`conversation-send-skills`). */
     skills?: string[]
+    steer?: boolean
   }) => Promise<MeshConversationCommandResult>
   // Take back a message the machine holds for the turn's end, by its id there.
   meshConversationCancelQueued: (input: {
@@ -1077,6 +1098,29 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationImageResult>
+  // A paired machine's chat's Create PR (`chat-create-pull-request`), the
+  // steps of the shell's own below, each run on that machine in the chat's
+  // checkout there. A pull request it creates is recorded there as the chat's.
+  meshConversationPullRequestState: (input: { key: MeshConversationKey }) => Promise<MeshPullRequestStateResult>
+  /** Drafted with that machine's text generation settings; `text_generation_off` where they are off. */
+  meshConversationPullRequestDraft: (input: {
+    key: MeshConversationKey
+    draftId?: string
+  }) => Promise<MeshPullRequestDraftResult>
+  meshConversationPullRequestDraftCancel: (input: {
+    key: MeshConversationKey
+    draftId: string
+  }) => Promise<{ ok: true } | { ok: false; code: string; message: string }>
+  meshConversationPullRequestPush: (input: {
+    key: MeshConversationKey
+    pin?: PullRequestCheckoutPin
+  }) => Promise<MeshPullRequestPushResult>
+  meshConversationPullRequestCreate: (input: {
+    key: MeshConversationKey
+    title: string
+    body: string
+    pin?: PullRequestCheckoutPin
+  }) => Promise<MeshPullRequestCreateResult>
   // Scheduled agents: a prompt and a schedule, each run a new chat. Main owns
   // the list and the scheduler; the renderer reads and writes through these.
   listScheduledAgents: () => Promise<ScheduledAgentView[]>
@@ -1090,6 +1134,19 @@ export type ElectronApi = {
   markScheduledAgentFailureSeen: (id: string) => Promise<{ ok: true }>
   /** The whole list, after every change — a write from anywhere, or a run's outcome. */
   onScheduledAgentsChanged: (cb: (agents: ScheduledAgentView[]) => void) => () => void
+  /** No run at its times until resumed; a run already going carries on, and Run now still runs it. */
+  pauseScheduledAgent: (id: string) => Promise<ScheduledAgentWriteResult>
+  /** On its schedule again, from its next time: nothing missed while paused is made up. */
+  resumeScheduledAgent: (id: string) => Promise<ScheduledAgentWriteResult>
+  /** Every scheduled agent paused at once, and until when; null when they are not. */
+  getScheduledAgentsPause: () => Promise<ScheduledAgentsPause | null>
+  /** Pause every scheduled agent until `until` (epoch ms), or until resumed (null). */
+  pauseAllScheduledAgents: (
+    until: number | null,
+  ) => Promise<{ ok: true; pause: ScheduledAgentsPause } | { ok: false; message: string }>
+  /** End that pause; a schedule paused on its own stays paused. */
+  resumeAllScheduledAgents: () => Promise<{ ok: true } | { ok: false; message: string }>
+  onScheduledAgentsPauseChanged: (cb: (pause: ScheduledAgentsPause | null) => void) => () => void
   authGetState: () => Promise<SprintEngineAuthState>
   authLogin: (organizationId?: string | null) => Promise<{ state: string; authorizationUrl: string }>
   authLogout: () => Promise<{ loggedOut: true }>
@@ -1242,6 +1299,12 @@ export type ElectronApi = {
   conversationSessionMcpAction: (input: ConversationMcpServerActionInput) => Promise<ConversationMcpServerActionResult>
   /** Stop one agent a live chat spawned, by its lane, leaving the chat and its turn running. */
   conversationSessionStopSubagent: (input: ConversationStopSubagentInput) => Promise<ConversationSessionActionResult>
+  /** Ask a side question about a live chat, answered from its context and added to nothing. */
+  conversationSessionAskSideQuestion: (input: ConversationSideQuestionInput) => Promise<ConversationSideQuestionResult>
+  /** Call off a side question still being answered, by the id it was asked under. */
+  conversationSessionCancelSideQuestion: (
+    input: ConversationCancelSideQuestionInput,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>
   conversationSessionStop: (input: ConversationStopSessionInput) => Promise<ConversationSessionActionResult>
   // Settle and Snooze: end the chat's child process, keeping the session so the
   // next message respawns it.
@@ -1417,6 +1480,18 @@ export type ElectronApi = {
   showMenubarMenu: (label: string, position?: { x?: number; y?: number }) => Promise<boolean>
   clipboardReadText: () => Promise<string>
   clipboardWriteText: (text: string) => Promise<void>
+  /**
+   * Plain text and HTML in one write, so a paste into a rich editor keeps the
+   * formatting and a paste into a terminal gets the text. Absent where the
+   * host has no rich clipboard of its own.
+   */
+  clipboardWriteRich?: (payload: { text: string; html: string }) => Promise<void>
+  /**
+   * Export chat: a chat tab's whole conversation saved as a PDF, Word or
+   * Markdown file where the save dialog says, or copied to the clipboard.
+   * Main reads the chat; the window names it and the format.
+   */
+  exportChat: (input: ChatExportInput) => Promise<ChatExportResult>
   // What this machine actually has: probed `git`/`gh` versions plus gh's own
   // auth login. Read-only and argument-free — see src/shared/version-control.ts.
   probeVersionControlProviders: () => Promise<VersionControlProviderProbe[]>
@@ -1585,7 +1660,12 @@ export type ElectronApi = {
   setGitHubToken: (token: string) => Promise<GitHubTokenStatus>
   clearGitHubToken: () => Promise<GitHubTokenStatus>
   listGitHubRepos: () => Promise<GitHubRepoListResult>
-  cloneGitHubRepo: (input: GitHubCloneInput) => Promise<GitHubCloneResult>
+  /** Clone any git repository (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, a self-hosted server). */
+  cloneRepository: (input: RepositoryCloneInput) => Promise<RepositoryCloneResult>
+  /** Stop the clone started with this `cloneId`; it answers `{ ok: false, reason: 'cancelled' }`. */
+  cancelRepositoryClone: (cloneId: string) => Promise<void>
+  /** Every running clone's progress, for the caller to filter on its `cloneId`. */
+  onRepositoryCloneProgress: (cb: (progress: CloneProgress) => void) => () => void
   detectExistingAgentConfig: (input?: AgentConfigDetectInput) => Promise<AgentConfigDetectResult>
   adoptAgentConfig: (input: AgentConfigAdoptInput) => Promise<AgentConfigAdoptResult>
   scanImportableConversations: () => Promise<ConversationImportScanResult>
@@ -1886,6 +1966,18 @@ export type ElectronApi = {
   // client whose machine is not this one to keep awake (a browser tab).
   getKeepAwake: () => Promise<boolean | null>
   setKeepAwake: (enabled: boolean) => Promise<boolean | null>
+  /**
+   * Settings ▸ Artifacts: where agents publish their pages, which main owns.
+   * A set-up (Test, or Save with `save`) finds and makes what the host needs
+   * and answers each step. Null from a client that is not this machine's
+   * desktop (a browser tab). A Cloudflare token goes in and never comes out.
+   */
+  getArtifactsSettings: () => Promise<ArtifactsSettingsView | null>
+  setUpArtifacts: (input: ArtifactsSetupInput, save: boolean) => Promise<ArtifactsSetupResult | null>
+  /** An agent's set-up, put to the person in this window; absent where there is no desktop to ask on. */
+  onArtifactsSetupQuestion?: (cb: (question: ArtifactsSetupQuestionView) => void) => () => void
+  onArtifactsSetupQuestionClosed?: (cb: (id: string) => void) => () => void
+  answerArtifactsSetupQuestion?: (id: string, confirmed: boolean) => void
   resolveBacklogLocation: (workspaceRoot: string) => Promise<BacklogLocationResult>
   setBacklogRoot: (input: BacklogSetRootInput) => Promise<BacklogLocationResult>
   ensureBacklogObjectRecords: (workspaceRoot: string, items: BacklogItemRecordInput[]) => Promise<BacklogReadResult>

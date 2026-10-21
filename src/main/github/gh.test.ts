@@ -206,6 +206,91 @@ test('on Windows, no gh on PATH is "not installed", without a bare-name spawn th
   assert.deepEqual(files, [])
 })
 
+test('on Windows, gh is looked up on PATH once, not before every call', async () => {
+  const files: string[] = []
+  const spawn: GhSpawn = async (file) => {
+    files.push(file)
+    return { stdout: '', stderr: '' }
+  }
+  const installed = 'C:\\Program Files\\GitHub CLI\\gh.exe'
+  let lookups = 0
+  const gh = createDefaultGhRunner({
+    spawn,
+    platform: 'win32',
+    resolveWindowsProgram: async () => {
+      lookups += 1
+      return installed
+    },
+  })
+  await gh.run(['pr', 'list'])
+  await gh.run(['pr', 'view'])
+  assert.equal(lookups, 1)
+  assert.deepEqual(files, [installed, installed])
+  gh.forgetLocation()
+  await gh.run(['pr', 'list'])
+  assert.equal(lookups, 2, 'a forced re-check looks again')
+})
+
+test('on Windows, a gh not found is looked for again on the next call', async () => {
+  let installed: string | null = null
+  let lookups = 0
+  const gh = createDefaultGhRunner({
+    spawn: async () => ({ stdout: '', stderr: '' }),
+    platform: 'win32',
+    resolveWindowsProgram: async () => {
+      lookups += 1
+      return installed
+    },
+  })
+  assert.equal((await gh.run(['--version'])).found, false)
+  installed = 'C:\\Program Files\\GitHub CLI\\gh.exe'
+  assert.equal((await gh.run(['--version'])).found, true)
+  assert.equal(lookups, 2)
+})
+
+test('on Windows, a remembered gh that is gone is looked up again and the call runs once more', async () => {
+  const moved = 'C:\\Users\\dev\\scoop\\shims\\gh.exe'
+  let location = 'C:\\Program Files\\GitHub CLI\\gh.exe'
+  const files: string[] = []
+  const gh = createDefaultGhRunner({
+    spawn: async (file) => {
+      files.push(file)
+      if (file !== location) throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })
+      return { stdout: 'ok', stderr: '' }
+    },
+    platform: 'win32',
+    resolveWindowsProgram: async () => location,
+  })
+  await gh.run(['pr', 'list'])
+  location = moved
+  const result = await gh.run(['pr', 'list'])
+  assert.equal(result.found, true)
+  assert.equal(result.stdout, 'ok')
+  assert.equal(files.at(-1), moved)
+})
+
+test('on Windows, a PATH that changed is searched again', async () => {
+  const saved = process.env.PATH
+  let lookups = 0
+  const gh = createDefaultGhRunner({
+    spawn: async () => ({ stdout: '', stderr: '' }),
+    platform: 'win32',
+    resolveWindowsProgram: async () => {
+      lookups += 1
+      return 'C:\\Program Files\\GitHub CLI\\gh.exe'
+    },
+  })
+  try {
+    process.env.PATH = 'C:\\Windows\\system32'
+    await gh.run(['--version'])
+    process.env.PATH = 'C:\\Program Files\\GitHub CLI;C:\\Windows\\system32'
+    await gh.run(['--version'])
+    assert.equal(lookups, 2)
+  } finally {
+    process.env.PATH = saved
+  }
+})
+
 test("the git that gh runs inside a repository ignores the repository's filesystem-monitor program", async () => {
   const envs: NodeJS.ProcessEnv[] = []
   const spawn: GhSpawn = async (_file, _args, options) => {

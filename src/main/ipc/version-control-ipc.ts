@@ -3,11 +3,17 @@ import type { IpcMain } from 'electron'
 import type { VersionControlProviderProbe } from '../../shared/version-control'
 import { binaryVersionProbeFrom, parseProbeOutput, probeBinaryVersion } from '../cli-runtime-install'
 import { hostRegistry } from '../hosts/host-registry'
-import { sharedGhRunner } from '../github/gh'
+import { sharedGhRunner, sharedHostCliRunner } from '../github/gh'
 import { probeHostGh } from '../github/host-gh-status'
 import { isWslHostId } from '../../shared/execution-host'
 import type { HostGhStatus } from '../../shared/host-gh'
-import { parseGhAuthLogin, probeVersionControlProviders, type VersionControlProbeDeps } from './version-control-probe'
+import {
+  parseGhAuthLogin,
+  parseGlabAuthLogin,
+  parseTeaLogin,
+  probeVersionControlProviders,
+  type VersionControlProbeDeps,
+} from './version-control-probe'
 
 // The real probes: the same machinery agent-CLI detection uses for versions, and
 // the same gh runner the review paths use for auth (so a GUI-launched app finds a
@@ -21,6 +27,19 @@ function createVersionControlProbeDeps(): VersionControlProbeDeps {
       const status = await gh.run(['auth', 'status'])
       if (!status.found || status.code !== 0) return null
       return parseGhAuthLogin(`${status.stdout}\n${status.stderr}`)
+    },
+    // Through the same runners the chat's Create PR drives them with, so the
+    // row and the button find the same binary.
+    async readForgeLogin(binary) {
+      if (binary === 'glab') {
+        const status = await sharedHostCliRunner('glab').run(['auth', 'status'], {
+          timeoutMs: 15_000,
+          setEnv: { NO_PROMPT: '1' },
+        })
+        return status.found ? parseGlabAuthLogin(`${status.stdout}\n${status.stderr}`) : null
+      }
+      const listed = await sharedHostCliRunner('tea').run(['logins', 'list', '--output=json'], { timeoutMs: 15_000 })
+      return listed.found && listed.code === 0 ? parseTeaLogin(listed.stdout) : null
     },
     // Each enabled WSL machine's own git: the one a workspace on that machine
     // runs. Asked through the machine itself, so it is that distribution's
@@ -50,7 +69,7 @@ export function registerVersionControlIpc(
   ipcMain: IpcMain,
   deps: VersionControlProbeDeps = createVersionControlProbeDeps(),
 ): void {
-  // Read-only and argument-free: the channel probes exactly the two providers the
+  // Read-only and argument-free: the channel probes exactly the providers the
   // product integrates, so no renderer-supplied value can reach a spawn.
   ipcMain.handle('version-control:probe-providers', (): Promise<VersionControlProviderProbe[]> =>
     probeVersionControlProviders(deps),

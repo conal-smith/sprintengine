@@ -19,6 +19,7 @@ import type {
   AgentConversationRuntime,
   AppSettings,
   CliRuntimeSettings,
+  FollowUpBehavior,
   NewChatAgentChoice,
   AgentExecution,
   WorkspaceWorktreeState,
@@ -27,7 +28,7 @@ import type {
   WorkspaceHighlight,
   McpServerConfig,
 } from '../types/workspace'
-import type { AppTheme, ChatWidth, ClockFormat, WindowMaterial } from '../types/appTheme'
+import type { AppTheme, ChatWidth, ClockFormat, ReplyStreaming, WindowMaterial } from '../types/appTheme'
 import { noteLaunchedAgentArrived, type LaunchedAgentProjection } from '../utils/launchedAgentProjection'
 import type { DiscoveredCliModelCatalog } from '../../../shared/cli-model-catalog'
 import type { FolderOpenTargetId } from '../../../shared/folder-open-targets'
@@ -278,6 +279,8 @@ export interface WorkspaceStore
   refreshMcpServersFromSource: (servers: McpServerConfig[]) => void
   removeMcpServer: (serverId: string) => void
   setLastSelectedCli: (cli: AgentCli) => void
+  /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
+  setWorktreeBranchPrefix: (prefix: string) => void
   recordProjectUse: (folderPath: string) => void
   setLastSelectedConversationModel: (selection: AgentConversationRuntime | null) => void
   setTextGenerationEnabled: (enabled: boolean) => void
@@ -314,7 +317,11 @@ export interface WorkspaceStore
   setTerminalIdleSuspendMinutes: (minutes: number) => void
   setTerminalKeepRecentAlive: (count: number) => void
   setSettleOnPullRequestMerge: (enabled: boolean) => void
+  /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
+  setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
+  /** What Enter does in a chat whose agent is working: queue the message, or steer the turn with it. */
+  setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
   setKeepRunningInBackground: (enabled: boolean) => void
   setTelemetryEnabled: (enabled: boolean) => void
@@ -335,8 +342,11 @@ export interface WorkspaceStore
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void
   setAppearanceClockFormat: (format: ClockFormat) => void
+  setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
+  setAppearanceInterfaceFont: (family: string) => void
+  setAppearanceCodeFont: (family: string) => void
   addWorkspace: (
     template: LayoutTemplate,
     options?: {

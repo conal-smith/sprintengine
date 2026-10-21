@@ -18,6 +18,7 @@
 //     all in to answer a keystroke would fetch the whole log on every find; a
 //     person who wants an old turn loads it, and the find picks it up.
 
+import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
 import { chatFindSegmentKey } from './chatFindSegment'
 import type { ConversationTimelineRow } from './conversationTimeline'
 import { planBody, planTitle } from './planCard'
@@ -184,10 +185,15 @@ function proseSearchText(prose: string): string {
     escaped.push(char)
     return String.fromCharCode(STAND_IN_BASE + escaped.length - 1)
   })
+  // Labels and destinations stop at the next `[`: without that, every `[`
+  // on a line with no `]` (a pasted log's `\x1b[32m`), or every `](` with no
+  // `)`, reads on to the line's end, and a long line costs its length squared.
+  // A bracket inside a label is the page's text anyway; the link is the
+  // innermost `[…](…)`, as the renderer draws it.
   text = text
-    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
-    .replace(/\[([^\]]+)\]\[[^\]]*\]/gu, '$1')
+    .replace(/!\[([^[\]]*)\]\([^)[]*\)/gu, '$1')
+    .replace(/\[([^[\]]+)\]\([^)[]*\)/gu, '$1')
+    .replace(/\[([^[\]]+)\]\[[^[\]]*\]/gu, '$1')
     .replace(/<((?:https?|mailto):[^>\s]+)>/gu, '$1')
     .replace(/(\*\*|__|~~)/gu, '')
     // A lone `*` or `_` is emphasis only against a word; `2 * 3` and
@@ -231,7 +237,10 @@ export function chatFindSegments(row: ConversationTimelineRow): ChatFindSegment[
       add(chatFindSegmentKey.plan(entry.requestId), `${planTitle(entry.plan) ?? ''}\n\n${planBody(entry.plan)}`)
     }
   }
-  if (row.kind === 'assistant' && row.entry.text.trim()) add(chatFindSegmentKey.reply(row.entry.turnId), row.entry.text)
+  // A follow-up Codex suggests is drawn as its label; the prompt behind it is
+  // not on the page to find.
+  if (row.kind === 'assistant' && row.entry.text.trim())
+    add(chatFindSegmentKey.reply(row.entry.turnId), showCodexFollowupLabels(row.entry.text))
   segmentCache.set(row, segments)
   return segments
 }

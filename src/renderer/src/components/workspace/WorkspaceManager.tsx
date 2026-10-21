@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioServerBanner } from '../studioServer/StudioServerBanner'
 import { hostIdForFolder, isWslHostId, LOCAL_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
-import {
-  isProjectlessChatsRoot,
-  projectlessScopeOf,
-  PROJECTLESS_CHATS_LABEL,
-} from '../../../../shared/projectless-chats'
+import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../shared/projectless-chats'
 import { nanoid } from 'nanoid'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -84,7 +80,12 @@ import { cliPermissionModeLaunch, cliPermissionModePatch, resolveCliPermissionPr
 import { BACKLOG_SKILL_ID, backlogHandoffPrompt } from '../../utils/backlogHandoff'
 import { recordBacklogAgentHandoff } from '../../utils/backlogAgentHandoff'
 import { setBacklogHandoffHost, type BacklogHandoffRequest } from '../backlog/backlogHandoffHost'
-import type { CardRunResult, WorkspaceSkill } from '../../../../shared/electron-api'
+import type {
+  CardRunResult,
+  RepositoryCloneInput,
+  RepositoryCloneResult,
+  WorkspaceSkill,
+} from '../../../../shared/electron-api'
 import type { HostedCard } from '../../../../shared/hosted-card-feed'
 import type { ConversationSessionSummary } from '../../../../shared/conversation-runtime'
 import type { CardLaunchChoice } from './globalSurface/extensions/home/CardGoPicker'
@@ -193,7 +194,7 @@ import {
   setExtensionsSurfaceHost,
   type ExtensionsSurfaceHostPorts,
 } from './globalSurface/extensions/extensionsSurfaceHost'
-import { isWorkspacePaneFocused } from './pane/paneFocus'
+import { isWorkspacePaneFocused, keepFocusOutOfClosedPane } from './pane/paneFocus'
 import { closePaneTabAndItsTerminal } from './pane/paneTerminals'
 import { reopenLastClosedTab } from './manager/reopenClosedTab'
 import { terminateWorkspaceTerminals } from './workspaceTerminalTermination'
@@ -205,6 +206,7 @@ import {
   buildSidebarWorkspaceOrder,
   getSessionItems,
   getWorkspaceActivity,
+  newChatInheritedScope,
   newChatProjectOptionsOf,
   showsNoWorkspaceState,
   type WorkspaceActivity,
@@ -247,7 +249,7 @@ import { dispatchPanelCommandEvent } from '../../utils/panelCommands'
 // From the pure search module, not the palette component: the palette is
 // React.lazy and importing a type through it would be a needless edge into the
 // deferred chunk.
-import type { PaletteScope } from '../commandPaletteSearch'
+import { paletteScopeForCommand, type PaletteScope } from '../commandPaletteSearch'
 import { subscribePaletteOpenRequest, type PaletteAgentTarget } from '../palette/paletteOpenRequest'
 import { isGlobalShortcutSuppressedTarget, isTerminalKeyTarget } from '../../utils/keyboard'
 import { controlTabContextItemOf, controlTabContextOf, cycleFocusedControlTabScope } from '../../utils/controlTab'
@@ -378,6 +380,11 @@ const ConversationImportCard = React.lazy(() => import('../onboarding/Conversati
 // to open before it gives way to whatever the window shows instead. The splash
 // gives boot the same budget (BOOT_REVEAL_TIMEOUT_MS in main/boot-reveal.ts).
 const BOOT_COMPOSER_WAIT_MS = 10_000
+
+/** Reads, when called, whether a workspace's pane is open. */
+function paneOpenOf(workspaceId: string): () => boolean {
+  return () => Boolean(useWorkspaceStore.getState().workspaces.find((w) => w.id === workspaceId)?.paneState?.open)
+}
 
 // Display name for a New Chat project scope: the folder's last path segment.
 function newChatFolderLabel(path: string): string {
@@ -2492,8 +2499,10 @@ export default function WorkspaceManager() {
       const phase = conversationSummaryPhase(session)
       if (phase === 'running' || phase === 'starting') {
         row.hasRunning = true
-        // When the turn started, not `updatedAt`: that also moves when an
-        // approval resolves or the model changes, and the counter restarted.
+        // When its work started (main's `workingSince`, which a turn the chat
+        // opens by itself does not move, and which a paired machine lists),
+        // not `updatedAt`: that also moves when an approval resolves or the
+        // model changes, and the counter restarted.
         const startedAt = session.turnStartedAt ?? session.updatedAt
         row.workingSince = Math.min(row.workingSince ?? startedAt, startedAt)
       }
@@ -2575,7 +2584,7 @@ export default function WorkspaceManager() {
 
   // Create the git worktree an agent spawn requested ("+ Worktree" in the
   // agent composer): placed under the shared worktree container on branch
-  // `agent/<slug>`, and registered in the workspace's worktree registry with
+  // `<prefix>/<slug>` (the person's branch prefix), and registered in the workspace's worktree registry with
   // the new agent as owner. Returns the agent's execution, or null after
   // publishing a diagnostic — the caller aborts the spawn, because silently
   // spawning into the main checkout would drop the isolation the user asked for.
@@ -2610,7 +2619,7 @@ export default function WorkspaceManager() {
     // A typed name is used verbatim; an empty one derives from the agent's tab
     // name plus a short uid so repeat spawns never collide on the branch.
     const name = requestedName.trim() || `${tabName}-${nanoid(4).toLowerCase()}`
-    const paths = agentWorktreePaths(repoRoot, name)
+    const paths = agentWorktreePaths(repoRoot, name, useWorkspaceStore.getState().appSettings.worktreeBranchPrefix)
     if (!paths) {
       spawnError('Worktree name invalid', `"${name}" does not reduce to a usable worktree name.`)
       return null
@@ -2968,6 +2977,8 @@ export default function WorkspaceManager() {
   // the person is in at that moment (closing the last project from a
   // door, opening Settings before the CLI probe resolves) is not what an
   // auto-open may do. The panel simply waits under whatever is open.
+  const activeFolderPath = activeWorkspace?.folderPath ?? null
+  const activeWorktreeRepoRoot = activeWorkspace?.worktree?.repoRoot ?? null
   const presentNewChatPanel = useCallback(
     (
       folderPath?: string | null,
@@ -2983,11 +2994,11 @@ export default function WorkspaceManager() {
         clearNewChatDraft(workspaceWindowId)
         parked = null
       }
-      const inherited =
-        folderPath === undefined ? (parked?.folderPath ?? activeWorkspace?.folderPath ?? null) : folderPath
-      // A chat started without a project hands New chat "No project", never
-      // its own folder: the next chat gets a folder of its own too.
-      const resolved = projectlessScopeOf(inherited) ?? inherited
+      // Always a project, never the open chat's worktree (newChatInheritedScope).
+      const resolved = newChatInheritedScope(folderPath, parked?.folderPath, {
+        folderPath: activeFolderPath,
+        worktree: activeWorktreeRepoRoot ? { repoRoot: activeWorktreeRepoRoot } : null,
+      })
       rescopeNewChatDraft(workspaceWindowId, resolved)
       setNewChatPanelState({
         folderPath: resolved,
@@ -2996,7 +3007,7 @@ export default function WorkspaceManager() {
         forcedSelection,
       })
     },
-    [activeWorkspace?.folderPath, workspaceWindowId],
+    [activeFolderPath, activeWorktreeRepoRoot, workspaceWindowId],
   )
   presentNewChatPanelRef.current = presentNewChatPanel
   const openNewChatPanel = useCallback(
@@ -3581,38 +3592,29 @@ export default function WorkspaceManager() {
   // unmounted panel and the project was never adopted. The host outlives the
   // popover, so success always lands — the panel is reopened on that project
   // if it was closed meanwhile — and the toast names what arrived.
-  const cloneNewChatProject = useCallback(
-    async (input: {
-      url: string
-      parentDir: string
-      folderName: string
-    }): Promise<{ ok: true; path: string } | { ok: false; message: string }> => {
-      const cloned = await window.api
-        .cloneGitHubRepo(input)
-        .catch((caught: unknown): { ok: false; message: string } => ({
-          ok: false,
-          message: caught instanceof Error ? caught.message : 'Could not clone the repository.',
-        }))
-      if (!cloned.ok) return cloned
-      setNewChatPanelState((prev) =>
-        prev
-          ? { ...prev, folderPath: cloned.path, folderLabel: newChatFolderLabel(cloned.path) }
-          : {
-              folderPath: cloned.path,
-              folderLabel: newChatFolderLabel(cloned.path),
-              connector: null,
-              forcedSelection: null,
-            },
-      )
-      showToast({
-        tone: 'good',
-        title: `Cloned ${newChatFolderLabel(cloned.path)}`,
-        description: `${cloned.path} — selected in New chat.`,
-      })
-      return { ok: true, path: cloned.path }
-    },
-    [],
-  )
+  const cloneNewChatProject = useCallback(async (input: RepositoryCloneInput): Promise<RepositoryCloneResult> => {
+    const cloned = await window.api.cloneRepository(input).catch((caught: unknown): RepositoryCloneResult => ({
+      ok: false,
+      message: caught instanceof Error ? caught.message : 'Could not clone the repository.',
+    }))
+    if (!cloned.ok) return cloned
+    setNewChatPanelState((prev) =>
+      prev
+        ? { ...prev, folderPath: cloned.path, folderLabel: newChatFolderLabel(cloned.path) }
+        : {
+            folderPath: cloned.path,
+            folderLabel: newChatFolderLabel(cloned.path),
+            connector: null,
+            forcedSelection: null,
+          },
+    )
+    showToast({
+      tone: 'good',
+      title: `Cloned ${newChatFolderLabel(cloned.path)}`,
+      description: `${cloned.path} — selected in New chat.`,
+    })
+    return { ok: true, path: cloned.path }
+  }, [])
   // Switching workspaces parks the pre-creation panel: the user has moved on,
   // and the panel would otherwise sit over the newly revealed workspace. The
   // draft stays parked — Forward, or the next New chat, resumes it. A window
@@ -3937,13 +3939,19 @@ export default function WorkspaceManager() {
         return
       }
       addWorkspace(SOLO_CHAT_TEMPLATE, {
-        name: remoteWorkspaceName(created.title, launch.remoteWorkspaceName),
+        // Named for the chat, not its project: the project is the header the
+        // row files under. The row then follows the title the machine gives
+        // the chat (`remoteConversationTitle`), as a local New chat's does.
+        name: created.title,
         folderPath: null,
         remoteOrigin: {
           connectionId: launch.connectionId,
           machineName: launch.machineName,
-          workspaceId: launch.remoteWorkspaceId,
-          workspaceName: launch.remoteWorkspaceName,
+          // The chat that was created, not the project's seat it was created
+          // from: settle, visit and bring-back ask about this id, and the
+          // seat is another chat — one that may be resting.
+          workspaceId: created.workspaceId,
+          workspaceName: created.title,
           workspaceRoot: launch.remoteWorkspaceRoot,
           // The id the Remote band lists this chat by, so its row is this one.
           sessionId: remoteSessionId,
@@ -3993,17 +4001,15 @@ export default function WorkspaceManager() {
         openSettings(true, 'general')
         return true
       }
-      // ⌘K, Shift Shift and ⌘⇧F raise the same overlay and dismiss the same
-      // competing surfaces; they differ only in the scope it opens filtered to
-      // (and, for the first two, not even that — they are separate commands so
-      // they are separately rebindable). Sharing the branch is what keeps them
-      // from drifting into three slightly different "open the palette" behaviours.
-      if (
-        commandId === 'commandPalette.open' ||
-        commandId === 'search.everywhere' ||
-        commandId === 'search.files.open'
-      ) {
-        setPaletteScope(commandId === 'search.files.open' ? 'text' : 'all')
+      // ⌘K, Shift Shift, ⌘P and ⌘⇧F raise the same overlay and dismiss the
+      // same competing surfaces; they differ only in the scope it opens
+      // filtered to (and, for the first two, not even that — they are separate
+      // commands so they are separately rebindable). Sharing the branch is what
+      // keeps them from drifting into slightly different "open the palette"
+      // behaviours.
+      const raisedScope = paletteScopeForCommand(commandId)
+      if (raisedScope) {
+        setPaletteScope(raisedScope)
         // A keyboard-raised palette belongs to no pane: whatever the star last
         // aimed it at must not silently steer this one.
         setPaletteTarget(null)
@@ -4228,10 +4234,8 @@ export default function WorkspaceManager() {
         return reopenLastClosedTab(windowActiveWorkspaceId)
       }
       if (commandId === 'pane.toggle' && windowActiveWorkspaceId) {
-        const open =
-          useWorkspaceStore.getState().workspaces.find((w) => w.id === windowActiveWorkspaceId)?.paneState?.open ??
-          false
-        setPaneOpen(windowActiveWorkspaceId, !open)
+        const open = paneOpenOf(windowActiveWorkspaceId)
+        keepFocusOutOfClosedPane(() => setPaneOpen(windowActiveWorkspaceId, !open()), open)
         return true
       }
       if (commandId === 'pane.add') {
@@ -4242,7 +4246,10 @@ export default function WorkspaceManager() {
         return true
       }
       if (commandId === 'panel.files.toggle' && windowActiveWorkspaceId) {
-        togglePaneKind(windowActiveWorkspaceId, 'files')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'files'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.editor.toggle' && windowActiveWorkspaceId) {
@@ -4250,11 +4257,17 @@ export default function WorkspaceManager() {
         return true
       }
       if (commandId === 'panel.git.toggle' && windowActiveWorkspaceId) {
-        togglePaneKind(windowActiveWorkspaceId, 'git')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'git'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.agents.toggle' && windowActiveWorkspaceId) {
-        togglePaneKind(windowActiveWorkspaceId, 'agents')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'agents'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.canvas.toggle' && windowActiveWorkspaceId) {
@@ -4265,7 +4278,10 @@ export default function WorkspaceManager() {
         // The pane keeps whatever width the person last gave it: a new Canvas
         // tab opens docked like every other kind (owner ruling 2026-09-22), and
         // Maximise in the pane strip is one click away when a board wants room.
-        togglePaneKind(windowActiveWorkspaceId, 'canvas')
+        keepFocusOutOfClosedPane(
+          () => togglePaneKind(windowActiveWorkspaceId, 'canvas'),
+          paneOpenOf(windowActiveWorkspaceId),
+        )
         return true
       }
       if (commandId === 'panel.knowledge-graph.toggle' && windowActiveWorkspaceId) {
@@ -5001,6 +5017,7 @@ export default function WorkspaceManager() {
               captionReserve={paneOwnsCaptionCorner || !captionButtons ? 0 : windowCaptionReserve(nativeMacChrome)}
               isFullScreen={windowState.isFullScreen}
               sidebarCollapsed={narrowViewport || sidebarCollapsed}
+              besideRail={!narrowViewport}
               onToggleSidebar={() => runCommand('workspace.sidebar.toggle')}
               onOpenSearch={() => runCommand('commandPalette.open')}
               onNewChat={() => openNewChatPanel()}

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 
 // The floating player coming up by itself, as the pane column wires it: an
-// agent taking a page in a closed pane, an agent's browser.open, and the
-// person closing the pane on a page an agent is still driving. The pane itself
+// agent taking a page or drawing on a board in a closed pane, an agent's
+// browser.open, and the person closing the pane on a page or board an agent is
+// still working in. The pane itself
 // is stubbed; what is under test is what the column does to the store.
 import { JSDOM } from 'jsdom'
 
@@ -261,4 +262,57 @@ test('a player the person closed stays closed when the agent opens without namin
     false,
   )
   assert.equal(after.open, false, 'nor does the pane open in its place')
+})
+
+function closedPaneWithBoard(tabId: string, path: string, open = false): WorkspacePaneState {
+  return {
+    open,
+    activeTabId: tabId,
+    tabs: [
+      { id: 'term', kind: 'terminal', terminalId: 'term-1' },
+      { id: tabId, kind: 'canvas', canvas: { path } },
+    ],
+  }
+}
+
+function drawing(workspaceId: string, path: string, controller: 'agent' | 'human' | 'none'): void {
+  const listener = listeners.get('onCanvasPresence')
+  assert.ok(listener, 'the column listens to main’s canvas presence')
+  act(() => listener({ workspaceId, path, controller }))
+}
+
+test('an agent drawing on a board in a closed pane floats the board, and the pane stays closed', async () => {
+  const tabId = freshTabId()
+  await renderColumn(closedPaneWithBoard(tabId, 'plan.excalidraw'))
+  drawing(WS, 'plan.excalidraw', 'agent')
+  const after = await pane()
+  assert.equal(after.tabs.find((tab) => tab.id === tabId)?.floating, true)
+  assert.equal(after.open, false)
+})
+
+test('the person drawing on a board does not float it, nor does another workspace’s board', async () => {
+  const tabId = freshTabId()
+  await renderColumn(closedPaneWithBoard(tabId, 'plan.excalidraw'))
+  drawing(WS, 'plan.excalidraw', 'human')
+  drawing('ws-elsewhere', 'plan.excalidraw', 'agent')
+  drawing(WS, 'other.excalidraw', 'agent')
+  assert.equal((await pane()).tabs.find((tab) => tab.id === tabId)?.floating, undefined)
+})
+
+test('with the setting off, a board an agent draws on does not float', async () => {
+  const tabId = freshTabId()
+  await renderColumn(closedPaneWithBoard(tabId, 'plan.excalidraw'), { autoFloat: false })
+  drawing(WS, 'plan.excalidraw', 'agent')
+  assert.equal((await pane()).tabs.find((tab) => tab.id === tabId)?.floating, undefined)
+})
+
+test('closing the pane on a board an agent is drawing on hands it to the player', async () => {
+  const tabId = freshTabId()
+  await renderColumn(closedPaneWithBoard(tabId, 'plan.excalidraw', true))
+  drawing(WS, 'plan.excalidraw', 'agent')
+  const useWorkspaceStore = await store()
+  act(() => useWorkspaceStore.getState().setPaneOpen(WS, false))
+  const after = await pane()
+  assert.equal(after.tabs.find((tab) => tab.id === tabId)?.floating, true)
+  assert.equal(after.open, false)
 })

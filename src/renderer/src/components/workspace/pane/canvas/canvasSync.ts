@@ -204,6 +204,11 @@ function rendererPlatform(): string {
   return typeof platform === 'string' ? platform : 'linux'
 }
 
+/** One string per board, whichever spelling of its path names it: what {@link canvasPushMatchesBoard} compares. */
+export function canvasBoardKey(board: CanvasBoardRef): string {
+  return `${board.workspaceId}\0${canvasBoardKeyPath(board.path, rendererPlatform())}`
+}
+
 /**
  * Whether a pushed scene is for the board this tab has open.
  *
@@ -214,9 +219,7 @@ function rendererPlatform(): string {
  * ignore every scene main ever sent it.
  */
 export function canvasPushMatchesBoard(push: CanvasBoardRef, board: CanvasBoardRef): boolean {
-  if (push.workspaceId !== board.workspaceId) return false
-  const platform = rendererPlatform()
-  return canvasBoardKeyPath(push.path, platform) === canvasBoardKeyPath(board.path, platform)
+  return canvasBoardKey(push) === canvasBoardKey(board)
 }
 
 /**

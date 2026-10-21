@@ -114,8 +114,10 @@ export type ConversationLaunchRequest = {
   newWorktree?: boolean
   /**
    * What the new chat's worktree is named from, with `newWorktree`: its branch
-   * is `agent/<name>-<suffix>`, the short suffix keeping each chat's branch its
-   * own. Absent, the name a window's New chat gives one (`chat-<suffix>`).
+   * is `<prefix>/<name>-<suffix>` (the branch prefix from Settings ▸
+   * Worktrees, `agent` unless changed), the short suffix keeping each chat's
+   * branch its own. Absent, the name a window's New chat gives one
+   * (`chat-<suffix>`).
    */
   worktreeName?: string
   /**
@@ -367,7 +369,8 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
     }
     const suffix = newWorktreeSuffix()
     const name = worktreeName ? `${worktreeName}-${suffix.toLowerCase()}` : newChatWorktreeName(suffix)
-    const paths = agentWorktreePaths(repoRoot, name)
+    const { worktreeBranchPrefix } = effectiveAgentLaunchSettings(deps.getLaunchSettings())
+    const paths = agentWorktreePaths(repoRoot, name, worktreeBranchPrefix)
     if (!paths) return { ok: false, message: `"${name}" does not reduce to a usable worktree name.` }
     const made = await deps
       .createWorktree({

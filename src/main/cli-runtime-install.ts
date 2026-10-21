@@ -8,7 +8,12 @@ import type {
 } from '../shared/electron-api'
 import type { PluginInstallMethod, PluginInstallPlatform, PluginManifest } from '../shared/plugin-manifest'
 import { getPluginManifest } from './plugin-registry-instance'
-import { chooseCliUpdateCommand } from './cli-version-advisory'
+import {
+  chooseCliUpdateCommand,
+  foreignPackageManager,
+  installedByWinGet,
+  localCliInstallFs,
+} from './cli-version-advisory'
 import { currentRuntimeEnv, ensureManagedRuntimeShims, withManagedRuntimePath } from './managed-runtime'
 import { runSpawnDescriptor, type RunOutcome, type SpawnDescriptor } from './process-run'
 import { knownDefaultWslDistro, resolveDefaultWslDistro, wslLoginScript, wslScriptDescriptor } from './hosts/wsl-distro'
@@ -18,6 +23,7 @@ import { ansiPlainText } from '../shared/conversation/ansi'
 import { findExecutable, searchDirectories, sharedLoginShellPath } from './login-shell-path'
 import { forgetSharedGhLocation } from './github/gh'
 import { access, constants as fsConstants } from 'node:fs/promises'
+import { cliProbeEnv } from './cli-probe-env'
 
 // Exit code our probe scripts use to signal "binary not found on PATH" so we
 // can distinguish a missing CLI from a CLI that exists but whose --version
@@ -348,18 +354,25 @@ export async function runCliCommand(input: {
   hostId?: string | null
   timeoutMs: number
   env?: NodeJS.ProcessEnv
+  /** Variables set on top of that environment, on whichever machine runs the command. */
+  setEnv?: Readonly<Record<string, string>>
 }): Promise<CliCommandOutcome> {
   const target = resolveInstallPlatform(process.platform, input.hostId)
-  // A WSL machine runs it through its helper, with the person's login PATH.
+  const setEnv = Object.entries(input.setEnv ?? {})
+  // A WSL machine runs it through its helper, with the person's login PATH;
+  // `env` sets the variables there.
   if (target === 'wsl') {
+    const argv = [input.binary, ...input.args]
     return hostRegistry()
       .get(input.hostId)
-      .runCommand([input.binary, ...input.args], { timeoutMs: input.timeoutMs })
+      .runCommand(setEnv.length > 0 ? ['env', ...setEnv.map(([key, value]) => `${key}=${value}`), ...argv] : argv, {
+        timeoutMs: input.timeoutMs,
+      })
   }
   return runDescriptor(
     buildCommandDescriptor({ binary: input.binary, args: input.args, target }),
     undefined,
-    input.env ?? defaultProbeEnv(),
+    { ...(input.env ?? defaultProbeEnv()), ...input.setEnv },
     input.timeoutMs,
   )
 }
@@ -627,6 +640,12 @@ export async function detectCliBatch(
   })
 
   const env = deps.env ?? defaultProbeEnv()
+  // One PowerShell runs every native CLI's `--version`, so it carries what
+  // each of them is checked with; each variable is read by its own CLI alone.
+  const windowsEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...Object.fromEntries(windows.flatMap((item) => Object.entries(cliProbeEnv(requests[item.index].cli)))),
+  }
   const force = deps.force === true
   const detectOnHost =
     deps.detectOnHost ??
@@ -642,7 +661,7 @@ export async function detectCliBatch(
     ...(windows.length > 0
       ? [
           (async () => {
-            const answers = await runBatchGroup(windows, deps, env)
+            const answers = await runBatchGroup(windows, deps, windowsEnv)
             windows.forEach((item, position) => {
               results[item.index] = detectResult(
                 requests[item.index].cli,
@@ -748,7 +767,7 @@ export async function detectCli(
       binary,
       versionArgs,
       target,
-      env: env ?? defaultProbeEnv(),
+      env: { ...(env ?? defaultProbeEnv()), ...cliProbeEnv(cli) },
     })
     // On the host, a binary missing while no shell would say what PATH the
     // person has is a non-answer. Reported as an error, availability leaves it
@@ -1037,11 +1056,49 @@ export function buildUpdateDescriptor(input: {
   return shellDescriptorForScript(target, `& ${[binary, ...args].map(powerShellSingleQuote).join(' ')}`)
 }
 
+// Run one update command and detect the CLI again once it has finished, so
+// the result carries the version the update left on PATH.
+async function runCliUpdate(
+  cli: AgentCli,
+  runtime: Partial<CliRuntimeSettings> | undefined,
+  command: string,
+  descriptor: SpawnDescriptor,
+  onData?: (chunk: string) => void,
+): Promise<CliInstallResult> {
+  const banner = `$ ${command}\n`
+  onData?.(banner)
+  let log = banner
+  const capture = (chunk: string): void => {
+    log += chunk
+    onData?.(chunk)
+  }
+  const updateEnv = managedInstallEnv() ?? undefined
+  let runError: string | null = null
+  try {
+    const outcome = await runDescriptor(descriptor, capture, updateEnv)
+    if (outcome.code !== 0) runError = updateFailure(outcome.code, log)
+  } catch (error) {
+    runError = error instanceof Error ? error.message : String(error)
+  }
+  invalidateLoginShellPath()
+  const detected = await detectCli(cli, runtime, updateEnv, { force: true })
+  const ok = detected.installed && runError === null
+  return {
+    ok,
+    cli,
+    installed: detected.installed,
+    version: detected.version,
+    resolvedPath: detected.resolvedPath,
+    log,
+    error: ok ? null : (runError ?? (detected.installed ? null : 'CLI not found on PATH after update.')),
+  }
+}
+
 // Update an installed CLI. No staleness detection: a CLI's "latest"
 // belongs to the vendor's channel, so this is an action, not a state. Where
 // the manifest declares an `update` spec the CLI's own updater runs; otherwise
-// the install spec is re-run, which for npm installs is exactly "update to
-// latest" and no-ops when current.
+// the manager that installed it updates it (chooseCliUpdateCommand), and when
+// none can be named the install spec is re-run.
 export async function updateCli(
   cli: AgentCli,
   runtime: Partial<CliRuntimeSettings> | undefined,
@@ -1062,80 +1119,76 @@ export async function updateCli(
   const target = resolveInstallPlatform(process.platform, runtime?.hostId)
   const distro = await wslDistroFor(target, runtime?.hostId)
 
-  if (manifest.update?.args?.length) {
-    const binary = resolveBinary(manifest, runtime)
-    const banner = `$ ${[binary, ...manifest.update.args].join(' ')}\n`
-    onData?.(banner)
-    let log = banner
-    const capture = (chunk: string): void => {
-      log += chunk
-      onData?.(chunk)
-    }
-    const updateEnv = managedInstallEnv() ?? undefined
-    let runError: string | null = null
-    try {
-      const outcome = await runDescriptor(
-        buildUpdateDescriptor({ binary, args: manifest.update.args, target, distro }),
-        capture,
-        updateEnv,
-      )
-      if (outcome.code !== 0) runError = updateFailure(outcome.code, log)
-    } catch (error) {
-      runError = error instanceof Error ? error.message : String(error)
-    }
-    invalidateLoginShellPath()
-    const detected = await detectCli(cli, runtime, updateEnv, { force: true })
-    const ok = detected.installed && runError === null
-    return {
-      ok,
-      cli,
-      installed: detected.installed,
-      version: detected.version,
-      resolvedPath: detected.resolvedPath,
-      log,
-      error: ok ? null : (runError ?? (detected.installed ? null : 'CLI not found on PATH after update.')),
-    }
+  // WinGet's install is WinGet's to move, whatever updater the CLI declares.
+  if (target === 'win32' && manifest.update?.args?.length) {
+    const detected = await detectCli(cli, runtime)
+    const real = detected.resolvedPath ? localCliInstallFs.realPath(detected.resolvedPath) : null
+    if (detected.installed && installedByWinGet(detected.resolvedPath, real))
+      return {
+        ok: false,
+        cli,
+        installed: true,
+        version: detected.version,
+        resolvedPath: detected.resolvedPath,
+        log: '',
+        error: `${manifest.displayName} at ${detected.resolvedPath} was installed with WinGet. Update it with WinGet, the way it was installed.`,
+      }
   }
 
-  // No updater of its own: update through the package manager that installed
-  // it — brew when the binary lives under Homebrew, else npm. Updating through
-  // a manager other than the one that installed it leaves the original copy
-  // ahead on PATH, so the update would look like it did nothing.
-  // `brew install` on an installed formula is a no-op, so this is the
-  // only path that actually moves a Homebrew-installed CLI forward.
-  const detectedBefore = await detectCli(cli, runtime)
-  const chosen = chooseCliUpdateCommand({ manifest, resolvedPath: detectedBefore.resolvedPath })
-  if (chosen && (chosen.kind === 'brew' || chosen.kind === 'npm')) {
-    const banner = `$ ${chosen.command}\n`
-    onData?.(banner)
-    let log = banner
-    const capture = (chunk: string): void => {
-      log += chunk
-      onData?.(chunk)
-    }
-    const updateEnv = managedInstallEnv() ?? undefined
-    let runError: string | null = null
-    try {
-      const outcome = await runDescriptor(
-        buildInstallDescriptor({ shell: chosen.command, target, distro }),
-        capture,
-        updateEnv,
-      )
-      if (outcome.code !== 0) runError = updateFailure(outcome.code, log)
-    } catch (error) {
-      runError = error instanceof Error ? error.message : String(error)
-    }
-    invalidateLoginShellPath()
-    const detected = await detectCli(cli, runtime, updateEnv, { force: true })
-    const ok = detected.installed && runError === null
-    return {
-      ok,
+  if (manifest.update?.args?.length) {
+    const binary = resolveBinary(manifest, runtime)
+    return runCliUpdate(
       cli,
-      installed: detected.installed,
-      version: detected.version,
-      resolvedPath: detected.resolvedPath,
-      log,
-      error: ok ? null : (runError ?? (detected.installed ? null : 'CLI not found on PATH after update.')),
+      runtime,
+      [binary, ...manifest.update.args].join(' '),
+      buildUpdateDescriptor({ binary, args: manifest.update.args, target, distro }),
+      onData,
+    )
+  }
+
+  // No updater that is right for every install: update through whatever put
+  // the binary where it is — brew under Homebrew, npm into the prefix npm
+  // installed it under, the CLI's own updater for a vendor-script install.
+  // Updating through anything else leaves the original copy ahead on PATH,
+  // so the update would look like it did nothing. `brew install` on an
+  // installed formula is a no-op, so brew upgrade is the only path that
+  // actually moves a Homebrew-installed CLI forward. A WSL distribution's
+  // files are not read from here (`fs: null`).
+  const detectedBefore = await detectCli(cli, runtime)
+  const fs = target === 'wsl' ? null : localCliInstallFs
+  const chosen = chooseCliUpdateCommand({ manifest, resolvedPath: detectedBefore.resolvedPath, fs })
+  if (chosen?.kind === 'cli-updater' && manifest.selfUpdate?.args?.length) {
+    const binary = resolveBinary(manifest, runtime)
+    return runCliUpdate(
+      cli,
+      runtime,
+      [binary, ...manifest.selfUpdate.args].join(' '),
+      buildUpdateDescriptor({ binary, args: manifest.selfUpdate.args, target, distro }),
+      onData,
+    )
+  }
+  if (chosen && (chosen.kind === 'brew' || chosen.kind === 'npm')) {
+    return runCliUpdate(
+      cli,
+      runtime,
+      chosen.command,
+      buildInstallDescriptor({ shell: chosen.command, target, distro }),
+      onData,
+    )
+  }
+  // A package manager Studio does not drive put it there. Re-running an
+  // install method would add a second copy beside it, so say whose it is.
+  const resolvedBefore = detectedBefore.resolvedPath
+  const manager = foreignPackageManager(resolvedBefore, resolvedBefore && fs ? fs.realPath(resolvedBefore) : null)
+  if (detectedBefore.installed && manager) {
+    return {
+      ok: false,
+      cli,
+      installed: true,
+      version: detectedBefore.version,
+      resolvedPath: resolvedBefore,
+      log: '',
+      error: `${manifest.displayName} at ${resolvedBefore} was installed with ${manager}. Update it with ${manager}, the way it was installed.`,
     }
   }
 

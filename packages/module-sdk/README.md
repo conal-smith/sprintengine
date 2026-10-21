@@ -344,7 +344,8 @@ reads its chats) and `dependsOn: ["agent-runtime"]`.
   installed and invoked, `attachments` are images, `name` is optional.
   `permissionPreset` is `'manual'`, `'none'`, `'auto'` or `'bypass'`; absent
   takes the person's default. `worktree: { name? }` starts the chat in a fresh
-  git worktree of the project (branch `agent/<name>-<suffix>`), in a workspace
+  git worktree of the project (branch `<prefix>/<name>-<suffix>`, the person's
+  worktree branch prefix being `agent` unless they changed it), in a workspace
   of its own whose id the answer names; a project that is not a git
   repository answers `worktree_unavailable`. Check
   `host.supports('conversation-worktrees')`.
@@ -479,7 +480,7 @@ under its own sign-in: no workspace, no chat tab, nothing in their history.
 `cli` is `claude-code` or `codex`; absent, the runtime the person chose for
 Studio's text generation in Settings, else `claude-code`. `model` absent takes
 the person's chosen model on their chosen runtime, else the runtime's small
-default (`claude-haiku-4-5`, `gpt-5.6-luna`); `maxOutputTokens` caps the
+default (`claude-haiku-5-5`, `gpt-5.6-luna`); `maxOutputTokens` caps the
 answer on Claude Code (Codex has no output cap and ignores it). Declare `agents:generate` and check
 `host.supports('text-generation')`. Each module gets two calls at once and
 eight waiting, and more than thirty a minute answer `busy`. Failures are typed
@@ -708,17 +709,18 @@ pauses while your module is off.
 ## Module storage
 
 `getModuleStorage(host)` → `get` / `set` / `delete` / `list`, keyed per module
-and optionally per workspace. Workspace keys live under the workspace's
-`.sprintengine/modules/<moduleId>/`, global keys under the app's data; JSON
+and optionally per workspace. Workspace keys live in the project's store in
+the person's home (`~/.sprintengine/workspaces/<project>/modules/<moduleId>/`),
+never in the project's folder; global keys under the app's data; JSON
 values up to 1 MB, atomic writes. Declare `storage` and
 `dependsOn: ["agent-runtime"]`.
 
 `list({ prefix })` and `getMany({ keys })` read a record family in one call
 (`supports('storage-query')`). `watch({ workspaceRoot? }, cb)` says which keys
 changed: your own writes at once, and a change made by other means — a
-`git pull`, a hand edit — within a couple of seconds (`supports('storage-watch')`).
-Whether a project commits `.sprintengine/modules/<moduleId>/` is the project's
-call; say in your README which your data wants. Data past the value limit
+hand edit — within a couple of seconds (`supports('storage-watch')`).
+Workspace keys do not travel with a clone; data that belongs to the project
+is a file your module writes where the person asks. Data past the value limit
 belongs in `host.getModuleDataDir()` (`supports('module-data-dir')`).
 
 ## Workspaces from entry.main

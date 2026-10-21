@@ -140,8 +140,9 @@ test('tailscale-serve', async () => {
     assert.equal(result.share.url, 'https://studio-mac.tail1a2b.ts.net:8443/')
     assert.equal(result.share.localPort, 5173)
     // `--bg` is what makes the mapping outlive this process; the proxy target
-    // stays loopback so the dev server is never asked to rebind.
-    assert.deepEqual(args[0], ['serve', '--bg', '--https=8443', 'http://127.0.0.1:5173'])
+    // stays loopback so the dev server is never asked to rebind, and is
+    // `localhost` so a server listening on `::1` alone is reached as well.
+    assert.deepEqual(args[0], ['serve', '--bg', '--https=8443', 'http://localhost:5173'])
   })
 
   check('no tailnet means no share, and it says so', async () => {
@@ -235,4 +236,45 @@ test('tailscale-serve', async () => {
   })
 
   await suiteRun
+})
+
+// A tailnet that never turned Serve on: `tailscale serve` prints where to
+// enable it on stdout and then waits for someone to, until it is killed at the
+// deadline. The reason it printed is the one a person can act on.
+const SERVE_OFF_STDOUT =
+  '\nServe is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nAbC123CNTRL\n\nWaiting for enablement...'
+
+function shareWith(run: TailscaleRun): ReturnType<typeof shareLocalPort> {
+  const status = JSON.stringify({
+    BackendState: 'Running',
+    Self: { ID: 'self', DNSName: 'mac-mini.tail1234.ts.net.', HostName: 'mac-mini', TailscaleIPs: ['100.101.102.103'] },
+    Peer: {},
+  })
+  return shareLocalPort({ localPort: 5173, servePort: 8443 }, { read: async () => status, run: async () => run })
+}
+
+test('a share on a tailnet without Serve says HTTPS is off, not that Tailscale did not answer', async () => {
+  const result = await shareWith({ ok: false, stdout: SERVE_OFF_STDOUT, stderr: '', timedOut: true })
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.equal(result.diagnostic, 'https-not-enabled')
+  assert.equal(result.message, describeServeDiagnostic('https-not-enabled'))
+})
+
+test('a share Serve refused at once on stdout is classified by what it printed', async () => {
+  const result = await shareWith({ ok: false, stdout: SERVE_OFF_STDOUT, stderr: '', timedOut: false })
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.equal(result.diagnostic, 'https-not-enabled')
+})
+
+test('a share that timed out after printing anything else is still a timeout', async () => {
+  const result = await shareWith({ ok: false, stdout: 'starting…', stderr: 'permission denied', timedOut: true })
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.equal(result.diagnostic, 'timeout')
+})
+
+test('the enable-Serve wording classifies as HTTPS not enabled', () => {
+  assert.equal(classifyServeStderr(SERVE_OFF_STDOUT), 'https-not-enabled')
 })

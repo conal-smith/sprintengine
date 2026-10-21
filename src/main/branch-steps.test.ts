@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -467,4 +479,102 @@ test('branch-steps', async () => {
   })()
 
   await suiteRun
+})
+
+// A file moved with a plain rename, not `git mv`, leaves git a deleted tracked
+// path and an untracked new one. The uncommitted reading pairs them through a
+// copy of the index, never the person's own.
+
+function gitIn(cwd: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', cwd, ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'dev',
+      GIT_AUTHOR_EMAIL: 'dev@example.com',
+      GIT_COMMITTER_NAME: 'dev',
+      GIT_COMMITTER_EMAIL: 'dev@example.com',
+    },
+  })
+}
+
+function movedRepo(): { dir: string; index: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'sprintengine-steps-moved-'))
+  gitIn(dir, 'init', '-b', 'main')
+  mkdirSync(join(dir, 'src'))
+  writeFileSync(join(dir, 'src', 'a.ts'), 'export const one = 1\nexport const two = 2\nexport const three = 3\n')
+  writeFileSync(join(dir, 'README.md'), 'acme\n')
+  gitIn(dir, 'add', '.')
+  gitIn(dir, 'commit', '-m', 'seed')
+  renameSync(join(dir, 'src', 'a.ts'), join(dir, 'src', 'b.ts'))
+  writeFileSync(join(dir, 'src', 'c.ts'), 'export const fresh = true\n')
+  return { dir, index: join(dir, '.git', 'index') }
+}
+
+test('a file moved without git mv is one rename, and the real index is never written', async () => {
+  const { dir, index } = movedRepo()
+  try {
+    const before = { bytes: readFileSync(index), mtimeMs: statSync(index).mtimeMs }
+    const diff = await diffBranchSelection(dir, { kind: 'uncommitted' })
+    assert.deepEqual(diff.files, [
+      { path: 'src/b.ts', status: 'renamed', oldPath: 'src/a.ts', additions: 0, deletions: 0 },
+      { path: 'src/c.ts', status: 'new', additions: 1, deletions: 0 },
+    ])
+    assert.deepEqual(readFileSync(index), before.bytes)
+    assert.equal(statSync(index).mtimeMs, before.mtimeMs)
+    assert.match(gitIn(dir, 'status', '--porcelain'), /^ D src\/a\.ts\n\?\? src\/b\.ts\n\?\? src\/c\.ts\n$/)
+
+    // From a subdirectory the paths are still the repo's.
+    const fromSrc = await diffBranchSelection(join(dir, 'src'), { kind: 'uncommitted' })
+    assert.deepEqual(
+      fromSrc.files.map((file) => [file.status, file.path]),
+      [
+        ['renamed', 'src/b.ts'],
+        ['new', 'src/c.ts'],
+      ],
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('pairing a move through the index copy leaves a split index the repository still uses in place', async () => {
+  const { dir } = movedRepo()
+  try {
+    // A split index whose shared files expire at once: any split write in
+    // the repository deletes every shared index file older than now.
+    gitIn(dir, 'config', 'core.splitIndex', 'true')
+    gitIn(dir, 'config', 'splitIndex.sharedIndexExpire', 'now')
+    gitIn(dir, 'update-index', '--split-index')
+    const gitDir = join(dir, '.git')
+    const past = new Date(Date.now() - 60_000)
+    for (const name of readdirSync(gitDir))
+      if (name.startsWith('sharedindex.')) utimesSync(join(gitDir, name), past, past)
+    const diff = await diffBranchSelection(dir, { kind: 'uncommitted' })
+    assert.equal(diff.files.find((file) => file.path === 'src/b.ts')?.status, 'renamed')
+    assert.match(gitIn(dir, 'ls-files', '--cached'), /src\/a\.ts/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('past the cap of untracked files a move reads as before: a deletion and a new file', async () => {
+  const { dir } = movedRepo()
+  try {
+    mkdirSync(join(dir, 'out'))
+    for (let file = 0; file < 300; file++) writeFileSync(join(dir, 'out', `${file}.txt`), `${file}\n`)
+    const diff = await diffBranchSelection(dir, { kind: 'uncommitted' })
+    const moved = diff.files.filter((file) => file.path.startsWith('src/'))
+    assert.deepEqual(
+      moved.map((file) => [file.status, file.path]),
+      [
+        ['deleted', 'src/a.ts'],
+        ['new', 'src/b.ts'],
+        ['new', 'src/c.ts'],
+      ],
+    )
+    assert.equal(diff.files.length, 303)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

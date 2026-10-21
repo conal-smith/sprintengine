@@ -1066,8 +1066,14 @@ export function builtinInstallsIntoHarness(
 }
 
 export type AgentCapabilitiesInput = {
-  workspaceRoot: string
+  /** Null asks only about what the CLI reads from the home folder (needs `includeGlobal`). */
+  workspaceRoot: string | null
   pluginId: string
+  /**
+   * Also list the skills in this CLI's home-folder skills directory — what it
+   * reads in every project. Servers are still the workspace's alone.
+   */
+  includeGlobal?: boolean
 }
 
 /**

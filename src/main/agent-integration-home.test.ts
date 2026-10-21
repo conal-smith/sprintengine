@@ -71,6 +71,33 @@ test('the copy a launch hands Claude Code carries no $comment key in any JSON fi
   assert.ok(Object.keys(hooks.hooks).length >= 8, 'stripping the comment keeps the declaration')
 })
 
+test('on Windows the copy runs its hooks through the launcher, and a copy written the other way is rebuilt', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sprintengine-agent-integration-launcher-'))
+  const options = {
+    templateRoot: TEMPLATE_ROOT,
+    reporterSourcePath: REPORTER_SOURCE,
+    userDataDir: dir,
+    tokens: { ...TOKENS, agentStateSocketPath: '\\\\.\\pipe\\sprintengine-agent-state-abc' },
+    enabledSkillDirs: [],
+  }
+  const plain = await ensureAgentIntegrationHome(options)
+  assert.ok(plain.ok)
+  const hooksPath = join(plain.home.root, 'sprintengine-studio', 'hooks', 'hooks.json')
+  assert.match(await readFile(hooksPath, 'utf8'), /"node \\"/u, 'by default the reporter runs under node')
+
+  const launcher = { path: 'C:/Users/dev/.sprintengine/bin/studio-run.cmd', shell: 'windows' as const }
+  const viaLauncher = await ensureAgentIntegrationHome({ ...options, hookLauncher: launcher })
+  assert.ok(viaLauncher.ok)
+  const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
+    hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>
+  }
+  const commands = Object.values(hooks.hooks).flatMap((blocks) => blocks.flatMap((block) => block.hooks))
+  assert.ok(commands.length > 0)
+  for (const { command } of commands) {
+    assert.ok(command.startsWith('C:/Users/dev/.sprintengine/bin/studio-run.cmd agent-state --socket '), command)
+  }
+})
+
 test('a copy materialised before the comment strip is rebuilt, not trusted', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sprintengine-agent-integration-'))
   const first = await ensureAgentIntegrationHome({

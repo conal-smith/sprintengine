@@ -27,14 +27,16 @@ import type {
   ConversationEventType,
   ConversationSessionSummary,
 } from '../../../shared/conversation-runtime'
-import { conversationSummaryPhase } from '../../../shared/conversation/phase'
+import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
 import { onWindowVisibilityChange, windowActivity, type WindowActivity } from '../utils/windowActivity'
 
 /**
- * A summary as the renderer holds it: main's fields, plus when the turn that
- * is running now started. `updatedAt` is not that: the runtime also moves it
- * when an approval resolves or the model or permission preset changes, and
- * the sidebar's "working for" counter restarted on each one.
+ * A summary as the renderer holds it: main's fields, plus when the work now
+ * running started, which the sidebar's "working for" counter counts from:
+ * main's `workingSince` where it says, else this window's own reading of the
+ * turns. `updatedAt` is not that: the runtime also moves it when an approval
+ * resolves or the model or permission preset changes, and the counter
+ * restarted on each one.
  */
 export type ConversationSessionEntry = ConversationSessionSummary & {
   /** Set only while the conversation is working. */
@@ -79,8 +81,7 @@ export function isConversationStatusEvent(event: Pick<ConversationEvent, 'type' 
 }
 
 function isWorking(summary: ConversationSessionSummary): boolean {
-  const phase = conversationSummaryPhase(summary)
-  return phase === 'running' || phase === 'starting'
+  return conversationPhaseWorking(conversationSummaryPhase(summary))
 }
 
 /**
@@ -171,12 +172,24 @@ export function createConversationSessionsStore({
       workingSince.delete(summary.sessionId)
       return undefined
     }
+    // Main keeps the stretch of work itself (`workingSince`, conversation/
+    // workingStretch.ts), seeing every turn open and every event land, and
+    // lists the same number to every paired machine: read it, so this row and
+    // theirs count alike. The reading below is for a server built before it.
+    if (typeof summary.workingSince === 'number') {
+      workingSince.set(summary.sessionId, summary.workingSince)
+      return summary.workingSince
+    }
     const fromEvent = turnStartedEvents.get(summary.sessionId)
     const held = workingSince.get(summary.sessionId)
     let start: number
     if (held !== undefined) {
-      // Still working: hold the start, unless a newer turn began since.
-      start = fromEvent !== undefined && fromEvent > held ? fromEvent : held
+      // Still working: hold the start, unless the person sent a message that
+      // began a newer turn since. A turn the runtime opens by itself, when a
+      // background agent finishes and wakes the chat, is the same stretch of
+      // work, so it does not restart the count.
+      const sentSince = (summary.lastUserMessageAt ?? 0) > held
+      start = fromEvent !== undefined && fromEvent > held && sentSince ? fromEvent : held
     } else if (fromEvent !== undefined && fromEvent >= (summary.lastTurnEndedAt ?? 0)) {
       start = fromEvent
     } else {

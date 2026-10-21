@@ -176,9 +176,9 @@ export type CardAction =
   // choosing, and the owner must be one of `CARD_CLONE_OWNERS` below.
   // `folderName` is the single directory name to clone into, and the executor
   // supplies `parentDir` — where this app keeps projects is the app's business,
-  // not a card's. There is no `ref`, because `cloneGitHubRepo` takes
-  // `{ url, parentDir, folderName }` and has no branch or tag support: a `ref`
-  // field would be a promise the installer cannot keep.
+  // not a card's. There is no `ref`: the clone takes a branch now, but a
+  // schema field is a permanent contract, and no card has needed anything but
+  // the default branch — it is added when one does, not before.
   | { verb: 'clone.repo'; repo: string; folderName?: string }
 
 export type CardActionVerb = CardAction['verb']
@@ -464,7 +464,7 @@ export function parseCardAction(raw: unknown): { ok: true; action: CardAction } 
       const folderName = text(raw.folderName)
       // One segment, and never a relative directory: the executor joins this
       // onto the app's projects directory, which is the same gate
-      // `cloneGitHubRepo` puts on its own `folderName`.
+      // `cloneRepository` puts on its own `folderName`.
       if (folderName && (folderName === '.' || folderName === '..' || /[/\\]/.test(folderName))) {
         return { ok: false, message: 'clone.repo folderName must be a single folder name.' }
       }

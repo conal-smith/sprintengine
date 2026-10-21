@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react'
 
 import { getRendererHost, selectModuleEnabled } from '../../../modules'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
+import { paneKindFloats } from '../../../store/slices/workspacePaneSlice'
 import type { WorkspacePaneTab } from '../../../types/workspace'
 import { SuspenseFallback } from '../../ui/SuspenseFallback'
 import { resolveWorkspaceWorktree } from '../../../utils/workspaceWorktree'
@@ -11,9 +12,11 @@ import { defaultDiffChangelistId } from '../../../utils/diffChangelistDefault'
 import { paneKindRetainsPanel } from './paneKinds'
 import { FloatingPlayerChrome, useFloatRect } from './FloatingPlayer'
 import { clientSupports } from '../../../clientCapabilities'
-import { EmptyState, OpenInWindowGlyph, OutlineButton, PrimaryButton } from '../../ui'
+import { AgentEdge, EmptyState, OpenInWindowGlyph, OutlineButton, PrimaryButton } from '../../ui'
 import { bringBackPaneTab, showPanePopOut } from './popout/panePopOutHost'
 import { paneTabLabel } from './paneTabItem'
+import { useRecordingTabIds } from './browser/recordingTabs'
+import { useAgentPresentTabIds } from './agentPresence'
 
 // The pane's content region: one layer per tab that needs to stay mounted
 // (terminal, browser, canvas) plus the active tab. Inactive retained layers are
@@ -49,10 +52,26 @@ const DocumentTab = React.lazy(() =>
 // offscreen instead. Electron blanks a `visibility:hidden` guest for good on
 // macOS, and a guest fully outside the window stops compositing without
 // losing its page. Parking is the only hiding a browser layer survives.
-export const OFFSCREEN_LAYER_STYLE: React.CSSProperties = {
+const OFFSCREEN_LAYER_STYLE: React.CSSProperties = {
   visibility: 'visible',
   transform: 'translateX(-100000px)',
   pointerEvents: 'none',
+}
+
+// Parked outside the window, a guest paints nothing, so a tab being recorded
+// out of view gave its recording no frames and the video froze on the last
+// one. While it records it waits where it is instead, under everything else
+// in the window: Chromium still composites it there, and nothing of it shows
+// or takes a click.
+const BEHIND_APP_LAYER_STYLE: React.CSSProperties = {
+  visibility: 'visible',
+  zIndex: 'var(--z-parked)',
+  pointerEvents: 'none',
+}
+
+/** How a browser layer out of view is hidden: behind the app while it records, else outside the window. */
+export function hiddenBrowserLayerStyle(recording: boolean): React.CSSProperties {
+  return recording ? BEHIND_APP_LAYER_STYLE : OFFSCREEN_LAYER_STYLE
 }
 
 // The explicit, labelled unavailable state (never a silently blank surface) —
@@ -199,6 +218,15 @@ function PaneDiffTab({
     [writeTourFields],
   )
 
+  // The branch step the viewer has open, kept the same way, so coming back to
+  // the tab does not put it back on the whole branch.
+  const keptStep = tab.diff?.kept ?? null
+  const keepStep = useCallback(
+    (kept: NonNullable<NonNullable<WorkspacePaneTab['diff']>['kept']>) =>
+      writeTourFields((diff) => ({ ...diff, kept })),
+    [writeTourFields],
+  )
+
   return (
     <DiffViewer
       // Keyed on the repo only: a Git row click retargets the mounted
@@ -228,6 +256,8 @@ function PaneDiffTab({
       focusRange={tab.diff?.reveal?.range ?? null}
       focusSide={tab.diff?.reveal?.side ?? 'modified'}
       revealKey={tab.diff?.reveal?.key ?? null}
+      keptStep={keptStep}
+      onKeepStep={keepStep}
       tourHost={tourHost}
       onTourOfferTaken={takeOffer}
       onTourCurrentChange={keepCurrent}
@@ -352,11 +382,20 @@ export function WorkspacePaneBody({
   collapsed = false,
   onDiffCountChange,
 }: WorkspacePaneBodyProps) {
-  const floatingTab = tabs.find((tab) => tab.floating && tab.kind === 'browser') ?? null
+  const floatingTab = tabs.find((tab) => tab.floating && paneKindFloats(tab.kind)) ?? null
   const floatRect = useFloatRect(workspaceId, floatingTab)
+  const recordingTabIds = useRecordingTabIds()
+  const agentPresentTabIds = useAgentPresentTabIds(workspaceId, tabs)
+  // The layers keep one order whatever the strip's is. Dragging a tab moves
+  // it in `tabs`, and rendering in that order would have React move layers in
+  // the tree to match; a browser layer moved that way detaches its <webview>,
+  // which reloads the page from its first URL as a WebContents main no longer
+  // knows. Only the selected or floating layer paints, so the tree's order
+  // shows nowhere.
+  const layerTabs = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)), [tabs])
   return (
     <>
-      {tabs.map((tab) => {
+      {layerTabs.map((tab) => {
         const floating = tab.id === floatingTab?.id && floatRect !== null
         const selected = tab.id === selectedTabId || floating
         const active = floating || (selected && tab.id === activeTabId)
@@ -373,8 +412,9 @@ export function WorkspacePaneBody({
             id={`pane-${workspaceId}-panel-${tab.id}`}
             aria-labelledby={`pane-${workspaceId}-tab-${tab.id}`}
             aria-hidden={!selected}
-            // No stacking tier: an unselected panel is offscreen (browser) or
-            // invisible (terminal), so the selected one is the only paint.
+            // No stacking tier: an unselected panel is offscreen or, while it
+            // records, under everything (browser), or invisible (terminal), so
+            // the selected one is the only paint.
             // `aria-hidden` below is load-bearing as well as correct: a canvas
             // layer needs its subtree hidden a second time, because the editor's
             // own stylesheet takes `visibility` back on a few of its nodes, and
@@ -400,7 +440,7 @@ export function WorkspacePaneBody({
               floating
                 ? { ...floatRect, pointerEvents: 'auto' }
                 : offscreen
-                  ? OFFSCREEN_LAYER_STYLE
+                  ? hiddenBrowserLayerStyle(recordingTabIds.has(tab.id))
                   : { pointerEvents: selected ? 'auto' : 'none' }
             }
             // An offscreen layer is still in the DOM: `inert` keeps its address
@@ -433,6 +473,11 @@ export function WorkspacePaneBody({
                 />
               </React.Suspense>
             )}
+            {!poppedOut && agentPresentTabIds.has(tab.id) ? (
+              // The panel an agent is driving or drawing in, outlined in the
+              // violet its tab's pill wears (agentPresence.ts).
+              <AgentEdge />
+            ) : null}
           </div>
         )
       })}

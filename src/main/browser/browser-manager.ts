@@ -7,12 +7,15 @@ import {
   BrowserWindow,
   clipboard,
   ClipboardItem,
+  Menu,
   session,
   shell,
   webContents,
+  type ContextMenuParams,
   type Session,
   type WebContents,
 } from 'electron'
+import { guestContextMenuTemplate } from './guest-context-menu'
 import {
   BROWSER_PARTITION,
   BROWSER_PICK_CROP_PADDING,
@@ -39,7 +42,8 @@ import {
 import { listProcListeners } from '../../server/web/preview-ports'
 import { safeExternalUrl } from '../ipc/external-url'
 import { parsePsTree, type ProcRow } from '../terminal-subtree-probe'
-import { ensureSidecarDirNoLinks } from '../workspace-sidecar'
+import { ensureWorkspaceStoreDir, ensureWorkspaceStoreDirSync } from '../workspace-store'
+import { createAgentDownloads, type AgentDownloadItem } from './agent-downloads'
 
 // The embedded browser's main-process half (browser-pane epic). The renderer
 // owns the `<webview>` elements; this owns everything the renderer must not:
@@ -93,6 +97,13 @@ const HOST_FORWARDED_CHORDS: readonly Chord[] = [
 const CAPTURE_TIMEOUT_MS = 5_000
 // How long a controller claim (agent or human) outlives its last input.
 const CONTROLLER_LINGER_MS = 1_500
+
+/** A file the agent's tab downloaded, from the moment it was given a path to its end. */
+export type BrowserDownload = {
+  url: string
+  path: string
+  state: 'started' | 'completed' | 'cancelled' | 'interrupted'
+}
 
 type TerminalRootInfo = {
   sessionId: string
@@ -309,6 +320,30 @@ export function fileStamp(now = new Date()): string {
 }
 
 /**
+ * Write a capture as `<name>-<stamp>.png` in `directory`, never over another
+ * file. The stamp is to the second, so a second capture within it (an agent
+ * taking two in a row) is numbered `-2`, `-3`, … instead of replacing the
+ * first, which an earlier message may already show. Returns the path written.
+ */
+export async function writeCaptureFile(
+  directory: string,
+  name: string,
+  data: Uint8Array,
+  now = new Date(),
+): Promise<string> {
+  const base = `${name}-${fileStamp(now)}`
+  for (let n = 1; ; n += 1) {
+    const file = join(directory, n === 1 ? `${base}.png` : `${base}-${n}.png`)
+    try {
+      await writeFile(file, data, { flag: 'wx' })
+      return file
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || n >= 1000) throw error
+    }
+  }
+}
+
+/**
  * A guest-viewport CSS rect as a crop of the captured image: padded, scaled by
  * the zoom factor into DIP, clamped to the image; null when nothing of it is on
  * screen or the numbers are not sane.
@@ -435,6 +470,8 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
   const agentAssignments = createAgentTabAssignments()
   const unregisterListeners = new Set<(tabId: string) => void>()
   const humanInputListeners = new Set<(tabId: string) => void>()
+  const downloadListeners = new Set<(tabId: string, download: BrowserDownload) => void>()
+  const agentDownloads = createAgentDownloads()
 
   /** A claim on the page that lapses CONTROLLER_LINGER_MS after the last input. */
   function claim(tab: BrowserTab, controller: BrowserController): void {
@@ -464,8 +501,36 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       callback(ALLOWED_PERMISSIONS.has(permission))
     })
     created.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission))
+    created.on('will-download', (_event, item, wc) => saveAgentDownload(item, wc))
     browserSessions.set(partition, created)
     return created
+  }
+
+  /**
+   * A download from a tab the agent is driving is saved to the workspace's
+   * store (`browser/downloads/`, workspace-store.ts) without a dialog
+   * (agent-downloads.ts). Anything else — the person's own download, a tab
+   * with no workspace folder, a folder that cannot be made — returns without
+   * a path, and Chromium asks.
+   */
+  function saveAgentDownload(item: AgentDownloadItem, wc: WebContents | undefined): void {
+    const tab = [...tabs.values()].find((candidate) => candidate.wc === wc)
+    if (!tab || tab.state.controller !== 'agent') return
+    const workspaceRoot = deps.resolveWorkspaceRoot(tab.workspaceId)
+    if (!workspaceRoot || !isAbsolute(workspaceRoot) || !existsSync(workspaceRoot)) return
+    let directory: string
+    try {
+      directory = ensureWorkspaceStoreDirSync(resolve(workspaceRoot), 'browser', 'downloads')
+    } catch {
+      return
+    }
+    const url = item.getURL()
+    const path = agentDownloads.save(item, directory)
+    const tell = (state: BrowserDownload['state']) => {
+      for (const listener of downloadListeners) listener(tab.tabId, { url, path, state })
+    }
+    item.once('done', (_event, state) => tell(state))
+    tell('started')
   }
 
   /** The partition a guest's session is, by asking each one this manager made. */
@@ -513,6 +578,22 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       canGoBack: history.canGoBack(),
       canGoForward: history.canGoForward(),
     }
+  }
+
+  /**
+   * The page's own right-click menu (`guest-context-menu.ts`). The page is
+   * focused first: Cut, Copy and Paste act on whichever contents has focus,
+   * and a right-click on a page you had not clicked into leaves the app's.
+   */
+  function showGuestMenu(contents: WebContents, params: ContextMenuParams, window: BrowserWindow | null): void {
+    if (contents.isDestroyed()) return
+    contents.focus()
+    const template = guestContextMenuTemplate(params, contents, (text) => clipboard.writeText(text))
+    Menu.buildFromTemplate(template).popup({
+      ...(window && !window.isDestroyed() ? { window } : {}),
+      // The frame that was clicked, so a menu over an iframe acts on it.
+      ...(params.frame ? { frame: params.frame } : {}),
+    })
   }
 
   function attach(tab: BrowserTab): () => void {
@@ -604,7 +685,11 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
         },
       ) => {
         if (input.type !== 'keyDown') return
-        if (tab.agentInputDepth === 0) humanTookOver(tab)
+        // A key the agent sent (browser_press) is the page's, chords included:
+        // its Cmd+W is meant for the page under test, and as the app's own it
+        // would close a tab of the app's or reload the page under the agent.
+        if (tab.agentInputDepth > 0) return
+        humanTookOver(tab)
         const primary = process.platform === 'darwin' ? input.meta : input.control
         if (!primary) return
         const key = input.key.toLowerCase()
@@ -662,9 +747,14 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       if (isHttp) void wc.loadURL(details.url)
       return { action: 'deny' }
     })
-    on('did-create-window', (child: { webContents: WebContents }) => {
+    on('did-create-window', (child: BrowserWindow) => {
       child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+      // A sign-in popup is a page too: right-click there gets the same menu.
+      child.webContents.on('context-menu', (_event, params) => showGuestMenu(child.webContents, params, child))
     })
+    on('context-menu', (_event: unknown, params: ContextMenuParams) =>
+      showGuestMenu(wc, params, BrowserWindow.fromWebContents(tab.host)),
+    )
     on('destroyed', () => {
       tabs.delete(tab.tabId)
       deps.machinePartitions?.tabClosed(tab.tabId)
@@ -872,6 +962,12 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       return () => humanInputListeners.delete(listener)
     },
 
+    /** Called as a download the agent's tab set off is saved, and again when it ends. */
+    onDownload(listener: (tabId: string, download: BrowserDownload) => void): () => void {
+      downloadListeners.add(listener)
+      return () => downloadListeners.delete(listener)
+    },
+
     /** A recording started or ended on a tab: the toolbar shows it while it runs. */
     setRecording(tabId: string, recording: BrowserRecordingState | null): void {
       const tab = requireTab(tabId)
@@ -891,7 +987,13 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
     /** Bracket the agent's synthetic input so it does not read as a human taking over. */
     noteAgentInput(tabId: string, delta: 1 | -1): void {
       const tab = requireTab(tabId)
-      if (tab) tab.agentInputDepth = Math.max(0, tab.agentInputDepth + delta)
+      if (!tab) return
+      const wasDriving = tab.agentInputDepth > 0
+      tab.agentInputDepth = Math.max(0, tab.agentInputDepth + delta)
+      // The app menu's accelerators answer a guest's keys before the page
+      // does; while the agent types they stay out of it, as the chords above do.
+      const driving = tab.agentInputDepth > 0
+      if (driving !== wasDriving && !tab.wc.isDestroyed()) tab.wc.setIgnoreMenuShortcuts(driving)
     },
 
     /** Tabs a workspace owns, for the agent tools (browser-tools child). */
@@ -932,7 +1034,7 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       return true
     },
 
-    /** PNG of the page (or a crop of it) into the workspace's `.sprintengine/browser/`. */
+    /** PNG of the page (or a crop of it) into the workspace store's `browser/`. */
     async captureScreenshot(input: BrowserCaptureInput): Promise<BrowserScreenshotResult> {
       const tab = requireTab(input.tabId)
       if (!tab) return { ok: false, message: 'This browser tab is gone.' }
@@ -956,12 +1058,10 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
           image = full.crop(crop)
         }
         const size = image.getSize()
-        // The folder ignores itself, so a project that does not list it in
-        // its own .gitignore still never sees screenshots in `git status`;
-        // and it is never made or written through a link the project holds.
-        const directory = await ensureSidecarDirNoLinks(resolve(workspaceRoot), 'browser')
-        const file = join(directory, `${input.kind}-${hostSlug(tab.state.url)}-${fileStamp()}.png`)
-        await writeFile(file, image.toPNG())
+        // In the store in the person's home, never in the project: a capture
+        // is the app's, and in the project it was one more file to ignore.
+        const directory = await ensureWorkspaceStoreDir(resolve(workspaceRoot), 'browser')
+        const file = await writeCaptureFile(directory, `${input.kind}-${hostSlug(tab.state.url)}`, image.toPNG())
         return { ok: true, path: file, width: size.width, height: size.height }
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : 'The capture failed.' }
@@ -1024,6 +1124,19 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       tab.wc.setZoomFactor(clamped)
       patch(tab, { zoomFactor: clamped })
       return true
+    },
+
+    /**
+     * Put each tab hosted by `host` back at its own zoom. Electron carries a
+     * change to the embedding window's zoom into every guest it hosts, so the
+     * app's View ▸ Zoom would zoom the pages too, and leave each tab's zoom
+     * reading what it no longer is; the app menu calls this after each one.
+     */
+    reapplyGuestZoom(host: WebContents): void {
+      for (const tab of tabs.values()) {
+        if (tab.host !== host || tab.wc.isDestroyed()) continue
+        tab.wc.setZoomFactor(tab.state.zoomFactor)
+      }
     },
 
     zoomStep(tabId: string, direction: 1 | -1 | 0): boolean {

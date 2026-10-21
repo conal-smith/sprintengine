@@ -22,7 +22,7 @@ export function AgentBrowserSettings() {
         />
         <SettingToggle
           label="Show the page while an agent uses it"
-          description="With the pane closed, a page an agent opens or drives floats in a corner over the chat. Close it to keep it out of the way while that agent works."
+          description="With the pane closed, a page an agent opens or drives, or a board it draws on, floats in a corner over the chat. Close it to keep it out of the way while that agent works."
           enabled={autoFloat}
           onChange={setAutoFloat}
         />

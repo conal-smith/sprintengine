@@ -31,9 +31,19 @@ test('ProjectSourceMenu', async () => {
   anyGlobal.IS_REACT_ACT_ENVIRONMENT = true
 
   let repoAnswer: () => Promise<Record<string, unknown>> = async () => ({ ok: false, reason: 'no_token' })
+  type ProgressListener = (progress: Record<string, unknown>) => void
+  const progressListeners = new Set<ProgressListener>()
+  const cancelled: string[] = []
   ;(dom.window as unknown as { api: Record<string, unknown> }).api = {
     platform: 'darwin',
     listGitHubRepos: () => repoAnswer(),
+    onRepositoryCloneProgress: (cb: ProgressListener) => {
+      progressListeners.add(cb)
+      return () => progressListeners.delete(cb)
+    },
+    cancelRepositoryClone: async (cloneId: string) => {
+      cancelled.push(cloneId)
+    },
   }
 
   async function main(): Promise<void> {
@@ -42,6 +52,7 @@ test('ProjectSourceMenu', async () => {
     const { createRoot } = await import('react-dom/client')
     const { renderToStaticMarkup } = await import('react-dom/server')
     const { ProjectSourceMenu } = await import('./ProjectSourceMenu')
+    type ProjectCloneResult = import('./ProjectSourceMenu').ProjectCloneResult
     const { Popover } = await import('../../ui/Popover')
 
     let failures = 0
@@ -162,7 +173,9 @@ test('ProjectSourceMenu', async () => {
     const surface = () => dom.window.document.querySelector('[role="menu"][aria-label="Project this agent runs in"]')
 
     const mount = async (
-      cloneResult: () => Promise<{ ok: true; path: string } | { ok: false; message: string }>,
+      cloneResult: () => Promise<
+        { ok: true; path: string } | { ok: false; message: string; reason?: string; existingPath?: string }
+      >,
     ): Promise<Mounted> => {
       const container = dom.window.document.createElement('div')
       dom.window.document.body.appendChild(container)
@@ -192,7 +205,7 @@ test('ProjectSourceMenu', async () => {
               onBrowse={() => {}}
               onClone={(request) => {
                 clones.push(request)
-                return cloneResult()
+                return cloneResult() as Promise<ProjectCloneResult>
               }}
               onClose={() => {
                 closes += 1
@@ -291,10 +304,16 @@ test('ProjectSourceMenu', async () => {
         await settle()
         const url = surface()!.querySelector<HTMLInputElement>('[aria-label="Repository URL"]')!
         await type(url, 'https://github.com/acme/missing')
-        assert.ok(/Clones into w\//.test(surface()!.textContent ?? ''), 'the target parent is named')
+        assert.ok(buttonWithText(surface()!, 'w/'), 'the target parent is named on its Change… button')
+        assert.equal(
+          surface()!.querySelector<HTMLInputElement>('input[id$="-folder"]')!.value,
+          'missing',
+          'the folder name follows the repository',
+        )
         await click(buttonWithText(surface()!, 'Clone'))
         await settle()
         assert.equal(view.clones.length, 1, 'the host was asked to clone')
+        assert.equal(view.clones[0]?.branch, null, 'no branch asked for: the remote default')
         assert.equal(view.clones[0]?.parentDir, '/w')
         assert.equal(view.clones[0]?.folderName, 'missing')
         const alert = surface()!.querySelector('[role="alert"]')
@@ -340,6 +359,146 @@ test('ProjectSourceMenu', async () => {
           await settle()
           assert.deepEqual(view.selections, [], 'the menu does not select into a closed panel — the host adopted it')
           assert.equal(view.clones.length, 1)
+        } finally {
+          view.unmount()
+        }
+      },
+    )
+
+    const openGitStep = async () => {
+      await click(buttonWithText(surface()!, 'Import from Git'))
+      await settle()
+      return surface()!.querySelector<HTMLInputElement>('[aria-label="Repository URL"]')!
+    }
+
+    await check(
+      'a pasted page URL previews its host and fills the branch and folder; edits ride the request',
+      async () => {
+        repoAnswer = async () => ({ ok: false, reason: 'no_token' })
+        const view = await mount(async () => ({ ok: false, message: 'unused' }))
+        try {
+          const url = await openGitStep()
+          await type(url, 'https://gitlab.acme.dev/platform/backend/api/-/tree/develop')
+          const text = surface()!.textContent ?? ''
+          assert.match(text, /GitLab/, 'the provider is named')
+          assert.match(text, /gitlab\.acme\.dev\/platform\/backend\/api/, 'with where the repository lives')
+          const branch = surface()!.querySelector<HTMLInputElement>('input[id$="-branch"]')!
+          const folder = surface()!.querySelector<HTMLInputElement>('input[id$="-folder"]')!
+          assert.equal(branch.value, 'develop', 'the branch the page was on')
+          assert.equal(folder.value, 'api')
+          await type(folder, 'api-develop')
+          await click(buttonWithText(surface()!, 'Clone'))
+          await settle()
+          assert.equal(view.clones[0]?.url, 'https://gitlab.acme.dev/platform/backend/api')
+          assert.equal(view.clones[0]?.branch, 'develop')
+          assert.equal(view.clones[0]?.folderName, 'api-develop', 'a typed folder name wins over the derived one')
+        } finally {
+          view.unmount()
+        }
+      },
+    )
+
+    await check('a URL that does not parse says why under the field, and Clone stays off', async () => {
+      repoAnswer = async () => ({ ok: false, reason: 'no_token' })
+      const view = await mount(async () => ({ ok: false, message: 'unused' }))
+      try {
+        const url = await openGitStep()
+        await type(url, 'ftp://example.com/repo')
+        assert.equal(url.getAttribute('aria-invalid'), 'true')
+        assert.ok(buttonWithText(surface()!, 'Clone')!.disabled, 'nothing to clone')
+      } finally {
+        view.unmount()
+      }
+    })
+
+    await check('a running clone says its progress in words and can be cancelled quietly', async () => {
+      repoAnswer = async () => ({ ok: false, reason: 'no_token' })
+      let finish: (value: { ok: false; message: string; reason: string }) => void = () => {}
+      const view = await mount(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      try {
+        await type(await openGitStep(), 'acme/widget')
+        await click(buttonWithText(surface()!, 'Clone'))
+        const cloneId = view.clones[0]?.cloneId as string
+        assert.ok(cloneId, 'the request is named for its progress and its cancel')
+        await act(async () => {
+          for (const listener of progressListeners) {
+            listener({ cloneId: 'someone-else', stage: 'checkout', percent: 99, detail: null })
+            listener({ cloneId, stage: 'receiving', percent: 45, detail: '12.30 MiB | 5.00 MiB/s' })
+          }
+        })
+        assert.match(
+          surface()!.textContent ?? '',
+          /Receiving objects · 45% · 12\.30 MiB \| 5\.00 MiB\/s/,
+          'its own progress, not another clone’s',
+        )
+        await click(buttonWithText(surface()!, 'Cancel'))
+        assert.deepEqual(cancelled, [cloneId], 'cancel names the clone')
+        await act(async () => {
+          finish({ ok: false, message: 'Clone cancelled.', reason: 'cancelled' })
+        })
+        await settle()
+        assert.equal(surface()!.querySelector('[role="alert"]'), null, 'a cancel is not an error')
+        assert.ok(!buttonWithText(surface()!, 'Clone')!.disabled, 'and Clone is offered again')
+        assert.equal(view.closes(), 0)
+      } finally {
+        view.unmount()
+      }
+    })
+
+    await check('a folder that is already this clone offers to open it instead', async () => {
+      repoAnswer = async () => ({ ok: false, reason: 'no_token' })
+      const view = await mount(async () => ({
+        ok: false,
+        reason: 'exists',
+        existingPath: '/w/widget',
+        message: 'widget is already a clone of acme/widget.',
+      }))
+      try {
+        await type(await openGitStep(), 'acme/widget')
+        await click(buttonWithText(surface()!, 'Clone'))
+        await settle()
+        await click(buttonWithText(surface()!, 'Open it'))
+        await settle()
+        assert.deepEqual(view.selections, ['/w/widget'], 'the existing clone is the project')
+        assert.equal(view.closes(), 1)
+      } finally {
+        view.unmount()
+      }
+    })
+
+    await check(
+      'picking one of the account’s repositories fills the URL field, and picking it again clears it',
+      async () => {
+        repoAnswer = async () => ({
+          ok: true,
+          repos: [
+            {
+              fullName: 'acme/widget',
+              name: 'widget',
+              owner: 'acme',
+              isPrivate: true,
+              description: null,
+              cloneUrl: 'https://github.com/acme/widget.git',
+              defaultBranch: 'main',
+              pushedAt: null,
+            },
+          ],
+        })
+        const view = await mount(async () => ({ ok: false, message: 'unused' }))
+        try {
+          const url = await openGitStep()
+          await settle()
+          const row = () => surface()!.querySelector('[role="option"]')!
+          await click(row())
+          assert.equal(url.value, 'https://github.com/acme/widget.git')
+          assert.equal(row().getAttribute('aria-selected'), 'true', 'the row the field names reads as picked')
+          await click(row())
+          assert.equal(url.value, '')
         } finally {
           view.unmount()
         }

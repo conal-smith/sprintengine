@@ -158,3 +158,33 @@ test('terminalLinkActions', async () => {
 
   console.log('terminalLinkActions tests passed')
 })
+
+test('a file offered the system reveal lists it after Reveal in Files', () => {
+  const ids = terminalLinkActions(
+    { kind: 'file', resolvedPath: '/Users/dev/app/src/App.tsx', isDirectory: false, workspaceRoot: '/Users/dev/app' },
+    { revealInSystemLabel: 'Reveal in Finder' },
+  ).map((action) => [action.id, action.label])
+  assert.deepEqual(ids.slice(-3), [
+    ['reveal-files', 'Reveal in Files'],
+    ['reveal-system', 'Reveal in Finder'],
+    ['copy-path', 'Copy path'],
+  ])
+})
+
+test('a folder offered the system reveal keeps it in its locate group', () => {
+  const ids = terminalLinkActions(
+    { kind: 'file', resolvedPath: '/Users/dev/app/src', isDirectory: true, workspaceRoot: '/Users/dev/app' },
+    { revealInSystemLabel: 'Show in Explorer' },
+  ).map((action) => action.id)
+  assert.deepEqual(ids, ['reveal-files', 'reveal-system', 'copy-path'])
+})
+
+test('without the option there is no system reveal, as in a terminal', () => {
+  const ids = terminalLinkActions({
+    kind: 'file',
+    resolvedPath: '/Users/dev/app/src/App.tsx',
+    isDirectory: false,
+    workspaceRoot: '/Users/dev/app',
+  }).map((action) => action.id)
+  assert.equal(ids.includes('reveal-system'), false)
+})

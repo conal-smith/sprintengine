@@ -286,3 +286,40 @@ test('the projection keeps the background work the session last reported, until 
     ]),
   ).toEqual([])
 })
+
+test('an MCP step keeps the title and server name its provider reported, through a second report', () => {
+  const entries = projectConversation([
+    event('user_message', 0, { turnId: 't1', text: 'Find the invoice' }),
+    event('turn_started', 1, { turnId: 't1' }),
+    event('tool_started', 10, {
+      turnId: 't1',
+      toolUseId: 'mail',
+      name: 'mcp__claude_ai_Gmail__search_threads',
+      displayTitle: 'Search threads',
+      serverName: 'Gmail',
+    }),
+    // Reported again without them (its input filled in): they stay.
+    event('tool_started', 11, { turnId: 't1', toolUseId: 'mail', name: 'mcp__claude_ai_Gmail__search_threads' }),
+    event('tool_output', 20, { turnId: 't1', toolUseId: 'mail', output: '1 thread' }),
+  ]).entries
+  const tool = entries.find((entry) => entry.kind === 'tool' && entry.id === 'mail') as
+    { displayTitle?: string; serverName?: string } | undefined
+  expect([tool?.displayTitle, tool?.serverName]).toEqual(['Search threads', 'Gmail'])
+})
+
+// The provider says the goal when it changes, and null once there is none; a
+// session that starts again says it again once it has read the thread's.
+test('the projection keeps the goal the session last reported, until it is cleared or a new session starts', () => {
+  const goal = { objective: 'make the parser tests pass', status: 'active' }
+  const reported = (events: ConversationEvent[]) => projectConversation(events).goal
+  const opened = [event('session_started', 0), event('session_updated', 10, { goal })]
+
+  expect(reported(opened)).toEqual(goal)
+  expect(reported([...opened, event('session_updated', 20, { notice: 'Model changed' })])).toEqual(goal)
+  expect(reported([...opened, event('session_updated', 20, { goal: { ...goal, status: 'paused' } })])).toEqual({
+    ...goal,
+    status: 'paused',
+  })
+  expect(reported([...opened, event('session_updated', 20, { goal: null })])).toBeNull()
+  expect(reported([...opened, event('session_started', 30)])).toBeNull()
+})

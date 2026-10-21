@@ -40,7 +40,9 @@ vi.mock('@legendapp/list/react', () => ({
       renderItem,
       keyExtractor,
       ListHeaderComponent,
+      ListFooterComponent,
       className,
+      contentContainerClassName,
       extraData,
       initialScrollIndex,
       initialScrollAtEnd,
@@ -49,7 +51,9 @@ vi.mock('@legendapp/list/react', () => ({
       renderItem: (props: { item: unknown; index: number }) => ReactNode
       keyExtractor: (item: unknown) => string
       ListHeaderComponent?: ReactNode
+      ListFooterComponent?: ReactNode
       className?: string
+      contentContainerClassName?: string
       extraData?: unknown
       initialScrollIndex?: number
       initialScrollAtEnd?: boolean
@@ -70,11 +74,12 @@ vi.mock('@legendapp/list/react', () => ({
       getState: () => ({ positionAtIndex: () => 0, positionByKey: () => 0 }),
     }))
     return (
-      <div ref={scroller} className={className}>
+      <div ref={scroller} className={className} data-content-class={contentContainerClassName}>
         {ListHeaderComponent}
         {data.map((item, index) => (
           <ListRow key={keyExtractor(item)} item={item} index={index} extraData={extraData} render={renderItem} />
         ))}
+        {ListFooterComponent}
       </div>
     )
   }),
@@ -784,6 +789,22 @@ test('the transcript takes the kit’s focus ring on keyboard focus only', async
     const scroller = chat.host.querySelector('[role="log"] > div')!
     expect(scroller.className).toContain('focus-visible:focus-ring-inset')
     expect(scroller.className).toContain('focus:outline-none')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('the transcript’s gap at either end is the list’s own header and footer, which it measures', async () => {
+  // A padding or a margin a class puts on the scroller or between the list's
+  // children is one the list cannot see: its end stopped short by it, and the
+  // last row, the live "agents working" line, sat sliced above the composer.
+  const chat = await mountChat({ events: [event('user_message', { turnId: 'a', text: 'hello' })] })
+  try {
+    const scroller = chat.host.querySelector<HTMLElement>('[role="log"] > div')!
+    expect(scroller.className).not.toMatch(/(?:^|\s)(?:p|py|pt|pb)-/)
+    expect(scroller.dataset.contentClass ?? '').not.toMatch(/(?:^|\s)(?:p|py|pt|pb|space-y)-/)
+    expect(scroller.firstElementChild?.matches('[data-transcript-head]')).toBe(true)
+    expect(scroller.lastElementChild?.matches('[data-transcript-foot]')).toBe(true)
   } finally {
     await chat.unmount()
   }
@@ -2790,5 +2811,109 @@ test('a reply queued behind a New chat’s first message comes back after it whe
     expect(sendTurn).not.toHaveBeenCalled()
   } finally {
     await chat.unmount()
+  }
+})
+
+test('/btw mid-turn asks the chat a side question and leaves the turn and its queue alone', async () => {
+  const turn = runningTurnSend()
+  let answer = (_value: unknown) => undefined as void
+  const askSideQuestion = vi.fn(
+    (_input: { sessionId: string; requestId: string; question: string }) =>
+      new Promise((resolve) => (answer = resolve)),
+  )
+  const cancelSideQuestion = vi.fn(async (_input: { sessionId: string; requestId: string }) => ({ ok: true }))
+  // A Claude chat: `/btw` is Studio's only where the chat's CLI has it.
+  const chat = await mountChat({
+    providerId: 'claude-agent',
+    modelId: 'opus',
+    sendTurn: turn.sendTurn,
+    capabilities: { sideQuestion: true },
+    api: {
+      conversationSessionAskSideQuestion: askSideQuestion,
+      conversationSessionCancelSideQuestion: cancelSideQuestion,
+    },
+  })
+  try {
+    await chat.act(async () => chat.type('Refactor the parser'))
+    await chat.act(async () => chat.enter())
+    const localTurnId = turn.calls[0]?.localTurnId
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('user_message', { turnId: 'side-t1', text: 'x', localTurnId }) })
+      chat.emit({ type: 'event', event: event('turn_started', { turnId: 'side-t1' }) })
+      chat.emit({ type: 'event', event: event('content_delta', { turnId: 'side-t1', text: 'Working on it' }) })
+    })
+    await chat.act(async () => chat.type('/btw which file is the parser in?'))
+    await chat.act(async () => chat.enter())
+    const drawer = () => chat.dom.window.document.querySelector('[role="dialog"][aria-label^="Side question"]')
+    // The Studio protocol has no method for it yet, so a window on it keeps /btw the CLI's.
+    if (chatOverStudioUnderTest()) {
+      expect(askSideQuestion).not.toHaveBeenCalled()
+      return
+    }
+    expect(askSideQuestion).toHaveBeenCalledOnce()
+    expect(askSideQuestion.mock.calls[0]![0]).toMatchObject({
+      sessionId: 'session',
+      question: 'which file is the parser in?',
+    })
+    expect(drawer()).not.toBeNull()
+    expect(turn.sendTurn, 'nothing went to the chat').toHaveBeenCalledOnce()
+    expect(chat.host.querySelector('[aria-label="Queued message"]'), 'nothing was queued').toBeNull()
+    expect(chat.host.querySelector('[role="log"]')?.textContent, 'nor into its transcript').not.toContain(
+      'which file is the parser in?',
+    )
+
+    // Closed before the answer: called off where it was asked, and gone.
+    const { requestId } = askSideQuestion.mock.calls[0]![0]
+    await chat.act(async () =>
+      chat.dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Close side question"]')!.click(),
+    )
+    expect(cancelSideQuestion).toHaveBeenCalledWith({ sessionId: 'session', requestId })
+    await chat.act(async () => answer({ ok: true, answer: 'src/parse.ts' }))
+    expect(chat.dom.window.document.body.textContent).not.toContain('src/parse.ts')
+    expect(turn.sendTurn).toHaveBeenCalledOnce()
+  } finally {
+    turn.release()
+    await chat.unmount()
+  }
+})
+
+test('the composer’s “+” offers a side question once the chat has a reply, and only where it can be answered', async () => {
+  const reply = [
+    event('user_message', { turnId: 'side-t2', text: 'Hello' }),
+    event('turn_started', { turnId: 'side-t2' }),
+    event('content_delta', { turnId: 'side-t2', text: 'Hi.' }),
+    event('turn_completed', { turnId: 'side-t2' }),
+  ]
+  let doc: Document | null = null
+  const row = () => doc!.querySelector<HTMLButtonElement>('[data-composer-side-question="true"]')
+  const openPlus = (chat: Awaited<ReturnType<typeof mountChat>>) =>
+    chat.act(async () => chat.host.querySelector<HTMLButtonElement>('[data-composer-options="true"]')?.click())
+  const answering = await mountChat({
+    events: reply,
+    capabilities: { sideQuestion: true, images: true },
+    api: {
+      conversationSessionAskSideQuestion: vi.fn(async () => ({ ok: true, answer: 'Hi.' })),
+      conversationSessionCancelSideQuestion: vi.fn(async () => ({ ok: true })),
+    },
+  })
+  try {
+    doc = answering.dom.window.document
+    await openPlus(answering)
+    if (chatOverStudioUnderTest()) expect(row()).toBeNull()
+    else {
+      expect(row()?.textContent).toContain('Side question')
+      await answering.act(async () => row()!.click())
+      expect(doc.querySelector('[role="dialog"][aria-label^="Side question"]')).not.toBeNull()
+    }
+  } finally {
+    await answering.unmount()
+  }
+  const without = await mountChat({ events: reply, capabilities: { images: true } })
+  try {
+    doc = without.dom.window.document
+    await openPlus(without)
+    expect(row()).toBeNull()
+  } finally {
+    await without.unmount()
   }
 })

@@ -437,7 +437,6 @@ test('each editor is offered only when its CLI or its app is installed', () => {
 
 test('the newer editors resolve through the CLI shim each one installs', () => {
   const shims = {
-    cursor: 'cursor',
     windsurf: 'windsurf',
     zed: 'zed',
     sublime: 'subl',
@@ -463,6 +462,64 @@ test('the newer editors resolve through the CLI shim each one installs', () => {
       args: [],
     })
   }
+})
+
+// OpenZFS's event daemon is also called `zed`, and run with a folder it starts
+// the daemon. It is never taken for the editor, and on macOS Zed.app decides.
+test('Open in Zed starts Zed, never the ZFS event daemon of the same name', () => {
+  const zfsOnMac: LauncherProbe = {
+    platform: 'darwin',
+    env: { PATH: '/usr/local/zfs/bin:/usr/local/bin:/usr/bin', HOME: '/Users/dev' },
+    exists: (candidate) => ['/usr/local/zfs/bin/zed', '/Applications/Zed.app'].includes(candidate),
+  }
+  assert.deepEqual(resolveFolderOpenLauncher('zed', zfsOnMac), {
+    kind: 'command',
+    command: '/usr/bin/open',
+    args: ['-a', '/Applications/Zed.app'],
+  })
+  assert.equal(
+    resolveFolderOpenLauncher('zed', { ...zfsOnMac, exists: (candidate) => candidate === '/usr/local/zfs/bin/zed' }),
+    null,
+    'the daemon alone is not Zed',
+  )
+
+  // On macOS the app wins over a CLI too, Spotlight included; the CLI is the
+  // fallback for a machine with no Zed.app at all.
+  const shimAndElsewhereApp: LauncherProbe = {
+    ...editorProbe('darwin', ['/usr/local/bin/zed']),
+    locateAppByBundleId: () => '/Volumes/Extra/Zed.app',
+  }
+  assert.deepEqual(resolveFolderOpenLauncher('zed', shimAndElsewhereApp), {
+    kind: 'command',
+    command: '/usr/bin/open',
+    args: ['-a', '/Volumes/Extra/Zed.app'],
+  })
+  assert.deepEqual(resolveFolderOpenLauncher('zed', editorProbe('darwin', ['/usr/local/bin/zed'])), {
+    kind: 'command',
+    command: '/usr/local/bin/zed',
+    args: [],
+  })
+
+  const linux = (installed: string[]): LauncherProbe => ({
+    platform: 'linux',
+    env: { PATH: '/home/dev/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin', HOME: '/home/dev' },
+    exists: (candidate) => installed.includes(candidate),
+  })
+  assert.equal(resolveFolderOpenLauncher('zed', linux(['/usr/sbin/zed', '/usr/sbin/zpool'])), null)
+  assert.equal(resolveFolderOpenLauncher('zed', linux(['/usr/sbin/zed'])), null)
+  assert.deepEqual(resolveFolderOpenLauncher('zed', linux(['/usr/sbin/zed', '/home/dev/.local/bin/zed'])), {
+    kind: 'command',
+    command: '/home/dev/.local/bin/zed',
+    args: [],
+  })
+  // A distribution with /usr/sbin merged into /usr/bin puts the daemon beside
+  // `zpool` there, and packages the editor as `zeditor`.
+  assert.equal(resolveFolderOpenLauncher('zed', linux(['/usr/bin/zed', '/usr/bin/zpool'])), null)
+  assert.deepEqual(resolveFolderOpenLauncher('zed', linux(['/usr/bin/zed', '/usr/bin/zpool', '/usr/bin/zeditor'])), {
+    kind: 'command',
+    command: '/usr/bin/zeditor',
+    args: [],
+  })
 })
 
 test('without a CLI, the newer editors open through their macOS app bundle', () => {
@@ -500,6 +557,14 @@ test('Kiro is asked for its editor by name, ahead of the folder', () => {
     kind: 'command',
     command: '/usr/local/bin/kiro',
     args: ['ide'],
+  })
+})
+
+test('Cursor is asked for its editor window, not its Agents window', () => {
+  assert.deepEqual(resolveFolderOpenLauncher('cursor', editorProbe('linux', ['/usr/local/bin/cursor'])), {
+    kind: 'command',
+    command: '/usr/local/bin/cursor',
+    args: ['--classic'],
   })
 })
 

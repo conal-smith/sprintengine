@@ -67,14 +67,16 @@ import type {
   BacklogMoveSourceInput,
 } from '../shared/electron-api'
 import { isPathInsideOrEqual } from './path-containment'
-import { workspaceSidecarPath } from './workspace-sidecar'
+import { SIDECAR_DIR_NAME } from '../shared/workspace-sidecar'
+import { workspaceStorePath, workspaceStoreProject, workspaceStoreReady } from './workspace-store'
 import { errorMessage } from '../shared/errors'
 
 // The volatile half of an item's links, and nothing else: resolved statuses, the
 // agent terminal currently holding an item, module metadata keyed to a live
-// session. Gitignored, because every value in here is re-derived from the world
-// and worthless after a restart — which is precisely why it used to churn a
-// TRACKED file (`backlog/items.json` in the sidecar) on every resolve tick.
+// session. Kept out of the project, because every value in here is re-derived
+// from the world and worthless after a restart — which is precisely why it used
+// to churn a TRACKED file (`backlog/items.json` in the sidecar) on every
+// resolve tick.
 //
 // Durable facts moved to the item's own markdown frontmatter (see
 // shared/backlog/durable-links.ts), so they travel with the file, diff for a
@@ -82,17 +84,24 @@ import { errorMessage } from '../shared/errors'
 //
 // Deleting this file is always safe: the next scan resolves it again.
 //
-// These three are relative to the workspace's sidecar directory, whose name
-// differs between a workspace made before the rename and one made after;
-// `workspaceSidecarPath` is what resolves it.
+// These three are relative to the project's store in the person's home
+// (workspace-store.ts), which every checkout of the project shares.
 const STORE_PATH = ['backlog', 'cache', 'links.json'] as const
 // The retired sidecar, read once by migrateBacklogSidecarToFiles and then
 // deleted. Kept as a constant so the migration cannot drift from the path it
 // must look under.
 const LEGACY_STORE_PATH = ['backlog', 'items.json'] as const
-// Per-workspace, committed config holding the display key (`MC`) so `KEY-n` ids
-// render identically on every machine. Separate from the cache, whose store
-// shape is normalized down to `{schemaVersion, items}` and would drop a key.
+// Per-project config holding the display key (`MC`) and the backlog's root.
+// Separate from the cache, whose store shape is normalized down to
+// `{schemaVersion, items}` and would drop a key. It is the app's runtime state
+// (it rewrites it as it runs, and a clone derives its own on first read), so it
+// is written to the store, never into the project.
+//
+// Older builds wrote it to `<project>/.sprintengine/backlog/config.json`. The
+// store's one-time move takes that file out, unless git tracks it: a project
+// that committed its key keeps the file, and it is read, never written, while
+// the store has no config of its own — so the committed key is the one every
+// clone starts from, and the first change after that lives in the store.
 const CONFIG_PATH = ['backlog', 'config.json'] as const
 // v1 carried the display key alone; v2 adds `root`. A v1 file reads correctly as
 // a workspace with no configured root, so there is no migration to run.
@@ -170,11 +179,11 @@ export async function withBacklogWorkspaceLock<T>(workspaceRoot: string, operati
 
 /**
  * The display key ids are composed with (`MC` in `MC-240`) without writing
- * anything: the committed one, else the default the first scan would persist.
+ * anything: the configured one, else the default the first scan would persist.
  */
 export async function peekBacklogDisplayKey(workspaceRoot: string): Promise<string> {
   const workspace = await validateWorkspaceRoot(workspaceRoot)
-  return (await peekBacklogWorkspaceKey(workspace)) ?? deriveDefaultBacklogKey(basename(workspace.root))
+  return (await peekBacklogWorkspaceKey(workspace)) ?? defaultBacklogKeyFor(workspace.root)
 }
 
 export async function readBacklogObjectStore(workspaceRoot: string): Promise<BacklogReadResult> {
@@ -189,13 +198,12 @@ export async function readBacklogObjectStore(workspaceRoot: string): Promise<Bac
   }
 }
 
-// Resolve the workspace display key: the committed config value when valid, else
+// Resolve the workspace display key: the config's value when valid, else
 // a default derived from the workspace folder name and persisted so it stays
 // stable. A malformed config is non-fatal — we derive a fresh default.
 async function resolveBacklogWorkspaceKey(workspace: ValidWorkspace): Promise<string> {
-  const configPath = workspaceSidecarPath(workspace.root, ...CONFIG_PATH)
   try {
-    const raw = await readFile(configPath, 'utf-8')
+    const raw = await readBacklogConfigText(workspace.root)
     const parsed = JSON.parse(raw) as { key?: unknown }
     if (isValidBacklogKey(parsed.key)) return parsed.key
   } catch (error) {
@@ -203,9 +211,39 @@ async function resolveBacklogWorkspaceKey(workspace: ValidWorkspace): Promise<st
       // Unreadable/unparseable config: fall through and re-derive a default.
     }
   }
-  const key = deriveDefaultBacklogKey(basename(workspace.root))
+  const key = defaultBacklogKeyFor(workspace.root)
   await persistBacklogWorkspaceKey(workspace, key)
   return key
+}
+
+/**
+ * The key a project with no configured one gets, from its main checkout's
+ * name: every checkout shares one config, so a worktree read first must not
+ * name the project's items after its own folder.
+ */
+export function defaultBacklogKeyFor(workspaceRoot: string): string {
+  let project = workspaceRoot
+  try {
+    project = workspaceStoreProject(workspaceRoot)
+  } catch {
+    // Not a folder on this computer: its own name.
+  }
+  return deriveDefaultBacklogKey(basename(project) || project)
+}
+
+/**
+ * The config's text: the store's, else a committed one an older build left in
+ * the project (see CONFIG_PATH). Throws, as `readFile` does, when there is
+ * neither. Read-only, so a snapshot read never writes.
+ */
+export async function readBacklogConfigText(workspaceRoot: string): Promise<string> {
+  await workspaceStoreReady(workspaceRoot)
+  try {
+    return await readFile(workspaceStorePath(workspaceRoot, ...CONFIG_PATH), 'utf-8')
+  } catch (error) {
+    if (!isMissingFileError(error)) throw error
+    return readFile(join(workspaceRoot, SIDECAR_DIR_NAME, ...CONFIG_PATH), 'utf-8')
+  }
 }
 
 // The whole config, or an empty object. Every reader here is tolerant: a
@@ -213,7 +251,7 @@ async function resolveBacklogWorkspaceKey(workspace: ValidWorkspace): Promise<st
 // than failing to show a backlog at all.
 async function readBacklogConfigFile(workspaceRoot: string): Promise<Record<string, unknown>> {
   try {
-    const raw = await readFile(workspaceSidecarPath(workspaceRoot, ...CONFIG_PATH), 'utf-8')
+    const raw = await readBacklogConfigText(workspaceRoot)
     const parsed = JSON.parse(raw) as unknown
     return isPlainRecord(parsed) ? parsed : {}
   } catch {
@@ -236,8 +274,7 @@ async function readConfiguredBacklogRoot(workspaceRoot: string): Promise<string 
 // root, and each is written by a different path — a whole-object write from
 // either one silently drops the other.
 async function writeBacklogConfigFields(workspaceRoot: string, fields: Record<string, unknown>): Promise<void> {
-  const target = resolve(workspaceSidecarPath(workspaceRoot, ...CONFIG_PATH))
-  if (!isPathInsideOrEqual(workspaceRoot, target)) return
+  const target = workspaceStorePath(workspaceRoot, ...CONFIG_PATH)
   const existing = await readBacklogConfigFile(workspaceRoot)
   const next = { ...existing, ...fields, schemaVersion: BACKLOG_CONFIG_SCHEMA_VERSION }
   try {
@@ -378,7 +415,7 @@ function recordRelativePath(raw: unknown): string | null {
 // so steady-state reads incur no extra fs writes (idempotent).
 // One-time move off the committed sidecar. `.sprintengine/backlog/items.json` held
 // both halves of every link plus the star; the durable halves go into each item's
-// own frontmatter, the volatile remainder becomes the gitignored cache, and the
+// own frontmatter, the volatile remainder becomes the cache in the store, and the
 // sidecar is deleted.
 //
 // Idempotent by construction: it runs only while the legacy file exists, and it
@@ -389,9 +426,17 @@ function recordRelativePath(raw: unknown): string | null {
 // The durable write is skipped when the item already declares the same scalars,
 // because serializeBacklogFrontmatterFields returns the content unchanged and the
 // writer compares before writing — so re-running costs reads and no writes.
+//
+// The file is looked for in two places: the store, where the store's one-time
+// move puts one git did not track, and the project's `.sprintengine/`, where a
+// tracked one stays (the move leaves tracked files alone; this drain is the
+// one-time change that retires that file, as it always was).
 async function migrateLegacyBacklogSidecar(workspace: ValidWorkspace): Promise<void> {
-  const legacyPath = resolve(workspaceSidecarPath(workspace.root, ...LEGACY_STORE_PATH))
-  if (!isPathInsideOrEqual(workspace.root, legacyPath)) return
+  await drainLegacyBacklogSidecar(workspace, workspaceStorePath(workspace.root, ...LEGACY_STORE_PATH))
+  await drainLegacyBacklogSidecar(workspace, join(workspace.root, SIDECAR_DIR_NAME, ...LEGACY_STORE_PATH))
+}
+
+async function drainLegacyBacklogSidecar(workspace: ValidWorkspace, legacyPath: string): Promise<void> {
   let rawText: string
   try {
     rawText = await readFile(legacyPath, 'utf-8')
@@ -775,7 +820,7 @@ async function nextBacklogNumericId(workspace: ValidWorkspace): Promise<number> 
 // readBacklogWorkspaceKey — a pure peek for read-only surfaces.
 async function peekBacklogWorkspaceKey(workspace: ValidWorkspace): Promise<string | null> {
   try {
-    const raw = await readFile(workspaceSidecarPath(workspace.root, ...CONFIG_PATH), 'utf-8')
+    const raw = await readBacklogConfigText(workspace.root)
     const parsed = JSON.parse(raw) as { key?: unknown }
     return isValidBacklogKey(parsed.key) ? parsed.key : null
   } catch {
@@ -1462,9 +1507,12 @@ async function validateWorkspaceRoot(workspaceRoot: string): Promise<ValidWorksp
     throw new Error(`Backlog workspace root is not accessible: ${errorMessage(error)}`)
   })
   if (!rootStat.isDirectory()) throw new Error('Backlog workspace root must be an existing folder.')
+  // Every Backlog read and write passes here, so each waits out the store's
+  // one-time move before it reads a config or the cache.
+  await workspaceStoreReady(root)
   return {
     root,
-    storePath: workspaceSidecarPath(root, ...STORE_PATH),
+    storePath: workspaceStorePath(root, ...STORE_PATH),
     location: backlogLocationFor(root, await readConfiguredBacklogRoot(root)),
   }
 }
@@ -1486,55 +1534,26 @@ async function loadStore(workspace: ValidWorkspace): Promise<BacklogObjectStore>
 
 async function saveStore(workspace: ValidWorkspace, store: BacklogObjectStore): Promise<void> {
   const target = resolve(workspace.storePath)
-  if (!isPathInsideOrEqual(workspace.root, target)) throw new Error('Backlog metadata path escaped the workspace root.')
   const next = `${JSON.stringify(normalizeStore(store), null, 2)}\n`
   // Every scan reaches a save, even one that discovers nothing: `mutateStore` has
   // no change check, and the reducers that do (ensureBacklogObjectRecords) guard
-  // only themselves. The sidecar is ~550KB and tracked, so rewriting identical
+  // only themselves. The sidecar was ~550KB and tracked, so rewriting identical
   // bytes cost a full serialize per scan AND left the working tree permanently
-  // dirty. normalizeStore emits a fixed key order, so equal content is equal bytes
-  // and this comparison is exact rather than heuristic.
+  // dirty; in the store it would still be a write per scan. normalizeStore emits
+  // a fixed key order, so equal content is equal bytes and this comparison is
+  // exact rather than heuristic.
   let current: string | null = null
   try {
     current = await readFile(target, 'utf-8')
   } catch (error) {
     if (!isMissingFileError(error)) throw new Error(`Could not read Backlog metadata: ${errorMessage(error)}`)
   }
-  // Scaffolding is ensured before the early return, not after it: the content
-  // write is what we skip when nothing moved, but a cache folder that already
-  // holds the right bytes still has to be a folder git ignores. Putting this
-  // below the return meant a workspace whose cache never changed never got its
-  // ignore file. Both calls are cheap and idempotent — a recursive mkdir on an
-  // existing directory, and a `wx` write that fails immediately once it exists.
-  try {
-    await mkdir(dirname(target), { recursive: true })
-    await ensureCacheSelfIgnored(dirname(target))
-  } catch (error) {
-    throw new Error(`Could not write Backlog metadata: ${errorMessage(error)}`)
-  }
   if (current === next) return
   try {
+    await mkdir(dirname(target), { recursive: true })
     await writeFile(target, next, 'utf-8')
   } catch (error) {
     throw new Error(`Could not write Backlog metadata: ${errorMessage(error)}`)
-  }
-}
-
-// The cache folder ignores itself, so a project that does not list it in its own
-// .gitignore still never sees the cache in `git status`. Studio writes this into
-// every workspace it opens, and editing somebody else's root .gitignore to make
-// our runtime state invisible is not ours to do — the same rule, and the same
-// one-line file, the browser pane's screenshot folder already follows
-// (src/main/browser/browser-manager.ts).
-//
-// `wx` so a pre-existing file (or one a person edited) is never clobbered, and a
-// failure here is deliberately swallowed: an un-ignored cache is untidy, a cache
-// that would not save is broken.
-async function ensureCacheSelfIgnored(directory: string): Promise<void> {
-  try {
-    await writeFile(join(directory, '.gitignore'), '*\n', { encoding: 'utf-8', flag: 'wx' })
-  } catch {
-    // Already present, or not writable. Either way the save proceeds.
   }
 }
 

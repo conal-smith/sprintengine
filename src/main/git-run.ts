@@ -18,9 +18,12 @@ import { isWslDriveMountPath } from '../shared/host-paths'
  *   than left spinning. It also runs with `GIT_OPTIONAL_LOCKS=0`: `git status`
  *   otherwise refreshes the index's stat cache and takes `index.lock` to do it,
  *   and a poll holding that lock for a moment is exactly what makes an agent's
- *   own `git commit` fail with "index.lock exists". Without the lock our reads
- *   also never rewrite `.git/index`, so the gitdir watcher that drives the views
- *   (git-repo-watch.ts) is never woken by our own reading.
+ *   own `git commit` fail with "index.lock exists". Without the lock `git status`
+ *   never rewrites `.git/index`. `git diff` against the working tree still
+ *   does, lock or not, when a file's stat data moved without its content, so
+ *   the reads that poll compare with `git diff-index`, which never writes it
+ *   (git-branch-span.ts, `diffFlags`). The gitdir watcher that drives the
+ *   views (git-repo-watch.ts) is then never woken by our own polling.
  * - `network` talks to a remote and changes only remote-tracking refs. It gets
  *   a long deadline: a fetch over a slow link is legitimate, a fetch that has
  *   sat stalled for two minutes is not.
@@ -546,6 +549,7 @@ export async function runGitCommand(
       message: execError.timedOut
         ? execError.message
         : stderr || removeLineEndingWarnings(execError.message ?? '') || 'Git command failed.',
+      ...(execError.timedOut ? { timedOut: true as const } : {}),
     }
   }
 }

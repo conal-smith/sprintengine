@@ -124,6 +124,24 @@ export function startPullRequestWatch(now: number): PullRequestWatchState {
   }
 }
 
+/**
+ * A watch begun again on a pull request an earlier watch in this chat already
+ * read: it starts from what that one last told the agent (the head, the
+ * checks, behind and conflicting), so a pull request that has not moved is no
+ * news again. Comments start fresh, as for any new watch: only what is written
+ * after this one began is news.
+ */
+export function resumePullRequestWatch(ended: PullRequestWatchState, now: number): PullRequestWatchState {
+  return {
+    ...startPullRequestWatch(now),
+    headSha: ended.headSha,
+    failedChecks: ended.failedChecks,
+    passedChecks: ended.passedChecks,
+    behind: ended.behind,
+    conflicting: ended.conflicting,
+  }
+}
+
 /** One read, against what the agent was last told. */
 export function evaluatePullRequestWatch(previous: PullRequestWatchState, read: SettledRead): PullRequestWatchOutcome {
   if (read.state === 'merged' || read.state === 'closed') {
@@ -135,7 +153,10 @@ export function evaluatePullRequestWatch(previous: PullRequestWatchState, read: 
     }
   }
   const news: PullRequestWatchNews[] = []
-  const headMoved = previous.primed && read.headSha !== null && read.headSha !== previous.headSha
+  // A resumed watch knows a head before its first read, and a head that moved
+  // since is news the same way.
+  const headMoved =
+    (previous.primed || previous.headSha !== null) && read.headSha !== null && read.headSha !== previous.headSha
 
   // ── Checks ──
   let failedChecks = headMoved ? [] : previous.failedChecks

@@ -167,13 +167,17 @@ test("the shell's scopes are a closed list, and New chat's stays the shell's own
 // Sentence case everywhere (design-system/foundations/principles.md): a
 // command's title is copy, read in the palette and the Shortcuts list, and
 // only a proper noun (or a surface's own name) and the word after a "Group:"
-// prefix are capitalised.
-const PROPER_NOUNS = new Set(['Git', 'New'])
+// prefix are capitalised. Markdown and Word are the names of the formats
+// Export chat writes, not words in a sentence.
+const PROPER_NOUNS = new Set(['Git', 'New', 'Markdown', 'Word'])
 test('command titles are in sentence case', () => {
   for (const command of COMMAND_REGISTRY) {
     for (const clause of command.title.split(': ')) {
       const words = clause.split(' ').slice(1)
-      const capitalised = words.filter((word) => /^\(?[A-Z][a-z]/.test(word) && !PROPER_NOUNS.has(word))
+      // A title that opens a dialog ends in an ellipsis, which is not part of its last word.
+      const capitalised = words.filter(
+        (word) => /^\(?[A-Z][a-z]/.test(word) && !PROPER_NOUNS.has(word.replace(/…$/u, '')),
+      )
       assert.deepEqual(capitalised, [], `"${command.title}" is not in sentence case`)
     }
   }
@@ -206,4 +210,29 @@ test('the pane "+" chord ships free of conflicts', () => {
   assert.deepEqual(add?.defaultKeybindings, ['primary+t'])
   assert.equal(add?.allowInEditableTarget, true, 'reaches the composer; keyTargetGate narrows it')
   assert.deepEqual(findKeybindingConflicts(add!, COMMAND_REGISTRY), [])
+})
+
+test('Go to file is bound to Primary+P and raises the palette on its Files tab', () => {
+  const goToFile = getCommandDefinition('search.goToFile')
+  assert.ok(goToFile, 'search.goToFile is a registry command, so the Shortcuts tab lists and rebinds it')
+  assert.deepEqual(goToFile.defaultKeybindings, ['primary+p'])
+  assert.deepEqual(goToFile.scopes, ['global'])
+  assert.equal(goToFile.handlerPath.kind, 'workspace-manager')
+  assert.notEqual(goToFile.allowInEditableTarget, true, 'a terminal and the editor keep the chord')
+})
+
+test('Primary+P is bound to no other registry command', () => {
+  const goToFile = getCommandDefinition('search.goToFile')!
+  assert.deepEqual(findKeybindingConflicts(goToFile, COMMAND_REGISTRY), [])
+})
+
+test('Primary+S stashes from a composer and is resolved there, never by the window', () => {
+  const stash = getCommandDefinition('chat.stash')
+  assert.ok(stash, 'chat.stash is a registry command, so the Shortcuts tab lists and rebinds it')
+  assert.deepEqual(stash.defaultKeybindings, ['primary+s'])
+  assert.deepEqual(stash.scopes, ['workspace', 'new-chat'])
+  // Context-bound: the window dispatcher's match runs nothing, so ⌘S pressed
+  // in the code editor still reaches the editor's own save.
+  assert.equal(stash.handlerPath.kind, 'context-bound')
+  assert.deepEqual(findKeybindingConflicts(stash, COMMAND_REGISTRY), [])
 })

@@ -205,10 +205,16 @@ export const LIST_CURSOR_MARK_CLASS =
  * tier is the caller's — `--z-popover` for an anchored surface, `--z-menu` for a
  * pointer-summoned one that must clear it.
  *
+ * `app-no-drag` because an overlay is portaled to `<body>` and often lands over
+ * a window-drag region — the app rail, a pane's tab strip, the title bar.
+ * Electron decides what drags the window from the regions alone, ignoring
+ * stacking, so without it a press on the part of a menu over that strip moved
+ * the window instead of choosing the item.
+ *
  * Written out in full, per the literal rule above.
  */
 export const OVERLAY_SURFACE_CLASS =
-  'rounded-[7px] border border-[color:var(--border-strong)] bg-[color:var(--bg-surface-raised)] shadow-[var(--shadow-popover)]'
+  'app-no-drag rounded-[7px] border border-[color:var(--border-strong)] bg-[color:var(--bg-surface-raised)] shadow-[var(--shadow-popover)]'
 
 /**
  * The same chrome without its ground, for the one case where a shell paints
@@ -222,7 +228,7 @@ export const OVERLAY_SURFACE_CLASS =
  * Written out in full, per the literal rule above.
  */
 export const OVERLAY_CHROME_CLASS =
-  'rounded-[7px] border border-[color:var(--border-strong)] shadow-[var(--shadow-popover)]'
+  'app-no-drag rounded-[7px] border border-[color:var(--border-strong)] shadow-[var(--shadow-popover)]'
 
 /**
  * The chat composer's material (remote-sessions-ux /

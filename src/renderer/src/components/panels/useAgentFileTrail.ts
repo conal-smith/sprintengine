@@ -7,7 +7,11 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { conversationSessionsStore } from '../../hooks/conversationSessionsStore'
 import { agentFileTrail, EMPTY_AGENT_TRAIL, type AgentTrail } from './agentFileTrail'
 
-export function useAgentFileTrail(workspaceId: string, rootPath: string): AgentTrail {
+/**
+ * @param rootPath the tree's root; null for marks on files anywhere and on no
+ *   folder, which is what an editor's tabs ask.
+ */
+export function useAgentFileTrail(workspaceId: string, rootPath: string | null): AgentTrail {
   const store = conversationSessionsStore()
   const getSnapshot = useCallback(() => store.getWorkspaceSnapshot(workspaceId), [store, workspaceId])
   const sessions = useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot)

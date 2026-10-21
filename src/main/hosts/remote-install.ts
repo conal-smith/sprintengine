@@ -11,8 +11,10 @@
 //   The holder writes its pid inside; a lock whose pid is gone (`kill -0`), or
 //   one that never got a pid and is minutes old (its maker died between the
 //   `mkdir` and the write), or one older than half an hour (a pid reused by
-//   something else of the same user) is reclaimed. A waiter gives up after
-//   120 s, in words.
+//   something else of the same user) is reclaimed. A lock is made and
+//   reclaimed only under a second directory, `.install.lock.guard`, so two
+//   waiters never reclaim and make at once. A waiter gives up after 120 s, in
+//   words.
 // - **Liveness** (is a tree still in use?) reads `/proc/*/cmdline` where
 //   there is a `/proc`, and `ps`'s command lines elsewhere. The `ps` output is
 //   read into a variable first, so the `grep` looking for a path is never
@@ -58,7 +60,7 @@ export const NODE_RUNTIME_REL = `runtime/node-${WSL_NODE_VERSION}`
 
 /**
  * The shell functions an install uses, defined once per script: `live`,
- * `lock_take`, `lock_drop`, `owned` and `place`. They read `$base` (the data root) and
+ * `lock_stale`, `lock_take`, `lock_drop`, `owned` and `place`. They read `$base` (the data root) and
  * `$id` (this install's stage id), which the script sets first.
  */
 export function posixInstallFunctions(): string[] {
@@ -84,35 +86,47 @@ export function posixInstallFunctions(): string[] {
     '  case "$procs" in *"$1/"*) return 0 ;; esac',
     '  return 1',
     '}',
+    // Whether the lock at `$lk` belongs to an install that is gone: its pid
+    // names no process, or it never got a pid and is minutes old, or it is
+    // older than any install takes (a pid reused by something else).
+    'lock_stale() {',
+    '  holder="$(cat "$lk/pid" 2>/dev/null)"',
+    '  if [ -n "$holder" ]; then kill -0 "$holder" 2>/dev/null || return 0',
+    '  elif [ -n "$(find "$lk" -prune -mmin +2 2>/dev/null)" ]; then return 0; fi',
+    '  [ -n "$(find "$lk" -prune -mmin +30 2>/dev/null)" ]',
+    '}',
+    // A lock is made, and a stale one removed, only under `$lk.guard`, held for
+    // the few commands that takes. So no waiter ever sees a lock half made (no
+    // pid yet), and a waiter that judged a holder gone judges again under the
+    // guard, where nobody else can have put a lock of their own in its place.
+    // Taking over by renaming the stale lock away could catch the lock another
+    // waiter had just made, before it wrote its pid in it: that write then
+    // failed, and the lock was put back with no pid, for everyone to wait on.
+    // A guard left by an install killed inside it is a minute old, and cleared.
     'lock_take() {',
     '  lk="$base/.install.lock"',
     '  waited=0',
-    '  while ! mkdir "$lk" 2>/dev/null; do',
-    '    holder="$(cat "$lk/pid" 2>/dev/null)"',
-    '    stale=0',
-    '    if [ -n "$holder" ]; then kill -0 "$holder" 2>/dev/null || stale=1',
-    '    elif [ -n "$(find "$lk" -prune -mmin +2 2>/dev/null)" ]; then stale=1; fi',
-    '    [ -n "$(find "$lk" -prune -mmin +30 2>/dev/null)" ] && stale=1',
-    '    if [ "$stale" = 1 ]; then',
-    // Renamed before it is removed, so two waiters that both found it stale
-    // cannot both go on: only one rename succeeds. A rename can still land on
-    // a lock the other waiter has just made in its place, so what was moved is
-    // checked against the holder judged gone, and put back when it is not that
-    // lock.
-    '      if mv "$lk" "$lk.stale-$$" 2>/dev/null; then',
-    '        moved="$(cat "$lk.stale-$$/pid" 2>/dev/null)"',
-    '        if [ "$moved" = "$holder" ] && { [ -n "$holder" ] || [ -n "$(find "$lk.stale-$$" -prune -mmin +2 2>/dev/null)" ]; }; then',
-    '          rm -rf "$lk.stale-$$"',
-    '        else mv "$lk.stale-$$" "$lk" 2>/dev/null || rm -rf "$lk.stale-$$"',
-    '        fi',
+    '  while :; do',
+    '    if mkdir "$lk.guard" 2>/dev/null; then',
+    '      if mkdir "$lk" 2>/dev/null; then',
+    '        echo "$$" > "$lk/pid" || { rm -rf "$lk"; rmdir "$lk.guard"; return 1; }',
+    '        rmdir "$lk.guard"',
+    '        return 0',
     '      fi',
+    '      if lock_stale; then',
+    '        rm -rf "$lk"',
+    '        rmdir "$lk.guard"',
+    '        continue',
+    '      fi',
+    '      rmdir "$lk.guard"',
+    '    elif [ -n "$(find "$lk.guard" -prune -mmin +1 2>/dev/null)" ]; then',
+    '      rmdir "$lk.guard" 2>/dev/null',
     '      continue',
     '    fi',
     `    [ "$waited" -ge ${INSTALL_LOCK_WAIT_S} ] && return 1`,
     '    sleep 1',
     '    waited=$((waited + 1))',
     '  done',
-    '  echo "$$" > "$lk/pid"',
     '}',
     'lock_drop() { rm -rf "$base/.install.lock"; }',
     // Whether this user owns a directory and nobody else can write in it

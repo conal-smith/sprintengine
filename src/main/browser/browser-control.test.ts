@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
 import type { WebContents } from 'electron'
+import { JSDOM } from 'jsdom'
 import { CONSOLE_BUFFER_MAX, createBrowserControl, parseKeyChord } from './browser-control'
+import type { BrowserDownload } from './browser-manager'
 import { test } from 'vitest'
 
 test('browser-control', async () => {
@@ -43,6 +45,8 @@ test('browser-control', async () => {
     debugger = new FakeDebugger()
     destroyed = false
     devTools = false
+    // Focused, where the debugger's key and text input already reach the page.
+    focusedFrame: object | null = {}
     isDestroyed() {
       return this.destroyed
     }
@@ -71,6 +75,7 @@ test('browser-control', async () => {
         humanListeners.push(listener)
         return () => {}
       },
+      onDownload: () => () => {},
       notePointer: (event) => {
         log.push(`pointer:${event.kind}@${event.x},${event.y}`)
       },
@@ -220,6 +225,52 @@ test('browser-control', async () => {
       assert.equal(parseKeyChord('Ctrl+Alt+Delete+Foo'), null)
       assert.equal(parseKeyChord(''), null)
       assert.equal(parseKeyChord('Hyperspace'), null)
+    })
+
+    await run('a snapshot says a secret field is filled and never prints what it holds', async () => {
+      const { wc, control } = fixture()
+      const dom = new JSDOM(
+        `<body>
+          <input aria-label="Email" value="dev@example.com">
+          <input aria-label="Password" type="password" value="hunter2-password">
+          <input aria-label="Shown password" autocomplete="current-password" value="shown-password">
+          <input aria-label="Code" autocomplete="one-time-code" value="424242">
+          <input aria-label="Card" autocomplete="billing cc-number" value="4111111111111111">
+          <input aria-label="CVC" autocomplete="cc-csc" value="737">
+          <input aria-label="PIN" style="-webkit-text-security: disc" value="9876">
+          <input aria-label="Empty password" type="password">
+        </body>`,
+        { runScripts: 'outside-only', pretendToBeVisual: true },
+      )
+      // jsdom lays nothing out; every element gets a box so the walker sees it.
+      dom.window.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 20 }) as DOMRect
+      // jsdom drops a style property it does not know; Chromium reports it.
+      const computed = dom.window.getComputedStyle.bind(dom.window)
+      dom.window.getComputedStyle = (el: Element) => {
+        const style = computed(el)
+        const masked = el.getAttribute('style')?.includes('-webkit-text-security: disc')
+        return new Proxy(style, {
+          get: (target, key) =>
+            key === 'getPropertyValue'
+              ? (name: string) =>
+                  name === '-webkit-text-security' ? (masked ? 'disc' : 'none') : target.getPropertyValue(name)
+              : Reflect.get(target, key),
+        })
+      }
+      wc.debugger.respond = (method, params) =>
+        method === 'Runtime.evaluate' ? evaluation(dom.window.eval(String(params?.expression))) : {}
+
+      const snapshot = await control.snapshot('t1')
+      assert.ok(snapshot.ok, snapshot.ok ? '' : snapshot.message)
+      const lineOf = (name: string) => snapshot.text.split('\n').find((line) => line.includes(`"${name}"`)) ?? ''
+      assert.match(lineOf('Email'), /value="dev@example\.com"/)
+      for (const name of ['Password', 'Shown password', 'Code', 'Card', 'CVC', 'PIN']) {
+        assert.match(lineOf(name), /value=hidden /, name)
+      }
+      assert.doesNotMatch(lineOf('Empty password'), /value=/)
+      for (const secret of ['hunter2-password', 'shown-password', '424242', '4111111111111111', '737', '9876']) {
+        assert.ok(!snapshot.text.includes(secret), `${secret} is not in the snapshot`)
+      }
     })
 
     await run('an unknown tab is no_tab; DevTools open refuses to attach', async () => {
@@ -507,6 +558,7 @@ test('an action a dialog ended does not resume typing once the dialog is answere
     noteAgentActivity: () => {},
     noteAgentInput: () => {},
     onHumanInput: () => () => {},
+    onDownload: () => () => {},
     notePointer: () => {},
   })
 
@@ -519,4 +571,236 @@ test('an action a dialog ended does not resume typing once the dialog is answere
   const after = wc.debugger.commands.slice(wc.debugger.commands.indexOf('Page.handleJavaScriptDialog') + 1)
   assert.deepEqual(after, [], 'the abandoned type sent nothing to the page after the dialog closed')
   assert.ok(!wc.debugger.commands.includes('Input.insertText'))
+})
+
+test('a download the agent’s tab saved is in its action history with the path, and says how it ended', async () => {
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async () => ({}),
+  })
+  const wc = Object.assign(new EventEmitter(), {
+    debugger: debuggerStub,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+  })
+  let tell: (tabId: string, download: BrowserDownload) => void = () => {}
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: (listener) => {
+      tell = listener
+      return () => {}
+    },
+    notePointer: () => {},
+  })
+  assert.equal((await control.console('t1', {})).ok, true)
+  const path = '/Users/dev/app/.sprintengine/browser/downloads/report.csv'
+  tell('t1', { url: 'http://localhost:5173/report.csv', path, state: 'started' })
+  assert.deepEqual(
+    control.actionsOf('t1').map(({ action, args, path, status }) => ({ action, args, path, status })),
+    [{ action: 'download', args: 'http://localhost:5173/report.csv', path, status: 'running' }],
+  )
+  tell('t1', { url: 'http://localhost:5173/report.csv', path, state: 'interrupted' })
+  const [entry] = control.actionsOf('t1')
+  assert.equal(entry?.status, 'failed')
+  assert.equal(entry?.error, 'The download was interrupted.')
+})
+
+test('a tab whose page is destroyed is forgotten, though its debugger can no longer be read', async () => {
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async () => ({}),
+  })
+  // As Electron's: reading `debugger` off destroyed contents throws.
+  let destroyed = false
+  const wc = Object.assign(new EventEmitter(), {
+    isDestroyed: () => destroyed,
+    isDevToolsOpened: () => false,
+  })
+  Object.defineProperty(wc, 'debugger', {
+    get() {
+      if (destroyed) throw new Error('Object has been destroyed')
+      return debuggerStub
+    },
+  })
+  let tell: (tabId: string, download: BrowserDownload) => void = () => {}
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: (listener) => {
+      tell = listener
+      return () => {}
+    },
+    notePointer: () => {},
+  })
+  assert.equal((await control.console('t1', {})).ok, true)
+  tell('t1', { url: 'http://localhost:5173/report.csv', path: '/Users/dev/report.csv', state: 'started' })
+  assert.equal(control.actionsOf('t1').length, 1)
+  assert.equal(debuggerStub.listenerCount('message'), 1)
+
+  destroyed = true
+  assert.doesNotThrow(() => wc.emit('destroyed'))
+  assert.deepEqual(control.actionsOf('t1'), [], 'the session is gone with its page')
+  assert.equal(debuggerStub.listenerCount('message'), 0, 'its listeners were taken off the debugger it held')
+  assert.equal(debuggerStub.listenerCount('detach'), 0)
+})
+
+test('typing into a page without focus never sends the debugger key or text input, which would land in the app', async () => {
+  const commands: string[] = []
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async (method: string, params?: Record<string, unknown>) => {
+      commands.push(method)
+      if (method !== 'Runtime.evaluate') return {}
+      // The cross-site-frame probe: the page's focus is in its own document.
+      return { result: { type: 'boolean', value: String(params?.expression).includes('activeElement') } }
+    },
+  })
+  const delivered: string[] = []
+  // The person is in the chat composer: the guest has no focused frame.
+  const wc = Object.assign(new EventEmitter(), {
+    debugger: debuggerStub,
+    focusedFrame: null,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+    insertText: async (text: string) => {
+      delivered.push(`text:${text}`)
+    },
+    sendInputEvent: (event: { type: string; keyCode: string }) => {
+      delivered.push(`${event.type}:${JSON.stringify(event.keyCode)}`)
+    },
+  })
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: () => () => {},
+    notePointer: () => {},
+  })
+
+  const typed = await control.type('t1', null, 'hello', { submit: true })
+  assert.equal(typed.ok, true)
+  assert.ok(!commands.includes('Input.insertText'))
+  assert.ok(!commands.includes('Input.dispatchKeyEvent'))
+  assert.deepEqual(delivered, ['text:hello', 'rawKeyDown:"Enter"', 'char:"\\r"', 'keyUp:"Enter"'])
+})
+
+// A `data:` URL's payload is the file itself; an agent reading its history or
+// the console gets the media type, never the content.
+function dataUrlFixture() {
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async () => ({}),
+  })
+  const wc = Object.assign(new EventEmitter(), {
+    debugger: debuggerStub,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+  })
+  let tell: (tabId: string, download: BrowserDownload) => void = () => {}
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: (listener) => {
+      tell = listener
+      return () => {}
+    },
+    notePointer: () => {},
+  })
+  return { control, debuggerStub, tell: (download: BrowserDownload) => tell('t1', download) }
+}
+
+test('a download from a data: URL is in the action history by its media type, without its contents', async () => {
+  const { control, tell } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  tell({
+    url: 'data:text/csv;base64,bmFtZSxlbWFpbApkZXYsZGV2QGV4YW1wbGUuY29t',
+    path: '/Users/dev/app/.sprintengine/browser/downloads/report.csv',
+    state: 'started',
+  })
+  assert.deepEqual(
+    control.actionsOf('t1').map(({ args }) => args),
+    ['data:text/csv,…'],
+  )
+})
+
+test('a data: URL whose type is not a media type keeps neither type nor contents', async () => {
+  const { control, tell } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  tell({ url: 'data:dev@example.com secret,x', path: '/Users/dev/app/d.txt', state: 'started' })
+  assert.deepEqual(
+    control.actionsOf('t1').map(({ args }) => args),
+    ['data:,…'],
+  )
+})
+
+test('a console message from a data: URL script is located by its media type, without its source', async () => {
+  const { control, debuggerStub } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  debuggerStub.emit('message', {}, 'Runtime.consoleAPICalled', {
+    type: 'log',
+    args: [{ type: 'string', value: 'hello' }],
+    stackTrace: { callFrames: [{ url: 'data:text/javascript,console.log("hello")', lineNumber: 0 }] },
+  })
+  const result = await control.console('t1', {})
+  assert.deepEqual(result.ok && result.entries.map(({ text, location }) => ({ text, location })), [
+    { text: 'hello', location: 'data:text/javascript,…:1' },
+  ])
+})
+
+test('a console message from a page URL keeps its location as it was', async () => {
+  const { control, debuggerStub } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  debuggerStub.emit('message', {}, 'Runtime.exceptionThrown', {
+    exceptionDetails: { text: 'Uncaught', url: 'http://localhost:5173/data:app.js', lineNumber: 4 },
+  })
+  const result = await control.console('t1', {})
+  assert.equal(result.ok && result.entries[0]?.location, 'http://localhost:5173/data:app.js:5')
 })

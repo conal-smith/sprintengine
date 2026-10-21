@@ -245,6 +245,12 @@ export type AgentCliModelSelection = {
 // `lastSelectedAgentModel` at spawn time, so a later CLI switch is honored.
 export type NewChatAgentChoice = { kind: 'general' } | { kind: 'terminal' } | { kind: 'conversation' }
 
+/**
+ * What a message sent while a chat's agent is working does: `queue` holds it
+ * and sends it when the turn ends; `steer` hands it to the running turn.
+ */
+export type FollowUpBehavior = 'queue' | 'steer'
+
 export type AppSettings = {
   cliRuntimes: Record<AgentCli, CliRuntimeSettings>
   /**
@@ -336,6 +342,13 @@ export type AppSettings = {
    * recorded through `recordProjectUse`.
    */
   projectUsage?: ProjectUsageMap
+  /**
+   * What new worktree branches start with (Settings ▸ Worktrees): `agent`
+   * unless changed, `''` for no prefix. A read model of main's launch
+   * settings, which name a worktree with no window open too; never chosen
+   * reads as `agent` (`effectiveWorktreeBranchPrefix`).
+   */
+  worktreeBranchPrefix: string
   /**
    * The model (and reasoning-effort level) an agent spawn last ran on, stored
    * with the CLI it was picked for so a later CLI switch cannot leak a stale
@@ -452,6 +465,13 @@ export type AppSettings = {
    */
   settleOnPullRequestMerge: boolean
   /**
+   * Keep a chat with an open pull request out of the three-quiet-days rule
+   * (Settings ▸ Settled chats), for chats with Auto-settle switched on. On by
+   * default: a pull request waiting on review is work still in flight, however
+   * long the chat itself has been quiet. Settle on merge is separate.
+   */
+  keepChatsWithOpenPullRequest: boolean
+  /**
    * Float the pane's browser over the workspace when an agent opens or drives
    * a page while the pane is closed, so the person sees what it is doing
    * without giving up the chat's width. On by default. Off, an agent's
@@ -459,6 +479,15 @@ export type AppSettings = {
    * driving a tab in a closed pane shows nothing.
    */
   browserAutoFloatAgentPreview: boolean
+  /**
+   * What Enter does in a chat whose agent is working (Settings ▸ Agents).
+   * `queue`, the default and every message's rule before the choice existed,
+   * holds the message and sends it when the turn ends; `steer` hands it to the
+   * running turn, where the chat's provider takes one, and queues it anywhere
+   * else. Primary+Enter, or a Primary-click on the send button, does the other
+   * for one message.
+   */
+  followUpBehavior: FollowUpBehavior
   /**
    * Keep the app running when its last window closes, on every platform.
    * Off by default, which is byte-for-byte the rule before background mode existed:
@@ -690,6 +719,13 @@ export type WorkspacePaneTab = {
      */
     tour?: { id: string; playing: boolean }
     tourOffer?: string
+    /**
+     * The branch step the viewer has open, so switching to another pane tab
+     * and back does not put it back on the whole branch; `afterReveal` is the
+     * agent reveal it was chosen after, which a remount does not apply again.
+     * Session-only, like `reveal`.
+     */
+    kept?: { step: BranchStepSelection; afterReveal: string | null }
   }
   // Canvas only: the board the tab is drawing on, project-relative and
   // normalized (`normalizeCanvasPath`). Absent is a real state, not a broken
@@ -702,13 +738,13 @@ export type WorkspacePaneTab = {
   document?: { path: string }
   // Browser only: the device toolbar's viewport; absent means fill.
   viewport?: BrowserViewport
-  // Browser only: where the floating player sits, in viewport pixels. Persisted
+  // Browser and canvas only: where the floating player sits, in viewport pixels. Persisted
   // — the rect is the thing worth remembering across a restart. Keyed on the
   // TAB rather than the workspace so two agents floating previews do not fight
   // over one rectangle: a floating player is keyed per thread, and a tab is this
   // app's equivalent grain now that agents hold tabs of their own.
   float?: { x: number; y: number; width: number; height: number }
-  // Browser only: whether the tab is floating right now. Session-only —
+  // Browser and canvas only: whether the tab is floating right now. Session-only —
   // partialize strips it, because a cold start showing a collapsed pane and a
   // window floating over the workspace is a confusing first frame, and the
   // spec only promises the RECT across restarts.

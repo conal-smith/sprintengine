@@ -1,4 +1,7 @@
 // Runs in every test worker before each test file.
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, vi } from 'vitest'
 
 // The app exports its own SPRINTENGINE_* / SPRINTENGINE_* variables into every
@@ -9,6 +12,19 @@ import { afterEach, vi } from 'vitest'
 for (const name of Object.keys(process.env)) {
   if (name.startsWith('SPRINTENGINE_') || name.startsWith('SPRINTENGINE_')) delete process.env[name]
 }
+
+// The one variable set back: the home the app keeps each project's store in
+// (`~/.sprintengine/workspaces`, main/workspace-store.ts). Every chat a suite
+// runs writes its transcript there, so without this the suite would fill the
+// home of whoever ran it. One folder per worker process, which runs file after
+// file; a test that needs a store of its own sets the variable itself.
+const worker = process as NodeJS.Process & { seStoreHome?: string }
+if (!worker.seStoreHome) {
+  const home = mkdtempSync(join(tmpdir(), 'se-store-home-'))
+  worker.seStoreHome = home
+  process.once('exit', () => rmSync(home, { recursive: true, force: true }))
+}
+process.env.SPRINTENGINE_STORE_HOME = worker.seStoreHome
 
 // `DEV` is false, as the app's own build compiles it; Vitest's default is a dev
 // build. `PROD` is left false on purpose: the renderer keys its production

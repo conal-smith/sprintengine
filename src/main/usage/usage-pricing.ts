@@ -19,7 +19,14 @@ import type { UsagePricingSource } from '../../shared/usage-report'
 // and the dashboard says "Unpriced" rather than $0.
 
 /** USD per token. */
-export type ModelRates = { input: number; output: number; cacheRead: number; cacheWrite: number }
+export type TokenRates = { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+/**
+ * A model's list price, and what it costs at a premium speed where the list
+ * names one: `fast` for Claude's fast mode and OpenAI's priority tier (Codex's
+ * `fast`), `ultrafast` for OpenAI's ultrafast tier.
+ */
+export type ModelRates = TokenRates & { fast?: TokenRates; ultrafast?: TokenRates }
 
 export type UsagePricing = {
   ratesFor(model: string): ModelRates | null
@@ -42,16 +49,20 @@ const MTOK = 1_000_000
 /**
  * List prices per million tokens: input, output, and the cache read where it
  * is not a tenth of input. A cache write is 1.25x input (the five-minute
- * cache the CLIs use).
+ * cache the CLIs use). `fast` is the premium speed's multiple of every rate,
+ * where the model has one (the live list's `provider_specific_entry.fast` for
+ * Claude, its `_priority` prices for OpenAI's).
  */
-const BUNDLED: ReadonlyArray<readonly [model: string, input: number, output: number, cacheRead?: number]> = [
+const BUNDLED: ReadonlyArray<
+  readonly [model: string, input: number, output: number, cacheRead?: number, fast?: number]
+> = [
   ['claude-fable-5-1', 10, 50, 0.25],
   ['claude-mythos-5-1', 10, 50, 0.25],
   ['claude-fable-5', 10, 50],
   ['claude-mythos-5', 10, 50],
-  ['claude-opus-5-5', 4, 20, 0.2],
-  ['claude-opus-5', 5, 25],
-  ['claude-opus-4-8', 5, 25],
+  ['claude-opus-5-5', 4, 20, 0.2, 2],
+  ['claude-opus-5', 5, 25, undefined, 2],
+  ['claude-opus-4-8', 5, 25, undefined, 2],
   ['claude-opus-4-7', 5, 25],
   ['claude-opus-4-6', 5, 25],
   ['claude-opus-4-5', 5, 25],
@@ -66,25 +77,62 @@ const BUNDLED: ReadonlyArray<readonly [model: string, input: number, output: num
   ['claude-haiku-5-5', 0.1, 0.5],
   ['claude-haiku-4-5', 1, 5],
   ['claude-3-5-haiku', 0.8, 4],
-  ['gpt-5', 1.25, 10],
+  ['gpt-5', 1.25, 10, undefined, 2],
   ['gpt-5-codex', 1.25, 10],
-  ['gpt-5.1', 1.25, 10],
+  ['gpt-5.1', 1.25, 10, undefined, 2],
   ['gpt-5.1-codex', 1.25, 10],
-  ['gpt-5-mini', 0.25, 2],
+  ['gpt-5-mini', 0.25, 2, undefined, 1.8],
   ['gpt-5-nano', 0.05, 0.4],
 ]
 
 function bundledTable(): Map<string, ModelRates> {
   const table = new Map<string, ModelRates>()
-  for (const [model, input, output, cacheRead] of BUNDLED) {
-    table.set(model, {
+  for (const [model, input, output, cacheRead, fast] of BUNDLED) {
+    const rates: TokenRates = {
       input: input / MTOK,
       output: output / MTOK,
       cacheRead: (cacheRead ?? input / 10) / MTOK,
       cacheWrite: (input * 1.25) / MTOK,
-    })
+    }
+    table.set(model, fast ? { ...rates, fast: scaled(rates, fast) } : rates)
   }
   return table
+}
+
+const scaled = (rates: TokenRates, by: number): TokenRates => ({
+  input: rates.input * by,
+  output: rates.output * by,
+  cacheRead: rates.cacheRead * by,
+  cacheWrite: rates.cacheWrite * by,
+})
+
+/**
+ * One tier's prices from a live-list entry: the fields named with `suffix`
+ * (`_priority`, `_ultrafast`), or the base ones for none. Null when its input
+ * or output price is missing; a missing cache price falls back to that
+ * tier's input price.
+ */
+function tierRates(entry: Record<string, unknown>, suffix: string): TokenRates | null {
+  const input = finite(entry[`input_cost_per_token${suffix}`])
+  const output = finite(entry[`output_cost_per_token${suffix}`])
+  if (input === null || output === null) return null
+  return {
+    input,
+    output,
+    cacheRead: finite(entry[`cache_read_input_token_cost${suffix}`]) ?? input,
+    cacheWrite: finite(entry[`cache_creation_input_token_cost${suffix}`]) ?? input,
+  }
+}
+
+/**
+ * Rates for a bucket at its speed: the premium tier's when the list prices
+ * one, else the list price. A premium tier the list does not price is costed
+ * at the list price, which under-reports it, rather than as unpriced: the
+ * tokens were billed at least that, and the model's row should not lose its
+ * cost over a tier the price list has not caught up with.
+ */
+export function ratesAtSpeed(rates: ModelRates, speed: 'fast' | 'ultrafast' | undefined): TokenRates {
+  return (speed && rates[speed]) || rates
 }
 
 const finite = (value: unknown): number | null =>
@@ -104,15 +152,15 @@ export function parseLiteLlmPrices(document: unknown): Map<string, ModelRates> {
   for (const [key, value] of Object.entries(document as Record<string, unknown>)) {
     if (!value || typeof value !== 'object') continue
     const entry = value as Record<string, unknown>
-    const input = finite(entry.input_cost_per_token)
-    const output = finite(entry.output_cost_per_token)
-    if (input === null || output === null) continue
-    const rates: ModelRates = {
-      input,
-      output,
-      cacheRead: finite(entry.cache_read_input_token_cost) ?? input,
-      cacheWrite: finite(entry.cache_creation_input_token_cost) ?? input,
-    }
+    const base = tierRates(entry, '')
+    if (!base) continue
+    // A premium speed is priced either outright (OpenAI's `_priority` and
+    // `_ultrafast` fields) or as a multiple of the list price (Claude's fast
+    // mode, `provider_specific_entry.fast`).
+    const multiple = finite(rec(entry.provider_specific_entry)?.fast)
+    const fast = tierRates(entry, '_priority') ?? (multiple ? scaled(base, multiple) : null)
+    const ultrafast = tierRates(entry, '_ultrafast')
+    const rates: ModelRates = { ...base, ...(fast ? { fast } : {}), ...(ultrafast ? { ultrafast } : {}) }
     const name = key.toLowerCase()
     table.set(name, rates)
     const bare = name.slice(name.lastIndexOf('/') + 1)
@@ -127,8 +175,20 @@ export function parseLiteLlmPrices(document: unknown): Map<string, ModelRates> {
   return table
 }
 
+const sameTokenRates = (a: TokenRates | undefined, b: TokenRates | undefined): boolean =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.input === b.input &&
+    a.output === b.output &&
+    a.cacheRead === b.cacheRead &&
+    a.cacheWrite === b.cacheWrite)
+
 const sameRates = (a: ModelRates, b: ModelRates): boolean =>
-  a.input === b.input && a.output === b.output && a.cacheRead === b.cacheRead && a.cacheWrite === b.cacheWrite
+  sameTokenRates(a, b) && sameTokenRates(a.fast, b.fast) && sameTokenRates(a.ultrafast, b.ultrafast)
+
+const rec = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 
 /** Names that are an alias or a placeholder, never one billed model. */
 const UNPRICEABLE = new Set(['<synthetic>', 'synthetic', 'default', 'unknown', 'opus', 'sonnet', 'haiku', 'fable'])

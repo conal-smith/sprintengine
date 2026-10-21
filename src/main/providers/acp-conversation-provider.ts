@@ -8,6 +8,8 @@ import {
   resolveConversationPath,
 } from '../conversation-file-access'
 import { terminateCliChild } from './cli-child-process'
+import { cliProbeEnv } from '../cli-probe-env'
+import { mergeJsonEnvValue } from '../json-env-value'
 import {
   CONVERSATION_IDENTITY_ENV_KEYS,
   cliHostSpawn,
@@ -52,6 +54,7 @@ import type {
   ConversationEvent,
   ConversationMcpServer,
   ConversationPermissionPreset,
+  ConversationQuestion,
   ConversationToolKind,
 } from '../../shared/conversation-runtime'
 import { turnUsageOf } from '../../shared/conversation/turn-usage'
@@ -61,11 +64,21 @@ import type {
   MockAdapterTurnInput,
 } from './conversation-provider-adapter'
 import { cliStderrSummary } from '../../shared/conversation/permissionModes'
+import {
+  saveToolResultImages,
+  toolResultImages,
+  type SaveToolResultImages,
+  type ToolResultImage,
+} from './tool-result-images'
 
 type EnforcedPreset = Exclude<ConversationPermissionPreset, 'none'>
 
-/** How a CLI is told one permission preset: launch argv in place of the plain one, environment on top, or both. */
-type AcpPresetLaunch = { argv?: string[]; env?: Record<string, string> }
+/**
+ * How a CLI is told one permission preset: launch argv in place of the plain
+ * one, environment on top, or one of the agent's own ACP session modes, which
+ * it is put in before each turn and the moment the preset changes.
+ */
+type AcpPresetLaunch = { argv?: string[]; env?: Record<string, string>; mode?: string }
 
 export type AcpProfile = {
   id: string
@@ -94,34 +107,51 @@ export type AcpProfile = {
   authenticate?: string
   images: boolean
   planMode: boolean
+  // The agent asks its own questions as a permission request titled
+  // `AskUserQuestion`, one option per answer (acpQuestionRequest): asked as a
+  // question, not as a tool to allow.
+  questions?: boolean
 }
 
 // OpenCode's permission rule set for a preset. `opencode acp` takes no
 // permission flag (`--auto` belongs to the TUI and `run`), but its
-// configuration takes a rule set from OPENCODE_PERMISSION, merged over the
-// person's own, and the last matching rule wins. So the wildcard comes first
-// and every tool OpenCode names follows it, each overriding the person's rule
-// for the same tool; reads, searches, listings and the to-do list run, and
-// `external_directory` (anything outside the project) asks.
+// configuration takes a rule set, merged over the person's own, and the last
+// matching rule wins. So the wildcard comes first and every tool OpenCode
+// names follows it, each overriding the person's rule for the same tool;
+// reads, searches, listings and the to-do list run, and `external_directory`
+// (anything outside the project) asks.
 function opencodePermission(edit: 'allow' | 'ask'): Record<string, string> {
+  return opencodeRules({
+    '*': 'ask',
+    read: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    list: 'allow',
+    lsp: 'allow',
+    todoread: 'allow',
+    todowrite: 'allow',
+    edit,
+    bash: 'ask',
+    task: 'ask',
+    webfetch: 'ask',
+    websearch: 'ask',
+    codesearch: 'ask',
+    external_directory: 'ask',
+  })
+}
+
+// The two ways OpenCode takes that rule set. 1.x reads OPENCODE_PERMISSION;
+// 2.x no longer does (the variable is gone from its binary, and a Manual chat
+// on 2.0.32 ran a shell command without asking), but it reads `permission`
+// from the OPENCODE_CONFIG_CONTENT document, which 1.x reads too, merged over
+// the person's own configuration, and maps 1.x's `bash` and `task` onto its
+// `shell` and `subagent`. Measured live against 1.18.32 and 2.0.32 on
+// 2026-10-17. The document is merged with whatever else says to it (the
+// person's own export), never replaced: see the launch below.
+function opencodeRules(rules: Record<string, string>): Record<string, string> {
   return {
-    OPENCODE_PERMISSION: JSON.stringify({
-      '*': 'ask',
-      read: 'allow',
-      glob: 'allow',
-      grep: 'allow',
-      list: 'allow',
-      lsp: 'allow',
-      todoread: 'allow',
-      todowrite: 'allow',
-      edit,
-      bash: 'ask',
-      task: 'ask',
-      webfetch: 'ask',
-      websearch: 'ask',
-      codesearch: 'ask',
-      external_directory: 'ask',
-    }),
+    OPENCODE_PERMISSION: JSON.stringify(rules),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: rules }),
   }
 }
 
@@ -155,7 +185,7 @@ export const ACP_PROFILES: AcpProfile[] = [
       manual: { env: opencodePermission('ask') },
       auto: { env: opencodePermission('allow') },
       // A wildcard allow is what `--auto` does for the TUI.
-      bypass: { env: { OPENCODE_PERMISSION: JSON.stringify({ '*': 'allow' }) } },
+      bypass: { env: opencodeRules({ '*': 'allow' }) },
     },
     authHint: 'Run opencode auth login in a terminal and configure a working model.',
     images: true,
@@ -188,6 +218,36 @@ export const ACP_PROFILES: AcpProfile[] = [
     authHint: 'Run grok login in a terminal.',
     images: false,
     planMode: false,
+  },
+  {
+    id: 'kimi-code-agent',
+    displayName: 'Kimi Code',
+    cli: 'kimi-code',
+    // `kimi acp` takes no permission flag and no variable for one. What it
+    // has are four ACP session modes, which are what each preset is told,
+    // over the protocol, before every turn. Read off Kimi Code 0.42.0's
+    // permission policies rather than its mode descriptions, which have the
+    // two looser ones the wrong way round:
+    //   default  reads, searches, web lookups and subagents run; a Write or
+    //            Edit inside a git project runs; everything else asks.
+    //   yolo     its "Ask When Needed" (`kimi --yolo`): routine edits and
+    //            commands run; a command its parser reads as dangerous, a
+    //            sensitive file, the git directory and the person's own ask
+    //            rules still ask. Its own Auto.
+    //   auto     its "Never Ask" (`kimi --auto`, the terminal agent's
+    //            Bypass): everything runs but what the person's own rules
+    //            deny, and it asks no questions.
+    // Manual has no mode: see conversationPermissionPresetRefusals.
+    argv: ['acp'],
+    presets: {
+      auto: { mode: 'yolo' },
+      bypass: { mode: 'auto' },
+    },
+    unsupported: conversationPermissionPresetRefusals('kimi-code'),
+    authHint: 'Run kimi login in a terminal.',
+    images: true,
+    planMode: true,
+    questions: true,
   },
 ]
 
@@ -226,6 +286,30 @@ export function acpLaunchEnv(
   return presetLaunch(profile, preset, mode)?.env || {}
 }
 
+/** The agent's own session mode a preset (and the CLI's own mode at it) puts it in, if it is told one that way. */
+export function acpPresetSessionMode(
+  profile: AcpProfile,
+  preset: ConversationPermissionPreset = 'none',
+  mode?: string,
+): string | undefined {
+  return presetLaunch(profile, preset, mode)?.mode
+}
+
+// Whether two settings start the child the same way, so moving between them
+// only moves the agent's session mode and needs no new process.
+function sameAcpLaunch(
+  profile: AcpProfile,
+  from: { preset?: ConversationPermissionPreset; mode?: string },
+  to: { preset?: ConversationPermissionPreset; mode?: string },
+): boolean {
+  const launch = (setting: typeof from) =>
+    JSON.stringify([
+      acpLaunchArgv(profile, setting.preset, setting.mode),
+      acpLaunchEnv(profile, setting.preset, setting.mode),
+    ])
+  return launch(from) === launch(to)
+}
+
 /** Why a CLI cannot run a preset, or null when it can. */
 function presetRefusal(profile: AcpProfile, preset: ConversationPermissionPreset): string | null {
   if (supportedPresets(profile).includes(preset)) return null
@@ -251,7 +335,7 @@ const baseCapabilities = (profile: AcpProfile): ConversationCapabilities => ({
   permissionModes: Object.keys(profile.ownModes ?? {}),
   tools: true,
   approvals: true,
-  questions: false,
+  questions: profile.questions === true,
   planMode: profile.planMode,
   images: profile.images,
   skills: 'context',
@@ -321,13 +405,78 @@ export function acpSubagentLaneFields(name: string | null | undefined, rawInput:
   return { subagentLane: true, ...(type ? { subagentType: type.trim() } : {}) }
 }
 
+// A data URL's picture, as the attachments of OpenCode's raw tool output carry one.
+const IMAGE_DATA_URL = /^data:(image\/[\w.+-]+);base64,(.+)$/s
+
+function acpAttachments(rawOutput: unknown): Array<Record<string, unknown>> {
+  const attachments =
+    rawOutput && typeof rawOutput === 'object' ? (rawOutput as { attachments?: unknown }).attachments : undefined
+  return Array.isArray(attachments)
+    ? attachments.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+    : []
+}
+
+/**
+ * The pictures a tool call returned, in order and once each: its image
+ * content blocks, and the data URLs among its raw output's attachments
+ * (OpenCode sends a screenshot both ways).
+ */
+export function acpToolResultImages(content: readonly unknown[], rawOutput: unknown): ToolResultImage[] {
+  const blocks: Array<{ type: 'image'; mimeType: unknown; data: unknown }> = []
+  for (const entry of content) {
+    const block = entry && typeof entry === 'object' ? (entry as { type?: unknown; content?: unknown }) : null
+    const inner = block?.type === 'content' ? (block.content as { type?: unknown } | null) : null
+    if (inner?.type === 'image') blocks.push(inner as { type: 'image'; mimeType: unknown; data: unknown })
+  }
+  for (const attachment of acpAttachments(rawOutput)) {
+    const match = typeof attachment.url === 'string' ? IMAGE_DATA_URL.exec(attachment.url) : null
+    if (match) blocks.push({ type: 'image', mimeType: match[1], data: match[2] })
+  }
+  const seen = new Set<unknown>()
+  return toolResultImages(blocks.filter((block) => !seen.has(block.data) && seen.add(block.data)))
+}
+
+/**
+ * What is kept of a tool call between its updates, for the next one to build
+ * on: its name, kind, title, input and what was read off them (its subagent
+ * lane, its todo mark). Not its content or raw output: each update's are read
+ * from that update alone, and kept they would hold every file the turn read
+ * and every screenshot's base64 until the turn ends.
+ */
+export function acpRememberedToolCall(tool: Record<string, unknown>): Record<string, unknown> {
+  const kept = { ...tool }
+  delete kept.content
+  delete kept.rawOutput
+  return kept
+}
+
+/**
+ * What a tool call's raw output says, with its pictures' bytes left out: the
+ * tool's own text when it has one, else the raw output with each picture
+ * attachment's data URL dropped. Output with no pictures is unchanged.
+ */
+export function acpRawOutputText(rawOutput: unknown): unknown {
+  const attachments = acpAttachments(rawOutput)
+  if (!attachments.some((entry) => typeof entry.url === 'string' && entry.url.startsWith('data:'))) return rawOutput
+  const raw = rawOutput as Record<string, unknown>
+  if (typeof raw.output === 'string') return raw.output
+  return {
+    ...raw,
+    attachments: attachments.map(({ url, ...rest }) =>
+      typeof url === 'string' && url.startsWith('data:') ? rest : { url, ...rest },
+    ),
+  }
+}
+
+// Events in the order the agent sent them. One may wait on a promise (its
+// pictures being written to disk), and every event after it waits behind it.
 class Queue implements AsyncIterable<ConversationEvent> {
-  private items: ConversationEvent[] = []
+  private items: Array<{ event: ConversationEvent; ready?: Promise<void> }> = []
   private wake?: () => void
   private ended = false
-  push(event: ConversationEvent) {
+  push(event: ConversationEvent, ready?: Promise<void>) {
     if (!this.ended) {
-      this.items.push(event)
+      this.items.push({ event, ready })
       this.wake?.()
     }
   }
@@ -338,15 +487,45 @@ class Queue implements AsyncIterable<ConversationEvent> {
   async *[Symbol.asyncIterator]() {
     while (!this.ended || this.items.length) {
       const next = this.items.shift()
-      if (next) yield next
-      else
+      if (next) {
+        if (next.ready) await next.ready
+        yield next.event
+      } else
         await new Promise<void>((resolve) => {
           this.wake = resolve
         })
     }
   }
 }
-type Pending = { options: RequestPermissionRequest['options']; resolve: (value: RequestPermissionResponse) => void }
+type Pending = {
+  options: RequestPermissionRequest['options']
+  resolve: (value: RequestPermissionResponse) => void
+  // The text of a question asked as a permission request, which its answer is keyed by.
+  question?: string
+}
+
+/**
+ * A question the agent asked as a permission request, or null for a tool to
+ * allow. Kimi Code has no other way to ask over ACP without forms: its
+ * AskUserQuestion arrives titled so, the question as the call's text, one
+ * `allow_once` option per answer and a `reject_once` to skip it. One question,
+ * one answer from the list: it takes no typed answer.
+ */
+export function acpQuestionRequest(params: RequestPermissionRequest): ConversationQuestion | null {
+  if (params.toolCall.title !== 'AskUserQuestion') return null
+  const question = (params.toolCall.content ?? [])
+    .map((entry) => (entry.type === 'content' && entry.content.type === 'text' ? entry.content.text : ''))
+    .join('\n')
+    .trim()
+  const answers = params.options.filter((option) => option.kind === 'allow_once' && option.name.trim())
+  if (!question || answers.length === 0) return null
+  return {
+    question,
+    multiSelect: false,
+    allowFreeText: false,
+    options: answers.map((option) => ({ label: option.name })),
+  }
+}
 // How much of a CLI's stderr is kept for the message of a failure it ends with.
 const STDERR_TAIL_CHARS = 4000
 
@@ -358,6 +537,34 @@ const STDERR_TAIL_CHARS = 4000
 function withStderrTail(message: string, stderrTail: string): string {
   const tail = cliStderrSummary(stderrTail)
   return tail ? `${message} (${tail})` : message
+}
+
+// What Cursor's agent says, as its reply, when it has lost its connection to
+// Cursor's servers: the error it caught, or its generic apology, and nothing
+// else. It then ends the prompt with an ordinary stop reason.
+const CURSOR_TRANSPORT_LINES = [
+  /^(?:Error: )?(?:RetriableError|ConnectError): \S/,
+  /^Something went wrong communicating with the server\. Please try again\.$/,
+]
+const STACK_FRAME_LINE = /^\s+at \S/
+
+/**
+ * The reply itself when Cursor's whole reply is one of its connection
+ * diagnostics (with the stack frames it may print under one), else undefined.
+ * Such a turn failed: it never reached the model, and recorded as an answer it
+ * would read as the agent's reply and be carried into the next turn's
+ * history. Any other line, prose included, makes it an answer, so a reply that
+ * explains an error is never taken for one.
+ */
+export function cursorTransportFailure(reply: string): string | undefined {
+  const message = reply.trim()
+  let diagnostic = false
+  for (const line of message.split('\n')) {
+    if (!line.trim() || (diagnostic && STACK_FRAME_LINE.test(line))) continue
+    if (!CURSOR_TRANSPORT_LINES.some((pattern) => pattern.test(line.trim()))) return undefined
+    diagnostic = true
+  }
+  return diagnostic ? message : undefined
 }
 
 type State = {
@@ -438,6 +645,8 @@ type Options = {
   // The app's MCP gateway on the machine the chat's CLI runs on. Null leaves
   // it out; the chat runs without Studio's tools rather than not at all.
   resolveStudioMcpServer?: StudioMcpServerResolver
+  // Writes a step's pictures; the app's data folder unless a test stands in.
+  saveToolImages?: SaveToolResultImages
 }
 
 /** Text helpers refuse symlinks in every path component, not only the leaf.
@@ -561,14 +770,17 @@ export async function probeAcpConversationCommands(
     options.prepareWslTarget ?? prepareWslCliTarget,
   )
   const command = await (options.detect ?? (() => detectAcpCommand(profile, input.cliRuntimes)))()
-  const env = await (options.buildEnv ?? acpEnvironment)()
+  // Nobody asked for this start, so it runs as a check does (cli-probe-env.ts).
+  const probeEnv = cliProbeEnv(profile.cli)
+  const env = { ...(await (options.buildEnv ?? acpEnvironment)()), ...probeEnv }
   const sdk = await import('@agentclientprotocol/sdk')
+  const wslChild = wsl ? acpWslChild(wsl, profile) : null
   const target = cliHostSpawn({
     command,
     args: profile.argv,
     cwd: input.cwd,
     env,
-    wsl: wsl ? acpWslChild(wsl, profile) : null,
+    wsl: wslChild ? { ...wslChild, forwardEnv: [...wslChild.forwardEnv, ...Object.keys(probeEnv)] } : null,
   })
   const child = (options.spawnChild ?? spawn)(target.file, target.args, target.options)
   child.stderr.on('data', () => undefined)
@@ -638,9 +850,14 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
     type,
     payload: { ...(state.turn ? { turnId: state.turn.turnId } : {}), ...payload },
   })
-  const emit = (state: State, type: ConversationEvent['type'], payload: Record<string, unknown>) => {
+  const emit = (
+    state: State,
+    type: ConversationEvent['type'],
+    payload: Record<string, unknown>,
+    ready?: Promise<void>,
+  ) => {
     state.lastActivityAt = Date.now()
-    if (!state.loading) state.queue?.push(event(state, type, payload))
+    if (!state.loading) state.queue?.push(event(state, type, payload), ready)
   }
   const cancelPermissions = (state: State) => {
     for (const pending of state.pending.values()) pending.resolve({ outcome: { outcome: 'cancelled' } })
@@ -679,6 +896,25 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
   const permission = (state: State, params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
     if (!state.turn || state.cancelled || state.closed || params.sessionId !== state.nativeId)
       return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    const question = profile.questions ? acpQuestionRequest(params) : null
+    if (question) {
+      const requestId = `acp_permission_${++requestSequence}`
+      const answered = new Promise<RequestPermissionResponse>((resolve) =>
+        state.pending.set(requestId, { options: params.options, resolve, question: question.question }),
+      )
+      // A question, never a tool: no permission mode answers it for the person.
+      emit(state, 'approval_requested', {
+        requestId,
+        kind: 'question',
+        action: 'AskUserQuestion',
+        input: { questions: [question] },
+        toolUseId: params.toolCall.toolCallId,
+        summary: question.question,
+        questions: [question],
+        cwd: state.input.workspaceRoot,
+      })
+      return answered
+    }
     if (state.turn.mode === 'ask' && !['read', 'search', 'fetch'].includes(params.toolCall.kind ?? 'other'))
       return Promise.resolve({ outcome: { outcome: 'cancelled' } })
     const requestId = `acp_permission_${++requestSequence}`
@@ -723,8 +959,10 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         state.reply += value.content.text
       }
     } else if (value.sessionUpdate === 'tool_call' || value.sessionUpdate === 'tool_call_update') {
-      state.replyClosed = true
       const prior = state.toolCalls.get(value.toolCallId)
+      // Only a new call ends the message. A call already running reports its
+      // progress while the agent talks over it, and that text is one message.
+      if (!prior) state.replyClosed = true
       // Kept from the update that first showed a spawn, and added to as later
       // ones fill in its input: an update may retitle the call with what the
       // agent was sent to do, which is no spawn tool's name.
@@ -736,7 +974,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       // `todowrite` with a count ("3 todos"), which names no todo tool.
       const todo = prior?.todo === true || acpTodoTool(value.title)
       const tool = { ...prior, ...value, ...(lane.subagentLane ? { lane } : {}), ...(todo ? { todo } : {}) }
-      state.toolCalls.set(value.toolCallId, tool)
+      state.toolCalls.set(value.toolCallId, acpRememberedToolCall(tool))
       const content = value.content ?? []
       const diff = content.find((entry) => entry.type === 'diff')
       if (!prior || value.rawInput !== undefined || diff)
@@ -756,25 +994,56 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             : tool.rawInput,
         })
       const output =
-        value.rawOutput ??
-        content
-          .map((entry) =>
-            entry.type === 'content' && entry.content.type === 'text'
-              ? entry.content.text
-              : entry.type === 'diff'
-                ? { path: entry.path, oldText: entry.oldText, newText: entry.newText }
-                : '',
-          )
-          .filter(Boolean)
-      if (value.status === 'completed' || value.status === 'failed' || value.rawOutput !== undefined || content.length)
-        emit(state, 'tool_output', {
+        value.rawOutput !== undefined && value.rawOutput !== null
+          ? acpRawOutputText(value.rawOutput)
+          : content
+              .map((entry) =>
+                entry.type === 'content' && entry.content.type === 'text'
+                  ? entry.content.text
+                  : entry.type === 'diff'
+                    ? { path: entry.path, oldText: entry.oldText, newText: entry.newText }
+                    : '',
+              )
+              .filter(Boolean)
+      // A step's pictures (a browser screenshot), kept to show under it rather
+      // than as base64 in its output; on disk before the step says where.
+      const pictures = state.input.workspaceRoot ? acpToolResultImages(content, value.rawOutput) : []
+      const write = pictures.length
+        ? (options.saveToolImages ?? saveToolResultImages)({
+            key: {
+              workspaceRoot: state.input.workspaceRoot!,
+              workspaceId: state.input.workspaceId,
+              agentId: state.input.agentId,
+            },
+            toolUseId: value.toolCallId,
+            images: pictures,
+          })
+        : null
+      if (
+        value.status === 'completed' ||
+        value.status === 'failed' ||
+        value.rawOutput !== undefined ||
+        content.length
+      ) {
+        const payload: Record<string, unknown> = {
           toolUseId: value.toolCallId,
           toolCallId: value.toolCallId,
           output,
           status: value.status === 'failed' ? 'error' : value.status === 'completed' ? 'success' : 'running',
           isError: value.status === 'failed',
           partial: value.status !== 'completed' && value.status !== 'failed',
-        })
+        }
+        // The same list, which the write trims of any file it could not make.
+        if (write) payload.images = write.paths
+        emit(
+          state,
+          'tool_output',
+          payload,
+          write?.written.then(() => {
+            if (!write.paths.length) delete payload.images
+          }),
+        )
+      }
     } else if (value.sessionUpdate === 'plan') {
       state.replyClosed = true
       const toolUseId = `plan_${state.turn.turnId}`
@@ -794,6 +1063,29 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       })
     }
   }
+  // The agent's session mode for a turn: the chat's own (Plan) when it chose
+  // one, else the mode the permission preset puts the agent in, else the one
+  // the agent opened the session in. Set before every turn, so a session
+  // reloaded in another mode, or switched from inside it, is put back.
+  const applySessionMode = async (state: State, turnMode: MockAdapterTurnInput['mode']) => {
+    const presetMode = acpPresetSessionMode(profile, state.input.permissionPreset, state.input.permissionMode)
+    if (!turnMode && !state.defaultMode && !presetMode) return
+    const desired = !turnMode || turnMode === 'default' ? (presetMode ?? state.defaultMode) : turnMode
+    // Worded as a refusal of the preset, so the runtime can start the chat
+    // again with no preset rather than leave it unable to answer.
+    if (desired && desired === presetMode && !state.modes.includes(desired))
+      throw new Error(
+        `The ${desired} session mode this permission preset runs in is not supported by this ${profile.displayName} build.`,
+      )
+    if (!desired || !state.modes.includes(desired)) throw new Error('This mode is unavailable from the ACP agent.')
+    if (state.modeConfigId)
+      await state.connection!.setSessionConfigOption({
+        sessionId: state.nativeId!,
+        configId: state.modeConfigId,
+        value: desired,
+      })
+    else await state.connection!.setSessionMode({ sessionId: state.nativeId!, modeId: desired })
+  }
   const environment = async (input: MockAdapterSessionInput): Promise<NodeJS.ProcessEnv> =>
     (options.buildEnv ?? acpEnvironment)(input)
   const ensure = async (state: State) => {
@@ -809,7 +1101,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       if (state.closed) throw new Error('Conversation was stopped during startup.')
       const command = await (options.detect ?? ((input) => detectAcpCommand(profile, input.cliRuntimes)))(state.input)
       const env = await environment(state.input)
-      Object.assign(env, acpLaunchEnv(profile, state.input.permissionPreset, state.input.permissionMode))
+      // A JSON document the preset sets (OpenCode's config content) joins the
+      // person's own rather than replacing it. In WSL the chat is handed the
+      // preset's variables alone, nothing of this PC's (acpWslChild).
+      for (const [key, value] of Object.entries(
+        acpLaunchEnv(profile, state.input.permissionPreset, state.input.permissionMode),
+      ))
+        env[key] = wsl ? value : mergeJsonEnvValue(env[key], value)
       const hostId = state.input.cliRuntimes?.[profile.cli]?.hostId
       const gateway = await options.resolveStudioMcpServer?.({ ...(hostId ? { hostId } : {}) }).catch(() => null)
       if (state.closed) throw new Error('Conversation was stopped during startup.')
@@ -1084,11 +1382,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         }
         if (state.input.modelId !== 'default') {
           if (modelConfig)
-            await connection.setSessionConfigOption({
-              sessionId: state.nativeId!,
-              configId: modelConfig.id,
-              value: state.input.modelId,
-            })
+            await selectModel(profile.displayName, state.input.modelId, () =>
+              connection.setSessionConfigOption({
+                sessionId: state.nativeId!,
+                configId: modelConfig.id,
+                value: state.input.modelId,
+              }),
+            )
           else throw new Error('This ACP agent does not expose model selection. Choose the default model.')
         }
       }
@@ -1110,7 +1410,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           )
         }
         // Not a sign-in problem, so without the sign-in hint.
-        if (error instanceof AcpMcpServerUnsupportedError) throw error
+        if (error instanceof AcpMcpServerUnsupportedError || error instanceof AcpModelSelectionError) throw error
         // What it printed as it went is all read once it has closed.
         await Promise.race([childClosed, new Promise((resolve) => setTimeout(resolve, 250))])
         const message = withStderrTail(error instanceof Error ? error.message : String(error), stderrTail)
@@ -1217,25 +1517,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             const value = state.input.modelId === 'default' ? state.defaultModelValue : state.input.modelId
             if (!state.modelConfigId || !value)
               throw new Error('This ACP agent does not expose model selection. Choose the default model.')
-            await state.connection!.setSessionConfigOption({
-              sessionId: state.nativeId!,
-              configId: state.modelConfigId,
-              value,
-            })
+            const configId = state.modelConfigId
+            await selectModel(profile.displayName, state.input.modelId, () =>
+              state.connection!.setSessionConfigOption({ sessionId: state.nativeId!, configId, value }),
+            )
             state.appliedModelId = state.input.modelId
           }
-          if (input.mode || state.defaultMode) {
-            const desired = !input.mode || input.mode === 'default' ? state.defaultMode : input.mode
-            if (!desired || !state.modes.includes(desired))
-              throw new Error('This mode is unavailable from the ACP agent.')
-            if (state.modeConfigId)
-              await state.connection!.setSessionConfigOption({
-                sessionId: state.nativeId!,
-                configId: state.modeConfigId,
-                value: desired,
-              })
-            else await state.connection!.setSessionMode({ sessionId: state.nativeId!, modeId: desired })
-          }
+          await applySessionMode(state, input.mode)
           await state.input.onBeforeTool?.('ACP agent turn')
           emit(state, 'turn_started', { providerSessionId: state.nativeId })
           // A slash command runs only from the start of the prompt, so the
@@ -1260,6 +1548,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             throw new Error('This ACP agent does not support images.')
           for (const attachment of input.attachments ?? [])
             prompt.push({ type: 'image', data: attachment.dataBase64, mimeType: attachment.mediaType })
+          // A Stop that landed while the model, the mode or the checkpoint was
+          // being set reached an agent with no prompt to cancel. Sent now, the
+          // prompt would run on until the watchdog ended the process.
+          if (input.signal?.aborted || state.cancelled) {
+            emit(state, 'turn_failed', { reason: 'interrupted' })
+            return
+          }
           const result = await state.connection!.prompt({ sessionId: state.nativeId!, prompt })
           // The agent has the conversation now. Until it answered the prompt
           // (a refused image, an agent that died on it) the conversation is
@@ -1275,8 +1570,14 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
               inputTokens: result.usage.inputTokens,
               outputTokens: result.usage.outputTokens,
             })
-          if (!state.cancelled && result.stopReason !== 'cancelled')
-            state.history.push({ user: input.message, assistant: state.assistantText })
+          const stopped = state.cancelled || result.stopReason === 'cancelled'
+          const transportFailure =
+            profile.cli === 'cursor' && !stopped ? cursorTransportFailure(state.assistantText) : undefined
+          if (transportFailure) {
+            emit(state, 'turn_failed', { message: transportFailure })
+            return
+          }
+          if (!stopped) state.history.push({ user: input.message, assistant: state.assistantText })
           // What the turn spent, as the agent's own protocol counts it.
           const usage = result.usage
             ? turnUsageOf({
@@ -1289,8 +1590,8 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           const reply = state.reply.trim() ? state.reply : ''
           emit(
             state,
-            state.cancelled || result.stopReason === 'cancelled' ? 'turn_failed' : 'turn_completed',
-            state.cancelled || result.stopReason === 'cancelled'
+            stopped ? 'turn_failed' : 'turn_completed',
+            stopped
               ? { reason: 'interrupted' }
               : {
                   stopReason: result.stopReason,
@@ -1328,7 +1629,15 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       const state = sessions.get(input.sessionId),
         pending = state?.pending.get(input.requestId)
       if (!state || !pending) return []
-      const selected = pending.options.find((option) => option.kind === (input.approved ? 'allow_once' : 'reject_once'))
+      // A question is answered with the option its answer names, and skipped
+      // (its reject option) when declined or answered with anything else.
+      const answer = pending.question === undefined ? undefined : input.answers?.[pending.question]
+      const selected =
+        pending.question === undefined
+          ? pending.options.find((option) => option.kind === (input.approved ? 'allow_once' : 'reject_once'))
+          : (input.approved &&
+              pending.options.find((option) => option.kind === 'allow_once' && option.name === answer)) ||
+            pending.options.find((option) => option.kind === 'reject_once')
       // Never convert a once-only approval into an agent-wide persistent grant.
       pending.resolve(
         selected
@@ -1336,10 +1645,12 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           : { outcome: { outcome: 'cancelled' } },
       )
       state.pending.delete(input.requestId)
+      const answered = pending.question !== undefined && selected?.kind === 'allow_once'
       return [
         event(state, 'approval_resolved', {
           requestId: input.requestId,
-          approved: input.approved && Boolean(selected),
+          approved: pending.question === undefined ? input.approved && Boolean(selected) : answered,
+          ...(answered ? { answers: { [pending.question!]: selected!.name } } : {}),
         }),
       ]
     },
@@ -1398,8 +1709,8 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           }
         : { ok: true }
     },
-    // The preset is a launch flag (or a launch environment), so the child is
-    // replaced: the next turn starts a new one under the new flags and reloads
+    // A preset that is a launch flag (or a launch environment) replaces the
+    // child: the next turn starts a new one under the new flags and reloads
     // this session. A turn already running finishes in the child it started
     // in, and the runtime answers what it still asks by the new mode.
     async setPermissionPreset(input) {
@@ -1407,9 +1718,26 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       if (!state) return { ok: false, message: 'ACP session is unavailable.' }
       const refused = presetRefusal(profile, input.permissionPreset)
       if (refused) return { ok: false, message: refused }
+      const before = { preset: state.input.permissionPreset, mode: state.input.permissionMode }
       state.input.permissionPreset = input.permissionPreset
       if (input.permissionMode) state.input.permissionMode = input.permissionMode
       else delete state.input.permissionMode
+      // A preset told as a session mode alone (Kimi Code's) keeps the process:
+      // the next turn sets the mode, and a turn running in the preset's mode
+      // (not Plan) is moved to it now, so its next tool call is decided by it.
+      if (
+        !state.relaunch &&
+        sameAcpLaunch(profile, before, { preset: input.permissionPreset, mode: input.permissionMode })
+      ) {
+        const turn = state.turn
+        if (!turn || !state.connection || !state.nativeId || (turn.mode && turn.mode !== 'default')) return { ok: true }
+        try {
+          await applySessionMode(state, turn.mode)
+          return { ok: true }
+        } catch {
+          return { ok: true, notice: `${profile.displayName} takes the new permissions from your next message.` }
+        }
+      }
       if (state.turn && (state.child || state.starting)) {
         state.relaunch = true
         return { ok: true, notice: `${profile.displayName} takes the new permissions from your next message.` }
@@ -1492,6 +1820,26 @@ const WSL_CHILD_OWNED_ENV: ReadonlySet<string> = new Set([
 
 /** An MCP server this agent cannot connect to; see acpMcpServers. */
 class AcpMcpServerUnsupportedError extends Error {}
+
+/** An agent refused the model the chat asked it for. */
+class AcpModelSelectionError extends Error {}
+
+// A model id the chat stored can stop being one the agent offers: retired,
+// renamed, or no longer on the account. The agent refuses it with JSON-RPC's
+// invalid params, which on its own read "Invalid params", and at startup came
+// with the sign-in hint, as if signing in again would help. Said instead as the
+// model it is, so the person picks another. Any other failure keeps its own.
+async function selectModel(agent: string, modelId: string, write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write()
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === -32602)
+      throw new AcpModelSelectionError(
+        `${agent} did not accept the model "${modelId}". Choose another model, then send your message again.`,
+      )
+    throw error
+  }
+}
 
 /**
  * A session's MCP servers as ACP's `session/new` takes them. Every agent takes

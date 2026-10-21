@@ -14,8 +14,8 @@ import { runGitCommand } from './git-run'
  * Two things happen before anything leaves main:
  *
  * 1. **Churn nobody renders is dropped.** `.git/` (the gitdir watcher in
- *    git-repo-watch.ts reads that, precisely), `node_modules/`, the app's own
- *    `.sprintengine/` sidecar, and build output. An install or a build inside a
+ *    git-repo-watch.ts reads that, precisely), `node_modules/`, the
+ *    `.sprintengine/` sidecar an older build wrote, and build output. An install or a build inside a
  *    watched checkout is thousands of events that would otherwise each wake the
  *    file tree and the git status reader.
  * 2. **A burst becomes a SET of paths, not `path: null`.** The previous
@@ -27,7 +27,7 @@ import { runGitCommand } from './git-run'
  *    decides on what actually changed.
  *
  * A subscriber that needs the dropped directories (a module watching a file
- * under `.sprintengine/`) asks for `includeIgnored`, and still shares the one
+ * under `node_modules/`) asks for `includeIgnored`, and still shares the one
  * watcher.
  */
 

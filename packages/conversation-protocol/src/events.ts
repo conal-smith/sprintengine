@@ -46,6 +46,10 @@ export const CONVERSATION_EVENT_TYPES = [
   // The provider summarised the conversation to free context (payload:
   // `trigger` 'manual' | 'auto', `preTokens`, `postTokens`).
   'context_compacted',
+  // The provider started summarising the conversation, on `/compact` or on its
+  // own when the window filled (payload: `turnId`). Says what the turn is doing
+  // until `context_compacted`, or the next thing the turn says, supersedes it.
+  'context_compacting',
   // What a command the CLI ran without the model printed (`/context`,
   // `/usage`; payload: `output`, `command` without its slash). `adapterNote:
   // true` marks a line the adapter wrote about the command instead, such as a
@@ -220,6 +224,15 @@ export type ConversationToolStartedPayload = {
    * consumer falls back to `summary`.
    */
   subagentType?: string
+  /**
+   * An MCP tool's title as its server gives it (`tool.annotations.title`, or
+   * a readable form of the wire name), and the server's own display name,
+   * where the provider reports them (Claude Code does, for each call). Plain
+   * text, at most 120 characters each; a reader without them makes the wire
+   * name readable instead.
+   */
+  displayTitle?: string
+  serverName?: string
 }
 
 /** Payload carried on `tool_output`. `parentToolUseId` mirrors `tool_started`. */
@@ -331,6 +344,26 @@ export type ConversationBackgroundTask = {
   description?: string
   /** A monitor with no deadline: it watches until it is stopped or the process ends. */
   persistent?: boolean
+}
+
+/**
+ * Where a session's goal stands. `active`: the agent is working toward it and
+ * starts its next turn by itself. `paused`: the person paused it. `blocked`:
+ * the agent cannot get further without them. `usageLimited` and
+ * `budgetLimited`: it stopped at a plan's limit or the goal's own budget.
+ * `complete`: the goal is met.
+ */
+export type ConversationGoalStatus = 'active' | 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited' | 'complete'
+
+/**
+ * A goal the session's agent keeps working toward by itself, turn after turn
+ * (Codex's `/goal`). A `session_updated` event carries it as `goal` when it
+ * changes, and `goal: null` once there is none. The turns the agent starts
+ * toward it are `turn_started` events with no `user_message` before them.
+ */
+export type ConversationGoal = {
+  objective: string
+  status: ConversationGoalStatus
 }
 
 /**

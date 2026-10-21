@@ -46,7 +46,15 @@ export type ConversationWirePage = { events: ConversationWireEvent[]; hasMore: b
  */
 export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & {
   permissionMode?: string
-  capabilities?: NonNullable<ConversationWireThread['capabilities']> & { permissionModes?: string[] }
+  capabilities?: NonNullable<ConversationWireThread['capabilities']> & {
+    permissionModes?: string[]
+    /**
+     * The chat's provider takes a message into a turn it is running (a
+     * `send` that says `steer`), from a desktop that advertises
+     * `conversation-steer-sends`. Absent means unknown.
+     */
+    steer?: boolean
+  }
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
    * listed, and for a chat whose machine the desktop cannot name yet.
@@ -74,6 +82,34 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    */
   lastUserMessageAt?: number
   /**
+   * The moment the desktop's own sidebar orders the chat by: `lastUserMessageAt`
+   * when a person has written to it, else when the chat was made there or
+   * last typed into in a terminal. A client that interleaves the list with
+   * rows of its own orders it by this, so the chat sits where it sits on the
+   * desktop it runs on; opening or settling nothing moves it. Absent from a
+   * desktop built before it was listed, where a client falls back to
+   * `lastUserMessageAt`, then `updatedAt`.
+   */
+  recencyAt?: number
+  /**
+   * When the turn the chat is running now began, for a "working for" count
+   * that does not restart when an approval resolves or the model changes, as
+   * `updatedAt` does. Absent while no turn runs, and from a desktop built
+   * before it was listed.
+   */
+  turnStartedAt?: number
+  /**
+   * When the chat's current stretch of work began: the person's message that
+   * began it, held through the turns the chat opens by itself while its
+   * `backgroundWork` goes on (an agent's result or a monitor waking it), where
+   * `turnStartedAt` restarts with each. The desktop's own sidebar counts
+   * "working for" from it. Present whenever the desktop counts the chat as
+   * working: `phase` running or starting, or `backgroundWork` beside a phase
+   * that says the turn is over. Absent otherwise, and from a desktop built
+   * before it was listed, where a client counts from `turnStartedAt`.
+   */
+  workingSince?: number
+  /**
    * When the chat's agent last finished a turn, or failed one: read from the
    * chat's transcript, so it does not move on a rename, a model switch or a
    * session starting. Absent from a desktop built before it was listed, and
@@ -100,6 +136,21 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    */
   visitRewoundAt?: number
   /**
+   * The schedule whose run started the chat, by the desktop's own id for it:
+   * the desktop marks such a chat with the schedule's clock. Absent for a chat
+   * a person or an agent started, and from a desktop built before it was
+   * listed.
+   */
+  scheduledAgentId?: string
+  /**
+   * When a chat the person snoozed on the desktop wakes. The desktop draws a
+   * sleeping chat in its folder's Snoozed shelf and never marks it "finished,
+   * unseen"; a client that reads this does the same until the time passes.
+   * Absent for a chat that is awake, and from a desktop built before it was
+   * listed.
+   */
+  snoozedUntil?: number
+  /**
    * The opening of the agent's last reply, as the desktop's own sidebar
    * previews it under the chat's title: the reply's first characters as
    * written, markdown and all, at most `CONVERSATION_MAX_REPLY_PREVIEW`. Absent
@@ -114,6 +165,60 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * repository, and on a detached HEAD.
    */
   branch?: string
+  /**
+   * What the chat still has working outside a turn: the agents it launched in
+   * the background that are still running (`agents`), and the background
+   * tasks that will wake its agent when they report (`monitors`: a monitor
+   * with a deadline, or a task the agent is told about when it ends). The
+   * desktop's own sidebar counts a chat that has either as working while its
+   * `phase` says the turn is over. `phase` is left as the turn's, so a client
+   * that holds sends while a turn runs does not hold them for these. Absent
+   * when nothing works in the background, and from a desktop built before it
+   * was listed.
+   */
+  backgroundWork?: ConversationBackgroundWork
+  /**
+   * What the chat's checkout carries, in files, as the desktop's own sidebar
+   * line and composer strip count it: the files its branch added, updated
+   * and removed against the default branch, uncommitted work included, and,
+   * in `uncommitted`, those changes alone (what a line shows once the branch
+   * has landed by squash). Listed only for a chat with a live session, as
+   * the desktop draws a line only for one: a parked chat's numbers would be
+   * the checkout's, not the chat's. Read from the desktop's shared reading,
+   * held for a few seconds, so a list asked for again runs no git. Absent for
+   * a chat at rest, a folder that is not a repository or could not be read,
+   * and from a desktop built before it was listed; never a confident zero.
+   */
+  changes?: ConversationWireChanges
+  /**
+   * The chat works in a git worktree of its project rather than the project's
+   * own checkout: the desktop marks its branch with the worktree glyph.
+   * Absent when it does not, and from a desktop built before it was listed.
+   */
+  worktree?: boolean
+}
+
+/** A listed chat's background work (`ConversationThread.backgroundWork`). At least one count is above zero. */
+export type ConversationBackgroundWork = { agents: number; monitors: number }
+
+/** Files changed, by what happened to each. */
+export type ConversationWireFileCounts = { added: number; updated: number; removed: number }
+
+/**
+ * Whose changes a listed chat's counts are: `worktree`, the chat's own
+ * worktree's branch; `branch`, the branch the folder is on, which other chats
+ * may share; `folder`, only what is uncommitted (a folder on the default
+ * branch, or with none to compare against).
+ */
+export type ConversationWireChangeScope = 'worktree' | 'branch' | 'folder'
+
+const CHANGE_SCOPES: ReadonlySet<string> = new Set<ConversationWireChangeScope>(['worktree', 'branch', 'folder'])
+
+/** A listed chat's changed files (`ConversationThread.changes`). */
+export type ConversationWireChanges = ConversationWireFileCounts & {
+  /** Absent from a desktop that did not say; a client then reads the counts as the branch's. */
+  scope?: ConversationWireChangeScope
+  uncommitted?: ConversationWireFileCounts
 }
 
 /** The most characters of a reply's opening a listed chat carries. */
@@ -309,6 +414,39 @@ function key(value: unknown): ConversationWireKey | null {
     : null
 }
 
+/**
+ * A listed chat's `backgroundWork`, or null: both counts whole and not
+ * negative, and one of them above zero. Anything else is left out, and the
+ * row reads as a chat with nothing working in the background.
+ */
+export function parseConversationBackgroundWork(value: unknown): ConversationBackgroundWork | null {
+  if (!record(value) || !integer(value.agents) || !integer(value.monitors)) return null
+  if (value.agents === 0 && value.monitors === 0) return null
+  return { agents: value.agents, monitors: value.monitors }
+}
+
+function fileCounts(value: unknown): ConversationWireFileCounts | null {
+  return record(value) && integer(value.added) && integer(value.updated) && integer(value.removed)
+    ? { added: value.added, updated: value.updated, removed: value.removed }
+    : null
+}
+
+/**
+ * A listed chat's `changes`, or null: every count whole and not negative.
+ * An `uncommitted` reading in the wrong shape is left out on its own; the
+ * branch's counts still stand.
+ */
+export function parseConversationWireChanges(value: unknown): ConversationWireChanges | null {
+  const counts = fileCounts(value)
+  if (!counts) return null
+  const uncommitted = record(value) ? fileCounts(value.uncommitted) : null
+  const scope =
+    record(value) && typeof value.scope === 'string' && CHANGE_SCOPES.has(value.scope)
+      ? (value.scope as ConversationWireChangeScope)
+      : null
+  return { ...counts, ...(scope ? { scope } : {}), ...(uncommitted ? { uncommitted } : {}) }
+}
+
 /** One listed conversation, or null. Capabilities absent or malformed read as unknown, not as refused. */
 function thread(value: unknown): ConversationThread | null {
   if (!record(value)) return null
@@ -344,6 +482,8 @@ function thread(value: unknown): ConversationThread | null {
     !/[\s\u0000-\u001f]/u.test(value.branch)
       ? value.branch
       : null
+  const backgroundWork = parseConversationBackgroundWork(value.backgroundWork)
+  const changes = parseConversationWireChanges(value.changes)
   const lastAssistantText =
     typeof value.lastAssistantText === 'string' && value.lastAssistantText.trim()
       ? value.lastAssistantText.slice(0, CONVERSATION_MAX_REPLY_PREVIEW)
@@ -375,11 +515,19 @@ function thread(value: unknown): ConversationThread | null {
     // out, and the row reads as from a desktop that does not send it.
     ...(chatTitle ? { chatTitle } : {}),
     ...(clock(value.lastUserMessageAt) ? { lastUserMessageAt: value.lastUserMessageAt } : {}),
+    ...(clock(value.recencyAt) ? { recencyAt: value.recencyAt } : {}),
+    ...(clock(value.turnStartedAt) ? { turnStartedAt: value.turnStartedAt } : {}),
+    ...(clock(value.workingSince) ? { workingSince: value.workingSince } : {}),
     ...(clock(value.lastTurnEndedAt) ? { lastTurnEndedAt: value.lastTurnEndedAt } : {}),
     ...(clock(value.lastVisitedAt) ? { lastVisitedAt: value.lastVisitedAt } : {}),
     ...(clock(value.visitRewoundAt) ? { visitRewoundAt: value.visitRewoundAt } : {}),
+    ...(id(value.scheduledAgentId) ? { scheduledAgentId: value.scheduledAgentId } : {}),
+    ...(clock(value.snoozedUntil) ? { snoozedUntil: value.snoozedUntil } : {}),
     ...(lastAssistantText ? { lastAssistantText } : {}),
     ...(branch ? { branch } : {}),
+    ...(backgroundWork ? { backgroundWork } : {}),
+    ...(changes ? { changes } : {}),
+    ...(value.worktree === true ? { worktree: true } : {}),
     ...(flags
       ? {
           capabilities: {
@@ -395,6 +543,7 @@ function thread(value: unknown): ConversationThread | null {
             ...(Array.isArray(flags.permissionModes)
               ? { permissionModes: flags.permissionModes.filter(isConversationPermissionModeId) }
               : {}),
+            ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
           },
         }
       : {}),

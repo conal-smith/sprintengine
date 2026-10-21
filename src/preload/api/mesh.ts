@@ -33,6 +33,11 @@ import {
   MESH_CONVERSATION_EARLIER_CHANNEL,
   MESH_CONVERSATION_FOLLOW_CHANNEL,
   MESH_CONVERSATION_LIST_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_CREATE_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_DRAFT_CANCEL_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_DRAFT_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL,
+  MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL,
   MESH_CONVERSATION_SEND_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
@@ -44,7 +49,12 @@ import {
   type MeshConversationKey,
   type MeshConversationImageResult,
   type MeshConversationListResult,
+  type MeshPullRequestCreateResult,
+  type MeshPullRequestDraftResult,
+  type MeshPullRequestPushResult,
+  type MeshPullRequestStateResult,
 } from '../../shared/tailnet-mesh'
+import type { PullRequestCheckoutPin } from '../../shared/git/pull-request-create'
 import type {
   ConversationImageAttachment,
   ConversationPageResult,
@@ -180,6 +190,7 @@ export const meshApi = {
     attachments?: ConversationImageAttachment[]
     queue?: boolean
     skills?: string[]
+    steer?: boolean
   }): Promise<MeshConversationCommandResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_SEND_CHANNEL, {
       key: input.key,
@@ -187,6 +198,7 @@ export const meshApi = {
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.queue ? { queue: true } : {}),
       ...(input.skills?.length ? { skills: input.skills } : {}),
+      ...(input.steer ? { steer: true } : {}),
     }) as Promise<MeshConversationCommandResult>,
   meshConversationCancelQueued: (input: { key: MeshConversationKey; queuedId: string }) =>
     command(input.key, { kind: 'cancelQueued', queuedId: input.queuedId }),
@@ -221,6 +233,33 @@ export const meshApi = {
     toolUseId: string
   }): Promise<MeshConversationImageResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_TOOL_IMAGE_CHANNEL, input) as Promise<MeshConversationImageResult>,
+  // A remote chat's Create PR: each step runs on the chat's machine.
+  meshConversationPullRequestState: (input: { key: MeshConversationKey }): Promise<MeshPullRequestStateResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL, input) as Promise<MeshPullRequestStateResult>,
+  meshConversationPullRequestDraft: (input: {
+    key: MeshConversationKey
+    draftId?: string
+  }): Promise<MeshPullRequestDraftResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_DRAFT_CHANNEL, input) as Promise<MeshPullRequestDraftResult>,
+  meshConversationPullRequestDraftCancel: (input: {
+    key: MeshConversationKey
+    draftId: string
+  }): Promise<{ ok: true } | { ok: false; code: string; message: string }> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_DRAFT_CANCEL_CHANNEL, input) as Promise<
+      { ok: true } | { ok: false; code: string; message: string }
+    >,
+  meshConversationPullRequestPush: (input: {
+    key: MeshConversationKey
+    pin?: PullRequestCheckoutPin
+  }): Promise<MeshPullRequestPushResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL, input) as Promise<MeshPullRequestPushResult>,
+  meshConversationPullRequestCreate: (input: {
+    key: MeshConversationKey
+    title: string
+    body: string
+    pin?: PullRequestCheckoutPin
+  }): Promise<MeshPullRequestCreateResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_CREATE_CHANNEL, input) as Promise<MeshPullRequestCreateResult>,
 } satisfies Pick<
   ElectronApi,
   | 'meshListConnections'
@@ -250,6 +289,11 @@ export const meshApi = {
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'
+  | 'meshConversationPullRequestState'
+  | 'meshConversationPullRequestDraft'
+  | 'meshConversationPullRequestDraftCancel'
+  | 'meshConversationPullRequestPush'
+  | 'meshConversationPullRequestCreate'
 >
 
 let nextFollowId = 0

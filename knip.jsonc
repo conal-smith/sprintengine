@@ -55,6 +55,9 @@
     "packages/module-sdk/templates/**",
     "packages/module-sdk/skills/**",
     "resources/studio-plugin/sprintengine-studio/skills/sprintengine-extension-builder/**",
+    // The phone app: its own package, with its own package.json and lockfile.
+    // Its dependencies are declared there, not in this one.
+    "mobile/**",
   ],
   "ignoreBinaries": [
     // The Windows system launcher for a WSL distribution: it lists the
@@ -78,6 +81,9 @@
     // The shell linter the install-script suites run every generated script
     // through, where it is installed. Not an npm binary.
     "shellcheck",
+    // Hyprland's control tool: the entry asks it for the compositor's version
+    // before the app is ready (hyprland-color-manager.ts). Not an npm binary.
+    "hyprctl",
   ],
   "ignoreDependencies": [
     // Imported from CSS (`@import "tailwindcss"`), which knip does not read.

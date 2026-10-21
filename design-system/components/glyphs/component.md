@@ -223,6 +223,8 @@ The New chat composer's own marks (owner ruling 2026-10-04). Stroke 1.4,
 | `AttachGlyph` | `glyphs/attach.svg` | A paper clip: Attach files |
 | `PluginsGlyph` | `glyphs/plugins.svg` | A puzzle piece: Skills, plugins & MCPs |
 | `SendGlyph` | `glyphs/send.svg` | An arrow up, inside the round send |
+| `QueueGlyph` | `glyphs/queue.svg` | Three lines of a list with a plus: the round send while the agent works, when it queues the message for the turn's end |
+| `SteerGlyph` | `glyphs/steer.svg` | An arrow that turns up and to the right: the round send while the agent works, when it hands the message to the running turn |
 | `WorktreeGlyph` | `glyphs/worktree.svg` | A folder holding a commit node: the strip's Worktree switch, and the Git panel's Worktrees view |
 
 ### Status (16-grid)

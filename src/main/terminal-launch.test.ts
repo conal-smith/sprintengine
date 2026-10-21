@@ -33,6 +33,8 @@ import {
   hostContextRenderInputs,
   mergeProviderLaunchEnv,
   buildLaunchShellBootstrap,
+  getTerminalEnv,
+  withoutInheritedMultiplexerEnv,
   type HostContextDelivery,
 } from './terminal-launch'
 import { test } from 'vitest'
@@ -234,6 +236,16 @@ test('terminal-launch', async () => {
     const merged = JSON.parse(out.OPENCODE_CONFIG_CONTENT) as { theme: string; instructions: string[] }
     assert.equal(merged.theme, 'tokyonight', "the user's own keys survive")
     assert.deepEqual(merged.instructions, ['AGENTS.md', '/ctx/s1.md'], 'lists concatenate')
+
+    // A table merges key by key: the app's MCP servers join the person's own.
+    const tables = mergeProviderLaunchEnv(
+      { OPENCODE_CONFIG_CONTENT: '{"mcp":{"mine":{"type":"local","command":["a"]}}}' },
+      { OPENCODE_CONFIG_CONTENT: '{"mcp":{"sprintengine-studio":{"type":"local","command":["b"]}}}' },
+    )
+    assert.deepEqual(Object.keys(JSON.parse(tables.OPENCODE_CONFIG_CONTENT).mcp).sort(), [
+      'mine',
+      'sprintengine-studio',
+    ])
 
     // Everything that is not a JSON object still takes the plain replacement path,
     // so no other manifest's env changes behaviour.
@@ -704,4 +716,38 @@ test('a terminal says it draws 24-bit colour unless the person already said othe
   const exported: Record<string, string> = { COLORTERM: '24bit', TERM: 'screen-256color', FORCE_HYPERLINK: '0' }
   applyTerminalCapabilityDefaults(exported)
   assert.deepEqual(exported, { COLORTERM: '24bit', TERM: 'screen-256color', FORCE_HYPERLINK: '0' })
+})
+
+test('a terminal is not inside the tmux, screen or Zellij pane the app was started from', () => {
+  const env: Record<string, string> = {
+    HOME: '/Users/dev',
+    TMUX: '/tmp/tmux-501/default,1234,0',
+    TMUX_PANE: '%3',
+    STY: '4242.ttys001.mac-mini',
+    WINDOW: '0',
+    ZELLIJ: '0',
+    ZELLIJ_SESSION_NAME: 'work',
+    ZELLIJ_PANE_ID: '7',
+    ZELLIJ_CONFIG_DIR: '/Users/dev/.config/zellij',
+  }
+  withoutInheritedMultiplexerEnv(env)
+  assert.deepEqual(env, { HOME: '/Users/dev', ZELLIJ_CONFIG_DIR: '/Users/dev/.config/zellij' })
+
+  const window: Record<string, string> = { WINDOW: 'main' }
+  withoutInheritedMultiplexerEnv(window)
+  assert.deepEqual(window, { WINDOW: 'main' }, "WINDOW goes only alongside screen's STY")
+
+  const saved = { TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE }
+  process.env.TMUX = '/tmp/tmux-501/default,1234,0'
+  process.env.TMUX_PANE = '%3'
+  try {
+    const launched = getTerminalEnv()
+    assert.equal(launched.TMUX, undefined)
+    assert.equal(launched.TMUX_PANE, undefined)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 })

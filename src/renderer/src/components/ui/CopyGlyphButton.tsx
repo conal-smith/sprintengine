@@ -12,12 +12,17 @@ import { Tooltip } from './Tooltip'
  */
 export const COPY_CONFIRM_MS = 1200
 
+/** How a rich copy is asked for as markdown alone, said after its label. */
+const MARKDOWN_ONLY_HINT = 'Shift-click for Markdown'
+
 export type CopyGlyphButtonProps = {
   /** What lands on the clipboard. A function is called only on click, so an
    *  expensive serialisation (a whole transcript, a table) costs nothing until
    *  someone copies. */
   text: ClipboardTextSource
-  /** Optional `text/html` flavour written beside the plain text. */
+  /** Optional `text/html` flavour written beside the plain text. With one, a
+   *  Shift-click writes the plain text alone — the markdown, for a paste into
+   *  a rich editor that should show the source — and the tooltip says so. */
   html?: string | (() => string)
   /** The accessible name and the tooltip — "Copy code", "Copy message". It never
    *  changes: the confirmation is announced, not renamed onto the button. */
@@ -72,7 +77,7 @@ export function CopyGlyphButton({
       // the clipboard already holds this, and restarting the timer would hold
       // the check for as long as someone keeps clicking.
       if (copied) return
-      const ok = await copyToClipboardWithToast(text, { html, success: 'silent' })
+      const ok = await copyToClipboardWithToast(text, { html: event.shiftKey ? undefined : html, success: 'silent' })
       if (!ok || !mountedRef.current) return
       setCopied(true)
       onCopied?.()
@@ -86,10 +91,11 @@ export function CopyGlyphButton({
   )
 
   const glyphSize = size === 'xs' ? 'size-icon-xs' : 'size-icon-sm'
+  const tooltip = html === undefined ? label : `${label} · ${MARKDOWN_ONLY_HINT}`
 
   return (
     <span data-copy-exclude="" className={['relative inline-flex', className ?? ''].join(' ')}>
-      <Tooltip content={label}>
+      <Tooltip content={tooltip}>
         <IconButton size={size} tone={tone} aria-label={label} onClick={(event) => void handleClick(event)}>
           {copied ? (
             <CheckIcon className={`${glyphSize} text-[color:var(--tone-good)]`} />

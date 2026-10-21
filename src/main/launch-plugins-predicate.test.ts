@@ -4,7 +4,9 @@
 // read only "has the copy landed" while the launch also asked "does this
 // platform take it", Windows fell between them: the copy landed, the installer
 // took the workspace hook out, and the launch passed no flag, so Claude there
-// reported no agent state at all.
+// reported no agent state at all. Every platform takes the copy now, so the
+// question is only whether it has landed (and, for WSL, landed inside the
+// distribution).
 
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -60,9 +62,10 @@ function withPlatform<T>(platform: NodeJS.Platform, run: () => T): T {
   }
 }
 
-test('on Windows the plugin copy is never active for launches, landed or not', () => {
-  assert.equal(appLaunchPluginsActive(PLUGIN_DIRS, 'win32'), false)
-  assert.equal(launchCarriesAppPluginsFor('claude-code', PLUGIN_DIRS, 'win32'), false)
+test('on Windows the plugin copy is active for launches once it has landed', () => {
+  assert.equal(appLaunchPluginsActive(PLUGIN_DIRS, 'win32'), true)
+  assert.equal(launchCarriesAppPluginsFor('claude-code', PLUGIN_DIRS, 'win32'), true)
+  assert.equal(appLaunchPluginsActive([], 'win32'), false, 'no copy yet: the workspace install still runs')
 })
 
 test('elsewhere it is active once the copy has landed', () => {
@@ -71,12 +74,11 @@ test('elsewhere it is active once the copy has landed', () => {
   assert.equal(launchCarriesAppPluginsFor('claude-code', ['/Users/dev/plugin'], 'linux'), true)
 })
 
-test('a Windows launch passes no --plugin-dir, which is what the workspace installer is told', () => {
+test('a WSL launch whose helper holds no copy passes no --plugin-dir, which is what the workspace installer is told', () => {
   setLaunchPluginDirsResolver(() => PLUGIN_DIRS)
   const cwd = join(temp, 'workspace-launch')
   mkdirSync(cwd, { recursive: true })
   const targets = [
-    { kind: 'windows' },
     {
       kind: 'wsl',
       distro: 'Ubuntu',
@@ -86,33 +88,25 @@ test('a Windows launch passes no --plugin-dir, which is what the workspace insta
     },
   ] as const
   for (const target of targets) {
-    let config: ReturnType<typeof getShellLaunchConfig> | undefined
-    try {
-      config = withPlatform('win32', () =>
-        getShellLaunchConfig(
-          cwd,
-          'sid-plugins',
-          false,
-          'claude-code',
-          undefined,
-          { 'claude-code': { command: 'claude' } },
-          'none',
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          target,
-        ),
-      )
-    } catch (error) {
-      // The native branch refuses a POSIX temp dir as a Windows path; the
-      // flag decision under test is the WSL one there.
-      if (target.kind === 'windows' && /not available as a Windows path/u.test(String(error))) continue
-      throw error
-    }
+    const config = withPlatform('win32', () =>
+      getShellLaunchConfig(
+        cwd,
+        'sid-plugins',
+        false,
+        'claude-code',
+        undefined,
+        { 'claude-code': { command: 'claude' } },
+        'none',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        target,
+      ),
+    )
     // A WSL launch's script is handed to its helper to write inside the
     // distribution; any other is a file here.
     const hostScript = config.hostFiles?.find((file) => file.path === config.startupScriptPath)?.content
@@ -180,7 +174,7 @@ test('a launch is handed a bundled skill as one more --plugin-dir only when its 
   }
 })
 
-test('on Windows the workspace keeps its Claude hook when the plugin copy has landed', async () => {
+test('on Windows, as elsewhere, the workspace gets no Claude hook once the plugin copy has landed', async () => {
   const workspace = join(temp, 'workspace-install')
   const userData = join(temp, 'userData')
   mkdirSync(workspace, { recursive: true })
@@ -200,11 +194,109 @@ test('on Windows the workspace keeps its Claude hook when the plugin copy has la
   })
   await service.ensureInstalledForRoots([workspace])
   const record = service.installed(workspace)
-  assert.ok(record?.hookSettingsPath, 'the Claude hook is registered in the workspace')
-  assert.equal(existsSync(join(workspace, '.claude', 'settings.local.json')), true)
-  assert.equal(
-    existsSync(join(workspace, '.sprintengine', 'hooks', 'agent-state.mjs')),
-    false,
-    'the launcher runs the shipped reporter',
+  assert.equal(record?.hookSettingsPath || null, null, 'the launch registers the hook, not the workspace')
+  assert.equal(existsSync(join(workspace, '.claude', 'settings.local.json')), false)
+  assert.equal(existsSync(join(workspace, '.sprintengine')), false, 'nothing of the app is in the repository')
+})
+
+test('what the launch integration carries reaches the command line, the settings and the environment', () => {
+  const base = '/Users/dev/agent-integration/1/sprintengine-studio'
+  setLaunchPluginDirsResolver(() => [base])
+  const cwd = join(temp, 'workspace-integration')
+  mkdirSync(cwd, { recursive: true })
+  const launch = (cli: 'claude-code' | 'opencode' | 'codex', integration: Record<string, unknown>) => {
+    const config = withPlatform('darwin', () =>
+      getShellLaunchConfig(
+        cwd,
+        `sid-integration-${cli}`,
+        false,
+        cli,
+        undefined,
+        { [cli]: { command: cli === 'claude-code' ? 'claude' : cli } },
+        'none',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { kind: 'posix' },
+        { integration },
+      ),
+    )
+    try {
+      return {
+        script: config.startupScriptPath ? readFileSync(config.startupScriptPath, 'utf8') : '',
+        env: config.env ?? {},
+      }
+    } finally {
+      cleanupTerminalStartupScript(config.startupScriptPath)
+    }
+  }
+  try {
+    const claude = launch('claude-code', {
+      args: ['--mcp-config', '/Users/dev/launch/claude-mcp-1.json'],
+      settings: { hooks: { PostToolUse: [] } },
+      pluginDirs: ['/Users/dev/launch/skill-canvas'],
+    })
+    assert.match(claude.script, /--mcp-config/u)
+    assert.match(claude.script, /\/Users\/dev\/launch\/claude-mcp-1\.json/u)
+    assert.match(claude.script, /\/Users\/dev\/launch\/skill-canvas/u, 'a module skill rides beside the app plugin')
+    // One --settings, carrying the integration's hooks with everything else.
+    assert.equal(claude.script.match(/--settings/gu)?.length, 1)
+    assert.match(claude.script, /PostToolUse/u)
+
+    const codex = launch('codex', { args: ['-c', 'mcp_servers.docs={ "command" = "x" }'] })
+    assert.match(codex.script, /mcp_servers\.docs=/u)
+
+    // OpenCode's config content joins the host context's, never replacing it.
+    const opencode = launch('opencode', {
+      env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: { docs: { type: 'local', command: ['x'] } } }) },
+    })
+    const content = JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+    assert.deepEqual(Object.keys(content.mcp ?? {}), ['docs'])
+  } finally {
+    setLaunchPluginDirsResolver(null)
+  }
+})
+
+test("an OpenCode terminal agent's permission rules join the integration's config document in the startup script too", () => {
+  const cwd = join(temp, 'workspace-opencode-rules')
+  mkdirSync(cwd, { recursive: true })
+  const mcp = { docs: { type: 'local', command: ['x'] } }
+  const config = withPlatform('darwin', () =>
+    getShellLaunchConfig(
+      cwd,
+      'sid-opencode-rules',
+      false,
+      'opencode',
+      undefined,
+      { opencode: { command: 'opencode' } },
+      'manual',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { kind: 'posix' },
+      { integration: { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp }) } } },
+    ),
   )
+  try {
+    const script = config.startupScriptPath ? readFileSync(config.startupScriptPath, 'utf8') : ''
+    // The script exports the document after the login profile, so what it
+    // exports is what OpenCode reads: the rules and the MCP table together.
+    const exported = /export OPENCODE_CONFIG_CONTENT='([^']*)'/u.exec(script)?.[1]
+    assert.ok(exported, 'the startup script exports the config document')
+    for (const content of [JSON.parse(exported), JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')]) {
+      assert.deepEqual(content.mcp, mcp)
+      assert.equal(content.permission?.['*'], 'ask')
+      assert.equal(content.permission?.bash, 'ask')
+    }
+  } finally {
+    cleanupTerminalStartupScript(config.startupScriptPath)
+  }
 })

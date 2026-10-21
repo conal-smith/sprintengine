@@ -17,6 +17,7 @@ import {
 import { composePaneKinds, type PaneLaunchKind } from './paneKinds'
 import { WORKSPACE_PANE_DATA_ATTRIBUTE } from './paneFocus'
 import { paneTabItem } from './paneTabItem'
+import { useAgentPresentTabIds } from './agentPresence'
 import { closePaneTabAndItsTerminal } from './paneTerminals'
 import { bringBackPaneTab, canPopOutPane, popOutPaneTabs, showPanePopOut } from './popout/panePopOutHost'
 import { WorkspacePaneAddMenu } from './WorkspacePaneAddMenu'
@@ -186,7 +187,10 @@ export default function WorkspacePane({ workspaceId, active }: WorkspacePaneProp
     [kinds, openModalSurface, openPaneTab, workspaceId],
   )
 
-  const items: TabItem[] = tabs.map((tab) => paneTabItem(tab, { diffCount }))
+  const agentPresentTabIds = useAgentPresentTabIds(workspaceId, tabs)
+  const items: TabItem[] = tabs.map((tab) =>
+    paneTabItem(tab, { diffCount, agentPresent: agentPresentTabIds.has(tab.id) }),
+  )
 
   const menuTabIndex = tabMenu ? tabs.findIndex((tab) => tab.id === tabMenu.tabId) : -1
   const menuTab = menuTabIndex === -1 ? null : tabs[menuTabIndex]

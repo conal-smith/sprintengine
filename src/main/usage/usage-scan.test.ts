@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
+import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 
-import { repositoryRoot, runUsageScan, type UsageCacheEntry, type UsageScanRoots } from './usage-scan'
+import { forEachLine, repositoryRoot, runUsageScan, type UsageCacheEntry, type UsageScanRoots } from './usage-scan'
 
 let home: string
 let roots: UsageScanRoots
@@ -442,4 +443,213 @@ test('repositoryRoot follows a linked worktree back to its repository', async ()
   assert.equal(await repositoryRoot(join(worktree, 'src')), repo)
   assert.equal(await repositoryRoot(join(repo)), repo)
   assert.equal(await repositoryRoot(join(home, 'elsewhere')), null)
+})
+
+test('a Claude Code reply in fast mode lands in a bucket of its own speed', async () => {
+  const sid = '22222222-3333-4444-5555-666666666666'
+  const folder = join(roots.claudeProjects, '-repo')
+  await mkdir(folder, { recursive: true })
+  const usage = (speed: string) => ({ input_tokens: 10, output_tokens: 20, speed }) as unknown as Record<string, number>
+  await writeFile(
+    join(folder, `${sid}.jsonl`),
+    jsonl([
+      assistant(sid, 'msg_std', 'req_std', usage('standard'), 1),
+      assistant(sid, 'msg_fast', 'req_fast', usage('fast'), 2),
+      // A later block of the same fast reply, with its fuller count.
+      assistant(sid, 'msg_fast', 'req_fast', { ...usage('fast'), output_tokens: 50 }, 2),
+    ]),
+  )
+  const { entries } = await scan()
+  const buckets = [...entries[0]!.buckets].sort((a, b) => String(a[9] ?? '').localeCompare(String(b[9] ?? '')))
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.slice(1)),
+    [
+      ['claude-opus-4-1', '', 10, 20, 0, 0, 1, 0],
+      ['claude-opus-4-1', '', 10, 50, 0, 0, 1, 0, 'fast'],
+    ],
+  )
+})
+
+async function claudeTitleOf(titleRecords: unknown[]): Promise<string | null> {
+  const sid = '33333333-4444-5555-6666-777777777777'
+  const folder = join(roots.claudeProjects, '-repo')
+  await mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, `${sid}.jsonl`),
+    jsonl([assistant(sid, 'msg_1', 'req_1', { input_tokens: 1, output_tokens: 1 }, 1), ...titleRecords]),
+  )
+  const { entries } = await scan()
+  return entries[0]!.title
+}
+
+test('a Claude Code session renamed with /rename is titled by its new name, over the title the CLI wrote after it', async () => {
+  const title = await claudeTitleOf([
+    { type: 'custom-title', customTitle: 'Checkout rewrite' },
+    { type: 'ai-title', aiTitle: 'Fix the checkout' },
+  ])
+  assert.equal(title, 'Checkout rewrite')
+})
+
+test('a Claude Code session whose rename was cleared goes back to the title the CLI gave it', async () => {
+  const title = await claudeTitleOf([
+    { type: 'custom-title', customTitle: 'Checkout rewrite' },
+    { type: 'ai-title', aiTitle: 'Fix the checkout' },
+    { type: 'custom-title', customTitle: '' },
+    { type: 'ai-title', aiTitle: 'Fix the checkout' },
+  ])
+  assert.equal(title, 'Fix the checkout')
+})
+
+test('Codex: a response takes the service tier its thread settings name, and the first turn the first named', async () => {
+  const day = join(roots.codexHome, 'sessions', '2026', '10', '08')
+  await mkdir(day, { recursive: true })
+  const response = (minutes: number, id: string) => ({
+    type: 'token_usage_record',
+    timestamp: at(minutes),
+    payload: { response_id: id, usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } },
+  })
+  const settings = (minutes: number, tier: string) => ({
+    type: 'event_msg',
+    timestamp: at(minutes),
+    payload: { type: 'thread_settings_applied', thread_settings: { model: 'gpt-5.5', service_tier: tier } },
+  })
+  await writeFile(
+    join(day, 'rollout-tiers.jsonl'),
+    jsonl([
+      { type: 'session_meta', timestamp: at(0), payload: { id: 'tiers-1', cwd: join(home, 'repo') } },
+      { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5.5' } },
+      // The first turn: Codex writes its settings only before the second.
+      response(1, 'r1'),
+      settings(2, 'priority'),
+      response(3, 'r2'),
+      settings(4, 'default'),
+      response(5, 'r3'),
+      settings(6, 'ultrafast'),
+      response(7, 'r4'),
+      settings(8, 'fast'),
+      response(9, 'r5'),
+    ]),
+  )
+  const { entries } = await scan()
+  const requests = new Map<string, number>()
+  for (const bucket of entries[0]!.buckets) {
+    const speed = bucket[9] ?? 'standard'
+    requests.set(speed, (requests.get(speed) ?? 0) + bucket[7])
+  }
+  assert.deepEqual(Object.fromEntries(requests), { fast: 3, standard: 1, ultrafast: 1 })
+})
+
+test('Codex: a rollout with no thread settings is read at standard speed', async () => {
+  const day = join(roots.codexHome, 'sessions', '2026', '10', '08')
+  await mkdir(day, { recursive: true })
+  await writeFile(
+    join(day, 'rollout-plain.jsonl'),
+    jsonl([
+      { type: 'session_meta', timestamp: at(0), payload: { id: 'plain-1' } },
+      { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5' } },
+      {
+        type: 'token_usage_record',
+        timestamp: at(1),
+        payload: { response_id: 'r1', usage: { input_tokens: 10, output_tokens: 2 } },
+      },
+    ]),
+  )
+  const { entries } = await scan()
+  assert.deepEqual(entries[0]!.buckets[0]!.slice(1), ['gpt-5', '', 10, 2, 0, 0, 1, 0])
+})
+
+// ── Reading lines ──
+
+// How lines were read before they were tested as bytes: the whole file decoded,
+// split on the newline character, each line tested as text.
+async function decodedLines(path: string, keep: (line: string) => boolean): Promise<string[]> {
+  const kept: string[] = []
+  let carry = ''
+  for await (const chunk of createReadStream(path, { encoding: 'utf8', highWaterMark: 7 }) as AsyncIterable<string>) {
+    const text = carry + chunk
+    let from = 0
+    for (let at = text.indexOf('\n', from); at >= 0; at = text.indexOf('\n', from)) {
+      const line = text.slice(from, at)
+      from = at + 1
+      if (line && keep(line)) kept.push(line)
+    }
+    carry = text.slice(from)
+  }
+  if (carry && keep(carry)) kept.push(carry)
+  return kept
+}
+
+async function byteLines(path: string, markers: string[], chunkBytes?: number): Promise<string[]> {
+  const encoded = markers.map((marker) => Buffer.from(marker))
+  const kept: string[] = []
+  await forEachLine(
+    path,
+    (line) => encoded.some((marker) => line.includes(marker)),
+    (line) => kept.push(line),
+    chunkBytes ? { chunkBytes } : {},
+  )
+  return kept
+}
+
+// Every awkward line at once: markers beside multibyte text, CRLF endings, a
+// blank line, a marker only in text that is not JSON, and no final newline.
+const MIXED = [
+  JSON.stringify({ type: 'assistant', text: 'héllo wörld' }),
+  '',
+  `${JSON.stringify({ type: 'user', text: '日本語のテキスト' })}\r`,
+  `${JSON.stringify({ text: '🙂🙂', type: 'assistant' })}\r`,
+  JSON.stringify({ type: 'summary', summary: 'Résumé "type":"assistant" inside a string' }),
+  'not json but "type":"assistant"',
+  JSON.stringify({ type: 'tool_result', content: 'ünïcödé'.repeat(40) }),
+  JSON.stringify({ type: 'assistant', text: 'the last line, with no newline after it ✓' }),
+].join('\n')
+
+test('lines tested as bytes are the lines tested as decoded text, at every chunk size', async () => {
+  const path = join(home, 'mixed.jsonl')
+  await writeFile(path, MIXED)
+  for (const markers of [['"type":"assistant"'], ['"type":"summary"', '"type":"user"'], ['ünïcödé'], ['']]) {
+    const expected = await decodedLines(path, (line) => markers.some((marker) => line.includes(marker)))
+    assert.ok(expected.length > 0)
+    for (const chunkBytes of [1, 2, 3, 5, 16, 64, undefined])
+      assert.deepEqual(await byteLines(path, markers, chunkBytes), expected, `${markers} at ${chunkBytes ?? 'default'}`)
+  }
+})
+
+test('a marker split across two chunks still keeps its line', async () => {
+  const path = join(home, 'split.jsonl')
+  const line = JSON.stringify({ padding: 'x'.repeat(10), type: 'assistant' })
+  await writeFile(path, `${line}\n`)
+  const marker = '"type":"assistant"'
+  // Chunks that end inside the marker, at each of its bytes.
+  for (let cut = line.indexOf(marker) + 1; cut < line.indexOf(marker) + marker.length; cut += 1)
+    assert.deepEqual(await byteLines(path, [marker], cut), [line])
+})
+
+test('a multibyte character split across two chunks decodes whole, beside a marker', async () => {
+  const path = join(home, 'multibyte.jsonl')
+  const line = `${JSON.stringify({ type: 'assistant', text: '€🙂€' })}`
+  await writeFile(path, `${line}\r\n${line}`)
+  for (let chunkBytes = 1; chunkBytes <= Buffer.byteLength(line) + 2; chunkBytes += 1)
+    assert.deepEqual(await byteLines(path, ['"type":"assistant"'], chunkBytes), [`${line}\r`, line])
+})
+
+test('a Claude Code log written with CRLF counts what the same log with LF does', async () => {
+  const sid = '99999999-2222-3333-4444-555555555555'
+  const folder = join(roots.claudeProjects, '-repo')
+  await mkdir(folder, { recursive: true })
+  const records = [
+    { type: 'user', sessionId: sid, cwd: join(home, 'repo'), timestamp: at(0), message: { content: 'naïve café' } },
+    assistant(sid, 'msg_1', 'req_1', { input_tokens: 10, output_tokens: 40, cache_read_input_tokens: 100 }, 1),
+    { type: 'ai-title', aiTitle: 'Fix the café' },
+  ]
+  await writeFile(join(folder, `${sid}.jsonl`), jsonl(records))
+  const lf = (await scan()).entries
+  await writeFile(join(folder, `${sid}.jsonl`), jsonl(records).replaceAll('\n', '\r\n'))
+  const crlf = (await scan()).entries
+  assert.equal(lf.length, 1)
+  assert.deepEqual(
+    crlf.map(({ fp: _fp, ...entry }) => entry),
+    lf.map(({ fp: _fp, ...entry }) => entry),
+  )
+  assert.equal(crlf[0]!.title, 'Fix the café')
 })

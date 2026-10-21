@@ -78,7 +78,7 @@ export function paletteGroupRank(group: PaletteCommandGroup): number {
  * same list narrowed to one question each: `actions` is what the product can
  * DO (commands and the launcher's verbs), `skills` is every skill and plugin
  * in every source (the terminal star opens here), `files` is file names
- * (Go to file), `text` is text in files (⌘⇧F, Search project contents — so a
+ * (Go to file, ⌘P), `text` is text in files (⌘⇧F, Search project contents — so a
  * snippet of code is never ranked against a file name or a command row), and
  * `conversations` is the chats and workspaces the sidebar lists, found by
  * title and folder.
@@ -113,6 +113,49 @@ const SCOPE_GROUPS: Record<Exclude<PaletteScope, 'all'>, ReadonlySet<PaletteComm
  *  launcher rather than overlap it. */
 export function groupInScope(group: PaletteCommandGroup, scope: PaletteScope): boolean {
   return scope === 'all' || SCOPE_GROUPS[scope].has(group)
+}
+
+// ── The highlighted row ──────────────────────────────────────────────────────
+//
+// The highlight is an index into the rows on screen, and the rows can change
+// under it without a keystroke: disk search keeps the previous query's rows up
+// while it waits out its pause, so a person can arrow far down a long list
+// that is then replaced by a short one. An index past the end highlights
+// nothing, leaves Enter with nothing to run, and makes the first ArrowUp land
+// on a row that does not exist either.
+
+/** The index the palette highlights: `selected`, pulled back onto the list.
+ *  An empty list highlights index 0, so the first row to arrive is the one
+ *  Enter runs. */
+export function clampPaletteSelection(selected: number, rowCount: number): number {
+  return Math.min(Math.max(selected, 0), Math.max(rowCount - 1, 0))
+}
+
+/** One arrow press from `selected`, by `step` rows, stopping at either end.
+ *  The move starts from the clamped index, so the press after a shrink moves
+ *  from the row that is highlighted rather than from one that has gone. */
+export function stepPaletteSelection(selected: number, rowCount: number, step: number): number {
+  return clampPaletteSelection(clampPaletteSelection(selected, rowCount) + step, rowCount)
+}
+
+/**
+ * The scope a palette-raising command opens the overlay on, or null for a
+ * command that does not raise the palette. ⌘K and Shift Shift open the
+ * launcher; ⌘P opens Go to file, because a person who knows the file's name
+ * wants file rows and nothing else; ⌘⇧F opens the project's text.
+ */
+export function paletteScopeForCommand(commandId: string): PaletteScope | null {
+  switch (commandId) {
+    case 'commandPalette.open':
+    case 'search.everywhere':
+      return 'all'
+    case 'search.goToFile':
+      return 'files'
+    case 'search.files.open':
+      return 'text'
+    default:
+      return null
+  }
 }
 
 // ── The resting page ─────────────────────────────────────────────────────────

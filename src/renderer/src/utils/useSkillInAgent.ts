@@ -342,7 +342,9 @@ export async function resolveWorkspaceSkill(input: {
 }): Promise<{ ok: true; skill: WorkspaceSkill } | { ok: false; message: string }> {
   if (!input.workspaceRoot) return { ok: false, message: NO_WORKSPACE_FOLDER_MESSAGE }
   try {
-    const result = await window.api.workspaceSkillsList({ workspaceRoot: input.workspaceRoot })
+    // A skill installed for every project is as usable here as the folder's
+    // own — installs land there by default.
+    const result = await window.api.workspaceSkillsList({ workspaceRoot: input.workspaceRoot, includeGlobal: true })
     if (!result.ok) return { ok: false, message: result.message }
     const skill = result.skills.find((candidate) => candidate.id === input.skillId)
     if (!skill) return { ok: false, message: SKILL_NOT_IN_WORKSPACE_MESSAGE }

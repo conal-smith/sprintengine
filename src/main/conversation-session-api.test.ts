@@ -13,7 +13,7 @@ import type {
   ConversationSessionFrame,
   ConversationSessionSummary,
 } from '../shared/conversation-runtime'
-import { workspaceSidecarPath } from './workspace-sidecar'
+import { workspaceStorePath } from './workspace-store'
 import { ConversationApprovalRuleStore } from './conversation-approval-rules'
 
 function event(
@@ -125,7 +125,7 @@ test('tool details preserve large outputs and edit inputs, redact secrets, and d
         apiKey: '[redacted]',
       })
     }
-    const path = workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'edit.json')
+    const path = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'edit.json')
     assert.equal((await readFile(path, 'utf8')).includes('private-value'), false)
     const missing = await f.runtime.getToolDetail({ ...f.key, toolUseId: 'missing' })
     assert.deepEqual(missing.ok ? null : missing.code, 'not_found')
@@ -198,7 +198,7 @@ test('tool detail files are capped and preserve their head and tail', async () =
       assert.ok(String(result.detail.output).startsWith('HEAD'))
       assert.ok(String(result.detail.output).endsWith('TAIL'))
     }
-    const path = workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'huge.json')
+    const path = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'huge.json')
     assert.ok((await stat(path)).size <= 5 * 1024 * 1024)
   } finally {
     await f.cleanup()
@@ -364,7 +364,7 @@ test('a crash after command intent persistence never replays its side effect', a
   const f = await fixture(adapter)
   const restarted = new ConversationRuntime({ adapters: [adapter], getProviderById: () => undefined })
   try {
-    receiptsPath = workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.receipts.json')
+    receiptsPath = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.receipts.json')
     const commandId = randomUUID()
     assert.ok((await f.runtime.sendTurn({ sessionId: f.sessionId, commandId, message: 'one effect' })).ok)
     assert.equal(JSON.parse(intent)[0][1].ok, false, 'intent must exist before invoking the provider')
@@ -501,7 +501,7 @@ test('legacy 5000-event logs get stable sequences and turn-aligned pages reachin
   const f = await fixture()
   try {
     await f.runtime.stopSession({ sessionId: f.sessionId })
-    const path = workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
+    const path = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
     const events = Array.from({ length: 5000 }, (_, index) => ({
       id: `legacy_${index}`,
       sessionId: 'old',
@@ -617,7 +617,7 @@ test('subscribe joins a racing replay without gaps or duplicates and disposes sy
 test('cold subscriptions persist crash recovery exactly once before snapshots and reconnects', async () => {
   const root = await mkdtemp(join(tmpdir(), 'conversation-recovery-'))
   const key = { workspaceRoot: root, workspaceId: 'workspace', agentId: 'agent' }
-  const path = workspaceSidecarPath(root, 'conversations', 'workspace', 'agent.jsonl')
+  const path = workspaceStorePath(root, 'conversations', 'workspace', 'agent.jsonl')
   const runtime = new ConversationRuntime({
     adapters: [createMockConversationProvider()],
     getProviderById: () => undefined,
@@ -1094,7 +1094,7 @@ test('a reconnect further behind than the catch-up budget gets a snapshot', asyn
 test('a transcript past the whole-file limit still subscribes, catches up, pages and resumes', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-large-'))
   const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
-  const path = workspaceSidecarPath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
+  const path = workspaceStorePath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
   const envelope = { ...key, sessionId: 'old', providerId: 'mock-provider', modelId: 'mock-model' }
   const lines: string[] = []
   let seq = 0
@@ -1284,7 +1284,7 @@ test('appended tool output streams a tail preview, coalesces in the transcript a
     assert.equal('outputMode' in final.payload!, false, 'published events always carry the whole preview')
     for (const partial of outputs.slice(0, -1)) assert.equal(String(partial.payload?.preview).length <= 4000, true)
     const transcript = await readFile(
-      workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.jsonl'),
+      workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.jsonl'),
       'utf8',
     )
     const persisted = transcript.split('\n').filter((line) => line.includes('"tool_output"'))
@@ -1294,6 +1294,30 @@ test('appended tool output streams a tail preview, coalesces in the transcript a
     assert.equal(detail.detail.output, whole)
     assert.deepEqual(detail.detail.input, { command: 'build' })
     assert.equal(detail.detail.exitCode, 0)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a whole final output after appended partial output replaces what streamed', async () => {
+  // Claude's shape: the running command's output read from its file as it is
+  // written, then the tool result with all of it.
+  const f = await fixture(
+    streamingToolAdapter(['PASS a.test.ts\n', 'PASS b'], {
+      output: 'PASS a.test.ts\nPASS b.test.ts\n',
+      isError: false,
+    }),
+  )
+  try {
+    const events: ConversationEvent[] = []
+    f.runtime.onEvent((value) => events.push(value))
+    await f.runtime.sendTurn({ sessionId: f.sessionId, message: 'test' })
+    const final = events.filter((value) => value.type === 'tool_output').at(-1)!
+    assert.equal(final.payload?.partial, undefined)
+    assert.equal(final.payload?.preview, 'PASS a.test.ts\nPASS b.test.ts\n', 'the result, not the stream plus it')
+    const detail = await f.runtime.getToolDetail({ ...f.key, toolUseId: 'cmd' })
+    assert.ok(detail.ok)
+    assert.equal(detail.detail.output, 'PASS a.test.ts\nPASS b.test.ts\n')
   } finally {
     await f.cleanup()
   }
@@ -1355,13 +1379,7 @@ test('a full final output replaces what streamed', async () => {
     const detail = await f.runtime.getToolDetail({ ...f.key, toolUseId: 'cmd' })
     assert.ok(detail.ok)
     assert.equal(detail.detail.output, 'complete output')
-    const streamed = workspaceSidecarPath(
-      f.key.workspaceRoot,
-      'conversations',
-      'workspace',
-      'agent.tools',
-      'cmd.output',
-    )
+    const streamed = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace', 'agent.tools', 'cmd.output')
     await assert.rejects(stat(streamed), { code: 'ENOENT' })
   } finally {
     await f.cleanup()
@@ -1371,7 +1389,7 @@ test('a full final output replaces what streamed', async () => {
 test('a receipts read that fails once does not fail every later command', async () => {
   const f = await fixture()
   try {
-    const folder = workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace')
+    const folder = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace')
     const receipts = join(folder, 'agent.receipts.json')
     await mkdir(join(folder, 'elsewhere'), { recursive: true })
     await writeFile(join(folder, 'elsewhere', 'receipts.json'), '[]')
@@ -1389,7 +1407,7 @@ test('a receipts read that fails once does not fail every later command', async 
 test('a corrupt receipts file is moved aside instead of refusing commands', async () => {
   const f = await fixture()
   try {
-    const folder = workspaceSidecarPath(f.key.workspaceRoot, 'conversations', 'workspace')
+    const folder = workspaceStorePath(f.key.workspaceRoot, 'conversations', 'workspace')
     await writeFile(join(folder, 'agent.receipts.json'), '{broken')
     const result = await f.runtime.sendTurn({
       sessionId: f.sessionId,
@@ -1502,7 +1520,7 @@ async function throttledRuntime(sendTurn: ConversationProviderAdapter['sendTurn'
   const published: ConversationEvent[] = []
   runtime.onEvent((value) => published.push(value))
   const persistedPreviews = async () =>
-    (await readFile(workspaceSidecarPath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl'), 'utf8'))
+    (await readFile(workspaceStorePath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl'), 'utf8'))
       .split('\n')
       .filter((line) => line.includes('"tool_output"') && line.includes('"partial":true'))
   return {
@@ -1626,7 +1644,7 @@ test('a running preview that shows nothing new is not written again', async () =
 test('a chat’s prompt cache survives a restart: resumed from the transcript, it goes cold when it really did', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-cache-'))
   const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
-  const path = workspaceSidecarPath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
+  const path = workspaceStorePath(workspaceRoot, 'conversations', 'workspace', 'agent.jsonl')
   const envelope = { ...key, sessionId: 'old', providerId: 'mock-provider', modelId: 'mock-model' }
   const at = 1_700_000_000_000
   const lines = [

@@ -9,13 +9,14 @@
   "binary": "opencode",
   "permissionPresets": {
     "manual": {
-      "$comment": "OpenCode takes no flag for this, but its configuration takes a permission rule set from OPENCODE_PERMISSION, merged over the person's own, and the last matching rule wins: the wildcard comes first and every tool OpenCode names follows it. Reads, searches and listings run; edits, commands, the web and anything outside the project ask. The same rule set a chat gets.",
+      "$comment": "OpenCode takes no flag for this, but its configuration takes a permission rule set, merged over the person's own, and the last matching rule wins: the wildcard comes first and every tool OpenCode names follows it. Reads, searches and listings run; edits, commands, the web and anything outside the project ask. The same rule set a chat gets. Told twice: 1.x reads OPENCODE_PERMISSION; 2.x no longer does (absent from the 2.0.32 binary, and a Manual chat there ran a shell command unasked) but reads `permission` from OPENCODE_CONFIG_CONTENT, which 1.x reads too, and maps `bash` and `task` onto its `shell` and `subagent`. Measured live against 1.18.32 and 2.0.32 on 2026-10-17. The document joins the host context's instructions and the launch integration's tables rather than replacing them (mergeJsonEnv).",
       "label": "Ask",
       "summary": "Asks before edits and commands.",
       "description": "OpenCode permission rules that ask before every edit, command and web request. Reading, searching and listing the project does not ask.",
       "args": [],
       "env": {
-        "OPENCODE_PERMISSION": "{\"*\":\"ask\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\",\"lsp\":\"allow\",\"todoread\":\"allow\",\"todowrite\":\"allow\",\"edit\":\"ask\",\"bash\":\"ask\",\"task\":\"ask\",\"webfetch\":\"ask\",\"websearch\":\"ask\",\"codesearch\":\"ask\",\"external_directory\":\"ask\"}"
+        "OPENCODE_PERMISSION": "{\"*\":\"ask\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\",\"lsp\":\"allow\",\"todoread\":\"allow\",\"todowrite\":\"allow\",\"edit\":\"ask\",\"bash\":\"ask\",\"task\":\"ask\",\"webfetch\":\"ask\",\"websearch\":\"ask\",\"codesearch\":\"ask\",\"external_directory\":\"ask\"}",
+        "OPENCODE_CONFIG_CONTENT": "{\"permission\":{\"*\":\"ask\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\",\"lsp\":\"allow\",\"todoread\":\"allow\",\"todowrite\":\"allow\",\"edit\":\"ask\",\"bash\":\"ask\",\"task\":\"ask\",\"webfetch\":\"ask\",\"websearch\":\"ask\",\"codesearch\":\"ask\",\"external_directory\":\"ask\"}}"
       }
     },
     "auto": {
@@ -25,7 +26,8 @@
       "description": "OpenCode permission rules that let file edits in the project through and ask before commands, web requests and anything outside the project.",
       "args": [],
       "env": {
-        "OPENCODE_PERMISSION": "{\"*\":\"ask\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\",\"lsp\":\"allow\",\"todoread\":\"allow\",\"todowrite\":\"allow\",\"edit\":\"allow\",\"bash\":\"ask\",\"task\":\"ask\",\"webfetch\":\"ask\",\"websearch\":\"ask\",\"codesearch\":\"ask\",\"external_directory\":\"ask\"}"
+        "OPENCODE_PERMISSION": "{\"*\":\"ask\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\",\"lsp\":\"allow\",\"todoread\":\"allow\",\"todowrite\":\"allow\",\"edit\":\"allow\",\"bash\":\"ask\",\"task\":\"ask\",\"webfetch\":\"ask\",\"websearch\":\"ask\",\"codesearch\":\"ask\",\"external_directory\":\"ask\"}",
+        "OPENCODE_CONFIG_CONTENT": "{\"permission\":{\"*\":\"ask\",\"read\":\"allow\",\"glob\":\"allow\",\"grep\":\"allow\",\"list\":\"allow\",\"lsp\":\"allow\",\"todoread\":\"allow\",\"todowrite\":\"allow\",\"edit\":\"allow\",\"bash\":\"ask\",\"task\":\"ask\",\"webfetch\":\"ask\",\"websearch\":\"ask\",\"codesearch\":\"ask\",\"external_directory\":\"ask\"}}"
       }
     },
     "bypass": {
@@ -92,6 +94,10 @@
     "userPath": "{{home}}/.config/opencode/opencode.json",
     "format": "opencode"
   },
+  "launchIntegration": {
+    "$comment": "The agent-state plugin (by file:// URL), the MCP table and a launch skill's folder (skills.paths) in OPENCODE_CONFIG_CONTENT, merged with the host context's instructions. Measured against opencode 1.18.32 on 2026-10-16: a plugin named by URL loads beside the person's own with nothing installed next to it, `mcp` merges field by field and wins on the same id, and skills.paths folders are scanned for SKILL.md.",
+    "route": "opencode"
+  },
   "skillIntegration": {
     "support": "native",
     "harnessId": "opencode",
@@ -133,6 +139,10 @@
     "versionArgs": ["--version"]
   },
   "package": { "npm": "opencode-ai", "brew": "opencode" },
+  "selfUpdate": {
+    "$comment": "Verified 2026-10-13 against OpenCode 1.18.32: `opencode upgrade --help` documents `upgrade [target]` and `--method` (curl, npm, pnpm, bun, brew, choco, scoop). Without `--method` it works out the method itself, `curl` for a binary under ~/.opencode/bin, which is where the install script puts it. For a binary it cannot place it asks (\"Install anyways?\") before going on, which is why this runs only for a binary under neither Homebrew nor npm (chooseCliUpdateCommand); a Homebrew or npm install is updated by its own manager.",
+    "args": ["upgrade"]
+  },
   "install": {
     "darwin": [
       {

@@ -31,7 +31,7 @@ import type {
 import { sceneVersionHash } from '../../../../../../shared/canvas/merge'
 import { CANVAS_DEFAULT_BACKGROUND, reduceAppState } from '../../../../../../shared/canvas/scene-file'
 import type { ColorScheme } from '../../../../types/appTheme'
-import { Badge } from '../../../ui'
+import { AgentPill } from '../../../ui'
 import {
   bufferCanvasPush,
   canApplyBufferedPush,
@@ -124,6 +124,72 @@ import { canvasLinkAction } from './canvasLinks'
 // tool shortcuts), and those are not app chords. Focus inside its text editing
 // is a `<textarea>`, which the shell's own suppression rule already treats as
 // "the person is typing" — the same answer Monaco and the terminal get.
+
+/**
+ * The board as the floating player shows it: a picture of the whole drawing,
+ * fitted to the player, redrawn from every scene main pushes.
+ *
+ * Not the editor. A live editor in a 320px card is its toolbars and the corner
+ * of the board the person last scrolled to; what the player is for is seeing
+ * what an agent is drawing, wherever on the board it lands. Exported from this
+ * file so the library stays behind the one door (`CanvasTab`'s `React.lazy`).
+ *
+ * Dark mode is the editor's own trick — the board's light colours under the
+ * library's inverting filter — applied to the whole card, so the margin around
+ * the picture darkens with it.
+ */
+export function CanvasMiniature({
+  board,
+  theme,
+}: {
+  board: Pick<CanvasBoardState, 'elements' | 'files' | 'appState'>
+  theme: ColorScheme
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const background = reduceAppState(board.appState).viewBackgroundColor || CANVAS_DEFAULT_BACKGROUND
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const elements = board.elements.filter((element) => !element.isDeleted)
+    if (elements.length === 0) {
+      host.replaceChildren()
+      return
+    }
+    // Pushes arrive faster than a render can finish while an agent draws: only
+    // the newest render is put on screen.
+    let stale = false
+    void exportToSvg({
+      elements: elements as unknown as readonly OrderedExcalidrawElement[],
+      appState: { exportBackground: false, exportWithDarkMode: false, viewBackgroundColor: background },
+      files: board.files as unknown as BinaryFiles,
+      exportPadding: 16,
+    })
+      .then((svg: SVGSVGElement) => {
+        if (stale) return
+        svg.setAttribute('width', '100%')
+        svg.setAttribute('height', '100%')
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+        host.replaceChildren(svg)
+      })
+      .catch(() => {
+        // The last picture stays up: a frame behind beats a blank card.
+      })
+    return () => {
+      stale = true
+    }
+  }, [background, board.elements, board.files])
+  return (
+    <div
+      ref={hostRef}
+      aria-hidden="true"
+      className="h-full w-full"
+      style={{ background, filter: theme === 'dark' ? CANVAS_DARK_FILTER : undefined }}
+    />
+  )
+}
+
+/** The library's dark theme: `--theme-filter` under `.theme--dark`. */
+const CANVAS_DARK_FILTER = 'invert(93%) hue-rotate(180deg)'
 
 type CanvasEditorProps = {
   workspaceId: string
@@ -621,9 +687,11 @@ export default function CanvasEditor({
         // beside the collaborator avatars and the Library button, and it will
         // squeeze anything that lets it — which turned the pill into a sliver
         // with its own label hanging out of it.
-        <Badge tone="accent" ariaLabel="An agent is drawing on this board" className="shrink-0 whitespace-nowrap">
-          Agent
-        </Badge>
+        // The agent violet, as on the tab and round the surface (ui/AgentPresence.tsx).
+        <span className="inline-flex shrink-0 whitespace-nowrap">
+          <span className="sr-only">An agent is drawing on this board</span>
+          <AgentPill />
+        </span>
       ) : null,
     [presence?.controller],
   )

@@ -117,10 +117,26 @@ export type TerminalFileLinkProviderOptions = {
   onDrop?: (drop: TerminalFileLinkDrop) => void
 }
 
+// The bare relative branch spells its name characters as Unicode classes, not
+// `\w`: `\w` is ASCII-only even under `u`, so `données/rapport.md:3` or
+// `src/日本語.ts` never linked. On ASCII the two classes agree.
 const FILE_REFERENCE_PATTERN =
-  /(^|[\s"'(<{[])([A-Za-z]:[\\/][^\s"'<>`)\]}]+|\/[^\s"'<>`)\]}]+|\.{1,2}[\\/][^\s"'<>`)\]}]+|(?:[\w@.+-]+[\\/])+[\w@.+-][^\s"'<>`]*)/gu
+  /(^|[\s"'(<{[])([A-Za-z]:[\\/][^\s"'<>`)\]}]+|\/[^\s"'<>`)\]}]+|\.{1,2}[\\/][^\s"'<>`)\]}]+|(?:[\p{L}\p{M}\p{N}_@.+-]+[\\/])+[\p{L}\p{M}\p{N}_@.+-][^\s"'<>`]*)/gu
 
-const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/u
+// A quoted path may hold spaces (`"C:\Program Files\app\main.ts:12"`,
+// `'/Users/dev/My Project/src/a.ts'`), and a space ends every match above, so
+// the path linked only up to its first space and failed the existence check.
+// A quoted span with a separator and a space in it is read whole, its line
+// and column inside the quotes or just after them. One without a space reads
+// as before. The quotes have to stand at a word's edge, so the apostrophes in
+// "it's in src/main.ts and that's it" quote nothing.
+const QUOTED_FILE_REFERENCE_PATTERN =
+  /(?<=^|[\s(<{[=:,])(["'])([^"'\s<>`][^"'\n<>`]*?[\\/][^"'\n<>`]*?)\1(?::(\d{1,7})(?::(\d{1,7}))?)?(?=$|[\s.,;:!?)>}\]])/gu
+
+// A colon too: compilers print `main.go:10:5: undefined`, and the colon after
+// the position belongs to the message, not the path. URLs never reach this —
+// the pattern cannot start one, and the web-link provider owns them.
+const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?]+$/u
 
 function stripTrailingPunctuation(value: string): string {
   let next = value.replace(TRAILING_PUNCTUATION_PATTERN, '')
@@ -217,6 +233,28 @@ export function resolveTerminalFileReferencePath(filePath: string, roots: Termin
   return normalizeResolvedPath(toHostPath(joinFilePath(base, filePath), roots))
 }
 
+/**
+ * `relativePath` without the leading folders that repeat the end of `base`,
+ * or null when it starts with none. A workspace opened at a subfolder of its
+ * repository (`/Users/dev/mono/apps/web`) hears paths from the repository's
+ * root (`apps/web/src/App.tsx`, as `git diff --stat` prints them), which join
+ * onto the workspace as `apps/web/apps/web/…`. Only a candidate: the literal
+ * path wins whenever it exists.
+ */
+export function withoutRepeatedWorkspacePrefix(relativePath: string, base: string): string | null {
+  if (isAbsoluteFilePath(relativePath)) return null
+  const pathSegments = relativePath.split(/[\\/]+/u)
+  const baseSegments = base.split(/[\\/]+/u).filter(Boolean)
+  const fold = isWindowsPath(base) ? (segment = '') => segment.toLowerCase() : (segment = '') => segment
+  for (let count = Math.min(baseSegments.length, pathSegments.length - 1); count > 0; count--) {
+    const prefix = baseSegments.slice(-count)
+    if (prefix.every((segment, index) => fold(segment) === fold(pathSegments[index]))) {
+      return pathSegments.slice(count).join('/') || null
+    }
+  }
+  return null
+}
+
 type TerminalFileReferenceRoots = {
   executionRoot?: string | null
   workspaceRoot?: string | null
@@ -284,12 +322,40 @@ export function findTerminalFileReferences(
   onDrop?: (drop: TerminalFileLinkDrop) => void,
 ): TerminalFileReference[] {
   const references: TerminalFileReference[] = []
+  const quotedSpans: Array<{ start: number; end: number }> = []
+
+  for (const match of lineText.matchAll(QUOTED_FILE_REFERENCE_PATTERN)) {
+    const text = match[2] ?? ''
+    if (!/\s/u.test(text) || /\s$/u.test(text) || isRemoteOrShellReference(text)) continue
+    const matchIndex = match.index ?? 0
+    quotedSpans.push({ start: matchIndex, end: matchIndex + match[0].length })
+    const startIndex = matchIndex + 1
+    const inside = parseLineSuffix(text)
+    const line = inside.line ?? (match[3] ? Number(match[3]) : undefined)
+    const column = inside.line !== undefined ? inside.column : match[4] ? Number(match[4]) : undefined
+    const resolvedPath = resolveTerminalFileReferencePath(inside.path, roots)
+    if (!resolvedPath) {
+      onDrop?.({ reason: 'no-root', text })
+      continue
+    }
+    references.push({
+      text,
+      path: inside.path,
+      resolvedPath,
+      line: line !== undefined && Number.isSafeInteger(line) && line > 0 ? line : undefined,
+      column: column !== undefined && Number.isSafeInteger(column) && column > 0 ? column : undefined,
+      startIndex,
+      endIndex: startIndex + text.length,
+    })
+  }
 
   for (const match of lineText.matchAll(FILE_REFERENCE_PATTERN)) {
     const prefix = match[1] ?? ''
     const rawCandidate = match[2] ?? ''
     const matchIndex = match.index ?? 0
     const startIndex = matchIndex + prefix.length
+    // Part of a quoted path read whole above.
+    if (quotedSpans.some((span) => startIndex >= span.start && startIndex < span.end)) continue
     const text = stripTrailingPunctuation(rawCandidate)
     if (!text || isRemoteOrShellReference(text)) continue
 
@@ -320,7 +386,7 @@ export function findTerminalFileReferences(
     })
   }
 
-  return references
+  return references.sort((left, right) => left.startIndex - right.startIndex)
 }
 
 export function rangeForTerminalFileReference(

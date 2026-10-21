@@ -1,0 +1,47 @@
+.expo/
+.expo-shared/
+node_modules/
+dist/
+web-build/
+coverage/
+.mobile-test-build/
+
+# Native build output
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/.cxx/
+android/app/build/
+ios/build/
+ios/Pods/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# OS/editor
+.DS_Store
+
+# Local agent and SprintEngine Studio state. Studio and the agent CLIs write
+# these into any folder they open; they are per-machine and never committed.
+.multi-code/
+.multicode/
+.multicode-automation-run-status.json
+.claude/
+.opencode/
+.codex
+.agents/
+.agents
+.grok/
+.mcp.json
+.playwright-mcp/
+
+# Release build artifacts
+*.apk
+*.aab

@@ -15,8 +15,9 @@ send. Claude chats load attached skills natively. Codex, Cursor, Grok and
 OpenCode chats are told to run the skill by name, the way each CLI's own picker
 would (`$name` for Codex, `/name` for Cursor and Grok, its skill tool by name
 for OpenCode), once, on the turn it is attached; the skill is copied into the
-folder that CLI reads first if it is not there. Only a provider with no CLI
-behind it is sent the SKILL.md as instructions. The composer's Skills & MCPs
+folder that CLI reads first if it is not there. A provider with no CLI behind
+it, and Kimi Code, whose skill folders Studio does not install into, is sent the
+SKILL.md as instructions. The composer's Skills & MCPs
 picker also lists the MCP servers the chat's CLI is configured with, with the
 connection each last reported. A file dropped, picked or pasted from the computer into a chat that runs
 on it is a card: the send carries it beside the words (`files` on the send and
@@ -141,12 +142,12 @@ cards and Revert stay with the original chat, whose checkpoints they are.
 The fork is offered while the chat is idle, on this machine (a paired
 machine's chat is not forked from here), wherever the runtime can be forked:
 
-| Runtime                     | How the fork continues                                                                                                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code                 | Its first message branches Claude's own session at the point (`resumeSessionAt` with `forkSession`). A point Claude recorded nothing at (a reply a queued message joined) cannot be forked. |
-| Codex                       | Its first message branches the thread through the turn forked at (`thread/fork` with `lastTurnId`).                                                                                         |
-| Cursor, Grok, OpenCode      | At the newest reply, an agent that offers `session/fork` branches its running session; anywhere else, a new session whose first message carries the conversation so far as text.            |
-| API-key (OpenAI-compatible) | The conversation is replayed from the copy each turn, as for any chat on it.                                                                                                                |
+| Runtime                           | How the fork continues                                                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code                       | Its first message branches Claude's own session at the point (`resumeSessionAt` with `forkSession`). A point Claude recorded nothing at (a reply a queued message joined) cannot be forked. |
+| Codex                             | Its first message branches the thread through the turn forked at (`thread/fork` with `lastTurnId`).                                                                                         |
+| Cursor, Grok, Kimi Code, OpenCode | At the newest reply, an agent that offers `session/fork` branches its running session; anywhere else, a new session whose first message carries the conversation so far as text.            |
+| API-key (OpenAI-compatible)       | The conversation is replayed from the copy each turn, as for any chat on it.                                                                                                                |
 
 Codex falls back to the conversation as text too, for a chat from before turns
 recorded their Codex turn, and when it cannot branch the thread at that turn
@@ -159,6 +160,28 @@ A second fork of a chat is numbered: "Atlas (fork 2)". A fork
 keeps its point across a restart until its first message is sent. Until then a
 Claude or Codex fork has no CLI session of its own, so Continue in terminal
 waits for that first message.
+
+### Side question
+
+**Side question**, in the composer's "+" or on ⌘⇧B (Ctrl+Shift+B), opens a
+drawer to ask something about the chat without adding it to the chat. Typing
+`/btw` and a question in the composer asks it the same way. The agent answers
+from the conversation so far, in one reply and with no tools, so it can change
+nothing. The question and the answer stay out of the transcript, the chat's
+history, the sidebar and the phone. A turn the chat is running goes on
+undisturbed, and so does its queue. Follow-ups in the same drawer see the side
+questions before them. Closing the drawer lets the whole aside go, and calls
+off a question still being answered. **Continue in a new chat** forks the chat
+at its newest reply, as Fork from here does, with the last question waiting in
+the fork's composer. It is offered once no turn runs.
+
+It is Claude Code's own `/btw`, asked over the SDK (`askSideQuestion`), and is
+offered for Claude chats on this machine, a WSL server's or an SSH machine's.
+A Claude Code that has no side questions says so in the drawer. Its cost joins
+the session's running total, so the chat's next turn reports it; Claude Code
+writes no request for it to its session log. Codex, the ACP runtimes and a
+paired machine's chat do not offer it, and there `/btw` goes to the CLI as
+before.
 
 ## Installed CLI providers
 
@@ -176,12 +199,22 @@ Each mode reaches each chat runtime its own way. No flag sends none of these.
 | Cursor      | `--force`                                 | `--auto-review` (its classifier)                                                                                         | Not offered: Cursor edits files without asking                      | Launch flag: the child is replaced at the end of the running turn                                                  |
 | Grok        | `--always-approve`                        | `--permission-mode auto` (its classifier)                                                                                | `--permission-mode default`                                         | Launch flag, as Cursor; its own `/always-approve` and `/auto` commands are refused under a stricter mode           |
 | OpenCode    | `OPENCODE_PERMISSION` allowing everything | A rule set asking for everything but reads, listings and edits                                                           | The same rule set asking for edits too                              | Launch environment, as Cursor                                                                                      |
+| Kimi Code   | Its `auto` session mode (Never Ask)       | Its `yolo` session mode (Ask When Needed: dangerous commands, sensitive files and the git directory still ask)           | Not offered: Kimi Code edits files in a git project without asking  | Its ACP session mode, set before every turn and live mid-reply; no new process                                     |
 
 A CLI's other modes reach a chat the same ways: Claude Code's Accept edits and
 Don't ask as SDK `acceptEdits` and `dontAsk` (Don't ask adds no card of its
 own), Grok's as `--permission-mode acceptEdits` and `dontAsk`, and Codex's
 Default as `on-request` in the `workspaceWrite` sandbox with the person, not the
 reviewer, answering what leaves it.
+
+`kimi acp` takes no permission flag, so a Kimi Code chat is told its level as
+one of Kimi's own ACP session modes. Read off Kimi Code 0.42.0's permission
+policies, its `yolo` is the Ask When Needed of `kimi --yolo` and its `auto` the
+Never Ask of `kimi --auto`, the other way round from the descriptions its ACP
+server gives them. Its menu lists the modes its terminal manifest names (Auto,
+which is Never Ask, at Bypass, and No flag); Auto runs `yolo` for a caller that
+names it. Kimi asks its own questions as permission requests, one option per
+answer; the chat shows them as questions, answered from the list or skipped.
 
 Claude's Auto is its own classifier mode, `auto`, as Grok's is, Cursor's its
 auto-review and Codex's its auto-review (owner ruling 2026-10-01): someone who
@@ -221,7 +254,7 @@ sandbox against a malicious process repeatedly replacing directory ancestors.
 ### Chats on a WSL machine
 
 On Windows, every chat runtime runs on a WSL machine as well as on This PC
-(owner ruling 2026-10-01): Claude Code, Codex, Cursor, Grok and OpenCode alike.
+(owner ruling 2026-10-01): Claude Code, Codex, Cursor, Grok, Kimi Code and OpenCode alike.
 A chat in a workspace on a WSL machine runs each CLI from that distribution,
 with the command set for it there (or the one its PATH finds), the way a
 terminal agent there does (`conversationCliRuntimesForHost`).
@@ -292,7 +325,8 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   `new-chat-worktree` takes `worktree: true` beside `newChat: true` and starts
   the chat in a worktree of its own, cut exactly as New chat here cuts one with
   Worktree on: from the worktree pool where this process keeps one, on the
-  project's default branch, as `agent/chat-<id>` under the project's worktree
+  project's default branch, as `<prefix>/chat-<id>` (the branch prefix from
+  Settings ▸ Worktrees, `agent` unless changed) under the project's worktree
   container, and filed under the project it was cut from, so the chat lists here
   as if it had been started here. A project that is not a git repository, or a
   folder on an SSH machine, is refused with `worktree_unavailable` rather than
@@ -303,7 +337,7 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   device, runs at it where the chat's provider runs that level: Claude Code's
   chat runs all five of its levels and Codex's runs low to xhigh, so Codex's
   `max` and `ultra` run at its default. A CLI that declares no levels (Cursor,
-  OpenCode, Grok) ignores it. A desktop that advertises `cli-runtime-catalog`
+  OpenCode, Grok, Kimi Code) ignores it. A desktop that advertises `cli-runtime-catalog`
   answers each CLI on `cli.runtime.list` with a `catalog`: whether it can run as
   a chat (`conversational`), its provider line (`providerLabel`, naming the CLI
   a hosted runtime rides), and `models`, the rows this machine's model picker
@@ -347,6 +381,19 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   At most 16 images of 5 MB each per turn, as JPEG, PNG, GIF or WebP, on a live
   image-capable session. An accepted send removes its staged files; unused ones
   expire after an hour.
+- **Pictures sized for the model.** A desktop that advertises
+  `conversation-image-downscale` shrinks each uploaded picture on receipt by
+  the rules its own composer uses (`src/shared/conversation-attachments.ts`):
+  to a 1568px long edge, kept a JPEG if it was one and a PNG otherwise, a JPEG
+  only when the PNG is still over 5 MB, and byte for byte when it already
+  fits. So the route takes an upload of up to 20 MB as it arrives, and what is
+  kept is still at most 5 MB (`413 too_large` either way, saying which). A
+  picture its codec cannot read (Electron's `nativeImage` reads PNG and JPEG)
+  is kept as it came, under the same 5 MB. Without the shrinking a phone's
+  photo reached Claude full size, and Claude refuses an image over 2000px a
+  side once a thread holds more than 20. Only a desktop has the codec: a
+  standalone Studio server does not advertise the capability, and keeps the
+  5 MB upload ceiling. A client that does not see it keeps its own 5 MB check.
 - **Pictures a step shows.** A desktop that advertises the `conversation-images`
   capability serves the picture a step made (Codex's `GenerateImage`) or looked
   at (a file read of a picture) at `GET /tailnet/v1/conversation-image`, named
@@ -362,6 +409,33 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   A paired desktop shows these under a remote chat's steps the same way; for a
   machine without the capability it still says the picture is on the other
   machine.
+- **Pictures a message carried.** A desktop that also advertises
+  `conversation-message-images` serves the pictures a person sent with a
+  message on the same route, named by `attachment`, the `ref` its
+  `user_message` recorded for each (`attachments`), in place of `toolUseId`.
+  The bytes come from this machine's attachment store, never from a path, and
+  only from the folder the store keeps for that chat (or for its live
+  session's folder), so a ref another chat recorded is `404 unknown_image`, as
+  one that is gone is. What is served is at most the 5 MB a sent picture may
+  be, under the type its first bytes say (PNG, JPEG, WebP or GIF), and cached
+  privately for a day. The phone draws them as thumbnails on the person's
+  message; it shows its own just-sent photos from the phone itself, and names
+  a picture it cannot fetch.
+- **Files a message carries.** A desktop that advertises
+  `conversation-message-files` takes a file of any type on the upload route
+  with `kind=file`, from a device with `conversation:operate`, for a chat it
+  lists: at most 25 MB (`413 too_large`, naming the limit), under its own name
+  made one safe path segment. It is written into Studio's data folder,
+  `tailnet-uploads/<device>/<upload>/<name>`, never into the project, and
+  answered `{ uploadId, bytes, name }`. A `send` naming that id in
+  `uploadIds` attaches the file to the message by that path, as a file
+  dropped into the desktop's composer is: the agent is told where it is, and
+  the `user_message` records it in `files`, which every view draws as a card.
+  Pictures and files go in the same `uploadIds`, each spent as what it was
+  uploaded as. The id is the uploading device's alone and goes with the send;
+  the file stays, for the agent to read in a later turn, and is removed a
+  week on, or with the device when it is removed. One never sent goes when its
+  id expires, after an hour.
 
 ### Sync
 
@@ -599,6 +673,21 @@ goes the way a local Settle takes a row. One that machine settles without
 asking here (on the phone, or on that machine) is followed once its browse says
 so, and the row here leaves the rail the same way.
 
+On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
+paired desktop's Create PR runs there too, in the chat's own checkout:
+**`conversation.pull_request_state`** `{ workspaceId, agentId }` answers
+whether it is ready, as the strip asks a local chat's (`gitRoot` is always
+null: no path of that machine's crosses); **`conversation.pull_request_draft`**
+`{ workspaceId, agentId, draftId? }` writes the title and description with that
+machine's text generation settings, refused `text_generation_off` where they
+are off (`conversation.pull_request_draft_cancel` stops one by its id);
+**`conversation.pull_request_push`** and **`conversation.pull_request_create`**
+take the `pin` the state answered and are refused once the checkout has moved
+off it. A creation's `kind` is the local one's, and a `created` pull request
+is recorded there as the chat's, with `recorded` saying whether that landed.
+The state is a read on `conversation:read`; the other four need
+`conversation:operate` and are audited.
+
 ### Following from another desktop
 
 A Studio desktop paired to this one follows its conversations with the same
@@ -662,15 +751,25 @@ in the app's own process.
   sends them. A machine without the capability, or one that refuses to hold a
   message, leaves it queued in this pane, which sends it when the turn ends
   only while this machine is awake, as every queued message was before.
+- **A message can steer the turn over there** (2026-10-14). Where the machine
+  advertises `conversation-steer-sends` and lists the chat's provider as taking
+  a message mid-turn (`capabilities.steer`), the composer's Steer, chosen in
+  Settings ▸ Agents or by Primary+Enter for one message, sends with `steer`,
+  and the message goes into the running turn there. A turn that cannot take it
+  then (a request it waits on, a turn that ended on the way) has that machine
+  hold it as a queued message, and the pane shows it among the held rows. A
+  machine without the capability is never sent a steer: the composer offers
+  only Queue, and Primary+Enter stops the turn and sends after, as before.
 
 ### Terminals stay on the machine
 
 Conversations are the only agents that cross the tailnet (2026-09-29). A
 paired device, phone or desktop, cannot list, watch, type into, or start a
 terminal on this machine: there is no terminal socket and no terminal scope,
-and the tools that list terminals or start an agent in one (`terminal.list`,
-`terminal.create`, `agent.launch`, `backlog.work`) are served
-on the local socket only, to the agents and MCP clients on this machine. What a
+and the tools that list terminals, read their output or start an agent in one
+(`terminal.list`, `terminal.read`, `terminal.create`, `agent.launch`,
+`backlog.work`) are served on the local socket only, to the agents and MCP
+clients on this machine. What a
 paired device starts is a chat, through `conversation.create`, and the machine
 dropdown in New chat offers a paired machine only for a Chat agent. Scheduled
 agents stay on the machine too: the phone neither lists nor runs them. A tab left open on a remote terminal by an earlier build reopens as

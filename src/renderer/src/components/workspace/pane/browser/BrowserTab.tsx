@@ -27,7 +27,7 @@ import {
 import type { WorkspacePaneTab } from '../../../../types/workspace'
 import type { EmbeddedWebviewElement, WebviewIpcMessageEvent } from '../../../../types/webview'
 import { showToast } from '../../../../store/toastStore'
-import { Badge, IconButton, OverflowMenu, Tooltip } from '../../../ui'
+import { AgentPill, IconButton, OverflowMenu, Tooltip } from '../../../ui'
 import { BrowserDeviceToolbar } from './BrowserDeviceToolbar'
 import { BrowserStartPage } from './BrowserStartPage'
 import { BrowserErrorPage } from './BrowserErrorPage'
@@ -38,6 +38,7 @@ import { BrowserRecordingIndicator } from './BrowserRecordingIndicator'
 import { useTabRecording } from './useTabRecording'
 import { buildBrowserElementBlock, normalizePickedElement, readPickTheme, sendTextToFocusedAgent } from './browserPick'
 import { usePaneHost } from '../paneHost'
+import { replayGuestFocusAsPress } from './guestPress'
 
 // The browser tab (browser-pane epic): a `<webview>` guest the renderer mounts
 // and main drives. The element is created once per tab and never re-keyed —
@@ -158,7 +159,7 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
   const [state, setState] = useState<BrowserTabState | null>(null)
   // An agent's recording of this tab is captured and encoded here, where the
   // guest is (browser.record_start).
-  useTabRecording(tab.id)
+  useTabRecording(tab.id, workspaceId)
   const [picking, setPicking] = useState(false)
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   // The URL the guest starts on. Read once: a later change to the tab record
@@ -410,6 +411,14 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
     return () => element.removeEventListener('ipc-message', onMessage)
   }, [handlePicked, config])
 
+  // A click into the page closes whatever menu is open, as a click anywhere
+  // else in the app does (guestPress.ts).
+  useEffect(() => {
+    const element = webviewRef.current
+    if (!element) return
+    return replayGuestFocusAsPress(element)
+  }, [config])
+
   // A new document tears the picker down: the guest's overlay went with the
   // old one, and the host un-presses to match. Keyed on the committed
   // document, not `loading` — a lazy iframe flips `loading` without replacing
@@ -540,9 +549,11 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
           trailing={
             <>
               {state?.controller === 'agent' ? (
-                <Badge tone="accent" ariaLabel="An agent is driving this page">
-                  Agent
-                </Badge>
+                // The agent violet, as on the tab and round the surface (ui/AgentPresence.tsx).
+                <span className="inline-flex shrink-0 whitespace-nowrap">
+                  <span className="sr-only">An agent is driving this page</span>
+                  <AgentPill />
+                </span>
               ) : null}
               {state?.recording ? (
                 <BrowserRecordingIndicator

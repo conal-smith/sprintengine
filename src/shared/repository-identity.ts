@@ -16,7 +16,10 @@ export type RepositoryIdentity = {
   canonicalKey: string
   /** The remote URL as `git remote` reported it, for display and diagnosis. */
   remoteUrl: string
-  /** The last path segment of the key — `sprintengine` for `github.com/acme/sprintengine`. */
+  /**
+   * The repository's last path segment as the remote spells it — `SprintEngine`
+   * for `git@github.com:Acme/SprintEngine.git` — for display. Compare keys, not names.
+   */
   name: string
 }
 
@@ -63,15 +66,32 @@ function repositoryNameFromKey(canonicalKey: string): string {
 }
 
 /**
+ * The key's name in the remote's own casing. The key is lower-cased so clones
+ * match, but "No copy of myrepo" reads wrong for `MyRepo`; the URL's last
+ * segment is used when it is the same name, else the key's.
+ */
+function repositoryDisplayName(remoteUrl: string, canonicalKey: string): string {
+  const fromKey = repositoryNameFromKey(canonicalKey)
+  const segments = remoteUrl
+    .trim()
+    .replace(/\/+$/g, '')
+    .replace(/\.git$/i, '')
+    .split(/[/:]/)
+  const spelled = segments[segments.length - 1] ?? ''
+  return spelled.toLowerCase() === fromKey ? spelled : fromKey
+}
+
+/**
  * Build an identity from a remote URL, or null when the URL yields no key.
  */
 export function repositoryIdentityFromRemote(remoteUrl: string): RepositoryIdentity | null {
   const canonicalKey = canonicalRepositoryKey(remoteUrl)
   if (!canonicalKey) return null
+  const strippedUrl = stripRemoteCredentials(remoteUrl.trim())
   return {
     canonicalKey,
-    remoteUrl: stripRemoteCredentials(remoteUrl.trim()),
-    name: repositoryNameFromKey(canonicalKey),
+    remoteUrl: strippedUrl,
+    name: repositoryDisplayName(strippedUrl, canonicalKey),
   }
 }
 
@@ -86,31 +106,41 @@ export function stripRemoteCredentials(remoteUrl: string): string {
   return remoteUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/i, '$1')
 }
 
+// A remote at a relative path (`.`, `./x`, `../x`) names a different place
+// from every folder that has it. Tools add one for their own bookkeeping — a
+// remote pointing at the repository itself is common — so as a key it would
+// file unrelated repositories under one project. An absolute path still names
+// one place, so two clones of one bare repository on disk stay one project.
+const RELATIVE_PATH_REMOTE = /^\.{1,2}(?:[\\/]|$)/u
+
 /**
  * Which remote names the repository when a clone has several. `upstream`
  * beats `origin` — a fork's origin is the fork, and the thing two machines
  * share is the repository it was forked from — and any other remote is
  * taken alphabetically, so the answer is stable rather than first-listed.
+ * A remote at a relative path never names it.
  */
 export function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
 ): { remoteName: string; remoteUrl: string } | null {
+  const named = new Map([...remotes].filter(([, remoteUrl]) => !RELATIVE_PATH_REMOTE.test(remoteUrl.trim())))
   for (const preferred of ['upstream', 'origin']) {
-    const remoteUrl = remotes.get(preferred)
+    const remoteUrl = named.get(preferred)
     if (remoteUrl) return { remoteName: preferred, remoteUrl }
   }
-  const [first] = [...remotes.entries()].sort(([left], [right]) => left.localeCompare(right))
+  const [first] = [...named.entries()].sort(([left], [right]) => left.localeCompare(right))
   return first ? { remoteName: first[0], remoteUrl: first[1] } : null
 }
 
 /**
  * Parse `git remote -v` into name → fetch URL. Push URLs are ignored: a
- * repository is identified by where it is read from.
+ * repository is identified by where it is read from. A partial clone's fetch
+ * line ends with its filter, `(fetch) [blob:none]`.
  */
 export function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>()
   for (const line of stdout.split(/\r?\n/)) {
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]*\])?$/.exec(line.trim())
     if (!match) continue
     const [, name = '', url = '', direction = ''] = match
     if (direction !== 'fetch' || !name || !url) continue

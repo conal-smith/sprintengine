@@ -1,19 +1,27 @@
+import { spawn, type SpawnOptions } from 'node:child_process'
 import { mkdtemp, writeFile, readFile, rm, symlink, mkdir, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { looksLikePermissionSettingRefusal } from '../../shared/conversation/permissionModes'
+import { saveToolResultImagesUnder } from './tool-result-images'
 import {
   ACP_PROFILES,
   acpLaunchArgv,
   acpLaunchEnv,
   acpApprovalInput,
   acpMcpServers,
+  acpPresetSessionMode,
+  acpQuestionRequest,
+  acpRawOutputText,
+  acpRememberedToolCall,
+  acpToolResultImages,
   acpSubagentLaneFields,
   acpTodoTool,
   acpToolKind,
   confinedAcpPath,
   createAcpConversationProvider,
+  cursorTransportFailure,
   probeAcpConversationCommands,
 } from './acp-conversation-provider'
 import type {
@@ -31,7 +39,7 @@ import { deriveTodoProgress } from '../../../packages/conversation-timeline/src/
 // permission and file requests. No installed CLI or network is needed in CI.
 const agent = `
 const { createInterface } = require('node:readline');
-let prompt, opened, serial=100, pending=new Map(), model='model-one';
+let prompt, opened, serial=100, pending=new Map(), model='model-one', mode=null;
 const send=value=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n');
 const result=(id,result)=>send({id,result});
 const update=update=>send({method:'session/update',params:{sessionId:'native',update}});
@@ -47,22 +55,29 @@ createInterface({input:process.stdin}).on('line',async line=>{
    opened=m.method;
    if(p.mcpServers?.length)require('node:fs').writeFileSync('mcp-servers.json',JSON.stringify(p.mcpServers));
    if(m.method==='session/load')update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'REPLAY SHOULD BE SUPPRESSED'}});
-   result(m.id,{...(m.method==='session/new'?{sessionId:'native'}:{}),modes:{currentModeId:'agent',availableModes:[{id:'agent',name:'Agent'},{id:'plan',name:'Plan'},{id:'ask',name:'Ask'}]},configOptions:[{id:'model',name:'Model',category:'model',type:'select',currentValue:'model-one',options:[{value:'model-one',name:'Model One'},{value:'model-two',name:'Model Two'}]}]});
+   // KIMI_MODES: Kimi Code's four session modes, which its presets are told as.
+   result(m.id,{...(m.method==='session/new'?{sessionId:'native'}:{}),modes:process.env.KIMI_MODES?{currentModeId:'default',availableModes:['default','plan','auto','yolo'].filter(id=>!process.env.KIMI_MODES.includes('-'+id)).map(id=>({id,name:id}))}:{currentModeId:'agent',availableModes:[{id:'agent',name:'Agent'},{id:'plan',name:'Plan'},{id:'ask',name:'Ask'}]},configOptions:[{id:'model',name:'Model',category:'model',type:'select',currentValue:'model-one',options:[{value:'model-one',name:'Model One'},{value:'model-two',name:'Model Two'}]}]});
    // Like Cursor and OpenCode: the command list follows the new session, outside any turn. STRAY
    // text goes first, so a test that has seen the list knows the text was read too.
    if(m.method==='session/new'){if(process.env.STRAY)update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'STRAY OUTSIDE A TURN'}});update({sessionUpdate:'available_commands_update',availableCommands:[{name:'review',description:'Review changes',input:{hint:'[commit|branch]'}},{name:'triage',description:'Sort the open issues. (builtin skill)'},{name:'changelog',description:'Draft a changelog entry. (global)'},{name:'always-approve',description:'Toggle approvals',input:{hint:'on|off'}},{name:'exit',description:'Leave'}]})}
    return;
  }
  if(m.method==='session/fork'){require('node:fs').writeFileSync('forked.json',JSON.stringify(p));return result(m.id,{sessionId:'branch-of-'+p.sessionId})}
- if(m.method==='session/set_mode')return result(m.id,{});
- if(m.method==='session/set_config_option'){if(p.configId==='model')model=p.value;return result(m.id,{configOptions:[]})}
+ if(m.method==='session/set_mode'){mode=p.modeId;return result(m.id,{})}
+ if(m.method==='session/set_config_option'){if(p.configId==='model'&&p.value==='retired-model')return send({id:m.id,error:{code:-32602,message:'Invalid params'}});if(p.configId==='model')model=p.value;return result(m.id,{configOptions:[]})}
  if(m.method==='session/cancel'){if(process.env.IGNORE_CANCEL)return;if(prompt)result(prompt,{stopReason:'cancelled'});prompt=null;return}
  if(m.method!=='session/prompt')return result(m.id,{});
  prompt=m.id;const text=p.prompt[0].text;
  if(text.startsWith('/')){if(text==='/refresh')update({sessionUpdate:'available_commands_update',availableCommands:[{name:'fresh',description:'Replaced list'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'ran '+text}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text.includes('inspect history')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});result(m.id,{stopReason:'end_turn'});return}
- if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,permission:process.env.OPENCODE_PERMISSION??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ if(text==='argv'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({argv:process.argv.slice(2),opened,model,mode,pid:process.pid,permission:process.env.OPENCODE_PERMISSION??null,configContent:process.env.OPENCODE_CONFIG_CONTENT??null})}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // As Kimi Code asks its AskUserQuestion with no form support: a permission request, one option per answer.
+ if(text==='question'){const asked=await request('session/request_permission',{sessionId:'native',toolCall:{toolCallId:'1:ask',title:'AskUserQuestion',content:[{type:'content',content:{type:'text',text:'Which suite?'}}]},options:[{optionId:'q0_opt_0',name:'Unit',kind:'allow_once'},{optionId:'q0_opt_1',name:'End to end',kind:'allow_once'},{optionId:'q0_skip',name:'Skip',kind:'reject_once'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:asked.outcome?.optionId??asked.outcome?.outcome}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // A turn that waits on a permission request, and then says which mode the agent is in.
+ if(text==='wait then mode'){await request('session/request_permission',{sessionId:'native',toolCall:{toolCallId:'run',kind:'execute',title:'Bash',rawInput:{command:'make'}},options:[{kind:'allow_once',optionId:'allow',name:'Allow'},{kind:'reject_once',optionId:'deny',name:'Deny'}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(mode)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='crash')process.exit(2);
+ // 'say <words>' answers with the words alone, as Cursor answers a turn its server connection broke.
+ if(text.startsWith('say ')){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:text.slice(4)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='pid'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(process.pid)}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  if(text==='flood'){process.stdout.write('x'.repeat(17*1024*1024));return}
  // As OpenCode spawns a subagent: a call named for its task tool, then retitled with what it was sent to do.
@@ -70,6 +85,11 @@ createInterface({input:process.stdin}).on('line',async line=>{
  // As OpenCode 1.18 keeps a checklist: its todowrite tool, ACP kind other, the list only in the
  // call's input, retitled with a count once done, and no plan update. 'todowrite plan' also sends one.
  if(text.startsWith('todowrite')){const todos=[{content:'Read the config',status:'completed',priority:'high'},{content:'Write the test',status:'in_progress',priority:'high'},{content:'Run the suite',status:'pending',priority:'medium'}];update({sessionUpdate:'tool_call',toolCallId:'call_todo',title:'todowrite',kind:'other',status:'pending',locations:[],rawInput:{}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'in_progress',kind:'other',title:'todowrite',locations:[],rawInput:{todos}});update({sessionUpdate:'tool_call_update',toolCallId:'call_todo',status:'completed',kind:'other',title:'2 todos',rawInput:{todos},rawOutput:{output:JSON.stringify(todos,null,2),metadata:{todos}},content:[{type:'content',content:{type:'text',text:JSON.stringify(todos,null,2)}}]});if(text==='todowrite plan')update({sessionUpdate:'plan',entries:todos.map(({content,status,priority})=>({content,status:status==='in_progress'?'completed':status,priority}))});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Planned'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // As OpenCode returns a screenshot: the picture as an image block beside the text, and again as a
+ // data URL among its raw output's attachments. 'screenshot blocks' sends the content alone.
+ if(text.startsWith('screenshot')){const data=Buffer.from('not really a png').toString('base64');update({sessionUpdate:'tool_call',toolCallId:'call_shot',kind:'other',title:'screenshot',rawInput:{url:'http://localhost:5173'},status:'pending'});update({sessionUpdate:'tool_call_update',toolCallId:'call_shot',status:'completed',...(text==='screenshot'?{rawOutput:{output:'Captured screenshot',attachments:[{type:'file',mime:'image/png',filename:'screenshot.png',url:'data:image/png;base64,'+data}]}}:{}),content:[{type:'content',content:{type:'text',text:'Captured screenshot'}},{type:'content',content:{type:'image',mimeType:'image/png',data}}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Looks right'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // A long tool the agent talks over while it reports progress, then (for 'progress then tool') a new call.
+ if(text.startsWith('progress')){const say=t=>update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:t}});update({sessionUpdate:'tool_call',toolCallId:'long',kind:'execute',title:'Run the suite',rawInput:{},status:'pending'});say('Started the suite. ');update({sessionUpdate:'tool_call_update',toolCallId:'long',status:'in_progress',content:[{type:'content',content:{type:'text',text:'40 of 120'}}]});say('Halfway there. ');update({sessionUpdate:'tool_call_update',toolCallId:'long',status:'completed'});say('All 120 pass.');if(text==='progress then tool'){update({sessionUpdate:'tool_call',toolCallId:'next',kind:'read',title:'Read',rawInput:{},status:'completed'});say('Read it too.')}result(m.id,{stopReason:'end_turn'});prompt=null;return}
  update({sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'Thinking'}});
  if(text==='hang'){update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'waiting'}});return}
  update({sessionUpdate:'tool_call',toolCallId:'tool',kind:'edit',title:'Write',rawInput:{path:'result.txt'},status:'pending'});
@@ -83,7 +103,12 @@ createInterface({input:process.stdin}).on('line',async line=>{
  result(m.id,{stopReason:'end_turn',usage:{inputTokens:10,outputTokens:2,totalTokens:12}});prompt=null;
 });
 `
-async function fixture(resume = false, lostSessionId?: string, env: Record<string, string> = {}) {
+async function fixture(
+  resume = false,
+  lostSessionId?: string,
+  env: Record<string, string> = {},
+  options: Parameters<typeof createAcpConversationProvider>[1] = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'acp-provider-'))
   const input = {
     sessionId: 'session',
@@ -119,6 +144,7 @@ async function fixture(resume = false, lostSessionId?: string, env: Record<strin
       // Short only where the agent ignores the cancel, so a slow machine never
       // ends a process that was about to wind its turn down.
       cancelGraceMs: env.IGNORE_CANCEL ? 300 : 10_000,
+      ...options,
     },
   )
   const started = (await provider.startSession(input)) as ConversationEvent[]
@@ -135,7 +161,11 @@ async function fixture(resume = false, lostSessionId?: string, env: Record<strin
 }
 // A shipped profile whose CLI is the stand-in agent: the script path leads
 // every argv, so the agent receives exactly the flags the profile launches with.
-async function presetFixture(profileId: string, permissionPreset: ConversationPermissionPreset) {
+async function presetFixture(
+  profileId: string,
+  permissionPreset: ConversationPermissionPreset,
+  env: Record<string, string> = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'acp-preset-'))
   const support = await mkdtemp(join(tmpdir(), 'acp-preset-support-'))
   const script = join(support, 'agent.js')
@@ -155,7 +185,7 @@ async function presetFixture(profileId: string, permissionPreset: ConversationPe
     },
     {
       detect: async () => process.execPath,
-      buildEnv: async () => ({ PATH: process.env.PATH }),
+      buildEnv: async () => ({ PATH: process.env.PATH, ...env }),
       startupTimeoutMs: 2000,
     },
   )
@@ -186,7 +216,15 @@ async function launched(f: { provider: ReturnType<typeof createAcpConversationPr
     .filter((event) => event.type === 'content_delta')
     .map((event) => event.payload?.text)
     .join('')
-  return JSON.parse(text) as { argv: string[]; opened: string; model: string; permission: string | null }
+  return JSON.parse(text) as {
+    argv: string[]
+    opened: string
+    model: string
+    mode: string | null
+    pid: number
+    permission: string | null
+    configContent: string | null
+  }
 }
 async function turn(f: Awaited<ReturnType<typeof fixture>>, message: string) {
   const events: ConversationEvent[] = []
@@ -249,6 +287,29 @@ test('ACP streams text, reasoning, typed edits, permissions, usage and workspace
     await f.cleanup()
   }
 })
+test('ACP keeps the reply whole across progress updates of a tool already running', async () => {
+  const f = await fixture()
+  try {
+    const events = await turn(f, 'progress')
+    expect(events.at(-1)).toMatchObject({
+      type: 'turn_completed',
+      payload: { text: 'Started the suite. Halfway there. All 120 pass.' },
+    })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('ACP starts the reply again after a new tool call', async () => {
+  const f = await fixture()
+  try {
+    const events = await turn(f, 'progress then tool')
+    expect(events.at(-1)).toMatchObject({ type: 'turn_completed', payload: { text: 'Read it too.' } })
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('ACP refuses a new-file write before asking for approval it cannot use', async () => {
   const f = await fixture()
   try {
@@ -358,6 +419,22 @@ test('ACP Stop cancels the turn and keeps the process for the next one', async (
     expect(await pidOf(f)).toBe(before)
     // Not reopened: the session stayed live in the same process.
     expect((await launched(f)).opened).toBe('session/new')
+  } finally {
+    await f.cleanup()
+  }
+})
+test('ACP Stop while the turn is being set up sends no prompt and keeps the process', async () => {
+  const f = await fixture()
+  try {
+    const before = await pidOf(f)
+    // The session reads its hooks off the input it started with.
+    Object.assign(f.input, { onBeforeTool: () => f.provider.interrupt(f.input) })
+    const events = await turn(f, 'hang')
+    Object.assign(f.input, { onBeforeTool: undefined })
+    expect(events.at(-1)).toMatchObject({ type: 'turn_failed', payload: { reason: 'interrupted' } })
+    // The agent never saw the prompt, so it said nothing.
+    expect(events.some((event) => event.type === 'reasoning_delta' || event.type === 'content_delta')).toBe(false)
+    expect(await pidOf(f)).toBe(before)
   } finally {
     await f.cleanup()
   }
@@ -474,6 +551,42 @@ test('ACP shutdown during executable discovery never spawns a late child', async
   await expect(pending).rejects.toThrow('stopped during startup')
   expect(provider.listLiveSessions?.()).toEqual([])
 })
+async function failedTurnMessage(f: Awaited<ReturnType<typeof fixture>>, message: string) {
+  try {
+    const events = await turn(f, message)
+    return String(events.find((event) => event.type === 'turn_failed')?.payload?.message ?? '')
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+test('ACP says which model the agent refused when a chat starts on one it no longer offers', async () => {
+  const f = await fixture()
+  try {
+    await f.provider.setModel?.({ ...f.input, nextModelId: 'retired-model' })
+    const message = await failedTurnMessage(f, 'argv')
+    expect(message).toContain('Test agent did not accept the model "retired-model"')
+    // Not a sign-in problem, so without the sign-in hint.
+    expect(message).not.toContain('Configure test agent.')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('ACP says which model the agent refused when the chat switches to it between turns', async () => {
+  const f = await fixture()
+  try {
+    expect((await launched(f)).model).toBe('model-one')
+    await f.provider.setModel?.({ ...f.input, nextModelId: 'retired-model' })
+    expect(await failedTurnMessage(f, 'argv')).toContain('Test agent did not accept the model "retired-model"')
+    // Another model still applies on the next turn.
+    await f.provider.setModel?.({ ...f.input, nextModelId: 'model-two' })
+    expect((await launched(f)).model).toBe('model-two')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('ACP reports a CLI that cannot be started without a misleading sign-in hint', async () => {
   const provider = createAcpConversationProvider(
     {
@@ -654,6 +767,52 @@ test('ACP reads a subagent spawn off its tool call and keeps it an agent after t
     await f.cleanup()
   }
 })
+async function screenshotTurn(message: string) {
+  const data = await mkdtemp(join(tmpdir(), 'acp-images-'))
+  const f = await fixture(false, undefined, {}, { saveToolImages: saveToolResultImagesUnder(data) })
+  try {
+    const events = await turn(f, message)
+    const output = events.filter((event) => event.type === 'tool_output' && event.payload?.toolUseId === 'call_shot')
+    const images = (output.at(-1)?.payload?.images ?? []) as string[]
+    return { output, images, files: await Promise.all(images.map((path) => readFile(path, 'utf8'))) }
+  } finally {
+    await f.cleanup()
+    await rm(data, { recursive: true, force: true })
+  }
+}
+test('an ACP screenshot is kept as a picture on its step, once, and its output is the tool’s text', async () => {
+  const { output, images, files } = await screenshotTurn('screenshot')
+  expect(output).toHaveLength(1)
+  expect(output[0]?.payload?.output).toBe('Captured screenshot')
+  expect(JSON.stringify(output[0]?.payload)).not.toContain('base64')
+  expect(images).toHaveLength(1)
+  expect(images[0]).toMatch(/call_shot-1\.png$/)
+  expect(files).toEqual(['not really a png'])
+})
+test('an ACP picture sent only as a content block is kept beside the text the step returned', async () => {
+  const { output, images, files } = await screenshotTurn('screenshot blocks')
+  expect(output[0]?.payload?.output).toEqual(['Captured screenshot'])
+  expect(images).toHaveLength(1)
+  expect(files).toEqual(['not really a png'])
+})
+test('an ACP raw output with a picture attachment and no text of its own keeps everything but the bytes', () => {
+  const raw = {
+    metadata: { title: 'Page' },
+    attachments: [
+      { type: 'file', mime: 'image/png', url: 'data:image/png;base64,AAAA' },
+      { type: 'file', mime: 'text/plain', url: 'file:///Users/dev/app/notes.txt' },
+    ],
+  }
+  expect(acpRawOutputText(raw)).toEqual({
+    metadata: { title: 'Page' },
+    attachments: [
+      { type: 'file', mime: 'image/png' },
+      { type: 'file', mime: 'text/plain', url: 'file:///Users/dev/app/notes.txt' },
+    ],
+  })
+  expect(acpRawOutputText({ output: 'plain' })).toEqual({ output: 'plain' })
+  expect(acpToolResultImages([], raw)).toEqual([{ mediaType: 'image/png', base64: 'AAAA' }])
+})
 // What the strip above the composer reads off a turn's events, the person's
 // message first as the runtime records it.
 function todoProgressOf(events: ConversationEvent[], live = true) {
@@ -704,6 +863,33 @@ test('an agent that sends a plan update beside its todowrite call shows one list
     await f.cleanup()
   }
 })
+test('an ACP tool call is kept between its updates without its content or raw output', () => {
+  const data = Buffer.from('not really a png').toString('base64')
+  const update = {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'call_shot',
+    title: 'screenshot',
+    kind: 'other',
+    status: 'completed',
+    rawInput: { url: 'http://localhost:5173' },
+    rawOutput: { output: 'Captured', attachments: [{ type: 'file', url: `data:image/png;base64,${data}` }] },
+    content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data } }],
+    lane: { subagentLane: true },
+    todo: true,
+  }
+  expect(acpRememberedToolCall(update)).toEqual({
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'call_shot',
+    title: 'screenshot',
+    kind: 'other',
+    status: 'completed',
+    rawInput: { url: 'http://localhost:5173' },
+    lane: { subagentLane: true },
+    todo: true,
+  })
+  expect(update.content).toHaveLength(1)
+})
+
 test('an ACP tool call is a todo by its tool name, in either spelling', () => {
   for (const name of ['todowrite', 'TodoWrite', 'todoread', 'update_todo', ' todowrite '])
     expect(acpTodoTool(name)).toBe(true)
@@ -735,6 +921,55 @@ test('an ACP permission request carries the locations the agent listed beside it
   })
   expect(acpApprovalInput({ target_file: 'a.ts' }, [])).toEqual({ target_file: 'a.ts' })
 })
+test("Cursor's connection diagnostic as its whole reply is a failed turn, and only that", () => {
+  for (const reply of [
+    'Error: RetriableError: WritableIterable is closed',
+    '  Error: ConnectError: [unavailable] read ECONNRESET\n',
+    'Something went wrong communicating with the server. Please try again.',
+    'Error: ConnectError: [unavailable] stream closed\n    at ConnectError.from (/app/index.js:12:3)\n    at next (/app/index.js:40:9)',
+    'Error: RetriableError: WritableIterable is closed\n\nSomething went wrong communicating with the server. Please try again.',
+  ])
+    expect(cursorTransportFailure(reply)).toBe(reply.trim())
+  for (const reply of [
+    '',
+    'Done',
+    // A reply that explains such an error is an answer.
+    'The log shows Error: ConnectError: [unavailable] — the proxy dropped the stream.',
+    'Error: ConnectError: [unavailable] stream closed\nI will retry the request.',
+    'Error: TypeError: x is undefined',
+    'Something went wrong communicating with the server. Please try again. I fixed the test anyway.',
+    // Stack frames alone are not a diagnostic.
+    '    at next (/app/index.js:40:9)',
+  ])
+    expect(cursorTransportFailure(reply)).toBeUndefined()
+})
+
+test('a Cursor turn whose reply is a connection diagnostic fails, and the next one answers as usual', async () => {
+  const f = await presetFixture('cursor-agent', 'bypass')
+  try {
+    const diagnostic = 'Error: RetriableError: WritableIterable is closed'
+    const events = await turn(f, `say ${diagnostic}`)
+    expect(events.at(-1)).toMatchObject({ type: 'turn_failed', payload: { message: diagnostic } })
+    expect(events.some((event) => event.type === 'turn_completed')).toBe(false)
+    expect((await turn(f, 'say Fine now')).at(-1)).toMatchObject({
+      type: 'turn_completed',
+      payload: { text: 'Fine now' },
+    })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('another ACP agent replying with the same words completes its turn', async () => {
+  const f = await presetFixture('opencode-agent', 'bypass')
+  try {
+    const events = await turn(f, 'say Error: RetriableError: WritableIterable is closed')
+    expect(events.at(-1)).toMatchObject({ type: 'turn_completed' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test("ACP launches each preset through the CLI's own switch, and Cursor offers no Manual", () => {
   const profile = (id: string) => ACP_PROFILES.find((entry) => entry.id === id)!
   const cursor = profile('cursor-agent')
@@ -787,15 +1022,43 @@ test("ACP launches each preset through the CLI's own switch, and Cursor offers n
   expect(auto).toMatchObject({ '*': 'ask', read: 'allow', edit: 'allow', bash: 'ask', external_directory: 'ask' })
 })
 
+test('every OpenCode preset carries its rule set in the config document OpenCode 2 reads, as well as in the variable 1.x reads', () => {
+  const opencode = ACP_PROFILES.find((entry) => entry.id === 'opencode-agent')!
+  for (const preset of ['manual', 'auto', 'bypass'] as const) {
+    const env = acpLaunchEnv(opencode, preset)
+    const content = JSON.parse(env.OPENCODE_CONFIG_CONTENT!) as { permission: Record<string, string> }
+    expect(content).toEqual({ permission: JSON.parse(env.OPENCODE_PERMISSION!) })
+    // Key order is the rule order: the wildcard still leads.
+    expect(Object.keys(content.permission)[0]).toBe('*')
+  }
+})
+
+test("an OpenCode chat's rules join the config document the person exports, and their own settings stay", async () => {
+  const f = await presetFixture('opencode-agent', 'manual', {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ theme: 'tokyonight', permission: { skill: 'allow', bash: 'allow' } }),
+  })
+  try {
+    const seen = await launched(f)
+    const content = JSON.parse(seen.configContent!) as { theme: string; permission: Record<string, string> }
+    expect(content.theme).toBe('tokyonight')
+    // The preset's rule for a tool it names replaces the person's; one it does not name is kept.
+    expect(content.permission).toMatchObject({ '*': 'ask', bash: 'ask', edit: 'ask', skill: 'allow' })
+    expect(JSON.parse(seen.permission!)).toMatchObject({ '*': 'ask', bash: 'ask' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('an OpenCode chat and an OpenCode terminal agent are held to the same rule set for each mode', async () => {
   const manifest = JSON.parse(
     await readFile(join(process.cwd(), 'resources/plugins/opencode/plugin.json'), 'utf8'),
   ) as { permissionPresets: Record<string, { env?: Record<string, string> }> }
   const opencode = ACP_PROFILES.find((entry) => entry.id === 'opencode-agent')!
   for (const preset of ['manual', 'auto'] as const)
-    expect(JSON.parse(manifest.permissionPresets[preset]!.env!.OPENCODE_PERMISSION!)).toEqual(
-      JSON.parse(acpLaunchEnv(opencode, preset).OPENCODE_PERMISSION!),
-    )
+    for (const name of ['OPENCODE_PERMISSION', 'OPENCODE_CONFIG_CONTENT'])
+      expect(JSON.parse(manifest.permissionPresets[preset]!.env![name]!)).toEqual(
+        JSON.parse(acpLaunchEnv(opencode, preset)[name]!),
+      )
 })
 
 test('Cursor refuses Manual with the reason, rather than running it as something looser', async () => {
@@ -1015,6 +1278,86 @@ test('ACP lists the commands an agent gives in its handshake without opening a s
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// Starts each child as asked, and keeps the environment it was given.
+function recordingSpawn(envs: NodeJS.ProcessEnv[]): typeof spawn {
+  return ((file: string, args: string[], options: SpawnOptions) => {
+    envs.push(options.env ?? {})
+    return spawn(file, args, options)
+  }) as unknown as typeof spawn
+}
+
+const shippedAcpProfile = (id: string) => ({
+  ...ACP_PROFILES.find((profile) => profile.id === id)!,
+  argv: ['-e', agent],
+  authenticate: undefined,
+})
+
+test("Grok's command-list handshake runs with its self-updater off, and leaves the caller's environment as it was", async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acp-probe-grok-'))
+  const envs: NodeJS.ProcessEnv[] = []
+  const callerEnv = { PATH: process.env.PATH, GROK_DISABLE_AUTOUPDATER: '0' }
+  try {
+    const commands = await probeAcpConversationCommands(
+      shippedAcpProfile('grok-agent'),
+      { cwd: root },
+      { detect: async () => process.execPath, buildEnv: async () => callerEnv, spawnChild: recordingSpawn(envs) },
+    )
+    expect(commands?.map((command) => command.name)).toEqual(['handshake'])
+    expect(envs[0]?.GROK_DISABLE_AUTOUPDATER).toBe('1')
+    expect(callerEnv.GROK_DISABLE_AUTOUPDATER).toBe('0')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a Grok chat the person starts keeps their environment, Grok's self-updater included", async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acp-grok-chat-'))
+  const envs: NodeJS.ProcessEnv[] = []
+  const provider = createAcpConversationProvider(shippedAcpProfile('grok-agent'), {
+    detect: async () => process.execPath,
+    buildEnv: async () => ({ PATH: process.env.PATH }),
+    spawnChild: recordingSpawn(envs),
+    startupTimeoutMs: 2000,
+  })
+  try {
+    await provider.startSession({
+      sessionId: 'session',
+      workspaceId: 'workspace',
+      agentId: 'agent',
+      providerId: 'grok-agent',
+      modelId: 'default',
+      workspaceRoot: root,
+    })
+    expect(envs).toHaveLength(1)
+    expect(envs[0]).not.toHaveProperty('GROK_DISABLE_AUTOUPDATER')
+  } finally {
+    provider.disposeAll?.()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+for (const id of ['cursor-agent', 'opencode-agent', 'kimi-code-agent']) {
+  test(`${id}'s handshake is started with nothing of Grok's set`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-probe-other-'))
+    const envs: NodeJS.ProcessEnv[] = []
+    try {
+      await probeAcpConversationCommands(
+        shippedAcpProfile(id),
+        { cwd: root },
+        {
+          detect: async () => process.execPath,
+          buildEnv: async () => ({ PATH: process.env.PATH }),
+          spawnChild: recordingSpawn(envs),
+        },
+      )
+      expect(envs).toHaveLength(1)
+      expect(envs[0]).not.toHaveProperty('GROK_DISABLE_AUTOUPDATER')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
 
 test("ACP opens the session with the chat's own MCP servers, and refuses one the agent cannot reach", async () => {
   const start = async (env: Record<string, string>, mcpServers: ConversationMcpServer[]) => {
@@ -1291,6 +1634,224 @@ test('an ACP session still owed its conversation is never branched: the fork is 
       cursor: null,
     })
     await expect(readFile(join(f.root, 'forked.json'), 'utf8')).rejects.toThrow()
+  } finally {
+    await f.cleanup()
+  }
+})
+
+const KIMI = { KIMI_MODES: '1' }
+
+test('Kimi Code runs No flag, Auto and Bypass as its own session modes, with no flag, and refuses Manual', () => {
+  const kimi = ACP_PROFILES.find((entry) => entry.id === 'kimi-code-agent')!
+  expect(kimi).toMatchObject({ cli: 'kimi-code', argv: ['acp'], images: true, planMode: true })
+  expect(createAcpConversationProvider(kimi).capabilities).toMatchObject({
+    permissionPresets: ['none', 'auto', 'bypass'],
+    permissionModes: [],
+    questions: true,
+  })
+  // `kimi acp` takes no permission flag and no variable for one.
+  for (const preset of ['none', 'auto', 'bypass'] as const) {
+    expect(acpLaunchArgv(kimi, preset)).toEqual(['acp'])
+    expect(acpLaunchEnv(kimi, preset)).toEqual({})
+  }
+  // Auto is Kimi's Ask When Needed (`yolo`), Bypass its Never Ask (`auto`).
+  expect(acpPresetSessionMode(kimi, 'none')).toBeUndefined()
+  expect(acpPresetSessionMode(kimi, 'auto')).toBe('yolo')
+  expect(acpPresetSessionMode(kimi, 'bypass')).toBe('auto')
+})
+
+test('Kimi Code refuses Manual with the reason, rather than running it as something looser', async () => {
+  const kimi = createAcpConversationProvider(
+    ACP_PROFILES.find((entry) => entry.id === 'kimi-code-agent')!,
+    {
+      detect: async () => process.execPath,
+      buildEnv: async () => ({}),
+    },
+  )
+  await expect(
+    kimi.startSession({
+      sessionId: 'manual',
+      workspaceId: 'workspace',
+      agentId: 'agent',
+      providerId: 'kimi-code-agent',
+      modelId: 'default',
+      workspaceRoot: tmpdir(),
+      permissionPreset: 'manual',
+    }),
+  ).rejects.toThrow('Kimi Code edits files in a git project without asking')
+})
+
+test("each Kimi Code turn puts the agent in its preset's session mode", async () => {
+  const f = await presetFixture('kimi-code-agent', 'auto', KIMI)
+  try {
+    expect(await launched(f)).toMatchObject({ mode: 'yolo' })
+  } finally {
+    await f.cleanup()
+  }
+  const none = await presetFixture('kimi-code-agent', 'none', KIMI)
+  try {
+    // No flag is the mode Kimi opened the session in.
+    expect(await launched(none)).toMatchObject({ mode: 'default' })
+  } finally {
+    await none.cleanup()
+  }
+})
+
+test("a Kimi Code chat's Plan turn runs in Kimi's plan mode, whatever the preset", async () => {
+  const f = await presetFixture('kimi-code-agent', 'bypass', KIMI)
+  try {
+    const events: ConversationEvent[] = []
+    for await (const event of await f.provider.sendTurn({
+      ...f.input,
+      turnId: 'plan',
+      requestId: 'request',
+      message: 'argv',
+      mode: 'plan',
+    }))
+      events.push(event)
+    const said = events.filter((event) => event.type === 'content_delta').map((event) => event.payload?.text)
+    expect(JSON.parse(said.join(''))).toMatchObject({ mode: 'plan' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a Kimi Code preset change between turns keeps the process and moves the session mode', async () => {
+  const f = await presetFixture('kimi-code-agent', 'none', KIMI)
+  try {
+    const first = await launched(f)
+    expect(await f.provider.setPermissionPreset?.({ ...f.input, permissionPreset: 'bypass' })).toEqual({ ok: true })
+    expect(f.provider.listLiveSessions?.()[0]).toMatchObject({ hasChildProcess: true })
+    expect(await launched(f)).toMatchObject({ pid: first.pid, mode: 'auto', opened: 'session/new' })
+    expect(await f.provider.setPermissionPreset?.({ ...f.input, permissionPreset: 'none' })).toEqual({ ok: true })
+    expect(await launched(f)).toMatchObject({ pid: first.pid, mode: 'default' })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a Kimi Code preset change mid-turn moves the running turn to the new session mode', async () => {
+  const f = await presetFixture('kimi-code-agent', 'none', KIMI)
+  try {
+    const iterator = (
+      (await f.provider.sendTurn({
+        ...f.input,
+        turnId: 'slow',
+        requestId: 'request',
+        message: 'wait then mode',
+      })) as AsyncIterable<ConversationEvent>
+    )[Symbol.asyncIterator]()
+    let requestId = ''
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done) break
+      if (next.value.type === 'approval_requested') {
+        requestId = String(next.value.payload?.requestId)
+        break
+      }
+    }
+    // No "from your next message": the mode is the agent's now.
+    expect(await f.provider.setPermissionPreset?.({ ...f.input, permissionPreset: 'auto' })).toEqual({ ok: true })
+    await f.provider.resolveApproval({ ...f.input, turnId: 'slow', requestId, approved: true })
+    let said = ''
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done) break
+      if (next.value.type === 'content_delta') said += String(next.value.payload?.text ?? '')
+    }
+    expect(said).toBe('yolo')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a Kimi Code build without the mode a preset runs in fails the turn as a refused setting', async () => {
+  const f = await presetFixture('kimi-code-agent', 'auto', { KIMI_MODES: '-yolo' })
+  try {
+    const failed = (await turn(f as Awaited<ReturnType<typeof fixture>>, 'argv')).find(
+      (event) => event.type === 'turn_failed',
+    )
+    const message = String(failed?.payload?.message)
+    expect(message).toContain('yolo session mode')
+    // So the runtime starts the chat again with no preset, as for a refused flag.
+    expect(looksLikePermissionSettingRefusal(message)).toBe(true)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test("Kimi Code's AskUserQuestion is asked as a question and answered with the option the answer names", async () => {
+  const f = await presetFixture('kimi-code-agent', 'bypass', KIMI)
+  try {
+    const answer = async (respond: (requestId: string) => Parameters<typeof f.provider.resolveApproval>[0]) => {
+      const events: ConversationEvent[] = []
+      for await (const event of await f.provider.sendTurn({
+        ...f.input,
+        turnId: 'turn',
+        requestId: 'request',
+        message: 'question',
+      })) {
+        events.push(event)
+        if (event.type === 'approval_requested')
+          events.push(...(f.provider.resolveApproval(respond(String(event.payload?.requestId))) as ConversationEvent[]))
+      }
+      return events
+    }
+    const answered = await answer((requestId) => ({
+      ...f.input,
+      turnId: 'turn',
+      requestId,
+      approved: true,
+      answers: { 'Which suite?': 'End to end' },
+    }))
+    expect(answered.find((event) => event.type === 'approval_requested')?.payload).toMatchObject({
+      kind: 'question',
+      action: 'AskUserQuestion',
+      summary: 'Which suite?',
+      questions: [
+        { question: 'Which suite?', allowFreeText: false, options: [{ label: 'Unit' }, { label: 'End to end' }] },
+      ],
+    })
+    expect(answered.find((event) => event.type === 'approval_resolved')?.payload).toMatchObject({
+      approved: true,
+      answers: { 'Which suite?': 'End to end' },
+    })
+    expect(answered.find((event) => event.type === 'turn_completed')?.payload?.text).toBe('q0_opt_1')
+    // Declined, the question is skipped rather than answered with its first option.
+    const declined = await answer((requestId) => ({ ...f.input, turnId: 'turn', requestId, approved: false }))
+    expect(declined.find((event) => event.type === 'approval_resolved')?.payload).toMatchObject({ approved: false })
+    expect(declined.find((event) => event.type === 'turn_completed')?.payload?.text).toBe('q0_skip')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('only a permission request titled AskUserQuestion, with text and answers, is read as a question', () => {
+  const request = (title: string, text: string, kinds: Array<'allow_once' | 'reject_once'>) => ({
+    sessionId: 'native',
+    toolCall: {
+      toolCallId: 'call',
+      title,
+      content: text ? [{ type: 'content' as const, content: { type: 'text' as const, text } }] : [],
+    },
+    options: kinds.map((kind, index) => ({ optionId: `o${index}`, name: `Option ${index}`, kind })),
+  })
+  expect(acpQuestionRequest(request('AskUserQuestion', 'Which?', ['allow_once', 'reject_once']))).toEqual({
+    question: 'Which?',
+    multiSelect: false,
+    allowFreeText: false,
+    options: [{ label: 'Option 0' }],
+  })
+  expect(acpQuestionRequest(request('Bash', 'Which?', ['allow_once', 'reject_once']))).toBeNull()
+  expect(acpQuestionRequest(request('AskUserQuestion', '', ['allow_once']))).toBeNull()
+  expect(acpQuestionRequest(request('AskUserQuestion', 'Which?', ['reject_once']))).toBeNull()
+})
+
+test('another ACP agent asking with the same title gets a tool approval card', async () => {
+  const f = await presetFixture('grok-agent', 'none')
+  try {
+    const events = await turn(f as Awaited<ReturnType<typeof fixture>>, 'question')
+    expect(events.find((event) => event.type === 'approval_requested')?.payload).toMatchObject({ kind: 'tool' })
   } finally {
     await f.cleanup()
   }

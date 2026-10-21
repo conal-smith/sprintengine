@@ -43,7 +43,8 @@ function trimRoot(key: string): string {
 }
 
 /**
- * The marks for the tree rooted at `rootPath`, from the summaries of the chats
+ * The marks for the tree rooted at `rootPath`, or for every file and no folder
+ * when it is null (an editor's tabs, which sit under no one root), from the summaries of the chats
  * in its workspace. A file is marked while a call on it runs, for
  * `AGENT_TRAIL_LINGER_MS` after it ends, and for as long as it is the last
  * file its agent touched while the chat is still working: an agent thinking
@@ -57,10 +58,10 @@ export function agentFileTrail(
     ConversationSessionSummary,
     'agentId' | 'phase' | 'status' | 'backgroundAgents' | 'fileActivity'
   >[],
-  rootPath: string,
+  rootPath: string | null,
   now: number,
 ): AgentTrail {
-  const root = trimRoot(normalizePathKey(rootPath))
+  const root = rootPath === null ? null : trimRoot(normalizePathKey(rootPath))
   const live: Live[] = []
   let nextChangeAt: number | null = null
   for (const session of sessions) {
@@ -101,7 +102,7 @@ export function agentFileTrail(
   const files = new Map<string, Live>()
   for (const item of live) {
     const key = normalizePathKey(item.path)
-    if (!key.startsWith(`${root}/`)) continue
+    if (root !== null && !key.startsWith(`${root}/`)) continue
     const prior = files.get(key)
     files.set(key, {
       path: key,
@@ -111,6 +112,7 @@ export function agentFileTrail(
   }
   for (const [key, file] of files) {
     marks.set(key, { verb: file.verb, count: 1, here: file.here })
+    if (root === null) continue
     // Every folder between the root and the file.
     let cut = key.lastIndexOf('/')
     while (cut > root.length) {

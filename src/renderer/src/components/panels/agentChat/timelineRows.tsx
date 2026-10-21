@@ -12,6 +12,10 @@ import { type ReasoningSegment, type TranscriptEntry, type TranscriptToolEntry }
 import { AttachmentThumbnail } from '../ComposerAttachmentStrip'
 import { ComposerFileChip } from './ComposerFileChip'
 import { clientSupports } from '../../../clientCapabilities'
+import {
+  hasMacosPrivacyFolderHint,
+  MACOS_PRIVACY_FOLDER_HINT,
+} from '../../../../../shared/conversation/macosPrivacyFolders'
 import { attachedFileName } from '../../../utils/attachedFiles'
 import { useConversationTransport } from './conversationTransport'
 import { StoredAttachmentThumbnail } from './storedAttachments'
@@ -47,6 +51,9 @@ import { formatStepDuration } from './stepDuration'
 import { useLiveRowMotion } from './liveVisibility'
 import { formatMessageDateTime, formatMessageTime, LiveElapsed } from './liveElapsed'
 import { useClockFormat } from '../../../utils/clockFormat'
+import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
+import { markdownClipboardHtml } from '../../../utils/markdownClipboardHtml'
+import { useMessageCopyMenu } from './messageCopyMenu'
 import { ReasoningBlock } from './reasoningBlock'
 import { CompactionDivider, TurnMeta } from './turnMeta'
 import { CommandOutputRow } from './commandOutputRow'
@@ -66,17 +73,48 @@ import {
   useStopSubagent,
 } from './subagentStatus'
 import { StopGlyph } from './stopGlyph'
-import React, { memo, useId, useMemo, useState, useRef } from 'react'
+import React, { memo, useId, useMemo, useRef, useState } from 'react'
 import { STUDIO_PRODUCT_NAME } from '../../../../../shared/product-identity'
 import { withoutStudioNoticePrefix } from '../../../../../shared/studio-notice'
 
 // Auth-shaped turn failures get a sign-in action in the error block. Whole
 // words and stems, so a path or message that merely contains "author" or a
-// number with 401 in it is not read as a lapsed login.
+// number with 401 in it is not read as a lapsed login. A refusal of access is
+// not one either, though the Claude CLI files a 403 as an authentication
+// failure: signing in again cannot grant what the account is not allowed.
 export function isAuthShapedFailure(reason: string | undefined): boolean {
   return Boolean(
-    reason && /authenticat|unauthori[sz]ed|\bauth\b|log ?in|oauth|credential|\b401\b|expired|api key/i.test(reason),
+    reason &&
+    permissionDeniedReason(reason) === undefined &&
+    /authenticat|unauthori[sz]ed|\bauth\b|log ?in|oauth|credential|\b401\b|expired|api key/i.test(reason),
   )
+}
+
+// The provider's own reason for refusing access ("Your organization does not
+// have access to this model."), read from after the 403; empty when it gave
+// none, undefined when the failure is not a refusal. A JSON error body gives
+// its message. A bare 403 elsewhere in the text counts only beside wording
+// that says access was refused.
+const REFUSAL_WORDING =
+  /permission|forbidden|(?:does not|doesn['’]t|do not|don['’]t) have access|access (?:is )?denied|not allowed/i
+export function permissionDeniedReason(text: string | undefined): string | undefined {
+  if (!text) return undefined
+  const status = /API Error:\s*403\b/i.exec(text) ?? (REFUSAL_WORDING.test(text) ? /\b403\b/.exec(text) : null)
+  if (!status) return undefined
+  const rest = text
+    .slice(status.index + status[0].length)
+    .replace(/^[\s:–—-]*(?:forbidden\b[\s:–—-]*)?/i, '')
+    .trim()
+  if (rest.startsWith('{')) {
+    try {
+      const body = JSON.parse(rest) as { message?: unknown; error?: { message?: unknown } }
+      const message = body.error?.message ?? body.message
+      if (typeof message === 'string') return message.trim()
+    } catch {
+      // Not JSON after all: the text reads as it came.
+    }
+  }
+  return rest
 }
 
 // Chrome the timeline rows need from the component: who is speaking, how to
@@ -102,6 +140,10 @@ export type TimelineChrome = {
   // cannot run it: another machine's chat, or a provider that signs in with a
   // key rather than the CLI's login.
   onSignIn?: () => Promise<void>
+  // Opens System Settings on Privacy & Security › Files and Folders, for a
+  // turn macOS kept out of its folder. Absent where that is not this Mac's
+  // setting to change: another machine's chat, a browser tab, not macOS.
+  onOpenPrivacySettings?: () => void
   // `window.api.platform`: on Windows the chat's login is the native CLI's,
   // which is not the one inside WSL.
   platform?: string
@@ -119,6 +161,7 @@ const CLI_SIGN_IN_COMMAND: Readonly<Record<string, string>> = {
   cursor: 'agent login',
   opencode: 'opencode auth login',
   grok: 'grok login',
+  'kimi-code': 'kimi login',
 }
 
 // A message's actions (copy, clock, revert) rest hidden so a read-through is
@@ -192,10 +235,18 @@ export function UserTimelineRow({
   const cards = fileCards ? files : []
   const named = fileCards ? [] : files
   const text = entry.text
+  const copy = useMessageCopyMenu(
+    text.trim()
+      ? { name: 'Message', label: 'Copy message', markdown: () => text, html: () => messageHtml(text) }
+      : null,
+  )
   return (
     <div className="flex flex-col items-end pb-6">
       <MessageAuthorHeading>You said</MessageAuthorHeading>
-      <div className="max-w-[76%] rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--agent-inset)] px-3 py-1.5">
+      <div
+        className="max-w-[76%] rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--agent-inset)] px-3 py-1.5"
+        onContextMenu={copy.onContextMenu}
+      >
         {attachments.length > 0 || stored.length > 0 || cards.length > 0 ? (
           <div data-copy-exclude="" className={`flex flex-wrap justify-end gap-1.5 ${text ? 'mb-2' : ''}`}>
             {attachments.map((attachment) => (
@@ -244,7 +295,13 @@ export function UserTimelineRow({
         {/* An image-only turn has no words to copy; a button that puts nothing
             on the clipboard and still says it did is worse than none. */}
         {entry.text.trim() ? (
-          <CopyGlyphButton size="xs" label="Copy message" text={entry.text} className={MESSAGE_ACTION_REVEAL} />
+          <CopyGlyphButton
+            size="xs"
+            label="Copy message"
+            text={entry.text}
+            html={() => messageHtml(entry.text)}
+            className={MESSAGE_ACTION_REVEAL}
+          />
         ) : null}
         {chrome?.checkpointsEnabled &&
         entry.seq &&
@@ -276,8 +333,15 @@ export function UserTimelineRow({
           />
         ) : null}
       </div>
+      {copy.menu}
     </div>
   )
+}
+
+// A message as a rich editor should receive it, drawn as its bubble draws it:
+// every newline a line break, and HTML the text it was typed as.
+function messageHtml(text: string): string {
+  return markdownClipboardHtml(text, { userText: true })
 }
 
 // A message Studio sent the chat itself — news from an agent the chat started,
@@ -378,7 +442,6 @@ export function AssistantTurnBlock({
     false,
   )
   const foldRegionId = useId()
-  const proseRef = useRef<HTMLDivElement>(null)
   const open = !fold || workOpen
   // Kept while the tools are, so the cards are not redrawn for each token.
   const lanes = useMemo(() => turnAgentLanes(tools), [tools])
@@ -386,6 +449,12 @@ export function AssistantTurnBlock({
   const foldedSteps = useMemo(() => turnFoldedSteps(tools).length, [tools])
   const foldedProse = useMemo(() => turnFoldedProse(entry.intermediateText), [entry.intermediateText])
   const shown = useMemo(() => turnShownWork(tools, entry.intermediateText), [tools, entry.intermediateText])
+  const settledReply = entry.status !== 'streaming' && hasReply(entry)
+  const copy = useMessageCopyMenu(
+    settledReply
+      ? { name: 'Reply', label: 'Copy reply', markdown: () => replyText(entry), html: () => replyHtml(entry) }
+      : null,
+  )
   return (
     <div className="pb-6">
       <MessageAuthorHeading>{chrome.assistantName}</MessageAuthorHeading>
@@ -452,8 +521,8 @@ export function AssistantTurnBlock({
         // are the list's own padding, so prose, code blocks and tool rows all
         // share them with the user's bubble.
         <div
-          ref={proseRef}
           className="min-w-0"
+          onContextMenu={copy.onContextMenu}
           {...{ [CHAT_FIND_SEGMENT_ATTRIBUTE]: chatFindSegmentKey.reply(entry.turnId) }}
         >
           <ConversationMarkdown text={entry.text} streaming={entry.status === 'streaming'} />
@@ -471,17 +540,14 @@ export function AssistantTurnBlock({
           {entry.durationMs !== undefined ? <span>{formatStepDuration(entry.durationMs)}</span> : null}
           <TurnMeta entry={entry} modelSwitched={modelSwitched} />
           <MessageTimestamp at={entry.startedAt} />
-          {hasReply(entry) ? (
+          {settledReply ? (
             <CopyGlyphButton
               size="xs"
               label="Copy reply"
               text={() => replyText(entry)}
               // The rendered reply beside its markdown, so a paste into a rich
-              // editor keeps the headings, lists and code. Only when the final
-              // text is the whole reply: the prose between steps may be folded
-              // out of the page, and a rich copy missing it would disagree with
-              // the plain one.
-              html={entry.intermediateText?.length ? undefined : () => replyHtml(proseRef.current)}
+              // editor keeps the headings, lists and code.
+              html={() => replyHtml(entry)}
               className={MESSAGE_ACTION_REVEAL}
             />
           ) : null}
@@ -495,6 +561,7 @@ export function AssistantTurnBlock({
           ) : null}
         </div>
       ) : null}
+      {copy.menu}
       {entry.status === 'failed' ? <TurnErrorBlock entry={entry} chrome={chrome} /> : null}
       {chrome.checkpointsEnabled &&
       entry.status !== 'streaming' &&
@@ -516,38 +583,25 @@ export function AssistantTurnBlock({
   )
 }
 
-// The reply as it was written: the prose between steps and the final text,
-// in order. Reasoning, steps and decisions are how it got there, not what it
-// said, so they stay out. Built when it is copied, not on every render.
+// The reply is the answer: the prose after the turn's last step, which is what
+// a person reads as what the agent said. The prose between steps narrates the
+// work, as the steps and the reasoning do, so it stays out with them; a turn
+// that ran no steps is all answer. A follow-up Codex suggests is its label, as
+// the page shows it. Built when it is copied, not on every render.
 function replyText(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): string {
-  return [...(entry.intermediateText?.map((part) => part.text) ?? []), entry.text]
-    .filter((part) => part.trim())
-    .join('\n\n')
+  return showCodexFollowupLabels(entry.text)
 }
 
 function hasReply(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): boolean {
-  return /\S/u.test(entry.text) || Boolean(entry.intermediateText?.some((part) => /\S/u.test(part.text)))
+  return /\S/u.test(entry.text)
 }
 
-// The reply's rendered HTML for the clipboard's rich flavour, read off the page
-// at click time rather than rendered twice. The chrome inside the prose (a code
-// block's header, a copy glyph, screen-reader-only words) is not what the agent
-// wrote, so it goes; a file link drawn as a button keeps its words. Classes are
-// the app's own and mean nothing to the editor the paste lands in.
-export function replyHtml(prose: HTMLElement | null): string {
-  if (!prose) return ''
-  const clone = prose.cloneNode(true) as HTMLElement
-  for (const node of clone.querySelectorAll('[data-copy-exclude], [aria-hidden="true"], .sr-only')) node.remove()
-  for (const button of clone.querySelectorAll('button')) {
-    const span = document.createElement('span')
-    span.textContent = button.textContent
-    button.replaceWith(span)
-  }
-  for (const node of clone.querySelectorAll('[class], [style]')) {
-    node.removeAttribute('class')
-    node.removeAttribute('style')
-  }
-  return `<meta charset="utf-8">${clone.innerHTML}`
+// The reply's rich flavour, rendered from the same markdown `replyText` gives
+// the plain one, so the two never disagree, and never from the page, where
+// the reply's own blocks (a code block's header, a folded table) are drawn
+// with chrome round them.
+function replyHtml(entry: Extract<TranscriptEntry, { kind: 'assistant' }>): string {
+  return markdownClipboardHtml(replyText(entry))
 }
 
 // Settled steps share a summary disclosure; live work stays outside it.
@@ -949,7 +1003,11 @@ export function TurnErrorBlock({
   const [showDetails, setShowDetails] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
   const detail = entry.failureDetail ?? entry.failureReason
-  const authShaped = isAuthShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
+  // macOS refused the CLI its folder (Desktop, Documents, Downloads, iCloud
+  // Drive): the fix is a setting, not a sign-in, so it is said first.
+  const privacyBlocked =
+    hasMacosPrivacyFolderHint(entry.failureDetail) || hasMacosPrivacyFolderHint(entry.failureReason)
+  const authShaped = !privacyBlocked && isAuthShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
   const onSignIn = authShaped ? chrome.onSignIn : undefined
   const detailsId = useId()
   const kept = 'Your message is kept; retrying resumes the same conversation.'
@@ -958,8 +1016,17 @@ export function TurnErrorBlock({
   // A provider with no known command is told to sign in, not given another
   // CLI's command that would do nothing for it.
   const command = chrome.cli ? CLI_SIGN_IN_COMMAND[chrome.cli] : undefined
-  const message: React.ReactNode = !authShaped ? (
-    `Something went wrong while responding. ${kept}`
+  // A refusal says the provider's own reason up front rather than under
+  // Details: it is what the person has to take to whoever grants access.
+  const refusal = permissionDeniedReason(entry.failureDetail) ?? permissionDeniedReason(entry.failureReason)
+  const refused =
+    refusal === undefined
+      ? undefined
+      : `${chrome.assistantName} was refused access${refusal ? `: ${refusal}${/[.!?]$/.test(refusal) ? '' : '.'}` : '.'}`
+  const message: React.ReactNode = privacyBlocked ? (
+    `${MACOS_PRIVACY_FOLDER_HINT} ${kept}`
+  ) : !authShaped ? (
+    `${refused ?? 'Something went wrong while responding.'} ${kept}`
   ) : onSignIn ? (
     `The session could not authenticate — usually a sign your sign-in expired. Sign in, then retry.${
       chrome.platform === 'win32'
@@ -993,6 +1060,11 @@ export function TurnErrorBlock({
       </div>
       <p className="mb-2.5 mt-1 text-body leading-[1.55] text-[color:var(--text-muted)]">{message}</p>
       <div className="flex items-center gap-2">
+        {privacyBlocked && chrome.onOpenPrivacySettings ? (
+          <OutlineButton size="sm" onClick={chrome.onOpenPrivacySettings}>
+            Open Privacy settings
+          </OutlineButton>
+        ) : null}
         {onSignIn ? (
           <OutlineButton size="sm" onClick={signIn} disabled={signingIn}>
             Sign in

@@ -80,7 +80,7 @@ export async function createNewChatWorktree(
       )
     }
     const name = requestedName.trim() || newChatWorktreeName(nanoid(4))
-    const paths = agentWorktreePaths(repoRoot, name)
+    const paths = agentWorktreePaths(repoRoot, name, useWorkspaceStore.getState().appSettings.worktreeBranchPrefix)
     if (!paths) return fail('Worktree name invalid', `"${name}" does not reduce to a usable worktree name.`)
     options.onBranch?.(paths.branchName)
     // From the worktree pool, on the default branch (main's git.ts): a
@@ -274,14 +274,22 @@ export function startPendingNewChatInProject(workspaceId: WorkspaceId): boolean 
 // computer, on a branch named at random: a name typed into the chip is a
 // different branch, so it is made on Enter as before. Turning Worktree off,
 // moving to another project or closing New chat gives the slot back to the
-// pool, clean, for the next chat; its empty `agent/` branch goes at the next
-// cleanup sweep, like any other with no work of its own.
+// pool, clean, for the next chat; its empty branch goes at the next cleanup
+// sweep, like any other of Studio's with no work of its own.
 //
-// Kept for a while only: the slot was reset to the base fetched when it was
-// leased, and a chat should not start from a base an hour behind origin.
+// Kept current while it waits: every chat starts on the latest origin/main
+// (owner ruling 2026-10-17), and the person may type for minutes after the
+// lease fetched it. A made reservation catches up (the pool's `catch-up`:
+// fetched, and fast-forwarded while nothing in it changed) once a minute, and
+// Enter takes it as made only when it caught up within that minute; otherwise
+// the chat waits on one more catch-up first, which costs about a fetch. Kept
+// for a while only, all the same: past that, Enter makes a fresh one.
 
 /** How long a made reservation stays good for a chat. Past it, Enter makes a fresh one. */
 export const NEW_CHAT_RESERVATION_FRESH_MS = 15 * 60_000
+
+/** How often a made reservation catches up to origin, and how long one that did counts as current. */
+export const NEW_CHAT_RESERVATION_CATCH_UP_MS = 60_000
 
 type Reservation = {
   owner: string
@@ -295,6 +303,12 @@ type Reservation = {
   startedAt: number
   /** The give-back waiting out a closed New chat's grace, or null. */
   releaseTimer: ReturnType<typeof setTimeout> | null
+  /** When it last stood on origin's default branch as just fetched: made, or caught up. */
+  caughtUpAt: number
+  /** The catch-up running now, or null. */
+  catchingUp: Promise<void> | null
+  /** The repeating catch-up while it waits, or null. */
+  catchUpTimer: ReturnType<typeof setInterval> | null
 }
 
 const reservations = new Map<string, Reservation>()
@@ -351,6 +365,9 @@ export function reserveNewChatWorktree(owner: string, folderPath: string, hostId
     settled: null,
     startedAt: Date.now(),
     releaseTimer: null,
+    caughtUpAt: 0,
+    catchingUp: null,
+    catchUpTimer: null,
   }
   reservation.made = createNewChatWorktree(projectFolder, '', null, {
     quietInstall: true,
@@ -361,6 +378,15 @@ export function reserveNewChatWorktree(owner: string, folderPath: string, hostId
     },
   }).then((made) => {
     reservation.settled = made
+    if (made.ok) {
+      reservation.caughtUpAt = Date.now()
+      if (made.made?.leaseId && reservations.get(owner) === reservation) {
+        reservation.catchUpTimer = setInterval(
+          () => void catchUpReservation(reservation),
+          NEW_CHAT_RESERVATION_CATCH_UP_MS,
+        )
+      }
+    }
     // A reservation that could not be made is not kept: Enter makes the
     // worktree itself, and says why if it fails again.
     if (!made.ok && reservations.get(owner) === reservation) {
@@ -391,9 +417,46 @@ export function releaseNewChatWorktreeReservation(owner: string, graceMs = 0): v
     return
   }
   if (reservation.releaseTimer) clearTimeout(reservation.releaseTimer)
+  stopCatchingUp(reservation)
   reservations.delete(owner)
   reservationsChanged()
   void reservation.made.then((made) => (made.ok ? giveBackUnusedWorktree(made, null) : undefined))
+}
+
+/**
+ * Bring a made reservation to origin's default branch as it is now. One at a
+ * time; a reservation that is not a pool lease (the pool declined) has nothing
+ * to catch up, and a catch-up that fails leaves it where it stood.
+ */
+function catchUpReservation(reservation: Reservation): Promise<void> {
+  if (reservation.catchingUp) return reservation.catchingUp
+  const leaseId = reservation.settled?.ok ? reservation.settled.made?.leaseId : null
+  if (!leaseId) return Promise.resolve()
+  const run = window.api
+    .worktreePoolAction({ kind: 'catch-up', leaseId })
+    .then(
+      (result) => {
+        if (result.ok) reservation.caughtUpAt = Date.now()
+      },
+      () => undefined,
+    )
+    .finally(() => {
+      if (reservation.catchingUp === run) reservation.catchingUp = null
+    })
+  reservation.catchingUp = run
+  return run
+}
+
+function stopCatchingUp(reservation: Reservation): void {
+  if (reservation.catchUpTimer) clearInterval(reservation.catchUpTimer)
+  reservation.catchUpTimer = null
+}
+
+/** Whether a made reservation stands on origin's default branch as last fetched, with nothing moving it. */
+function caughtUp(reservation: Reservation): boolean {
+  const lease = reservation.settled?.ok ? reservation.settled.made?.leaseId : null
+  if (!lease) return true
+  return !reservation.catchingUp && Date.now() - reservation.caughtUpAt <= NEW_CHAT_RESERVATION_CATCH_UP_MS
 }
 
 /** Whether `owner` holds a reservation now (made or on its way). */
@@ -417,7 +480,7 @@ function claimReservation(
   let found: Reservation | null = null
   for (const reservation of reservations.values()) {
     if (reservation.projectFolder !== projectFolder) continue
-    if (ready && !reservation.settled?.ok) continue
+    if (ready && (!reservation.settled?.ok || !caughtUp(reservation))) continue
     // The one most likely made: settled before one still on its way.
     if (!found || (reservation.settled?.ok && !found.settled?.ok)) found = reservation
   }
@@ -427,6 +490,7 @@ function claimReservation(
     return null
   }
   if (found.releaseTimer) clearTimeout(found.releaseTimer)
+  stopCatchingUp(found)
   reservations.delete(found.owner)
   reservationsChanged()
   return found
@@ -461,7 +525,10 @@ export async function obtainNewChatWorktree(
     if (claimed.branch) options.onBranch?.(claimed.branch)
     else claimed.onBranch = options.onBranch ?? null
     const made = await claimed.made
-    if (made.ok) return made
+    if (made.ok) {
+      if (!caughtUp(claimed)) await catchUpReservation(claimed)
+      return made
+    }
   }
   return createNewChatWorktree(folderPath, requestedName, hostId, options)
 }

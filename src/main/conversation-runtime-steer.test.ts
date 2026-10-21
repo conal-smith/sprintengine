@@ -56,6 +56,9 @@ function event(input: MockAdapterSessionInput, type: ConversationEventType, payl
   }
 }
 
+// The delay the runtime asks a busy send to wait before it is sent again.
+const TURN_BUSY_RETRY = 1_000
+
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 async function until(condition: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 200 && !condition(); i += 1) await tick()
@@ -293,7 +296,12 @@ test('a steer that a card overtakes on its way in waits behind the card, which s
   chat.provider.emit(first.turnId, 'approval_requested', { requestId: 'approval_y', action: 'Bash', summary: 'Deploy' })
   await until(() => chat.summary()?.status === 'awaiting_approval', 'the card')
   release()
-  assert.deepEqual(await steer, { ok: false, message: 'Conversation turn is awaiting approval.' })
+  assert.deepEqual(await steer, {
+    ok: false,
+    code: 'busy',
+    retryAfterMs: TURN_BUSY_RETRY,
+    message: 'Conversation turn is awaiting approval.',
+  })
   assert.deepEqual(chat.provider.steers, [])
   assert.equal(chat.events.filter((next) => next.type === 'user_message').length, 1, 'nothing was written')
   assert.equal(chat.events.find((next) => next.type === 'approval_requested')?.payload?.turnId, first.turnId)
@@ -322,10 +330,12 @@ test('a steer is refused until the running turn has reached the provider, and af
   const chat = await setup({ attachmentStore })
   const first = chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'investigate' })
   await until(() => chat.summary()?.status === 'active', 'the turn to open')
-  assert.deepEqual(await chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'early', steer: true }), {
-    ok: false,
-    message: 'The agent has not started on the last message yet.',
-  })
+  // Each refusal ran nothing, so it is busy: sent again, it runs again.
+  const steerBusy = (message: string) => ({ ok: false, code: 'busy', retryAfterMs: TURN_BUSY_RETRY, message })
+  assert.deepEqual(
+    await chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'early', steer: true }),
+    steerBusy('The agent has not started on the last message yet.'),
+  )
   release()
   await until(() => chat.provider.streams.size === 1, 'the provider to take the turn')
   const turnId = Array.from(chat.provider.streams.keys())[0]
@@ -333,7 +343,7 @@ test('a steer is refused until the running turn has reached the provider, and af
   // The provider's own refusal is the answer, and nothing is written.
   chat.provider.record.refuse = 'The child is being replaced.'
   const refused = await chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'refused', steer: true })
-  assert.deepEqual(refused, { ok: false, message: 'The child is being replaced.' })
+  assert.deepEqual(refused, steerBusy('The child is being replaced.'))
   assert.equal(chat.landed('refused'), undefined)
   chat.provider.record.refuse = null
 
@@ -341,10 +351,10 @@ test('a steer is refused until the running turn has reached the provider, and af
   // rather than into one that is over.
   chat.provider.emit(turnId, 'turn_completed', { costUsd: 0.1 })
   await until(() => chat.summary()?.status === 'ready', 'the turn to end')
-  assert.deepEqual(await chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'late', steer: true }), {
-    ok: false,
-    message: 'The agent has just finished; the message goes as the next turn.',
-  })
+  assert.deepEqual(
+    await chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'late', steer: true }),
+    steerBusy('The agent has just finished; the message goes as the next turn.'),
+  )
   chat.provider.streams.get(turnId)!.end()
   assert.equal((await first).ok, true)
   assert.deepEqual(chat.provider.steers, [])

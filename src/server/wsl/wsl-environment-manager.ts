@@ -151,6 +151,9 @@ const ALIVE_PROBE_MS = 15_000
 // gives its VM this long to wake before a miss counts.
 const MISSED_PROBES_TO_KILL = 3
 const WAKE_GRACE_MS = 60_000
+// How long a message sent while a hung server is being stopped waits for it to
+// exit before it is told to try again: `wsl.exe` killed says so promptly.
+const HUNG_EXIT_WAIT_MS = 15_000
 
 /** The refusal a WSL 1 distribution gets (decision R70). */
 export function wsl1Refusal(distro: string): string {
@@ -263,13 +266,43 @@ export function createWslEnvironmentManager(deps: WslEnvironmentManagerDeps): Ws
     handle.idleTimer.unref?.()
   }
 
-  /** Stop a server that no longer answers, with the reason a person reads once it has exited. */
+  /**
+   * Stop a server that no longer answers, with the reason a person reads once
+   * it has exited. Its wire is let go at once, and a reconnect in flight is
+   * dropped: until `wsl.exe` says it exited (a moment, or longer) the next
+   * message would otherwise be handed the hung server, and go nowhere.
+   */
   const stopAsHung = (handle: Handle, server: RunningWslServer, reason: string): void => {
     if (handle.server !== server) return
     handle.killedFor = reason
+    if (handle.reconnecting && handle.starting === handle.reconnecting) handle.starting = null
+    handle.reconnecting = null
+    const connection = handle.connection
+    handle.connection = null
+    connection?.backend.close()
     setStatus(handle, { state: 'unavailable', reason })
     server.kill()
   }
+
+  /** Resolves once a server stopped for not answering has exited; one that has not within the bound is said to be still stopping. */
+  const exitOfHung = (handle: Handle, server: RunningWslServer): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new WslSetupError(
+              `The Studio server in ${handle.distro} that stopped answering is still being stopped; try again in a moment.`,
+              { fatal: false, code: 'start' },
+            ),
+          ),
+        HUNG_EXIT_WAIT_MS,
+      )
+      timer.unref?.()
+      server.onExit(() => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
 
   /** One lease ping, answered or not: misses in a row past the bound are a hung server. */
   async function probe(handle: Handle, server: RunningWslServer): Promise<void> {
@@ -432,7 +465,7 @@ export function createWslEnvironmentManager(deps: WslEnvironmentManagerDeps): Ws
     backend.onClose((why) => {
       if (handle.connection !== connection) return
       handle.connection = null
-      if (handle.stopping || !handle.server) return
+      if (handle.stopping || !handle.server || handle.killedFor !== null) return
       // The wire went. If the server is still there, one reconnect, then the
       // server is stopped and the next call starts it afresh. If it died, its
       // exit (a moment behind the wire) says so, and nothing is reconnected.
@@ -670,6 +703,17 @@ export function createWslEnvironmentManager(deps: WslEnvironmentManagerDeps): Ws
   return {
     connect(distro) {
       const handle = handleOf(distro)
+      // A server stopped for not answering is neither handed out nor
+      // reconnected to while it goes: the next server starts once it has.
+      const hung = handle.killedFor !== null ? handle.server : null
+      if (hung) {
+        handle.starting ??= exitOfHung(handle, hung)
+          .then(() => (handle.server ? connectBackend(handle) : start(handle)))
+          .finally(() => {
+            handle.starting = null
+          })
+        return handle.starting
+      }
       if (handle.connection && handle.server) {
         armIdle(handle)
         return Promise.resolve(handle.connection)

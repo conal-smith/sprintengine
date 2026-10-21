@@ -86,3 +86,36 @@ test('a provider that signs in with a stored key has no CLI sign-in', async () =
   expect(result.ok).toBe(false)
   expect(detect).not.toHaveBeenCalled()
 })
+
+test('a Kimi Code chat signs in with kimi login, from the kimi the chat runs', async () => {
+  const detect = vi.fn(async () => ({
+    ...detected('/Users/me/.kimi-code/bin/kimi'),
+    cli: 'kimi-code',
+    binary: 'kimi',
+  }))
+  const result = await resolveConversationSignIn(
+    { providerId: 'kimi-code-agent' },
+    { detect, platform: 'darwin', home: () => '/Users/me' },
+  )
+  expect(result).toEqual({
+    ok: true,
+    commandLine: '/Users/me/.kimi-code/bin/kimi login',
+    cwd: '/Users/me',
+    platform: 'darwin',
+  })
+  expect(detect).toHaveBeenCalledWith('kimi-code', undefined)
+})
+
+test('a missing Kimi Code CLI is named as Kimi Code', async () => {
+  const result = await resolveConversationSignIn(
+    { providerId: 'kimi-code-agent' },
+    { detect: async () => detected(null), platform: 'darwin', home: () => '/Users/me' },
+  )
+  expect(result).toMatchObject({ ok: false, message: expect.stringMatching(/^Kimi Code CLI is not installed/) })
+})
+
+test('a CLI chat Studio cannot open a sign-in for has none to run', async () => {
+  const detect = vi.fn(async () => detected('/usr/local/bin/grok'))
+  expect((await resolveConversationSignIn({ providerId: 'grok-agent' }, { detect })).ok).toBe(false)
+  expect(detect).not.toHaveBeenCalled()
+})

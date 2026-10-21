@@ -99,15 +99,19 @@ const settle = async () => {
   for (let pass = 0; pass < 30; pass += 1) await new Promise((resolve) => setImmediate(resolve))
 }
 
-function register(decision: QuitDecision | Pick<QuitConfirmation, 'confirm' | 'quitWithoutAsking'>) {
+function register(
+  decision: QuitDecision | Pick<QuitConfirmation, 'confirm' | 'quitWithoutAsking'>,
+  options: { allowMultipleInstances?: boolean; terminalShutdown?: () => Promise<void> } = {},
+) {
   const calls = { confirm: 0, quitWithoutAsking: 0, terminals: 0 }
   let prepareForInstall: (() => Promise<void>) | null = null
   registerAppLifecycle({
     diagnosticsEnabled: false,
-    allowMultipleInstances: true,
+    allowMultipleInstances: options.allowMultipleInstances ?? true,
     terminalRuntime: {
       shutdown: async () => {
         calls.terminals += 1
+        await options.terminalShutdown?.()
       },
     },
     quitConfirmation:
@@ -145,6 +149,29 @@ test('a quit the person confirms runs the shutdown and exits', async () => {
   assert.equal(calls.confirm, 1)
   assert.equal(calls.terminals, 1)
   assert.deepEqual(exitCalls, [0])
+})
+
+test('a relaunch while the shutdown runs opens no window', async () => {
+  let finishTerminals = () => {}
+  const terminalsStopping = new Promise<void>((resolve) => (finishTerminals = resolve))
+  const { calls, beforeQuit } = register('quit', {
+    allowMultipleInstances: false,
+    terminalShutdown: () => terminalsStopping,
+  })
+  beforeQuit()
+  await settle()
+  assert.equal(calls.terminals, 1, 'the shutdown is running')
+  appEvents.get('second-instance')?.[0]?.({}, ['/opt/SprintEngine Studio/sprintengine-studio'])
+  assert.equal(windowsCreated.length, 0, 'a window opened now would be gone when the app exits')
+  finishTerminals()
+  await settle()
+  assert.deepEqual(exitCalls, [0])
+})
+
+test('a relaunch with no window open, and no quit under way, opens one', () => {
+  register('quit', { allowMultipleInstances: false })
+  appEvents.get('second-instance')?.[0]?.({}, ['/opt/SprintEngine Studio/sprintengine-studio'])
+  assert.equal(windowsCreated.length, 1)
 })
 
 test('Cancel keeps the app: no shutdown, no exit', async () => {

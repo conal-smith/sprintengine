@@ -447,6 +447,8 @@ test('CliModelPicker', async () => {
         'the arrow walked the results the query just produced',
       )
       assert.equal(dom.window.document.activeElement, search, 'without the query field losing focus')
+      await view.key(search, 'Enter', { isComposing: true })
+      assert.deepEqual(picked, [], 'the Enter that commits an input method’s word picks nothing')
       await view.key(search, 'Enter')
       assert.deepEqual(picked, [['codex', 'gpt-5.5']], 'and Enter took the highlighted row')
       view.unmount()

@@ -53,6 +53,22 @@ export const COMMAND_REGISTRY = [
     defaultKeybindings: ['Shift Shift'],
     handlerPath: { kind: 'workspace-manager', handler: 'setCommandPaletteOpen(true)' },
   }),
+  // Go to file. The same overlay `commandPalette.open` raises, opened on its
+  // Files tab, so the rows are file names in the project and a query is never
+  // ranked against chats or commands. ⌘P because that is the chord a person's
+  // hands already know for it from other editors; nothing else in the app or
+  // its modules binds it. Global and not allowed in an editable target, like
+  // ⌘⇧F: in the browser pane ⌘P stays the page's print (browser-manager's
+  // forwarded-chord table leaves it out on purpose), and off macOS Ctrl+P in
+  // a terminal is the shell's previous-command key.
+  command({
+    id: 'search.goToFile',
+    title: 'Go to file',
+    category: 'command_palette',
+    scopes: ['global'],
+    defaultKeybindings: ['Primary+P'],
+    handlerPath: { kind: 'workspace-manager', handler: 'setCommandPaletteOpen(true, "files")' },
+  }),
   // Find in Path. The same overlay `commandPalette.open` raises, opened filtered
   // to the file-backed groups — a snippet of code should not be ranked against
   // command and workspace rows. Global scope, like the palette itself: with no
@@ -114,8 +130,8 @@ export const COMMAND_REGISTRY = [
     },
   }),
   // Send what is in a chat's composer and go straight to New chat, to fire off
-  // the next task while this one runs. ⌘⌥⏎: the chat's ⌘⏎ is "send now", and
-  // Option is the key that says "and then somewhere else". Resolved in the
+  // the next task while this one runs. ⌘⌥⏎: the chat's ⌘⏎ is the other of
+  // queue and steer, and Option is the key that says "and then somewhere else". Resolved in the
   // composer's own keydown, after its pickers and an input method have had the
   // key, so the window dispatcher's match runs nothing (context-bound); the
   // scope is what puts it in the Shortcuts tab, rebindable and checked for
@@ -131,6 +147,26 @@ export const COMMAND_REGISTRY = [
       kind: 'context-bound',
       owner: 'AgentChatView',
       action: 'composer onKeyDown -> submitComposer(), then chat.new',
+    },
+  }),
+  // Set the draft aside and clear the box, or, on an empty box, open the
+  // stash to bring one back (agentChat/promptStashPicker.tsx). ⌘S because a
+  // stash is the composer's save: the words are kept, just not here. Resolved
+  // in each composer's own keydown, after its pickers and an input method, so
+  // the window dispatcher's match runs nothing (context-bound), and ⌘S in the
+  // code editor stays the editor's save. The scopes put it in the Shortcuts
+  // tab, rebindable and checked for conflicts, for both composers.
+  command({
+    id: 'chat.stash',
+    title: 'Stash prompt, or open stashed prompts',
+    category: 'workspace',
+    scopes: ['workspace', 'new-chat'],
+    defaultKeybindings: ['Primary+S'],
+    allowInEditableTarget: true,
+    handlerPath: {
+      kind: 'context-bound',
+      owner: 'AgentChatView, NewAgentPanel',
+      action: 'composer onKeyDown -> usePromptStash().handleKeyDown',
     },
   }),
   // The chats waiting on the person, one press each: blocked on a question or
@@ -272,6 +308,54 @@ export const COMMAND_REGISTRY = [
     availability: ['activeWorkspace'],
     handlerPath: { kind: 'panel-event', eventId: 'chat.replay.start' },
   }),
+  // Export the focused chat, whole, to send to someone: onto the clipboard to
+  // paste into an email, or as a file. No chords, for the reason Replay has
+  // none: they are reached for rarely, from here or the chat tab's menu.
+  command({
+    id: 'chat.export.copy',
+    title: 'Copy chat',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.copy' },
+  }),
+  command({
+    id: 'chat.export.copyMarkdown',
+    title: 'Copy chat as Markdown',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.copyMarkdown' },
+  }),
+  command({
+    id: 'chat.export.pdf',
+    title: 'Export chat as PDF…',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.pdf' },
+  }),
+  command({
+    id: 'chat.export.docx',
+    title: 'Export chat as Word document…',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.docx' },
+  }),
+  command({
+    id: 'chat.export.markdown',
+    title: 'Export chat as Markdown…',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: [],
+    availability: ['activeWorkspace'],
+    handlerPath: { kind: 'panel-event', eventId: 'chat.export.markdown' },
+  }),
   // Find in the conversation you are reading: its messages, replies and plans,
   // a match at a time. ⌘F because that is where a person's hand goes to find
   // anything, and it is free here: `terminal.find` holds the chord on the more
@@ -303,6 +387,20 @@ export const COMMAND_REGISTRY = [
     defaultKeybindings: ['Primary+Shift+.'],
     availability: ['activeWorkspace'],
     handlerPath: { kind: 'panel-event', eventId: 'chat.quoteSelection' },
+  }),
+  // Ask the focused chat a side question that stays out of it. B for "by the
+  // way", Claude Code's own /btw. Not ⌘⇧/: macOS takes that chord for the
+  // Help menu's search before the window sees it. From the composer too,
+  // where the person is when the question comes to them.
+  command({
+    id: 'chat.sideQuestion',
+    title: 'Ask a side question',
+    category: 'panel',
+    scopes: ['workspace'],
+    defaultKeybindings: ['Primary+Shift+B'],
+    availability: ['activeWorkspace'],
+    allowInEditableTarget: true,
+    handlerPath: { kind: 'panel-event', eventId: 'chat.sideQuestion' },
   }),
   command({
     id: 'workspace.close',

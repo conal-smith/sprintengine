@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { encodeQrCode } from '../../../../shared/qr-code'
 import type { WebDevicesStatus } from '../../../../shared/web-client'
+import { useRelativeNow } from '../../hooks/useRelativeNow'
 import { relativeFromNow } from '../../utils/relativeTime'
 import { CopyGlyphButton, GhostButton, InlineNotice, Input, OutlineButton, Select, useConfirmDialog } from '../ui'
 import { QrSquare } from './RemoteTailnetSettingsTab'
@@ -41,9 +42,12 @@ export function BrowsersSettings() {
   }, [refresh])
 
   const qr = useMemo(() => (link ? encodeQrCode(link.url) : null), [link])
+  // "last seen 2 minutes ago" and "pairing ends in 3 days" move with the
+  // clock while the panel stays open, not only when the device list changes.
+  // A desktop window draws nothing here, so its clock does not tick.
+  const now = useRelativeNow(30_000, status !== null)
 
   if (!status) return null
-  const now = Date.now()
 
   const act = async (work: () => Promise<{ ok: boolean; message?: string } | boolean>) => {
     setError(null)

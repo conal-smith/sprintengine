@@ -3,6 +3,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { WebContents } from 'electron'
 
 import type { BrowserPointerEvent } from '../../shared/browser'
+import type { BrowserDownload } from './browser-manager'
+import { sendPageInput } from './guest-input'
 
 // The agent's hands on a browser tab (browser-pane epic, child 6). One
 // in-process DevTools-protocol session per tab, shared with the appearance
@@ -76,13 +78,15 @@ export type NetworkEntry = {
   at: number
 }
 
-/** One thing that happened to a tab: an agent action, or the person taking it back. */
+/** One thing that happened to a tab: an agent action, a file it downloaded, or the person taking it back. */
 export type ActionEntry = {
   id: string
-  /** The tool's verb (`click`, `type`, …) or `human` for the person's own input. */
+  /** The tool's verb (`click`, `type`, …), `download` for a file the page sent, or `human` for the person's own input. */
   action: string
-  /** A short rendering of the arguments, never the full text typed. */
+  /** A short rendering of the arguments, never the full text typed; a download's URL. */
   args: string
+  /** Where a download was saved. */
+  path?: string
   status: 'running' | 'succeeded' | 'failed' | 'interrupted'
   startedAt: string
   completedAt?: string
@@ -108,6 +112,8 @@ export type BrowserControlManager = {
   noteAgentInput(tabId: string, delta: 1 | -1): void
   /** Subscribe to the person's own input on any tab (the epoch bumps). */
   onHumanInput(listener: (tabId: string) => void): () => void
+  /** Subscribe to the downloads a tab the agent drives saved, as each starts and ends. */
+  onDownload(listener: (tabId: string, download: BrowserDownload) => void): () => void
   /** Where the agent's pointer is about to act, for the cursor overlay. */
   notePointer(event: BrowserPointerEvent): void
 }
@@ -118,6 +124,11 @@ type Target = { ref?: string; selector?: string }
 type Session = {
   tabId: string
   wc: WebContents
+  /**
+   * The tab's debugger, read once as the session opens. `wc.debugger` throws
+   * once the contents are destroyed, which is where the session is disposed.
+   */
+  dbg: WebContents['debugger']
   console: ConsoleEntry[]
   network: NetworkEntry[]
   /** Newest last; agent actions and the person's takeovers, so an `interrupted` explains itself. */
@@ -157,6 +168,21 @@ const SNAPSHOT_SCRIPT = `(() => {
     if (cs.display === 'none' || cs.visibility === 'hidden') return false;
     const r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0 || el.tagName === 'OPTION';
+  };
+  // The snapshot is a tool result, kept in the chat's transcript, so a field
+  // holding a secret says only that it is filled: \`value=hidden\`, unquoted
+  // where a real value is always quoted. That is enough for the agent to know
+  // the form is ready to submit. A secret is what the page hides as it is
+  // typed (a password, or a field styled to draw dots), and what autofill is
+  // told is a password, a one-time code or a card's number or security code,
+  // which stays secret after a "show password" button makes it plain text.
+  const SECRET_AUTOCOMPLETE = ['current-password', 'new-password', 'one-time-code', 'cc-number', 'cc-csc'];
+  const secret = (el) => {
+    if (el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'password') return true;
+    const masked = getComputedStyle(el).getPropertyValue('-webkit-text-security');
+    if (masked && masked !== 'none') return true;
+    const tokens = (el.getAttribute('autocomplete') || '').toLowerCase().split(/\\s+/);
+    return tokens.some((t) => SECRET_AUTOCOMPLETE.includes(t));
   };
   const roleOf = (el) => {
     const explicit = el.getAttribute('role');
@@ -225,7 +251,7 @@ const SNAPSHOT_SCRIPT = `(() => {
         const bits = [role];
         if (name) bits.push(JSON.stringify(name));
         if (role === 'heading') bits.push('level=' + (tag[1] || el.getAttribute('aria-level') || '2'));
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { const v = el.value; if (v) bits.push('value=' + JSON.stringify(clip(v))); }
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { const v = el.value; if (v) bits.push(secret(el) ? 'value=hidden' : 'value=' + JSON.stringify(clip(v))); }
         if (el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions[0]) bits.push('value=' + JSON.stringify(clip(el.selectedOptions[0].textContent)));
         if (role === 'checkbox' || role === 'radio' || role === 'switch') bits.push(el.checked || el.getAttribute('aria-checked') === 'true' ? 'checked' : 'unchecked');
         if (el.disabled || el.getAttribute('aria-disabled') === 'true') bits.push('disabled');
@@ -343,6 +369,29 @@ export function createBrowserControl(manager: BrowserControlManager) {
     })
   })
 
+  // A download the agent's action set off is saved without a dialog
+  // (browser-manager); its entry says where, and whether it finished.
+  manager.onDownload((tabId, download) => {
+    const s = sessions.get(tabId)
+    if (!s) return
+    if (download.state === 'started') {
+      pushBounded(s.actions, ACTION_HISTORY_MAX, {
+        id: nextActionId(),
+        action: 'download',
+        args: withoutDataPayload(download.url).slice(0, 200),
+        path: download.path,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+      })
+      return
+    }
+    const entry = s.actions.findLast((candidate) => candidate.action === 'download' && candidate.path === download.path)
+    if (!entry) return
+    entry.status = download.state === 'completed' ? 'succeeded' : 'failed'
+    entry.completedAt = new Date().toISOString()
+    if (download.state !== 'completed') entry.error = `The download was ${download.state}.`
+  })
+
   function nextActionId(): string {
     actionSequence += 1
     return `a${Date.now().toString(36)}-${actionSequence.toString(36)}`
@@ -361,9 +410,11 @@ export function createBrowserControl(manager: BrowserControlManager) {
       existing = undefined
     }
     if (!existing) {
+      const dbg = wc.debugger
       const created: Session = {
         tabId,
         wc,
+        dbg,
         console: [],
         network: [],
         actions: [],
@@ -379,30 +430,37 @@ export function createBrowserControl(manager: BrowserControlManager) {
         created.attached = false
       }
       const onDestroyed = () => {
-        created.dispose()
         if (sessions.get(tabId) === created) sessions.delete(tabId)
+        created.dispose()
       }
-      wc.debugger.on('message', onMessage)
-      wc.debugger.on('detach', onDetach)
+      dbg.on('message', onMessage)
+      dbg.on('detach', onDetach)
       wc.once('destroyed', onDestroyed)
       created.dispose = () => {
-        wc.debugger.removeListener('message', onMessage)
-        wc.debugger.removeListener('detach', onDetach)
-        wc.removeListener('destroyed', onDestroyed)
+        // Also run as the contents are destroyed, when what is left of them
+        // may throw: nothing here may stop the rest of a teardown.
+        try {
+          dbg.removeListener('message', onMessage)
+          dbg.removeListener('detach', onDetach)
+          wc.removeListener('destroyed', onDestroyed)
+        } catch {
+          // Gone with the contents.
+        }
       }
       sessions.set(tabId, created)
       existing = created
     }
-    if (!existing.attached || !wc.debugger.isAttached()) {
+    const { dbg } = existing
+    if (!existing.attached || !dbg.isAttached()) {
       if (wc.isDevToolsOpened()) {
         return fail('cdp', 'DevTools is open on this tab; close it to let the agent drive the page.')
       }
       try {
-        if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
-        await wc.debugger.sendCommand('Runtime.enable')
-        await wc.debugger.sendCommand('Log.enable')
-        await wc.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 })
-        await wc.debugger.sendCommand('Page.enable')
+        if (!dbg.isAttached()) dbg.attach('1.3')
+        await dbg.sendCommand('Runtime.enable')
+        await dbg.sendCommand('Log.enable')
+        await dbg.sendCommand('Network.enable', { maxPostDataSize: 0 })
+        await dbg.sendCommand('Page.enable')
         existing.attached = true
       } catch (error) {
         return fail('cdp', `Could not attach to the page: ${error instanceof Error ? error.message : String(error)}`)
@@ -432,7 +490,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.console, CONSOLE_BUFFER_MAX, {
         level,
         text: text.slice(0, 2000),
-        location: frame?.url ? `${frame.url}:${(frame.lineNumber ?? 0) + 1}` : null,
+        location: frame?.url ? `${withoutDataPayload(frame.url)}:${(frame.lineNumber ?? 0) + 1}` : null,
         at,
       })
     } else if (method === 'Runtime.exceptionThrown') {
@@ -444,7 +502,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.console, CONSOLE_BUFFER_MAX, {
         level: 'error',
         text: `Uncaught ${text}`.slice(0, 2000),
-        location: details?.url ? `${details.url}:${(details.lineNumber ?? 0) + 1}` : null,
+        location: details?.url ? `${withoutDataPayload(details.url)}:${(details.lineNumber ?? 0) + 1}` : null,
         at,
       })
     } else if (method === 'Log.entryAdded') {
@@ -462,7 +520,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.console, CONSOLE_BUFFER_MAX, {
         level,
         text: `[${entry.source ?? 'browser'}] ${entry.text ?? ''}`.slice(0, 2000),
-        location: entry.url ? `${entry.url}:${(entry.lineNumber ?? 0) + 1}` : null,
+        location: entry.url ? `${withoutDataPayload(entry.url)}:${(entry.lineNumber ?? 0) + 1}` : null,
         at,
       })
     } else if (method === 'Network.requestWillBeSent') {
@@ -530,7 +588,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
   ): Promise<{ value: unknown; exception: string | null }> {
     stopIfAbandoned()
     const result = (await withDeadline(
-      s.wc.debugger.sendCommand('Runtime.evaluate', {
+      s.dbg.sendCommand('Runtime.evaluate', {
         expression,
         returnByValue: true,
         awaitPromise,
@@ -633,12 +691,16 @@ export function createBrowserControl(manager: BrowserControlManager) {
     )
   }
 
-  /** Synthetic input, bracketed so the manager's human-epoch does not count it. */
+  /**
+   * Synthetic input, bracketed so the manager's human-epoch does not count it.
+   * Keys and text reach the page even when the app, not the page, has focus
+   * (guest-input.ts).
+   */
   async function input(s: Session, method: string, params: Record<string, unknown>): Promise<void> {
     stopIfAbandoned()
     manager.noteAgentInput(s.tabId, 1)
     try {
-      await s.wc.debugger.sendCommand(method, params)
+      await sendPageInput(s.wc, s.dbg, method, params)
     } finally {
       manager.noteAgentInput(s.tabId, -1)
     }
@@ -983,7 +1045,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       if (!open) return fail('no_dialog', 'No dialog is open on this tab.')
       try {
         await withDeadline(
-          s.wc.debugger.sendCommand('Page.handleJavaScriptDialog', {
+          s.dbg.sendCommand('Page.handleJavaScriptDialog', {
             accept: answer.accept,
             ...(answer.promptText !== undefined ? { promptText: answer.promptText } : {}),
           }),
@@ -1090,6 +1152,19 @@ function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Prom
 
 function describeTarget(target: Target): string {
   return target.ref ? `ref ${target.ref}` : `selector ${target.selector ?? ''}`
+}
+
+/**
+ * A `data:` URL as `data:<type>,…`. Its payload is its content, which can be a
+ * whole file a page built in script, and the URLs recorded here reach an
+ * agent's tool output. A type that is not a plain `type/subtype` is the page's
+ * own text too, so it goes as well.
+ */
+function withoutDataPayload(url: string): string {
+  const parsed = /^data:([^,;]*)/i.exec(url)
+  if (!parsed) return url
+  const type = parsed[1]!.trim()
+  return `data:${/^[\w.+-]{1,64}\/[\w.+-]{1,64}$/.test(type) ? type : ''},…`
 }
 
 function pushBounded<T>(list: T[], max: number, item: T): void {

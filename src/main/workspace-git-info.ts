@@ -149,7 +149,8 @@ export function resolveSshHostName(alias: string, config: string): string | null
     const keyword = (match[1] ?? '').toLowerCase()
     const value = (match[2] ?? '').trim()
     if (keyword === 'host') {
-      matching = hostPatternsMatch(value.split(/\s+/), alias)
+      const patterns = splitSshConfigWords(value)
+      matching = patterns !== null && hostPatternsMatch(patterns, alias)
       continue
     }
     if (keyword === 'match') {
@@ -157,10 +158,59 @@ export function resolveSshHostName(alias: string, config: string): string | null
       continue
     }
     if (matching && keyword === 'hostname') {
-      return value.replace(/^"|"$/g, '').replace(/%h/g, alias)
+      const hostName = splitSshConfigWords(value)?.[0]
+      if (hostName) return hostName.replace(/%h/g, alias)
     }
   }
   return null
+}
+
+/**
+ * A config value split into words the way ssh splits it: whitespace
+ * separates, double or single quotes group, a backslash escapes a quote, a
+ * backslash or a space, and a `#` that begins a word starts a comment — so
+ * `HostName github.com # work` is `github.com` and `Host "github-work"`
+ * matches `github-work`. Null for an unterminated quote, a line ssh refuses.
+ */
+function splitSshConfigWords(value: string): string[] | null {
+  const words: string[] = []
+  let word = ''
+  let inWord = false
+  let quote: string | null = null
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index] as string
+    const next = value[index + 1] ?? ''
+    if (quote) {
+      if (char === '\\' && (next === quote || next === '\\')) {
+        word += next
+        index++
+      } else if (char === quote) {
+        quote = null
+      } else {
+        word += char
+      }
+      continue
+    }
+    if (char === ' ' || char === '\t') {
+      if (inWord) words.push(word)
+      word = ''
+      inWord = false
+      continue
+    }
+    if (char === '#' && !inWord) break
+    inWord = true
+    if (char === '"' || char === "'") {
+      quote = char
+    } else if (char === '\\' && (next === '\\' || next === '"' || next === "'" || next === ' ')) {
+      word += next
+      index++
+    } else {
+      word += char
+    }
+  }
+  if (quote) return null
+  if (inWord) words.push(word)
+  return words
 }
 
 function hostPatternsMatch(patterns: string[], alias: string): boolean {

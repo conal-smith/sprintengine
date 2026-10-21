@@ -2,10 +2,12 @@ import React, { useCallback, useState } from 'react'
 
 import type { WorkspaceId } from '../../types/workspace'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import { showToast } from '../../store/toastStore'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
 import { EmptyState, GhostButton, OutlineButton } from '../ui'
 import { SettingCard, SettingToggle, SettingsPageHeader } from './SettingsAtoms'
 import { createSettledChatsSelector, type SettledChatEntry } from './settledChatsModel'
+import { remoteOriginChatWorkspaceId } from '../workspace/remoteBand/remoteSessionsModel'
 import { useStableCallback } from '../../hooks/useStableCallback'
 
 const SETTLED_PAGE = 100
@@ -31,6 +33,8 @@ export function SettledChatsSettingsTab({
   const setWorkspaceSettled = useWorkspaceStore((s) => s.setWorkspaceSettled)
   const settleOnMerge = useWorkspaceStore((s) => s.appSettings.settleOnPullRequestMerge)
   const setSettleOnMerge = useWorkspaceStore((s) => s.setSettleOnPullRequestMerge)
+  const keepWithOpenPr = useWorkspaceStore((s) => s.appSettings.keepChatsWithOpenPullRequest)
+  const setKeepWithOpenPr = useWorkspaceStore((s) => s.setKeepChatsWithOpenPullRequest)
   // One clock for the visit: "settled 3d ago" does not need to tick while the
   // page is open, and a timer here would re-render the list for nothing.
   const [now] = useState(() => Date.now())
@@ -42,7 +46,33 @@ export function SettledChatsSettingsTab({
   // Hundreds of chats settle on a long-lived profile; the page draws the most
   // recent and folds the rest.
   const [shown, setShown] = useState(SETTLED_PAGE)
-  const unsettle = useCallback((id: WorkspaceId) => setWorkspaceSettled(id, false), [setWorkspaceSettled])
+  // A chat opened here from a paired machine rests over there: that machine
+  // is asked to bring it back, so every device lists it again, and it comes
+  // back here once it has said yes. A machine that keeps no rest has nothing
+  // to ask.
+  const unsettle = useCallback(
+    (id: WorkspaceId) => {
+      const origin = useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === id)?.remoteOrigin
+      const settle = window.api?.meshSettleConversation
+      if (!origin || typeof settle !== 'function') {
+        setWorkspaceSettled(id, false)
+        return
+      }
+      const refused = (message: string) =>
+        showToast({ tone: 'error', title: 'The chat was not brought back', description: message })
+      void settle({
+        connectionId: origin.connectionId,
+        workspaceId: remoteOriginChatWorkspaceId(origin),
+        settled: false,
+      })
+        .then((answer) => {
+          if (answer.ok || answer.code === 'lifecycle_unsupported') setWorkspaceSettled(id, false)
+          else refused(answer.message)
+        })
+        .catch((error: unknown) => refused(error instanceof Error ? error.message : String(error)))
+    },
+    [setWorkspaceSettled],
+  )
   const open = useStableCallback(onOpenChat)
   const remaining = chats.length - shown
 
@@ -55,6 +85,12 @@ export function SettledChatsSettingsTab({
           description="For chats with Auto-settle switched on from their menu: once every pull request is merged or closed, and at least one merged, the chat settles. Not if you wrote to it after the merge, and never while an agent in it is working. A settled chat's worktree is removed once its work is merged and clean, and checked out again from its branch when you come back."
           enabled={settleOnMerge}
           onChange={setSettleOnMerge}
+        />
+        <SettingToggle
+          label="Keep chats with an open pull request"
+          description="For chats with Auto-settle switched on from their menu: a chat whose pull request is still open, waiting on review or still a draft, does not settle after three days without activity. Settling when its pull requests merge is the setting above."
+          enabled={keepWithOpenPr}
+          onChange={setKeepWithOpenPr}
         />
       </SettingCard>
       {chats.length === 0 ? (

@@ -4,8 +4,8 @@
 // active-derivation semantics — the sidebar no longer carries a second copy.
 //
 // Files and Git have no switches here: they are workspace-pane tabs now
-// (browser-pane epic), and the workspace identity cluster's project chip and
-// branch chip open them; the command palette and their keyboard shortcuts
+// (browser-pane epic), and the workspace identity cluster's branch chip opens
+// Git; the command palette and their keyboard shortcuts
 // (panel.files.toggle / panel.git.toggle) toggle them. Backlog is a pane tab
 // too, but it keeps its switch: the glyph is the one entry point the panel
 // has in the header, and it toggles the pane's Backlog tab.

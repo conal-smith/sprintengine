@@ -39,13 +39,13 @@ type CleanupWorkspace = Pick<Workspace, 'id' | 'folderPath' | 'worktree' | 'agen
  * leased for itself (MCP `worktree.lease`) is in use while that agent exists,
  * wherever its terminal sits. Each is named with its chat as well
  * (`agentKeys`): an agent id is unique only within its chat. Every branch a
- * chat or worktree entry records is named too: main deletes merged `agent/`
- * branches, but never one a chat that is not settled may still be restored
- * from (`chatWorktreeRestore.ts`).
+ * chat or worktree entry records is named too: main deletes Studio's merged
+ * branches (the person's prefix or `agent/`), but never one a chat that is not
+ * settled may still be restored from (`chatWorktreeRestore.ts`).
  *
  * Every project root the records mention is swept. Main's own rules decide
- * what in it is an agent worktree at all (`agent/<slug>` in the app's
- * container) and whether it is clean and merged.
+ * what in it is an agent worktree at all (one of Studio's branches in the
+ * app's container) and whether it is clean and merged.
  */
 export function agentWorktreeCleanupPlan(
   workspaces: readonly CleanupWorkspace[],

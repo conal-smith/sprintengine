@@ -76,3 +76,21 @@ test('paired browsers are listed, and a request is let in by the digits it shows
   await act(async () => letIn?.click())
   expect(approve).toHaveBeenCalledWith('r1', '123456')
 })
+
+test("a paired browser's last-seen time moves on while the panel stays open", async () => {
+  // Only the interval is faked: the window's shared clock keeps the Date it
+  // first saw, so the time is moved on that Date rather than a fake one.
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  let now = Date.parse('2026-10-03T00:00:30Z')
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  try {
+    await mount({ webDevicesStatus: async () => status })
+    expect(host?.textContent).toContain('last seen 30 seconds ago')
+    now += 90_000
+    await act(async () => vi.advanceTimersByTime(30_000))
+    expect(host?.textContent).toContain('last seen 2 minutes ago')
+  } finally {
+    clock.mockRestore()
+    vi.useRealTimers()
+  }
+})

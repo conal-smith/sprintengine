@@ -7,6 +7,7 @@
 
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
 import {
@@ -93,7 +94,13 @@ import {
 import { createSkillSourceStore, isRemovableSkillSource, skillSourceLog, type SkillSourceStore } from './source-store'
 import { createSourceUpdateChecker } from './source-updates'
 import { STUDIO_MARKETPLACE_RESOURCE_DIR } from './studio-plugin'
-import { diffScannedSkills, installedSkillCopies, refreshInstalledSkills, refreshSourceMcpServers } from './sync'
+import {
+  diffScannedSkills,
+  installedSkillCopies,
+  refreshInstalledSkills,
+  refreshSourceMcpServers,
+  type SkillSyncCopyResult,
+} from './sync'
 import { readStudioEnv } from '../../shared/studio-env'
 
 // How many entry documents a scan reads to fill in names and descriptions. The
@@ -141,6 +148,12 @@ export type SkillsServiceDeps = {
    * not after a restart. Awaited before the three deps above are read.
    */
   refreshTransport?: () => Promise<void>
+  /**
+   * The folder a `global` install writes under — its `.claude/skills`,
+   * `.codex/skills`, `.agents/skills` and the rest are what every agent reads
+   * in every project. The user's home folder in production.
+   */
+  homeDir?: string
 }
 
 export type SkillsService = {
@@ -170,6 +183,40 @@ export function createSkillsService(
 ): SkillsService {
   const studioSeedRoot = deps.studioMarketplaceSeedRoot ?? defaultStudioMarketplaceSeedRoot
   const listHarnesses = deps.listHarnesses ?? (() => resolveInstalledSkillHarnesses())
+  const globalRoot = (): string => deps.homeDir ?? homedir()
+  /**
+   * The folders whose installed copies a call touches: the workspace's when
+   * one is open, and always the home folder's. A workspace opened on the home
+   * folder is one root, not two.
+   */
+  const installRoots = (workspaceRoot: string): string[] => {
+    const roots = workspaceRoot && existsSync(workspaceRoot) ? [resolve(workspaceRoot)] : []
+    const home = resolve(globalRoot())
+    if (!roots.includes(home)) roots.push(home)
+    return roots
+  }
+  /** Re-copy what each root holds from this source, out of the scan just read. */
+  const refreshCopies = async (
+    workspaceRoot: string,
+    sourceId: string,
+    scan: ScanResult,
+    readFile: (skill: ScannedSkill, file: SkillFileRef) => Promise<Buffer>,
+  ): Promise<SkillSyncCopyResult> => {
+    const refreshed: SkillSyncCopyResult['refreshed'] = []
+    const failures: SkillSyncCopyResult['failures'] = []
+    for (const root of installRoots(workspaceRoot)) {
+      const copied = await refreshInstalledSkills({
+        workspaceRoot: root,
+        sourceId,
+        scan,
+        installedCopies: await installedSkillCopies(root),
+        readFile,
+      })
+      refreshed.push(...copied.refreshed)
+      failures.push(...copied.failures)
+    }
+    return { refreshed, failures }
+  }
   /** The bundled marketplace seed, read at most once: undefined until asked. */
   let studioSeed: ScanResult | null | undefined
   const discovery = createSkillDiscoveryClient(deps.discovery)
@@ -466,20 +513,23 @@ export function createSkillsService(
 
     async install(input) {
       const workspaceRoot = input.workspaceRoot?.trim() ?? ''
-      if (!workspaceRoot) {
-        return {
-          ok: false,
-          message: 'Open a workspace to install a skill — skills are installed into a workspace, not the app.',
+      // A caller that names no scope keeps the meaning it always had: a folder
+      // given is the folder installed into. The Skills surfaces ask for
+      // `global`, which is what makes a skill usable in every chat.
+      const scope = input.scope ?? (workspaceRoot ? 'workspace' : 'global')
+      if (scope === 'workspace') {
+        if (!workspaceRoot) {
+          return { ok: false, message: 'Open a project folder to install a skill into that project only.' }
         }
-      }
-      if (!existsSync(workspaceRoot)) {
-        return { ok: false, message: 'That workspace folder no longer exists.' }
+        if (!existsSync(workspaceRoot)) {
+          return { ok: false, message: 'That workspace folder no longer exists.' }
+        }
       }
       const located = await locateSkill(input.sourceId ?? '', input.skillId ?? '')
       if (!located.ok) return located
       const harnesses = await listHarnesses()
       const result = await installSkill({
-        workspaceRoot,
+        workspaceRoot: scope === 'workspace' ? workspaceRoot : globalRoot(),
         skill: located.skill,
         harnesses,
         readFile: (file) => readSkillBytes(located.source, located.skill, file),
@@ -489,7 +539,7 @@ export function createSkillsService(
           commitSha: located.source.commitSha,
         },
       })
-      return result
+      return result.ok ? { ...result, scope } : result
     },
 
     /**
@@ -500,21 +550,26 @@ export function createSkillsService(
      */
     async uninstall(input) {
       const workspaceRoot = input.workspaceRoot?.trim() ?? ''
-      if (!workspaceRoot || !existsSync(workspaceRoot)) {
+      if (workspaceRoot && !existsSync(workspaceRoot)) {
         return { ok: false, message: 'That workspace folder no longer exists.' }
       }
-      const result = await uninstallSkill({
-        workspaceRoot,
-        dirName: input.dirName ?? '',
-        harnesses: SKILL_PACK_HARNESSES,
-      })
+      // Both copies go: the workspace's, and the one every project reads. A
+      // Remove that left either behind would leave an agent reading the skill.
+      let dirName = input.dirName ?? ''
+      const removedPaths: string[] = []
+      for (const root of installRoots(workspaceRoot)) {
+        const result = await uninstallSkill({ workspaceRoot: root, dirName, harnesses: SKILL_PACK_HARNESSES })
+        if (!result.ok) return result
+        dirName = result.dirName
+        removedPaths.push(...result.removedPaths)
+      }
       // A row whose skill is already gone is a stale row, and saying so beats
       // reporting a removal that removed nothing.
-      if (result.ok && result.removedPaths.length === 0) {
-        return { ok: false, message: `${result.dirName} is not installed in this workspace.` }
+      if (removedPaths.length === 0) {
+        return { ok: false, message: `${dirName} is not installed.` }
       }
-      if (result.ok) await pruneSkillFromPluginReceipts(installs, workspaceRoot, result.dirName)
-      return result
+      if (workspaceRoot) await pruneSkillFromPluginReceipts(installs, workspaceRoot, dirName)
+      return { ok: true, dirName, removedPaths }
     },
 
     /**
@@ -558,18 +613,10 @@ export function createSkillsService(
       const changes = diffScannedSkills(previous, rescan.scan)
       const workspaceRoot = input.workspaceRoot?.trim() ?? ''
       // Sources are app-level and the door opens without a workspace, so a sync
-      // with none refreshes the list and copies nothing — there is nowhere for
-      // a skill to be installed.
-      const copied =
-        workspaceRoot && existsSync(workspaceRoot)
-          ? await refreshInstalledSkills({
-              workspaceRoot,
-              sourceId: source.id,
-              scan: rescan.scan,
-              installedCopies: await installedSkillCopies(workspaceRoot),
-              readFile: (skill, file) => readSkillBytes(rescan.source, skill, file),
-            })
-          : { refreshed: [], failures: [] }
+      // with none still refreshes the copies installed for every project.
+      const copied = await refreshCopies(workspaceRoot, source.id, rescan.scan, (skill, file) =>
+        readSkillBytes(rescan.source, skill, file),
+      )
 
       return {
         ok: true,
@@ -639,16 +686,9 @@ export function createSkillsService(
     await store.putSource(synced, scan)
     const changes = diffScannedSkills(previous, scan)
     const workspaceRoot = (input.workspaceRoot ?? '').trim()
-    const copied =
-      workspaceRoot && existsSync(workspaceRoot)
-        ? await refreshInstalledSkills({
-            workspaceRoot,
-            sourceId: source.id,
-            scan,
-            installedCopies: await installedSkillCopies(workspaceRoot),
-            readFile: (skill, file) => readSkillBytes(synced, skill, file),
-          })
-        : { refreshed: [], failures: [] }
+    const copied = await refreshCopies(workspaceRoot, source.id, scan, (skill, file) =>
+      readSkillBytes(synced, skill, file),
+    )
     return {
       ok: true,
       source: synced,

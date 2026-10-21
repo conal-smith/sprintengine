@@ -18,14 +18,14 @@
 // lands. It is small in practice: telegram is 11 files and 89 KB at
 // 85cce0381e7860082641b59d961a2b8c368b8b79.
 //
-// **Where it lands: `<workspace>/.sprintengine/claude-plugins/<plugin id>`.**
-// Beside `.sprintengine/studio-plugin`, in the app-owned per-workspace directory
-// the agent-state reporter already lives in — a plugin's directory is
-// per-workspace because installs are, and it must be writable because
-// `bun install` writes `node_modules` into it. NOT `.sprintengine/plugins`:
-// `plugin-registry.ts` uses `~/.sprintengine/plugins` for the studio's own modules,
-// and a person who opens their home directory as a workspace would have the two
-// meet.
+// **Where it lands: `claude-plugins/<plugin id>` in the workspace's store**
+// (`~/.sprintengine/workspaces/<slug>-<hash>/`, `workspace-store.ts`): per
+// workspace because installs are, writable because `bun install` writes
+// `node_modules` into it, and outside the repository, which keeps nothing of
+// the app's that a person would have to ignore (owner ruling 2026-10-16). It
+// used to be `<workspace>/.sprintengine/claude-plugins/<plugin id>`; a plugin
+// installed there stays there, because the MCP settings name its folder
+// (`sourceRef.pluginRoot`), and is still found by the uninstall.
 //
 // **What happens when the runtime is missing.** Nothing here: the copy is the
 // same either way. `installPlugin` probes the command and says so on the row,
@@ -44,9 +44,13 @@ import { dirname, join, resolve } from 'node:path'
 
 import { DEFAULT_SKILL_INSTALL_MAX_FILES, DEFAULT_SKILL_INSTALL_MAX_TOTAL_BYTES, resolveSkillFilePath } from './install'
 import { isPathStrictlyInside } from '../path-containment'
+import { workspaceStorePath } from '../workspace-store'
 
-/** Where a source's plugins land inside a workspace. */
-export const PLUGIN_WORKSPACE_DIR = join('.sprintengine', 'claude-plugins')
+/** Where a source's plugins land inside a workspace's store. */
+export const PLUGIN_STORE_DIR = 'claude-plugins'
+
+/** Where an earlier build put them, inside the workspace itself. */
+export const LEGACY_PLUGIN_WORKSPACE_DIR = join('.sprintengine', 'claude-plugins')
 
 /**
  * The provenance marker, written last into each copied plugin directory so a
@@ -86,12 +90,21 @@ export function pluginDirectoryName(pluginId: string): string {
   return name
 }
 
-/** Where this plugin's files live in this workspace, or '' when the id has no usable name. */
+/** Where this plugin's files live for this workspace, or '' when the id has no usable name. */
 export function pluginDirectoryPath(workspaceRoot: string, pluginId: string): string {
   const name = pluginDirectoryName(pluginId)
   if (name === '') return ''
+  const root = workspaceStorePath(workspaceRoot, PLUGIN_STORE_DIR)
+  const path = resolve(root, name)
+  return isPathStrictlyInside(root, path) ? path : ''
+}
+
+/** Where an earlier build installed it, inside the workspace. */
+function legacyPluginDirectoryPath(workspaceRoot: string, pluginId: string): string {
+  const name = pluginDirectoryName(pluginId)
+  if (name === '') return ''
   const root = resolve(workspaceRoot)
-  const path = resolve(root, PLUGIN_WORKSPACE_DIR, name)
+  const path = resolve(root, LEGACY_PLUGIN_WORKSPACE_DIR, name)
   return isPathStrictlyInside(root, path) ? path : ''
 }
 
@@ -147,7 +160,7 @@ export async function installPluginDirectory(
   }
   const destination = pluginDirectoryPath(options.workspaceRoot, options.pluginId)
   if (destination === '') {
-    return { ok: false, message: `Plugin "${options.pluginId}" resolves outside the workspace.` }
+    return { ok: false, message: `Plugin "${options.pluginId}" resolves outside the workspace's store.` }
   }
   if (options.files.length === 0) {
     return { ok: false, message: `Plugin "${options.pluginId}" lists no files to install.` }
@@ -248,10 +261,12 @@ export async function uninstallPluginDirectory(options: {
   workspaceRoot: string
   pluginId: string
 }): Promise<PluginDirectoryUninstallResult> {
-  const destination = pluginDirectoryPath(options.workspaceRoot, options.pluginId)
-  if (destination === '') {
+  const stored = pluginDirectoryPath(options.workspaceRoot, options.pluginId)
+  if (stored === '') {
     return { ok: false, message: `"${options.pluginId}" is not a plugin directory name.` }
   }
+  const legacy = legacyPluginDirectoryPath(options.workspaceRoot, options.pluginId)
+  const destination = !(await exists(stored)) && legacy !== '' && (await exists(legacy)) ? legacy : stored
   const standing = await readPluginDirectoryProvenance(destination)
   if (standing && standing.pluginId !== options.pluginId) {
     return {

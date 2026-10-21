@@ -106,3 +106,23 @@ test('filesystem-read', async () => {
 
   await suiteRun
 })
+
+test('a ~/ picture is stat’d and read from the home folder', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'sprintengine-fs-home-'))
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
+  process.env.HOME = home
+  process.env.USERPROFILE = home
+  try {
+    mkdirSync(join(home, 'Desktop'))
+    writeFileSync(join(home, 'Desktop', 'shot.png'), Buffer.from('png'))
+    const handlers = createFilesystemReadHandlers()
+    assert.equal((await handlers.statPath('~/Desktop/shot.png')).sizeBytes, 3)
+    assert.equal(await handlers.readImageDataUrl('~/Desktop/shot.png'), 'data:image/png;base64,cG5n')
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    rmSync(home, { force: true, recursive: true })
+  }
+})

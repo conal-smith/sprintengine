@@ -163,6 +163,30 @@ export const TAILNET_CAPABILITIES = [
   // A message may bring skills (2026-10-09): `send` takes `skills`, ids of
   // this machine's skills the chat runs with it. CONVERSATION_SEND_SKILLS_CAPABILITY.
   'conversation-send-skills',
+  // A message may steer the turn that is running (2026-10-14): `send` takes
+  // `steer`, and a listed chat says whether its provider takes one
+  // (`capabilities.steer`). A steer the turn cannot take is held as a queued
+  // message is, or refused busy where it carries what a held one cannot.
+  // CONVERSATION_STEER_SENDS_CAPABILITY.
+  'conversation-steer-sends',
+  // The pictures a person sent with a message (2026-10-16): `GET
+  // conversation-image` takes `attachment`, the `ref` a `user_message`'s
+  // `attachments` entry records, in place of `toolUseId`, and serves the
+  // picture this machine kept for that chat. A client without it names the
+  // picture instead. CONVERSATION_MESSAGE_IMAGES_CAPABILITY.
+  'conversation-message-images',
+  // Files of any type with a message (2026-10-17): `upload?kind=file` takes
+  // one up to 25 MB, kept in Studio's own store, and the `send` that spends
+  // its id attaches it to the message by path (`files` on its
+  // `user_message`). A client without it offers pictures only.
+  // CONVERSATION_MESSAGE_FILES_CAPABILITY.
+  'conversation-message-files',
+  // A picture uploaded for a chat is sized for the model on receipt
+  // (2026-10-17): this machine shrinks it to the composer's 1568px long edge,
+  // so the upload route takes one up to 20MB, where it took 5MB. A client
+  // that does not see it keeps its own 5MB check. A server with no image
+  // codec does not advertise it. CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY.
+  'conversation-image-downscale',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:
@@ -203,6 +227,13 @@ export const TAILNET_CAPABILITIES = [
   // skips the argument.
   'workspace-extensions',
   'new-chat-skills',
+  // A paired desktop's Create PR on a chat here (2026-10-18): the
+  // `conversation.pull_request_*` tools read whether the chat's checkout is
+  // ready, draft the text with this machine's text generation settings, push
+  // the branch and open the pull request here, recording it as the chat's.
+  // They name the chat, never a folder. A client that does not see it draws
+  // no Create PR under this machine's chats, as before.
+  'chat-create-pull-request',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

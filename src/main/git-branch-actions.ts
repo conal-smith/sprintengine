@@ -1,4 +1,5 @@
 import type { GitCommandResult, GitRepoOperation, GitResetMode } from './git'
+import { gitPushTarget, originDefaultBranch } from './git-push-target'
 import { getGitBranches } from './git-read-models'
 import { runGitCommand } from './git-utils'
 
@@ -72,6 +73,45 @@ export async function pushGitBranch(repoRoot: string): Promise<GitCommandResult>
 
   const branch = branchSnapshot.branches.find((candidate) => candidate.current)
   if (branch?.upstream) {
+    const out = async (cwd: string, args: string[]) => {
+      const result = await runGitCommand(cwd, args)
+      return result.ok ? result.stdout.trim() : null
+    }
+    const [merge, pushDefault, originHead] = await Promise.all([
+      out(repoRoot, ['config', '--get', `branch.${currentBranch}.merge`]),
+      out(repoRoot, ['config', '--get', 'push.default']),
+      out(repoRoot, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']),
+    ])
+    // A plain push follows the upstream. A branch cut from `origin/main`
+    // tracks main, so git either refuses it (push.default simple) or sends
+    // the branch's commits to main (upstream); it goes to its own name
+    // instead, as Create PR pushes it. A person who set push.default to
+    // upstream and tracks some other branch on purpose keeps that push.
+    if (merge !== `refs/heads/${currentBranch}`) {
+      const defaultBranch = await originDefaultBranch(out, repoRoot, originHead)
+      const target = await gitPushTarget(out, repoRoot, currentBranch, defaultBranch)
+      if (!target.ok) return fail(target.message)
+      const followsUpstream = (pushDefault === 'upstream' || pushDefault === 'tracking') && !target.setUpstream
+      if (!followsUpstream) {
+        // What the push remote has of the branch already, else what the
+        // upstream has: a new branch carries only what is not on main.
+        const namesake = `refs/remotes/${target.remote}/${currentBranch}`
+        const counted = (await out(repoRoot, ['rev-parse', '--verify', '--quiet', namesake]))
+          ? namesake
+          : branch.upstream
+        const pushedCommitCount = await countCommitsToPush(repoRoot, counted)
+        // `--` so the remote, read from the repository's config, is never
+        // taken for an option, whatever slipped past the push target's check.
+        const result = await runGitCommand(repoRoot, [
+          'push',
+          ...(target.setUpstream ? ['-u'] : []),
+          '--',
+          target.remote,
+          `HEAD:refs/heads/${currentBranch}`,
+        ])
+        return result.ok ? { ...result, pushedCommitCount } : result
+      }
+    }
     const pushedCommitCount = await countCommitsToPush(repoRoot, branch.upstream)
     const result = await runGitCommand(repoRoot, ['push'])
     return result.ok ? { ...result, pushedCommitCount } : result
@@ -162,6 +202,10 @@ export async function switchGitBranch(repoRoot: string, branchName: string): Pro
   if (!trimmedBranch) {
     return { ok: false, stdout: '', stderr: '', message: 'Choose a branch.' }
   }
+  // The name arrives over IPC and goes to git as an argument; a dash-led one
+  // would be read as an option, as it would for the other branch actions.
+  const invalid = validateRefName(trimmedBranch, 'branch')
+  if (invalid) return invalid
 
   return runGitCommand(repoRoot, ['switch', trimmedBranch])
 }

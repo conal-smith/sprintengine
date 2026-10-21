@@ -22,6 +22,7 @@ const fakeMain = createFakeLaunchSettingsMain({
   cliPermissionPresets: {},
   cliPermissionModes: {},
   projectUsage: {},
+  worktreeBranchPrefix: null,
 })
 // This window read main while it still had no record.
 const racingApi = {

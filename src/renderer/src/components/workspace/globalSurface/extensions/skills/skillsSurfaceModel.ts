@@ -217,20 +217,11 @@ export type SkillInstallAvailability = {
 }
 
 /**
- * Sources are app-level; installing is workspace-level. The Extensions door can
- * be open with no workspace, and there Install is disabled WITH its reason —
- * never a control that silently does nothing.
+ * Sources are app-level, and so is a default install: it lands in the home
+ * folder, where every agent reads it in every chat and project. Nothing about
+ * the open folder can withhold Install — only having nothing picked.
  */
-export function deriveInstallAvailability(
-  workspaceRoot: string | null,
-  selectedCount: number,
-): SkillInstallAvailability {
-  if (!workspaceRoot) {
-    return {
-      enabled: false,
-      reason: 'Open a workspace to install skills — a skill installs into a workspace, not into the app.',
-    }
-  }
+export function deriveInstallAvailability(selectedCount: number): SkillInstallAvailability {
   if (selectedCount === 0) return { enabled: false, reason: null }
   return { enabled: true, reason: null }
 }

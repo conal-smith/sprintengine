@@ -1,5 +1,5 @@
 import type { UsageGroupBy, UsageQuery, UsageRow } from '../../shared/modules/activity-service'
-import type { UsageCacheEntry } from './usage-scan'
+import type { UsageCacheEntry, UsageSpeed } from './usage-scan'
 
 // The query side of the usage service: the cached per-session aggregates
 // (usage-scan.ts), summed over a window and the dimensions asked for.
@@ -28,7 +28,16 @@ export type UsageAggregateContext = {
   chatTitle?: (workspaceId: string, agentId: string) => string | null
   /** The calendar day an hour falls on. Defaults to this machine's local day. */
   dayOf?: (hourMs: number) => string
+  /**
+   * Keep usage at a premium speed in rows of its own, each naming its speed,
+   * so it can be priced at that speed's rate. The dashboard asks for it; a
+   * module's query does not, and its rows stay one per group as before.
+   */
+  bySpeed?: boolean
 }
+
+/** A row as the dashboard reads it: a module's row, and the speed it ran at when it was not standard. */
+export type UsageSpeedRow = UsageRow & { speed?: UsageSpeed }
 
 type Atom = {
   hour: number
@@ -44,6 +53,7 @@ type Atom = {
   cacheWrite: number
   requests: number
   costUsd: number | null
+  speed?: UsageSpeed
 }
 
 export function localDay(hourMs: number): string {
@@ -57,7 +67,7 @@ export function aggregateUsage(
   entries: Iterable<UsageCacheEntry>,
   query: UsageQuery,
   context: UsageAggregateContext,
-): UsageRow[] {
+): UsageSpeedRow[] {
   const all = [...entries]
   const cliSessions = new Set(all.filter((entry) => entry.src !== 'studio').map((entry) => entry.sessionId))
   const chats = new Map<string, { workspaceId: string; agentId: string; title: string | null }>()
@@ -93,7 +103,7 @@ export function aggregateUsage(
     if (entry.studio) {
       const studio = entry.studio
       const title = entry.title ?? context.chatTitle?.(studio.workspaceId, studio.agentId) ?? null
-      for (const [hour, model, link, input, output, cacheRead, cacheWrite, requests, costUsd] of entry.buckets) {
+      for (const [hour, model, link, input, output, cacheRead, cacheWrite, requests, costUsd, speed] of entry.buckets) {
         // Counted from the CLI's own log instead.
         if (!inWindow(hour) || (link && cliSessions.has(link))) continue
         if (input + output + cacheRead + cacheWrite === 0 && costUsd === 0) continue
@@ -111,13 +121,14 @@ export function aggregateUsage(
           cacheWrite,
           requests,
           costUsd: costUsd > 0 ? costUsd : null,
+          ...(speed ? { speed } : {}),
         })
       }
       continue
     }
     const chat = chats.get(entry.sessionId)
     const workspaceId = chat?.workspaceId ?? workspaceFor([entry.repoRoot, entry.cwd])
-    for (const [hour, model, , input, output, cacheRead, cacheWrite, requests, costUsd] of entry.buckets) {
+    for (const [hour, model, , input, output, cacheRead, cacheWrite, requests, costUsd, speed] of entry.buckets) {
       if (!inWindow(hour)) continue
       atoms.push({
         hour,
@@ -133,21 +144,24 @@ export function aggregateUsage(
         cacheWrite,
         requests,
         costUsd: costUsd > 0 ? costUsd : null,
+        ...(speed ? { speed } : {}),
       })
     }
   }
 
   const groupBy = new Set<UsageGroupBy>(query.groupBy ?? [])
   const dayOf = context.dayOf ?? localDay
-  const rows = new Map<string, UsageRow>()
+  const rows = new Map<string, UsageSpeedRow>()
   for (const atom of atoms) {
     const day = groupBy.has('day') ? dayOf(atom.hour) : undefined
+    const speed = context.bySpeed ? atom.speed : undefined
     const key = JSON.stringify([
       day,
       groupBy.has('model') ? atom.model : undefined,
       groupBy.has('provider') ? atom.providerId : undefined,
       groupBy.has('workspace') ? atom.workspaceId : undefined,
       groupBy.has('session') ? atom.sessionId : undefined,
+      speed,
     ])
     let row = rows.get(key)
     if (!row) {
@@ -162,6 +176,7 @@ export function aggregateUsage(
         tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         requests: 0,
         reportedCostUsd: null,
+        ...(speed ? { speed } : {}),
       }
       rows.set(key, row)
     }
@@ -175,7 +190,7 @@ export function aggregateUsage(
   return [...rows.values()].sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '') || totalTokens(b) - totalTokens(a))
 }
 
-const totalTokens = (row: UsageRow): number =>
+const totalTokens = (row: UsageSpeedRow): number =>
   row.tokens.input + row.tokens.output + row.tokens.cacheRead + row.tokens.cacheWrite
 
 function trimSeparators(path: string): string {

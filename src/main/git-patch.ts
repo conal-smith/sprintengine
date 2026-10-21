@@ -31,14 +31,23 @@ export type GitPatchResult = {
 }
 
 /**
+ * A person's own settings that would otherwise turn the output into something
+ * `git apply` refuses: `diff.noprefix` and `diff.mnemonicPrefix` drop or
+ * rename the `a/` `b/` prefixes `-p1` counts on, and `diff.external` or a
+ * textconv filter replace the patch with a tool's rendering of it. The same
+ * pins `git-hunks.ts` puts on the diffs it builds patches from.
+ */
+const PATCH_PINS = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--binary']
+
+/**
  * The argv for the tracked half. Exported so the test can assert the command
  * rather than the output: `--` before the paths is what keeps a file named
  * `--cached` a file, `:(literal)` is what keeps a file named `[id].tsx` from
  * being read as a character class, and `--no-color` is what keeps ANSI escapes
- * out of a patch that has to survive `git apply`.
+ * out of a patch that has to survive `git apply`. The rest is `PATCH_PINS`.
  */
 export function gitPatchArgs(relativePaths: string[], cached: boolean): string[] {
-  return ['diff', ...(cached ? ['--cached'] : []), '--no-color', '--binary', '--', ...relativePaths.map(toPathspec)]
+  return ['diff', ...(cached ? ['--cached'] : []), ...PATCH_PINS, '--', ...relativePaths.map(toPathspec)]
 }
 
 /**
@@ -50,7 +59,7 @@ export function gitPatchArgs(relativePaths: string[], cached: boolean): string[]
  * what makes it safe — the name is opened, not matched.
  */
 export function gitUntrackedPatchArgs(relativePath: string): string[] {
-  return ['diff', '--no-index', '--no-color', '--binary', '--', '/dev/null', relativePath]
+  return ['diff', '--no-index', ...PATCH_PINS, '--', '/dev/null', relativePath]
 }
 
 export async function createGitPatch(

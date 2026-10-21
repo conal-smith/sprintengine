@@ -104,6 +104,16 @@ export const FLOAT_MIN_WIDTH = 240
 export const FLOAT_MIN_HEIGHT = 160
 export const FLOAT_MAX_WIDTH = 1200
 export const FLOAT_MAX_HEIGHT = 900
+
+/**
+ * The kinds the floating player can show: a page, and a board an agent is
+ * drawing on. Both keep their panel mounted while the pane is closed, which is
+ * what the player restyles; a board floats as a picture of its drawing rather
+ * than its editor (CanvasTab).
+ */
+export function paneKindFloats(kind: WorkspacePaneTabKind): boolean {
+  return kind === 'browser' || kind === 'canvas'
+}
 // A favicon data URL past this is not a favicon; the main process caps what it
 // sends at the same size.
 const MAX_FAVICON_LENGTH = 12_000
@@ -116,18 +126,33 @@ function defaultWorkspacePaneState(): WorkspacePaneState {
 
 type DiffReveal = NonNullable<NonNullable<WorkspacePaneTab['diff']>['reveal']>
 
+type DiffStep = NonNullable<DiffReveal['step']>
+type DiffKept = NonNullable<NonNullable<WorkspacePaneTab['diff']>['kept']>
+
+function normalizeDiffStep(input: unknown): DiffStep | null {
+  if (!input || typeof input !== 'object') return null
+  const raw = input as Partial<{ kind: unknown; hash: unknown }>
+  if (raw.kind === 'span' || raw.kind === 'uncommitted') return { kind: raw.kind }
+  if (raw.kind === 'commit' && typeof raw.hash === 'string') return { kind: 'commit', hash: raw.hash }
+  return null
+}
+
+function normalizeDiffKept(input: unknown): DiffKept | null {
+  if (!input || typeof input !== 'object') return null
+  const raw = input as { step?: unknown; afterReveal?: unknown }
+  const step = normalizeDiffStep(raw.step)
+  if (!step) return null
+  return { step, afterReveal: typeof raw.afterReveal === 'string' && raw.afterReveal ? raw.afterReveal : null }
+}
+
 function normalizeDiffReveal(input: unknown): DiffReveal | null {
   if (!input || typeof input !== 'object') return null
   const raw = input as Partial<DiffReveal>
   if (typeof raw.key !== 'string' || !raw.key) return null
   const reveal: DiffReveal = { key: raw.key }
   if (Array.isArray(raw.paths)) reveal.paths = raw.paths.filter((path): path is string => typeof path === 'string')
-  if (raw.step && typeof raw.step === 'object') {
-    if (raw.step.kind === 'span' || raw.step.kind === 'uncommitted') reveal.step = { kind: raw.step.kind }
-    else if (raw.step.kind === 'commit' && typeof raw.step.hash === 'string') {
-      reveal.step = { kind: 'commit', hash: raw.step.hash }
-    }
-  }
+  const step = normalizeDiffStep(raw.step)
+  if (step) reveal.step = step
   if (raw.range && typeof raw.range === 'object' && typeof raw.range.startLine === 'number') reveal.range = raw.range
   if (raw.side === 'modified' || raw.side === 'original') reveal.side = raw.side
   return reveal
@@ -149,9 +174,6 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
     }
     const viewport = normalizeBrowserViewport(raw.viewport)
     if (viewport && viewport.mode !== 'fill') tab.viewport = viewport
-    const float = normalizeFloatRect(raw.float)
-    if (float) tab.float = float
-    if (raw.floating === true) tab.floating = true
     if (
       typeof raw.faviconUrl === 'string' &&
       raw.faviconUrl.startsWith('data:image/') &&
@@ -159,6 +181,11 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
     ) {
       tab.faviconUrl = raw.faviconUrl
     }
+  }
+  if (paneKindFloats(tab.kind)) {
+    const float = normalizeFloatRect(raw.float)
+    if (float) tab.float = float
+    if (raw.floating === true) tab.floating = true
   }
   if (tab.kind === 'terminal') {
     if (typeof raw.terminalId !== 'string' || raw.terminalId.trim().length === 0) return null
@@ -196,6 +223,9 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
         : null
     const rawOffer = (raw.diff as { tourOffer?: unknown }).tourOffer
     const tourOffer = typeof rawOffer === 'string' && rawOffer ? rawOffer : null
+    // The step the viewer has open, carried for the same reason as the reveal
+    // and dropped with it on a restart.
+    const kept = normalizeDiffKept((raw.diff as { kept?: unknown }).kept)
     tab.diff = {
       ...(repoRoot ? { repoRoot } : {}),
       focusPath,
@@ -204,6 +234,7 @@ function normalizeTab(input: unknown): WorkspacePaneTab | null {
       ...(reveal ? { reveal } : {}),
       ...(tour ? { tour } : {}),
       ...(tourOffer ? { tourOffer } : {}),
+      ...(kept ? { kept } : {}),
     }
   }
   return tab
@@ -318,12 +349,15 @@ export function partializeWorkspacePaneState(input: unknown): WorkspacePaneState
       // `floating` is session-only alongside the favicon: the rect persists,
       // the "is it floating right now" does not.
       // So is an agent's reveal on a Diff tab: a restart must not re-narrow the
-      // viewer or re-highlight lines nobody asked about today.
+      // viewer or re-highlight lines nobody asked about today. The step the
+      // viewer had open goes with it: a restart opens on the whole branch.
       // And so is `poppedOut`: the window it names closes with the app, and a
       // restart has to find the tab back in the pane rather than stranded as a
       // placeholder for a window that is not there.
       const withoutReveal =
-        tab.diff?.reveal !== undefined ? { ...tab, diff: (({ reveal: _reveal, ...diff }) => diff)(tab.diff) } : tab
+        tab.diff?.reveal !== undefined || tab.diff?.kept !== undefined
+          ? { ...tab, diff: (({ reveal: _reveal, kept: _kept, ...diff }) => diff)(tab.diff) }
+          : tab
       if (!withoutReveal.faviconUrl && !withoutReveal.floating && !withoutReveal.poppedOut) return withoutReveal
       const { faviconUrl: _faviconUrl, floating: _floating, poppedOut: _poppedOut, ...rest } = withoutReveal
       return rest
@@ -541,7 +575,7 @@ export function createWorkspacePaneSlice(set: PaneSliceSet): WorkspacePaneSliceA
         const tab = pane.tabs.find((candidate) => candidate.id === tabId)
         // A tab in a pop-out window is already off the pane: it has no
         // docked panel to restyle into a player.
-        if (!tab || tab.kind !== 'browser' || tab.poppedOut) return
+        if (!tab || !paneKindFloats(tab.kind) || tab.poppedOut) return
         if (floating) {
           tab.floating = true
           // No rect is fabricated here: the window's size is not known at this
@@ -695,9 +729,14 @@ export function createWorkspacePaneSlice(set: PaneSliceSet): WorkspacePaneSliceA
         const index = pane.tabs.findIndex((tab) => tab.id === tabId)
         if (index === -1) return
         // For ⌘⇧T (utils/recentlyClosedTabs.ts): what opens one like it again.
-        rememberClosedPaneTab(id, pane.tabs[index]!)
+        const closed = pane.tabs[index]!
+        rememberClosedPaneTab(id, closed)
         pane.tabs.splice(index, 1)
         if (pane.activeTabId === tabId) pane.activeTabId = nextActiveAfterClose(pane.tabs, index)
+        // The last docked tab closing takes the pane with it, the way a toggle
+        // and a pop-out emptying it already do: an empty column is width spent
+        // on nothing. A tab closed in its own window leaves the pane as it was.
+        if (!closed.poppedOut && !pane.tabs.some((tab) => !tab.poppedOut)) pane.open = false
         ws.paneState = normalizeWorkspacePaneState(pane)
       }),
 
