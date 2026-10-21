@@ -188,6 +188,7 @@ import {
   WorkspaceContextMenu,
   workspaceTypeRowActions,
 } from './sidebar/contextMenus'
+import { cancelNextMiddleButtonRelease } from '../../utils/middleButtonRelease'
 import { isImeKey } from '../../utils/imeKey'
 
 export { TerminalLineView } from './sidebar/TerminalLineView'
@@ -4505,6 +4506,8 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
       onMouseDown={(event) => {
         if (event.button === 1) {
           event.preventDefault()
+          // The release would paste the primary selection on Linux.
+          cancelNextMiddleButtonRelease(event.currentTarget.ownerDocument.defaultView)
           handleClose(workspace.id)
         }
       }}

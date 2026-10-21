@@ -88,7 +88,9 @@ export type TailscaleShareResult = { ok: true; share: TailscaleShare } | Tailsca
  */
 const STDERR_PATTERNS: ReadonlyArray<readonly [RegExp, TailscaleServeDiagnostic]> = [
   [
-    /https:\/\/tailscale\.com\/s\/https|https is not enabled|enable https|certificate.*not.*enabled/i,
+    // A tailnet that never turned Serve on gets "Serve is not enabled on your
+    // tailnet" and a `login.tailscale.com/f/serve` link to enable it.
+    /https:\/\/tailscale\.com\/s\/https|https is not enabled|enable https|certificate.*not.*enabled|serve is not enabled|login\.tailscale\.com\/f\/serve/i,
     'https-not-enabled',
   ],
   [/not logged in|logged out|needs? login|no valid node key/i, 'not-logged-in'],
@@ -128,7 +130,14 @@ export function describeServeDiagnostic(diagnostic: TailscaleServeDiagnostic): s
 }
 
 function failureFrom(run: Extract<TailscaleRun, { ok: false }>): TailscaleServeFailure {
-  const diagnostic = run.timedOut ? 'timeout' : classifyServeStderr(run.stderr)
+  // Serve asking for HTTPS to be enabled writes to stdout, not stderr.
+  const stderr = classifyServeStderr(run.stderr)
+  const said = stderr === 'unknown' ? classifyServeStderr(run.stdout) : stderr
+  // `killed` wins over the text: a child killed at the deadline may have
+  // written anything on its way out. Except the one thing serve says and then
+  // waits on: with Serve off for the tailnet it prints where to enable it and
+  // blocks until someone does, so that run always reaches the deadline.
+  const diagnostic = run.timedOut && said !== 'https-not-enabled' ? 'timeout' : said
   return { ok: false, diagnostic, message: describeServeDiagnostic(diagnostic) }
 }
 

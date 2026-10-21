@@ -51,9 +51,11 @@ export function AgentBrowserCursor({ tabId, scale, controller }: AgentBrowserCur
     >
       {event.kind === 'click' ? (
         // A one-shot ring per click: the key remounts it so the animation restarts.
+        // Under Reduce Motion the ring holds still under the point, which
+        // still says where the click landed without pulsing.
         <span
           key={event.at}
-          className="absolute -left-3 -top-3 block size-icon-lg animate-ping rounded-full bg-[color:var(--accent-primary-soft)]"
+          className="absolute -left-3 -top-3 block size-icon-lg animate-ping rounded-full bg-[color:var(--accent-primary-soft)] motion-reduce:animate-none"
         />
       ) : null}
       <svg viewBox="0 0 16 16" className="icon-md drop-shadow-sm" aria-hidden="true">

@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { readRepositoryIdentity, readRepositoryIdentityRead } from './repository-identity'
 import { test } from 'vitest'
@@ -163,4 +167,52 @@ test('repository-identity', async () => {
   })()
 
   await suiteRun
+})
+
+// The default readers, against real repositories: a bare one has no work tree,
+// so the root question is the one that has to be asked differently.
+function git(cwd: string, args: string[]): void {
+  execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' })
+}
+
+function withTempDir(prefix: string, fn: (dir: string) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  return fn(dir).finally(() => rmSync(dir, { recursive: true, force: true }))
+}
+
+test('a bare clone reads the identity of its remote', async () => {
+  await withTempDir('sprintengine-repo-identity-bare-', async (dir) => {
+    git(dir, ['init', '--quiet', '--bare'])
+    git(dir, ['remote', 'add', 'origin', 'git@github.com:acme/app.git'])
+    const read = await readRepositoryIdentityRead(dir)
+    assert.deepEqual([read.settled, read.identity?.canonicalKey], [true, 'github.com/acme/app'])
+  })
+})
+
+test('a folder whose .git file points at ./.bare reads the identity of its remote', async () => {
+  await withTempDir('sprintengine-repo-identity-dotbare-', async (dir) => {
+    git(dir, ['init', '--quiet', '--bare', join(dir, '.bare')])
+    writeFileSync(join(dir, '.git'), 'gitdir: ./.bare\n')
+    git(dir, ['remote', 'add', 'origin', 'https://github.com/acme/app.git'])
+    const identity = await readRepositoryIdentity(dir)
+    assert.equal(identity?.canonicalKey, 'github.com/acme/app')
+  })
+})
+
+test('a checkout still reads the identity of its remote', async () => {
+  await withTempDir('sprintengine-repo-identity-checkout-', async (dir) => {
+    git(dir, ['init', '--quiet'])
+    git(dir, ['remote', 'add', 'origin', 'git@github.com:acme/app.git'])
+    const identity = await readRepositoryIdentity(dir)
+    assert.equal(identity?.canonicalKey, 'github.com/acme/app')
+  })
+})
+
+test("a checkout's .git folder is not taken for a bare repository", async () => {
+  await withTempDir('sprintengine-repo-identity-gitdir-', async (dir) => {
+    git(dir, ['init', '--quiet'])
+    git(dir, ['remote', 'add', 'origin', 'git@github.com:acme/app.git'])
+    const read = await readRepositoryIdentityRead(join(dir, '.git'))
+    assert.deepEqual(read, { identity: null, settled: true })
+  })
 })

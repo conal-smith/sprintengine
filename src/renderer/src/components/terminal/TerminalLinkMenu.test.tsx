@@ -206,6 +206,17 @@ test('TerminalLinkMenu', async () => {
       view.unmount()
     })
 
+    // The link resolver joins a relative path onto `C:\repo` with `/`, so the
+    // target reads `C:/repo/src/App.tsx`; the clipboard gets Windows' own spelling.
+    await run('Copy path copies a Windows path with backslashes', async () => {
+      const view = mount(fileTarget('C:/repo/src/App.tsx'))
+      calls.length = 0
+      click('Copy path')
+      await act(async () => {})
+      assert.deepEqual(calls, ['clipboard:C:\\repo\\src\\App.tsx'])
+      view.unmount()
+    })
+
     await run('Open in editor reads the file rather than routing through the pop-out preference', async () => {
       const view = mount(fileTarget(`${ROOT}/src/App.tsx`))
       calls.length = 0
