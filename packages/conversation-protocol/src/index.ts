@@ -157,6 +157,10 @@ export type ConversationWireErrorCode =
   | 'unsupported_command'
   // A `setModel` naming a model that is not in the chat's CLI catalog.
   | 'unsupported_model'
+  // A `send` written longer ago than the desktop sends without asking (its
+  // `composedAt`), and not confirmed by the person since. Nothing was
+  // recorded; the same command confirmed (`confirmedStale`) goes.
+  | 'stale'
 export type ConversationWireCommand =
   | { kind: 'send'; message: string; uploadIds?: string[] }
   | { kind: 'interrupt' }
