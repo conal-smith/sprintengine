@@ -4695,9 +4695,10 @@ const HANDOFFS_FOLDER = 'handoffs'
  */
 function handoffRefusal(session: RuntimeSession): string | null {
   if (session.status === 'starting') return 'The chat is still starting. Try again in a moment.'
-  if (session.activeTurnId !== null) return 'Stop the running turn before handing the chat off.'
-  if (session.pendingRequestId !== null || session.pendingApprovalRequestIds.size > 0)
+  if (session.pendingApprovalRequestIds.size > 0)
     return 'Answer what the agent is waiting on before handing the chat off.'
+  if (session.activeTurnId !== null || session.pendingRequestId !== null)
+    return 'Stop the running turn before handing the chat off.'
   if (session.runningSubagents.size > 0)
     return 'An agent this chat started is still working. Hand the chat off once it has finished, or stop it first.'
   if (session.backgroundTasks?.length)

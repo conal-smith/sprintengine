@@ -1,7 +1,15 @@
 import { expect, test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { TranscriptEntry } from './conversationProjection'
-import { compactionLabel, CompactionDivider, formatTurnModel, TurnMeta, turnMetaParts } from './turnMeta'
+import {
+  compactionLabel,
+  CompactionDivider,
+  formatTurnModel,
+  HandoffDivider,
+  handoffLabel,
+  TurnMeta,
+  turnMetaParts,
+} from './turnMeta'
 
 type Assistant = Extract<TranscriptEntry, { kind: 'assistant' }>
 
@@ -52,6 +60,33 @@ test('a compaction divider says what triggered it and how much context it freed'
   const html = renderToStaticMarkup(<CompactionDivider entry={auto} />)
   expect(html).toContain('role="separator"')
   expect(html).toContain('aria-label="Context compacted · automatically · 182k → 24k tokens"')
+})
+
+test('Studio’s own compaction before the cache expired says so', () => {
+  const entry = {
+    kind: 'compaction' as const,
+    id: 'c2',
+    createdAt: 0,
+    trigger: 'manual' as const,
+    beforeCacheExpiry: true as const,
+    preTokens: 221_000,
+    postTokens: 30_000,
+  }
+  expect(compactionLabel(entry)).toBe(
+    'Context compacted · automatically, before the cache expired · 221k → 30k tokens',
+  )
+})
+
+test('a handoff divider says what was left behind, and opens the file', () => {
+  const entry = { kind: 'handoff' as const, id: 'h1', createdAt: 0, path: '/Users/dev/handoff.md', preTokens: 221_000 }
+  expect(handoffLabel(entry)).toBe('Handed off to a new session · 221k tokens left behind')
+  expect(handoffLabel({ ...entry, preTokens: undefined })).toBe('Handed off to a new session')
+  const html = renderToStaticMarkup(<HandoffDivider entry={entry} onOpenFile={() => undefined} />)
+  expect(html).toContain('role="separator"')
+  expect(html).toContain('aria-label="Handed off to a new session · 221k tokens left behind"')
+  expect(html).toContain('Open file')
+  // A file on another machine is not offered.
+  expect(renderToStaticMarkup(<HandoffDivider entry={entry} />)).not.toContain('Open file')
 })
 
 test('the token line says how much of the input the prompt cache served', () => {
