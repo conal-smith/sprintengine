@@ -470,6 +470,36 @@ test('a Claude Code reply in fast mode lands in a bucket of its own speed', asyn
   )
 })
 
+async function claudeTitleOf(titleRecords: unknown[]): Promise<string | null> {
+  const sid = '33333333-4444-5555-6666-777777777777'
+  const folder = join(roots.claudeProjects, '-repo')
+  await mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, `${sid}.jsonl`),
+    jsonl([assistant(sid, 'msg_1', 'req_1', { input_tokens: 1, output_tokens: 1 }, 1), ...titleRecords]),
+  )
+  const { entries } = await scan()
+  return entries[0]!.title
+}
+
+test('a Claude Code session renamed with /rename is titled by its new name, over the title the CLI wrote after it', async () => {
+  const title = await claudeTitleOf([
+    { type: 'custom-title', customTitle: 'Checkout rewrite' },
+    { type: 'ai-title', aiTitle: 'Fix the checkout' },
+  ])
+  assert.equal(title, 'Checkout rewrite')
+})
+
+test('a Claude Code session whose rename was cleared goes back to the title the CLI gave it', async () => {
+  const title = await claudeTitleOf([
+    { type: 'custom-title', customTitle: 'Checkout rewrite' },
+    { type: 'ai-title', aiTitle: 'Fix the checkout' },
+    { type: 'custom-title', customTitle: '' },
+    { type: 'ai-title', aiTitle: 'Fix the checkout' },
+  ])
+  assert.equal(title, 'Fix the checkout')
+})
+
 test('Codex: a response takes the service tier its thread settings name, and the first turn the first named', async () => {
   const day = join(roots.codexHome, 'sessions', '2026', '10', '08')
   await mkdir(day, { recursive: true })

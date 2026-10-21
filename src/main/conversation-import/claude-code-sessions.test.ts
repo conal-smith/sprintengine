@@ -150,6 +150,56 @@ test('the scan lists the sessions a person typed into, with their folder and tit
   ])
 })
 
+/** A session file of `sessionRecords()` with `extra` after them, and `padding` bytes of replies between. */
+async function renamedFixture(extra: Array<Record<string, unknown>>, padding = 0): Promise<string> {
+  const { projects, file } = await fixture()
+  const filler: Array<Record<string, unknown>> = []
+  for (let size = 0; size < padding; size += 1024)
+    filler.push(
+      base(
+        { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } },
+        '2026-09-01T10:00:11Z',
+      ),
+    )
+  const records = [...sessionRecords(), ...filler, ...extra]
+  await writeFile(file, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  return projects
+}
+
+const RENAMED = [
+  { type: 'custom-title', sessionId: SESSION, customTitle: 'Login test rewrite' },
+  { type: 'ai-title', sessionId: SESSION, aiTitle: 'Flaky login test' },
+]
+
+test('the scan titles a session renamed with /rename by its new name, over the title the CLI wrote after it', async () => {
+  const projects = await renamedFixture(RENAMED)
+  const [session] = await scanClaudeCodeSessions(projects)
+  assert.equal(session?.title, 'Login test rewrite')
+})
+
+test('the scan finds a rename at the end of a session too long to read whole', async () => {
+  const projects = await renamedFixture(RENAMED, 256 * 1024)
+  const [session] = await scanClaudeCodeSessions(projects)
+  assert.equal(session?.title, 'Login test rewrite')
+})
+
+test('the scan titles a session whose rename was cleared by the title the CLI gave it', async () => {
+  const projects = await renamedFixture([
+    ...RENAMED,
+    { type: 'custom-title', sessionId: SESSION, customTitle: '' },
+    { type: 'ai-title', sessionId: SESSION, aiTitle: 'Flaky login test' },
+  ])
+  const [session] = await scanClaudeCodeSessions(projects)
+  assert.equal(session?.title, 'Flaky login test')
+})
+
+test('a renamed session reads back with its new name', async () => {
+  const projects = await renamedFixture(RENAMED)
+  const [session] = await scanClaudeCodeSessions(projects)
+  const history = await readClaudeCodeSession(session!.path, 0)
+  assert.equal(history.title, 'Login test rewrite')
+})
+
 test('a scan of a home with no sessions is empty, not an error', async () => {
   assert.deepEqual(await scanClaudeCodeSessions('/Users/dev/no-such-claude/projects'), [])
 })
