@@ -271,7 +271,10 @@ async function readPairingMoves(
     // cwd may be a subdirectory, and a name with `*` in it is a name. The copy
     // is written whole, never as a split index: a split write under the
     // repository's `core.splitIndex` expires shared index files by age,
-    // the one the repository's own index uses among them.
+    // the one the repository's own index uses among them. Preloading is off:
+    // it matches every tracked entry against the pathspec, over threads, to
+    // stat the ones it names, and every path here is untracked, so on a large
+    // repository that is CPU spent finding nothing in a copy thrown away next.
     const added = await runGitCommand(
       cwd,
       [
@@ -279,6 +282,8 @@ async function readPairingMoves(
         'core.splitIndex=false',
         '-c',
         'splitIndex.sharedIndexExpire=never',
+        '-c',
+        'core.preloadIndex=false',
         'add',
         '--intent-to-add',
         '--',
