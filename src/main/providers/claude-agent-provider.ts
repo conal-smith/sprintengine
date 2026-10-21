@@ -18,6 +18,7 @@ import {
   claudeTaskResultFromText,
   claudeTaskTodos,
   isClaudeTaskTool,
+  readStoredClaudeTasks,
   type ClaudeTaskList,
 } from './claude-task-list'
 import type { ChildProcess } from 'child_process'
@@ -318,6 +319,8 @@ type SessionState = {
   bypassRefused: boolean
   // That refusal has been said in this chat once already.
   bypassRefusalNoted?: boolean
+  // Claude Code's task list as this app has read it (mapSdkMessage).
+  claudeTasks?: ClaudeTaskList
   // Session-level events (resume cursor updates) that arrived while no turn
   // stream was open to carry them; flushed at the next turn start.
   pendingSessionEvents: ConversationEvent[]
@@ -1022,13 +1025,21 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // WSL machine's file is under its own Linux home, out of reach here.
     let savedCostUsd = 0
     if (state.providerSessionId && !wslTarget) {
-      const check = await ensureResumableTranscript(
-        resolveClaudeConfigDir(homedir(), env),
-        state.workspaceRoot,
-        state.providerSessionId,
-      )
+      const configDir = resolveClaudeConfigDir(homedir(), env)
+      const check = await ensureResumableTranscript(configDir, state.workspaceRoot, state.providerSessionId)
       state.resumeNote = transcriptCheckNote(check)
       if ((check.kind === 'ok' || check.kind === 'repaired') && check.savedCostUsd) savedCostUsd = check.savedCostUsd
+      // The chat's task list is held in memory, so a chat resumed after the
+      // app restarted would start its next task tool row from an empty list:
+      // a new task shown alone, an update shown as no list at all. It starts
+      // from the list the CLI left on disk instead, the one the resumed
+      // session goes on writing. Shown only; one that cannot be read is
+      // left as before.
+      if (state.claudeTasks === undefined) {
+        const listId = env.CLAUDE_CODE_TASK_LIST_ID?.trim() || state.providerSessionId
+        const stored = await readStoredClaudeTasks(configDir, listId)
+        if (stored && state.claudeTasks === undefined) state.claudeTasks = stored
+      }
       try {
         assertSpawnWanted(state, generation)
       } catch (error) {
