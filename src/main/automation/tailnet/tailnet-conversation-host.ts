@@ -1,6 +1,7 @@
 import {
   CONVERSATION_DEFAULT_MODEL_ID,
   CONVERSATION_MAX_REPLY_PREVIEW,
+  parseConversationWireHighlight,
   type ConversationCommand,
   type ConversationQueuedMessage,
   type ConversationThread,
@@ -341,9 +342,14 @@ function lifecycleOf(
   | 'visitRewoundAt'
   | 'scheduledAgentId'
   | 'snoozedUntil'
+  | 'highlight'
+  | 'autoSettle'
 > {
   const chatTitle = record?.name.trim()
   const scheduledAgentId = record?.scheduledAgentId?.trim()
+  // The record's own mark, read as a client reads one: a colour this desktop
+  // does not offer is left out.
+  const highlight = parseConversationWireHighlight(record?.highlight)
   return {
     ...(chatTitle ? { chatTitle } : {}),
     ...(epoch(record?.lastUserMessageAt) ? { lastUserMessageAt: record.lastUserMessageAt } : {}),
@@ -357,6 +363,10 @@ function lifecycleOf(
     ...(epoch(record?.snoozedUntil) && record.snoozedUntil > now
       ? { snoozedUntil: Math.trunc(record.snoozedUntil) }
       : {}),
+    // The row menu's star, colour and Auto-settle, which a paired device's
+    // menu reads and writes (`chat-row-menu`).
+    ...(highlight ? { highlight } : {}),
+    ...(record?.autoSettleEnabled === true ? { autoSettle: true as const } : {}),
   }
 }
 
@@ -395,6 +405,10 @@ export type ConversationListWorkspace = {
   scheduledAgentId?: string | null
   /** When a snoozed chat wakes; absent, or past, for one that is awake. */
   snoozedUntil?: number | null
+  /** The row menu's star and highlight colour; absent for a chat with neither. */
+  highlight?: { starred: boolean; color: string | null } | null
+  /** Auto-settle, switched on from the row menu; absent or null is off. */
+  autoSettleEnabled?: boolean | null
 }
 
 /**

@@ -211,6 +211,19 @@ at; a red *block* is read as something that has already happened.
 There is no size variant, no tone variant beyond destructive, and no "compact"
 menu. A menu that needs to be denser is a menu with too many items in it.
 
+## Row descriptions
+
+A row may carry a description of what it does (`MenuItem`'s and
+`MenuFlyoutItem`'s `tooltip`): one or two plain sentences in a
+[tooltip](../tooltip/component.md) to the row's right, on the menu's own layer,
+opened by hover after a longer delay than a toolbar's (a person runs the
+pointer down a menu reading labels) and at once by keyboard focus. It adds to
+the label, never replaces it. A flyout row's description gives way while its
+flyout is open, which stands where it would. A disabled row says why in its
+description on hover, and in its hint for the keyboard, which skips it. A chat
+row's right-click menu describes every row (`chatMenuTooltips`), and its test
+holds each row to one.
+
 ## Keyboard hints
 
 A shortcut hint sits in the trailing slot as **mono `font.size.micro` (11px) at

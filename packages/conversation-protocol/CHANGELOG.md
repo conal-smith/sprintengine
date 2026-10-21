@@ -13,6 +13,17 @@
 
 ### Added
 
+- **A listed chat says how a person marked it.** `highlight` and
+  `autoSettle` are optional members of `ConversationThread`. `highlight`
+  (`ConversationWireHighlight`, `{ starred, color? }`) is the star and the
+  highlight colour a person put on the chat from its row menu, on any device;
+  `CONVERSATION_HIGHLIGHT_COLORS` names the colours, and
+  `isConversationHighlightColor` and `parseConversationWireHighlight` read
+  them. `autoSettle: true` says Auto-settle is on for the chat. Both are
+  absent for a chat with neither, and from a desktop built before they were
+  listed. `parseConversationServerFrame` keeps `highlight` when its star is a
+  boolean or its colour one it knows, and `autoSettle` only when it is `true`.
+  The pinned files are unchanged.
 - **A listed chat says when its work began, how it began, and whether it
   sleeps.** `workingSince`, `scheduledAgentId` and `snoozedUntil` are optional
   members of `ConversationThread`. `workingSince` is when the chat's current

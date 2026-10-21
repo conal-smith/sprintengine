@@ -299,6 +299,71 @@ test('a listed chat names the schedule that started it, and a snooze still ahead
   assert.equal(parsed.get('sleeping')?.snoozedUntil, Math.trunc(now + 3_600_000))
 })
 
+test('a listed chat names its star, highlight colour and Auto-settle, which a paired desktop’s row menu reads', async () => {
+  const now = Date.now()
+  const record = (fields: Partial<ConversationListWorkspace>): ConversationListWorkspace => ({
+    name: 'Fix the parser',
+    createdAt: now - 60_000,
+    ...fields,
+  })
+  const listed = new Map(
+    (
+      await hostOf([], {
+        starred: record({ highlight: { starred: true, color: null } }),
+        tinted: record({ highlight: { starred: false, color: 'green' }, autoSettleEnabled: true }),
+        unmarked: record({ highlight: { starred: false, color: null }, autoSettleEnabled: null }),
+        odd: record({ highlight: { starred: false, color: 'teal' } }),
+      }).list()
+    ).map((thread) => [thread.workspaceId, thread]),
+  )
+  assert.deepEqual(listed.get('starred')?.highlight, { starred: true })
+  assert.deepEqual(listed.get('tinted')?.highlight, { starred: false, color: 'green' })
+  assert.equal(listed.get('tinted')?.autoSettle, true)
+  assert.equal('highlight' in listed.get('unmarked')!, false, 'a chat with neither carries none')
+  assert.equal('autoSettle' in listed.get('unmarked')!, false)
+  assert.equal('highlight' in listed.get('odd')!, false, 'a colour the menu does not offer is left out')
+  const frame = parseConversationServerFrame(
+    JSON.parse(JSON.stringify({ type: 'sessions', requestId: 'list', sessions: [...listed.values()] })),
+  )
+  assert.ok(frame?.type === 'sessions')
+  const parsed = new Map(frame.sessions.map((thread) => [thread.workspaceId, thread]))
+  assert.deepEqual(parsed.get('tinted')?.highlight, { starred: false, color: 'green' })
+  assert.equal(parsed.get('tinted')?.autoSettle, true)
+  assert.deepEqual(parsed.get('starred')?.highlight, { starred: true })
+})
+
+test('the client validator keeps a highlight it can read and leaves out one it cannot', () => {
+  const thread = (fields: Record<string, unknown>) => ({
+    workspaceId: 'ws-1',
+    agentId: 'agent-1',
+    title: 'Ada',
+    phase: 'idle',
+    updatedAt: 1,
+    createdAt: 1,
+    providerId: 'claude',
+    modelId: 'default',
+    turnCount: 0,
+    lastSeq: 0,
+    ...fields,
+  })
+  const frame = parseConversationServerFrame({
+    type: 'sessions',
+    requestId: 'list',
+    sessions: [
+      thread({ workspaceId: 'a', highlight: { starred: true, color: 'pink' }, autoSettle: true }),
+      thread({ workspaceId: 'b', highlight: { starred: 'yes', color: 'chartreuse' }, autoSettle: 'on' }),
+      thread({ workspaceId: 'c', highlight: { starred: false, color: 'chartreuse' } }),
+    ],
+  })
+  assert.ok(frame?.type === 'sessions')
+  const parsed = new Map(frame.sessions.map((listed) => [listed.workspaceId, listed]))
+  assert.deepEqual(parsed.get('a')?.highlight, { starred: true, color: 'pink' })
+  assert.equal(parsed.get('a')?.autoSettle, true)
+  assert.equal('highlight' in parsed.get('b')!, false)
+  assert.equal('autoSettle' in parsed.get('b')!, false)
+  assert.equal('highlight' in parsed.get('c')!, false)
+})
+
 test('one summary reads as the same work, from the same start, in this desktop’s sidebar and on a paired machine', async () => {
   const t0 = 1_000_000
   const summaries: Array<[string, Partial<ConversationSessionSummary>, { working: boolean; since?: number }]> = [

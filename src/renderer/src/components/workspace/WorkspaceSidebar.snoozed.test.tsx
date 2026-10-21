@@ -316,7 +316,7 @@ test('WorkspaceSidebar.snoozed', async () => {
       await settle()
       const snoozeItem = [
         ...dom.window.document.querySelectorAll<HTMLElement>('[role="menu"] [data-menu-item="true"]'),
-      ].find((el) => el.textContent?.trim() === 'Snooze')
+      ].find((el) => el.getAttribute('aria-haspopup') === 'menu' && el.textContent?.trim().startsWith('Snooze'))
       assert.ok(snoozeItem, 'Snooze is a menu item')
       assert.equal(snoozeItem.getAttribute('aria-haspopup'), 'menu', 'and it opens a submenu of wake times')
       // Opened by click; hover opens it too, but a raw non-bubbling `mouseenter`
@@ -391,7 +391,7 @@ test('WorkspaceSidebar.snoozed', async () => {
       await settle()
       const askingSnooze = [
         ...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="menu"] [data-menu-item="true"]'),
-      ].find((el) => el.textContent?.trim() === 'Snooze')
+      ].find((el) => el.getAttribute('aria-haspopup') === 'menu' && el.textContent?.trim().startsWith('Snooze'))
       assert.ok(askingSnooze, 'Snooze is listed on a row whose agent is asking')
       assert.equal(askingSnooze.disabled, false, 'and it can be chosen')
       act(() => {
@@ -414,7 +414,7 @@ test('WorkspaceSidebar.snoozed', async () => {
       await settle()
       const workingSnooze = [
         ...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="menu"] [data-menu-item="true"]'),
-      ].find((el) => el.textContent?.trim() === 'Snooze')
+      ].find((el) => el.getAttribute('aria-haspopup') === 'menu' && el.textContent?.trim().startsWith('Snooze'))
       assert.ok(workingSnooze, 'Snooze is still listed on a row whose agent is working')
       assert.equal(workingSnooze.disabled, true, 'but it cannot be chosen until the agent finishes')
       act(() => {
