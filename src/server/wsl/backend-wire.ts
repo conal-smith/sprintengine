@@ -51,6 +51,7 @@ export const REMOTE_BACKEND_MEMBERS = [
   'stopSubagent',
   'askSideQuestion',
   'cancelSideQuestion',
+  'readContextBreakdown',
   'stopSession',
   'suspendSession',
   'terminalHandoffTarget',

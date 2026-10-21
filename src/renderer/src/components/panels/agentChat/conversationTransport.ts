@@ -23,6 +23,8 @@ import type {
   ConversationSetModelInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationSetPermissionInput,
@@ -210,6 +212,13 @@ export type ConversationTransport = {
     input: ConversationCancelSideQuestionInput,
   ): Promise<{ ok: true } | { ok: false; message: string }>
   /**
+   * What fills the chat's context window, as its agent measures it. Absent
+   * where the transport cannot ask, as `stopSubagent` is; the ring then opens
+   * on the total alone. Asked only where the provider declares
+   * `contextBreakdown` as well.
+   */
+  readContextBreakdown?(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult>
+  /**
    * The Studio this window belongs to: providers, files, plans and command
    * lists. The same for every chat in the window, whichever machine it runs on.
    */
@@ -266,6 +275,7 @@ const ipcConversationParts: Required<
   stopSubagent: (input) => window.api.conversationSessionStopSubagent(input),
   askSideQuestion: (input) => window.api.conversationSessionAskSideQuestion(input),
   cancelSideQuestion: (input) => window.api.conversationSessionCancelSideQuestion(input),
+  readContextBreakdown: (input) => window.api.conversationSessionContextBreakdown(input),
 }
 
 // One Studio implementation per window object, so its client and the
@@ -353,6 +363,9 @@ export const localConversationTransport: ConversationTransport = {
   },
   get cancelSideQuestion() {
     return localParts().cancelSideQuestion
+  },
+  get readContextBreakdown() {
+    return localParts().readContextBreakdown
   },
   services: windowServices,
 }

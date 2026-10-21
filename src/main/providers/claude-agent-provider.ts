@@ -84,6 +84,7 @@ import { cliStderrSummary, LOOKUP_TOOL_KINDS } from '../../shared/conversation/p
 import { withMacosPrivacyFolderHint } from '../../shared/conversation/macosPrivacyFolders'
 import { wslShareSafeDirectoryEnv } from '../git-run'
 import { resolveClaudeConfigDir } from '../claude-config-dir'
+import { contextBreakdownFromSdk } from './claude-context-usage'
 import { ensureResumableTranscript, transcriptCheckNote } from './claude-transcript-integrity'
 import { claudeTaskOutputRoot, createClaudeCommandOutput, type ClaudeCommandOutput } from './claude-command-output'
 import { isMcpServerStatus, publishMcpServerStatus } from '../mcp-server-status/registry'
@@ -103,6 +104,8 @@ import type {
   ConversationBackgroundTask,
   ConversationBackgroundTaskKind,
   ConversationCliRuntimeOverrides,
+  ConversationContextBreakdown,
+  ConversationContextBreakdownResult,
   ConversationEvent,
   ConversationImageAttachment,
   ConversationMcpServer,
@@ -191,6 +194,7 @@ export type ClaudeAgentProviderAdapter = ConversationProviderAdapter & {
     sessionId: string,
     input: ConversationProviderSideQuestionInput,
   ): Promise<ConversationSideQuestionResult>
+  readContextBreakdown(sessionId: string): Promise<ConversationContextBreakdownResult>
   disposeAll(): Promise<void>
   setPermissionPreset(input: MockAdapterPermissionInput): Promise<ConversationProviderPermissionResult>
   setModel(input: MockAdapterModelInput): Promise<ConversationProviderPermissionResult>
@@ -316,6 +320,9 @@ type SessionState = {
   continuationSequence: number
   lastActivityAt: number
   stderrTail: string
+  // The last breakdown of the context window the child gave, answered (as
+  // old) once the child is gone; see readContextBreakdown.
+  lastContextBreakdown?: ConversationContextBreakdown
   // The SDK reports cost as a running total for the life of one query() call;
   // the total already attributed to earlier turns of the live child.
   queryCostUsd: number
@@ -1509,6 +1516,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       fork: true,
       stopSubagent: true,
       sideQuestion: true,
+      contextBreakdown: true,
     },
     sessions: 'stateful',
     acceptsMcpServers: true,
@@ -2074,6 +2082,43 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       }
     },
 
+    // What fills the window, as Claude Code's own /context reads it, asked of
+    // the live child over the control channel. It never starts one: a reading
+    // is about the child that holds the conversation, and starting Claude Code
+    // (its MCP servers and all) only to measure it would cost more than the
+    // answer is worth. With no child, the last reading is answered, marked
+    // old. `summary` answers from the last request's usage and Claude Code's
+    // own estimates of each row, without the per-row token-count calls `full`
+    // makes, so opening the breakdown spends nothing of the person's plan.
+    async readContextBreakdown(sessionId: string): Promise<ConversationContextBreakdownResult> {
+      const state = sessions.get(sessionId)
+      if (!state) return { ok: false, reason: 'failed', message: 'Conversation session is invalid.' }
+      const q = state.query
+      if (!q) {
+        return state.lastContextBreakdown
+          ? { ok: true, breakdown: state.lastContextBreakdown, stale: true }
+          : { ok: false, reason: 'not-running', message: CONTEXT_BREAKDOWN_NOT_RUNNING }
+      }
+      if (typeof q.getContextUsage !== 'function')
+        return { ok: false, reason: 'unsupported', message: CONTEXT_BREAKDOWN_UNSUPPORTED }
+      let answer: unknown
+      try {
+        answer = await answerWithin(q.getContextUsage({ detail: 'summary' }), CONTEXT_READING_TIMEOUT_MS)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (/unsupported|not supported|unknown (control )?request/iu.test(message))
+          return { ok: false, reason: 'unsupported', message: CONTEXT_BREAKDOWN_UNSUPPORTED }
+        return { ok: false, reason: 'failed', message: `Claude Code could not read its context window: ${message}` }
+      }
+      if (answer === TIMED_OUT)
+        return { ok: false, reason: 'failed', message: 'Claude Code did not say what fills its window in time.' }
+      const breakdown = contextBreakdownFromSdk(answer, { estimated: true, measuredAt: now() })
+      if (!breakdown)
+        return { ok: false, reason: 'failed', message: 'Claude Code’s reading of its window was not one.' }
+      state.lastContextBreakdown = breakdown
+      return { ok: true, breakdown }
+    },
+
     disposeChildProcess(sessionId: string, _options?: ConversationDisposeOptions): boolean {
       const state = sessions.get(sessionId)
       if (!state) return false
@@ -2239,6 +2284,36 @@ type SideQuestionQuery = Query & {
 }
 
 const SIDE_QUESTION_UNSUPPORTED = 'This version of Claude Code cannot answer side questions. Update it to ask one.'
+
+const CONTEXT_BREAKDOWN_NOT_RUNNING =
+  'Claude Code is not running for this chat now. Send a message and it can say what fills the window.'
+const CONTEXT_BREAKDOWN_UNSUPPORTED =
+  'This version of Claude Code does not say what fills its window. Update it to see.'
+
+// A reading walks every tool, skill and memory file the child has loaded, and
+// a child busy with a turn answers it between other work, so it is given
+// longer than a stop or a mode switch.
+const CONTEXT_READING_TIMEOUT_MS = 15_000
+
+const TIMED_OUT = Symbol('timed out')
+
+/** `promise`'s answer, or `TIMED_OUT` when it has none within `ms`; a rejection is thrown. */
+function answerWithin<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(TIMED_OUT), ms)
+    timer.unref?.()
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
 
 /**
  * Whether `promise` settled within `ms`. A rejection counts as an answer

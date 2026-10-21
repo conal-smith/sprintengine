@@ -70,6 +70,8 @@ import type {
   ConversationApprovalRulesResult,
   ConversationApprovalRuleRevokeResult,
   ConversationEventType,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
 } from '../../shared/conversation-runtime'
 import {
   parseProviderInput,
@@ -128,6 +130,7 @@ export type ConversationIpcHandlers = {
   cancelSideQuestion?(
     input: ConversationCancelSideQuestionInput,
   ): Promise<{ ok: true } | { ok: false; message: string }>
+  readContextBreakdown?(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult>
   stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult>
   suspendSession?(input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult>
   terminalHandoff?(input: ConversationTerminalHandoffInput): Promise<ConversationTerminalHandoffResult>
@@ -389,6 +392,9 @@ export function createConversationIpcHandlers(
       input: ConversationCancelSideQuestionInput,
     ): Promise<{ ok: true } | { ok: false; message: string }> {
       return runtime.cancelSideQuestion(input)
+    },
+    readContextBreakdown(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult> {
+      return runtime.readContextBreakdown(input)
     },
     stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
       return runtime.stopSession(input)
@@ -864,6 +870,21 @@ export function registerConversationIpc(
         return await handlers.cancelSideQuestion(parsed.input)
       } catch (err) {
         return { ok: false, message: formatError(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'conversation:sessions:context-breakdown',
+    async (_, input: unknown): Promise<ConversationContextBreakdownResult> => {
+      const parsed = parseSessionIdInput(input)
+      if (!parsed.ok) return { ok: false, reason: 'failed', message: parsed.message }
+      if (!handlers.readContextBreakdown)
+        return { ok: false, reason: 'unsupported', message: 'The context breakdown is unavailable.' }
+      try {
+        return await handlers.readContextBreakdown(parsed.input)
+      } catch (err) {
+        return { ok: false, reason: 'failed', message: formatError(err) }
       }
     },
   )

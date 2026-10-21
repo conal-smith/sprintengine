@@ -33,6 +33,8 @@ import type {
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
@@ -175,6 +177,10 @@ type ConversationIpcRenderer = {
     input: ConversationCancelSideQuestionInput,
   ): Promise<{ ok: true } | { ok: false; message: string }>
   invoke(
+    channel: 'conversation:sessions:context-breakdown',
+    input: ConversationContextBreakdownInput,
+  ): Promise<ConversationContextBreakdownResult>
+  invoke(
     channel: 'conversation:sessions:stop',
     input: ConversationStopSessionInput,
   ): Promise<ConversationSessionActionResult>
@@ -284,6 +290,9 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
       input: ConversationCancelSideQuestionInput,
     ): Promise<{ ok: true } | { ok: false; message: string }> =>
       renderer.invoke('conversation:sessions:cancel-side-question', input),
+    conversationSessionContextBreakdown: (
+      input: ConversationContextBreakdownInput,
+    ): Promise<ConversationContextBreakdownResult> => renderer.invoke('conversation:sessions:context-breakdown', input),
     conversationSessionStop: (input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> =>
       renderer.invoke('conversation:sessions:stop', input),
     conversationSessionSuspend: (input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult> =>
@@ -381,6 +390,7 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     | 'conversationSessionStopSubagent'
     | 'conversationSessionAskSideQuestion'
     | 'conversationSessionCancelSideQuestion'
+    | 'conversationSessionContextBreakdown'
     | 'conversationSessionStop'
     | 'conversationSessionSuspend'
     | 'conversationSessionTerminalHandoff'

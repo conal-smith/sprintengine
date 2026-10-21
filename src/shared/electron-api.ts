@@ -207,6 +207,8 @@ import type {
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
@@ -1305,6 +1307,10 @@ export type ElectronApi = {
   conversationSessionCancelSideQuestion: (
     input: ConversationCancelSideQuestionInput,
   ) => Promise<{ ok: true } | { ok: false; message: string }>
+  /** What fills a live chat's context window, as its agent measures it; read when the ring's breakdown opens. */
+  conversationSessionContextBreakdown: (
+    input: ConversationContextBreakdownInput,
+  ) => Promise<ConversationContextBreakdownResult>
   conversationSessionStop: (input: ConversationStopSessionInput) => Promise<ConversationSessionActionResult>
   // Settle and Snooze: end the chat's child process, keeping the session so the
   // next message respawns it.
