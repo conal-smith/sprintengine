@@ -995,6 +995,15 @@ function WorkspaceLayoutBody({
     [closeTabWithCleanup, findTabNodeFromElement],
   )
 
+  // A middle-click closes a tab on its auxclick, after the button comes back
+  // up. Left alone, that release has Chromium on Linux paste the primary
+  // selection into the focused field (the composer) as the tab closes.
+  const handleMouseUpCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 1) return
+    if (!(event.target instanceof Element) || !event.target.closest('.flexlayout__tab_button')) return
+    event.preventDefault()
+  }, [])
+
   const closeOtherTabsInSet = useCallback(
     (node: TabNode) => {
       const parent = node.getParent()
@@ -1841,7 +1850,11 @@ function WorkspaceLayoutBody({
     // the layout rather than covering its tab strips. The layout's own box is
     // always the same element, whether or not a note is showing, so a note
     // arriving never remounts a terminal.
-    <div className="relative flex h-full flex-col" onMouseDownCapture={handleMouseDownCapture}>
+    <div
+      className="relative flex h-full flex-col"
+      onMouseDownCapture={handleMouseDownCapture}
+      onMouseUpCapture={handleMouseUpCapture}
+    >
       <AgentRevealStrip workspaceId={workspaceId} />
       <div className="relative min-h-0 flex-1">
         <Layout
