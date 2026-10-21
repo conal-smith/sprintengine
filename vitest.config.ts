@@ -71,6 +71,10 @@ export default defineConfig({
     hookTimeout: 120_000,
     // A passing suite's `ok - …` lines are noise; a failing one's are the story.
     silent: 'passed-only',
+    // Stylesheets are stubbed to nothing, which is right for the components'
+    // imports. The token sheet is the exception: Export chat's PDF page and
+    // its pasted HTML read their colours out of it as text (`tokens.css?raw`).
+    css: { include: [/design-system\/foundations\/tokens\.css/u] },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}', 'packages/*/src/**/*.ts'],

@@ -740,15 +740,19 @@ async function restoreGitWorktreeOnce(input: GitWorktreeRestoreInput): Promise<G
   if (!branch.ok) return branch
 
   // A worktree pool slot the cleanup handed back is still on disk: the pool
-  // checks the chat's branch out in it again, or says why it cannot.
+  // checks the chat's branch out in it again, or says why it cannot. One the
+  // pool removed to make room left its path reserved for the chat, and the
+  // pool makes a slot there again; with no room for one it answers null, and
+  // a plain worktree is put at the path below.
   const pool = activeWorktreePool()
   if (pool) {
     await pool.load()
-    if (pool.ownsPath(worktreePath)) {
+    if (pool.ownsPath(worktreePath) || pool.reservesPath(worktreePath)) {
       const reclaimed = await pool.reclaim({
         path: worktreePath,
         branch: branch.data,
         owner: input.agentLockOwner ?? branch.data,
+        copyIncludedFiles: input.copyIncludedFiles === true,
       })
       if (reclaimed && !reclaimed.ok) {
         return reclaimed.definitive

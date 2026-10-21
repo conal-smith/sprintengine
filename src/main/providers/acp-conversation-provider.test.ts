@@ -64,7 +64,7 @@ createInterface({input:process.stdin}).on('line',async line=>{
  }
  if(m.method==='session/fork'){require('node:fs').writeFileSync('forked.json',JSON.stringify(p));return result(m.id,{sessionId:'branch-of-'+p.sessionId})}
  if(m.method==='session/set_mode'){mode=p.modeId;return result(m.id,{})}
- if(m.method==='session/set_config_option'){if(p.configId==='model')model=p.value;return result(m.id,{configOptions:[]})}
+ if(m.method==='session/set_config_option'){if(p.configId==='model'&&p.value==='retired-model')return send({id:m.id,error:{code:-32602,message:'Invalid params'}});if(p.configId==='model')model=p.value;return result(m.id,{configOptions:[]})}
  if(m.method==='session/cancel'){if(process.env.IGNORE_CANCEL)return;if(prompt)result(prompt,{stopReason:'cancelled'});prompt=null;return}
  if(m.method!=='session/prompt')return result(m.id,{});
  prompt=m.id;const text=p.prompt[0].text;
@@ -555,6 +555,42 @@ test('ACP shutdown during executable discovery never spawns a late child', async
   await expect(pending).rejects.toThrow('stopped during startup')
   expect(provider.listLiveSessions?.()).toEqual([])
 })
+async function failedTurnMessage(f: Awaited<ReturnType<typeof fixture>>, message: string) {
+  try {
+    const events = await turn(f, message)
+    return String(events.find((event) => event.type === 'turn_failed')?.payload?.message ?? '')
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+test('ACP says which model the agent refused when a chat starts on one it no longer offers', async () => {
+  const f = await fixture()
+  try {
+    await f.provider.setModel?.({ ...f.input, nextModelId: 'retired-model' })
+    const message = await failedTurnMessage(f, 'argv')
+    expect(message).toContain('Test agent did not accept the model "retired-model"')
+    // Not a sign-in problem, so without the sign-in hint.
+    expect(message).not.toContain('Configure test agent.')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('ACP says which model the agent refused when the chat switches to it between turns', async () => {
+  const f = await fixture()
+  try {
+    expect((await launched(f)).model).toBe('model-one')
+    await f.provider.setModel?.({ ...f.input, nextModelId: 'retired-model' })
+    expect(await failedTurnMessage(f, 'argv')).toContain('Test agent did not accept the model "retired-model"')
+    // Another model still applies on the next turn.
+    await f.provider.setModel?.({ ...f.input, nextModelId: 'model-two' })
+    expect((await launched(f)).model).toBe('model-two')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('ACP reports a CLI that cannot be started without a misleading sign-in hint', async () => {
   const provider = createAcpConversationProvider(
     {

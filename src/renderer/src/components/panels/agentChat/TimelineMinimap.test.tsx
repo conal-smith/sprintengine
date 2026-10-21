@@ -114,3 +114,24 @@ test('a plain hover opens the preview', () => {
   expect(strip.textContent).toContain('Reply 2')
   unmount()
 })
+
+test('the hover preview shows a markdown reply as its words, and the prompt as typed', () => {
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root: Root = createRoot(host)
+  const withMarkdown: TurnNavigation = {
+    ...navigation(3, 0),
+    marks: [...marks(2), { id: 'u2', rowIndex: 4, prompt: 'Why does **this** fail?' }],
+    reply: () => '## The cause\nThe `login` route reads **an old** [token](https://example.com/token).',
+  }
+  act(() => root.render(<TimelineMinimap navigation={withMarkdown} />))
+  const strip = host.querySelector<HTMLElement>('[data-minimap-strip]')!
+  strip.getBoundingClientRect = () => ({ top: 0, height: 40, bottom: 40, left: 0, right: 16, width: 16 }) as DOMRect
+  mouse(strip, 'mousemove', 40, 0)
+  expect(strip.textContent).toContain('Why does **this** fail?')
+  expect(strip.textContent).toContain('The cause The login route reads an old token.')
+  expect(strip.textContent).not.toContain('https://example.com')
+  act(() => root.unmount())
+  host.remove()
+})

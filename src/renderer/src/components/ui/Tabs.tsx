@@ -411,6 +411,16 @@ export function Tabs<T extends string = string>({
               if (!item.disabled) onChange(item.id)
             }}
             onPointerDown={onReorder ? (event) => beginDrag(item.id, event) : undefined}
+            // A strip that acts on a middle-click owns that button's release
+            // too: left alone, Chromium on Linux pastes the primary selection
+            // into the focused field (the composer) as the tab closes.
+            onMouseUp={
+              onItemAuxClick
+                ? (event) => {
+                    if (event.button === 1) event.preventDefault()
+                  }
+                : undefined
+            }
             onAuxClick={onItemAuxClick ? (event) => onItemAuxClick(item.id, event) : undefined}
             onContextMenu={onItemContextMenu ? (event) => onItemContextMenu(item.id, event) : undefined}
             className={[

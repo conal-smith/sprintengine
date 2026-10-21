@@ -1,6 +1,7 @@
 import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
 import type { ConversationQueuedMessage, ConversationThread } from '../../packages/conversation-protocol/src/public'
 import type { ConversationSessionFrame } from './conversation-runtime'
+import { conversationPhaseWorking, phaseWithBackgroundWork } from './conversation/phase'
 import type { RepositoryIdentity } from './repository-identity'
 import type { TailnetRemoteStatus, TailnetScope } from './tailnet'
 
@@ -488,10 +489,20 @@ export type MeshConversationCommand =
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }
 
-/** Whether a machine's listed phase is a turn in flight, one waiting on a person, or neither. */
-export function meshConversationPresence(phase: MeshConversation['phase']): 'running' | 'needs-input' | 'idle' {
-  if (phase === 'starting' || phase === 'running') return 'running'
-  if (phase === 'waiting_for_approval' || phase === 'waiting_for_input') return 'needs-input'
+/**
+ * Whether a machine's listed chat is at work, waiting on a person, or neither.
+ * A turn in flight is at work, and so is a chat whose turn is over while its
+ * `backgroundWork` goes on, as the machine's own sidebar counts it
+ * (`phaseWithBackgroundWork`). A machine from before it listed background work
+ * says only the turn's phase, which is read as before.
+ */
+export function meshConversationPresence(
+  phase: MeshConversation['phase'],
+  backgroundWork?: MeshConversation['backgroundWork'] | null,
+): 'running' | 'needs-input' | 'idle' {
+  const counted = phaseWithBackgroundWork(phase, Boolean(backgroundWork))
+  if (conversationPhaseWorking(counted)) return 'running'
+  if (counted === 'waiting_for_approval' || counted === 'waiting_for_input') return 'needs-input'
   return 'idle'
 }
 

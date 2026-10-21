@@ -3,6 +3,7 @@
 // answer covers the composer itself.
 
 import React, { useRef, useEffect, useState } from 'react'
+import { markdownClipboardHtml } from '../../../utils/markdownClipboardHtml'
 import {
   LifecycleGlyph,
   CopyGlyphButton,
@@ -594,7 +595,7 @@ export function ConversationPlanCard({
         <>
           <div className="group/plan relative mx-3 mt-2 rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--bg-app)]">
             <div className="absolute right-1 top-1 opacity-0 group-hover/plan:opacity-100 focus-within:opacity-100">
-              <CopyGlyphButton text={plan} label="Copy plan" size="xs" />
+              <CopyGlyphButton text={plan} html={() => markdownClipboardHtml(plan)} label="Copy plan" size="xs" />
             </div>
             <div className={`overflow-y-auto px-3 py-2.5 ${expanded || !long ? '' : 'max-h-80'}`}>
               <ConversationMarkdown size="compact" text={plan} />

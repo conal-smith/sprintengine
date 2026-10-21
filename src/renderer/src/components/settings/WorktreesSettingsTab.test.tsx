@@ -39,6 +39,7 @@ const baseSlot = {
   uses: 2,
   lastBranch: null,
   kept: null,
+  parked: null,
 }
 const inventory: WorktreeInventory = {
   measuredAt: now,
@@ -593,4 +594,24 @@ test('the branch prefix warns, as it is typed, about a remote’s name or one gi
   expect(host.textContent).toContain('New worktrees are named feat/fix-login')
   await type('feat')
   expect(warning()).toBeNull()
+})
+
+test('Copy path on a Windows worktree copies it with backslashes, not as git prints it', async () => {
+  // `git worktree list` prints `C:/code/by-hand` on Windows, which Explorer and
+  // `cmd` do not take as a path.
+  const project = inventory.projects[0]!
+  const windows: WorktreeInventory = {
+    ...inventory,
+    projects: [{ ...project, worktrees: [{ ...project.worktrees[0]!, path: 'C:/code/by-hand' }] }],
+  }
+  window.api.getWorktreeInventory = async () => windows
+  const copied: string[] = []
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text: string) => void copied.push(text) },
+  })
+  await render()
+  await click(button(rowNamed('by-hand')!, 'More for by-hand'))
+  await click(button(document.body, 'Copy path'))
+  expect(copied).toEqual(['C:\\code\\by-hand'])
 })

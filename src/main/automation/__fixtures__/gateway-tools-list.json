@@ -286,7 +286,7 @@
     },
     {
       "name": "schedule.list",
-      "sha256": "b0e71eb292275e6d7b9ce1cc4c3d05dd6f09188ce55612180c48d0b572cfaeb4"
+      "sha256": "0878d048bf14aa87f6104246c0a755806478b15bb979a76980f9be39e0575797"
     },
     {
       "name": "schedule.create",
@@ -301,8 +301,16 @@
       "sha256": "7781f2bebf27b02a6ca36e22fc5c213cc994f3c8c875d7462fcf85cf25abd5a7"
     },
     {
+      "name": "schedule.pause",
+      "sha256": "524d98871999e95684b83bcf38931481f105c8d38f1409b79d5f6b992ac2a64e"
+    },
+    {
+      "name": "schedule.resume",
+      "sha256": "7fa625eb6d6a39fdc7eeeeaea16d5ddcd59aa8c05bbad45b8308e8b3ec9450f2"
+    },
+    {
       "name": "worktree.lease",
-      "sha256": "c4566fc4a0fe4a5d30ff0b00a7498ef587987374496d560bf55dbf7bddfa3d24"
+      "sha256": "47397aaee3ecabfe79b7a083178addd6997fa0b2cb387205f2f2d4c7e47262e1"
     },
     {
       "name": "worktree.release",
@@ -656,7 +664,7 @@
     },
     {
       "name": "schedule.list",
-      "sha256": "b0e71eb292275e6d7b9ce1cc4c3d05dd6f09188ce55612180c48d0b572cfaeb4"
+      "sha256": "0878d048bf14aa87f6104246c0a755806478b15bb979a76980f9be39e0575797"
     },
     {
       "name": "schedule.create",
@@ -671,8 +679,16 @@
       "sha256": "7781f2bebf27b02a6ca36e22fc5c213cc994f3c8c875d7462fcf85cf25abd5a7"
     },
     {
+      "name": "schedule.pause",
+      "sha256": "524d98871999e95684b83bcf38931481f105c8d38f1409b79d5f6b992ac2a64e"
+    },
+    {
+      "name": "schedule.resume",
+      "sha256": "7fa625eb6d6a39fdc7eeeeaea16d5ddcd59aa8c05bbad45b8308e8b3ec9450f2"
+    },
+    {
       "name": "worktree.lease",
-      "sha256": "c4566fc4a0fe4a5d30ff0b00a7498ef587987374496d560bf55dbf7bddfa3d24"
+      "sha256": "47397aaee3ecabfe79b7a083178addd6997fa0b2cb387205f2f2d4c7e47262e1"
     },
     {
       "name": "worktree.release",
@@ -846,7 +862,7 @@
     },
     {
       "name": "schedule.list",
-      "sha256": "b0e71eb292275e6d7b9ce1cc4c3d05dd6f09188ce55612180c48d0b572cfaeb4"
+      "sha256": "0878d048bf14aa87f6104246c0a755806478b15bb979a76980f9be39e0575797"
     },
     {
       "name": "artifacts.list",

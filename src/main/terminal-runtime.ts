@@ -111,6 +111,7 @@ import {
   recordTerminalVisibility,
   releaseSettledTerminalSession,
   releaseTerminalOutput,
+  statusLineRateLimitsAreNews,
   transitionTerminalActivity,
   type TerminalSession,
 } from './terminal-session'
@@ -2457,9 +2458,11 @@ function ingestAgentStateFrame(frame: AgentStateFrame): void {
   // refresh and nothing renders them yet.
   //
   // The usage windows riding the same reading are the account's, not the
-  // session's: they go to the usage-limit store and nowhere on the session.
+  // session's: they go to the usage-limit store and nowhere on the session,
+  // and only when they are news from this session.
   const { rateLimits, ...statusLineReading } = frame.statusLine ?? {}
-  if (rateLimits) noteStatusLineRateLimits(rateLimits, frame.ts)
+  if (rateLimits && statusLineRateLimitsAreNews(session, rateLimits, statusLineReading.totalCostUsd))
+    noteStatusLineRateLimits(rateLimits, frame.ts)
   const statusLineChanged = frame.statusLine ? recordSessionStatusLine(session, statusLineReading, frame.ts) : false
   // Every path out of this function that does not reach the broadcast at the
   // end still has to publish an edit or a context reading: they are rendered,

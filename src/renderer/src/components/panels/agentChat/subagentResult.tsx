@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react'
 import type { ConversationJsonValue } from '../../../../../shared/conversation-runtime'
+import { markdownClipboardHtml } from '../../../utils/markdownClipboardHtml'
 import { GhostButton, InlineNotice, RowButton, Spinner } from '../../ui'
 import type { TranscriptToolEntry } from './conversationProjection'
 import { ConversationMarkdown, useConversationLinkContext } from './conversationLinks'
@@ -135,7 +136,7 @@ export function SubagentLaneResult({ tool }: { tool: TranscriptToolEntry }) {
       </div>
       {open ? (
         <div className="mb-1.5 mt-1 flex flex-col items-start gap-1.5 text-meta [&>*]:w-full">
-          <ToolPanel mono={false} copyText={report}>
+          <ToolPanel mono={false} copyText={report} copyHtml={() => markdownClipboardHtml(report)}>
             <ConversationMarkdown text={report} />
           </ToolPanel>
           {loading ? <Spinner label="Loading the full report" /> : null}

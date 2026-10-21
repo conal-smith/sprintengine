@@ -3,7 +3,13 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test } from 'vitest'
 import { renderMarkdown } from './markdown'
+import { PASTE_STYLES } from './pasteStyles'
 import { copySelectionAsMarkdown, renderedMarkdown, selectionClipboard } from './selectionToMarkdown'
+
+// A code block as the HTML flavour writes it: no language class, which means
+// nothing to the editor it lands in, and the shared paste styles.
+const pastedCode = (code: string) =>
+  `<pre style="${PASTE_STYLES.pre}"><code style="${PASTE_STYLES.codeBlock}">${code}</code></pre>`
 
 // A conversation log in a real DOM: the serializer reads live ranges and
 // clones, so the tests select text the way a person's drag does.
@@ -244,7 +250,7 @@ test('rules and web images are written back; a local image keeps its alt text', 
   ).toBe('Above\n\n---\n\n![Chart](https://example.com/a.png) Shot')
 })
 
-test('the HTML flavour is the fragment with chrome, attributes and handlers stripped', () => {
+test('the HTML flavour is the fragment with chrome, attributes and handlers stripped, and the paste styles on', () => {
   const view = page(
     '<p class="text-body" style="color:red" onclick="steal()">Hi <a href="https://example.com" class="link" onmouseover="x()">there</a>' +
       ' <button aria-label="Open a.ts" class="link">a.ts</button><svg></svg><span class="sr-only">hidden</span></p>' +
@@ -257,9 +263,9 @@ test('the HTML flavour is the fragment with chrome, attributes and handlers stri
   const html = view.copy()!.html
   expect(html.startsWith('<meta charset="utf-8">')).toBe(true)
   expect(html).toContain('<p>Hi <a href="https://example.com">there</a> a.ts</p>')
-  expect(html).toContain('<pre><code class="language-py">print(1)</code></pre>')
-  expect(html).toContain('<li><input type="checkbox" disabled="" checked="">Done</li>')
-  expect(html).not.toMatch(/<button|<svg|class="(?!language-)|style=|onclick|onmouseover|hidden|Copy/u)
+  expect(html).toContain(pastedCode('print(1)'))
+  expect(html).toContain('<li>\u2611 Done</li>')
+  expect(html).not.toMatch(/<button|<svg|class=|color:|onclick|onmouseover|hidden|Copy/u)
 })
 
 test('a selection that reaches outside the container is left to the browser', () => {
@@ -360,7 +366,10 @@ test('a reply rendered by the conversation’s own components copies back as its
   view.selectAll()
   const copied = view.copy()
   expect(copied?.text).toBe(source)
-  expect(copied?.html).toContain('<pre><code class="language-bash">npm test</code></pre>')
+  expect(copied?.html).toContain(pastedCode('npm test'))
+  expect(copied?.html).toContain(
+    `<td align="right" style="border:1px solid #aaaaaa;padding:4px 8px;text-align:right">12s</td>`,
+  )
   expect(copied?.html).not.toMatch(/Copy|Wrap|<button|<svg/u)
 })
 
@@ -372,7 +381,8 @@ test('a task item from the conversation’s own renderer keeps its box in both f
   view.selectAll()
   const copied = view.copy()
   expect(copied?.text).toBe('- [x] Ship\n- [ ] Tell people')
-  expect(copied?.html).toContain('<li><input type="checkbox" disabled="" checked=""> Ship</li>')
+  expect(copied?.html).toContain('<li>\u2611 Ship</li>')
+  expect(copied?.html).not.toContain('<input')
 })
 
 test('a task list nested under a plain item keeps the item’s words and its sub-list in the rich flavour', () => {
@@ -384,10 +394,8 @@ test('a task list nested under a plain item keeps the item’s words and its sub
   const html = new JSDOM(copied?.html ?? '').window.document
   const parent = html.querySelector('li')!
   expect(parent.firstChild?.textContent?.trim()).toBe('parent')
-  expect(parent.querySelector(':scope > input')).toBeNull()
   const subItems = [...parent.querySelectorAll('ul > li')]
-  expect(subItems.map((item) => item.textContent?.trim())).toEqual(['sub one', 'sub two'])
-  expect(subItems.map((item) => item.querySelector('input')?.hasAttribute('checked'))).toEqual([false, true])
+  expect(subItems.map((item) => item.textContent?.trim())).toEqual(['\u2610 sub one', '\u2611 sub two'])
 })
 
 test('a loose task item keeps its own words and paragraphs in the rich flavour', () => {
@@ -398,11 +406,9 @@ test('a loose task item keeps its own words and paragraphs in the rich flavour',
   const html = new JSDOM(view.copy()?.html ?? '').window.document
   const items = [...html.querySelectorAll('li')]
   expect(items).toHaveLength(2)
-  expect(items[0].textContent).toContain('a task')
+  expect(items[0].textContent?.trim()).toMatch(/^\u2610 a task/u)
   expect(items[0].textContent).toContain('with para')
-  expect(items[0].querySelector('input[type="checkbox"]')).not.toBeNull()
-  expect(items[1].textContent?.trim()).toBe('b')
-  expect(items[1].querySelector('input[checked]')).not.toBeNull()
+  expect(items[1].textContent?.trim()).toBe('\u2611 b')
 })
 
 test('typeset math copies back as the TeX it was written in, in both flavours', async () => {
@@ -415,6 +421,6 @@ test('typeset math copies back as the TeX it was written in, in both flavours', 
   const copied = view.copy()
   expect(copied?.text).toBe(source)
   expect(copied?.html).toContain('Energy is $$E = mc^2$$ here.')
-  expect(copied?.html).toContain('<pre><code class="language-math">\\frac{a}{b}</code></pre>')
+  expect(copied?.html).toContain(pastedCode('\\frac{a}{b}'))
   expect(copied?.html).not.toContain('katex')
 })

@@ -1898,8 +1898,14 @@ test('NewAgentPanel', async () => {
         await act(async () => {
           box.dispatchEvent(dropEvent)
         })
-        await settle()
-        await settle()
+        // Reading the image takes several timer hops (decode, encode, read
+        // back), so a fixed count of settles lost the race on a loaded CI Mac
+        // and Enter launched before the image was staged. Waited for instead:
+        // the strip offers to remove it once it is staged.
+        for (let i = 0; i < 50 && !view.container.querySelector('[aria-label="Remove shot.png"]'); i += 1) {
+          await settle()
+        }
+        assert.ok(view.container.querySelector('[aria-label="Remove shot.png"]'), 'the dropped image is staged')
         const enter = () =>
           act(async () => {
             textarea.dispatchEvent(
@@ -3594,6 +3600,64 @@ test('NewAgentPanel', async () => {
       const refused = useToastStore.getState().toasts.find((toast) => toast.title === 'Did not run')
       assert.equal(refused?.description, 'Its last run is still working.')
       door.view.unmount()
+    })
+
+    await check('a paused scheduled agent’s editor says so, and its Pause button resumes it', async () => {
+      seedStore()
+      const api = (dom.window as unknown as { api: Record<string, unknown> }).api
+      api.markScheduledAgentFailureSeen = async () => ({ ok: true })
+      const resumed: string[] = []
+      const paused: string[] = []
+      const agent = {
+        id: 'sa-9',
+        prompt: 'Refresh the forecast.',
+        schedule: { cron: '0 21 * * 0', timezone: 'UTC' },
+        folderPath: '/proj',
+        hostId: null,
+        cli: 'claude-code',
+        cliModel: null,
+        permissionPreset: null,
+        skills: [],
+        mcpServers: [],
+        worktree: null,
+        ownerModuleId: null,
+        createdAt: 0,
+        updatedAt: 0,
+        lastRun: null,
+        lastFailureSeenAt: null,
+        nextRunAt: null,
+      }
+      api.resumeScheduledAgent = async (id: string) => {
+        resumed.push(id)
+        return { ok: true, agent: { ...agent, nextRunAt: Date.now() + 3_600_000 } }
+      }
+      api.pauseScheduledAgent = async (id: string) => {
+        paused.push(id)
+        return { ok: true, agent: { ...agent, pausedAt: Date.now() } }
+      }
+      const door = await scheduleDoor({ editingScheduledAgent: { ...agent, pausedAt: Date.now() - 60_000 } })
+      const tray = door.view.container.querySelector('[data-schedule-paused-tray]')
+      assert.match(tray?.textContent ?? '', /^Paused since .*Run now still runs it\.$/u)
+      const toggle = door.view.container.querySelector<HTMLElement>('[data-schedule-editor-pause]')
+      assert.equal(toggle?.textContent, 'Resume')
+      await act(async () => {
+        toggle!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      })
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      assert.deepEqual(resumed, ['sa-9'])
+      door.view.unmount()
+
+      // Running on its schedule, there is no tray, and the button pauses.
+      const running = await scheduleDoor({ editingScheduledAgent: agent })
+      assert.equal(running.view.container.querySelector('[data-schedule-paused-tray]'), null)
+      const pause = running.view.container.querySelector<HTMLElement>('[data-schedule-editor-pause]')
+      assert.equal(pause?.textContent, 'Pause')
+      await act(async () => {
+        pause!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      })
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      assert.deepEqual(paused, ['sa-9'])
+      running.view.unmount()
     })
 
     // ── Extension mode ──────────────────────────────────────────────────────

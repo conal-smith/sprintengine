@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Sprint Engine",
+    "slug": "sprintengine-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": [
+      "sprintengine",
+      "sprintengine-tailnet"
+    ],
+    "userInterfaceStyle": "automatic",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "icon": "./src/assets/brand/app-icon.png",
+    "splash": {
+      "image": "./android/app/src/main/res/drawable-xxxhdpi/splashscreen_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.sprintengine.mobile"
+    },
+    "android": {
+      "package": "ai.sprintengine.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./src/assets/brand/android-adaptive-foreground.png",
+        "backgroundColor": "#0c0c10"
+      }
+    },
+    "extra": {
+      "iconSourceOfTruth": "ios/ and android/ are checked in, so `icon` and `android.adaptiveIcon` above are inert mirrors. The shipped icons are ios/SprintEngine/Images.xcassets/AppIcon.appiconset/ (one 1024 full-bleed square, no alpha: iOS cuts its own corners) and android/app/src/main/res/mipmap-*/ (ic_launcher, ic_launcher_round, and the adaptive ic_launcher_foreground over @color/ic_launcher_background in res/values/colors.xml). All of them, the two mirrors and the welcome screen's src/assets/brand/se-mark*.png are cut from one master, scripts/brand/sprintengine-se-mark-1024.png, a copy of SprintEngine Studio's Mac icon master, by `npm run brand:icons` (scripts/generate-brand-icons.mjs). The phone wears the desktop's se mark: to change it, replace the master with the desktop's and rerun; never hand-edit an output. The splash is the wordmark, not the mark, and `splash.image` above points at the shipped light splash logo so the inert record shows what ships.",
+      "protocolVersionSourceOfTruth": "The mobile-control protocol version is `mobileControlProtocolVersion` in src/shared/mobile-control/protocol.ts, which is a byte-identical mirror of the desktop copy and sha256-pinned to it. It is deliberately not repeated here: a second copy would be a second place for it to be wrong, and nothing would read it at runtime.",
+      "splashSourceOfTruth": "ios/ and android/ are checked in, so the splash and userInterfaceStyle keys above are inert and record only the light half. The shipped values live in ios/SprintEngine/ (Info.plist UIUserInterfaceStyle, SplashScreen*.colorset/.imageset appearance variants) and android/app/src/main/res/{values,values-night,drawable-night-*}/. Do not run expo prebuild: it regresses SplashScreen.storyboard. See README-splash.md in each. Splash backgrounds are light #ffffff and dark #0a0a0a, matching bgApp in each theme on BOTH platforms; keep the two platforms in step when changing them.",
+      "uploadPermissionsSourceOfTruth": "ios/ and android/ are checked in and `expo prebuild` is forbidden here (see splashSourceOfTruth), so expo-image-picker's config plugin never runs and the permission strings it would author are hand-maintained. The shipped values are NSPhotoLibraryUsageDescription and NSCameraUsageDescription in ios/SprintEngine/Info.plist, written for this app rather than left at the plugin's defaults: App Review rejects a vague reason string, and a person being asked for their camera roll deserves to be told it is going to their own paired desktop. There is no `plugins` array to keep them in sync with, so a rename of the picker rows in src/features/conversations/ConversationScreen.tsx should visit the plist too. Android needs nothing: CAMERA merges in from expo-image-picker's own manifest at build time, its READ/WRITE_EXTERNAL_STORAGE declarations carry the same maxSdkVersion=32 the app already pins with tools:replace, and the Android 13+ photo picker asks for no runtime permission at all. Both platforms need a native rebuild for the pickers to exist; upload itself is plain HTTP and needs none.",
+      "schemeSourceOfTruth": "ios/ and android/ are checked in, so the shipped URL schemes are AndroidManifest.xml (the VIEW intent-filter's android:scheme entries) and ios/SprintEngine/Info.plist (CFBundleURLSchemes). The `scheme` array above is kept in sync with them anyway: it is what a prebuild would regenerate from, and a single-string value there is exactly how sprintengine-tailnet:// links came to be dropped by the OS before the app was launched. Both schemes must appear in all three places. sprintengine is ours (conversation and chat links); sprintengine-tailnet is minted by the DESKTOP for tailnet pairing, the only way the phone pairs.",
+      "identity": "The app is 'Sprint Engine'; the desktop is 'SprintEngine Studio'. Bundle id ai.sprintengine.mobile on both platforms, URL scheme sprintengine://. Changing a bundle identifier makes a DIFFERENT app to the store and the OS: a build under another id is a separate install that no update reaches, and needs its own pairing.",
+      "cameraPermissionSourceOfTruth": "expo-camera was added for the pairing scanner (src/features/pairing/PairingScanner.tsx), which reads the QR the desktop has always drawn on Settings -> Remote. `expo prebuild` is forbidden here (see splashSourceOfTruth), so its config plugin never runs: CAMERA is declared by hand in android/app/src/main/AndroidManifest.xml, and RECORD_AUDIO is declared beside it for chat dictation (expo-speech-recognition), whose config plugin never runs either: its <queries> entries for the Google app's recogniser are hand-written in the same manifest, and its NSMicrophoneUsageDescription and NSSpeechRecognitionUsageDescription in ios/SprintEngine/Info.plist. On iOS the string is NSCameraUsageDescription in ios/SprintEngine/Info.plist, which now names BOTH uses (pairing and a chat's camera); App Review rejects a reason string that does not describe what the camera is actually for. Both platforms need a native rebuild for the scanner to exist."
+    }
+  }
+}

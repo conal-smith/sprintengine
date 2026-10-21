@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX, type TransitionEvent } from 'react'
 import { IconButton } from '../../ui'
 import { OVERLAY_SURFACE_CLASS } from '../../ui/tokens'
+import { markdownPreviewText } from '../../../utils/markdownPreviewText'
 import {
   TURN_MINIMAP_MIN_TURNS,
   turnPreviewText,
@@ -76,7 +77,12 @@ function MinimapPreview({
   count: number
 }): JSX.Element {
   const prompt = turnPreviewText(mark.prompt, 160) ?? 'Prompt with attachments only'
-  const reply = turnPreviewText(replyText, 240)
+  // The reply is markdown and the preview has no room to render it, so it
+  // shows the words. The prompt is what the person typed, shown as typed.
+  const reply = useMemo(
+    () => turnPreviewText(replyText === null ? null : markdownPreviewText(replyText), 240),
+    [replyText],
+  )
   return (
     <span
       aria-hidden="true"

@@ -123,9 +123,11 @@ import { chatSettleStep } from './chatSettleCommand'
 import { waitingChatCount, waitingLabel } from './sidebar/projectWaiting'
 import { isSnoozedWorkspace, resolveSnoozePresets, snoozeWakeLabel, workspaceWokeAt } from '../../utils/workspaceSnooze'
 import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
-import { useScheduledAgents } from '../../store/scheduledAgentsStore'
+import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
+import { PauseAllScheduledAgentsControl, ScheduledAgentsPausedNotice } from './sidebar/ScheduledPauseControls'
+import { setScheduledAgentPaused } from '../../utils/scheduledAgentsPause'
 import { isScheduledRunChat, scheduledAgentRunInProgress } from '../../utils/scheduledAgentRuns'
 import type { ScheduledAgentView } from '../../../../shared/scheduled-agents'
 import {
@@ -156,6 +158,7 @@ import {
   isHookSettledSession,
   keepUnvisitedCompletions,
   rowHasOpenTerminals,
+  visitClockCompletions,
 } from './sidebar/rowTerminals'
 import { useVisitStamp, type VisitTarget } from './sidebar/useVisitStamp'
 import { useChatJumpHints } from './sidebar/useChatJumpHints'
@@ -185,6 +188,7 @@ import {
   WorkspaceContextMenu,
   workspaceTypeRowActions,
 } from './sidebar/contextMenus'
+import { cancelNextMiddleButtonRelease } from '../../utils/middleButtonRelease'
 import { isImeKey } from '../../utils/imeKey'
 
 export { TerminalLineView } from './sidebar/TerminalLineView'
@@ -403,6 +407,25 @@ function WorkspaceSidebar({
   )
   const allScheduledAgents = useScheduledAgents()
   const scheduledAgents = scheduledAgentsEnabled ? allScheduledAgents : NO_SCHEDULED_AGENTS
+  // Every scheduled agent paused at once, and until when (null: they are not).
+  const scheduledAgentsPause = useScheduledAgentsPause()
+  const scheduledPausedAll = scheduledAgentsEnabled ? scheduledAgentsPause : null
+  // Run now from a schedule's menu: the run is a chat of its own, started in
+  // the background as every run is, and it runs whether or not the schedule is
+  // paused — it was asked for.
+  const runScheduledAgentNow = useCallback((agent: ScheduledAgentView) => {
+    void window.api
+      .runScheduledAgentNow(agent.id)
+      .then((result) => {
+        const failure = !result.ok ? result.message : !result.run.ok ? result.run.message : null
+        showToast(
+          failure === null
+            ? { tone: 'good', title: 'Started', description: 'Its chat is in the list, with the schedule’s clock.' }
+            : { tone: 'error', title: 'Did not run', description: failure },
+        )
+      })
+      .catch(() => {})
+  }, [])
   // Closing a card is how a scheduled agent is switched off: removed at once,
   // and said so. No Undo on the toast — the toast spec keeps its action row for
   // its two named consumers, and an undo racing a dismissal timer is not one.
@@ -555,14 +578,15 @@ function WorkspaceSidebar({
   // it, so it is not stamped as seen. A door is leaving it. A chat started
   // with ⌘⏎ is not the front chat at all, so neither applies to it.
   const frontWorkspaceId = globalSurfaceActive ? null : activeWorkspaceId
-  // The unseen-completion mark (the green row, `doneRowClass`). Session-only: the
-  // store's recency slice persists when a workspace was last TYPED into, not
-  // when it was last looked at, so "seen" has no honest home there yet and a
-  // restart simply starts clean. The transition is read off the same
-  // hook-authoritative clock the working counter uses; nothing here reads a
-  // pane. A ref carries the previous clocks so the effect compares, not
-  // re-renders.
-  const [unseenDoneIds, setUnseenDoneIds] = useState<Set<string>>(() => new Set())
+  // The unseen-completion mark (the green row, `doneRowClass`), from two
+  // readings. The durable one is the visit clock (`visitClockCompletions`,
+  // below): a finish newer than anyone's last look, which a reload keeps and a
+  // paired machine's row for the same chat reads alike. These are the ones
+  // this window watched happen: a turn's end seen on the same
+  // hook-authoritative clock the working counter uses, which also marks a
+  // chat whose visits were never recorded. Nothing here reads a pane. A ref
+  // carries the previous clocks so the effect compares, not re-renders.
+  const [observedDoneIds, setObservedDoneIds] = useState<Set<string>>(() => new Set())
   const workingSinceRef = useRef<Record<string, number | null>>({})
   useEffect(() => {
     const workingSinceNow: Record<string, number | null> = {}
@@ -583,7 +607,7 @@ function WorkspaceSidebar({
     }
     const before = workingSinceRef.current
     workingSinceRef.current = workingSinceNow
-    setUnseenDoneIds((previous) => {
+    setObservedDoneIds((previous) => {
       const next = deriveUnseenCompletions({
         previous,
         workingSinceBefore: before,
@@ -595,9 +619,6 @@ function WorkspaceSidebar({
       return next
     })
   }, [terminalRecencyByWorkspaceId, terminalSessions, conversationSessions, onScreenWorkspaceId])
-  useEffect(() => {
-    onUnseenDoneChange?.(unseenDoneIds)
-  }, [unseenDoneIds, onUnseenDoneChange])
   // …and read somewhere else. A chat read on the phone, or in a desktop
   // following it, has had its finish seen, and its `lastVisitedAt` moves past
   // the moment this window put the mark up; the mark comes down here too
@@ -608,21 +629,21 @@ function WorkspaceSidebar({
   useEffect(() => {
     const marked = unseenMarkedAtRef.current
     const now = Date.now()
-    for (const id of unseenDoneIds) if (!marked.has(id)) marked.set(id, now)
-    for (const id of [...marked.keys()]) if (!unseenDoneIds.has(id)) marked.delete(id)
-  }, [unseenDoneIds])
+    for (const id of observedDoneIds) if (!marked.has(id)) marked.set(id, now)
+    for (const id of [...marked.keys()]) if (!observedDoneIds.has(id)) marked.delete(id)
+  }, [observedDoneIds])
   const unseenVisits = useWorkspaceStore(
     useCallback(
       (state: { workspaces: Workspace[] }) => {
-        if (unseenDoneIds.size === 0) return ''
+        if (observedDoneIds.size === 0) return ''
         let visits = ''
         for (const workspace of state.workspaces) {
-          if (unseenDoneIds.has(workspace.id) && typeof workspace.lastVisitedAt === 'number')
+          if (observedDoneIds.has(workspace.id) && typeof workspace.lastVisitedAt === 'number')
             visits += `${workspace.id}=${workspace.lastVisitedAt};`
         }
         return visits
       },
-      [unseenDoneIds],
+      [observedDoneIds],
     ),
   )
   useEffect(() => {
@@ -630,7 +651,7 @@ function WorkspaceSidebar({
     const visitedAt = new Map(
       useWorkspaceStore.getState().workspaces.map((workspace) => [workspace.id, workspace.lastVisitedAt]),
     )
-    setUnseenDoneIds((previous) => {
+    setObservedDoneIds((previous) => {
       const next = keepUnvisitedCompletions({
         marks: previous,
         markedAt: unseenMarkedAtRef.current,
@@ -667,10 +688,43 @@ function WorkspaceSidebar({
       marked.push(workspace.id)
     }
     if (marked.length === 0) return
-    setUnseenDoneIds((previous) =>
+    setObservedDoneIds((previous) =>
       marked.every((id) => previous.has(id)) ? previous : new Set([...previous, ...marked]),
     )
   }, [rewoundVisits, conversationsByWorkspaceId, onScreenWorkspaceId])
+  // The marks the visit clock says, which need no transition to have been
+  // watched: two overnight scheduled runs nobody opened are green after a
+  // reload, as they are on a paired machine following them. Idle is the
+  // row's own reading: nothing working (its background agents and monitors
+  // count) and nothing waiting on the person.
+  const visitClockDoneRef = useRef<ReadonlySet<string> | undefined>(undefined)
+  const visitClockDoneIds = useMemo(() => {
+    const next = visitClockCompletions({
+      workspaces,
+      finishedAt: (workspace) =>
+        latestFinishOf(workspace, conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS),
+      idle: (id) => {
+        const activity = activityByWorkspaceId[id]
+        return (
+          activity !== 'working' &&
+          activity !== 'needs-input' &&
+          typeof terminalRecencyByWorkspaceId[id]?.workingSince !== 'number'
+        )
+      },
+      onScreenWorkspaceId,
+      previous: visitClockDoneRef.current,
+    })
+    visitClockDoneRef.current = next
+    return next
+  }, [workspaces, conversationsByWorkspaceId, activityByWorkspaceId, terminalRecencyByWorkspaceId, onScreenWorkspaceId])
+  const unseenDoneIds = useMemo<ReadonlySet<string>>(() => {
+    if (visitClockDoneIds.size === 0) return observedDoneIds
+    if ([...visitClockDoneIds].every((id) => observedDoneIds.has(id))) return observedDoneIds
+    return new Set([...observedDoneIds, ...visitClockDoneIds])
+  }, [observedDoneIds, visitClockDoneIds])
+  useEffect(() => {
+    onUnseenDoneChange?.(unseenDoneIds)
+  }, [unseenDoneIds, onUnseenDoneChange])
 
   // Module-contributed top-nav doors used to be resolved here and handed to
   // ExtensionsRail. They are resolved inside `useExtensionsDrawerRows` now: the
@@ -2444,7 +2498,8 @@ function WorkspaceSidebar({
     const open = () => onOpenRemoteSession?.(openSpecOfConversation(conversation))
     const agent = conversation.agents[0]!
     const needsAttention = conversation.activity === 'needs-input'
-    const unseenDone = !needsAttention && conversation.agents.some(remoteFinishUnseen)
+    const unseenDone = !needsAttention && conversation.agents.some((row) => remoteFinishUnseen(row, now))
+    const scheduledAgentId = conversation.agents.find((row) => row.scheduledAgentId)?.scheduledAgentId ?? null
     const working = conversation.activity === 'working'
     const flatProject = options?.flatProject ?? null
     const surface = needsAttention
@@ -2559,6 +2614,9 @@ function WorkspaceSidebar({
                 so the row wears the glyph; in the flat stream the project line
                 already wears it, right of the folder icon. */}
             {flatProject ? null : <MachineRowGlyph machine={machine} />}
+            {/* A schedule over there started this chat: the clock its own
+                machine's row wears beside the title, in both shapes of the list. */}
+            {scheduledAgentId ? <ScheduledRunGlyph scheduledAgentId={scheduledAgentId} /> : null}
             {/* Weight marks a running turn, or one that wants you, the way
                 `workspaceRowEmphasis` weights a local row. */}
             <TruncatedText
@@ -2689,6 +2747,10 @@ function WorkspaceSidebar({
   // A row opens its schedule's editor, never a run — the runs are chats, in
   // the list above with the schedule's clock on them, and the editor lists a
   // schedule's recent ones.
+  //
+  // Beside the fold, the pause of them all (an hour, until tomorrow morning,
+  // until resumed); while it holds, a line under the fold says so with Resume,
+  // folded or not, since it is about every schedule and not about a row.
   const renderScheduledSection = () => {
     if (scheduledAgents.length === 0) return null
     const expanded = expandedShelves[SCHEDULED_SHELF_KEY] !== false
@@ -2701,7 +2763,9 @@ function WorkspaceSidebar({
           flush
           controlsId={SCHEDULED_SHELF_ID}
           onToggle={() => setExpandedShelves((prev) => ({ ...prev, [SCHEDULED_SHELF_KEY]: !expanded }))}
+          trailing={<PauseAllScheduledAgentsControl pause={scheduledPausedAll} />}
         />
+        {scheduledPausedAll ? <ScheduledAgentsPausedNotice pause={scheduledPausedAll} now={now} /> : null}
         <div id={SCHEDULED_SHELF_ID} role="group" aria-label="Scheduled agents" hidden={!expanded}>
           {expanded
             ? scheduledAgents.map((agent) => (
@@ -2712,8 +2776,11 @@ function WorkspaceSidebar({
                   project={flatProjectOfScheduled(agent)}
                   runInProgress={scheduledAgentRunInProgress(agent, activityByWorkspaceId)}
                   selected={openScheduledAgentId === agent.id}
+                  pausedAll={scheduledPausedAll !== null}
                   onOpen={() => onOpenScheduledAgent?.(agent.id)}
                   onClose={() => closeScheduledAgent(agent)}
+                  onTogglePause={() => void setScheduledAgentPaused(agent, agent.pausedAt === undefined)}
+                  onRunNow={() => runScheduledAgentNow(agent)}
                 />
               ))
             : null}
@@ -3144,7 +3211,14 @@ function WorkspaceSidebar({
                 A scheduled agent is a New chat that starts itself, so it has no
                 door of its own. */}
             {onNewScheduledAgent && scheduledAgentsEnabled ? (
-              <Tooltip content="New scheduled agent" placement="right">
+              <Tooltip
+                content={
+                  scheduledPausedAll
+                    ? 'New scheduled agent — scheduled agents are paused for now'
+                    : 'New scheduled agent'
+                }
+                placement="right"
+              >
                 <IconButton
                   size="md"
                   tone="quiet"
@@ -3285,6 +3359,13 @@ function WorkspaceSidebar({
             return workspace ? canMarkWorkspaceUnread(workspace) : false
           })()}
           watchedPullRequestNumber={watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ?? null}
+          schedule={(() => {
+            // A chat a schedule here started: its menu pauses (or resumes)
+            // that schedule. Only while the schedule is still in the list.
+            const scheduledAgentId = workspaceById.get(contextMenu.workspaceId)?.scheduledAgentId
+            const agent = scheduledAgentId ? scheduledAgents.find((entry) => entry.id === scheduledAgentId) : null
+            return agent ? { paused: agent.pausedAt !== undefined } : null
+          })()}
           onClose={() => setContextMenu(null)}
           onSelect={(action) => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
@@ -3389,6 +3470,12 @@ function WorkspaceSidebar({
             }
             if (action === 'wake') {
               setWorkspaceSnoozed(workspace.id, null)
+              setContextMenu(null)
+              return
+            }
+            if (action === 'toggle-schedule-pause') {
+              const agent = scheduledAgents.find((entry) => entry.id === workspace.scheduledAgentId)
+              if (agent) void setScheduledAgentPaused(agent, agent.pausedAt === undefined)
               setContextMenu(null)
               return
             }
@@ -4419,6 +4506,8 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
       onMouseDown={(event) => {
         if (event.button === 1) {
           event.preventDefault()
+          // The release would paste the primary selection on Linux.
+          cancelNextMiddleButtonRelease(event.currentTarget.ownerDocument.defaultView)
           handleClose(workspace.id)
         }
       }}

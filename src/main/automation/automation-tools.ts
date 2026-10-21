@@ -2410,23 +2410,32 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
   }
 
   // What a caller reads about a scheduled agent: the record, its schedule in
-  // words, and when it runs next as an ISO instant.
+  // words, whether it is paused (and since when), and when it runs next as an
+  // ISO instant — null while it is paused, on its own or with every other.
+  const isoOrNull = (at: number | null | undefined) => (typeof at === 'number' ? new Date(at).toISOString() : null)
   const scheduledAgentForCaller = (agent: ScheduledAgentView) => ({
     ...agent,
     scheduleWords: scheduledAgentScheduleWords(agent.schedule),
-    nextRunAt: agent.nextRunAt === null ? null : new Date(agent.nextRunAt).toISOString(),
+    paused: agent.pausedAt !== undefined,
+    pausedAt: isoOrNull(agent.pausedAt),
+    nextRunAt: isoOrNull(agent.nextRunAt),
   })
 
   const scheduledAgentList: McpToolRegistration = {
     name: 'schedule.list',
     description:
       'List the scheduled agents on this computer: each is a prompt and a cron schedule, and each time the ' +
-      'schedule comes round a new chat starts in its project with that prompt. Read-only.',
+      'schedule comes round a new chat starts in its project with that prompt. `paused` is true for one the ' +
+      'person paused; `pausedAll` says whether every scheduled agent is paused, and until when. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => {
       const service = scheduledAgentsOrFailure()
       if (!('list' in service)) return service
-      return success({ scheduledAgents: service.list().map(scheduledAgentForCaller) })
+      const pause = service.pausedAll()
+      return success({
+        scheduledAgents: service.list().map(scheduledAgentForCaller),
+        pausedAll: pause ? { since: isoOrNull(pause.since), until: isoOrNull(pause.until) } : null,
+      })
     },
   }
 
@@ -2579,6 +2588,66 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     },
   }
 
+  const scheduledAgentPause: McpToolRegistration = {
+    name: 'schedule.pause',
+    description:
+      'Pause a scheduled agent: it starts no run at its scheduled times until it is resumed. A run already ' +
+      'going is left to finish, and schedule.run still starts one. Refused to a chat a scheduled agent started.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Scheduled agent id from schedule.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: async (args, context) => {
+      const refused = refuseScheduledRunCaller(context, 'pause')
+      if (refused) return refused
+      const id = requireString(args, 'id')
+      if (typeof id !== 'string') return id
+      const service = scheduledAgentsOrFailure()
+      if (!('pause' in service)) return service
+      if (!service.get(id)) return failure('unknown_scheduled_agent', `No scheduled agent "${id}".`)
+      const paused = await service.pause(id)
+      if (!paused.ok) return failure('scheduled_agent_invalid', paused.message)
+      return success({ scheduledAgent: scheduledAgentForCaller(paused.agent) })
+    },
+  }
+
+  const scheduledAgentResume: McpToolRegistration = {
+    name: 'schedule.resume',
+    description:
+      'Resume a paused scheduled agent. It runs next at its first scheduled time from now: the times that ' +
+      'passed while it was paused are not made up. Called by an agent of this app, the scheduled agent must ' +
+      'launch no looser than that agent\'s own preset, or it is refused with "permission_escalation". ' +
+      'Refused to a chat a scheduled agent started.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Scheduled agent id from schedule.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: async (args, context) => {
+      const refused = refuseScheduledRunCaller(context, 'resume')
+      if (refused) return refused
+      const id = requireString(args, 'id')
+      if (typeof id !== 'string') return id
+      const service = scheduledAgentsOrFailure()
+      if (!('resume' in service)) return service
+      const agent = service.get(id)
+      if (!agent) return failure('unknown_scheduled_agent', `No scheduled agent "${id}".`)
+      // Resumed, it starts runs on its own preset with nobody watching, as
+      // schedule.run would start one now: held to the same ceiling.
+      const refusal = refuseScheduledAgentRun(
+        agent.permissionPreset,
+        launchPermissionCeiling(context, backends.resolveAgentPermissionPreset),
+      )
+      if (refusal) return failure(refusal.code, refusal.message)
+      const resumed = await service.resume(id)
+      if (!resumed.ok) return failure('scheduled_agent_invalid', resumed.message)
+      return success({ scheduledAgent: scheduledAgentForCaller(resumed.agent) })
+    },
+  }
+
   return [
     workspaceCheckout,
     workspaceExtensions,
@@ -2606,6 +2675,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     scheduledAgentCreate,
     scheduledAgentDelete,
     scheduledAgentRun,
+    scheduledAgentPause,
+    scheduledAgentResume,
   ]
 }
 

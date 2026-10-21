@@ -42,8 +42,22 @@ export type RepositoryIdentityReaders = {
   readRemotes: (repoRoot: string) => Promise<string>
 }
 
+// A bare repository has no work tree, so `--show-toplevel` refuses it — both a
+// bare clone and a container folder whose `.git` file points at `./.bare`, the
+// layout people keep several worktrees under. Such a folder is still a clone of
+// its remote and should group with that project's checkouts; `remote -v` reads
+// fine from the folder itself, so the folder stands in as its root.
+async function readBareRepoRoot(folderPath: string): Promise<string | null> {
+  try {
+    const stdout = await runGit(folderPath, ['rev-parse', '--is-bare-repository'])
+    return stdout.trim() === 'true' ? folderPath : null
+  } catch {
+    return null
+  }
+}
+
 const defaultReaders: RepositoryIdentityReaders = {
-  readRepoRoot: (folderPath) => getGitRepoRoot(folderPath),
+  readRepoRoot: async (folderPath) => (await getGitRepoRoot(folderPath)) ?? (await readBareRepoRoot(folderPath)),
   readRemotes: (repoRoot) => runGit(repoRoot, ['remote', '-v']),
 }
 

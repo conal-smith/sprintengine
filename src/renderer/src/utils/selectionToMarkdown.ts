@@ -8,10 +8,15 @@
 // selected DOM written back as markdown. The HTML flavour is the same fragment
 // with the app's chrome, classes and handlers stripped, for a rich editor.
 //
+// The HTML takes the same inline styles a copy button's does
+// (`pasteStyles.ts`), so a selection and a button paste alike.
+//
 // Chrome is anything marked `data-copy-exclude`, plus what is never content:
 // hidden and screen-reader-only nodes, glyphs, form controls, timestamps, and a
 // button that is not set inside prose. A button inside prose stays, because the
 // conversation renders a file path as one and its text is the path.
+
+import { pasteCellStyle, PASTE_STYLES, pasteTaskBox } from './pasteStyles'
 
 export type SelectionClipboard = { text: string; html: string }
 
@@ -480,10 +485,14 @@ const KEPT_ATTRIBUTES: Record<string, readonly string[]> = {
   TD: ['align', 'colspan', 'rowspan'],
   OL: ['start'],
   LI: ['value'],
-  INPUT: ['type', 'checked', 'disabled'],
 }
 
 function keepMeaningfulAttributes(element: Element): void {
+  // A column's alignment drawn as a style is meaning too: it is kept as the
+  // attribute, before the style goes, for the paste style to read.
+  const styledAlign = (element as HTMLElement).style?.textAlign
+  if ((element.tagName === 'TH' || element.tagName === 'TD') && styledAlign && !element.hasAttribute('align'))
+    element.setAttribute('align', styledAlign)
   const kept = KEPT_ATTRIBUTES[element.tagName] ?? []
   for (const attribute of Array.from(element.attributes)) {
     if (!kept.includes(attribute.name)) element.removeAttribute(attribute.name)
@@ -494,23 +503,45 @@ function keepMeaningfulAttributes(element: Element): void {
   }
 }
 
+// A code block as the clipboard holds it: the code in a styled `pre > code`.
+// No language class: a class means nothing to the editor it lands in.
+function pasteCodeBlock(doc: Document, text: string): Element {
+  const pre = doc.createElement('pre')
+  pre.setAttribute('style', PASTE_STYLES.pre)
+  const code = doc.createElement('code')
+  code.setAttribute('style', PASTE_STYLES.codeBlock)
+  code.textContent = text
+  pre.appendChild(code)
+  return pre
+}
+
+// The paste styles on what is left: inline code in a monospace face, tables
+// ruled, quotes barred. A code block was styled as it was rebuilt.
+function stylePaste(root: Element): void {
+  for (const element of Array.from(root.querySelectorAll('code, table, th, td, blockquote'))) {
+    const tag = element.tagName
+    if (tag === 'CODE' && element.parentElement?.tagName !== 'PRE') element.setAttribute('style', PASTE_STYLES.code)
+    else if (tag === 'TABLE') element.setAttribute('style', PASTE_STYLES.table)
+    else if (tag === 'TH' || tag === 'TD') element.setAttribute('style', pasteCellStyle(element.getAttribute('align')))
+    else if (tag === 'BLOCKQUOTE') element.setAttribute('style', PASTE_STYLES.blockquote)
+  }
+}
+
 // The fragment as a rich editor should receive it: content elements with the
-// attributes that carry meaning, and nothing of the app — no classes, styles,
-// handlers, ids or ARIA, no controls, no chrome. A code block becomes a plain
-// `pre > code` naming its language; a file-path button becomes its text.
+// attributes that carry meaning and the paste styles, and nothing of the app —
+// no classes, handlers, ids or ARIA, no controls, no chrome. A code block
+// becomes a plain `pre > code`; a file-path button becomes its text.
 function sanitisedHtml(root: Element): string {
   const doc = root.ownerDocument
   const copy = root.cloneNode(true) as Element
-  // A task item's box, as a plain disabled checkbox. The kit draws it inside a
-  // wrapper the pointer cannot select, which is chrome to everything else.
-  const taskBox = (input: Element) => {
-    const box = doc.createElement('input')
-    box.setAttribute('type', 'checkbox')
-    box.setAttribute('disabled', '')
-    if ((input as HTMLInputElement).checked || input.getAttribute('aria-checked') === 'true')
-      box.setAttribute('checked', '')
-    return box
-  }
+  // A task item's box, as the character a paste keeps (`pasteStyles.ts`). The
+  // kit draws it inside a wrapper the pointer cannot select, which is chrome to
+  // everything else.
+  const taskBox = (input: Element, next: Node | null) =>
+    doc.createTextNode(
+      pasteTaskBox((input as HTMLInputElement).checked || input.getAttribute('aria-checked') === 'true') +
+        (/^\s/u.test(next?.textContent ?? '') ? '' : ' '),
+    )
   // Each box replaces only what was drawn around it — the wrappers that hold
   // nothing but the box — so the item's words, its paragraphs and a list
   // nested under it all stay where they were.
@@ -522,39 +553,23 @@ function sanitisedHtml(root: Element): string {
       parent = parent.parentElement
     )
       drawn = parent
-    drawn.replaceWith(taskBox(input))
+    drawn.replaceWith(taskBox(input, drawn.nextSibling))
   }
   const clean = (element: Element) => {
     for (const child of Array.from(element.children)) {
-      if (child.tagName === 'INPUT' && child.getAttribute('type') === 'checkbox') continue
       if (isChrome(child, element.tagName)) {
         child.remove()
         continue
       }
       const math = typesetMath(child)
       if (math) {
-        // As the source a rich editor can keep: a display formula as a math
-        // block, an inline one as the text it was written as.
-        if (!math.display) {
-          child.replaceWith(doc.createTextNode(`$$${math.tex}$$`))
-          continue
-        }
-        const pre = doc.createElement('pre')
-        const code = doc.createElement('code')
-        code.setAttribute('class', 'language-math')
-        code.textContent = math.tex
-        pre.appendChild(code)
-        child.replaceWith(pre)
+        // As the source a rich editor can keep: a display formula as a code
+        // block of its TeX, an inline one as the text it was written as.
+        child.replaceWith(math.display ? pasteCodeBlock(doc, math.tex) : doc.createTextNode(`$$${math.tex}$$`))
         continue
       }
       if (isCodeBlockRoot(child)) {
-        const pre = doc.createElement('pre')
-        const code = doc.createElement('code')
-        const language = codeBlockLanguage(child)
-        if (language) code.setAttribute('class', `language-${language}`)
-        code.textContent = codeBlockText(child)
-        pre.appendChild(code)
-        child.replaceWith(pre)
+        child.replaceWith(pasteCodeBlock(doc, codeBlockText(child)))
         continue
       }
       clean(child)
@@ -564,6 +579,7 @@ function sanitisedHtml(root: Element): string {
   }
   keepMeaningfulAttributes(copy)
   clean(copy)
+  stylePaste(copy)
   return `<meta charset="utf-8">${copy.innerHTML}`
 }
 
@@ -588,7 +604,9 @@ function rangeClipboard(range: Range): SelectionClipboard | null {
   if (codeRoot) {
     const box = contextualFragment(range, ancestor)
     const text = (box.querySelector('pre') ? codeBlockText(box) : plainText(box)).replace(/\n$/u, '')
-    return text ? { text, html: `<meta charset="utf-8"><pre><code>${escapeHtml(text)}</code></pre>` } : null
+    return text
+      ? { text, html: `<meta charset="utf-8">${pasteCodeBlock(ancestor.ownerDocument, text).outerHTML}` }
+      : null
   }
 
   const box = contextualFragment(range, ancestor)

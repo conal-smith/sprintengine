@@ -35,8 +35,9 @@ import {
 } from './slot-git'
 import { type PoolContext, type PoolRuntime, tail, messageOf, failureOf } from './pool-context'
 import type { LeaseBase, WorktreePoolLeaseInput, WorktreePoolLeaseResult } from './worktree-pool-service'
-import { hold, holdAfterFailure, forgetSlotsGoneFromDisk } from './pool-slot-steps'
+import { hold, holdAfterFailure, forgetSlotsGoneFromDisk, reservationAt } from './pool-slot-steps'
 import { findLease } from './pool-return'
+import { makeRoom } from './pool-idle'
 
 /** Leasing a slot (worktree-pool-service.ts): the base it forks from, the reset that moves it there, and the lease itself. */
 
@@ -332,7 +333,11 @@ async function nextSlotPath(pool: PoolRuntime): Promise<{ id: string; path: stri
   const takenNumbers = new Set(
     pool.record.slots.map((slot) => poolSlotNumber(slot.id, stem)).filter((n): n is number => n !== null),
   )
-  const released = new Set(pool.record.releasedPaths.map(comparablePath))
+  // A path kept for a chat whose parked slot was removed is that chat's to
+  // come back to (`reclaim`): a new slot there would be someone else's.
+  const released = new Set(
+    [...pool.record.releasedPaths, ...pool.record.reservedPaths.map((entry) => entry.path)].map(comparablePath),
+  )
   for (let n = 1; n < SLOT_NUMBER_LIMIT; n += 1) {
     if (takenNumbers.has(n)) continue
     const id = poolSlotName(stem, n)
@@ -375,6 +380,7 @@ async function createSlot(
       lastBranch: null,
       size: null,
       kept: null,
+      parked: null,
     }
     pool.record.slots.push(created)
     pool.busy.add(created.id)
@@ -466,7 +472,9 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
 
   // Idle slots, the least recently used first: the slot a settled chat gave
   // back most recently is the last to go to someone else, so reopening that
-  // chat finds its worktree still free to reclaim (`reclaim`).
+  // chat finds its worktree still free to reclaim (`reclaim`). A slot parked
+  // for a chat that still exists is never one of them: that chat comes back
+  // to it. A full pool makes room instead (`makeRoom`).
   // Idle slots passed over for this lease (a terminal sits in one): it stays
   // idle, and picking it again would never get past it.
   const passedOver = new Set<string>()
@@ -475,7 +483,11 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
     let slot: SlotRecord | null = await ctx.withPool(pool, async () => {
       const picked = pool.record.slots
         .filter(
-          (candidate) => candidate.state === 'idle' && !pool.busy.has(candidate.id) && !passedOver.has(candidate.id),
+          (candidate) =>
+            candidate.state === 'idle' &&
+            !candidate.parked &&
+            !pool.busy.has(candidate.id) &&
+            !passedOver.has(candidate.id),
         )
         .sort((a, b) => (a.lastUsedAt ?? a.createdAt) - (b.lastUsedAt ?? b.createdAt))[0]
       if (!picked) return null
@@ -485,14 +497,25 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
       return picked
     })
     if (!slot) {
-      const made = await createSlot(ctx, pool, local)
+      let made = await createSlot(ctx, pool, local)
+      // Full: a slot nobody is using is given back and removed to make room,
+      // before the lease is refused (pool-idle.ts). Refused, the message names
+      // every slot and what holds it, so the person knows what to free.
       if (made === 'full') {
-        const { maxSlots } = await ctx.getSettings()
-        return {
-          ok: false,
-          reason: 'full',
-          message: `The pool already has ${maxSlots} worktrees.`,
-          base: await fetching,
+        const room = await makeRoom(ctx, pool)
+        if (room.ok) made = await createSlot(ctx, pool, local)
+        if (made === 'full') {
+          const { maxSlots } = await ctx.getSettings()
+          const held = room.ok ? [] : room.reasons
+          return {
+            ok: false,
+            reason: 'full',
+            message:
+              held.length > 0
+                ? `The pool already has ${maxSlots} worktrees, and none can be given back now. ${held.join('; ')}. Commit and push what is done, close what you are not using, or raise the limit in Settings ▸ Worktrees.`
+                : `The pool already has ${maxSlots} worktrees.`,
+            base: await fetching,
+          }
         }
       }
       if (made === 'error') {
@@ -691,9 +714,14 @@ export async function catchUp(ctx: PoolContext, leaseId: string): Promise<CatchU
 /**
  * Give a returned slot back to the chat it was returned from, on the
  * chat's own branch, at the path the chat records: a settled chat reopened
- * after the cleanup handed its worktree back (git.ts `restoreGitWorktree`).
- * The slot is still on disk with everything the chat left in it, ignored
- * files included, so only the branch is checked out again.
+ * after the cleanup handed its worktree back, or a chat whose slot was given
+ * back while it sat idle (pool-idle.ts), opened or sent to again (git.ts
+ * `restoreGitWorktree`). The slot is still on disk with everything the chat
+ * left in it, ignored files included, so only the branch is checked out
+ * again. A parked slot removed to make room left its path reserved for the
+ * chat, and a slot is made there again on the chat's branch
+ * ({@link recreateAtReservedPath}): the chat's records and its CLI's
+ * sessions name that path, so the chat comes back to it, not to another.
  *
  * Only an idle slot can be reclaimed. One leased to another agent since, or
  * held with someone's changes, is refused with the reason; a branch that no
@@ -705,11 +733,14 @@ export async function reclaim(
     path: string
     branch: string
     owner: string
+    copyIncludedFiles?: boolean
   },
 ): Promise<{ ok: true } | { ok: false; message: string; definitive?: true } | null> {
   await ctx.load()
-  const pool = [...ctx.pools.values()].find((candidate) =>
-    candidate.record.slots.some((slot) => comparablePath(slot.path) === comparablePath(input.path)),
+  const pool = [...ctx.pools.values()].find(
+    (candidate) =>
+      candidate.record.slots.some((slot) => comparablePath(slot.path) === comparablePath(input.path)) ||
+      reservationAt(candidate, input.path) !== undefined,
   )
   if (!pool) return null
   if (!(await ctx.ready(pool))) {
@@ -718,7 +749,10 @@ export async function reclaim(
   const branch = input.branch
   const began = await ctx.withPool(pool, async () => {
     const slot = pool.record.slots.find((candidate) => comparablePath(candidate.path) === comparablePath(input.path))
-    if (!slot) return { kind: 'gone' as const }
+    if (!slot) {
+      const reserved = reservationAt(pool, input.path)
+      return reserved?.branch === branch ? { kind: 'reserved' as const } : { kind: 'gone' as const }
+    }
     if (slot.state === 'leased' && slot.lease?.branch === branch) return { kind: 'done' as const, slot }
     if (slot.state !== 'idle' || pool.busy.has(slot.id)) return { kind: 'refused' as const, other: slot }
     pool.busy.add(slot.id)
@@ -728,6 +762,7 @@ export async function reclaim(
     return { kind: 'began' as const, slot }
   })
   if (began.kind === 'gone') return null
+  if (began.kind === 'reserved') return recreateAtReservedPath(ctx, pool, input)
   if (began.kind === 'done') {
     // The record says it is already this chat's; the tree is asked too. A
     // record can be stale (another profile shares the container, a person
@@ -869,6 +904,7 @@ export async function reclaim(
     await ctx.withPool(pool, async () => {
       slot.state = 'leased'
       slot.op = null
+      slot.parked = null
       slot.lease = {
         leaseId: randomUUID(),
         branch,
@@ -888,5 +924,137 @@ export async function reclaim(
     return { ok: false, message: messageOf(error) }
   } finally {
     pool.busy.delete(slot.id)
+  }
+}
+
+/**
+ * Make a slot again at a path reserved for its chat, on the chat's branch:
+ * the chat's parked slot was removed to make room, and the chat is back. As
+ * a fresh worktree is made (`.worktreeinclude` copied, submodules and LFS
+ * brought along, locked before anyone works in it), and leased to the chat
+ * as `reclaim` leases a parked slot.
+ *
+ * It needs a place in the pool like any lease, and makes room the same way.
+ * Null when the pool is off or has no room: the caller then puts a plain
+ * worktree at the path (git.ts), as a lease past the limit gets one, and the
+ * chat is just as whole. The reservation is dropped once a slot stands there.
+ */
+async function recreateAtReservedPath(
+  ctx: PoolContext,
+  pool: PoolRuntime,
+  input: { path: string; branch: string; owner: string; copyIncludedFiles?: boolean },
+): Promise<{ ok: true } | { ok: false; message: string; definitive?: true } | null> {
+  const { enabled, maxSlots } = await ctx.getSettings()
+  if (!enabled || (await pathExists(input.path))) return null
+  const branch = input.branch
+  if (!(await branchExists(ctx, pool.record.repoRoot, branch))) {
+    return {
+      ok: false,
+      definitive: true,
+      message: `Branch "${branch}" no longer exists, so the worktree cannot be recreated.`,
+    }
+  }
+  const id = input.path.split(/[\\/]/u).filter(Boolean).pop() ?? input.path
+  const claim = async (): Promise<SlotRecord | 'full' | 'taken'> =>
+    ctx.withPool(pool, async () => {
+      if (
+        pool.record.slots.some((slot) => slot.id === id || comparablePath(slot.path) === comparablePath(input.path))
+      ) {
+        return 'taken' as const
+      }
+      if (pool.record.slots.length >= Math.min(maxSlots, POOL_MAX_SLOTS)) return 'full' as const
+      const created: SlotRecord = {
+        id,
+        path: input.path,
+        state: 'creating',
+        baseRef: null,
+        baseSha: null,
+        error: null,
+        lease: null,
+        held: null,
+        lastUsedAt: null,
+        createdAt: ctx.now(),
+        op: { kind: 'create', startedAt: ctx.now(), pid: process.pid },
+        uses: 0,
+        lastBranch: null,
+        size: null,
+        kept: null,
+        parked: null,
+      }
+      pool.record.slots.push(created)
+      pool.busy.add(created.id)
+      await ctx.persist(pool)
+      return created
+    })
+  let slot = await claim()
+  if (slot === 'full' && (await makeRoom(ctx, pool)).ok) slot = await claim()
+  if (slot === 'full' || slot === 'taken') return null
+  const made = slot
+  try {
+    const checkoutConfig = await parallelCheckoutConfig(ctx.git, pool.record.repoRoot)
+    const added = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
+      ctx.git(pool.record.repoRoot, [...checkoutConfig, 'worktree', 'add', '--quiet', made.path, branch]),
+    )
+    if (!added.ok) {
+      await ctx.withPool(pool, async () => {
+        pool.record.slots = pool.record.slots.filter((candidate) => candidate !== made)
+        await ctx.persist(pool)
+      })
+      return { ok: false, message: added.message ?? `Could not check out ${branch} again.` }
+    }
+    await writeSlotMarker(ctx.git, made.path).catch((error: unknown) =>
+      ctx.log(`${made.path}: could not mark it as a slot (${messageOf(error)})`),
+    )
+    // Locked BEFORE anything else runs in it, as a lease locks its slot.
+    const locked = await lockAgentWorktree(pool.record.repoRoot, made.path, input.owner, ctx.git)
+    if (!locked.ok) ctx.log(`${made.path}: could not lock (${tail(locked.message)}); reclaiming anyway`)
+    const notes: string[] = []
+    if (await hasFile(made.path, '.gitmodules')) {
+      const modules = await ctx.git(made.path, ['submodule', 'update', '--init', '--recursive'], {
+        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+      })
+      if (!modules.ok) notes.push(`submodules: ${tail(modules.message)}`)
+    }
+    if (await usesLfs(made.path)) {
+      const lfs = await ctx.git(made.path, ['lfs', 'pull'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+      if (!lfs.ok) notes.push(`lfs: ${tail(lfs.message)}`)
+    }
+    if (input.copyIncludedFiles && ctx.deps.seedIncludedFiles) {
+      const seeded = await ctx.deps.seedIncludedFiles(pool.record.repoRoot, made.path).then(
+        (result) => failureOf(result),
+        (error: unknown) => messageOf(error),
+      )
+      if (seeded !== null) ctx.log(`${made.path}: could not copy the .worktreeinclude files (${tail(seeded)})`)
+    }
+    const head = await revParseCommit(ctx.git, made.path, 'HEAD')
+    await ctx.withPool(pool, async () => {
+      made.state = 'leased'
+      made.op = null
+      made.error = notes.length ? notes.join('; ') : null
+      made.baseRef = pool.record.defaultRef
+      made.baseSha = head
+      made.lease = {
+        leaseId: randomUUID(),
+        branch,
+        owner: input.owner,
+        agentId: null,
+        workspaceId: null,
+        leasedAt: ctx.now(),
+        claimed: false,
+      }
+      made.lastUsedAt = ctx.now()
+      made.uses = 1
+      pool.record.reservedPaths = pool.record.reservedPaths.filter(
+        (entry) => comparablePath(entry.path) !== comparablePath(made.path),
+      )
+      await ctx.persist(pool)
+    })
+    ctx.log(`${made.path}: made again for its chat on ${branch}`)
+    return { ok: true }
+  } catch (error) {
+    await holdAfterFailure(ctx, pool, made, messageOf(error))
+    return { ok: false, message: messageOf(error) }
+  } finally {
+    pool.busy.delete(made.id)
   }
 }
