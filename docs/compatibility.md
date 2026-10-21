@@ -44,7 +44,9 @@ change, and `MUX_VERSION` whenever a frame does. A number once on `main` is
 spent, even before a release, since a nightly may already carry it: two changes
 made side by side take one each. The backend wire went from 2 to 3 when
 `sendTurn` took `origin` (a message Studio sends a chat itself), and to 4 when
-it took `files` (a message's files attached by path), both on 2026-10-07.
+it took `files` (a message's files attached by path), both on 2026-10-07. It
+went to 5 when `sendTurn` took `composedAt` and `confirmedStale` and could
+answer `stale` (2026-10-20).
 
 A session's summary, which that wire pushes with every chat event, carries
 three optional clocks a reader must not count on: `lastTurnEndedAt` (when
@@ -405,6 +407,29 @@ additive: a desktop without the capability drops `steer`, so the send is
 refused `busy` mid-turn as before, and a client sends it only where it is
 advertised. The Studio RPC advertises it too: its `conversation.send` reads
 the lane's own validator and reaches the same host.
+A `send` may say when it was written, `composedAt` (epoch ms, the client's
+clock), and that the person confirmed one written long ago, `confirmedStale`
+(2026-10-20). A desktop that reads them records `composedAt` on the
+`user_message` and refuses a send written more than
+`CONVERSATION_STALE_SEND_MS` (30 minutes) ago with the new `stale` code,
+recording nothing and keeping no receipt, unless `confirmedStale` is set; a
+`queue` send it would hold is refused the same way, since a held message goes
+the moment the chat is free. A repeat of a send that already went is still
+answered from its receipt, however old. No capability: a desktop built before
+the members drops both (the first version's validator strips unknown members)
+and sends as it always did, so a client sends `composedAt` with every message
+and keeps its own rule for what it no longer sends without asking (the phone
+stops at ten minutes after an absence, `mobile/src/features/conversations/queuedSends.ts`).
+An older client never sends either, and its sends are never stale. `stale` is
+an error code a client from before it reads as any refusal with a message;
+the code joined the pinned `ConversationWireErrorCode` union, so both copies
+and both pins moved with it.
+A desktop also remembers, across a restart, the commands its held messages
+came in on, while each is held and for the 500 most recent after it has gone,
+so the same `queue` command offered again (its answer lost, or the desktop
+restarted) is answered as held and never held or sent a second time
+(`scheduled-messages.json` keeps `sources` on a message and a top-level
+`heldSources`; a file without them reads as before).
 Create PR on a paired machine's chat is `chat-create-pull-request`
 (2026-10-18), gateway tools beside `conversation.mark_unread` and, like it,
 without the `conversation-` prefix: `conversation.pull_request_state`

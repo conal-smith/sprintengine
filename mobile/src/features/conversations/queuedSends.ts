@@ -1,4 +1,5 @@
 import type { ConversationQueuedMessage } from "../../api/conversationWire";
+import { formatTimestamp } from "../../components/formatTimestamp";
 
 // Where a message queued behind a running turn waits, and what the queued
 // bubble over the transcript's foot shows.
@@ -13,6 +14,67 @@ import type { ConversationQueuedMessage } from "../../api/conversationWire";
 // the capability gets nothing new: the phone holds the message, as it always
 // has, and offers it when the turn ends (`queuedSendCourier.ts` once the chat
 // is closed).
+
+// A message that waited on the phone while the phone was away is not sent
+// without asking once it comes back. Android suspends an app in the
+// background, so a message refused busy behind a running turn stopped being
+// offered the moment the phone slept, and was offered again, under its id,
+// the next time the chat opened: a day later, into a chat whose person had
+// long since done that work at the desk, as a new turn they did not ask for.
+// The phone now keeps when each message was written (`queuedAt`) and, for
+// one it carried across an absence (the chat reopened, the app back from the
+// background, the courier), offers it only while it is young and its turn has
+// not ended in the meantime. Otherwise it is drawn as Not sent, with Send now
+// and Discard. While the phone stays in front it waits as it always did, and
+// goes when the turn ends: the person is watching it wait.
+
+/**
+ * How long a message carried across an absence may have waited and still go
+ * without asking: long enough for a short trip away while a turn finishes,
+ * short enough that the person has not moved on.
+ */
+export const QUEUED_SEND_STALE_MS = 10 * 60_000;
+
+/** A waiting send as the rule reads it: a cached entry, or one a stream carries. */
+export type WaitingSend = {
+  queuedAt?: number;
+  stale?: true;
+  command: { confirmedStale?: true; composedAt?: number };
+};
+
+/**
+ * Whether a send carried across an absence is no longer sent without asking
+ * at `now`. One the person confirmed always goes; one already found stale
+ * stays so; one cached before the phone kept when it was written (neither
+ * `queuedAt` nor the send's `composedAt`) is taken for one written long ago.
+ */
+export function queuedSendStale(item: WaitingSend, now: number): boolean {
+  if (item.command.confirmedStale === true) return false;
+  if (item.stale === true) return true;
+  const queuedAt = item.queuedAt ?? item.command.composedAt;
+  if (queuedAt === undefined) return true;
+  return now - queuedAt > QUEUED_SEND_STALE_MS;
+}
+
+/**
+ * Whether a turn's end, by the desktop's clock, is one the send waited on: it
+ * ended after the send was written. A send with no time waited on any.
+ */
+export function turnEndedSince(item: { queuedAt?: number }, endedAt: number): boolean {
+  return item.queuedAt === undefined || endedAt >= item.queuedAt;
+}
+
+/** The line under a sent message still on its way. */
+export function pendingLine(item: { waiting?: boolean; stale?: boolean; queuedAt?: number }, now: number): string {
+  if (item.stale)
+    return item.queuedAt === undefined
+      ? "Not sent"
+      : `Not sent · written ${formatTimestamp(new Date(item.queuedAt).toISOString(), now)}`;
+  // Refused busy: a turn is running on the desktop that this phone had not
+  // heard of yet, and the message goes when it ends.
+  if (item.waiting) return "Waiting for the agent's turn to end";
+  return "Pending delivery…";
+}
 
 /** A message the phone holds until the turn ends, pictures and all. */
 export type PhoneQueuedSend = { commandId: string; text: string; uploads: string[] };

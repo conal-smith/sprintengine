@@ -28,6 +28,7 @@ import {
   resolveAgentForkBase,
 } from './worktree-pool/slot-git'
 import type { WorktreePoolLeaseResult } from './worktree-pool/worktree-pool-service'
+import { removeWorktreeLeftovers } from './worktree-leftovers'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { repoRootFromWorktreePath, WORKTREE_CONTAINER_DIR, worktreeContainerPath } from '../shared/worktree-paths'
 import { dependencyInstallSettingFor, type WorktreeDependencyInstallView } from '../shared/ipc/worktree-pool'
@@ -949,9 +950,22 @@ export async function removeGitWorktree(
     if (!unlocked.ok) return toWorktreeResult(unlocked, unlocked)
   }
 
-  const removeResult = await withWorktreeRegistryLock(root.data, () =>
-    runGitCommand(root.data, ['worktree', 'remove', ...(input.force ? ['--force'] : []), worktreePath]),
-  )
+  const removeResult = await withWorktreeRegistryLock(root.data, async () => {
+    const removed = await runGitCommand(root.data, [
+      'worktree',
+      'remove',
+      ...(input.force ? ['--force'] : []),
+      worktreePath,
+    ])
+    // Git for Windows reports success with junctions (a linked
+    // `node_modules`) and their folders still in place, and the worktree
+    // could not be made at this path again. The path as git lists it, which
+    // is the folder it just removed.
+    if (removed.ok && !(await removeWorktreeLeftovers(registeredWorktree.path))) {
+      console.warn(`[git] kept files written after git removed the worktree at ${registeredWorktree.path}`)
+    }
+    return removed
+  })
   if (!removeResult.ok && ownLock) await relockWorktree(root.data, worktreePath, registeredWorktree.lockedReason)
 
   return toWorktreeResult(removeResult, removeResult)

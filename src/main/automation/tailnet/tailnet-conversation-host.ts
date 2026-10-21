@@ -9,6 +9,7 @@ import {
   type ConversationWireHost,
   type ConversationWirePullRequest,
   type ConversationWireModels,
+  isStaleConversationSend,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
 import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
@@ -186,16 +187,23 @@ export type ConversationGatewayHost = {
 }
 
 /**
- * A runtime answer as a command's result. Two refusals the runtime names by a
- * code are kept: a command id already used for a different command, and
- * `busy` with its delay (a send that arrived while a turn runs, which the
- * device sends again). The commands built here name none other, and the
- * runtime's words stay in the message.
+ * A runtime answer as a command's result. Three refusals the runtime names by
+ * a code are kept: a command id already used for a different command, `busy`
+ * with its delay (a send that arrived while a turn runs, which the device
+ * sends again), and `stale` (a send written long before it arrived, which the
+ * device asks its person about). The commands built here name none other, and
+ * the runtime's words stay in the message.
  */
 function relay(
   result: ConversationGatewayCommandResult | ConversationSessionActionResult,
 ): ConversationGatewayCommandResult {
-  if (result.ok || result.code === undefined || result.code === 'command_id_conflict' || result.code === 'busy')
+  if (
+    result.ok ||
+    result.code === undefined ||
+    result.code === 'command_id_conflict' ||
+    result.code === 'busy' ||
+    result.code === 'stale'
+  )
     return result as ConversationGatewayCommandResult
   const { code: _unnamed, ...rest } = result
   return rest as ConversationGatewayCommandResult
@@ -989,12 +997,24 @@ export function createConversationGatewayHost(
         return Promise.resolve(
           held ? held.cancel(chat, command.queuedId) : { ok: false, message: 'This desktop holds no queued messages.' },
         )
+      // A message written long ago that the person has not confirmed is not
+      // held either: held now, it would go the moment the chat is free, which
+      // is the late send the refusal is for. The runtime asks the same of a
+      // send it runs, after its receipts.
+      const staleHold = (): ConversationGatewayCommandResult | null =>
+        command.kind === 'send' && isStaleConversationSend(command, Date.now())
+          ? {
+              ok: false,
+              code: 'stale',
+              message: 'This message was written a while ago and was not sent. Send it again to send it now.',
+            }
+          : null
       // A queued message is held here and sent from here when the turn ends,
       // answered as soon as it is held: no session is resumed for it now, and
       // nothing waits on the turn. Held under the device's own command, so a
-      // repeat after a dropped connection holds it once.
+      // repeat after a dropped connection, or after a restart, holds it once.
       if (command.kind === 'send' && command.queue && held)
-        return Promise.resolve(held.hold(chat, command.message, JSON.stringify([deviceId, commandId])))
+        return Promise.resolve(staleHold() ?? held.hold(chat, command.message, JSON.stringify([deviceId, commandId])))
       // A steer the running turn cannot take is held for the turn's end, as a
       // queued send is, and answered at once with a notice saying so: the
       // person's words are never lost to a provider that cannot take them, or
@@ -1005,6 +1025,8 @@ export function createConversationGatewayHost(
       const holdInstead = (reason: string): ConversationGatewayCommandResult => {
         if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length)
           return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
+        const stale = staleHold()
+        if (stale) return stale
         const holding = held.hold(chat, command.message, JSON.stringify([deviceId, commandId]))
         return holding.ok
           ? { ok: true, notice: `${reason.replace(/\.$/u, '')}, so it is queued and goes when this turn ends.` }
@@ -1059,6 +1081,13 @@ export function createConversationGatewayHost(
             // Into the running turn, where there is one; with none, the runtime
             // sends it as the next turn, as an ordinary send.
             const turnSteer = steer ? { steer: true } : {}
+            // When the person wrote it, and whether they confirmed one written
+            // long ago: the runtime refuses an unconfirmed old one and records
+            // the time on the message.
+            const written = {
+              ...(command.composedAt !== undefined ? { composedAt: command.composedAt } : {}),
+              ...(command.confirmedStale ? { confirmedStale: true } : {}),
+            }
             if (retry)
               return api.send({
                 sessionId: session.sessionId,
@@ -1068,6 +1097,7 @@ export function createConversationGatewayHost(
                 ...turnEffort,
                 ...turnSkills,
                 ...turnSteer,
+                ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
               })
@@ -1149,6 +1179,7 @@ export function createConversationGatewayHost(
                 ...turnEffort,
                 ...turnSkills,
                 ...turnSteer,
+                ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
               })

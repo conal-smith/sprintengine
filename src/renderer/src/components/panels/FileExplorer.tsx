@@ -47,11 +47,13 @@ import { FileTreeRootRow, FileTreeRow, FileTreeRows, type FileTreeRowsHandle } f
 import {
   buildPathTreeRows,
   flattenTree,
+  folderPathsSharedWithFiles,
   getEntryGitStatus,
   mergeGitDeletedEntries,
   movedTreePath,
   parentDirectoriesForPath,
   pathSeparatorFor,
+  treeRowKey,
   type FileTreeEntry,
   type FileTreeRowModel,
 } from '../../utils/fileTreeEntries'
@@ -636,6 +638,11 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
   const isSearching = !isPathsSource && query.trim().length > 0
   const searchRows = useMemo(() => buildPathTreeRows(rootPath, searchResults), [rootPath, searchResults])
   const activeRows = isSearching ? searchRows : rootCollapsed ? EMPTY_TREE_ROWS : isPathsSource ? pathRows : visibleRows
+  // Found files can put a folder and a file at one path (a diff that turns the
+  // file `docs` into a folder). The selection, the cursor and each row's key
+  // and element go by the row's key, so the two are never one row.
+  const sharedFolderPaths = useMemo(() => folderPathsSharedWithFiles(activeRows), [activeRows])
+  const rowKeyOf = (entry: Entry): string => treeRowKey(entry, sharedFolderPaths)
   const isExpandedEntry = (entry: Entry): boolean =>
     entry.isDir &&
     (isSearching || (isPathsSource ? !collapsedPaths.has(entry.path) : expandedPaths[entry.path] === true))
@@ -649,8 +656,9 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
     })
   }
   const selectedEntries = useMemo(
-    () => activeRows.filter((row) => selectedPaths.has(row.entry.path)).map((row) => row.entry),
-    [activeRows, selectedPaths],
+    () =>
+      activeRows.filter((row) => selectedPaths.has(treeRowKey(row.entry, sharedFolderPaths))).map((row) => row.entry),
+    [activeRows, selectedPaths, sharedFolderPaths],
   )
   const searchDiagnosticsTitle =
     import.meta.env.DEV && searchDiagnostics
@@ -674,13 +682,16 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
       const dragSelection = dragSelectionRef.current
       if (!dragSelection || dragSelection.kind !== 'background') return
 
+      const rows = activeRowsRef.current
+      const shared = folderPathsSharedWithFiles(rows)
       const rangePaths = fileExplorerSelectionFromVerticalRange(
-        activeRowsRef.current
+        rows
           .map((row) => {
-            const node = rowRefs.current[row.entry.path]
+            const key = treeRowKey(row.entry, shared)
+            const node = rowRefs.current[key]
             if (!node) return null
             const rect = node.getBoundingClientRect()
-            return { path: row.entry.path, top: rect.top, bottom: rect.bottom }
+            return { path: key, top: rect.top, bottom: rect.bottom }
           })
           .filter((row): row is { path: string; top: number; bottom: number } => Boolean(row)),
         dragSelection.startY,
@@ -795,14 +806,15 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
   }
 
   const selectOnlyEntry = (entry: Entry) => {
-    selectionAnchorPathRef.current = entry.path
-    setSelectedPath(entry.path)
-    setSelectedPaths(new Set([entry.path]))
+    const key = rowKeyOf(entry)
+    selectionAnchorPathRef.current = key
+    setSelectedPath(key)
+    setSelectedPaths(new Set([key]))
   }
 
   const selectEntryRange = (anchorPath: string, targetPath: string) => {
     const rangePaths = fileExplorerSelectionRange(
-      activeRowsRef.current.map((row) => row.entry.path),
+      activeRowsRef.current.map((row) => rowKeyOf(row.entry)),
       anchorPath,
       targetPath,
     )
@@ -828,21 +840,22 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
   }
 
   const selectEntry = (entry: Entry, event?: React.MouseEvent<HTMLDivElement>) => {
-    setSelectedPath(entry.path)
+    const key = rowKeyOf(entry)
+    setSelectedPath(key)
 
     if (event?.shiftKey && selectionAnchorPathRef.current) {
-      selectEntryRange(selectionAnchorPathRef.current, entry.path)
+      selectEntryRange(selectionAnchorPathRef.current, key)
       return
     }
 
     if (event?.metaKey || event?.ctrlKey) {
-      selectionAnchorPathRef.current = entry.path
+      selectionAnchorPathRef.current = key
       setSelectedPaths((current) => {
         const next = new Set(current)
-        if (next.has(entry.path) && next.size > 1) {
-          next.delete(entry.path)
+        if (next.has(key) && next.size > 1) {
+          next.delete(key)
         } else {
-          next.add(entry.path)
+          next.add(key)
         }
         return next
       })
@@ -1130,8 +1143,9 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
       return
     }
 
+    const entryKey = rowKeyOf(entry)
     const dragEntries = topLevelEntries(
-      (selectedPaths.has(entry.path) ? selectedEntries : [entry]).filter((selectedEntry) => !selectedEntry.gitDeleted),
+      (selectedPaths.has(entryKey) ? selectedEntries : [entry]).filter((selectedEntry) => !selectedEntry.gitDeleted),
     )
     if (!dragEntries.length) {
       event.preventDefault()
@@ -1145,10 +1159,10 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
       entries: dragEntries,
     }
     activeMoveDragRef.current = movePayload
-    setSelectedPath(entry.path)
-    if (!selectedPaths.has(entry.path)) {
-      selectionAnchorPathRef.current = entry.path
-      setSelectedPaths(new Set([entry.path]))
+    setSelectedPath(entryKey)
+    if (!selectedPaths.has(entryKey)) {
+      selectionAnchorPathRef.current = entryKey
+      setSelectedPaths(new Set([entryKey]))
     }
     setFileDropData(event.dataTransfer, {
       version: 1,
@@ -1391,9 +1405,10 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
     event.stopPropagation()
     focusTree()
 
-    const contextSelection = entry && selectedPaths.has(entry.path) ? selectedEntries : entry ? [entry] : []
+    const entrySelected = entry ? selectedPaths.has(rowKeyOf(entry)) : false
+    const contextSelection = entry && entrySelected ? selectedEntries : entry ? [entry] : []
 
-    if (entry && !selectedPaths.has(entry.path)) {
+    if (entry && !entrySelected) {
       selectOnlyEntry(entry)
     }
 
@@ -1870,11 +1885,11 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
   useEffect(() => {
     const target = pendingScrollPathRef.current
     if (!target) return
-    const index = activeRows.findIndex((row) => row.entry.path === target)
+    const index = activeRows.findIndex((row) => treeRowKey(row.entry, sharedFolderPaths) === target)
     if (index < 0) return
     pendingScrollPathRef.current = null
     rowsHandleRef.current?.scrollToIndex(index)
-  }, [activeRows])
+  }, [activeRows, sharedFolderPaths])
 
   useEffect(() => {
     // A tree that follows a path has a selection only where that path is: the
@@ -1889,20 +1904,20 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
       return
     }
 
-    if (!selectedPath || !activeRows.some((row) => row.entry.path === selectedPath)) {
-      const firstPath = activeRows[0].entry.path
+    const activePathSet = new Set(activeRows.map((row) => treeRowKey(row.entry, sharedFolderPaths)))
+    if (!selectedPath || !activePathSet.has(selectedPath)) {
+      const firstPath = treeRowKey(activeRows[0].entry, sharedFolderPaths)
       setSelectedPath(firstPath)
       setSelectedPaths(new Set([firstPath]))
       selectionAnchorPathRef.current = firstPath
       return
     }
 
-    const activePathSet = new Set(activeRows.map((row) => row.entry.path))
     setSelectedPaths((current) => {
       const next = new Set(Array.from(current).filter((path) => activePathSet.has(path)))
       return next.size ? next : new Set([selectedPath])
     })
-  }, [activeRows, following, loading, searching, selectedPath])
+  }, [activeRows, following, loading, searching, selectedPath, sharedFolderPaths])
 
   // Persist the focused selection so a reload/restart restores the highlighted
   // file. Debounced because arrow-key navigation changes it rapidly and every
@@ -1940,25 +1955,25 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
     }
     if (!activeRows.length) return
 
-    const cursorIndex = activeRows.findIndex((row) => row.entry.path === selectedPath)
+    const cursorIndex = activeRows.findIndex((row) => rowKeyOf(row.entry) === selectedPath)
     const currentIndex = Math.max(cursorIndex, 0)
     const currentEntry = activeRows[currentIndex].entry
     const moveSelection = (nextIndex: number) => {
-      const nextRow = activeRows[nextIndex]
-      setSelectedPath(nextRow.entry.path)
+      const nextKey = rowKeyOf(activeRows[nextIndex].entry)
+      setSelectedPath(nextKey)
       // Keep the cursor in view — past the windowing threshold a row that is
       // off-screen is not mounted at all.
       rowsHandleRef.current?.scrollToIndex(nextIndex)
 
       if (event.shiftKey) {
-        const anchorPath = selectionAnchorPathRef.current ?? currentEntry.path
+        const anchorPath = selectionAnchorPathRef.current ?? rowKeyOf(currentEntry)
         selectionAnchorPathRef.current = anchorPath
-        selectEntryRange(anchorPath, nextRow.entry.path)
+        selectEntryRange(anchorPath, nextKey)
         return
       }
 
-      selectionAnchorPathRef.current = nextRow.entry.path
-      setSelectedPaths(new Set([nextRow.entry.path]))
+      selectionAnchorPathRef.current = nextKey
+      setSelectedPaths(new Set([nextKey]))
     }
 
     if (event.key === 'ArrowDown') {
@@ -1994,7 +2009,7 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
       if (currentEntry.isDir && isExpandedEntry(currentEntry)) {
         const nextRow = activeRows[currentIndex + 1]
         if (nextRow?.entry.parentPath === currentEntry.path) {
-          setSelectedPath(nextRow.entry.path)
+          setSelectedPath(rowKeyOf(nextRow.entry))
         }
       }
       return
@@ -2007,9 +2022,9 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
         else setExpandedPaths((current) => ({ ...current, [currentEntry.path]: false }))
         return
       }
-      const parentRow = activeRows.find((row) => row.entry.path === currentEntry.parentPath)
+      const parentRow = activeRows.find((row) => row.entry.isDir && row.entry.path === currentEntry.parentPath)
       if (parentRow) {
-        setSelectedPath(parentRow.entry.path)
+        setSelectedPath(rowKeyOf(parentRow.entry))
       }
       return
     }
@@ -2120,7 +2135,7 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
   }
 
   const banded = variant === 'banded'
-  const cursorShown = Boolean(selectedPath && activeRows.some((row) => row.entry.path === selectedPath))
+  const cursorShown = Boolean(selectedPath && activeRows.some((row) => rowKeyOf(row.entry) === selectedPath))
   const showEmpty = !isSearching && !rootCollapsed && activeRows.length === 0
 
   return (
@@ -2173,12 +2188,13 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
           ref={rowsHandleRef}
           rows={activeRows}
           scrollParent={scrollParentRef}
-          rowKey={(row) => row.entry.path}
+          rowKey={(row) => rowKeyOf(row.entry)}
           renderRow={({ entry, depth }) => {
-            const isSelected = selectedPaths.has(entry.path)
-            const isFocused = entry.path === selectedPath
+            const key = rowKeyOf(entry)
+            const isSelected = selectedPaths.has(key)
+            const isFocused = key === selectedPath
             const isExpanded = isExpandedEntry(entry)
-            const isRenaming = renameDraft?.entry.path === entry.path
+            const isRenaming = renameDraft ? rowKeyOf(renameDraft.entry) === key : false
             const isDropTarget = dropTargetPath === entry.path
             const decoration = rowDecoration?.(entry)
             const gitAppearance = decoration
@@ -2213,9 +2229,9 @@ export const FileExplorerTree = forwardRef<FileExplorerTreeHandle, FileExplorerT
             return (
               <FileTreeRow
                 rowRef={(node) => {
-                  rowRefs.current[entry.path] = node
+                  rowRefs.current[key] = node
                 }}
-                id={rowId(entry.path)}
+                id={rowId(key)}
                 name={entry.name}
                 isDir={entry.isDir}
                 depth={depth}

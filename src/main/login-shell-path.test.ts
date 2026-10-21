@@ -290,6 +290,29 @@ test("one caller's invalidate makes the next caller, whichever it is, ask a shel
   assert.equal(runShell.mock.calls.length, 2)
 })
 
+test('the shared lookup starts its shell away from the terminal the app was launched from, except on Windows', async () => {
+  vi.stubEnv('SHELL', '/bin/zsh')
+  runShell.mockImplementation(async () => shellPrinted('/usr/bin'))
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+  const detachedOn = async (value: NodeJS.Platform): Promise<boolean | undefined> => {
+    sharedLoginShellPath().invalidate()
+    runShell.mockClear()
+    Object.defineProperty(process, 'platform', { value })
+    try {
+      await sharedLoginShellPath().resolve({})
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform)
+    }
+    return runShell.mock.calls[0]?.[1]?.detached
+  }
+  // An interactive zsh that shares the launching terminal contends for it and
+  // never answers; its own session has no terminal to contend for.
+  assert.equal(await detachedOn('darwin'), true)
+  assert.equal(await detachedOn('linux'), true)
+  // `detached` on Windows opens a console window rather than a new session.
+  assert.equal(await detachedOn('win32'), false)
+})
+
 test('a shared lookup no shell answered is asked again by the next caller', async () => {
   vi.stubEnv('SHELL', '/bin/zsh')
   let answers = false

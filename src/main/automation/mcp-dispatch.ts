@@ -216,6 +216,12 @@ export function createMcpDispatcher(options: {
           }
           // Tool-domain failures (unknown workspace, malformed payload) come back
           // as MCP tool results with isError: true — explicit, never fake success.
+          const undeclared = undeclaredArguments(tool.inputSchema, args)
+          if (undeclared.length > 0) {
+            const result = undeclaredArgumentsResult(name, tool.inputSchema, undeclared)
+            options.onToolCall?.({ context, tool: name, args, durationMs: 0, result })
+            return { kind: 'result', value: result as unknown as Record<string, unknown> }
+          }
           const startedAt = Date.now()
           // A call the agent may cancel, and whose progress it asked to hear.
           const controller = new AbortController()
@@ -274,6 +280,36 @@ export function createMcpDispatcher(options: {
           return { kind: 'error', code: JSONRPC_METHOD_NOT_FOUND, errorMessage: `Method "${method}" is not supported.` }
       }
     },
+  }
+}
+
+/**
+ * The arguments a call passed that its tool does not take, when the tool's
+ * schema says it takes no others (`additionalProperties: false`, which nearly
+ * every tool here declares). Nothing enforced that: a handler reads the keys
+ * it knows, so a misspelled one (`projectroot`, `tabID`) was dropped without a
+ * word and the call went ahead on its default — the backlog of the project the
+ * agent was launched from, the active tab — and answered as if it had done
+ * what was asked. Only the top level is checked; a tool that leaves its schema
+ * open is not.
+ */
+export function undeclaredArguments(schema: Record<string, unknown>, args: Record<string, unknown>): string[] {
+  if (schema.additionalProperties !== false) return []
+  const declared = isRecord(schema.properties) ? schema.properties : {}
+  return Object.keys(args).filter((key) => !Object.hasOwn(declared, key))
+}
+
+/** The refusal of a call with arguments its tool does not take: what it named, and what the tool takes. */
+function undeclaredArgumentsResult(name: string, schema: Record<string, unknown>, undeclared: string[]): McpToolResult {
+  const declared = isRecord(schema.properties) ? Object.keys(schema.properties) : []
+  const quote = (keys: string[]) => keys.map((key) => `"${key}"`).join(', ')
+  const takes = declared.length > 0 ? `It takes ${quote(declared)}.` : 'It takes no arguments.'
+  const noun = undeclared.length === 1 ? 'argument' : 'arguments'
+  return {
+    content: [
+      { type: 'text', text: `${name} was not run: it does not take the ${noun} ${quote(undeclared)}. ${takes}` },
+    ],
+    isError: true,
   }
 }
 

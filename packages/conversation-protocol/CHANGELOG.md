@@ -24,6 +24,15 @@
   listed. `parseConversationServerFrame` keeps `highlight` when its star is a
   boolean or its colour one it knows, and `autoSettle` only when it is `true`.
   The pinned files are unchanged.
+- **A send says when it was written.** `composedAt` (epoch ms) and
+  `confirmedStale` are optional members of a `send` command, beside any other.
+  `isStaleConversationSend` says whether a desktop refuses one at a time: it
+  was written more than `CONVERSATION_STALE_SEND_MS` (30 minutes) ago and the
+  person has not confirmed it. Such a send is refused with the new `stale`
+  code, which joined `ConversationWireErrorCode`. `parseConversationClientMessage`
+  keeps both members and refuses a malformed one; the first version's
+  `parseConversationClientFrame` drops them, as a desktop from before them
+  does. A pinned file: the phone's copy changes with it.
 - **A listed chat says when its work began, how it began, and whether it
   sleeps.** `workingSince`, `scheduledAgentId` and `snoozedUntil` are optional
   members of `ConversationThread`. `workingSince` is when the chat's current

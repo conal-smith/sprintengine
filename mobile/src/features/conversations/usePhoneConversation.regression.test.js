@@ -677,7 +677,13 @@ test("a turn's end is written at once, with the deltas waiting before it", async
 // ── Messages the desktop holds (`conversation-queued-sends`) ─────────────────
 /** Out of the hook's realm, so deepEqual compares values, not prototypes. */
 const plain = (value) => JSON.parse(JSON.stringify(value));
-const holding = () => fixture({ capabilities: ["conversations", "conversation-queued-sends"] });
+/** A send as the desktop is offered it, less when it was written, which every send says. */
+const words = (command) => {
+  const { composedAt, ...rest } = plain(command);
+  assert.equal(typeof composedAt, "number", "a send says when it was written");
+  return rest;
+};
+const holding =() => fixture({ capabilities: ["conversations", "conversation-queued-sends"] });
 /** A turn running on the screen's stream, as the desktop would show it. */
 async function runTurn(h) {
   const frames = h.connections.at(-1).handlers;
@@ -693,7 +699,7 @@ test("behind a running turn, a desktop that holds messages is handed the message
   assert.equal(h.connections[0].options.queuedSends, true, "the stream watches what the desktop holds");
   const frames = await runTurn(h);
   const id = await h.render().queueSend("draft the phone side");
-  assert.deepEqual(plain(h.commands.at(-1).command), { kind: "send", message: "draft the phone side", queue: true });
+  assert.deepEqual(words(h.commands.at(-1).command), { kind: "send", message: "draft the phone side", queue: true });
   let chat = h.render();
   assert.deepEqual(plain(chat.handing), [{ commandId: id, text: "draft the phone side" }]);
   assert.deepEqual(plain(chat.queued), [], "the phone holds nothing");
@@ -722,10 +728,10 @@ test("a message with pictures, or with no turn running, or behind one the phone 
   h.render();
   await settle();
   await h.render().queueSend("idle");
-  assert.deepEqual(plain(h.commands.at(-1).command), { kind: "send", message: "idle", uploadIds: [] });
+  assert.deepEqual(words(h.commands.at(-1).command), { kind: "send", message: "idle", uploadIds: [] });
   await runTurn(h);
   await h.render().queueSend("with a picture", ["upload-1"]);
-  assert.deepEqual(plain(h.commands.at(-1).command), { kind: "send", message: "with a picture", uploadIds: ["upload-1"] });
+  assert.deepEqual(words(h.commands.at(-1).command), { kind: "send", message: "with a picture", uploadIds: ["upload-1"] });
   await h.render().queueSend("after the picture");
   assert.equal(h.commands.at(-1).command.queue, undefined, "kept in order behind the phone's own");
   assert.deepEqual(plain(h.render().queued.map((item) => item.text)), ["idle", "with a picture", "after the picture"]);
@@ -738,7 +744,7 @@ test("a desktop without the capability keeps the phone-held queue exactly as bef
   assert.equal(h.connections[0].options.queuedSends, false);
   await runTurn(h);
   await h.render().queueSend("phone held");
-  assert.deepEqual(plain(h.commands.at(-1).command), { kind: "send", message: "phone held", uploadIds: [] });
+  assert.deepEqual(words(h.commands.at(-1).command), { kind: "send", message: "phone held", uploadIds: [] });
   assert.deepEqual(plain(h.render().queued.map((item) => item.text)), ["phone held"]);
   assert.deepEqual(plain(h.render().handing), []);
   h.unmount();
@@ -771,6 +777,86 @@ test("a hand-over the desktop refuses shows as not sent, with its reason", async
   const chat = h.render();
   assert.deepEqual(plain(chat.handing), []);
   assert.deepEqual(plain(chat.optimistic.map((item) => item.failed)), ["This chat already holds as many queued messages as it can."]);
+  h.unmount();
+});
+// ── A message that waited while the phone was away ───────────────────────────
+const HOUR = 3_600_000;
+/** A chat whose cache holds one unsent message, written `ago` before now. */
+async function cachedSend(h, ago, extra = {}) {
+  const queuedAt = Date.now() - ago;
+  await h.store.update("a", () => ({
+    lastSeq: 0,
+    events: [],
+    pending: [
+      {
+        commandId: "X",
+        command: { kind: "send", message: "run the migration", uploadIds: [], composedAt: queuedAt },
+        queuedAt,
+        ...extra,
+      },
+    ],
+  }));
+  return queuedAt;
+}
+test("a message cached a day ago is drawn as not sent when the chat opens, and Send now sends it confirmed", async () => {
+  const h = fixture();
+  const queuedAt = await cachedSend(h, 23 * HOUR);
+  h.render();
+  await settle();
+  let chat = h.render();
+  assert.deepEqual(
+    plain(chat.optimistic.map((item) => [item.commandId, item.stale, item.queuedAt])),
+    [["X", true, queuedAt]],
+    "not sent, before the desktop is even asked",
+  );
+  assert.deepEqual(plain(chat.queued), [], "not drawn as waiting to go");
+  assert.deepEqual(h.commands, []);
+  await h.render().sendNow("X");
+  assert.deepEqual(plain(h.commands), [
+    {
+      key: { workspaceId: "w", agentId: "a" },
+      id: "X",
+      command: { kind: "send", message: "run the migration", uploadIds: [], composedAt: queuedAt, confirmedStale: true },
+    },
+  ]);
+  const [kept] = (await h.store.load("a")).pending;
+  assert.equal(kept.stale, undefined);
+  assert.equal(kept.command.confirmedStale, true, "kept confirmed, so a restart does not ask again");
+  chat = h.render();
+  assert.deepEqual(plain(chat.optimistic.map((item) => item.stale)), [false]);
+  h.unmount();
+});
+test("Discard lets a message not sent go, from the screen and the cache", async () => {
+  const h = fixture();
+  await cachedSend(h, 23 * HOUR, { stale: true });
+  h.render();
+  await settle();
+  await h.render().cancelQueued("X");
+  assert.deepEqual(plain(h.render().optimistic), []);
+  assert.deepEqual((await h.store.load("a")).pending, []);
+  h.unmount();
+});
+test("what the stream says of a waiting send is drawn and kept: waiting on a turn, held by the desktop, not sent", async () => {
+  const h = holding();
+  h.render();
+  await settle();
+  const id = await h.render().queueSend("check the logs");
+  const [entry] = (await h.store.load("a")).pending;
+  assert.equal(typeof entry.queuedAt, "number", "kept with when it was written");
+  assert.equal(entry.command.composedAt, entry.queuedAt);
+  const handlers = h.connections[0].handlers;
+  handlers.onSendWaiting(id);
+  assert.deepEqual(plain(h.render().optimistic.map((item) => item.waiting)), [true]);
+  const held = { kind: "send", message: "check the logs", composedAt: entry.queuedAt, queue: true };
+  handlers.onSendHeld(id, held, 0);
+  await settle();
+  assert.deepEqual(plain(h.render().handing), [{ commandId: id, text: "check the logs" }], "on its way to the desktop's list");
+  assert.deepEqual(plain((await h.store.load("a")).pending.map((item) => [item.command.queue, item.heldAfter])), [[true, 0]]);
+  handlers.onSendStale(id);
+  await settle();
+  assert.deepEqual(plain(h.render().handing), []);
+  assert.deepEqual(plain(h.render().optimistic.map((item) => item.stale)), [true]);
+  assert.deepEqual(plain((await h.store.load("a")).pending.map((item) => item.stale)), [true], "still not sent after a restart");
   h.unmount();
 });
 test("an unanswered hand-over cached when the chat closed is carried as one, and reopened as one", async () => {
@@ -812,7 +898,7 @@ test("a message sent while an agent works in the background goes straight to the
   h.render(inBackground());
   await settle();
   await h.render().queueSend("and the docs too");
-  assert.deepEqual(plain(h.commands.at(-1).command), { kind: "send", message: "and the docs too", uploadIds: [] });
+  assert.deepEqual(words(h.commands.at(-1).command), { kind: "send", message: "and the docs too", uploadIds: [] });
   assert.deepEqual(plain(h.render().handing), [], "not handed to the desktop to hold behind a turn");
   h.unmount();
 });

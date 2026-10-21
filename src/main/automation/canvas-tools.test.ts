@@ -353,8 +353,12 @@ for (const through of ['direct', 'the shell'] as const)
       await run('with the module disabled every tool answers the gateway’s words and touches nothing', async () => {
         const h = harness()
         h.enabled = false
+        const given: Record<string, unknown> = { op: 'align', elementIds: ['a'], create: [] }
         for (const [name, tool] of h.tools) {
-          const result = await tool.handler({ op: 'align', elementIds: ['a'], create: [] }, bound)
+          // Each tool is given only the arguments it takes: one it does not take is refused by name first.
+          const declared = Object.keys((tool.inputSchema.properties ?? {}) as Record<string, unknown>)
+          const args = Object.fromEntries(Object.entries(given).filter(([key]) => declared.includes(key)))
+          const result = await tool.handler(args, bound)
           assert.equal(result.isError, true, name)
           assert.equal(errorOf(result).code, 'canvas_module_disabled', name)
           assert.equal(
