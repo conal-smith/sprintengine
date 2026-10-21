@@ -181,6 +181,9 @@ type RuntimeSession = ConversationSessionSummary & {
   // reads them beside it, so a child a side question started or is using is
   // not ended under it.
   sideQuestionsOpen?: number
+  // Turns Studio opened with its own `/compact` before the chat's cache
+  // expired, whose end is not one the person is told about.
+  quietTurnIds?: Set<string>
   sideQuestionAt?: number
   // The tool call that first spawned each agent the chat has seen, by task:
   // a provider started again resumes an agent in that lane.
@@ -2631,7 +2634,20 @@ export class ConversationRuntime {
     if (event.type === 'turn_completed' && event.payload?.steered === true) return
     // When the last turn ended, read off the event rather than the clock so
     // the transcript replay on resume restores the true time, not the resume.
-    if (event.type === 'turn_completed' || event.type === 'turn_failed') session.lastTurnEndedAt = event.createdAt
+    // Studio's own compaction before a cache expired is not the agent
+    // finishing anything: a chat that sat idle stays as read as it was.
+    const endedTurnId = typeof event.payload?.turnId === 'string' ? event.payload.turnId : undefined
+    if (
+      event.type === 'user_message' &&
+      endedTurnId &&
+      readConversationMessageOrigin(event.payload?.origin)?.reason === 'auto-compact'
+    )
+      (session.quietTurnIds ??= new Set()).add(endedTurnId)
+    if (
+      (event.type === 'turn_completed' || event.type === 'turn_failed') &&
+      !(endedTurnId && session.quietTurnIds?.has(endedTurnId))
+    )
+      session.lastTurnEndedAt = event.createdAt
     const wasWaiting = isWaitingPhase(session.phase)
     // A turn the person stopped ended where they asked it to: the chat reads as
     // done, as its own transcript does, not as failed and needing a look.

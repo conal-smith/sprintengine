@@ -55,6 +55,8 @@ export function workspaceManagerWorkspaceFieldsEqual(left: Workspace, right: Wor
     left.settledOverride === right.settledOverride &&
     // The row menu's Auto-settle choice draws its check from this.
     left.autoSettleEnabled === right.autoSettleEnabled &&
+    // And its Auto compact choice.
+    left.autoCompactEnabled === right.autoCompactEnabled &&
     // Sleep: Snooze and Wake write only this, and the sidebar files the row
     // under the Snoozed shelf from it. Without it a snoozed chat stayed in
     // the active list until something unrelated moved the projection.

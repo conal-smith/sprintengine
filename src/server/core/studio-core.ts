@@ -74,6 +74,7 @@ import { takeDataDir } from './take-data-dir'
 import { createStudioUsageLimitResumes } from './studio-usage-limit-resumes'
 import { studioPullRequestWakes } from './studio-pull-request-wakes'
 import { createStudioScheduledMessages, studioHeldMessages } from './studio-scheduled-messages'
+import { createStudioAutoCompact } from './studio-auto-compact'
 
 // The Studio core: the services the server owns (studio-server design, section
 // 4.1), composed once. The desktop builds it inside Electron main, from
@@ -715,6 +716,28 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     workspaceRegistry.subscribe(() => usageLimitResumes.prune()),
   ]
 
+  // A Claude chat with Auto compact on is compacted by Studio while it sits
+  // idle, just before its prompt cache expires (conversation-auto-compact.ts,
+  // wired in studio-auto-compact.ts): its chats' sessions, a distribution's
+  // and an SSH machine's included, read through the router; the send goes
+  // through the same door a resume after a usage limit takes, marked as
+  // Studio's. Looked at again whenever a chat, its record or the default
+  // moves, and on waking, since a timer stands still while the machine sleeps.
+  const autoCompact = createStudioAutoCompact({
+    conversations,
+    workspaceRecord: (workspaceId) => workspaceRegistry.getRecord(workspaceId),
+    enabledByDefault: () => effectiveAgentLaunchSettings(agentLaunchSettings.get()).autoCompactChats,
+    createHost: (hostOptions) => createConversationHost(hostOptions),
+    log: (message) => {
+      void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Auto compact', message })
+    },
+  })
+  const stopFollowingAutoCompact = [
+    workspaceRegistry.subscribe(() => autoCompact.recompute()),
+    agentLaunchSettings.subscribe(() => autoCompact.recompute()),
+    powerActivity.onResume(() => autoCompact.recompute()),
+  ]
+
   // Messages a person scheduled into a chat from its composer's "+"
   // (scheduled-messages/scheduled-messages.ts, wired in
   // studio-scheduled-messages.ts): sent when their time comes through the same
@@ -778,6 +801,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     for (const stop of stopFollowingScheduledMessages.splice(0)) stop()
     return scheduledMessages.dispose()
   }
+  function stopAutoCompact(): void {
+    for (const stop of stopFollowingAutoCompact.splice(0)) stop()
+    autoCompact.dispose()
+  }
 
   /**
    * The core's own end, for a process that owns nothing else: the registry
@@ -798,6 +825,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       () => conversationRuntime.flushTranscripts(),
       stopUsageLimitResumes,
       stopScheduledMessages,
+      stopAutoCompact,
       () => chatTitler.dispose(),
       () => conversationOwner.shutdown(),
       () => {
@@ -853,6 +881,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     textGenerationSettings,
     stopUsageLimitResumes,
     stopScheduledMessages,
+    stopAutoCompact,
     shutdown,
   }
 }
