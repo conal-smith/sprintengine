@@ -536,7 +536,8 @@ unsent to a stream with no screen (`queuedSendCourier.ts`), which offers it as
 the turn ends and closes once each message is taken or refused. Opening the
 chat again takes them back first. A refused one stays queued, and the chat's
 screen shows the desktop's reason when it is next opened. The app being
-closed altogether still holds them until the chat is opened. A message over the desktop's size
+closed altogether still holds them until the chat is opened, and then offers
+only what the rule below allows. A message over the desktop's size
 limit is refused before it is queued, and a send the desktop refuses is shown
 as not sent, with the reason, until it is removed. The cache is bounded and
 does not store credentials or image bytes.
@@ -602,7 +603,41 @@ reached the desktop and that first message happens to carry the same words
 lesser harm than the agent being told the same thing twice. A desktop
 without the capability keeps the phone-held queue exactly as it was; a send
 cached as handed over goes to such a desktop (one that lost the capability) as
-an ordinary send, held on the phone until the turn ends.
+an ordinary send, held on the phone until the turn ends. A desktop since
+2026-10-20 also remembers the commands it held, across a restart and after it
+has sent them, so a repeat of one is answered as held and never held twice.
+
+A send the desktop turns away `busy` (a turn is running there that the phone
+had not heard of yet) is offered once more, under the same command id, as a
+held send, where the desktop advertises `conversation-queued-sends` and the
+message is words alone with nothing queued behind it. It then goes when the
+turn ends whether or not the phone is awake, and the cache keeps it as held.
+Otherwise it waits on the phone, and its bubble says "Waiting for the agent's
+turn to end" rather than "Pending delivery…".
+
+### A message that waited while the phone was away
+
+Android suspends an app in the background. A message the desktop turned away
+busy stopped being offered when the phone slept, and was offered again under
+its id the next time the chat opened: once a day later, into a chat whose
+person had long since done that work at the desk, as a turn they did not ask
+for. So each queued message keeps when it was written (`queuedAt` in the
+cache, `composedAt` on the send), and a message carried across an absence
+(the chat reopened, the app back from the background, the courier) goes
+without asking only while it is younger than ten minutes
+(`QUEUED_SEND_STALE_MS`) and the turn it waited on has not ended meanwhile,
+which the redial's catch-up says. One cached before the time was kept has
+none and counts as old. While the phone stays in front a message waits as it
+always did and goes when the turn ends: the person is watching it wait.
+
+Anything else is drawn in the transcript as "Not sent · written 23h ago",
+with Send now and Discard, and stays so across a restart (`stale` in the
+cache) until the person decides. Send now offers the same send under its id
+with `confirmedStale`; Discard removes it. The courier keeps the same rule: it
+marks such a message in the cache and does not offer it. A desktop that reads
+`composedAt` also refuses an unconfirmed one written more than thirty minutes
+ago as `stale`, recording nothing, and the phone draws that refusal the same
+way; an older desktop ignores both members.
 
 Conversation links use
 `sprintengine://conversation/<deviceId>/<workspaceId>/<agentId>`, with each

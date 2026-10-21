@@ -8,7 +8,7 @@ rewrite the `.js` import specifiers; Metro resolves those locally to `.ts`.
 The ordered files are `index.ts`, `presentation.ts`, `tool-types.ts`,
 `toolKind.ts`, and `commandLabel.ts`. SHA-256 covers each filename, a NUL byte,
 then that file's source bytes, in order. The current digest is
-`23e0189b289722112130934fc45ebd234dd5b034e5383263bf69042f061c5722`.
+`a1313dd4c44024e14956b1fb461ca30d0d65851ec28162453ffa888af66c5c3c`.
 
 This source mirror does not publish a package. When adopting a published
 version, remove the mirror and the narrowly scoped Metro resolver together.

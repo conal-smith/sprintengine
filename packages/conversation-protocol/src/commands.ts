@@ -62,15 +62,60 @@ export type ConversationQuestionAnswers = Record<string, string>
  * - `cancelQueued` takes back a message the desktop holds (`queued` frames
  *   name each by `id`), refused once it is on its way into the chat. Needs
  *   `conversation-queued-sends` too.
+ * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
+ *   client's clock), beside any of the above. A desktop refuses one written
+ *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
+ *   unless it also says `confirmedStale`: the person saw it had not gone and
+ *   asked for it to go now. A message a client kept while it slept is not one
+ *   the person still means hours later. The message it records carries
+ *   `composedAt`, so a reader can say when it was written. No capability: a
+ *   desktop without it drops both members and sends as it always did, so a
+ *   client sends `composedAt` with every message and decides for itself what
+ *   it no longer sends without asking.
  */
 export type ConversationCommand =
   | Exclude<ConversationWireCommand, { kind: 'setPermissionPreset' } | { kind: 'send' }>
-  | { kind: 'send'; message: string; uploadIds?: string[]; queue?: true; skills?: string[]; steer?: true }
+  | {
+      kind: 'send'
+      message: string
+      uploadIds?: string[]
+      queue?: true
+      skills?: string[]
+      steer?: true
+      composedAt?: number
+      confirmedStale?: true
+    }
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
 
 export type ConversationCommandKind = ConversationCommand['kind']
+
+/**
+ * How old a `send`'s `composedAt` may be before a desktop asks for it to be
+ * confirmed. Wider than any client's own limit (the phone stops at ten
+ * minutes) so a client whose clock runs a few minutes off the desktop's never
+ * has a message it just sent refused: this is the backstop for a client that
+ * forgot to ask, not the rule a person meets.
+ */
+export const CONVERSATION_STALE_SEND_MS = 30 * 60_000
+
+/**
+ * Whether a desktop refuses this send as `stale` at `now`: it says when it
+ * was written, that is longer ago than the limit, and the person has not
+ * confirmed it. A send that does not say (every client before the member) is
+ * never stale.
+ */
+export function isStaleConversationSend(
+  command: { composedAt?: number; confirmedStale?: true | boolean },
+  now: number,
+): boolean {
+  return (
+    command.confirmedStale !== true &&
+    typeof command.composedAt === 'number' &&
+    now - command.composedAt > CONVERSATION_STALE_SEND_MS
+  )
+}
 
 /** Every command kind this version of the contract defines. */
 export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [

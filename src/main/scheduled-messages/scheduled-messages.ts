@@ -53,6 +53,12 @@ import { writeFileAtomically } from '../config-file-write'
 // same wait on the turn a scheduled message that came due mid-turn takes,
 // and several queued in one turn go as one message, as the composer's own
 // queue sends them.
+//
+// A held message keeps the commands it came in on (`sources`) in the file, and
+// once it has gone (sent, deleted, or its chat with it) they are remembered a
+// while longer (`heldSources`), so the same command arriving again is the same
+// message and is never held, and sent, a second time: a device that lost the
+// answer offers it again under its id, before or after a restart here.
 
 export const SCHEDULED_MESSAGES_FILE = 'scheduled-messages.json'
 const FORMAT_VERSION = 1
@@ -71,7 +77,10 @@ const MAX_TIMER_MS = 15 * 60_000
 const MAX_FAILURE_LENGTH = 300
 /** Held messages one chat may wait on; a machine queueing past this is refused rather than kept without end. */
 const MAX_HELD_PER_CHAT = 20
-/** Commands a held message came in on, remembered so one arriving twice is held once. */
+/**
+ * Commands a held message that has gone came in on, remembered so one arriving
+ * again is not held a second time. A message still held keeps its own.
+ */
 const MAX_HELD_SOURCES = 500
 
 type Pending = ScheduledMessage & {
@@ -79,6 +88,8 @@ type Pending = ScheduledMessage & {
   retryAt?: number
   /** How many times it was sent again after a refusal; each send needs a command id of its own. */
   attempt?: number
+  /** A held message: the commands it came in on, several when queued ones were joined. Kept in the file. */
+  sources?: string[]
 }
 
 export type ScheduledMessagesStorage = {
@@ -145,8 +156,9 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
   const log = deps.log ?? (() => undefined)
 
   let messages: Pending[] = []
-  // Source command → the held message it went into.
-  const heldSources = new Map<string, string>()
+  // Source command → the held message it went into, for messages that have
+  // gone; one still held answers from its own `sources`.
+  let heldSources = new Map<string, string>()
   const listeners = new Set<(state: ScheduledMessagesState) => void>()
   const unsubscribers: Array<() => void> = []
   let timer: unknown = null
@@ -161,7 +173,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     // One on its way is kept as it was before it left: should the app stop
     // mid-send, it is sent again rather than lost.
     const kept = messages.map(({ retryAt: _retryAt, sending: _sending, ...entry }) => entry)
-    const body = JSON.stringify({ version: FORMAT_VERSION, messages: kept })
+    const body = JSON.stringify({ version: FORMAT_VERSION, messages: kept, heldSources: [...heldSources] })
     writing = writing
       .then(() => deps.storage.write(body))
       .catch((error: unknown) => {
@@ -171,7 +183,9 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
 
   function state(): ScheduledMessagesState {
     return {
-      messages: messages.map(({ retryAt: _retryAt, attempt: _attempt, ...entry }) => ({ ...entry })),
+      messages: messages.map(({ retryAt: _retryAt, attempt: _attempt, sources: _sources, ...entry }) => ({
+        ...entry,
+      })),
     }
   }
 
@@ -182,11 +196,28 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     arm()
   }
 
+  /** Take messages out, remembering the commands the held ones came in on. */
+  function remove(leaving: (entry: Pending) => boolean): boolean {
+    const before = messages.length
+    messages = messages.filter((entry) => {
+      if (!leaving(entry)) return true
+      remember(entry.id, entry.sources ?? [])
+      return false
+    })
+    return messages.length !== before
+  }
+
+  function remember(id: string, sources: readonly string[]): void {
+    for (const source of sources) {
+      heldSources.delete(source)
+      heldSources.set(source, id)
+    }
+    while (heldSources.size > MAX_HELD_SOURCES) heldSources.delete(heldSources.keys().next().value!)
+  }
+
   /** Drop the messages of chats that are gone. True when something went. */
   function dropStale(): boolean {
-    const before = messages.length
-    messages = messages.filter((entry) => entry.sending || deps.chatExists(entry))
-    return messages.length !== before
+    return remove((entry) => !entry.sending && !deps.chatExists(entry))
   }
 
   // ── When one comes due ───────────────────────────────────────────────────
@@ -232,7 +263,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
 
   function fire(entry: Pending, at: number): void {
     if (!deps.chatExists(entry)) {
-      messages = messages.filter((candidate) => candidate !== entry)
+      remove((candidate) => candidate === entry)
       log('A scheduled message was not sent: its chat was deleted.')
       return changed()
     }
@@ -282,7 +313,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     if (!messages.includes(entry)) return
     if (!running) return
     if (result.ok) {
-      messages = messages.filter((candidate) => candidate !== entry)
+      remove((candidate) => candidate === entry)
       return changed()
     }
     // A turn that started between the look and the send: the same wait as a
@@ -338,7 +369,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     const entry = messages.find((candidate) => candidate.id === input.id)
     if (!entry) return state()
     if (input.kind === 'delete') {
-      messages = messages.filter((candidate) => candidate !== entry)
+      remove((candidate) => candidate === entry)
       changed()
       return state()
     }
@@ -364,8 +395,12 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
   function hold(chat: ScheduledMessageChat, input: string, source: string): ScheduledMessageHoldResult {
     const text = input.trim()
     if (!text) return { ok: false, reason: 'A queued message needs words.' }
-    const known = heldSources.get(source)
-    if (known !== undefined && messages.some((entry) => entry.id === known)) return { ok: true, id: known }
+    // The same command again is the same message: still held, or gone
+    // already. Either way it is not held again.
+    const holding = messages.find((entry) => entry.sources?.includes(source))
+    if (holding) return { ok: true, id: holding.id }
+    const gone = heldSources.get(source)
+    if (gone !== undefined) return { ok: true, id: gone }
     if (!deps.chatExists(chat)) return { ok: false, reason: 'The chat is not on this machine any more.' }
     const at = now()
     // Only one that has not gone yet takes more: one on its way has been read,
@@ -381,6 +416,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     let id: string
     if (joined) {
       joined.text = `${joined.text}\n${text}`
+      joined.sources = [...(joined.sources ?? []), source]
       id = joined.id
     } else {
       if (text.length > MAX_SCHEDULED_MESSAGE_LENGTH)
@@ -401,11 +437,10 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
           // running turn: the tray says it waits on the turn from the start.
           waitingSince: at,
           queued: true,
+          sources: [source],
         },
       ]
     }
-    heldSources.set(source, id)
-    while (heldSources.size > MAX_HELD_SOURCES) heldSources.delete(heldSources.keys().next().value!)
     changed()
     return { ok: true, id }
   }
@@ -421,8 +456,23 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     if (!running) return
     // One scheduled while the file was being read is newer than the file.
     const known = new Set(messages.map((entry) => entry.id))
-    messages = [...saved.filter((entry) => !known.has(entry.id)), ...messages]
-    if (dropStale()) persist()
+    // The file's commands are older than any held while it was read: a
+    // command held then that the file already knew is the same message
+    // twice, and the file's copy stands.
+    const savedSources = new Set([
+      ...saved.messages.flatMap((entry) => entry.sources ?? []),
+      ...saved.heldSources.keys(),
+    ])
+    const fresh = messages.filter((entry) => {
+      if (!entry.sources?.length) return true
+      entry.sources = entry.sources.filter((source) => !savedSources.has(source))
+      return entry.sources.length > 0
+    })
+    const repeated = fresh.length !== messages.length
+    messages = [...saved.messages.filter((entry) => !known.has(entry.id)), ...fresh]
+    heldSources = new Map([...saved.heldSources, ...heldSources])
+    while (heldSources.size > MAX_HELD_SOURCES) heldSources.delete(heldSources.keys().next().value!)
+    if (dropStale() || repeated) persist()
     const next = state()
     for (const listener of [...listeners]) listener(next)
     arm()
@@ -477,16 +527,28 @@ export function scheduledMessagesFileStorage(file: string): ScheduledMessagesSto
 
 // ── The file ──────────────────────────────────────────────────────────────
 
-function readSaved(text: string | null): Pending[] {
-  if (!text) return []
+function readSaved(text: string | null): { messages: Pending[]; heldSources: Map<string, string> } {
+  const none = { messages: [], heldSources: new Map<string, string>() }
+  if (!text) return none
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
-    return []
+    return none
   }
-  if (!isRecord(parsed) || parsed.version !== FORMAT_VERSION || !Array.isArray(parsed.messages)) return []
-  return parsed.messages.flatMap(readPending)
+  if (!isRecord(parsed) || parsed.version !== FORMAT_VERSION || !Array.isArray(parsed.messages)) return none
+  // Written by a build before it, the file has no `heldSources`: nothing gone
+  // is remembered, as nothing was then.
+  const heldSources = new Map<string, string>()
+  if (Array.isArray(parsed.heldSources))
+    for (const pair of parsed.heldSources.slice(-MAX_HELD_SOURCES))
+      if (Array.isArray(pair) && isSource(pair[0]) && isId(pair[1])) heldSources.set(pair[0], pair[1])
+  return { messages: parsed.messages.flatMap(readPending), heldSources }
+}
+
+/** A command a held message came in on, as the conversation host names one. */
+function isSource(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 1_000
 }
 
 function readPending(raw: unknown): Pending[] {
@@ -506,6 +568,9 @@ function readPending(raw: unknown): Pending[] {
       ...(typeof raw.failure === 'string' && raw.failure ? { failure: failureWords(raw.failure) } : {}),
       ...(typeof raw.attempt === 'number' && Number.isInteger(raw.attempt) && raw.attempt > 0
         ? { attempt: raw.attempt }
+        : {}),
+      ...(Array.isArray(raw.sources) && raw.sources.every(isSource) && raw.sources.length
+        ? { sources: [...raw.sources] }
         : {}),
     },
   ]

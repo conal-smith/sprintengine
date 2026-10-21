@@ -264,7 +264,23 @@ export type ConversationCommand =
    * pictures: where the turn cannot take it the desktop holds it as a queued
    * send, and a held message is its words alone.
    */
-  | { kind: "send"; message: string; uploadIds?: string[]; queue?: true; steer?: true }
+  /**
+   * `composedAt` is when the person pressed Send, on this phone's clock
+   * (epoch ms), and rides every send. A desktop that reads it records it on
+   * the message and refuses one written long ago as `stale`, unless
+   * `confirmedStale` says the person tapped Send now on it here. One that does
+   * not read it drops both and sends as it always did, so neither needs a
+   * capability: the phone keeps its own rule (`queuedSends.ts`).
+   */
+  | {
+      kind: "send";
+      message: string;
+      uploadIds?: string[];
+      queue?: true;
+      steer?: true;
+      composedAt?: number;
+      confirmedStale?: true;
+    }
   /** Needs `conversation-queued-sends`: takes back a held message, refused once it is on its way. */
   | { kind: "cancelQueued"; queuedId: string }
   | { kind: "interrupt" }

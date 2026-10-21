@@ -11,14 +11,17 @@ const compiledRequire = createRequire(compiled);
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const ticketResponse = () => ({ ok: true, json: async () => ({ ticket: "test-ticket" }) });
 const key = { workspaceId: "workspace", agentId: "agent" };
-const pending = (id) => ({ commandId: id, command: { kind: "send", message: id, uploadIds: [] } });
+// The wall clock the fixture starts at: a message cached here was written then.
+const T0 = Date.UTC(2026, 9, 19, 13, 25);
+const HOUR = 3_600_000;
+const pending = (id) => ({ commandId: id, command: { kind: "send", message: id, uploadIds: [] }, queuedAt: T0 });
 const event = (seq, type, payload = {}) => ({
   type: "event", event: { id: `event-${seq}`, seq, type, sessionId: "session", ...key, createdAt: seq, payload },
 });
 
 /** Execute the compiled production API with only its native host boundary mocked. */
 function fixture(fetchTicket = async () => ticketResponse()) {
-  const sockets = [], states = [], frames = [], started = [];
+  const sockets = [], states = [], frames = [], started = [], stale = [], reheld = [], waiting = [];
   const timers = new Map();
   let clock = 0, timerId = 0;
   class Socket {
@@ -49,11 +52,16 @@ function fixture(fetchTicket = async () => ticketResponse()) {
     },
     clearTimeout: (id) => timers.delete(id),
   }, { filename: compiled });
-  const api = module.exports.createTailnetConversationsApi({ baseUrl: "https://example.ts.net", deviceToken: "test-token" });
+  const api = module.exports.createTailnetConversationsApi({
+    baseUrl: "https://example.ts.net", deviceToken: "test-token", now: () => T0 + clock,
+  });
   const details = [];
   const open = (options, afterSeq = 0) => api.open(key, afterSeq, {
     onState: (state, detail) => { states.push(state); details.push(detail); }, onFrame: (frame) => frames.push(frame),
     onSendStarted: (id) => started.push(id),
+    onSendStale: (id) => stale.push(id),
+    onSendHeld: (id, command, heldAfter) => reheld.push({ id, command, heldAfter }),
+    onSendWaiting: (id) => waiting.push(id),
   }, options);
   const advance = async (ms = 0) => {
     const end = clock + ms;
@@ -71,7 +79,9 @@ function fixture(fetchTicket = async () => ticketResponse()) {
     socket.frame({ type: "synchronized", seq });
   };
   const commands = () => sockets.flatMap((socket) => socket.sent.filter((frame) => frame.type === "command"));
-  return { sockets, states, details, frames, started, open, advance, synchronize, commands, module };
+  return {
+    sockets, states, details, frames, started, stale, reheld, waiting, open, advance, synchronize, commands, module,
+  };
 }
 
 test("foreground reconnect preserves a newly queued send until the replacement socket synchronizes", async () => {
@@ -382,7 +392,7 @@ test("an oversized send is refused before it reaches the outbox", async () => {
 
 test("an oversized send left in an older cache is failed once, locally, and never transmitted", async () => {
   const f = fixture();
-  const stream = f.open({ pendingSends: [{ commandId: "poison", command: oversized() }, pending("after")] });
+  const stream = f.open({ pendingSends: [{ commandId: "poison", command: oversized(), queuedAt: T0 }, pending("after")] });
   await f.advance(); f.synchronize(f.sockets[0]);
   assert.deepEqual(f.commands().map((item) => item.commandId), ["after"]);
   const refused = f.frames.filter((frame) => frame.type === "commandResult" && frame.commandId === "poison");
@@ -631,7 +641,7 @@ test("coming back to the app starts the reconnect backoff again", async () => {
 });
 
 // ── Messages the desktop holds (`conversation-queued-sends`) ─────────────────
-const held = (id, message = id) => ({ commandId: id, command: { kind: "send", message, queue: true } });
+const held = (id, message = id) => ({ commandId: id, command: { kind: "send", message, queue: true }, queuedAt: T0 });
 const watches = (socket) => socket.sent.filter((frame) => frame.type === "watchQueued");
 
 test("a send handed to the desktop goes at once behind a running turn, without uploads, and the queue is watched after the fence", async () => {
@@ -771,5 +781,168 @@ test("only the first message after the offer can be the held one; the same words
   f.sockets[0].frame(event(7, "user_message", { text: "yes" }));
   f.sockets[0].frame({ type: "synchronized", seq: 7 });
   assert.deepEqual(f.commands().map((frame) => frame.commandId), ["never-held"], "offered: the desktop never had it");
+  stream.close();
+});
+
+// ── A message that waited while the phone was away ───────────────────────────
+// Android suspends an app in the background. A message the desktop turned
+// away busy stopped being offered when the phone slept, and was offered again
+// under its id when the chat next opened, a day later, as a new turn nobody
+// asked for. Carried across an absence, a message now goes without asking
+// only while it is young and its turn has not ended meanwhile.
+const MINUTE = 60_000;
+const sent = (id, message = id, queuedAt = T0) => ({
+  commandId: id,
+  command: { kind: "send", message, uploadIds: [], composedAt: queuedAt },
+  queuedAt,
+});
+/** A turn's end as the desktop records it, on its own clock. */
+const endedAt = (seq, at) => ({ ...event(seq, "turn_completed", { turnId: "t" }).event, createdAt: at });
+const commandsOn = (socket) => socket.sent.filter((frame) => frame.type === "command");
+
+test("a send turned away busy is not offered a day later when the chat reopens; it is handed back as not sent", async () => {
+  const f = fixture();
+  const first = f.open();
+  await f.advance(); f.synchronize(f.sockets[0]);
+  first.command(sent("X", "run the migration").command, "X");
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["X"]);
+  // A turn the phone had not heard of is running; then the phone sleeps.
+  f.sockets[0].frame({ type: "commandResult", commandId: "X", ok: false, code: "busy", retryAfterMs: 1_000 });
+  first.close();
+  await f.advance(23 * HOUR);
+  // The app opens the chat again with what its cache kept; the chat is idle.
+  const reopened = f.open({ pendingSends: [sent("X", "run the migration")] }, 0);
+  await f.advance();
+  f.synchronize(f.sockets[1], [endedAt(1, T0 + 5 * MINUTE)], 1);
+  assert.deepEqual(commandsOn(f.sockets[1]), [], "no command for X goes out");
+  assert.deepEqual(f.stale, ["X"], "X is offered to the person as not sent");
+  reopened.close();
+});
+
+test("a carried send under the limit whose turn has not ended still goes when the chat is free", async () => {
+  const f = fixture();
+  const stream = f.open({ pendingSends: [sent("young", "young", T0 - 9 * MINUTE)] });
+  await f.advance();
+  f.synchronize(f.sockets[0]);
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["young"]);
+  assert.deepEqual(f.stale, []);
+  stream.close();
+});
+
+test("a send cached before the phone kept when it was written is taken for an old one", async () => {
+  const f = fixture();
+  const legacy = { commandId: "legacy", command: { kind: "send", message: "from an older build", uploadIds: [] } };
+  const stream = f.open({ pendingSends: [legacy, sent("fresh")] });
+  await f.advance();
+  f.synchronize(f.sockets[0]);
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["fresh"]);
+  assert.deepEqual(f.stale, ["legacy"]);
+  stream.close();
+});
+
+test("a carried send whose turn ended while the phone was away is not offered, however young", async () => {
+  const f = fixture();
+  const stream = f.open({ pendingSends: [sent("behind-a-turn", "and then this", T0 - 2 * MINUTE)] }, 4);
+  await f.advance();
+  f.sockets[0].open();
+  // What happened while no stream listened: the turn it waited on ended.
+  f.sockets[0].frame({ type: "snapshot", page: { events: [endedAt(5, T0 - MINUTE)], hasMore: false, beforeCursor: null } });
+  f.sockets[0].frame({ type: "synchronized", seq: 5 });
+  assert.deepEqual(commandsOn(f.sockets[0]), []);
+  assert.deepEqual(f.stale, ["behind-a-turn"]);
+  stream.close();
+});
+
+test("a send waiting while the app is in the background is offered again only if its turn did not end meanwhile", async () => {
+  const f = fixture(), stream = f.open();
+  await f.advance();
+  f.synchronize(f.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  stream.command(sent("waits", "after this", T0).command, "waits");
+  assert.deepEqual(commandsOn(f.sockets[0]), [], "it waits on the running turn");
+  // Watched in front, a turn's end sends it; here the app went away first.
+  stream.foreground(3 * MINUTE);
+  await f.advance();
+  f.sockets[1].open();
+  f.sockets[1].frame({ type: "event", event: endedAt(2, T0 + MINUTE) });
+  f.sockets[1].frame({ type: "synchronized", seq: 2 });
+  assert.deepEqual(commandsOn(f.sockets[1]), []);
+  assert.deepEqual(f.stale, ["waits"]);
+  stream.close();
+});
+
+test("a busy answer from a desktop that holds messages offers the send once more, under its id, to be held", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  stream.command(sent("words", "check the logs").command, "words");
+  f.sockets[0].frame({ type: "commandResult", commandId: "words", ok: false, code: "busy", retryAfterMs: 1_000 });
+  assert.deepEqual(
+    commandsOn(f.sockets[0]).map((frame) => [frame.commandId, frame.command]),
+    [
+      ["words", { kind: "send", message: "check the logs", uploadIds: [], composedAt: T0 }],
+      ["words", { kind: "send", message: "check the logs", composedAt: T0, queue: true }],
+    ],
+    "the same id, now held by the desktop, with no uploads beside queue",
+  );
+  assert.deepEqual(f.reheld.map((item) => [item.id, item.command.queue]), [["words", true]]);
+  // The desktop's own crowding is waited out under the same id, as a held send is.
+  f.sockets[0].frame({ type: "commandResult", commandId: "words", ok: false, code: "busy", retryAfterMs: 500 });
+  await f.advance(500);
+  assert.equal(commandsOn(f.sockets[0]).length, 3);
+  assert.equal(commandsOn(f.sockets[0]).at(-1).command.queue, true, "held once; never back to a plain send");
+  assert.equal(f.reheld.length, 1);
+  f.sockets[0].frame({ type: "commandResult", commandId: "words", ok: true });
+  assert.deepEqual(f.frames.filter((frame) => frame.type === "commandResult").map((frame) => [frame.commandId, frame.ok]), [["words", true]]);
+  stream.close();
+});
+
+test("a busy send with pictures, or from a desktop that holds nothing, waits on the phone and says so", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  stream.command({ kind: "send", message: "see this", uploadIds: ["upload-1"], composedAt: T0 }, "picture");
+  f.sockets[0].frame({ type: "commandResult", commandId: "picture", ok: false, code: "busy", retryAfterMs: 1_000 });
+  await f.advance(1_000);
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.command.queue), [undefined, undefined]);
+  assert.deepEqual(f.reheld, []);
+  assert.deepEqual(f.waiting, ["picture"]);
+  stream.close();
+  const older = fixture(), plainStream = older.open();
+  await older.advance(); older.synchronize(older.sockets[0]);
+  plainStream.command(sent("words").command, "words");
+  older.sockets[0].frame({ type: "commandResult", commandId: "words", ok: false, code: "busy", retryAfterMs: 1_000 });
+  await older.advance(1_000);
+  assert.deepEqual(commandsOn(older.sockets[0]).map((frame) => frame.command.queue), [undefined, undefined]);
+  assert.deepEqual(older.waiting, ["words"]);
+  plainStream.close();
+});
+
+test("a send the desktop refuses as stale is handed back, and Send now offers it under its id, confirmed", async () => {
+  const f = fixture(), stream = f.open();
+  await f.advance(); f.synchronize(f.sockets[0]);
+  const old = sent("late", "run the migration", T0 - 2 * HOUR).command;
+  stream.command(old, "late");
+  f.sockets[0].frame({ type: "commandResult", commandId: "late", ok: false, code: "stale", message: "Written a while ago." });
+  assert.deepEqual(f.stale, ["late"]);
+  assert.equal(f.frames.some((frame) => frame.type === "commandResult"), false, "not a refusal the screen shows as failed");
+  stream.foreground(11_000); await f.advance();
+  f.synchronize(f.sockets[1]);
+  assert.deepEqual(commandsOn(f.sockets[1]), [], "never offered again without asking");
+  stream.command({ ...old, confirmedStale: true }, "late");
+  assert.deepEqual(commandsOn(f.sockets[1]).map((frame) => [frame.commandId, frame.command.confirmedStale]), [["late", true]]);
+  stream.close();
+});
+
+test("a stale send can be let go of, and a confirmed one is never held back by the phone's own rule", async () => {
+  const f = fixture();
+  const stream = f.open({
+    pendingSends: [
+      { ...sent("discarded", "no", T0 - 3 * HOUR), stale: true },
+      { ...sent("confirmed", "yes", T0 - 3 * HOUR), command: { ...sent("confirmed", "yes", T0 - 3 * HOUR).command, confirmedStale: true } },
+    ],
+  });
+  await f.advance();
+  assert.deepEqual(f.stale, ["discarded"]);
+  stream.cancelPending("discarded");
+  f.synchronize(f.sockets[0]);
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["confirmed"]);
   stream.close();
 });

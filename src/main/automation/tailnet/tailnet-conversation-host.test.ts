@@ -351,6 +351,46 @@ test('a queued send is held for the turn and answered at once: no session is res
   }
 })
 
+test('a send written long ago is refused stale, neither held nor sent, until the person confirms it', async () => {
+  const memory = memoryHeld()
+  const f = await fixture({ heldMessages: memory.held })
+  try {
+    const started = await f.start()
+    assert.ok(started.ok)
+    const composedAt = Date.now() - 23 * 3_600_000
+    const held = await f.host.command(f.key, 'phone', 'held-1', {
+      kind: 'send',
+      message: 'Then the docs.',
+      queue: true,
+      composedAt,
+    })
+    assert.equal(held.ok, false)
+    assert.equal(held.code, 'stale', 'the code reaches the device, for it to ask its person')
+    assert.deepEqual(memory.holds, [], 'held messages go the moment the chat is free, so none is held')
+    const sent = await f.host.command(f.key, 'phone', 'send-1', { kind: 'send', message: '/tools', composedAt })
+    assert.equal(sent.ok, false)
+    assert.equal(sent.code, 'stale')
+    const transcript = await f.runtime.readTranscript(f.key)
+    assert.ok(transcript.ok)
+    assert.equal(transcript.events.filter((event) => event.type === 'user_message').length, 0)
+    // Send now: the same id, confirmed, goes and says when it was written.
+    const confirmed = await f.host.command(f.key, 'phone', 'send-1', {
+      kind: 'send',
+      message: '/tools',
+      composedAt,
+      confirmedStale: true,
+    })
+    assert.equal(confirmed.ok, true, confirmed.message ?? '')
+    const after = await f.runtime.readTranscript(f.key)
+    assert.ok(after.ok)
+    const [message] = after.events.filter((event) => event.type === 'user_message')
+    assert.equal(message?.payload?.composedAt, composedAt)
+    assert.equal(message?.payload?.commandId, 'send-1')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('a host that holds nothing takes a queued send as an ordinary one, and refuses taking one back', async () => {
   const f = await fixture()
   try {

@@ -56,6 +56,7 @@ import type {
   ConversationImportTranscriptResult,
 } from '../shared/conversation-runtime'
 import { CONVERSATION_SESSION_NOT_FOUND, readConversationMessageOrigin } from '../shared/conversation-runtime'
+import { isStaleConversationSend } from '../../packages/conversation-protocol/src/public'
 import { cliRuntimesOnPlatform, distroOfHostId, type ExecutionHostId } from '../shared/execution-host'
 import { wslInputInRootSpelling } from '../shared/host-paths'
 import { inferConversationToolKind } from '../shared/conversation/toolKind'
@@ -947,8 +948,12 @@ export class ConversationRuntime {
         input.commandFingerprint,
         // A send turned away busy runs nothing, so it is answered before an
         // intent is written: a phone tries again every second while a turn
-        // runs, and each try was a receipts write and then its removal.
+        // runs, and each try was a receipts write and then its removal. A
+        // stale one is the same: nothing is recorded, and the same id
+        // confirmed by the person runs. Asked after the receipts, so a repeat
+        // of a send that already went is answered as it was, however old.
         () => {
+          if (isStaleConversationSend(input, this.now())) return staleRefusal()
           const session = this.sessions.get(input.sessionId)
           return session && !input.steer && isSessionBusy(session) ? busyRefusal(session) : null
         },
@@ -1089,6 +1094,7 @@ export class ConversationRuntime {
         mentionRefs: mentions.refs,
         files,
         ...(input.origin ? { origin: input.origin } : {}),
+        ...composedAtOf(input),
       })
 
     const turnId = `turn_${this.randomId()}`
@@ -1129,6 +1135,7 @@ export class ConversationRuntime {
             ...(mentions.refs.length ? { mentions: mentions.refs } : {}),
             ...(files.length ? { files } : {}),
             ...(input.origin ? { origin: input.origin } : {}),
+            ...composedAtOf(input),
           }),
           { turnId },
         )
@@ -1345,6 +1352,7 @@ export class ConversationRuntime {
       mentionRefs: Awaited<ReturnType<typeof resolveConversationMentions>>['refs']
       files: ConversationAttachedFile[]
       origin?: ConversationSendTurnInput['origin']
+      composedAt?: number
     },
   ): Promise<ConversationSessionActionResult> {
     const path = this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId)
@@ -1396,6 +1404,7 @@ export class ConversationRuntime {
             ...(input.mentionRefs.length ? { mentions: input.mentionRefs } : {}),
             ...(input.files.length ? { files: input.files } : {}),
             ...(input.origin ? { origin: input.origin } : {}),
+            ...(input.composedAt !== undefined ? { composedAt: input.composedAt } : {}),
           }),
           { turnId },
         )
@@ -4353,6 +4362,30 @@ function busyRefusal(session: RuntimeSession): ConversationSessionActionResult {
       ? 'Conversation turn is awaiting approval.'
       : 'Conversation turn is already in progress.',
   }
+}
+
+/**
+ * A send written longer ago than a paired device sends without asking, and
+ * not confirmed since: nothing ran, and nothing is kept for its id, so the
+ * person's Send now under the same id goes.
+ */
+function staleRefusal(): ConversationSessionActionResult {
+  return {
+    ok: false,
+    code: 'stale',
+    message: 'This message was written a while ago and was not sent. Send it again to send it now.',
+  }
+}
+
+/**
+ * When the person wrote the message, for its `user_message`: kept where the
+ * sending device said, so the transcript can tell a message written long
+ * before it went from one sent as it was typed.
+ */
+function composedAtOf(input: ConversationSendTurnInput): { composedAt?: number } {
+  return typeof input.composedAt === 'number' && Number.isSafeInteger(input.composedAt) && input.composedAt > 0
+    ? { composedAt: input.composedAt }
+    : {}
 }
 
 // A steer the running turn could not take ran nothing: it is answered as busy,

@@ -45,7 +45,14 @@ import {
   type RememberedTranscript,
 } from "../../storage/transcriptMemory";
 import { createQueuedSendCourier } from "./queuedSendCourier";
-import { cancelRefusal, holdsOnDesktop, stillHanding, type HandingSend } from "./queuedSends";
+import {
+  cancelRefusal,
+  heldByDesktop,
+  holdsOnDesktop,
+  queuedSendStale,
+  stillHanding,
+  type HandingSend,
+} from "./queuedSends";
 
 /**
  * How long a streamed delta may wait to be drawn with the ones behind it. A
@@ -179,8 +186,20 @@ export function usePhoneConversation(
   });
   // `uploads`: the pictures it carries, by upload id, which its bubble draws
   // from the phone's own copies until the desktop's echo of it arrives.
+  // `waiting`: the desktop turned it away behind a turn this phone had not
+  // heard of, and it goes when that turn ends. `stale`: it waited across an
+  // absence too long to go without asking (`queuedSends.ts`), and waits on
+  // Send now or Discard; `queuedAt` says when it was written.
   const [optimistic, setOptimistic] = useState<
-    { commandId: string; text: string; uploads?: string[]; failed?: string }[]
+    {
+      commandId: string;
+      text: string;
+      uploads?: string[];
+      failed?: string;
+      waiting?: boolean;
+      stale?: boolean;
+      queuedAt?: number;
+    }[]
   >([]);
   const [queued, setQueued] = useState<
     { commandId: string; text: string; uploads: string[] }[]
@@ -334,11 +353,24 @@ export function usePhoneConversation(
     async (change: {
       add?: CachedConversation["pending"][number];
       remove?: string;
+      /** Rewrite one entry where it stands: a send now held, found stale, or sent again. */
+      patch?: {
+        commandId: string;
+        update: (
+          item: CachedConversation["pending"][number],
+        ) => CachedConversation["pending"][number];
+      };
     }) => {
       const owner = lifecycle.current;
+      const patched = (pending: CachedConversation["pending"]) =>
+        change.patch
+          ? pending.map((item) =>
+              item.commandId === change.patch!.commandId ? change.patch!.update(item) : item,
+            )
+          : pending;
       if (!session || apiOverride) {
-        pendingRef.current = pendingRef.current.filter(
-          (item) => item.commandId !== change.remove,
+        pendingRef.current = patched(
+          pendingRef.current.filter((item) => item.commandId !== change.remove),
         );
         if (change.add)
           pendingRef.current = [...pendingRef.current, change.add];
@@ -350,10 +382,12 @@ export function usePhoneConversation(
         (current) => ({
           ...current,
           pending: [
-            ...current.pending.filter(
-              (item) =>
-                item.commandId !== change.remove &&
-                item.commandId !== change.add?.commandId,
+            ...patched(
+              current.pending.filter(
+                (item) =>
+                  item.commandId !== change.remove &&
+                  item.commandId !== change.add?.commandId,
+              ),
             ),
             ...(change.add ? [change.add] : []),
           ],
@@ -561,12 +595,26 @@ export function usePhoneConversation(
         const oldest = pageHeld(eventsRef.current);
         if (oldest !== null) setPage({ hasMore: true, beforeCursor: oldest });
       }
+      // What waited too long while the chat was closed is drawn as not sent
+      // at once, before the desktop answers: the stream will not offer it
+      // (`queuedSends.ts`), and the person decides.
+      const openedAt = Date.now();
+      const staleAtOpen = new Set(
+        pendingRef.current
+          .filter((item) => queuedSendStale(item, openedAt))
+          .map((item) => item.commandId),
+      );
       setOptimistic(
-        pendingRef.current.map((item) => ({
-          commandId: item.commandId,
-          text: item.command.message,
-          ...(item.command.uploadIds?.length ? { uploads: item.command.uploadIds } : {}),
-        })),
+        pendingRef.current.map((item) => {
+          const queuedAt = item.queuedAt ?? item.command.composedAt;
+          return {
+            commandId: item.commandId,
+            text: item.command.message,
+            ...(item.command.uploadIds?.length ? { uploads: item.command.uploadIds } : {}),
+            ...(staleAtOpen.has(item.commandId) ? { stale: true } : {}),
+            ...(queuedAt !== undefined ? { queuedAt } : {}),
+          };
+        }),
       );
       // A send cached as handed to the desktop is offered to it again
       // under its id (the desktop holds a repeat once); to a desktop that has
@@ -575,7 +623,7 @@ export function usePhoneConversation(
         item.command.queue === true && holdsQueued;
       setQueued(
         pendingRef.current
-          .filter((item) => !handed(item))
+          .filter((item) => !handed(item) && !staleAtOpen.has(item.commandId))
           .map((item) => ({
             commandId: item.commandId,
             text: item.command.message,
@@ -584,7 +632,7 @@ export function usePhoneConversation(
       );
       setHanding(
         pendingRef.current
-          .filter(handed)
+          .filter((item) => handed(item) && !staleAtOpen.has(item.commandId))
           .map((item) => ({ commandId: item.commandId, text: item.command.message })),
       );
       current = api.open(
@@ -614,6 +662,61 @@ export function usePhoneConversation(
               setQueued((previous) =>
                 previous.filter((item) => item.commandId !== commandId),
               );
+          },
+          onSendWaiting(commandId) {
+            if (disposed) return;
+            setOptimistic((previous) =>
+              previous.some((item) => item.commandId === commandId && !item.waiting)
+                ? previous.map((item) => (item.commandId === commandId ? { ...item, waiting: true } : item))
+                : previous,
+            );
+          },
+          // Turned away behind a turn, and now the desktop's to send when it
+          // ends: drawn as on its way to its list, and kept as held, so a
+          // stream that takes it over from the cache offers it as one.
+          onSendHeld(commandId, command, heldAfter) {
+            if (disposed) return;
+            setQueued((previous) => previous.filter((item) => item.commandId !== commandId));
+            setHanding((previous) =>
+              previous.some((item) => item.commandId === commandId)
+                ? previous
+                : [...previous, { commandId, text: command.message }],
+            );
+            void serialize(async () => {
+              await mutatePending({
+                patch: { commandId, update: (item) => ({ ...item, command, heldAfter }) },
+              });
+            }).catch(() => {
+              if (!disposed) setNotice("Conversation cache could not be saved.");
+            });
+          },
+          // No longer sent without asking: Not sent, with Send now and
+          // Discard, and kept so across a restart until the person decides.
+          onSendStale(commandId) {
+            if (disposed) return;
+            setQueued((previous) => previous.filter((item) => item.commandId !== commandId));
+            setHanding((previous) => previous.filter((item) => item.commandId !== commandId));
+            const entry = pendingRef.current.find((item) => item.commandId === commandId);
+            const queuedAt = entry?.queuedAt ?? entry?.command.composedAt;
+            setOptimistic((previous) =>
+              previous.map((item) =>
+                item.commandId === commandId
+                  ? {
+                      ...item,
+                      stale: true,
+                      waiting: false,
+                      ...(queuedAt !== undefined ? { queuedAt } : {}),
+                    }
+                  : item,
+              ),
+            );
+            void serialize(async () => {
+              await mutatePending({
+                patch: { commandId, update: (item) => ({ ...item, stale: true }) },
+              });
+            }).catch(() => {
+              if (!disposed) setNotice("Conversation cache could not be saved.");
+            });
           },
           onFrame(frame) {
             if (disposed) return;
@@ -776,6 +879,28 @@ export function usePhoneConversation(
               // sent, taken back elsewhere or refused when its turn came is
               // already as it should be here.
               setDesktopHeld(frame.messages);
+              // A held send found stale here that the desktop's list names
+              // after all reached it before its answer was lost: the list
+              // draws it, with its own Edit and Remove.
+              const reachedDesktop = pendingRef.current
+                .filter(
+                  (item) =>
+                    item.stale === true &&
+                    item.command.queue === true &&
+                    heldByDesktop(frame.messages, item.command.message),
+                )
+                .map((item) => item.commandId);
+              if (reachedDesktop.length) {
+                setOptimistic((shown) => shown.filter((item) => !reachedDesktop.includes(item.commandId)));
+                for (const commandId of reachedDesktop) {
+                  current?.cancelPending(commandId);
+                  void serialize(async () => {
+                    await mutatePending({ remove: commandId });
+                  }).catch(() => {
+                    if (!disposed) setNotice("Conversation cache could not be saved.");
+                  });
+                }
+              }
               setHanding((previous) => {
                 const next = stillHanding(previous, frame.messages);
                 // One the list now names is drawn from it alone, never also
@@ -1038,6 +1163,9 @@ export function usePhoneConversation(
             "Too many pending messages. Reconnect before sending more.",
           );
         const commandId = Crypto.randomUUID();
+        // When the person pressed Send: kept with the queued entry, and told
+        // to the desktop with the send (`composedAt`).
+        const queuedAt = Date.now();
         // A steer goes now, like a send with no turn running: it is neither
         // held by the phone nor handed to the desktop to hold. Where the turn
         // cannot take it after all, the desktop holds it and its `queued`
@@ -1056,10 +1184,10 @@ export function usePhoneConversation(
         // held one carries no `uploadIds` at all: the desktop refuses `queue`
         // beside even an empty list.
         const command: Extract<ConversationCommand, { kind: "send" }> = steer
-          ? { kind: "send", message: plainLineBreaks(message), steer: true }
+          ? { kind: "send", message: plainLineBreaks(message), steer: true, composedAt: queuedAt }
           : handOver
-            ? { kind: "send", message: plainLineBreaks(message), queue: true }
-            : { kind: "send", message: plainLineBreaks(message), uploadIds };
+            ? { kind: "send", message: plainLineBreaks(message), queue: true, composedAt: queuedAt }
+            : { kind: "send", message: plainLineBreaks(message), uploadIds, composedAt: queuedAt };
         // Checked before the outbox: a send the desktop must refuse would
         // otherwise be persisted and offered again on every reconnect.
         const problem = conversationSendProblem(commandId, command);
@@ -1068,7 +1196,7 @@ export function usePhoneConversation(
         // stream offers it from the cache later (the chat reopened, the
         // courier, the app restarted) can tell the desktop already sent it.
         await mutatePending({
-          add: { commandId, command, ...(handOver ? { heldAfter: cursorRef.current.lastSeq } : {}) },
+          add: { commandId, command, queuedAt, ...(handOver ? { heldAfter: cursorRef.current.lastSeq } : {}) },
         });
         // A persisted send belongs to its original conversation even if navigation changed.
         if (owner !== lifecycle.current || stream.current !== sendingStream)
@@ -1078,6 +1206,7 @@ export function usePhoneConversation(
           {
             commandId,
             text: command.message,
+            queuedAt,
             ...(command.uploadIds?.length ? { uploads: command.uploadIds } : {}),
           },
         ]);
@@ -1142,6 +1271,48 @@ export function usePhoneConversation(
       return serialize(run);
     },
     [mutatePending, serialize],
+  );
+  // Send a message that was not sent without asking (`stale`), now the
+  // person asks: the same send under its id, marked confirmed, so neither
+  // this phone's rule nor the desktop's holds it back again. It is then a
+  // waiting send like any other: held by the desktop if it was handed there,
+  // else waiting here for the turn.
+  const sendNow = useCallback(
+    (commandId: string): Promise<void> => {
+      const owner = lifecycle.current;
+      const sendingStream = stream.current;
+      const run = async () => {
+        if (!sendingStream || stream.current !== sendingStream || owner !== lifecycle.current)
+          throw new Error("Conversation is not connected yet.");
+        const entry = pendingRef.current.find((item) => item.commandId === commandId);
+        if (!entry) return;
+        const command = { ...entry.command, confirmedStale: true as const };
+        await mutatePending({
+          patch: {
+            commandId,
+            update: ({ stale: _stale, ...item }) => ({ ...item, command }),
+          },
+        });
+        if (owner !== lifecycle.current || stream.current !== sendingStream) return;
+        setOptimistic((previous) =>
+          previous.map((item) =>
+            item.commandId === commandId ? { ...item, stale: false, waiting: false } : item,
+          ),
+        );
+        if (command.queue === true && holdsQueued)
+          setHanding((previous) => [...previous, { commandId, text: command.message }]);
+        else {
+          phoneQueuedRef.current++;
+          setQueued((previous) => [
+            ...previous,
+            { commandId, text: command.message, uploads: command.uploadIds ?? [] },
+          ]);
+        }
+        sendingStream.command(command, commandId);
+      };
+      return serialize(run);
+    },
+    [mutatePending, serialize, holdsQueued],
   );
   // A refused hand-over is shown as not sent, with the desktop's reason, as
   // any refused send is; nothing about it waits anywhere.
@@ -1234,6 +1405,7 @@ export function usePhoneConversation(
     queueSend,
     queued,
     cancelQueued,
+    sendNow,
     holdsQueued,
     takesSteer,
     desktopHeld,
