@@ -12,6 +12,7 @@ import { resolveRepoRoot } from './git-worktree-validation'
 import { lockAgentWorktree, relockWorktree } from './agent-worktree-lock'
 import { worktreeBranchLedger, type WorktreeBranchLedger } from './worktree-branch-ledger'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
+import { removeWorktreeKeepingSubmoduleWork, type SubmoduleWork } from './worktree-submodule-removal'
 import type { WorktreePoolReturnInput, WorktreePoolSweepEntry } from './worktree-pool/worktree-pool-service'
 import {
   adminDirWrittenAt,
@@ -88,7 +89,11 @@ import {
  * The removal itself is `git worktree remove` WITHOUT `--force`, so git checks
  * cleanliness again at the moment of removal: anything written between the
  * check above and the removal makes git refuse, and the sweep reports the
- * refusal. The branch itself is kept by the removal.
+ * refusal. The branch itself is kept by the removal. The one exception is a
+ * worktree with checked-out submodules, which git refuses without `--force`
+ * however clean: it is forced only after every submodule is found to hold no
+ * change, file or commit that exists nowhere else, and its own status is read
+ * clean once more (worktree-submodule-removal.ts).
  *
  * **Every other worktree of the repository** (owner ruling 2026-10-08): one
  * made by hand, by an agent CLI on its own (`.claude/worktrees/…`), in the
@@ -447,12 +452,23 @@ export async function cleanupAgentWorktrees(
       }
     }
     // No --force: git re-checks cleanliness itself at the moment of removal.
-    const removed = await withWorktreeRegistryLock(root, () => runGit(root, ['worktree', 'remove', worktree.path]))
-    if (!removed.ok && ownLock) await relockWorktree(root, worktree.path, worktree.lockedReason, runGit)
+    // A worktree with checked-out submodules, which plain `remove` always
+    // refuses, is forced only once its submodules hold nothing to lose and
+    // its status reads clean again (worktree-submodule-removal.ts).
+    const removal = await withWorktreeRegistryLock(root, () =>
+      removeWorktreeKeepingSubmoduleWork(root, worktree.path, runGit, {
+        knownWorkspaceIds: deps.knownWorkspaceIds ?? null,
+      }),
+    )
+    if (removal.outcome !== 'removed' && ownLock) {
+      await relockWorktree(root, worktree.path, worktree.lockedReason, runGit)
+    }
     record(
-      removed.ok
+      removal.outcome === 'removed'
         ? { ...base, verdict: 'removed', detail: how }
-        : { ...base, verdict: 'error', detail: removed.message ?? 'git worktree remove failed' },
+        : removal.outcome === 'kept'
+          ? { ...base, ...submoduleVerdict(removal.why) }
+          : { ...base, verdict: 'error', detail: removal.result.message ?? 'git worktree remove failed' },
     )
   }
 
@@ -482,6 +498,22 @@ export async function cleanupAgentWorktrees(
         )
       : []
   return { repoRoot: root, defaultRef, entries, deletedBranches, dryRun }
+}
+
+/** The verdict a submodule's work keeps a worktree under, in the report's existing terms. */
+function submoduleVerdict(why: SubmoduleWork): Pick<AgentWorktreeCleanupEntry, 'verdict' | 'changedPaths' | 'detail'> {
+  switch (why.kind) {
+    case 'uncommitted':
+      return { verdict: 'dirty', changedPaths: why.paths, detail: why.detail }
+    case 'unpushed':
+      return { verdict: 'unmerged', detail: why.detail }
+    case 'hidden-edits':
+      return { verdict: 'hidden-edits', changedPaths: why.paths, detail: why.detail }
+    case 'ignored-files':
+      return { verdict: 'ignored-files', changedPaths: why.paths, detail: why.detail }
+    case 'unreadable':
+      return { verdict: 'error', detail: why.detail }
+  }
 }
 
 function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
