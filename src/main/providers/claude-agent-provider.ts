@@ -304,6 +304,14 @@ type SessionState = {
   // first reported (mapSdkMessage). Null until its first init.
   cliMode: string | null
   cliSpawnMode: string | null
+  // The permission mode the live child was spawned with, and whether its
+  // first init named another where that was bypass: Claude Code's own
+  // settings (`permissions.disableBypassPermissionsMode`) can refuse it, and
+  // the child then starts in a mode that asks.
+  requestedSpawnMode: string | null
+  bypassRefused: boolean
+  // That refusal has been said in this chat once already.
+  bypassRefusalNoted?: boolean
   // Session-level events (resume cursor updates) that arrived while no turn
   // stream was open to carry them; flushed at the next turn start.
   pendingSessionEvents: ConversationEvent[]
@@ -651,6 +659,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.childMode = null
     state.cliMode = null
     state.cliSpawnMode = null
+    state.requestedSpawnMode = null
+    state.bypassRefused = false
     state.childPid = null
     state.spawnedAt = null
     state.commandOutputTails?.stopAll()
@@ -1175,6 +1185,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     state.queryCostUsd = savedCostUsd
     state.childPreset = state.permissionPreset
     state.childMode = ownSdkMode(state)
+    state.requestedSpawnMode = permissionMode ?? null
+    state.bypassRefused = false
     state.inputQueue = inputQueue
     state.abort = abort
     void pump(state, q)
@@ -1377,8 +1389,12 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // show. The child has to run under bypass, so a live switch to bypass
     // answers the rest of the reply too; and the chat has to still be on it,
     // so a stricter mode chosen while a child that could not take it goes on
-    // bypassing holds whatever that child still asks about.
+    // bypassing holds whatever that child still asks about. A child whose own
+    // settings refused bypass runs in a mode that asks on purpose: while the
+    // chat is on Bypass, what it asks goes to the person, and the runtime does
+    // not answer it as Bypass either (`mustAsk`).
     const bypassable =
+      !(state.bypassRefused && state.permissionPreset === 'bypass') &&
       state.mode !== 'plan' &&
       state.mode !== 'ask' &&
       toolName !== 'AskUserQuestion' &&
@@ -1546,6 +1562,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         childMode: null,
         cliMode: null,
         cliSpawnMode: null,
+        requestedSpawnMode: null,
+        bypassRefused: false,
         pendingSessionEvents: [],
         onSessionEvent: input.onSessionEvent ?? null,
         continuationSequence: 0,
@@ -2675,6 +2693,9 @@ export function mapSdkMessage(
     // chat set accounts for.
     cliMode?: string | null
     cliSpawnMode?: string | null
+    requestedSpawnMode?: string | null
+    bypassRefused?: boolean
+    bypassRefusalNoted?: boolean
     // A compaction is under way: the CLI repeats its `compacting` status every
     // half minute while it summarises, and the transcript hears it once.
     compacting?: boolean
@@ -2778,6 +2799,26 @@ export function mapSdkMessage(
   const apiKeySource = init ? normalizeApiKeySource(message.apiKeySource) : null
   if (init && typeof message.model === 'string' && message.model) state.contextModel = message.model
   if (init && typeof message.permissionMode === 'string') {
+    // Asked for bypass and started in another mode: the person's (or their
+    // organisation's) Claude Code settings turn bypass off, and the CLI fell
+    // back to a mode that asks without saying so. Said once per chat.
+    if (
+      state.cliSpawnMode == null &&
+      state.requestedSpawnMode === 'bypassPermissions' &&
+      message.permissionMode !== 'bypassPermissions'
+    ) {
+      state.bypassRefused = true
+      if (turnId && !state.bypassRefusalNoted) {
+        state.bypassRefusalNoted = true
+        events.push(
+          eventFor(state, 'command_output', {
+            turnId,
+            adapterNote: true,
+            output: 'Claude Code’s settings turn off bypass permissions here, so actions will ask for approval.',
+          }),
+        )
+      }
+    }
     state.cliSpawnMode ??= message.permissionMode
     state.cliMode = message.permissionMode
   }
