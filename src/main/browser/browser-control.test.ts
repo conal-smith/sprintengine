@@ -719,3 +719,88 @@ test('typing into a page without focus never sends the debugger key or text inpu
   assert.ok(!commands.includes('Input.dispatchKeyEvent'))
   assert.deepEqual(delivered, ['text:hello', 'rawKeyDown:"Enter"', 'char:"\\r"', 'keyUp:"Enter"'])
 })
+
+// A `data:` URL's payload is the file itself; an agent reading its history or
+// the console gets the media type, never the content.
+function dataUrlFixture() {
+  const debuggerStub = Object.assign(new EventEmitter(), {
+    attached: false,
+    isAttached() {
+      return this.attached
+    },
+    attach() {
+      this.attached = true
+    },
+    detach() {
+      this.attached = false
+    },
+    sendCommand: async () => ({}),
+  })
+  const wc = Object.assign(new EventEmitter(), {
+    debugger: debuggerStub,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+  })
+  let tell: (tabId: string, download: BrowserDownload) => void = () => {}
+  const control = createBrowserControl({
+    webContentsOf: () => wc as unknown as WebContents,
+    epochOf: () => 0,
+    noteAgentActivity: () => {},
+    noteAgentInput: () => {},
+    onHumanInput: () => () => {},
+    onDownload: (listener) => {
+      tell = listener
+      return () => {}
+    },
+    notePointer: () => {},
+  })
+  return { control, debuggerStub, tell: (download: BrowserDownload) => tell('t1', download) }
+}
+
+test('a download from a data: URL is in the action history by its media type, without its contents', async () => {
+  const { control, tell } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  tell({
+    url: 'data:text/csv;base64,bmFtZSxlbWFpbApkZXYsZGV2QGV4YW1wbGUuY29t',
+    path: '/Users/dev/app/.sprintengine/browser/downloads/report.csv',
+    state: 'started',
+  })
+  assert.deepEqual(
+    control.actionsOf('t1').map(({ args }) => args),
+    ['data:text/csv,…'],
+  )
+})
+
+test('a data: URL whose type is not a media type keeps neither type nor contents', async () => {
+  const { control, tell } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  tell({ url: 'data:dev@example.com secret,x', path: '/Users/dev/app/d.txt', state: 'started' })
+  assert.deepEqual(
+    control.actionsOf('t1').map(({ args }) => args),
+    ['data:,…'],
+  )
+})
+
+test('a console message from a data: URL script is located by its media type, without its source', async () => {
+  const { control, debuggerStub } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  debuggerStub.emit('message', {}, 'Runtime.consoleAPICalled', {
+    type: 'log',
+    args: [{ type: 'string', value: 'hello' }],
+    stackTrace: { callFrames: [{ url: 'data:text/javascript,console.log("hello")', lineNumber: 0 }] },
+  })
+  const result = await control.console('t1', {})
+  assert.deepEqual(result.ok && result.entries.map(({ text, location }) => ({ text, location })), [
+    { text: 'hello', location: 'data:text/javascript,…:1' },
+  ])
+})
+
+test('a console message from a page URL keeps its location as it was', async () => {
+  const { control, debuggerStub } = dataUrlFixture()
+  assert.equal((await control.console('t1', {})).ok, true)
+  debuggerStub.emit('message', {}, 'Runtime.exceptionThrown', {
+    exceptionDetails: { text: 'Uncaught', url: 'http://localhost:5173/data:app.js', lineNumber: 4 },
+  })
+  const result = await control.console('t1', {})
+  assert.equal(result.ok && result.entries[0]?.location, 'http://localhost:5173/data:app.js:5')
+})
