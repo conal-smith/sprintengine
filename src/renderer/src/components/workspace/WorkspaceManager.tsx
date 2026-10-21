@@ -533,7 +533,6 @@ export default function WorkspaceManager() {
   const updateWorkspaceWindowPlacement = useWorkspaceStore((s) => s.updateWorkspaceWindowPlacement)
   const closeWorkspaceWindow = useWorkspaceStore((s) => s.closeWorkspaceWindow)
   const moveWorkspaceToWindow = useWorkspaceStore((s) => s.moveWorkspaceToWindow)
-  const removeWorkspace = useWorkspaceStore((s) => s.removeWorkspace)
   const addWorkspace = useWorkspaceStore((s) => s.addWorkspace)
   const sidebarCollapsed = useWorkspaceStore((s) => s.sidebarCollapsed)
   const setSidebarCollapsed = useWorkspaceStore((s) => s.setSidebarCollapsed)
@@ -2334,20 +2333,6 @@ export default function WorkspaceManager() {
     setNotificationsOpen(false)
   }, [windowActiveWorkspaceId])
 
-  // Resolves when the close has actually run: every terminal kill acknowledged by
-  // main and the workspace gone from the store. Callers that only want the
-  // workspace closed can ignore it; a caller that then touches the run's files
-  // must not (item 1812).
-  const closeWorkspaceById = useCallback(
-    (id: string): Promise<void> => {
-      const workspace = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
-      const terminated = workspace ? terminateWorkspaceTerminals(workspace) : Promise.resolve()
-      removeWorkspace(id)
-      return terminated
-    },
-    [removeWorkspace],
-  )
-
   const handleForgetFolder = useCallback(
     (folderPath: string) => {
       const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/u, '').toLowerCase()
@@ -4086,10 +4071,6 @@ export default function WorkspaceManager() {
         dispatchPanelCommand(commandId, windowActiveWorkspaceId)
         return true
       }
-      if (commandId === 'workspace.close' && windowActiveWorkspaceId) {
-        closeWorkspaceById(windowActiveWorkspaceId)
-        return true
-      }
       if (commandId === 'workspace.history.back' || commandId === 'workspace.history.forward') {
         // History semantics (the location I was just in), not sidebar order —
         // sidebar-order cycling stays on workspace.switch.next/previous. Entries
@@ -4388,7 +4369,6 @@ export default function WorkspaceManager() {
       activeGlobalSurface,
       openGlobalSurface,
       openModalSurface,
-      closeWorkspaceById,
       railWorkspaces,
       visibleWorkspaceIdSet,
       setActiveWorkspaceForWindow,
@@ -4893,7 +4873,6 @@ export default function WorkspaceManager() {
       void moveWorkspaceToNewWindow(id, placement),
   )
   const sidebarMoveToMainWindow = useStableCallback(moveWorkspaceToPrimaryWindow)
-  const sidebarCloseWorkspace = useStableCallback(closeWorkspaceById)
   const sidebarForgetFolder = useStableCallback(handleForgetFolder)
   // The window's own chrome: traffic lights on a Mac window, caption buttons
   // and a menubar elsewhere. A browser tab has none of it (phase 9 spec, 3.4):
@@ -5019,7 +4998,6 @@ export default function WorkspaceManager() {
             onSelectWorkspace={sidebarSelectWorkspace}
             onMoveWorkspaceToNewWindow={sidebarMoveToNewWindow}
             onMoveWorkspaceToMainWindow={sidebarMoveToMainWindow}
-            onCloseWorkspace={sidebarCloseWorkspace}
             onForgetFolder={sidebarForgetFolder}
             onNewChat={sidebarNewChat}
             onNewScheduledAgent={sidebarNewScheduledAgent}

@@ -78,7 +78,9 @@ export const chatMenuTooltips = {
     working
       ? 'Waits until the agents in this chat finish.'
       : 'Put this chat away: it leaves the list and its agents stop. A message to it brings it back.' +
-        (where.kind === 'remote' ? ` ${where.machineName} settles it, so it leaves the list on every device.` : ''),
+        (where.kind === 'remote'
+          ? ` Where ${where.machineName} keeps its chats' rest, it settles there too and leaves the list on every device.`
+          : ''),
   unsettle: () => 'Bring this chat back to the list. Auto-settle leaves it alone until it sees new activity.',
   snooze: (working: boolean, where: ChatMenuPlace = LOCAL) =>
     working
@@ -103,8 +105,4 @@ export const chatMenuTooltips = {
       ? "Remove this chat's highlight color."
       : `Tint this chat's row ${getHighlightSwatch(color).label.toLowerCase()}.`) + markKept(where),
   typeAction: (label: string) => `${label}: an action this chat's workspace type adds.`,
-  close: (where: ChatMenuPlace = LOCAL) =>
-    where.kind === 'local'
-      ? 'Remove this chat from Studio. Its agents stop. Files on disk are kept.'
-      : `Stop following this chat here. It keeps running on ${where.machineName}.`,
 } as const

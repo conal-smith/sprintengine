@@ -88,7 +88,6 @@ export type ContextMenuAction =
   | 'copy-link'
   | 'move-to-new-window'
   | 'move-to-main-window'
-  | 'close'
   | ChatMarkAction
   | 'toggle-schedule-pause'
   | `type-action:${string}`
@@ -240,7 +239,6 @@ export function WorkspaceContextMenu({
   isDetachedWindow,
   now,
   working,
-  remoteSettle = false,
   remoteMarks = false,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
@@ -258,11 +256,6 @@ export function WorkspaceContextMenu({
   working: boolean
   /** The clock the wake times and the asleep/awake reading are resolved against. */
   now: number
-  /**
-   * A row born on a paired machine whose machine keeps its chats' rest
-   * (`conversation-lifecycle`): Settle asks that machine, which owns the chat.
-   */
-  remoteSettle?: boolean
   /**
    * A row born on a paired machine whose machine takes the row menu's marks
    * (`chat-row-menu`): its Star, Highlight color, Snooze and Auto-settle are
@@ -302,10 +295,11 @@ export function WorkspaceContextMenu({
   const snoozed = isSnoozedWorkspace(workspace, now)
   const autoSettle = workspace.autoSettleEnabled === true
   const currentColor = workspace.highlight?.color ?? null
-  // A row born on a paired machine is settled by that machine, which owns the
-  // chat, so it offers Settle only where the machine keeps its chats' rest,
-  // and never Un-settle: a settled one is off the rail here. Its sleep and
-  // Auto-settle are that machine's too, offered where it takes them.
+  // Settle is the one way a row is put away: there is no Close beside it. A
+  // row born on a paired machine asks that machine first where it keeps its
+  // chats' rest, and rests here alone where it keeps none; it never offers
+  // Un-settle: a settled one is off the rail here. Its sleep and Auto-settle
+  // are that machine's, offered where it takes them.
   const remote = Boolean(workspace.remoteOrigin)
   const where: ChatMenuPlace = workspace.remoteOrigin
     ? { kind: 'remote', machineName: workspace.remoteOrigin.machineName, marks: remoteMarks }
@@ -313,7 +307,7 @@ export function WorkspaceContextMenu({
   // Reveal is shown off, and says why, for a folder this computer cannot
   // show: one on the paired machine the chat runs on, or one gone from disk.
   const revealUnavailable = remote || (Boolean(workspace.folderPath) && workspace.folderMissing === true)
-  const settle = remote ? (remoteSettle && !settled ? 'settle' : null) : settled ? 'unsettle' : 'settle'
+  const settle = remote ? (settled ? null : 'settle') : settled ? 'unsettle' : 'settle'
   const sleeps = remote ? remoteMarks : !settled
   const canSnooze = remote ? !settled : canSnoozeWorkspace(workspace)
 
@@ -411,20 +405,21 @@ export function WorkspaceContextMenu({
         onSelect={onSelect}
         onPickColor={onPickColor}
       />
-      <MenuDivider />
-      {typeActions.map((action) => (
-        <ChatMenuItem
-          key={action.id}
-          variant={action.variant}
-          tooltip={tips.typeAction(action.label)}
-          onClick={() => onSelect(`type-action:${action.id}`)}
-        >
-          {action.label}
-        </ChatMenuItem>
-      ))}
-      <ChatMenuItem tooltip={tips.close(where)} onClick={() => onSelect('close')}>
-        Close workspace
-      </ChatMenuItem>
+      {typeActions.length > 0 ? (
+        <>
+          <MenuDivider />
+          {typeActions.map((action) => (
+            <ChatMenuItem
+              key={action.id}
+              variant={action.variant}
+              tooltip={tips.typeAction(action.label)}
+              onClick={() => onSelect(`type-action:${action.id}`)}
+            >
+              {action.label}
+            </ChatMenuItem>
+          ))}
+        </>
+      ) : null}
     </ContextMenu>
   )
 }
