@@ -6,7 +6,7 @@ import { parseAuthCallbackFromArgv } from './auth-service'
 import { registerAppLifecycle } from './app-lifecycle'
 import { createAppServices } from './app-services'
 import { ensureExtensionFolders } from './extension-folders'
-import { raiseConnectAttemptTimeout } from './network-defaults'
+import { ignoreMacosTypeOfServiceEinval, raiseConnectAttemptTimeout } from './network-defaults'
 import type { ModuleEnablementLiveApplier } from './ipc/module-enablement-ipc'
 import { activeForChannel } from '../shared/modules/dev-only'
 import { resolveModuleEnablement } from '../shared/modules/resolve'
@@ -88,8 +88,10 @@ attachBuildSkewWatch(ipcMain, createBuildSkewWatch({ mainStamp: mainBuildStamp }
 const extensionFolders = ensureExtensionFolders()
 
 // Before anything here fetches: a slow IPv4 host behind an IPv6 address with
-// no route answers within a second, not Node's quarter-second.
+// no route answers within a second, not Node's quarter-second, and a macOS
+// socket reset mid-request is not an uncaught exception.
 raiseConnectAttemptTimeout()
+ignoreMacosTypeOfServiceEinval()
 
 const DIAGNOSTICS_ENABLED = readStudioEnv('SPRINTENGINE_DIAGNOSTICS') === '1'
 

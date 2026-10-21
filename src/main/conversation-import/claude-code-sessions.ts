@@ -67,7 +67,11 @@ async function scanSessionFile(path: string): Promise<ScannedSession | null> {
   }
   if (!head?.folderPath || !head.firstPrompt) return null
   const tail = info.size > TAIL_BYTES ? await readJsonLinesWindow(path, info.size - TAIL_BYTES, TAIL_BYTES) : []
-  const title = [...tail].reverse().map(sessionTitleOf).find(Boolean) ?? head.title
+  // The CLI writes its title records again on every save, so the file's end
+  // carries the latest of each; what the head said holds when it does not.
+  const titles = { ...head.titles }
+  for (const record of tail) noteSessionTitle(titles, record)
+  const title = sessionTitle(titles)
   return {
     source: 'claude-code',
     sessionId: head.sessionId ?? basename(path, '.jsonl'),
@@ -87,9 +91,16 @@ function readHead(records: Array<Record<string, unknown>>) {
     sessionId: string | null
     folderPath: string | null
     firstPrompt: string | null
-    title: string | null
+    titles: SessionTitles
     startedAt: number | null
-  } = { excluded: false, sessionId: null, folderPath: null, firstPrompt: null, title: null, startedAt: null }
+  } = {
+    excluded: false,
+    sessionId: null,
+    folderPath: null,
+    firstPrompt: null,
+    titles: { named: undefined, generated: null },
+    startedAt: null,
+  }
   for (const record of records) {
     // A session the Agent SDK or `claude -p` ran was a program's, not a
     // person's: this app's own chats, a script, a CI job. Each names how it
@@ -99,18 +110,33 @@ function readHead(records: Array<Record<string, unknown>>) {
     head.sessionId ??= stringField(record.sessionId)
     head.folderPath ??= stringField(record.cwd)
     head.startedAt ??= recordTime(record.timestamp)
-    head.title = sessionTitleOf(record) ?? head.title
+    noteSessionTitle(head.titles, record)
     if (!head.firstPrompt && isMainChainPrompt(record))
       head.firstPrompt = claudePromptText(asRecord(record.message)?.content)
   }
   return head
 }
 
-function sessionTitleOf(record: Record<string, unknown>): string | null {
-  if (record.type === 'ai-title') return stringField(record.aiTitle)
+/**
+ * The titles a session's records have given it so far. `named` is the one a
+ * person gave with `/rename`: undefined until a record says, null once a
+ * rename was cleared (the CLI writes an empty one for that).
+ */
+type SessionTitles = { named: string | null | undefined; generated: string | null }
+
+function noteSessionTitle(titles: SessionTitles, record: Record<string, unknown>): void {
+  if (record.type === 'custom-title' && typeof record.customTitle === 'string')
+    titles.named = stringField(record.customTitle)
+  else if (record.type === 'ai-title') titles.generated = stringField(record.aiTitle) ?? titles.generated
   // Older versions wrote a one-line summary in place of a title.
-  if (record.type === 'summary') return stringField(record.summary)
-  return null
+  else if (record.type === 'summary') titles.generated = stringField(record.summary) ?? titles.generated
+}
+
+// A person's name for the session wins over the CLI's: the CLI writes its own
+// title after the person's on every save, so the later record is not the newer
+// choice.
+function sessionTitle(titles: SessionTitles): string | null {
+  return titles.named ?? titles.generated
 }
 
 function isMainChainPrompt(record: Record<string, unknown>): boolean {
@@ -182,9 +208,9 @@ export async function readClaudeCodeSession(path: string, fallbackAt: number): P
     providerSessionId: null as string | null,
     turn: { turnId: '' },
   }
-  let title: string | null = null
+  const titles: SessionTitles = { named: undefined, generated: null }
   for await (const record of readJsonLines(path)) {
-    title = sessionTitleOf(record) ?? title
+    noteSessionTitle(titles, record)
     if (record.isSidechain === true) continue
     const at = recordTime(record.timestamp)
     if (record.type === 'system' && record.subtype === 'compact_boundary') {
@@ -239,7 +265,7 @@ export async function readClaudeCodeSession(path: string, fallbackAt: number): P
       }
     }
   }
-  return builder.finish(title)
+  return builder.finish(sessionTitle(titles))
 }
 
 function withoutTurn(payload: Record<string, unknown> | undefined): Record<string, unknown> {

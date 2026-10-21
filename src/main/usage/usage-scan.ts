@@ -197,7 +197,7 @@ function markers(...texts: string[]): (line: Buffer) => boolean {
 
 // What each reader keeps a line for.
 const CLAUDE_REPLY = markers('"type":"assistant"')
-const CLAUDE_TITLE = markers('"type":"ai-title"', '"type":"summary"')
+const CLAUDE_TITLE = markers('"type":"custom-title"', '"type":"ai-title"', '"type":"summary"')
 const CODEX_RECORD = markers(
   '"session_meta"',
   '"turn_context"',
@@ -437,6 +437,9 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
   const sessionId = basename(group.main, '.jsonl')
   const requests = new Map<string, { at: number; model: string; counts: number[]; speed?: UsageSpeed }>()
   let anonymous = 0
+  // The name a person gave with `/rename` wins over the CLI's own title, which
+  // the CLI writes again after it on every save. An empty one clears it.
+  let named: string | null | undefined
   for (const file of group.files) {
     const isMain = file === group.main && file.endsWith(`${sep}${sessionId}.jsonl`)
     await forEachLine(
@@ -446,6 +449,8 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
         const record = parseJson(line)
         if (!record) return
         entry.cwd ??= str(record.cwd)
+        if (isMain && record.type === 'custom-title' && typeof record.customTitle === 'string')
+          named = str(record.customTitle)
         if (isMain && record.type === 'ai-title') entry.title = str(record.aiTitle) ?? entry.title
         if (isMain && record.type === 'summary' && !entry.title) entry.title = str(record.summary)
         if (record.type !== 'assistant') return
@@ -484,6 +489,7 @@ export async function foldClaude(group: Group, yieldEveryBytes?: number): Promis
     addUsage(buckets, at, model, '', [counts[0]!, counts[1]!, counts[2]!, counts[3]!, 1, 0], speed)
   }
   entry.sessionId = sessionId
+  entry.title = named ?? entry.title
   entry.buckets = [...buckets.values()]
   return entry
 }

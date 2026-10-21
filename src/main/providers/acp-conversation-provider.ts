@@ -1382,11 +1382,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         }
         if (state.input.modelId !== 'default') {
           if (modelConfig)
-            await connection.setSessionConfigOption({
-              sessionId: state.nativeId!,
-              configId: modelConfig.id,
-              value: state.input.modelId,
-            })
+            await selectModel(profile.displayName, state.input.modelId, () =>
+              connection.setSessionConfigOption({
+                sessionId: state.nativeId!,
+                configId: modelConfig.id,
+                value: state.input.modelId,
+              }),
+            )
           else throw new Error('This ACP agent does not expose model selection. Choose the default model.')
         }
       }
@@ -1408,7 +1410,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           )
         }
         // Not a sign-in problem, so without the sign-in hint.
-        if (error instanceof AcpMcpServerUnsupportedError) throw error
+        if (error instanceof AcpMcpServerUnsupportedError || error instanceof AcpModelSelectionError) throw error
         // What it printed as it went is all read once it has closed.
         await Promise.race([childClosed, new Promise((resolve) => setTimeout(resolve, 250))])
         const message = withStderrTail(error instanceof Error ? error.message : String(error), stderrTail)
@@ -1515,11 +1517,10 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
             const value = state.input.modelId === 'default' ? state.defaultModelValue : state.input.modelId
             if (!state.modelConfigId || !value)
               throw new Error('This ACP agent does not expose model selection. Choose the default model.')
-            await state.connection!.setSessionConfigOption({
-              sessionId: state.nativeId!,
-              configId: state.modelConfigId,
-              value,
-            })
+            const configId = state.modelConfigId
+            await selectModel(profile.displayName, state.input.modelId, () =>
+              state.connection!.setSessionConfigOption({ sessionId: state.nativeId!, configId, value }),
+            )
             state.appliedModelId = state.input.modelId
           }
           await applySessionMode(state, input.mode)
@@ -1819,6 +1820,26 @@ const WSL_CHILD_OWNED_ENV: ReadonlySet<string> = new Set([
 
 /** An MCP server this agent cannot connect to; see acpMcpServers. */
 class AcpMcpServerUnsupportedError extends Error {}
+
+/** An agent refused the model the chat asked it for. */
+class AcpModelSelectionError extends Error {}
+
+// A model id the chat stored can stop being one the agent offers: retired,
+// renamed, or no longer on the account. The agent refuses it with JSON-RPC's
+// invalid params, which on its own read "Invalid params", and at startup came
+// with the sign-in hint, as if signing in again would help. Said instead as the
+// model it is, so the person picks another. Any other failure keeps its own.
+async function selectModel(agent: string, modelId: string, write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write()
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === -32602)
+      throw new AcpModelSelectionError(
+        `${agent} did not accept the model "${modelId}". Choose another model, then send your message again.`,
+      )
+    throw error
+  }
+}
 
 /**
  * A session's MCP servers as ACP's `session/new` takes them. Every agent takes

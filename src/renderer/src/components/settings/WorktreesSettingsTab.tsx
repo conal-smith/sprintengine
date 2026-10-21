@@ -23,7 +23,7 @@ import {
 } from '../../../../shared/worktree-branch'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { ChevronDownIcon } from '../AppIcons'
-import { samePath } from '../../utils/paths'
+import { clipboardPath, samePath } from '../../utils/paths'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
 import {
   ActionResultMessage,
@@ -1060,7 +1060,7 @@ function WorktreeTableRow({
       onSelect: () => void window.api.showItemInFolder(row.path),
       disabled: row.state === 'missing',
     },
-    { id: 'copy', label: 'Copy path', onSelect: () => void navigator.clipboard?.writeText(row.path) },
+    { id: 'copy', label: 'Copy path', onSelect: () => void navigator.clipboard?.writeText(clipboardPath(row.path)) },
   ]
   if (row.state === 'ready') {
     menu.push(

@@ -162,6 +162,10 @@ export type TerminalSession = {
   // are kept here for the surfaces that will read them, so the forwarder is
   // written once rather than once per consumer.
   statusLine?: SessionStatusLine
+  // The usage windows this session's status line last handed to the
+  // usage-limit store, with the cost beside them (`statusLineRateLimitsAreNews`).
+  // In memory only: a rehydrated session's next reading is news.
+  forwardedRateLimits?: string
   // How much of the context window this session has consumed, as of the reading
   // that last MOVED it. A null percentage — which the CLI reports before its
   // first API call and again right after a /compact — deliberately does NOT
@@ -1005,6 +1009,26 @@ export type SessionStatusLine = {
   // a status line refreshes several times a turn and its frames can be
   // delivered out of order.
   at: number
+}
+
+/**
+ * Whether a status line's usage windows are worth handing to the usage-limit
+ * store, which dates a reading by the frame that carried it and keeps the
+ * latest. The CLI repeats the windows of its last API response on every
+ * refresh, idle or not: an idle terminal re-sending 12% would overwrite a
+ * chat's newer 95% and look fresh doing it. The windows are news when they
+ * moved, or when the session's cost did, which takes a new API response, so
+ * they are current even when they read the same.
+ */
+export function statusLineRateLimitsAreNews(
+  session: TerminalSession,
+  rateLimits: unknown,
+  totalCostUsd: number | undefined,
+): boolean {
+  const reading = JSON.stringify([rateLimits, totalCostUsd ?? null])
+  if (session.forwardedRateLimits === reading) return false
+  session.forwardedRateLimits = reading
+  return true
 }
 
 /**

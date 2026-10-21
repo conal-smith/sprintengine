@@ -19,3 +19,32 @@ export function raiseConnectAttemptTimeout(
   if (current < MIN_CONNECT_ATTEMPT_TIMEOUT_MS)
     netApi.setDefaultAutoSelectFamilyAttemptTimeout(MIN_CONNECT_ATTEMPT_TIMEOUT_MS)
 }
+
+// Node's own types do not declare setTypeOfService yet.
+type TypeOfServiceSocket = {
+  setTypeOfService?: (this: net.Socket, typeOfService: number) => net.Socket
+}
+
+// Node's fetch sets a socket's type-of-service on every HTTP/1 request, from
+// a socket callback with nothing around it to catch. On macOS that call
+// throws EINVAL once the peer has reset the connection, and the throw
+// escapes as an uncaught exception: the Studio server exits and restarts
+// under its supervisor, cutting off the chats it was running, and the app
+// shows an error. The type of service is an optional QoS hint, so on macOS
+// an EINVAL from it is ignored; every other error still throws.
+export function ignoreMacosTypeOfServiceEinval(
+  platform: NodeJS.Platform = process.platform,
+  socketPrototype: TypeOfServiceSocket = net.Socket.prototype as TypeOfServiceSocket,
+): void {
+  if (platform !== 'darwin') return
+  const setTypeOfService = socketPrototype.setTypeOfService
+  if (typeof setTypeOfService !== 'function') return
+  socketPrototype.setTypeOfService = function (this: net.Socket, typeOfService: number) {
+    try {
+      return setTypeOfService.call(this, typeOfService)
+    } catch (error) {
+      if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'EINVAL') return this
+      throw error
+    }
+  }
+}

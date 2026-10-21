@@ -71,6 +71,18 @@ export function isAbsoluteFilePath(pathValue: string): boolean {
 }
 
 /**
+ * A path as it should land on the clipboard: a Windows path (`C:\…`, `C:/…`,
+ * `\\server\share\…`) with its own backslashes, anything else untouched. The
+ * app keeps Windows paths with `/` in places (a join onto a relative path, git's
+ * own output), and `C:/repo/src/a.ts` pasted into Explorer or a `cmd` prompt is
+ * not a path there.
+ */
+export function clipboardPath(pathValue: string): string {
+  if (!/^[A-Za-z]:[\\/]/.test(pathValue) && !pathValue.startsWith('\\\\')) return pathValue
+  return pathValue.replace(/\//g, '\\')
+}
+
+/**
  * Lowercase alphanumeric slug with `-` separators and stripped boundary hyphens.
  * Returns an empty string if the value yields no slug content; callers add a fallback.
  */
