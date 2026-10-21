@@ -38,7 +38,7 @@ function memoryStorage(initial: string | null = null): ScheduledMessagesStorage 
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-function harness(options: { storage?: ScheduledMessagesStorage; now?: number } = {}) {
+function harness(options: { storage?: ScheduledMessagesStorage; now?: number; idPrefix?: string } = {}) {
   let now = options.now ?? T0
   const timers: Array<{ at: number; callback: () => void; cleared: boolean }> = []
   const eventListeners = new Set<(event: ConversationEvent) => void>()
@@ -62,7 +62,7 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number } =
       return sendAnswer()
     },
     now: () => now,
-    newId: () => `sm-${++ids}`,
+    newId: () => `${options.idPrefix ?? 'sm'}-${++ids}`,
     setTimer: (callback, ms) => {
       const timer = { at: now + ms, callback, cleared: false }
       timers.push(timer)
@@ -338,4 +338,95 @@ test('a held message outlives a restart, still held for the turn', async () => {
   const [message] = second.scheduled.state().messages
   assert.equal(message?.queued, true)
   assert.equal(message?.text, 'Keep this.')
+})
+
+test('the same held command arriving again after its message went is not held or sent a second time', async () => {
+  const h = harness()
+  await started(h)
+  assert.deepEqual(h.scheduled.hold(CHAT, 'Ship it.', 'device-1:cmd-1'), { ok: true, id: 'sm-1' })
+  await h.advance(5_000)
+  assert.deepEqual(
+    h.sent.map((entry) => entry.text),
+    ['Ship it.'],
+  )
+  assert.deepEqual(h.scheduled.state().messages, [])
+  // The device lost the answer and offers it again under the same id.
+  assert.deepEqual(h.scheduled.hold(CHAT, 'Ship it.', 'device-1:cmd-1'), { ok: true, id: 'sm-1' })
+  await h.advance(HOUR)
+  assert.deepEqual(h.scheduled.state().messages, [])
+  assert.equal(h.sent.length, 1, 'sent once')
+  // A message taken back is gone too: its command does not bring it back.
+  h.working()
+  h.scheduled.hold(CHAT, 'Not this.', 'device-1:cmd-2')
+  const [held] = h.scheduled.state().messages
+  h.scheduled.update({ kind: 'delete', id: held!.id })
+  assert.equal(h.scheduled.hold(CHAT, 'Not this.', 'device-1:cmd-2').ok, true)
+  assert.deepEqual(h.scheduled.state().messages, [])
+})
+
+test('the same held command after a restart is not held or sent a second time', async () => {
+  const storage = memoryStorage()
+  const first = harness({ storage })
+  await started(first)
+  first.working()
+  first.scheduled.hold(CHAT, 'First this.', 'device-1:cmd-1')
+  first.scheduled.hold(CHAT, 'Then that.', 'device-1:cmd-2')
+  first.idle()
+  first.emit({ type: 'turn_completed' })
+  await first.advance(5_000)
+  assert.deepEqual(
+    first.sent.map((entry) => entry.text),
+    ['First this.\nThen that.'],
+  )
+  first.working()
+  first.scheduled.hold(CHAT, 'Still waiting.', 'device-1:cmd-3')
+  await first.scheduled.dispose()
+
+  const second = harness({ storage, now: first.now() })
+  second.working()
+  await started(second)
+  // Gone before the restart, and still held across it: neither is held again.
+  for (const [text, source] of [
+    ['First this.', 'device-1:cmd-1'],
+    ['Then that.', 'device-1:cmd-2'],
+    ['Still waiting.', 'device-1:cmd-3'],
+  ] as const)
+    assert.equal(second.scheduled.hold(CHAT, text, source).ok, true)
+  assert.deepEqual(
+    second.scheduled.state().messages.map((message) => message.text),
+    ['Still waiting.'],
+  )
+  second.idle()
+  second.emit({ type: 'turn_completed' })
+  await second.advance(5_000)
+  assert.deepEqual(
+    second.sent.map((entry) => entry.text),
+    ['Still waiting.'],
+  )
+  // A command first seen now is a message of its own.
+  second.scheduled.hold(CHAT, 'Something new.', 'device-1:cmd-4')
+  await second.advance(5_000)
+  assert.deepEqual(
+    second.sent.map((entry) => entry.text),
+    ['Still waiting.', 'Something new.'],
+  )
+})
+
+test('a command held while the file is read, and already in it, is the file’s message', async () => {
+  const storage = memoryStorage()
+  const first = harness({ storage })
+  await started(first)
+  first.working()
+  first.scheduled.hold(CHAT, 'Keep this.', 'device-1:cmd-1')
+  await first.scheduled.dispose()
+  // Another run mints other ids, as the app's random ones are.
+  const second = harness({ storage, now: first.now(), idPrefix: 'run-2' })
+  second.working()
+  const starting = second.scheduled.start()
+  second.scheduled.hold(CHAT, 'Keep this.', 'device-1:cmd-1')
+  await starting
+  assert.deepEqual(
+    second.scheduled.state().messages.map((message) => message.text),
+    ['Keep this.'],
+  )
 })

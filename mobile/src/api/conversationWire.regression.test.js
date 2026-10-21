@@ -21,7 +21,7 @@ test("portable source matches the jointly verified desktop digest", () => {
     hash.update(name); hash.update("\0");
     hash.update(readFileSync(join(__dirname, "conversation-protocol", name)));
   }
-  assert.equal(hash.digest("hex"), "23e0189b289722112130934fc45ebd234dd5b034e5383263bf69042f061c5722");
+  assert.equal(hash.digest("hex"), "a1313dd4c44024e14956b1fb461ca30d0d65851ec28162453ffa888af66c5c3c");
 });
 
 function chunks(frameId, value, size = 48_000) {

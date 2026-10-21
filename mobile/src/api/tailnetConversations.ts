@@ -19,6 +19,7 @@ import {
   type ConversationThread,
 } from "./conversationWire";
 import { readPeerRefusal, type TailnetPeerRefusal } from "./tailnetTransport";
+import { queuedSendStale, turnEndedSince } from "../features/conversations/queuedSends";
 import {
   conversationImageSource,
   conversationFileUploadRefusal,
@@ -65,6 +66,9 @@ const REVOKED_MESSAGE = "Pairing was revoked.";
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_CAP_MS = 30_000;
 const BUSY_RETRY_MS = 1_000;
+/** Away for this long, the app back in front redials rather than probes the socket it left. */
+const FOREGROUND_REDIAL_MS = 10_000;
+const TURN_ENDS = ["turn_completed", "turn_failed", "session_stopped", "session_closed"];
 
 /**
  * How long to wait before reconnect attempt `attempt` (0-based): exponential
@@ -167,9 +171,33 @@ export interface ConversationStreamHandlers {
   onState(state: ConversationConnectionState, detail?: string): void;
   onFrame(frame: ConversationServerFrame): void;
   onSendStarted?(commandId: string): void;
+  /**
+   * The desktop turned a send away because a turn is running there: it stays
+   * here under its id and goes when the turn ends.
+   */
+  onSendWaiting?(commandId: string): void;
+  /**
+   * A send the desktop turned away busy was offered to it again, under the
+   * same id, to hold until the turn ends (`conversation-queued-sends`):
+   * `command` is the send as it is now offered, and `heldAfter` the cursor
+   * no offer of it precedes, for the cache to keep.
+   */
+  onSendHeld?(
+    commandId: string,
+    command: Extract<ConversationCommand, { kind: "send" }>,
+    heldAfter: number,
+  ): void;
+  /**
+   * A send this stream no longer offers without asking: it waited across an
+   * absence too long, or its turn ended meanwhile, or the desktop refused it
+   * `stale`. It waits for the person's Send now (the same command with
+   * `confirmedStale`, under its id) or Discard (`cancelPending`).
+   */
+  onSendStale?(commandId: string): void;
 }
 export interface ConversationStream {
   command(command: ConversationCommand, commandId?: string): string;
+  /** Stop offering a send: one waiting here, one not yet offered to be held, or one no longer sent without asking. */
   cancelPending(commandId: string): void;
   request(
     frame: Omit<
@@ -189,11 +217,20 @@ export interface ConversationApi {
     afterSeq: number,
     handlers: ConversationStreamHandlers,
     options?: {
+      /**
+       * Sends carried over from the cache, which waited while no stream
+       * offered them: each is offered only while `queuedSendStale` allows,
+       * and is otherwise handed back through `onSendStale`.
+       */
       pendingSends?: Array<{
         commandId: string;
         command: Extract<ConversationCommand, { kind: "send" }>;
         /** A held send's cursor when it was queued (`CachedConversation`). */
         heldAfter?: number;
+        /** When it was written (`CachedConversation`). */
+        queuedAt?: number;
+        /** Already no longer sent without asking. */
+        stale?: true;
       }>;
       initiallyBusy?: boolean;
       /**
@@ -258,7 +295,10 @@ function identifier(): string {
 export function createTailnetConversationsApi(input: {
   baseUrl: string;
   deviceToken: string;
+  /** The wall clock a waiting send's age is read against. */
+  now?: () => number;
 }): ConversationApi {
+  const now = input.now ?? Date.now;
   return {
     async list() {
       const ticket = await mintTicket(input.baseUrl, input.deviceToken);
@@ -346,11 +386,29 @@ export function createTailnetConversationsApi(input: {
           socket: number;
         }
       >();
+      // Sends no longer offered without asking (`onSendStale`), until the
+      // person sends one again or lets it go. `sentAfter` is a held one's, so
+      // the chat can still show the desktop had it and sent it.
+      const parked = new Map<
+        string,
+        { command: Extract<ConversationCommand, { kind: "send" }>; sentAfter: number | null }
+      >();
+      // When each waiting send was written, and which of them waited while
+      // this phone was away (taken over from the cache, or waiting when the
+      // app came back to the front): those are offered only while
+      // `queuedSendStale` allows and their turn has not ended meanwhile.
+      const written = new Map<string, number | undefined>();
+      const away = new Set<string>();
+      // Sends already offered again to be held after a busy refusal: once.
+      const reheld = new Set<string>();
       const take = (
         commandId: string,
         command: Extract<ConversationCommand, { kind: "send" }>,
         sentAfter: number | null = null,
+        queuedAt: number | undefined = command.composedAt,
       ) => {
+        parked.delete(commandId);
+        written.set(commandId, queuedAt);
         if (command.queue && queuedSends)
           held.set(commandId, { command, sentAfter, socket: -1 });
         else {
@@ -358,8 +416,24 @@ export function createTailnetConversationsApi(input: {
           outbox.set(commandId, plain);
         }
       };
-      for (const item of options?.pendingSends ?? [])
-        take(item.commandId, item.command, item.heldAfter ?? initialSeq);
+      // Taken over from the cache: what waited too long, or was found stale
+      // before, is never offered; the rest is offered once the replay has
+      // said whether its turn ended meanwhile.
+      const staleAtOpen: string[] = [];
+      for (const item of options?.pendingSends ?? []) {
+        const queuedAt = item.queuedAt ?? item.command.composedAt;
+        if (queuedSendStale({ queuedAt, stale: item.stale, command: item.command }, now())) {
+          written.set(item.commandId, queuedAt);
+          parked.set(item.commandId, {
+            command: item.command,
+            sentAfter: item.command.queue ? (item.heldAfter ?? initialSeq) : null,
+          });
+          staleAtOpen.push(item.commandId);
+          continue;
+        }
+        take(item.commandId, item.command, item.heldAfter ?? initialSeq, queuedAt);
+        away.add(item.commandId);
+      }
       let heldRetryTimer: ReturnType<typeof setTimeout> | null = null;
       // Sends already offered a second time after the desktop lost the
       // session they went to. Kept for the stream's life: a send is resent
@@ -375,6 +449,45 @@ export function createTailnetConversationsApi(input: {
         if (closed || socket?.readyState !== WebSocket.OPEN) return false;
         socket.send(JSON.stringify(frame));
         return true;
+      };
+      // Stop offering a waiting send; the person decides. A held one keeps its
+      // cursor, so the chat can still show the desktop sent it after all.
+      const park = (commandId: string): boolean => {
+        const plain = outbox.get(commandId);
+        const handed = held.get(commandId);
+        const command = plain ?? handed?.command;
+        if (!command) return false;
+        outbox.delete(commandId);
+        held.delete(commandId);
+        away.delete(commandId);
+        parked.set(commandId, { command, sentAfter: handed?.sentAfter ?? null });
+        if (activeSendId === commandId) activeSendId = null;
+        handlers.onSendStale?.(commandId);
+        return true;
+      };
+      // Whether a waiting send was carried across an absence and may no
+      // longer go without asking: too old now, or (`endedAt`, a turn's end on
+      // the desktop's clock) its turn ended while the phone was not there.
+      const staleAfterAbsence = (commandId: string, endedAt?: number) => {
+        if (!away.has(commandId)) return false;
+        const command = outbox.get(commandId) ?? held.get(commandId)?.command;
+        if (!command || command.confirmedStale === true) return false;
+        const queuedAt = written.get(commandId);
+        return (
+          queuedSendStale({ queuedAt, command }, now()) ||
+          (endedAt !== undefined && turnEndedSince({ queuedAt }, endedAt))
+        );
+      };
+      // Events the desktop sends before its fence are what happened while
+      // this phone was not listening. A turn that ended among them was one a
+      // carried send waited on, and that send's moment has passed.
+      const parkAfterReplayedEnds = (events: readonly ConversationEvent[]) => {
+        if (synchronized || !away.size) return;
+        for (const event of events) {
+          if (!TURN_ENDS.includes(event.type)) continue;
+          for (const commandId of [...away])
+            if (staleAfterAbsence(commandId, event.createdAt)) park(commandId);
+        }
       };
       const detach = () => {
         dialGeneration++;
@@ -458,16 +571,20 @@ export function createTailnetConversationsApi(input: {
       // message that is not it means the desktop never held it, and no later
       // message is read as it, so a "yes" typed elsewhere afterwards is not
       // taken for a "yes" the desktop never got.
+      // A held send parked as stale is read the same way: the desktop may
+      // have held it before the answer was lost, and sent it since.
       const settleLandedHeld = (events: readonly ConversationEvent[]) => {
         const landed: string[] = [];
         for (const event of events) {
           if (event.type !== "user_message" || event.seq === undefined) continue;
-          for (const [commandId, entry] of held) {
-            if (entry.sentAfter === null || event.seq <= entry.sentAfter) continue;
-            if (heldSendLanded(event, entry.command.message, entry.sentAfter)) {
-              held.delete(commandId);
-              landed.push(commandId);
-            } else entry.sentAfter = Number.MAX_SAFE_INTEGER;
+          for (const waiting of [held, parked]) {
+            for (const [commandId, entry] of waiting) {
+              if (!entry.command.queue || entry.sentAfter === null || event.seq <= entry.sentAfter) continue;
+              if (heldSendLanded(event, entry.command.message, entry.sentAfter)) {
+                waiting.delete(commandId);
+                landed.push(commandId);
+              } else entry.sentAfter = Number.MAX_SAFE_INTEGER;
+            }
           }
         }
         return landed;
@@ -645,7 +762,10 @@ export function createTailnetConversationsApi(input: {
                   event.type === "user_message"
                     ? event.payload?.commandId
                     : undefined;
-                if (typeof commandId === "string") outbox.delete(commandId);
+                if (typeof commandId === "string") {
+                  outbox.delete(commandId);
+                  parked.delete(commandId);
+                }
               }
               if (activeSendId && !outbox.has(activeSendId) && !busy)
                 activeSendId = null;
@@ -656,7 +776,10 @@ export function createTailnetConversationsApi(input: {
               const commandId = frame.event.payload?.commandId;
               if (frame.event.type === "user_message") {
                 busy = true;
-                if (typeof commandId === "string") outbox.delete(commandId);
+                if (typeof commandId === "string") {
+                  outbox.delete(commandId);
+                  parked.delete(commandId);
+                }
               }
               if (frame.event.type === "turn_started") busy = true;
               if (
@@ -672,10 +795,20 @@ export function createTailnetConversationsApi(input: {
                 flushSend();
               }
             }
+            // After the frame's own messages are read: a carried send the
+            // replay shows already in the chat went, and is not parked.
+            if (frame.type === "snapshot") parkAfterReplayedEnds(frame.page.events);
+            if (frame.type === "event") parkAfterReplayedEnds([frame.event]);
             if (frame.type === "synchronized") {
               afterSeq = frame.seq;
               if (frame.generation !== undefined)
                 logGeneration = frame.generation;
+              // Carried across an absence and grown too old meanwhile: not
+              // offered. The ones left go as any waiting send does, the phone
+              // being here again to see them go.
+              for (const commandId of [...away])
+                if (staleAfterAbsence(commandId)) park(commandId);
+              away.clear();
               synchronized = true;
               attempt = 0;
               watchIdle();
@@ -688,6 +821,18 @@ export function createTailnetConversationsApi(input: {
               // this phone was away.
               if (queuedSends)
                 send({ type: "watchQueued", requestId: identifier() });
+            }
+            if (
+              frame.type === "commandResult" &&
+              !frame.ok &&
+              frame.code === "stale" &&
+              (outbox.has(frame.commandId) || held.has(frame.commandId))
+            ) {
+              // The desktop's own limit (its clock, or a send this phone kept
+              // too long): handed to the person, as one parked here is.
+              park(frame.commandId);
+              flushSend();
+              return;
             }
             if (frame.type === "commandResult" && held.has(frame.commandId)) {
               if (!frame.ok && frame.code === "busy") {
@@ -709,9 +854,35 @@ export function createTailnetConversationsApi(input: {
               !frame.ok &&
               frame.code === "busy"
             ) {
-              // The desktop has too many commands in flight from this socket.
-              // The send stays queued under the same id and goes again after
-              // the delay it asked for; it has not failed.
+              const command = outbox.get(frame.commandId)!;
+              // A turn is running there that this phone had not heard of. A
+              // desktop that holds messages takes this one to send when the
+              // turn ends, so it no longer depends on this phone staying
+              // awake to offer it again: offered once more, under the same
+              // id, as a held send. Only words can be held, a steer is the
+              // desktop's to hold already, and one with others behind it
+              // waits here so the desktop's send cannot overtake them.
+              if (
+                queuedSends &&
+                !command.steer &&
+                !command.uploadIds?.length &&
+                outbox.size === 1 &&
+                !reheld.has(frame.commandId)
+              ) {
+                reheld.add(frame.commandId);
+                outbox.delete(frame.commandId);
+                if (activeSendId === frame.commandId) activeSendId = null;
+                const { uploadIds: _pictures, ...words } = command;
+                const heldCommand = { ...words, queue: true as const };
+                held.set(frame.commandId, { command: heldCommand, sentAfter: null, socket: -1 });
+                handlers.onSendHeld?.(frame.commandId, heldCommand, afterSeq);
+                flushHeld();
+                return;
+              }
+              handlers.onSendWaiting?.(frame.commandId);
+              // The desktop has too many commands in flight from this socket,
+              // or a turn running. The send stays queued under the same id and
+              // goes again after the delay it asked for; it has not failed.
               if (activeSendId === frame.commandId) activeSendId = null;
               if (sendRetryTimer) clearTimeout(sendRetryTimer);
               sendRetryTimer = setTimeout(() => {
@@ -835,6 +1006,13 @@ export function createTailnetConversationsApi(input: {
         }
       };
       void dial();
+      // Said once the stream is handed back, so a caller that closes on it
+      // closes this stream rather than one not yet returned.
+      if (staleAtOpen.length)
+        void Promise.resolve().then(() => {
+          for (const commandId of staleAtOpen)
+            if (!closed && parked.has(commandId)) handlers.onSendStale?.(commandId);
+        });
       return {
         command(command, suppliedId) {
           const commandId = suppliedId ?? identifier();
@@ -851,6 +1029,8 @@ export function createTailnetConversationsApi(input: {
           return commandId;
         },
         cancelPending(commandId) {
+          parked.delete(commandId);
+          away.delete(commandId);
           if (activeSendId !== commandId) outbox.delete(commandId);
           // One already offered is the desktop's to give back (`cancelQueued`).
           if (held.get(commandId)?.sentAfter === null) held.delete(commandId);
@@ -869,10 +1049,14 @@ export function createTailnetConversationsApi(input: {
         foreground(backgroundMs) {
           if (closed || halted) return;
           if (
-            backgroundMs >= 10_000 ||
+            backgroundMs >= FOREGROUND_REDIAL_MS ||
             !socket ||
             socket.readyState !== WebSocket.OPEN
           ) {
+            // What waited while the app was away is offered only if it is
+            // still young and its turn did not end meanwhile: the redial's
+            // replay says which.
+            for (const commandId of [...outbox.keys(), ...held.keys()]) away.add(commandId);
             if (heldByDesktop && reconnectTimer) return;
             // Back in front is a fresh start: a dial that fails now retries
             // in a second, not after the half-minute that failures while the
