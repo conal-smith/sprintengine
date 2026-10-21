@@ -380,7 +380,16 @@ let sharedResolver: LoginShellPathResolver | null = null
  */
 export function sharedLoginShellPath(): LoginShellPathResolver {
   sharedResolver ??= createLoginShellPathResolver({
-    run: (descriptor, env) => runSpawnDescriptor(descriptor, { env, timeoutMs: descriptor.timeoutMs }),
+    // Detached so the interactive `$SHELL -ilc` cannot reach the terminal the
+    // app was started from (an AppImage, a bare binary, the dev runner): there
+    // it would contend for the terminal, time out, and leave only login bash,
+    // which never reads `~/.zshrc`.
+    run: (descriptor, env) =>
+      runSpawnDescriptor(descriptor, {
+        env,
+        timeoutMs: descriptor.timeoutMs,
+        detached: process.platform !== 'win32',
+      }),
     shell: () => process.env.SHELL,
   })
   return sharedResolver

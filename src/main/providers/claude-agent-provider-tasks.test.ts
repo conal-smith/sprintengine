@@ -128,7 +128,7 @@ test('a task tool row is a todo row, announced again with the list its result le
   ])
 })
 
-test('a task tool that failed, or one an agent called, leaves the chat’s list as it was', () => {
+test('a task tool that failed leaves the chat’s list as it was', () => {
   const { read, state, events } = mapper()
   read(toolUse('toolu_a', 'TaskCreate', { subject: 'Read the brief' }))
   read(
@@ -138,24 +138,54 @@ test('a task tool that failed, or one an agent called, leaves the chat’s list 
   )
   read(toolUse('toolu_b', 'TaskUpdate', { taskId: '1', status: 'completed' }))
   read(toolResult('toolu_b', '<tool_use_error>Task not found</tool_use_error>', undefined, { isError: true }))
-  read(toolUse('toolu_c', 'TaskCreate', { subject: 'Agent step' }, 'toolu_agent'))
-  read(
-    toolResult(
-      'toolu_c',
-      'Task #2 created successfully: Agent step',
-      { task: { id: '2', subject: 'Agent step' } },
-      {
-        parentToolUseId: 'toolu_agent',
-      },
-    ),
-  )
+  // An agent's results are text alone: an update a hook blocked says so in
+  // words, and one that errored is marked so.
+  read(toolUse('toolu_c', 'TaskUpdate', { taskId: '1', status: 'completed' }, 'toolu_agent'))
+  read(toolResult('toolu_c', 'Tests must pass before completing.', undefined, { parentToolUseId: 'toolu_agent' }))
+  read(toolUse('toolu_d', 'TaskUpdate', { taskId: '1', status: 'completed' }, 'toolu_agent'))
+  read(toolResult('toolu_d', 'Updated task #1 status', undefined, { isError: true, parentToolUseId: 'toolu_agent' }))
   expect(Array.from(state.claudeTasks?.values() ?? [])).toEqual([{ subject: 'Read the brief', status: 'pending' }])
-  // The agent's call is drawn as the tool it is, in its own lane.
-  const agentRow = events.find((entry) => entry.type === 'tool_started' && entry.payload?.toolUseId === 'toolu_c')
-  expect(agentRow?.payload?.kind).toBe('other')
-  expect(
-    events.filter((entry) => entry.type === 'tool_started' && entry.payload?.toolUseId === 'toolu_b'),
-  ).toHaveLength(1)
+  for (const id of ['toolu_b', 'toolu_c', 'toolu_d'])
+    expect(events.filter((entry) => entry.type === 'tool_started' && entry.payload?.toolUseId === id)).toHaveLength(1)
+})
+
+// Claude Code keeps one task list per session, and an agent's TaskCreate and
+// TaskUpdate write that same list (2.1.299 names the list for the session,
+// whoever calls). An agent's results reach the stream as their text alone.
+test('an agent’s task creates and updates reach the chat’s list, and its todo strip, from its own lane', () => {
+  const { read, state, events, progress } = mapper()
+  read(toolUse('toolu_a', 'TaskCreate', { subject: 'Read the brief' }))
+  read(
+    toolResult('toolu_a', 'Task #1 created successfully: Read the brief', {
+      task: { id: '1', subject: 'Read the brief' },
+    }),
+  )
+  read(toolUse('toolu_agent', 'Agent', { description: 'Work the plan', prompt: 'Do the tasks' }))
+  read(toolUse('toolu_c', 'TaskUpdate', { taskId: '1', status: 'completed' }, 'toolu_agent'))
+  read(toolResult('toolu_c', 'Updated task #1 status', undefined, { parentToolUseId: 'toolu_agent' }))
+  read(toolUse('toolu_d', 'TaskCreate', { subject: 'Check the answer' }, 'toolu_agent'))
+  read(
+    toolResult('toolu_d', 'Task #2 created successfully: Check the answer', undefined, {
+      parentToolUseId: 'toolu_agent',
+    }),
+  )
+  expect(Array.from(state.claudeTasks?.values() ?? [])).toEqual([
+    { subject: 'Read the brief', status: 'completed' },
+    { subject: 'Check the answer', status: 'pending' },
+  ])
+  expect(progress()).toMatchObject({ completed: 1, total: 2, current: 'Check the answer' })
+  // The agent's calls are drawn as the tools they are, in its lane.
+  const agentRows = events.filter(
+    (entry) => entry.type === 'tool_started' && ['toolu_c', 'toolu_d'].includes(String(entry.payload?.toolUseId)),
+  )
+  expect(agentRows.map((entry) => [entry.payload?.kind, entry.payload?.parentToolUseId])).toEqual([
+    ['other', 'toolu_agent'],
+    ['other', 'toolu_agent'],
+  ])
+  // The chat's own row, announced again, is still finished.
+  const shown = events.map((entry, index) => ({ ...entry, id: `evt_${index}`, seq: index + 1 }))
+  const row = projectConversation(shown).entries.find((entry) => entry.kind === 'tool' && entry.id === 'toolu_a')
+  expect(row).toMatchObject({ status: 'done', output: 'Task #1 created successfully: Read the brief' })
 })
 
 test('the list carries over from one turn to the next', () => {

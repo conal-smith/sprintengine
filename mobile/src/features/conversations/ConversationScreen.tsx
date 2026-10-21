@@ -137,7 +137,7 @@ import { useChatVisits } from "./useChatVisits";
 import { messageCopyText, replyCopyText } from "./copyText";
 import { jumpMark, jumpToLatest, newRepliesSince, transcriptScrollable, type JumpMark } from "./jumpToLatest";
 import { usePhoneConversation } from "./usePhoneConversation";
-import { queuedBubbles, queuedLine, type QueuedBubble } from "./queuedSends";
+import { pendingLine, queuedBubbles, queuedLine, type QueuedBubble } from "./queuedSends";
 import { toolDetailChat } from "./toolOutput";
 import type { CliRuntime } from "./launchLogic";
 import { ModelPickerSheet } from "./ModelPickerSheet";
@@ -1349,10 +1349,13 @@ export function ConversationScreen({
                           {item.text || "Image attachment"}
                         </Text>
                       ) : null}
-                      <Text style={styles.meta}>
+                      <Text
+                        accessibilityRole={item.stale ? "alert" : undefined}
+                        style={styles.meta}
+                      >
                         {item.failed !== undefined
                           ? `Not sent: ${item.failed}`
-                          : "Pending delivery…"}
+                          : pendingLine(item, Date.now())}
                       </Text>
                       {item.failed !== undefined ? (
                         <PrimaryButton
@@ -1360,6 +1363,26 @@ export function ConversationScreen({
                           variant="ghost"
                           onPress={() => chat.dismissFailed(item.commandId)}
                         />
+                      ) : item.stale ? (
+                        // It waited while the phone was away and was not sent
+                        // without asking (`queuedSends.ts`): the person says.
+                        <View style={styles.metaLine}>
+                          <PrimaryButton
+                            label="Send now"
+                            variant="ghost"
+                            disabled={!canAct}
+                            onPress={() =>
+                              void chat.sendNow(item.commandId).catch((error: Error) => chat.setNotice(error.message))
+                            }
+                          />
+                          <PrimaryButton
+                            label="Discard"
+                            variant="ghost"
+                            onPress={() =>
+                              void chat.cancelQueued(item.commandId).catch((error: Error) => chat.setNotice(error.message))
+                            }
+                          />
+                        </View>
                       ) : null}
                     </View>
                   );

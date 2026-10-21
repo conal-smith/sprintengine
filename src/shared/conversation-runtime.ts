@@ -303,6 +303,14 @@ export type ConversationSendTurnInput = {
   // by Studio's own senders in main; neither a window's IPC nor the Studio
   // protocol's `session.send` passes one through.
   origin?: ConversationMessageOrigin
+  // When the person wrote the message, on the sending device's clock (epoch
+  // ms): a paired device's `send` says so. Recorded on the `user_message`,
+  // and a send under a command id written longer ago than the lane's limit is
+  // refused `stale` unless `confirmedStale` says the person asked for it to go
+  // now (`isStaleConversationSend`). A message held on a device while it slept
+  // is not one the person still means hours later.
+  composedAt?: number
+  confirmedStale?: boolean
 }
 
 export type ConversationInterruptInput = {

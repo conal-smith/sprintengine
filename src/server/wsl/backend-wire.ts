@@ -34,8 +34,10 @@ import type { SignIns, SignInDone, SignInStarted } from '../machine/machine-sign
  * 5.6). Bump it whenever a forwarded member's arguments or answer change.
  * 3: `sendTurn` takes `origin`, a message Studio sends a chat itself.
  * 4: `sendTurn` takes `files`, a message's files attached by path.
+ * 5: `sendTurn` takes `composedAt` and `confirmedStale`, and may answer
+ *    `stale`: a paired device's message written long before it arrived.
  */
-export const BACKEND_WIRE_VERSION = 4
+export const BACKEND_WIRE_VERSION = 5
 
 /** Members answered over the wire. The synchronous ones are the router's to answer (from the mirror, or locally). */
 export const REMOTE_BACKEND_MEMBERS = [

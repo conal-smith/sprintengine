@@ -4,6 +4,7 @@ import type {
   ConversationStream,
 } from "../../api/tailnetConversations";
 import type { CachedConversation } from "../../storage/conversationCacheModel";
+import { queuedSendStale } from "./queuedSends";
 
 // A message queued behind a running turn outlives its chat's screen. The
 // desktop takes no send while a turn runs, so the phone holds a queued one
@@ -25,6 +26,13 @@ import type { CachedConversation } from "../../storage/conversationCacheModel";
 // A delivered message leaves the cache. A refused one stays there: the chat's
 // screen offers it again when next opened, under the same id, and shows the
 // desktop's reason beside it, as it does for a refusal it saw itself.
+//
+// Every message it carries waited while no screen showed it, so it keeps the
+// rule a reopened chat keeps (`queuedSends.ts`): one that waited too long, or
+// whose turn ended while the phone was away, is not offered. It is marked so
+// in the cache, and the chat's screen draws it as Not sent, with Send now.
+// One the desktop turned away busy is offered to it to hold, as the screen's
+// stream does, and the cache says so.
 
 export interface QueuedSendCourierDeps {
   load(deviceId: string, key: ConversationKey): Promise<CachedConversation | null>;
@@ -35,6 +43,8 @@ export interface QueuedSendCourierDeps {
   ): Promise<CachedConversation>;
   /** Calls back, with how long the app was away, each time it comes back; returns how to stop. */
   watchForeground?(onForeground: (backgroundMs: number) => void): () => void;
+  /** The wall clock a waiting message's age is read against. */
+  now?: () => number;
 }
 
 export interface QueuedSendCourier {
@@ -80,7 +90,25 @@ export function createQueuedSendCourier(deps: QueuedSendCourierDeps): QueuedSend
         // writing when it closed is in the cache by the time this read runs.
         const cached = await deps.load(deviceId, key);
         if (stopped) return;
-        const pending = cached?.pending ?? [];
+        const keep = (
+          commandId: string,
+          update: (item: CachedConversation["pending"][number]) => CachedConversation["pending"][number],
+        ) =>
+          void deps
+            .update(deviceId, key, (current) => ({
+              ...current,
+              pending: current.pending.map((item) => (item.commandId === commandId ? update(item) : item)),
+            }))
+            .catch(() => {
+              /* Left as it was, the stream that next takes it reads the same rule again. */
+            });
+        // Too old to go without asking now: never offered, and marked so.
+        const at = (deps.now ?? Date.now)();
+        const pending: CachedConversation["pending"] = [];
+        for (const item of cached?.pending ?? []) {
+          if (!queuedSendStale(item, at)) pending.push(item);
+          else if (item.stale !== true) keep(item.commandId, (entry) => ({ ...entry, stale: true }));
+        }
         const unsettled = new Set(pending.map((item) => item.commandId));
         if (!unsettled.size) return stop();
         const settle = (commandIds: string[], delivered: boolean) => {
@@ -118,6 +146,15 @@ export function createQueuedSendCourier(deps: QueuedSendCourierDeps): QueuedSend
                 const commandId = frame.event.payload?.commandId;
                 if (typeof commandId === "string") settle([commandId], true);
               } else if (frame.type === "commandResult") settle([frame.commandId], frame.ok);
+            },
+            onSendHeld(commandId, command, heldAfter) {
+              keep(commandId, (item) => ({ ...item, command, heldAfter }));
+            },
+            // Its turn ended while the phone was away, or the desktop's own
+            // limit refused it: it waits on the person in the cache.
+            onSendStale(commandId) {
+              keep(commandId, (item) => ({ ...item, stale: true }));
+              settle([commandId], false);
             },
           },
           {

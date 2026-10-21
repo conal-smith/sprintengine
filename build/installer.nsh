@@ -273,6 +273,22 @@
       !endif
       SetShellVarContext all
     ${EndIf}
+
+    ; An update or a reinstall over an installation keeps the shortcuts it
+    ; finds (KeepShortcuts), and addStartMenuLink then creates nothing when the
+    ; Start Menu entry is already gone (removed by hand, or by a profile
+    ; cleanup), so the app could no longer be found from Start. It is put back
+    ; with the same lines addStartMenuLink runs on a fresh install;
+    ; $newStartMenuLink is the link it would have made there, in the shell
+    ; context this install runs in.
+    !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
+      ${IfNot} ${FileExists} "$newStartMenuLink"
+        !insertmacro createMenuDirectory
+        CreateShortCut "$newStartMenuLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+        ClearErrors
+        WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
+      ${EndIf}
+    !endif
   !macroend
 
 !endif

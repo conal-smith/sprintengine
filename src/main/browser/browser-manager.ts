@@ -55,10 +55,12 @@ import { createAgentDownloads, type AgentDownloadItem } from './agent-downloads'
 // The permissions a page may hold. Everything else — camera, microphone,
 // MIDI, USB, local fonts, pointer lock — is denied without a prompt: this is
 // a preview surface for the person's own dev server, not a general browser.
+// Notifications are denied too: granted without a prompt, any page an agent
+// or a link opened here could post system notifications under the app's own
+// name and icon, indistinguishable from the app's.
 export const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set([
   'clipboard-read',
   'clipboard-sanitized-write',
-  'notifications',
   'geolocation',
   // The Fullscreen API, so a video's fullscreen button works. Electron asks
   // this handler before it lets a page go fullscreen. The guest and every
