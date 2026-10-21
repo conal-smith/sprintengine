@@ -40,7 +40,9 @@ vi.mock('@legendapp/list/react', () => ({
       renderItem,
       keyExtractor,
       ListHeaderComponent,
+      ListFooterComponent,
       className,
+      contentContainerClassName,
       extraData,
       initialScrollIndex,
       initialScrollAtEnd,
@@ -49,7 +51,9 @@ vi.mock('@legendapp/list/react', () => ({
       renderItem: (props: { item: unknown; index: number }) => ReactNode
       keyExtractor: (item: unknown) => string
       ListHeaderComponent?: ReactNode
+      ListFooterComponent?: ReactNode
       className?: string
+      contentContainerClassName?: string
       extraData?: unknown
       initialScrollIndex?: number
       initialScrollAtEnd?: boolean
@@ -70,11 +74,12 @@ vi.mock('@legendapp/list/react', () => ({
       getState: () => ({ positionAtIndex: () => 0, positionByKey: () => 0 }),
     }))
     return (
-      <div ref={scroller} className={className}>
+      <div ref={scroller} className={className} data-content-class={contentContainerClassName}>
         {ListHeaderComponent}
         {data.map((item, index) => (
           <ListRow key={keyExtractor(item)} item={item} index={index} extraData={extraData} render={renderItem} />
         ))}
+        {ListFooterComponent}
       </div>
     )
   }),
@@ -784,6 +789,22 @@ test('the transcript takes the kit’s focus ring on keyboard focus only', async
     const scroller = chat.host.querySelector('[role="log"] > div')!
     expect(scroller.className).toContain('focus-visible:focus-ring-inset')
     expect(scroller.className).toContain('focus:outline-none')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('the transcript’s gap at either end is the list’s own header and footer, which it measures', async () => {
+  // A padding or a margin a class puts on the scroller or between the list's
+  // children is one the list cannot see: its end stopped short by it, and the
+  // last row, the live "agents working" line, sat sliced above the composer.
+  const chat = await mountChat({ events: [event('user_message', { turnId: 'a', text: 'hello' })] })
+  try {
+    const scroller = chat.host.querySelector<HTMLElement>('[role="log"] > div')!
+    expect(scroller.className).not.toMatch(/(?:^|\s)(?:p|py|pt|pb)-/)
+    expect(scroller.dataset.contentClass ?? '').not.toMatch(/(?:^|\s)(?:p|py|pt|pb|space-y)-/)
+    expect(scroller.firstElementChild?.matches('[data-transcript-head]')).toBe(true)
+    expect(scroller.lastElementChild?.matches('[data-transcript-foot]')).toBe(true)
   } finally {
     await chat.unmount()
   }

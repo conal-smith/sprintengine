@@ -51,6 +51,7 @@ import { ChangelistDialog, type ChangelistDialogValue } from './git/ChangelistDi
 import { GitChangesList } from './git/GitChangesList'
 import { GitChangesToolbar, type ShowDiffPlacement } from './git/GitChangesToolbar'
 import { useCommitMessageDraft } from './git/commitMessageDraft'
+import { splitMainWorktree } from './git/mainWorktree'
 import {
   buildGitChangeGroups,
   commitCounts,
@@ -411,7 +412,7 @@ export default function GitPanel({ workspaceId }: { workspaceId: string }) {
         return
       }
 
-      const listedMain = result.data.worktrees.find((worktree) => samePath(worktree.path, mainRepoRoot)) ?? null
+      const { main: listedMain, linked } = splitMainWorktree(result.data.worktrees, mainRepoRoot)
       const mainScope: GitScopeOption = {
         ...fallbackMainScope,
         branch: listedMain?.branch ?? null,
@@ -421,23 +422,21 @@ export default function GitPanel({ workspaceId }: { workspaceId: string }) {
       }
 
       const worktreeScopes = await Promise.all(
-        result.data.worktrees
-          .filter((worktree) => !samePath(worktree.path, mainRepoRoot))
-          .map(async (worktree): Promise<GitScopeOption> => {
-            const missing = !(await window.api.pathExists(worktree.path).catch(() => false))
-            const scope: GitScopeOption = {
-              id: scopeId('worktree', worktree.path),
-              kind: 'worktree',
-              label: '',
-              path: worktree.path,
-              branch: worktree.branch,
-              head: worktree.head,
-              missing,
-              locked: worktree.locked,
-              prunable: worktree.prunable,
-            }
-            return { ...scope, label: formatScopeOptionLabel(scope) }
-          }),
+        linked.map(async (worktree): Promise<GitScopeOption> => {
+          const missing = !(await window.api.pathExists(worktree.path).catch(() => false))
+          const scope: GitScopeOption = {
+            id: scopeId('worktree', worktree.path),
+            kind: 'worktree',
+            label: '',
+            path: worktree.path,
+            branch: worktree.branch,
+            head: worktree.head,
+            missing,
+            locked: worktree.locked,
+            prunable: worktree.prunable,
+          }
+          return { ...scope, label: formatScopeOptionLabel(scope) }
+        }),
       )
 
       const scopes = [mainScope, ...worktreeScopes]

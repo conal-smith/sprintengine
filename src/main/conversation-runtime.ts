@@ -64,6 +64,17 @@ import { isTurnlessSubagentStep, readSubagentStatus } from '../shared/conversati
 import { readBackgroundTasks } from '../shared/conversation/backgroundTasks'
 import { applyFileActivityEvent } from '../shared/conversation/fileActivity'
 import {
+  conversationPhaseWorking,
+  conversationSessionWorking,
+  conversationSummaryPhase,
+} from '../shared/conversation/phase'
+import {
+  workingStretchOnReading,
+  workingStretchOnTurn,
+  workingStretchSince,
+  type WorkingStretch,
+} from '../shared/conversation/workingStretch'
+import {
   readToolDetail,
   writeToolDetail,
   redactConversationValue,
@@ -154,6 +165,11 @@ type RuntimeSession = ConversationSessionSummary & {
   // The idle listeners were told this session came to rest, and it has not
   // been busy since (noteSettled).
   idleAnnounced?: boolean
+  // The stretch of work the chat is in (conversation/workingStretch.ts): begun
+  // by a person's message, carried through the turns the chat opens by
+  // itself, ended once it settles with nothing working. Reported as
+  // `workingSince`.
+  workingStretch?: WorkingStretch
   // Spawned agents still running, by spawning tool call.
   runningSubagents: Map<string, ConversationSubagentStatusPayload>
   // Side questions being answered now, and when the last one ended. Neither
@@ -277,6 +293,15 @@ export type ConversationRuntimeOptions = {
   // agent), on the machine its CLI runs on (a WSL host's, or this one's). Null
   // leaves it out; the chat runs without Studio's tools rather than not at all.
   resolveStudioMcpServer?: (input: { hostId?: ExecutionHostId }) => Promise<ConversationMcpServer | null>
+  // Asked before a session starts and before every turn: brings the chat's
+  // folder back when the worktree pool gave it back while the chat sat idle
+  // (worktree-pool/chat-folder-guard.ts), so the agent never runs in a folder
+  // that is gone or on someone else's branch. A refusal refuses the start or
+  // the turn with its reason. Left out (a server with no pool), nothing is asked.
+  prepareChatFolder?: (input: {
+    workspaceId: string
+    workspaceRoot: string
+  }) => Promise<{ ok: true } | { ok: false; message: string }>
   // The platform this runtime runs on; tests stand in for another. Off
   // Windows a `wsl:` host id means nothing (a WSL server is handed the
   // runtimes a Windows front door built), so it is dropped at the start.
@@ -422,6 +447,7 @@ export class ConversationRuntime {
   private readonly randomId: () => string
   private readonly platform: NodeJS.Platform
   private readonly resolveSkills: ConversationSkillsResolver
+  private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
   private readonly attachmentStore: ConversationAttachmentStore
@@ -534,6 +560,7 @@ export class ConversationRuntime {
     })
     this.randomId = options.randomId ?? (() => Math.random().toString(36).slice(2, 10))
     this.resolveSkills = options.resolveSkills ?? createConversationSkillsResolver()
+    this.prepareChatFolder = options.prepareChatFolder ?? (() => Promise.resolve({ ok: true }))
     this.approvalRules = options.approvalRules ?? new ConversationApprovalRuleStore()
     this.attachmentStore = options.attachmentStore ?? new ConversationAttachmentStore()
     this.planStore = options.planStore ?? new ConversationPlanStore()
@@ -564,6 +591,7 @@ export class ConversationRuntime {
   // every event and at each place a turn lets go of the session; a check that
   // finds it busy re-arms the announcement for its next rest.
   private noteSettled(session: RuntimeSession): void {
+    this.noteWorkingStretch(session)
     const settled =
       this.sessions.get(session.sessionId) === session &&
       (session.status === 'ready' || session.status === 'failed') &&
@@ -583,6 +611,44 @@ export class ConversationRuntime {
         console.warn('[conversation-runtime] an idle listener failed:', error instanceof Error ? error.message : error)
       }
     }
+  }
+
+  // Read whether the chat still has anything in hand, after every event and
+  // at each place a turn lets go of the session (the same places as
+  // `noteSettled`): a stretch of work stops when nothing is left, background
+  // agents and monitors included. Reads the session's own fields, which are
+  // its summary's, so a streamed token does not build a summary to ask.
+  private noteWorkingStretch(session: RuntimeSession): void {
+    session.workingStretch = workingStretchOnReading(session.workingStretch, {
+      busy: conversationSessionWorking(session),
+      at: this.now(),
+      ...(session.activeTurnId !== null && session.turnStartedAt !== undefined
+        ? { startedAt: session.turnStartedAt }
+        : {}),
+    })
+  }
+
+  // A turn opened, from a send or by the chat itself: a person's message
+  // begins a new stretch, and anything else carries on the one in hand.
+  private openWorkingStretch(session: RuntimeSession, at: number, byPerson: boolean): void {
+    session.workingStretch = workingStretchOnTurn(session.workingStretch, { at, byPerson })
+  }
+
+  // The summary's `workingSince`: only while it reads as working, as the
+  // sidebar's count is drawn only then. Read as the next reading will leave
+  // the stretch, so a summary taken between a change and that reading says
+  // what the one after it does.
+  private workingSinceOf(session: RuntimeSession): Pick<ConversationSessionSummary, 'workingSince'> {
+    if (session.status === 'stopped' || !conversationPhaseWorking(conversationSummaryPhase(session))) return {}
+    const stretch = workingStretchOnReading(session.workingStretch, {
+      busy: true,
+      at: this.now(),
+      ...(session.activeTurnId !== null && session.turnStartedAt !== undefined
+        ? { startedAt: session.turnStartedAt }
+        : {}),
+    })
+    const since = workingStretchSince(stretch)
+    return since === undefined ? {} : { workingSince: since }
   }
   getProviderCapabilities(providerId: string) {
     return this.getAdapterForProviderId(providerId)?.capabilities
@@ -608,6 +674,13 @@ export class ConversationRuntime {
     if (cliRuntimes !== input.cliRuntimes) input = { ...input, cliRuntimes }
     this.startingTranscripts.add(path)
     try {
+      // The chat's worktree, given back while it sat idle, is brought back
+      // before anything is spawned in it.
+      const folder = await this.prepareChatFolder({
+        workspaceId: input.workspaceId.trim(),
+        workspaceRoot: input.workspaceRoot,
+      })
+      if (!folder.ok) return { ok: false, message: folder.message }
       return (await this.adoptLiveSession(input, path)) ?? (await this.startSessionNow(input))
     } finally {
       this.startingTranscripts.delete(path)
@@ -918,6 +991,16 @@ export class ConversationRuntime {
     // A turn needs some payload: text, an image, a mention, a skill or a file.
     if (!message && attachments.length === 0 && !input.mentions?.length && !input.skills?.length && !files.length)
       return { ok: false, message: 'Conversation turn message is required.' }
+    // A resting session respawns in the chat's folder for this turn: one the
+    // worktree pool gave back while the chat sat idle is brought back first,
+    // whoever sent the message. A busy session is working in it, so it is there.
+    if (!isSessionBusy(session)) {
+      const folder = await this.prepareChatFolder({
+        workspaceId: session.workspaceId,
+        workspaceRoot: session.workspaceRoot,
+      })
+      if (!folder.ok) return { ok: false, message: folder.message }
+    }
 
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }
@@ -1025,6 +1108,9 @@ export class ConversationRuntime {
     session.phase = 'running'
     session.updatedAt = this.now()
     session.turnStartedAt = session.updatedAt
+    // A message Studio sends the chat itself (a launched agent's notice, a
+    // resume after a usage limit) is not the person starting something new.
+    this.openWorkingStretch(session, session.turnStartedAt, !input.origin)
     // The provider starts the child again for this turn if it had rested.
     session.resting = undefined
     session.checkpointTurnSeq = null
@@ -2862,6 +2948,9 @@ export class ConversationRuntime {
       session.checkpointCaptured = false
       session.updatedAt = this.now()
       session.turnStartedAt = session.updatedAt
+      // The same stretch of work, if the chat is still in one: what woke it
+      // was its own background agent or monitor, not the person.
+      this.openWorkingStretch(session, session.turnStartedAt, false)
       // Only a live child carries on by itself.
       session.resting = undefined
       // From here a steer can join it, as it joins a send's turn.
@@ -4197,6 +4286,7 @@ export class ConversationRuntime {
       ...(session.activeTurnId !== null && session.turnStartedAt !== undefined
         ? { turnStartedAt: session.turnStartedAt }
         : {}),
+      ...this.workingSinceOf(session),
       ...(session.promptCache ? { promptCache: session.promptCache } : {}),
       ...(session.fileActivity?.length ? { fileActivity: session.fileActivity } : {}),
       // Only when the session carries one, so a session that never chose a

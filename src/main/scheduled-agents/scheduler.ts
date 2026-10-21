@@ -18,12 +18,30 @@
 // is one message the person asked to have sent, and late is closer to that
 // than never, so one whose time passed while the app was closed runs once the
 // app is open. It runs once — the scheduler never arms it again after firing.
+//
+// A paused schedule — paused on its own (`pausedAt`), or with all the others
+// (`pausedAll`) — has no due time. Its timer is let go of when the pause comes,
+// not checked when it fires, so a computer waking from a sleep finds nothing
+// of it due. Resumed, it counts from then, as a changed schedule does: the
+// times that passed while it was paused are not made up, however many there
+// were, and it runs next at its first time after the resume. (A one-time
+// schedule whose time passed while it was paused is the exception above once
+// more: it runs once on resuming, late rather than never.) Run now runs a
+// paused schedule, because a person asked for that run; and a run already
+// going when the pause comes carries on, because pausing is about the times
+// still to come.
+//
+// A pause of everything until a time ends at that time. The timer is armed for
+// it as for a run, and the time is read from the store, so one that ends while
+// the app is closed has ended by the next start.
 
 import {
   nextScheduledAgentRun,
   scheduledAgentOnceDue,
   type ScheduledAgent,
+  scheduledAgentsPauseHolds,
   type ScheduledAgentLastRun,
+  type ScheduledAgentsPause,
 } from '../../shared/scheduled-agents'
 
 // A timer longer than this is re-armed rather than trusted: a changed clock or
@@ -56,6 +74,10 @@ export type ScheduledAgentsSchedulerDeps = {
   onSkipped?: (agent: ScheduledAgent, reason: Exclude<ScheduledAgentRunRefusal, 'unknown' | 'stopped'>) => void
   /** Something went wrong around a run that has no caller to tell: recording it, or saying it ran. */
   log?: (message: string) => void
+  /** Every scheduled agent paused at once, and until when; absent or null, none is. */
+  pausedAll?: () => ScheduledAgentsPause | null
+  /** That pause came to its until: whoever keeps it lets it go. Said once for each. */
+  onPauseAllEnded?: (pause: ScheduledAgentsPause) => void
   now?: () => number
   setTimer?: (callback: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
@@ -81,7 +103,10 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
   // Each agent's due time, counted forward from when it was last scheduled —
   // never recomputed from "now" on a refresh, or a run due during a sleep
   // would be skipped the moment the computer woke and refreshed.
-  const dueAt = new Map<string, { at: number | null; cron: string; timezone: string; once: number | undefined }>()
+  const dueAt = new Map<
+    string,
+    { at: number | null; cron: string; timezone: string; once: number | undefined; paused: boolean }
+  >()
   const inFlight = new Set<string>()
   // Aborted by stop: a run on its way when the app quits starts no chat.
   let stopping = new AbortController()
@@ -89,25 +114,41 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
 
   const dueFor = (agent: ScheduledAgent, after: number): number | null =>
     agent.schedule.once !== undefined ? scheduledAgentOnceDue(agent) : nextScheduledAgentRun(agent.schedule, after)
+  const pausedAll = (): ScheduledAgentsPause | null => deps.pausedAll?.() ?? null
+  const isPaused = (agent: ScheduledAgent, at: number): boolean =>
+    agent.pausedAt !== undefined || scheduledAgentsPauseHolds(pausedAll(), at)
+  // The until of the pause last said to have ended, so it is said once.
+  let endedUntil: number | null = null
+  const endPauseIfDue = (at: number): void => {
+    const pause = pausedAll()
+    if (!pause || pause.until === null || pause.until > at || endedUntil === pause.until) return
+    endedUntil = pause.until
+    deps.onPauseAllEnded?.(pause)
+  }
 
   const reconcile = (): void => {
     const agents = deps.list()
     const ids = new Set(agents.map((agent) => agent.id))
     for (const id of [...dueAt.keys()]) if (!ids.has(id)) dueAt.delete(id)
+    const at = now()
     for (const agent of agents) {
       const known = dueAt.get(agent.id)
-      // A new agent, or one whose schedule changed, counts from now.
+      const paused = isPaused(agent, at)
+      // A new agent, one whose schedule changed, or one just resumed, counts
+      // from now; one just paused has no due time at all.
       if (
         !known ||
         known.cron !== agent.schedule.cron ||
         known.timezone !== agent.schedule.timezone ||
-        known.once !== agent.schedule.once
+        known.once !== agent.schedule.once ||
+        known.paused !== paused
       ) {
         dueAt.set(agent.id, {
-          at: dueFor(agent, now()),
+          at: paused ? null : dueFor(agent, at),
           cron: agent.schedule.cron,
           timezone: agent.schedule.timezone,
           once: agent.schedule.once,
+          paused,
         })
       }
     }
@@ -121,6 +162,10 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
     for (const entry of dueAt.values()) {
       if (entry.at !== null && (soonest === null || entry.at < soonest)) soonest = entry.at
     }
+    // A pause of everything that ends is woken for like a run: at its end the
+    // schedules count on from then.
+    const until = pausedAll()?.until ?? null
+    if (until !== null && until > now() && (soonest === null || until < soonest)) soonest = until
     if (soonest === null) return
     const delay = Math.max(0, Math.min(soonest - now(), MAX_TIMER_MS))
     timer = setTimer(tick, delay)
@@ -160,6 +205,7 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
     if (!running) return
     reconcile()
     const at = now()
+    endPauseIfDue(at)
     for (const agent of deps.list()) {
       const entry = dueAt.get(agent.id)
       if (!entry || entry.at === null || entry.at > at) continue
@@ -185,6 +231,8 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
       if (stopping.signal.aborted) stopping = new AbortController()
       dueAt.clear()
       reconcile()
+      // Ended while the app was closed: let go of it now, not at the first run.
+      endPauseIfDue(now())
       arm()
     },
     stop() {
@@ -206,7 +254,7 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
       const entry = dueAt.get(id)
       if (entry) return entry.at
       const agent = deps.list().find((candidate) => candidate.id === id)
-      return agent ? dueFor(agent, now()) : null
+      return agent && !isPaused(agent, now()) ? dueFor(agent, now()) : null
     },
     isRunning: () => running,
     async runNow(id) {

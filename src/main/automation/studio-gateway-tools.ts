@@ -32,6 +32,9 @@ const APP_MUTATION_TOOLS = new Set([
   'schedule.create',
   'schedule.delete',
   'schedule.run',
+  // Pausing and resuming change when this machine starts agents on its own.
+  'schedule.pause',
+  'schedule.resume',
   'backlog.assign',
   'backlog.repair',
   'backlog.update',

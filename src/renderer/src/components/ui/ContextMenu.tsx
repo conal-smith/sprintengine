@@ -561,6 +561,12 @@ type MenuFlyoutItemProps = {
   ariaLabel: string
   icon?: React.ReactNode
   disabled?: boolean
+  /**
+   * A quiet annotation in the trailing column, before the chevron: the same
+   * slot and treatment as `MenuItem`'s `hint`. Its job here is saying why a
+   * disabled flyout is off ("No messages yet"), as a disabled row does.
+   */
+  hint?: React.ReactNode
   /** Extra classes for the flyout surface — typically a `min-w-[…]` floor. */
   surfaceClassName?: string
   /** Optional keydown handler run before the trigger's own open logic, so a host
@@ -642,6 +648,7 @@ export function MenuFlyoutItem({
   ariaLabel,
   icon,
   disabled,
+  hint,
   surfaceClassName,
   onItemKeyDown,
   onOpenChange,
@@ -724,6 +731,7 @@ export function MenuFlyoutItem({
       >
         {icon ?? null}
         <span className="min-w-0 flex-1 truncate">{label}</span>
+        {hint ? <span className="text-micro text-[color:var(--text-disabled)] font-mono">{hint}</span> : null}
         <svg
           viewBox="0 0 16 16"
           fill="none"

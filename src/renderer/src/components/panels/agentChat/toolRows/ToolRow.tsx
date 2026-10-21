@@ -55,10 +55,14 @@ function object(value: ConversationJsonValue | undefined): Record<string, Conver
 // rather than pushing the conversation down.
 export function ToolPanel({
   copyText,
+  copyHtml,
   mono = true,
   children,
 }: {
   copyText?: string
+  /** The rendered flavour, for a panel that holds prose (an agent's report);
+   *  output and code copy as the text they are. */
+  copyHtml?: () => string
   mono?: boolean
   children: React.ReactNode
 }) {
@@ -66,7 +70,7 @@ export function ToolPanel({
     <div className="group/tool-panel relative rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)]">
       {copyText ? (
         <div className="absolute right-1 top-1 opacity-0 group-hover/tool-panel:opacity-100 focus-within:opacity-100">
-          <CopyGlyphButton text={copyText} label="Copy output" size="xs" />
+          <CopyGlyphButton text={copyText} html={copyHtml} label="Copy output" size="xs" />
         </div>
       ) : null}
       <div

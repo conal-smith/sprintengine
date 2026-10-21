@@ -12,6 +12,7 @@ import {
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
 import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
+import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
   ConversationKey,
@@ -305,6 +306,21 @@ function turnStartOf(summary: ConversationSessionSummary | undefined): Pick<Conv
 }
 
 /**
+ * When a live session's stretch of work began, as the runtime keeps it
+ * (`workingSince`, conversation/workingStretch.ts): the number this desktop's
+ * own sidebar counts "working for" from. Present whenever the session reads
+ * as working, its background work included, so a turn the chat opens by
+ * itself does not restart a paired machine's count, and the gap between two
+ * of them does not stop it.
+ */
+function workingSinceOf(summary: ConversationSessionSummary | undefined): Pick<ConversationThread, 'workingSince'> {
+  if (!summary || !epoch(summary.workingSince)) return {}
+  return conversationPhaseWorking(conversationSummaryPhase(summary))
+    ? { workingSince: Math.trunc(summary.workingSince) }
+    : {}
+}
+
+/**
  * What a live session still has working after its turn ended, from the same
  * readings the desktop's sidebar counts it working by
  * (`conversationSummaryPhase`): its background agents, and the background
@@ -323,11 +339,19 @@ function backgroundWorkOf(summary: ConversationSessionSummary | undefined): Pick
 function lifecycleOf(
   record: ConversationListWorkspace | null,
   lastTurnEndedAt: number | undefined,
+  now: number,
 ): Pick<
   ConversationThread,
-  'chatTitle' | 'lastUserMessageAt' | 'lastTurnEndedAt' | 'lastVisitedAt' | 'visitRewoundAt'
+  | 'chatTitle'
+  | 'lastUserMessageAt'
+  | 'lastTurnEndedAt'
+  | 'lastVisitedAt'
+  | 'visitRewoundAt'
+  | 'scheduledAgentId'
+  | 'snoozedUntil'
 > {
   const chatTitle = record?.name.trim()
+  const scheduledAgentId = record?.scheduledAgentId?.trim()
   return {
     ...(chatTitle ? { chatTitle } : {}),
     ...(epoch(record?.lastUserMessageAt) ? { lastUserMessageAt: record.lastUserMessageAt } : {}),
@@ -335,6 +359,12 @@ function lifecycleOf(
     ...(epoch(record?.lastVisitedAt) ? { lastVisitedAt: record.lastVisitedAt } : {}),
     // Read only from the record, which only Mark unread's own command stamps.
     ...(epoch(record?.visitRewoundAt) ? { visitRewoundAt: record.visitRewoundAt } : {}),
+    // How the chat began, which this desktop's row marks with the schedule's clock.
+    ...(scheduledAgentId ? { scheduledAgentId } : {}),
+    // Only a snooze still ahead: one that has run out is a row awake here.
+    ...(epoch(record?.snoozedUntil) && record.snoozedUntil > now
+      ? { snoozedUntil: Math.trunc(record.snoozedUntil) }
+      : {}),
   }
 }
 
@@ -369,6 +399,10 @@ export type ConversationListWorkspace = {
   lastVisitedAt?: number | null
   /** When Mark unread last moved `lastVisitedAt` back. */
   visitRewoundAt?: number | null
+  /** The schedule whose run started the chat; absent for one a person or an agent started. */
+  scheduledAgentId?: string | null
+  /** When a snoozed chat wakes; absent, or past, for one that is awake. */
+  snoozedUntil?: number | null
 }
 
 /**
@@ -729,6 +763,7 @@ export function createConversationGatewayHost(
   }
   return {
     async list() {
+      const now = Date.now()
       const result = api.listSessions()
       const all = result.ok ? result.sessions : []
       const live = all.filter((session) => session.status !== 'stopped').sort((a, b) => b.updatedAt - a.updatedAt)
@@ -781,8 +816,9 @@ export function createConversationGatewayHost(
             // into it went over as the path of a file on the other machine.
             ...capabilitiesOf(summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
             ...turnStartOf(summary),
+            ...workingSinceOf(summary),
             ...backgroundWorkOf(summary),
-            ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt)),
+            ...lifecycleOf(recordOf(workspace.workspaceId), latestTurnEnd(sessions, key, thread.lastTurnEndedAt), now),
             ...replyPreviewOf(sessions, thread.lastAssistantText),
           })
         }
@@ -809,8 +845,9 @@ export function createConversationGatewayHost(
           sessionId: summary.sessionId,
           ...capabilitiesOf(summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
           ...turnStartOf(summary),
+          ...workingSinceOf(summary),
           ...backgroundWorkOf(summary),
-          ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary)),
+          ...lifecycleOf(recordOf(summary.workspaceId), latestTurnEnd(sessions, summary), now),
           ...replyPreviewOf(sessions),
         })
       }

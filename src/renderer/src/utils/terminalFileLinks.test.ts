@@ -401,3 +401,25 @@ test('a quoted path without a space, and quoted prose, read as before', () => {
   // A quoted URL with a space is still the web-link provider's.
   assert.equal(findTerminalFileReferences('"https://example.com/a b"', roots).length, 0)
 })
+
+// A folder or file named outside ASCII is still a path. `\w` stopped at the
+// first accented letter, so these printed as plain text with no link.
+for (const [line, path, position] of [
+  ['wrote données/rapport.md:3 just now', 'données/rapport.md', 3],
+  ['see src/日本語.ts for the strings', 'src/日本語.ts', undefined],
+  ['moved docs/ünits/a.md', 'docs/ünits/a.md', undefined],
+  ['in src/café.ts:12', 'src/café.ts', 12],
+  ['żółć\\main.ts:7 failed', 'żółć\\main.ts', 7],
+] as const) {
+  test(`a relative path with non-ASCII names links whole: ${path}`, () => {
+    const references = findTerminalFileReferences(line, { workspaceRoot: '/repo' })
+    assert.equal(references.length, 1)
+    assert.equal(references[0]?.path, path)
+    assert.equal(references[0]?.line, position)
+    assert.equal(references[0]?.startIndex, line.indexOf(path))
+  })
+}
+
+test('a word with non-ASCII letters and no separator is still not a path', () => {
+  assert.equal(findTerminalFileReferences('le rapport était prêt.md', { workspaceRoot: '/repo' }).length, 0)
+})

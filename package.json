@@ -89,17 +89,25 @@
       "!out/server/**",
       "!out/wsl-server/**",
       "!out/web/**",
-      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**",
+      "!node_modules/**/*.{map,d.ts,d.mts,d.cts}",
+      "!node_modules/**/!(LICENSE*|LICENCE*|license*|licence*).md",
+      "!node_modules/**/*.test.js",
+      "!node_modules/zod/src{,/**/*}",
+      "!node_modules/docx/dist/{charts,html,layout,macros,math,shapes,watermarks}.*",
+      "!node_modules/docx/dist/index.{mjs,iife.js,umd.cjs,d.ts,d.cts}"
     ],
     "asarUnpack": [
       "node_modules/@vscode/ripgrep-*/bin/**"
     ],
     "extraResources": [
       {
-        "from": "resources/runtime/npm",
-        "to": "runtime/npm",
+        "from": "resources/runtime",
+        "to": "runtime",
         "filter": [
-          "**/*"
+          "npm/**/*",
+          "!npm/docs{,/**/*}",
+          "!npm/man{,/**/*}"
         ]
       },
       {
@@ -206,6 +214,7 @@
         ]
       }
     ],
+    "afterSign": "./scripts/release/notarize-mac.mjs",
     "win": {
       "target": [
         {
@@ -228,7 +237,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
-      "notarize": true,
+      "notarize": false,
       "extendInfo": {
         "NSLocalNetworkUsageDescription": "SprintEngine Studio uses your local network to reach your SSH machines and the devices you pair with it, to preview servers running on this Mac or nearby, and for the commands your terminals and agents run.",
         "NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac": true
@@ -275,47 +284,32 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.8.0",
     "@anthropic-ai/claude-agent-sdk": "0.3.299",
+    "@vscode/ripgrep": "^1.18.0",
+    "@xterm/addon-serialize": "0.15.0-beta.300",
+    "@xterm/addon-unicode11": "0.10.0-beta.300",
+    "@xterm/headless": "6.1.0-beta.303",
+    "docx": "^9.13.0",
+    "electron-updater": "^6.8.9",
+    "ignore": "7.0.12",
+    "node-pty": "^1.1.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron/asar": "^3.4.1",
+    "@electron/notarize": "^2.5.0",
     "@excalidraw/excalidraw": "0.18.1",
     "@excalidraw/mermaid-to-excalidraw": "2.2.2",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@legendapp/list": "3.6.0",
     "@lezer/common": "^1.5.3",
     "@monaco-editor/react": "^4.7.0",
-    "@vscode/ripgrep": "^1.18.0",
-    "@xterm/addon-clipboard": "0.3.0-beta.302",
-    "@xterm/addon-fit": "0.12.0-beta.300",
-    "@xterm/addon-search": "0.17.0-beta.300",
-    "@xterm/addon-serialize": "0.15.0-beta.300",
-    "@xterm/addon-unicode11": "0.10.0-beta.300",
-    "@xterm/addon-web-links": "0.13.0-beta.300",
-    "@xterm/addon-webgl": "0.20.0-beta.299",
-    "@xterm/headless": "6.1.0-beta.303",
-    "@xterm/xterm": "6.1.0-beta.303",
-    "diff": "9.0.0",
-    "dompurify": "^3.4.17",
-    "electron-updater": "^6.8.9",
-    "flexlayout-react": "^0.11.1",
-    "ignore": "7.0.12",
-    "immer": "^11.1.21",
-    "katex": "^0.19.0",
-    "mermaid": "~11.13.0",
-    "monaco-editor": "^0.57.0",
-    "nanoid": "^6.0.2",
-    "node-pty": "^1.1.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "shiki": "4.5.0",
-    "zustand": "^5.0.15"
-  },
-  "devDependencies": {
-    "@electron-toolkit/tsconfig": "^2.0.0",
-    "@fontsource/inter": "^5.3.0",
-    "@fontsource/jetbrains-mono": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/hast": "3.0.5",
     "@types/jsdom": "^30.0.0",
@@ -324,24 +318,43 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "5.0.4",
+    "@xterm/addon-clipboard": "0.3.0-beta.302",
+    "@xterm/addon-fit": "0.12.0-beta.300",
+    "@xterm/addon-search": "0.17.0-beta.300",
+    "@xterm/addon-web-links": "0.13.0-beta.300",
+    "@xterm/addon-webgl": "0.20.0-beta.299",
+    "@xterm/xterm": "6.1.0-beta.303",
     "axe-core": "^4.14.0",
+    "diff": "9.0.0",
+    "dompurify": "^3.4.17",
     "electron": "^44.7.2",
     "electron-builder": "^26.15.3",
     "electron-vite": "6.0.0-beta.8",
     "esbuild": "^0.28.2",
+    "flexlayout-react": "^0.11.1",
+    "immer": "^11.1.21",
     "jsdom": "^30.1.2",
+    "katex": "^0.19.0",
     "knip": "6.41.0",
+    "mermaid": "~11.13.0",
+    "monaco-editor": "^0.57.0",
+    "nanoid": "^6.0.2",
     "oxlint": "1.88.0",
     "playwright-core": "^1.64.0",
     "prettier": "3.9.10",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
+    "shiki": "4.5.0",
     "tailwindcss": "^4.0.6",
     "typescript": "^7.0.2",
     "unified": "^11.0.5",
     "vite": "^8.3.4",
-    "vitest": "5.0.4"
+    "vitest": "5.0.4",
+    "zustand": "^5.0.15"
   },
   "overrides": {
     "@excalidraw/excalidraw": {

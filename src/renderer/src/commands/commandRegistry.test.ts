@@ -167,13 +167,17 @@ test("the shell's scopes are a closed list, and New chat's stays the shell's own
 // Sentence case everywhere (design-system/foundations/principles.md): a
 // command's title is copy, read in the palette and the Shortcuts list, and
 // only a proper noun (or a surface's own name) and the word after a "Group:"
-// prefix are capitalised.
-const PROPER_NOUNS = new Set(['Git', 'New'])
+// prefix are capitalised. Markdown and Word are the names of the formats
+// Export chat writes, not words in a sentence.
+const PROPER_NOUNS = new Set(['Git', 'New', 'Markdown', 'Word'])
 test('command titles are in sentence case', () => {
   for (const command of COMMAND_REGISTRY) {
     for (const clause of command.title.split(': ')) {
       const words = clause.split(' ').slice(1)
-      const capitalised = words.filter((word) => /^\(?[A-Z][a-z]/.test(word) && !PROPER_NOUNS.has(word))
+      // A title that opens a dialog ends in an ellipsis, which is not part of its last word.
+      const capitalised = words.filter(
+        (word) => /^\(?[A-Z][a-z]/.test(word) && !PROPER_NOUNS.has(word.replace(/…$/u, '')),
+      )
       assert.deepEqual(capitalised, [], `"${command.title}" is not in sentence case`)
     }
   }

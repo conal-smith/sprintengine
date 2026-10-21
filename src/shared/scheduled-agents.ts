@@ -89,7 +89,22 @@ export type ScheduledAgent = {
   lastRun: ScheduledAgentLastRun | null
   /** When a failed last run was last looked at; the card says "Failed" until then. */
   lastFailureSeenAt: number | null
+  /**
+   * When the person paused it; absent while it runs on its schedule. A paused
+   * schedule starts nothing at its times, and the times that pass while it is
+   * paused are not made up when it resumes: it runs next at the first time
+   * after that. Run now still runs it, and pausing leaves a run already going
+   * alone.
+   */
+  pausedAt?: number
 }
+
+/**
+ * Every scheduled agent paused at once, apart from each one's own pause:
+ * since when, and until when (null until the person resumes them). Resuming
+ * them all leaves a schedule paused on its own still paused.
+ */
+export type ScheduledAgentsPause = { since: number; until: number | null }
 
 /**
  * What a person (or an extension, or an agent) writes: everything but the
@@ -119,6 +134,8 @@ export type ScheduledAgentView = ScheduledAgent & { nextRunAt: number | null }
 export type ScheduledAgentWriteResult = { ok: true; agent: ScheduledAgentView } | { ok: false; message: string }
 
 export const SCHEDULED_AGENTS_CHANGED_CHANNEL = 'scheduled-agents:changed'
+/** Every scheduled agent paused, or not: the `ScheduledAgentsPause`, or null. */
+export const SCHEDULED_AGENTS_PAUSE_CHANGED_CHANNEL = 'scheduled-agents:pause-changed'
 
 export const SCHEDULED_AGENTS_IPC = {
   list: 'scheduled-agents:list',
@@ -127,7 +144,17 @@ export const SCHEDULED_AGENTS_IPC = {
   remove: 'scheduled-agents:remove',
   runNow: 'scheduled-agents:run-now',
   markSeen: 'scheduled-agents:mark-seen',
+  pause: 'scheduled-agents:pause',
+  resume: 'scheduled-agents:resume',
+  pauseState: 'scheduled-agents:pause-state',
+  pauseAll: 'scheduled-agents:pause-all',
+  resumeAll: 'scheduled-agents:resume-all',
 } as const
+
+/** Whether a pause of every scheduled agent holds at `now`: set, and its until not yet come. */
+export function scheduledAgentsPauseHolds(pause: ScheduledAgentsPause | null, now: number): boolean {
+  return pause !== null && (pause.until === null || pause.until > now)
+}
 
 /** The schedule a new scheduled agent starts on before anyone changes it: weekdays at 9 AM. */
 export const DEFAULT_SCHEDULED_AGENT_CRON = '0 9 * * 1-5'

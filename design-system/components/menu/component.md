@@ -266,6 +266,11 @@ with its own accessible name and its own roving focus — each surface roves onl
 its own level. It stays inside the parent menu's DOM so a click in the flyout
 reads as a click inside the parent.
 
+**Disabled.** A trigger with nothing to open is disabled like any row — dimmed,
+skipped by the arrow keys, its flyout never opening — and says why in the
+trailing hint slot, before its chevron, in the hint's own treatment: Export
+chat on a chat tab with no message yet reads "No messages yet".
+
 ## States
 
 - **Rest** — transparent; the surface is the only ground.

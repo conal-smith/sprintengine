@@ -22,6 +22,20 @@
   keeps both members and refuses a malformed one; the first version's
   `parseConversationClientFrame` drops them, as a desktop from before them
   does. A pinned file: the phone's copy changes with it.
+- **A listed chat says when its work began, how it began, and whether it
+  sleeps.** `workingSince`, `scheduledAgentId` and `snoozedUntil` are optional
+  members of `ConversationThread`. `workingSince` is when the chat's current
+  stretch of work began: the person's message that began it, held through the
+  turns the chat opens by itself while its `backgroundWork` goes on, where
+  `turnStartedAt` restarts with each. The desktop's own sidebar counts
+  "working for" from it, and lists it whenever it counts the chat as working.
+  `scheduledAgentId` names the schedule whose run started the chat, which the
+  desktop marks with the schedule's clock. `snoozedUntil` is when a chat the
+  person snoozed wakes, listed only while that is ahead. All three are absent
+  from a desktop built before they were listed. `parseConversationServerFrame`
+  keeps `workingSince` and `snoozedUntil` when each is a clock and
+  `scheduledAgentId` when it is an id, and leaves out anything else. The
+  pinned files are unchanged.
 - **A listed chat says what its checkout carries, and whether it is a
   worktree.** `changes` is an optional member of `ConversationThread`,
   `ConversationWireChanges` (`{ added, updated, removed, scope?, uncommitted? }`):

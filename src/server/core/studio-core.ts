@@ -110,6 +110,12 @@ export type StudioCoreOptions = {
    */
   resolveStudioMcpServer?: ConversationRuntimeOptions['resolveStudioMcpServer']
   /**
+   * Brings a chat's folder back before an agent runs in it, where this
+   * process keeps a worktree pool that may have given it back
+   * (main/worktree-pool/chat-folder-guard.ts). A server keeps no pool.
+   */
+  prepareChatFolder?: ConversationRuntimeOptions['prepareChatFolder']
+  /**
    * The agent terminals this process runs, for the gateway's launch cap: an
    * agent may start agents only at its own preset or stricter. A server has
    * none (owner ruling 2026-10-01), so it defaults to an empty list.
@@ -247,6 +253,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     attachmentStore: new ConversationAttachmentStore(dataDir),
     planStore: new ConversationPlanStore(dataDir),
     ...(options.resolveStudioMcpServer ? { resolveStudioMcpServer: options.resolveStudioMcpServer } : {}),
+    ...(options.prepareChatFolder ? { prepareChatFolder: options.prepareChatFolder } : {}),
   })
   conversationRuntime.startIdleSweep(powerActivity)
   // Each project's state lives in its store in the person's home, on the

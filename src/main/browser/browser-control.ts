@@ -378,7 +378,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.actions, ACTION_HISTORY_MAX, {
         id: nextActionId(),
         action: 'download',
-        args: download.url.slice(0, 200),
+        args: withoutDataPayload(download.url).slice(0, 200),
         path: download.path,
         status: 'running',
         startedAt: new Date().toISOString(),
@@ -490,7 +490,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.console, CONSOLE_BUFFER_MAX, {
         level,
         text: text.slice(0, 2000),
-        location: frame?.url ? `${frame.url}:${(frame.lineNumber ?? 0) + 1}` : null,
+        location: frame?.url ? `${withoutDataPayload(frame.url)}:${(frame.lineNumber ?? 0) + 1}` : null,
         at,
       })
     } else if (method === 'Runtime.exceptionThrown') {
@@ -502,7 +502,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.console, CONSOLE_BUFFER_MAX, {
         level: 'error',
         text: `Uncaught ${text}`.slice(0, 2000),
-        location: details?.url ? `${details.url}:${(details.lineNumber ?? 0) + 1}` : null,
+        location: details?.url ? `${withoutDataPayload(details.url)}:${(details.lineNumber ?? 0) + 1}` : null,
         at,
       })
     } else if (method === 'Log.entryAdded') {
@@ -520,7 +520,7 @@ export function createBrowserControl(manager: BrowserControlManager) {
       pushBounded(s.console, CONSOLE_BUFFER_MAX, {
         level,
         text: `[${entry.source ?? 'browser'}] ${entry.text ?? ''}`.slice(0, 2000),
-        location: entry.url ? `${entry.url}:${(entry.lineNumber ?? 0) + 1}` : null,
+        location: entry.url ? `${withoutDataPayload(entry.url)}:${(entry.lineNumber ?? 0) + 1}` : null,
         at,
       })
     } else if (method === 'Network.requestWillBeSent') {
@@ -1152,6 +1152,19 @@ function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Prom
 
 function describeTarget(target: Target): string {
   return target.ref ? `ref ${target.ref}` : `selector ${target.selector ?? ''}`
+}
+
+/**
+ * A `data:` URL as `data:<type>,…`. Its payload is its content, which can be a
+ * whole file a page built in script, and the URLs recorded here reach an
+ * agent's tool output. A type that is not a plain `type/subtype` is the page's
+ * own text too, so it goes as well.
+ */
+function withoutDataPayload(url: string): string {
+  const parsed = /^data:([^,;]*)/i.exec(url)
+  if (!parsed) return url
+  const type = parsed[1]!.trim()
+  return `data:${/^[\w.+-]{1,64}\/[\w.+-]{1,64}$/.test(type) ? type : ''},…`
 }
 
 function pushBounded<T>(list: T[], max: number, item: T): void {

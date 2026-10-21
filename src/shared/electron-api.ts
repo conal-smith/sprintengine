@@ -18,6 +18,7 @@ import type {
 } from './ssh-environments'
 import type { SshPreviewStatus } from './ssh-preview'
 import type { ServerMode } from './server-mode'
+import type { ChatExportInput, ChatExportResult } from './chat-export'
 import type { StudioServerInfo, StudioServerStatus } from './studio-server-status'
 import type { EditorRevealAck, EditorRevealRequest, EditorStateQuery, EditorStateReply } from './editor-reveal'
 import type {
@@ -179,6 +180,7 @@ import type {
   ScheduledAgentLastRun,
   ScheduledAgentView,
   ScheduledAgentWriteResult,
+  ScheduledAgentsPause,
 } from './scheduled-agents'
 // Write-back config + IPC contracts: schema owned by T10, IPC surface
 // consumed by the T11 settings UI. Re-exported through the single electron-api
@@ -1132,6 +1134,19 @@ export type ElectronApi = {
   markScheduledAgentFailureSeen: (id: string) => Promise<{ ok: true }>
   /** The whole list, after every change — a write from anywhere, or a run's outcome. */
   onScheduledAgentsChanged: (cb: (agents: ScheduledAgentView[]) => void) => () => void
+  /** No run at its times until resumed; a run already going carries on, and Run now still runs it. */
+  pauseScheduledAgent: (id: string) => Promise<ScheduledAgentWriteResult>
+  /** On its schedule again, from its next time: nothing missed while paused is made up. */
+  resumeScheduledAgent: (id: string) => Promise<ScheduledAgentWriteResult>
+  /** Every scheduled agent paused at once, and until when; null when they are not. */
+  getScheduledAgentsPause: () => Promise<ScheduledAgentsPause | null>
+  /** Pause every scheduled agent until `until` (epoch ms), or until resumed (null). */
+  pauseAllScheduledAgents: (
+    until: number | null,
+  ) => Promise<{ ok: true; pause: ScheduledAgentsPause } | { ok: false; message: string }>
+  /** End that pause; a schedule paused on its own stays paused. */
+  resumeAllScheduledAgents: () => Promise<{ ok: true } | { ok: false; message: string }>
+  onScheduledAgentsPauseChanged: (cb: (pause: ScheduledAgentsPause | null) => void) => () => void
   authGetState: () => Promise<SprintEngineAuthState>
   authLogin: (organizationId?: string | null) => Promise<{ state: string; authorizationUrl: string }>
   authLogout: () => Promise<{ loggedOut: true }>
@@ -1465,6 +1480,18 @@ export type ElectronApi = {
   showMenubarMenu: (label: string, position?: { x?: number; y?: number }) => Promise<boolean>
   clipboardReadText: () => Promise<string>
   clipboardWriteText: (text: string) => Promise<void>
+  /**
+   * Plain text and HTML in one write, so a paste into a rich editor keeps the
+   * formatting and a paste into a terminal gets the text. Absent where the
+   * host has no rich clipboard of its own.
+   */
+  clipboardWriteRich?: (payload: { text: string; html: string }) => Promise<void>
+  /**
+   * Export chat: a chat tab's whole conversation saved as a PDF, Word or
+   * Markdown file where the save dialog says, or copied to the clipboard.
+   * Main reads the chat; the window names it and the format.
+   */
+  exportChat: (input: ChatExportInput) => Promise<ChatExportResult>
   // What this machine actually has: probed `git`/`gh` versions plus gh's own
   // auth login. Read-only and argument-free — see src/shared/version-control.ts.
   probeVersionControlProviders: () => Promise<VersionControlProviderProbe[]>

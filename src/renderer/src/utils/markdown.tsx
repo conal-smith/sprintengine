@@ -1,8 +1,6 @@
 import React, { type JSX } from 'react'
 import type { Element } from 'hast'
-import ReactMarkdown, { type Components, type ExtraProps, type Options, type UrlTransform } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
+import ReactMarkdown, { type Components, type ExtraProps, type UrlTransform } from 'react-markdown'
 import { Checkbox } from '../components/ui/Checkbox'
 import { filenameFromFenceMeta } from '../components/ui/codeBlockModel'
 import { CopyGlyphButton } from '../components/ui/CopyGlyphButton'
@@ -13,18 +11,9 @@ import { copyToClipboardWithToast } from './copyToClipboardWithToast'
 import type { GitLineChange } from './gitDiff'
 import { tableCsv, tableHtml, tableMarkdown, tableTsv } from './markdownTableClipboard'
 import { remarkFencedCodeValue, singleFencedCode } from './markdownFence'
-import {
-  isMarkdownFragmentHref,
-  MARKDOWN_FRAGMENT_PREFIX,
-  markdownFragmentTarget,
-  remarkHeadingIds,
-} from './markdownHeadingIds'
-import { DisplayMath, InlineMath, isMathLanguage, remarkMathDelimiters } from './markdownMath'
-import { remarkUserText } from './markdownUserText'
-import { showCodexFollowupLabels } from './markdownCodexFollowups'
-import { repairMarkdownFileLinks } from './markdownFileLinks'
-import { keepInsightLineBreaks } from './markdownInsight'
-import { remarkWindowsPaths } from './markdownWindowsPaths'
+import { isMarkdownFragmentHref, MARKDOWN_FRAGMENT_PREFIX, markdownFragmentTarget } from './markdownHeadingIds'
+import { DisplayMath, InlineMath, isMathLanguage } from './markdownMath'
+import { MARKDOWN_PLUGINS, MATH_PLUGINS, repairReplyMarkdown, USER_TEXT_PLUGINS } from './markdownPlugins'
 
 /**
  * A document renders at `document` scale; a document read inside a dense
@@ -392,56 +381,6 @@ function changedBlockClass(node: MarkdownNode, lineChanges: GitLineChange[] | un
   const kind = changeKindForRange(node, lineChanges)
   return kind ? `markdown-change-block markdown-change-${kind}` : null
 }
-
-// The slice of the markdown syntax tree the alert pass reads. Declared here
-// rather than imported: the pass touches four fields, and the tree's own types
-// belong to a package this renderer only reaches through remark.
-type MarkdownSyntaxNode = {
-  type: string
-  value?: string
-  children?: MarkdownSyntaxNode[]
-  data?: { hProperties?: Record<string, unknown> }
-}
-
-const ALERT_MARKER = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\r?\n|$)/iu
-
-/**
- * A GitHub alert — a blockquote whose first line is `[!NOTE]`, `[!TIP]`,
- * `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` and nothing else. Agents write
- * them because GitHub renders them; left alone the marker reads as stray
- * brackets. The marker comes out of the text and the kind rides on the
- * blockquote for the component to draw.
- */
-function remarkGithubAlerts() {
-  return (tree: MarkdownSyntaxNode) => markAlerts(tree)
-}
-
-function markAlerts(node: MarkdownSyntaxNode): void {
-  for (const child of node.children ?? []) {
-    if (child.type === 'blockquote') markAlert(child)
-    markAlerts(child)
-  }
-}
-
-function markAlert(quote: MarkdownSyntaxNode): void {
-  const paragraph = quote.children?.[0]
-  const text = paragraph?.type === 'paragraph' ? paragraph.children?.[0] : undefined
-  if (!paragraph?.children || text?.type !== 'text' || typeof text.value !== 'string') return
-  const match = ALERT_MARKER.exec(text.value)
-  if (!match) return
-  text.value = text.value.slice(match[0].length)
-  if (!text.value) paragraph.children.shift()
-  if (paragraph.children[0]?.type === 'break') paragraph.children.shift()
-  if (!paragraph.children.length) quote.children?.shift()
-  quote.data = { ...quote.data, hProperties: { ...quote.data?.hProperties, dataAlert: match[1].toLowerCase() } }
-}
-
-const MARKDOWN_PLUGINS = [remarkGfm, remarkGithubAlerts, remarkHeadingIds, remarkWindowsPaths]
-const USER_TEXT_PLUGINS = [...MARKDOWN_PLUGINS, remarkUserText]
-// remark-math builds the formulas' nodes; which delimiters open one is ours
-// (`markdownMath.tsx`), and a single dollar never does: in a reply it is a
-// price or a shell variable far more often than a formula.
-const MATH_PLUGINS: NonNullable<Options['remarkPlugins']> = [...MARKDOWN_PLUGINS, remarkMath, remarkMathDelimiters]
 
 // GitHub's five, each on a tone the app already speaks: a note is information
 // (accent), a tip a good outcome, a warning a degraded one, a caution a
@@ -916,10 +855,7 @@ function MarkdownRenderer({
 }): React.ReactNode {
   const { lineChanges, links, density, renderText, renderLink, renderImage, codeBlock, math, inPageLinks } = options
   const source = React.useMemo(
-    () =>
-      options.repairFileLinks
-        ? keepInsightLineBreaks(repairMarkdownFileLinks(showCodexFollowupLabels(markdown)))
-        : markdown,
+    () => (options.repairFileLinks ? repairReplyMarkdown(markdown) : markdown),
     [markdown, options.repairFileLinks],
   )
   // Component types must outlive a streamed source update: recreating them

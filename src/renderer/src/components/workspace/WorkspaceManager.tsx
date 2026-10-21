@@ -2499,8 +2499,10 @@ export default function WorkspaceManager() {
       const phase = conversationSummaryPhase(session)
       if (phase === 'running' || phase === 'starting') {
         row.hasRunning = true
-        // When the turn started, not `updatedAt`: that also moves when an
-        // approval resolves or the model changes, and the counter restarted.
+        // When its work started (main's `workingSince`, which a turn the chat
+        // opens by itself does not move, and which a paired machine lists),
+        // not `updatedAt`: that also moves when an approval resolves or the
+        // model changes, and the counter restarted.
         const startedAt = session.turnStartedAt ?? session.updatedAt
         row.workingSince = Math.min(row.workingSince ?? startedAt, startedAt)
       }

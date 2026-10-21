@@ -104,6 +104,7 @@ export function registerWorktreePoolIpc(
       if (typeof patch.keepIdle === 'number') clean.keepIdle = patch.keepIdle
       if (typeof patch.maxSlots === 'number') clean.maxSlots = patch.maxSlots
       if (patch.diskLimitGb === null || typeof patch.diskLimitGb === 'number') clean.diskLimitGb = patch.diskLimitGb
+      if (typeof patch.idleReturnMinutes === 'number') clean.idleReturnMinutes = patch.idleReturnMinutes
       // Every project's choice at once, as the page holds them; checked entry
       // by entry where it is stored (normalizePoolSettings).
       if (patch.dependencyInstall && typeof patch.dependencyInstall === 'object') {

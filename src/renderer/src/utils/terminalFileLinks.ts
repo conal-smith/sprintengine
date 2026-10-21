@@ -117,8 +117,11 @@ export type TerminalFileLinkProviderOptions = {
   onDrop?: (drop: TerminalFileLinkDrop) => void
 }
 
+// The bare relative branch spells its name characters as Unicode classes, not
+// `\w`: `\w` is ASCII-only even under `u`, so `données/rapport.md:3` or
+// `src/日本語.ts` never linked. On ASCII the two classes agree.
 const FILE_REFERENCE_PATTERN =
-  /(^|[\s"'(<{[])([A-Za-z]:[\\/][^\s"'<>`)\]}]+|\/[^\s"'<>`)\]}]+|\.{1,2}[\\/][^\s"'<>`)\]}]+|(?:[\w@.+-]+[\\/])+[\w@.+-][^\s"'<>`]*)/gu
+  /(^|[\s"'(<{[])([A-Za-z]:[\\/][^\s"'<>`)\]}]+|\/[^\s"'<>`)\]}]+|\.{1,2}[\\/][^\s"'<>`)\]}]+|(?:[\p{L}\p{M}\p{N}_@.+-]+[\\/])+[\p{L}\p{M}\p{N}_@.+-][^\s"'<>`]*)/gu
 
 // A quoted path may hold spaces (`"C:\Program Files\app\main.ts:12"`,
 // `'/Users/dev/My Project/src/a.ts'`), and a space ends every match above, so

@@ -145,6 +145,7 @@ test('terminal-runtime', async () => {
       await assertFileLedgerFollowsHookReportedEdits(runtimeModule)
       await assertAgentChangelistSeamsFire(runtimeModule)
       await assertContextUsageFollowsStatusLineFrames(runtimeModule)
+      await assertStatusLineUsageWindowsReachTheStoreOnlyWhenNews(runtimeModule)
       await assertObservedCheckoutReachesThePullRequestSeam(runtimeModule)
       await assertTerminalReattachUsesReplayChannel(runtimeModule)
       await assertHiddenTerminalOutputSkipsLiveIpcAndReplaysOnAttach(runtimeModule)
@@ -3284,6 +3285,71 @@ test('terminal-runtime', async () => {
       )
     } finally {
       await runtime2.shutdown()
+    }
+  }
+
+  // A status line repeats the usage windows of its last API response on every
+  // refresh, idle or not, and the usage-limit store keeps whatever it heard
+  // last. Handing it every refresh let an idle terminal's old reading overwrite
+  // a chat's newer one, dated as fresh. The windows go to the store when they
+  // moved, or when the session's cost did (a new API response, so a current
+  // reading even when it is the same).
+  async function assertStatusLineUsageWindowsReachTheStoreOnlyWhenNews(runtimeModule: RuntimeModule): Promise<void> {
+    const { forwardStatusLineRateLimits } = await import('./usage-limits/store')
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-terminal-runtime-usage-'))
+    mockPty.spawnCalls = []
+    mockSender.sent = []
+    const runtime = runtimeModule.createTerminalRuntime({
+      diagnosticsEnabled: false,
+      logMainPerfEvent: () => undefined,
+    })
+    const base = Date.now()
+    const frame = (ts: number, statusLine: AgentStateFrame['statusLine']): AgentStateFrame => ({
+      type: 'agent_state',
+      agentId: 'agent-usage',
+      workspaceId: 'ws-usage',
+      sessionId: null,
+      event: 'StatusLine',
+      ts,
+      statusLine,
+    })
+    const forwarded: Array<{ rateLimits: unknown; at: number }> = []
+    const stopForwarding = forwardStatusLineRateLimits((rateLimits, at) => forwarded.push({ rateLimits, at }))
+    const twelve = { five_hour: { usedPercentage: 12, resetsAt: base + 3_600_000 } }
+    try {
+      const result = await runtime.ipcHandlers.spawnTerminal(mockSender as unknown as WebContents, {
+        sessionId: 'sess-usage',
+        cols: 120,
+        rows: 30,
+        cwd: workspaceRoot,
+        cli: 'claude-code',
+        kind: 'agent',
+        shellOnly: false,
+        workspaceId: 'ws-usage',
+        agentId: 'agent-usage',
+        visible: false,
+        mcpSettings: { syncEnabled: false, servers: {} } satisfies McpSettings,
+      })
+      assert.equal(result.ok, true, JSON.stringify(result))
+
+      runtime.ingestAgentStateFrame(frame(base + 100, { totalCostUsd: 0.5, rateLimits: twelve }))
+      assert.deepEqual(forwarded, [{ rateLimits: twelve, at: base + 100 }], 'a first reading reaches the store')
+
+      // An idle refresh: the same windows, the same cost.
+      runtime.ingestAgentStateFrame(frame(base + 200, { totalCostUsd: 0.5, rateLimits: twelve }))
+      assert.equal(forwarded.length, 1, 'an idle refresh repeating the last reading is not handed on again')
+
+      // A new API response: the cost moved, the windows read the same.
+      runtime.ingestAgentStateFrame(frame(base + 300, { totalCostUsd: 0.6, rateLimits: twelve }))
+      assert.deepEqual(forwarded.at(-1), { rateLimits: twelve, at: base + 300 }, 'a new response re-dates the reading')
+
+      const moved = { five_hour: { usedPercentage: 14, resetsAt: base + 3_600_000 } }
+      runtime.ingestAgentStateFrame(frame(base + 400, { totalCostUsd: 0.6, rateLimits: moved }))
+      assert.deepEqual(forwarded.at(-1), { rateLimits: moved, at: base + 400 }, 'windows that moved are news')
+      assert.equal(forwarded.length, 3)
+    } finally {
+      stopForwarding()
+      await runtime.shutdown()
     }
   }
 

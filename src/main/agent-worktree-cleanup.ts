@@ -488,7 +488,11 @@ function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
   const base = { path: entry.path, branch: entry.branch }
   switch (entry.verdict) {
     case 'returned':
-      return { ...base, verdict: 'returned', detail: 'given back to the worktree pool' }
+      return {
+        ...base,
+        verdict: 'returned',
+        detail: entry.detail ? `given back to the worktree pool: ${entry.detail}` : 'given back to the worktree pool',
+      }
     case 'held':
       return { ...base, verdict: 'held', detail: entry.detail }
     case 'unclaimed':
@@ -496,7 +500,11 @@ function poolEntry(entry: WorktreePoolSweepEntry): AgentWorktreeCleanupEntry {
     case 'postponed':
       return { ...base, verdict: 'in-use', detail: 'something still runs in it' }
     case 'in-use':
-      return { ...base, verdict: 'in-use', detail: 'worktree pool slot' }
+      return {
+        ...base,
+        verdict: 'in-use',
+        detail: entry.detail ? `worktree pool slot: ${entry.detail}` : 'worktree pool slot',
+      }
   }
 }
 

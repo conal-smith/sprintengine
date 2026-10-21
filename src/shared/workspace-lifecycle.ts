@@ -69,3 +69,24 @@ export function workspaceLastUserMessageAt(
 ): number {
   return workspace.lastUserMessageAt ?? workspaceLastWorkedAt(workspace)
 }
+
+/**
+ * THE "finished while you were away" rule (the green row): an agent in the
+ * chat finished a turn after anyone last had it on screen, on any device, and
+ * nothing in it is working or waiting on the person now. Read off the visit
+ * clock (`lastVisitedAt`), which is durable and shared by every device, so a
+ * reload, a window hidden overnight or a second machine following the chat
+ * all mark the same chats. A chat with no visit recorded reads as seen:
+ * nothing recorded visits before the clock existed. Scheduled runs are made
+ * with the clock at their creation, so a run nobody has opened reads unseen.
+ * The exceptions a row adds (the chat on screen, a sleeping row, a watched
+ * pull request) are its caller's.
+ */
+export function finishedUnseen(input: {
+  idle: boolean
+  finishedAt: number | null | undefined
+  visitedAt: number | null | undefined
+}): boolean {
+  if (!input.idle || typeof input.finishedAt !== 'number' || typeof input.visitedAt !== 'number') return false
+  return input.finishedAt > input.visitedAt
+}
