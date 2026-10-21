@@ -102,6 +102,26 @@ export function applyClaudeTaskTool(
   return new Map(tasks).set(id, updated)
 }
 
+/**
+ * What an agent's TaskCreate or TaskUpdate returned, read off the text of its
+ * result: an agent's results reach the stream as text alone, with no
+ * structured result beside them. Only a create or an update that went through
+ * reads as one; anything else (an update a hook blocked, a task not found)
+ * reads as a failed update, and a create that cannot be read as nothing.
+ */
+export function claudeTaskResultFromText(toolName: string, output: string): unknown {
+  const said = output.trim()
+  if (toolName === 'TaskCreate') {
+    const created = /^Task #(\S+) created successfully: (.+)$/s.exec(said)
+    return created ? { task: { id: created[1], subject: created[2]!.trim() } } : undefined
+  }
+  if (toolName === 'TaskUpdate') {
+    const updated = /^Updated task #(\S+)/.exec(said)
+    return updated ? { success: true, taskId: updated[1] } : { success: false }
+  }
+  return undefined
+}
+
 /** The list as a todo write's `todos`. */
 export function claudeTaskTodos(tasks: ClaudeTaskList): ClaudeTaskTodo[] {
   return Array.from(tasks.values(), ({ subject, status, activeForm }) => ({

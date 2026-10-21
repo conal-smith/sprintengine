@@ -13,7 +13,13 @@
 // is ESM-only and the main bundle is CJS, so the SDK is loaded via dynamic
 // import on first use.
 import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
-import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTaskList } from './claude-task-list'
+import {
+  applyClaudeTaskTool,
+  claudeTaskResultFromText,
+  claudeTaskTodos,
+  isClaudeTaskTool,
+  type ClaudeTaskList,
+} from './claude-task-list'
 import type { ChildProcess } from 'child_process'
 import { spawnClaudeLocalProcess } from './claude-local-process'
 import { randomUUID } from 'node:crypto'
@@ -2759,10 +2765,18 @@ export function mapSdkMessage(
     // Pictures being written for steps this message reported; the caller
     // waits for them before the events go out, so no path names a missing file.
     toolImageWrites?: Promise<void>[]
-    // Claude Code's task list as the main chain's task tools left it, and
-    // those calls still waiting for their results (claude-task-list.ts).
+    // Claude Code's task list as the task tools left it, those calls still
+    // waiting for their results (an agent's with the lane it runs in), and
+    // the main chain's latest task tool row (claude-task-list.ts).
     claudeTasks?: ClaudeTaskList
-    taskToolCalls?: Map<string, { name: string; input: Record<string, unknown> }>
+    taskToolCalls?: Map<string, { name: string; input: Record<string, unknown>; parentToolUseId?: string }>
+    taskToolRow?: {
+      turnId: string
+      toolUseId: string
+      name: string
+      input: Record<string, unknown>
+      output?: ConversationToolOutputPayload
+    }
     // The model refused and the CLI answered on its fallback model, already
     // noted (it may say so mid-turn and again as the turn ends); and why the
     // model refused when no fallback ran, for the turn's end to say. Both
@@ -3098,10 +3112,19 @@ export function mapSdkMessage(
         const toolInput = asRecord(block.input) ?? {}
         // A main-chain task tool's row is a todo row carrying the list as it
         // stands, and is stamped again once its result says what changed.
-        // An agent's task tools are its own bookkeeping, not the chat's plan.
+        // An agent writes the same list (Claude Code keeps one per session,
+        // its agents' included), so what its creates and updates change is
+        // the chat's plan too; its own row stays the tool it is, in its lane.
         const taskTool = !parentToolUseId && typeof block.id === 'string' && isClaudeTaskTool(block.name)
-        if (taskTool)
-          (state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+        if (taskTool) {
+          ;(state.taskToolCalls ??= new Map()).set(block.id as string, { name: block.name, input: toolInput })
+          if (turnId) state.taskToolRow = { turnId, toolUseId: block.id as string, name: block.name, input: toolInput }
+        } else if (
+          parentToolUseId &&
+          typeof block.id === 'string' &&
+          (block.name === 'TaskCreate' || block.name === 'TaskUpdate')
+        )
+          (state.taskToolCalls ??= new Map()).set(block.id, { name: block.name, input: toolInput, parentToolUseId })
         const kind = taskTool ? 'todo' : inferConversationToolKind(block.name)
         const display = kind === 'mcp' && typeof block.id === 'string' ? displays.get(block.id) : undefined
         const payload: ConversationToolStartedPayload = {
@@ -3198,32 +3221,43 @@ export function mapSdkMessage(
         if (taskCall) {
           state.taskToolCalls!.delete(toolUseId!)
           const tasks = state.claudeTasks ?? new Map()
+          const structured = oneResult ? message.tool_use_result : undefined
+          const result =
+            taskCall.parentToolUseId && structured === undefined
+              ? claudeTaskResultFromText(taskCall.name, output)
+              : structured
           const next =
             block.is_error === true || declined
               ? tasks
-              : applyClaudeTaskTool(
-                  tasks,
-                  taskCall.name,
-                  taskCall.input,
-                  oneResult ? message.tool_use_result : undefined,
-                )
+              : applyClaudeTaskTool(tasks, taskCall.name, taskCall.input, result)
           // The row is announced again with the list the call left, ahead of
           // its result: a step reported twice keeps its place and its start.
-          if (next !== tasks) {
-            state.claudeTasks = next
+          // An agent's call has no todo row of its own, so the main chain's
+          // latest one in this turn, which the todo strip reads, is announced
+          // again instead, and its result with it when it had one: a row
+          // announced again reads as running until a result closes it.
+          const row = !taskCall.parentToolUseId
+            ? { turnId, toolUseId: toolUseId!, name: taskCall.name, input: taskCall.input, output: undefined }
+            : state.taskToolRow?.turnId === turnId
+              ? state.taskToolRow
+              : undefined
+          if (next !== tasks) state.claudeTasks = next
+          if (next !== tasks && row) {
             events.push(
               eventFor(state, 'tool_started', {
-                turnId,
-                toolCallId: toolUseId,
-                tool: taskCall.name,
-                toolUseId,
-                name: taskCall.name,
+                turnId: row.turnId,
+                toolCallId: row.toolUseId,
+                tool: row.name,
+                toolUseId: row.toolUseId,
+                name: row.name,
                 kind: 'todo',
-                input: JSON.parse(JSON.stringify({ ...taskCall.input, todos: claudeTaskTodos(next) })),
+                input: JSON.parse(JSON.stringify({ ...row.input, todos: claudeTaskTodos(next) })),
               } satisfies ConversationToolStartedPayload),
             )
+            if (row.output) events.push(eventFor(state, 'tool_output', row.output))
           }
         }
+        if (toolUseId && state.taskToolRow?.toolUseId === toolUseId) state.taskToolRow.output = payload
         events.push(eventFor(state, 'tool_output', payload))
       }
       break
