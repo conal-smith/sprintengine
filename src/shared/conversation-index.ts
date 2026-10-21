@@ -23,7 +23,16 @@ export type ConversationThread = {
   lastAssistantText?: string
 }
 export type ConversationSearchInput = ConversationWorkspaceKey & { query: string; requestId?: string }
-export type ConversationSearchHit = { agentId: string; seq: number; turnId?: string; snippet: string }
+export type ConversationSearchHit = {
+  agentId: string
+  seq: number
+  turnId?: string
+  snippet: string
+  // Who said the matching words: the person, the agent, or Studio (a message
+  // the app sent the chat on the person's behalf). Absent from a host that
+  // predates it.
+  from?: 'person' | 'agent' | 'studio'
+}
 export type ConversationRenameInput = ConversationKey & { title: string }
 export type ConversationThreadsResult = { ok: true; threads: ConversationThread[] } | { ok: false; message: string }
 export type ConversationSearchResult = { ok: true; hits: ConversationSearchHit[] } | { ok: false; message: string }

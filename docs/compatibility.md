@@ -69,6 +69,11 @@ the Files tree marks. It is additive in the same way. A server built before it
 leaves it out, and the tree reads that as an agent touching nothing: the tree
 draws no trail for that chat, and nothing else reads the member.
 
+A conversation search hit carries `from`: who wrote the matching words (the
+person, the agent, or Studio). It is additive in the same way. A server built
+before it leaves it out, and the palette still shows the match, without the
+"You:" or "Agent:" in front of it, ranked after the hits that say.
+
 So is `backgroundTasks`: the shells, monitors and workflows the chat's process
 still runs after its turn ended, which a `session_updated` event carries as the
 whole list each time it changes. A server built before it leaves both out, and

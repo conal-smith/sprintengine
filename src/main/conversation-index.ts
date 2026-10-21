@@ -164,7 +164,13 @@ export class ConversationIndex {
         turnSeq = new Map<string, number>()
       let ordinal = 0
       // One unreadable transcript costs its own hits, not the whole search.
-      const events = guarded(readEvents(input.workspaceRoot, path, this.maxBytes, options.signal), options.signal)
+      // Only the two kinds of event a search reads are parsed: a transcript is
+      // mostly tool output, and the palette searches every chat the sidebar
+      // lists on each pause in typing, so parsing every line was most of it.
+      const events = guarded(
+        readEvents(input.workspaceRoot, path, this.maxBytes, options.signal, mightBeSearched),
+        options.signal,
+      )
       for await (const event of events) {
         ordinal = event.seq ?? ordinal + 1
         const turnId = text(event.payload?.turnId)
@@ -178,11 +184,17 @@ export class ConversationIndex {
         if (offset < 0) continue
         seen.add(key)
         const snippet = `${offset > 80 ? '…' : ''}${value.slice(Math.max(0, offset - 80), offset + query.length + 100)}${value.length > offset + query.length + 100 ? '…' : ''}`
-        const hit = {
+        const hit: ConversationSearchHit = {
           agentId: event.agentId,
           seq: turnSeq.get(turnId) ?? ordinal,
           ...(turnId ? { turnId } : {}),
           snippet,
+          from:
+            event.type === 'content_delta'
+              ? 'agent'
+              : readConversationMessageOrigin(event.payload?.origin)
+                ? 'studio'
+                : 'person',
         }
         hits.push(hit)
         pending.push(hit)
@@ -322,11 +334,18 @@ async function fingerprint(path: string, file: string): Promise<Fingerprint | nu
 /** Where to read an oversized transcript: its opening and its end. */
 const HEAD_BYTES = 1024 * 1024
 const CHUNK_BYTES = 64 * 1024
+/**
+ * Whether a transcript line can be an event search reads. A cheap test on the
+ * raw text, before the parse: an event's type is written in it, so a line
+ * that names neither type is neither, whatever its payload holds.
+ */
+const mightBeSearched = (line: string) => line.includes('user_message') || line.includes('content_delta')
 async function* readEvents(
   root: string,
   path: string,
   maxBytes: number,
   signal?: AbortSignal,
+  keep?: (line: string) => boolean,
 ): AsyncIterable<ConversationEvent> {
   const info = await fingerprint(path, '')
   if (!info) return
@@ -336,6 +355,7 @@ async function* readEvents(
     for (const range of wholeFileRanges(size, maxBytes))
       for await (const line of readLines(file, range.start, range.end, signal)) {
         signal?.throwIfAborted()
+        if (keep && !keep(line.text)) continue
         const event = parseEvent(line.text)
         if (event) yield event
       }

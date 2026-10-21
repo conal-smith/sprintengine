@@ -20,7 +20,7 @@ see Material.
 
 | Part | Class | Required |
 |---|---|---|
-| Scrim | `.ds-command-palette-scrim` | yes — full-viewport `overlay.scrim` at `z.modal`, dismissing on a press that both starts and ends on it; a plain tone, never a blur |
+| Scrim | `.ds-command-palette-scrim` | yes — full-viewport `overlay.scrim` at `z.modal`, dismissing on a press that both starts and ends on it; a plain tone, blurred as well only over a conversation with no terminal in view (see Material) |
 | Shell | `.ds-command-palette` | yes — the modal shell's chrome at the `palette` width step (600px, capped `95vw`) on the glass ground, clipping its own corners |
 | Band | `.ds-command-palette-band` | yes — the one band of chrome: the strip and the field, one `border.default` hairline beneath |
 | Scope strip | `.ds-command-palette-tabs` | yes — a borderless [tabs](../tabs/component.md) strip, `role="tablist"` labelled "Search in": All, then the five narrowings |
@@ -71,8 +71,17 @@ have: the shipped primitive **holds the terminal repaint pause** for its
 lifetime — the same hold `Modal` takes, which stops every pane writing while
 a dialog covers the app. Over paused panes the blur is computed once and sits
 still, and the area is the shell's, not the viewport's. The **scrim stays a
-plain tone**; the ruling is for the shell alone, and the conformance lint pins
+plain tone** over anything with a terminal in view; the conformance lint pins
 the glass utility to the four kit shells that carry it.
+
+Over a conversation the scrim **blurs as well as darkens** (owner ruling
+2026-10-21): `scrim-glass`, the `glass.blur` radius over `overlay.scrim`, so
+the transcript recedes and the results are what is read. It is decided once,
+as the palette opens, from what is drawn beneath: a chat pane in view and no
+terminal. A terminal keeps the plain tone even under the repaint hold, because
+the hold fails open — one older than two minutes is dropped — and a
+full-window blur over a streaming pane is the ~10fps measurement again. A
+transcript redraws a paragraph at a time, which a blur can afford.
 
 ## Variants
 
@@ -92,8 +101,10 @@ wonder which tab a thing is under, and nothing is found twice.
   A quiet meta line at the top of the list names it ("Claude Code skills")
   and trails two ghost buttons, Refresh and Browse skills; Browse opens the
   catalogue, which remains searchable from All.
-- **Conversations** — the chats and workspaces the sidebar lists, by title
-  and folder.
+- **Conversations** — the chats the sidebar lists, by title, folder, pull
+  request and branch, and by what was said in them: every chat's transcripts
+  are searched from the second character, most recently spoken in first. One
+  row per chat, however many of its messages matched.
 - **Files** — file names. The Go to file action opens here.
 - **Text** — text in files, grouped under the file each line was found in.
   ⌘⇧F and the Search project contents action open here, so a snippet of code
@@ -199,11 +210,28 @@ monogram); an action draws the glyph its other entry point already wears (the
 sidebar's compose mark on New chat, the generic file tile, the search glyph,
 the settings gear, the remote-machine glyph); a chat draws the sidebar's
 provider chip — the agent
-CLI's mark on a round raised ground, or the workspace type's icon when no
-agent has run in it. A row that is recognised by its mark before it is read
+CLI's mark on a round raised ground (a chat tab's provider, or a terminal's
+CLI), or the workspace type's icon when no agent has run in it — and draws it
+only in a list it shares with other kinds of result. In the Conversations tab
+every row is a chat, and the chip goes. A row that is recognised by its mark before it is read
 is what lets a list be scanned, and on the resting page the glyph is what
 makes an action row read as an action. A panel or git command wears none:
 the verb is the whole row, and a glyph invented for it would be decoration.
+
+**A chat row says why it is there** (owner, 2026-10-21). Line one is the
+title, the pull request it holds in the line's quietest ink with the
+sidebar's glyph, and its project by name — the folder glyph and the folder's
+name, for a worktree the project it was cut from, never a path. Line two is
+drawn only when the title is not what matched: the sentence that matched,
+opening near the match on a word, who wrote it ("You:", "Agent:") and how many
+more of the chat's messages matched; or, for a chat found by a field it never
+prints, that field — the pull request's number and title, the branch, the
+folder. The query is marked wherever it appears, in `text.strong` at the
+semibold weight with no fill behind it. A message row whose sentence does not
+hold the query is never drawn: while the next search is in flight, the rows of
+the last keystroke stay up only if they still match. Enter on a row with a
+sentence opens the chat at that message; on a title match it switches to the
+chat.
 
 **The heading is a word.** `text.muted` at `font.size.meta`, above rows in
 `text.default`: the quiet thing is the label and the loud thing is the row.

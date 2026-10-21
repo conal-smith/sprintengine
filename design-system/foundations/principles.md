@@ -785,14 +785,16 @@ the folded remainder takes `color.chart.other`, a neutral grey.
   the visible label carry it too.
 - Every animation honors `prefers-reduced-motion: reduce`, including the
   `:active` press scale.
-- Never put `backdrop-filter` on a full-viewport scrim; separation comes from
-  `overlay.scrim` plus the shell's shadow. Glass is a material of four kit
+- Never put `backdrop-filter` on a full-viewport scrim over a terminal;
+  separation comes from `overlay.scrim` plus the shell's shadow. The one
+  blurred scrim is the command palette's, over a conversation with no terminal
+  in view (2026-10-21). Glass is a material of four kit
   shells and nothing else, pinned there by the conformance lint: the toast
   card (ruling 2026-09-04, a corner-sized blur), the popover family's opt-in
   `material="glass"` (2026-09-07/08), and the command palette's shell
   (2026-09-10) — the last affordable only because the palette pauses terminal
   repaints while it is up, so the blur beneath it is computed once. The
-  scrims behind all of them stay plain tones.
+  scrims behind all of them stay plain tones, but for that one.
 
 ## Accessibility
 
