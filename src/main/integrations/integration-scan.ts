@@ -318,7 +318,13 @@ export async function scanGitIntegrations(
   const found: IntegrationWrite[] = []
   const common = await runGit(root.path, ['rev-parse', '--git-common-dir'])
   if (!common.ok) return { found, worktrees: [] }
-  const commonDir = resolve(root.path, common.stdout.trim())
+  // A relative answer (`../../.git` from a subfolder) is relative to the folder
+  // git actually ran in, which is the symlink's target when the root is reached
+  // through one: resolved against the link's own path it names a folder that
+  // does not exist, and the scan finds nothing. Resolved against the real path
+  // it works on every git, without the newer `--path-format=absolute`.
+  const realRoot = await realpath(root.path).catch(() => root.path)
+  const commonDir = resolve(realRoot, common.stdout.trim())
   const base = { hostId: root.hostId, source: 'scan' as const }
   const sharedExclude = join(commonDir, 'info', 'exclude')
   const sharedText = await readText(sharedExclude)
