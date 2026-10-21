@@ -17,7 +17,7 @@ import { applyClaudeTaskTool, claudeTaskTodos, isClaudeTaskTool, type ClaudeTask
 import type { ChildProcess } from 'child_process'
 import { spawnClaudeLocalProcess } from './claude-local-process'
 import { randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openConfinedExistingFile, readBoundedConversationFile } from '../conversation-file-access'
@@ -2138,12 +2138,39 @@ async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skill
       if (!/^[\w.-]+$/.test(id) || id === '.' || id === '..') throw new Error(`Attached skill ${id} is invalid.`)
       const source = await realpath(join(workspaceRoot, '.claude', 'skills', id))
       await cp(source, join(dir, 'skills', id), { recursive: true })
+      const staged = join(dir, 'skills', id, 'SKILL.md')
+      const text = await readFile(staged, 'utf8').catch(() => null)
+      const usable = text === null ? null : withoutModelInvocationGuard(text)
+      if (usable !== null && usable !== text) {
+        // Removed first: a SKILL.md the skill links to elsewhere is copied as
+        // the link, and writing through it would change the skill's own file.
+        await rm(staged, { force: true })
+        await writeFile(staged, usable)
+      }
     }
     return dir
   } catch (error) {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
     throw error
   }
+}
+
+/**
+ * A skill's SKILL.md without its `disable-model-invocation` key, the rest of
+ * the file as it was. Claude Code's Skill tool refuses a skill marked so
+ * unless the person typed `/<name>` in the message itself, and an attached
+ * skill is named in the note the chat puts ahead of the message, never typed:
+ * the model was told to use it and could not. Attaching it is the person
+ * asking for it, so the staged copy drops the key.
+ */
+function withoutModelInvocationGuard(text: string): string {
+  const open = /^---[ \t]*\r?\n/.exec(text)
+  if (!open) return text
+  const rest = text.slice(open[0].length)
+  const close = /^---[ \t]*(?:\r?\n|$)/m.exec(rest)
+  if (!close) return text
+  const front = rest.slice(0, close.index).replace(/^disable-model-invocation[ \t]*:.*(?:\r?\n|$)/gm, '')
+  return `${open[0]}${front}${rest.slice(close.index)}`
 }
 
 /**
