@@ -221,6 +221,10 @@ function electronUserAgent(appToken: string): string {
   return CHROME_UA.replace('Chrome/140.0.0.0', `${appToken} Chrome/140.0.0.0 Electron/38.0.0`)
 }
 
+test("a page cannot post system notifications under the app's name", () => {
+  assert.equal(ALLOWED_PERMISSIONS.has('notifications'), false)
+})
+
 test("a page may go fullscreen, and the guest's fullscreen never resizes the app window", () => {
   assert.equal(ALLOWED_PERMISSIONS.has('fullscreen'), true)
   const prefs: Record<string, unknown> = { disableHtmlFullscreenWindowResize: false }
