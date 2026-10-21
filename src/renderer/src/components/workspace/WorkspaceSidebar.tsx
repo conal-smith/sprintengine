@@ -277,7 +277,6 @@ type WorkspaceSidebarProps = {
   onOpenRemoteSession?: (spec: RemoteSessionOpenSpec) => void
   onMoveWorkspaceToNewWindow: (id: WorkspaceId, placement?: WorkspaceDetachPlacement) => void
   onMoveWorkspaceToMainWindow: (id: WorkspaceId) => void
-  onCloseWorkspace: (id: WorkspaceId) => void
   onForgetFolder: (folderPath: string) => void
   // Open the pre-creation New Chat panel scoped to the active workspace's
   // folder — the create control. The one way in (owner, 2026-09-04): the split
@@ -379,7 +378,6 @@ function WorkspaceSidebar({
   onOpenRemoteSession,
   onMoveWorkspaceToNewWindow,
   onMoveWorkspaceToMainWindow,
-  onCloseWorkspace,
   onForgetFolder,
   onNewChat,
   onNewScheduledAgent,
@@ -790,7 +788,7 @@ function WorkspaceSidebar({
       if (!workspace || !rowHasOpenAgents(workspace)) return
       // The record as it stands when main has answered, not the render's: a
       // chat un-settled meanwhile keeps its agents. One gone from the record
-      // was closed, and Close kills unconditionally anyway.
+      // (its folder forgotten) has nobody left to keep them for.
       void terminateSettledWorkspaceTerminals(workspace, () => {
         const now = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
         return now === undefined || isSettledWorkspace(now)
@@ -931,7 +929,6 @@ function WorkspaceSidebar({
   // The menu of a chat on a paired machine that no window here holds, by its row's key.
   const [remoteMenu, setRemoteMenu] = useState<{ key: string; x: number; y: number } | null>(null)
   const [folderMenu, setFolderMenu] = useState<{ folderKey: string; x: number; y: number } | null>(null)
-  const [confirmClose, setConfirmClose] = useState<WorkspaceId | null>(null)
   const [pendingTypeAction, setPendingTypeAction] = useState<{
     workspaceId: WorkspaceId
     action: WorkspaceTypeRowAction
@@ -2025,20 +2022,6 @@ function WorkspaceSidebar({
     setRenamingId(null)
   }, [renamingId, renameValue, renameWorkspace])
 
-  const handleClose = useCallback(
-    (workspaceId: WorkspaceId) => {
-      const workspace = workspaceById.get(workspaceId)
-      if (!workspace) return
-      const activity = activityByWorkspaceId[workspaceId] ?? 'idle'
-      if (activity === 'working' || activity === 'failed' || activity === 'needs-input') {
-        setConfirmClose(workspaceId)
-        return
-      }
-      onCloseWorkspace(workspaceId)
-    },
-    [workspaceById, activityByWorkspaceId, onCloseWorkspace],
-  )
-
   const runWorkspaceTypeRowAction = useCallback(
     async (workspaceId: WorkspaceId, action: WorkspaceTypeRowAction) => {
       if (typeActionBusy) return
@@ -2335,7 +2318,6 @@ function WorkspaceSidebar({
   // runs the latest closure, so a row that skipped a render still acts on the
   // sidebar's current state (the drag in flight, the rename being typed).
   const stableSetContextMenu = useStableCallback(setContextMenu)
-  const stableHandleClose = useStableCallback(handleClose)
   const stableSetWorkspaceSnoozed = useStableCallback(setWorkspaceSnoozed)
   const stableSettleWorkspaceById = useStableCallback(settleWorkspaceById)
   const stableSettleOpenedRemote = useStableCallback(settleOpenedRemote)
@@ -2358,7 +2340,6 @@ function WorkspaceSidebar({
   const rowHandlers = useMemo<WorkspaceRowHandlers>(
     () => ({
       setContextMenu: stableSetContextMenu,
-      handleClose: stableHandleClose,
       setWorkspaceSnoozed: stableSetWorkspaceSnoozed,
       settleWorkspaceById: stableSettleWorkspaceById,
       settleOpenedRemote: stableSettleOpenedRemote,
@@ -2383,7 +2364,6 @@ function WorkspaceSidebar({
     // Every entry is stable by construction; the list is here for the linter.
     [
       stableSetContextMenu,
-      stableHandleClose,
       stableSetWorkspaceSnoozed,
       stableSettleWorkspaceById,
       stableSettleOpenedRemote,
@@ -2453,7 +2433,6 @@ function WorkspaceSidebar({
         }
         isTabDropTarget={tabDropTarget?.kind === 'workspace' && tabDropTarget.id === workspace.id}
         rowConversation={remoteConversationByWorkspace.get(workspace.id) ?? null}
-        remoteSettle={remoteKeepsRest(workspace)}
         liveSessions={sessionsByWorkspaceId.get(workspace.id) ?? NO_SESSIONS}
         peekSessions={peekSessionsByWorkspaceId.get(workspace.id) ?? NO_SESSIONS}
         conversationSessions={conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS}
@@ -3350,10 +3329,6 @@ function WorkspaceSidebar({
             rowIsWorking(contextMenu.workspaceId) ||
             remoteConversationByWorkspace.get(contextMenu.workspaceId)?.activity === 'working'
           }
-          remoteSettle={(() => {
-            const workspace = workspaceById.get(contextMenu.workspaceId)
-            return workspace ? remoteKeepsRest(workspace) : false
-          })()}
           canMarkUnread={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? canMarkWorkspaceUnread(workspace) : false
@@ -3443,11 +3418,6 @@ function WorkspaceSidebar({
             }
             if (action === 'move-to-main-window') {
               onMoveWorkspaceToMainWindow(workspace.id)
-              setContextMenu(null)
-              return
-            }
-            if (action === 'close') {
-              handleClose(workspace.id)
               setContextMenu(null)
               return
             }
@@ -3557,48 +3527,6 @@ function WorkspaceSidebar({
           }}
         />
       ) : null}
-
-      {/* Close-confirm popover (modal-style for safety) */}
-      <Modal
-        open={confirmClose !== null}
-        onClose={() => setConfirmClose(null)}
-        labelledBy="ws-close-title"
-        size="confirm"
-      >
-        {confirmClose
-          ? (() => {
-              const workspace = workspaceById.get(confirmClose)
-              const activity = activityByWorkspaceId[confirmClose] ?? 'idle'
-              return (
-                <>
-                  <ModalHeader
-                    titleId="ws-close-title"
-                    title={`Close “${workspace?.name ?? 'workspace'}”?`}
-                    subtitle={
-                      activity === 'needs-input'
-                        ? 'An agent is waiting for input. Closing will lose that prompt.'
-                        : 'Running agents will be stopped. Workspace files on disk are kept.'
-                    }
-                    onClose={() => setConfirmClose(null)}
-                  />
-                  <ModalFooter>
-                    <ModalButton onClick={() => setConfirmClose(null)}>Cancel</ModalButton>
-                    <ModalButton
-                      variant="danger"
-                      onClick={() => {
-                        const id = confirmClose
-                        setConfirmClose(null)
-                        if (id) onCloseWorkspace(id)
-                      }}
-                    >
-                      Close workspace
-                    </ModalButton>
-                  </ModalFooter>
-                </>
-              )
-            })()
-          : null}
-      </Modal>
 
       {/* Type-contributed row-action confirm */}
       <Modal
@@ -3750,7 +3678,6 @@ const NO_GIT_SUMMARIES: RowGitSummaries = {}
 /** What a row does, held in one object whose identity never changes. */
 type WorkspaceRowHandlers = {
   setContextMenu: (menu: { workspaceId: WorkspaceId; x: number; y: number } | null) => void
-  handleClose: (workspaceId: WorkspaceId) => void
   setWorkspaceSnoozed: (workspaceId: WorkspaceId, until: number | null) => void
   settleWorkspaceById: (workspaceId: WorkspaceId) => void
   settleOpenedRemote: (workspace: Workspace, settled?: boolean) => void
@@ -3790,8 +3717,6 @@ type WorkspaceRowProps = {
   dropMark: 'before' | 'after' | null
   isTabDropTarget: boolean
   rowConversation: RemoteConversation | null
-  /** A chat born on a paired machine that keeps its rest, so the seat's tick asks it to settle (`remoteKeepsRest`). */
-  remoteSettle: boolean
   liveSessions: TerminalSessionSnapshot[]
   peekSessions: TerminalSessionSnapshot[]
   conversationSessions: readonly ConversationSessionSummary[]
@@ -3828,7 +3753,6 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   dropMark,
   isTabDropTarget,
   rowConversation,
-  remoteSettle,
   liveSessions,
   peekSessions,
   conversationSessions,
@@ -3845,7 +3769,6 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
 }: WorkspaceRowProps) {
   const {
     setContextMenu,
-    handleClose,
     setWorkspaceSnoozed,
     settleWorkspaceById,
     settleOpenedRemote,
@@ -4078,6 +4001,13 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   // or, for a chat born on a paired machine, over there.
   const settleBlocked =
     workspaceIsWorking(activity, conversationSessions, liveSessions) || rowConversation?.activity === 'working'
+  // The seat's tick and a middle press on the row: the one way a row is put
+  // away. A row already resting has nothing more to do.
+  const settleRow = () => {
+    if (settleBlocked || settled) return
+    if (workspace.remoteOrigin) settleOpenedRemote(workspace)
+    else settleWorkspaceById(workspace.id)
+  }
   const tabbedConversations = useMemo(
     () => conversationsWithTabs(conversationSessions, workspace.layoutModel),
     [conversationSessions, workspace.layoutModel],
@@ -4150,10 +4080,12 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             2026-09-07). It used to be the ✕, which terminates the row's
             terminals and removes the chat — the irreversible gesture in the
             cheapest place on the row, and against this epic's own thesis
-            that a chat comes to rest instead of vanishing. Close keeps its
-            entry in `···`, where a gesture that cannot be taken back
-            belongs; Settle, the one you make fifty times a day and can undo
-            with the next click, takes the seat.
+            that a chat comes to rest instead of vanishing. Settle, the one
+            you make fifty times a day and can undo with the next click,
+            takes the seat, and since 2026-10-21 it is the only way a row is
+            put away: Close is gone from the menu, the keyboard and the
+            middle button alike, so a chat holding nothing but a shell goes
+            the way every other chat goes.
 
             Neutral ink, deliberately: green already means "an agent
             finished while you were away — come look" on this exact surface
@@ -4163,27 +4095,11 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             (owner ruling 2026-09-05). The tick's SHAPE says done; it does
             not need the tone to say it.
 
-            A row born on a paired machine settles the same way when its
-            machine keeps its chats' rest: the tick asks the machine, and the
-            row goes once it has said yes (`settleOpenedRemote`), the rule
-            the menu's Settle entry follows. One whose machine keeps no rest
-            has nothing to settle into, and keeps the ✕. */}
-        {workspace.remoteOrigin && !remoteSettle ? (
-          <Tooltip content="Close workspace">
-            <IconButton
-              onClick={(event) => {
-                event.stopPropagation()
-                handleClose(workspace.id)
-              }}
-              tone="quiet"
-              aria-label={`Close ${workspace.name}`}
-            >
-              <svg viewBox="0 0 16 16" fill="none" className="icon-xs" aria-hidden="true">
-                <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </IconButton>
-          </Tooltip>
-        ) : settled ? (
+            A row born on a paired machine settles the same way: when its
+            machine keeps its chats' rest the tick asks the machine, and the
+            row goes once it has said yes; when it keeps none, the row rests
+            here alone (`settleOpenedRemote`). */}
+        {settled ? (
           /* The settled seat: the same tick, drawn smaller inside a ring and
              in the good tone. Green here does not collide with the ruling
              above: that was about the resting AFFORDANCE on every row, and
@@ -4268,9 +4184,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             <IconButton
               onClick={(event) => {
                 event.stopPropagation()
-                if (settleBlocked) return
-                if (workspace.remoteOrigin) settleOpenedRemote(workspace)
-                else settleWorkspaceById(workspace.id)
+                settleRow()
               }}
               tone="quiet"
               aria-disabled={settleBlocked || undefined}
@@ -4508,7 +4422,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
           event.preventDefault()
           // The release would paste the primary selection on Linux.
           cancelNextMiddleButtonRelease(event.currentTarget.ownerDocument.defaultView)
-          handleClose(workspace.id)
+          settleRow()
         }
       }}
       onContextMenu={(event) => {
