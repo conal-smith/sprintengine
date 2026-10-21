@@ -5,6 +5,7 @@ import {
   type UsageAgentId,
   type UsageReport,
   type UsageReportAgent,
+  type UsageReportMachine,
   type UsageReportModel,
   type UsageReportPoint,
   type UsageReportTokens,
@@ -42,6 +43,9 @@ export function buildUsageReport(input: {
   scannedAt: number | null
   sources: readonly UsageSource[]
   pricing: UsagePricing
+  /** Each machine's part, when the rows are more than this machine's (usage-mesh.ts). */
+  machines?: UsageReportMachine[]
+  sharedSessions?: number
 }): UsageReport {
   const { pricing } = input
   const agents = new Map<UsageAgentId, UsageReportAgent & { sessionIds: Set<string> }>()
@@ -123,5 +127,7 @@ export function buildUsageReport(input: {
     ),
     points: [...points.values()].sort((a, b) => a.hour - b.hour),
     sources: input.sources.map((source) => ({ ...source })),
+    machines: input.machines ?? [],
+    sharedSessions: input.sharedSessions ?? 0,
   }
 }

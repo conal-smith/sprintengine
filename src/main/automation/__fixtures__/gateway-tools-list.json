@@ -813,6 +813,10 @@
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },
     {
+      "name": "usage.report",
+      "sha256": "d305a31b01c9e1ab4b1bc0090bff07ffb11e033b8410bd7a017e8cc6c1a015a4"
+    },
+    {
       "name": "workspace.checkout",
       "sha256": "0afb536c6142df85c46b0e126675982fd5df43b7a286db59085bc20688572006"
     },

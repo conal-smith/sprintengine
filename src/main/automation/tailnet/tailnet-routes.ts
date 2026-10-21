@@ -234,6 +234,12 @@ export const TAILNET_CAPABILITIES = [
   // They name the chat, never a folder. A client that does not see it draws
   // no Create PR under this machine's chats, as before.
   'chat-create-pull-request',
+  // A paired desktop's Usage counts what this machine spent (2026-10-21):
+  // `usage.report` answers a window with rows of one hour of one model in one
+  // session, each session by a hash of its id, on `workspace:read`. The
+  // desktop asking prices them itself. A client that does not see it says
+  // the machine's Studio needs updating rather than asking.
+  'usage-report',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

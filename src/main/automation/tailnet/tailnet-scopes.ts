@@ -1,3 +1,4 @@
+import type { McpConnectionContext, McpToolRegistration } from '../../../shared/modules/mcp-tools'
 import type { TailnetScope } from '../../../shared/tailnet'
 
 // Mapping the gateway's tool surface onto the shared scope vocabulary
@@ -75,6 +76,27 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
     return `"${toolName}" reads the terminals on this machine, and terminals are not served over the tailnet. A paired device follows this machine's chats instead; run it from an agent on that machine.`
   }
   return null
+}
+
+/**
+ * Tools served to paired devices and left out of the local socket's list: the
+ * other side of `localOnlyGatewayToolReason`. `usage.report` answers another
+ * desktop's usage dashboard with counts by hashed session, which no agent
+ * here has a use for, and every tool an agent is listed costs it context.
+ */
+const PAIRED_DEVICE_ONLY_TOOLS: ReadonlySet<string> = new Set(['usage.report'])
+
+export function servedOnlyToPairedDevices(toolName: string): boolean {
+  return PAIRED_DEVICE_ONLY_TOOLS.has(toolName)
+}
+
+/** The gateway's own tools as one caller is listed them: without those served only to paired devices, unless it is one. */
+export function gatewayToolsForCaller(
+  tools: McpToolRegistration[],
+  context: McpConnectionContext | undefined,
+): McpToolRegistration[] {
+  if (context?.metadata.kind === 'remote-tailnet') return tools
+  return tools.filter((tool) => !servedOnlyToPairedDevices(tool.name))
 }
 
 /**

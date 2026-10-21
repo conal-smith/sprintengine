@@ -794,6 +794,7 @@ test('tailnet', async () => {
         'workspace-extensions',
         'new-chat-skills',
         'chat-create-pull-request',
+        'usage-report',
       ])
 
       // The pairing code is one-time: replaying it does not mint a second device.
@@ -898,6 +899,7 @@ test('tailnet', async () => {
         'workspace-extensions',
         'new-chat-skills',
         'chat-create-pull-request',
+        'usage-report',
       ])
       // Every one the wire defines but shrinking an upload, which only a
       // machine with an image codec advertises; this harness has none.

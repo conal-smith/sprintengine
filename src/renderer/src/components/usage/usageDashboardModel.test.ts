@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import type { UsageReport } from '../../../../shared/usage-report'
-import { monotonePath, niceScale, periodIndex, usagePeriodRows, usageSeries, usageWindow } from './usageDashboardModel'
+import type { UsageReport, UsageReportMachine } from '../../../../shared/usage-report'
+import {
+  monotonePath,
+  niceScale,
+  periodIndex,
+  usageMachineLine,
+  usagePeriodRows,
+  usageSeries,
+  usageWindow,
+} from './usageDashboardModel'
 
 const HOUR = 3_600_000
 
@@ -62,6 +70,8 @@ const report = (points: UsageReport['points']): UsageReport => ({
   models: [],
   points,
   sources: [],
+  machines: [],
+  sharedSessions: 0,
 })
 
 test('hourly points fold into the periods they fall in, per agent', () => {
@@ -116,4 +126,37 @@ test('the curve passes through every point and never dips below a zero baseline'
   assert.ok(Math.max(...ys) <= 100 && Math.min(...ys) >= 0)
   assert.equal(monotonePath([]), '')
   assert.equal(monotonePath([[5, 5]]), 'M5,5')
+})
+
+test('each machine says where its figures came from, and why one is not counted', () => {
+  const machine = (partial: Partial<UsageReportMachine>): UsageReportMachine => ({
+    id: 'mini',
+    label: 'mac-mini',
+    kind: 'mini',
+    color: 'teal',
+    status: 'ok',
+    scanning: false,
+    scannedAt: 1,
+    fetchedAt: 2,
+    detail: null,
+    costUsd: 0,
+    tokens: 0,
+    sessions: 0,
+    ...partial,
+  })
+  const at = (value: number) => `t${value}`
+  const line = (partial: Partial<UsageReportMachine>, asking = false) => {
+    const said = usageMachineLine(machine(partial), asking, at)
+    return [said.text, said.tone, said.pending]
+  }
+  assert.deepEqual(line({ status: 'local' }), ['This machine', 'muted', false])
+  assert.deepEqual(line({}), ['Logs read t1', 'muted', false])
+  assert.deepEqual(line({ scanning: true }), ['Reading its logs…', 'muted', true])
+  assert.deepEqual(line({ status: 'cached' }), ['Offline, figures from t2', 'warn', false])
+  assert.deepEqual(line({ status: 'cached' }, true), ['Asking… (figures from t2)', 'muted', true])
+  assert.deepEqual(line({ status: 'offline', fetchedAt: null }), ['Offline, never counted here yet', 'warn', false])
+  assert.deepEqual(line({ status: 'offline' }, true), ['Asking…', 'muted', true])
+  assert.deepEqual(line({ status: 'unsupported' }), ['Update Studio on mac-mini to include its usage', 'warn', false])
+  assert.deepEqual(line({ status: 'unauthorized' }), ['This pairing may not read its usage', 'warn', false])
+  assert.deepEqual(line({ status: 'error' }), ['Its usage could not be read', 'warn', false])
 })
