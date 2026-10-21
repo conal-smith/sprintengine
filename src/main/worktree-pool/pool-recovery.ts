@@ -6,6 +6,7 @@ import { pathInside } from '../agent-worktree-keep-checks'
 import type { GitWorktreeEntry } from '../git'
 import { pathExists } from '../git-utils'
 import { parseGitWorktreePorcelain, runGitWorktreeListPorcelain } from '../git-worktree-list'
+import { removeWorktreeLeftovers } from '../worktree-leftovers'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import type { SlotRecord } from './pool-store'
 import { hasSlotMarker } from './slot-git'
@@ -60,9 +61,14 @@ export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<
       // `worktree add` was cut short. The slot was never leased, so nothing in
       // it is anyone's work, and a half-checked-out tree would otherwise read
       // as dirty and be held for ever. It is removed and made again later.
-      const removed = await withWorktreeRegistryLock(record.repoRoot, () =>
-        ctx.git(record.repoRoot, ['worktree', 'remove', '--force', slot.path]),
-      )
+      const removed = await withWorktreeRegistryLock(record.repoRoot, async () => {
+        const result = await ctx.git(record.repoRoot, ['worktree', 'remove', '--force', slot.path])
+        // Git for Windows reports success with junctions still in place.
+        if (result.ok && !(await removeWorktreeLeftovers(slot.path))) {
+          ctx.log(`${slot.path}: left files written after git removed it`)
+        }
+        return result
+      })
       if (removed.ok) {
         ctx.log(`${slot.path}: removed a slot whose creation was interrupted`)
         continue

@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import type { WorktreePoolActionResult } from '../../shared/ipc/worktree-pool'
 import { hiddenEditPaths, ignoredPathsAtRisk, isChatTranscriptPath } from '../agent-worktree-keep-checks'
 import { pathExists } from '../git-utils'
+import { removeWorktreeLeftovers } from '../worktree-leftovers'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { removeWorktreeKeepingSubmoduleWork } from '../worktree-submodule-removal'
 import { MEASURE_CONCURRENCY } from './disk-usage'
@@ -129,11 +130,17 @@ export async function evictSlot(
       // that exists nowhere else, and its status reads clean again: the reads
       // above never look inside a submodule, and --force deletes each one's
       // repository with the slot (worktree-submodule-removal.ts).
-      const removal = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
-        removeWorktreeKeepingSubmoduleWork(pool.record.repoRoot, slot.path, ctx.git, {
+      const removal = await withWorktreeRegistryLock(pool.record.repoRoot, async () => {
+        const outcome = await removeWorktreeKeepingSubmoduleWork(pool.record.repoRoot, slot.path, ctx.git, {
           knownWorkspaceIds: ctx.deps.knownWorkspaceIds ?? null,
-        }),
-      )
+        })
+        // Git for Windows reports success with junctions still in place,
+        // and a new slot could not be made at this path again.
+        if (outcome.outcome === 'removed' && !(await removeWorktreeLeftovers(slot.path))) {
+          ctx.log(`${slot.path}: left files written after git removed it`)
+        }
+        return outcome
+      })
       if (removal.outcome === 'kept') {
         const unreadable = removal.why.kind === 'unreadable'
         await hold(ctx, pool, slot, unreadable ? 'error' : 'dirty', `found while evicting: ${removal.why.detail}`, {

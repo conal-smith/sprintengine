@@ -11,6 +11,7 @@ import { listGitWorktrees } from './git-worktree-list'
 import { resolveRepoRoot } from './git-worktree-validation'
 import { lockAgentWorktree, relockWorktree } from './agent-worktree-lock'
 import { worktreeBranchLedger, type WorktreeBranchLedger } from './worktree-branch-ledger'
+import { removeWorktreeLeftovers } from './worktree-leftovers'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { removeWorktreeKeepingSubmoduleWork, type SubmoduleWork } from './worktree-submodule-removal'
 import type { WorktreePoolReturnInput, WorktreePoolSweepEntry } from './worktree-pool/worktree-pool-service'
@@ -455,11 +456,16 @@ export async function cleanupAgentWorktrees(
     // A worktree with checked-out submodules, which plain `remove` always
     // refuses, is forced only once its submodules hold nothing to lose and
     // its status reads clean again (worktree-submodule-removal.ts).
-    const removal = await withWorktreeRegistryLock(root, () =>
-      removeWorktreeKeepingSubmoduleWork(root, worktree.path, runGit, {
+    const removal = await withWorktreeRegistryLock(root, async () => {
+      const outcome = await removeWorktreeKeepingSubmoduleWork(root, worktree.path, runGit, {
         knownWorkspaceIds: deps.knownWorkspaceIds ?? null,
-      }),
-    )
+      })
+      // Git for Windows reports success with junctions still in place.
+      if (outcome.outcome === 'removed' && !(await removeWorktreeLeftovers(worktree.path))) {
+        log(`left files written after git removed it in ${worktree.path}`)
+      }
+      return outcome
+    })
     if (removal.outcome !== 'removed' && ownLock) {
       await relockWorktree(root, worktree.path, worktree.lockedReason, runGit)
     }
