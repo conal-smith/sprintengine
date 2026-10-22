@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
+import type { AgentLaunchRecord } from '../../shared/agent-launch'
 import type { TerminalSessionSnapshot } from '../../shared/electron-api'
-import type { McpToolRegistration, McpToolResult } from '../../shared/modules/mcp-tools'
+import type { McpConnectionMetadata, McpToolRegistration, McpToolResult } from '../../shared/modules/mcp-tools'
 import { readTerminalOutputTail } from '../terminal-output-tail'
 import { TerminalReplayBuffer } from '../terminal-replay-buffer'
 import { createAutomationTools, type AutomationBackends } from './automation-tools'
@@ -27,15 +28,21 @@ function snapshot(sessionId: string, overrides: Partial<TerminalSessionSnapshot>
     lastInputAt: null,
     lastVisibleAt: null,
     activity: { kind: 'working', since: 1 },
+    // Started by the calling agent's chat: the only terminals it may read.
+    agentRecord: { launchedBy: { workspaceId: 'ws-1', agentId: 'agent-1' } },
     ...overrides,
   } as TerminalSessionSnapshot
 }
+
+const AGENT_1: McpConnectionMetadata = { kind: 'studio-agent', workspaceId: 'ws-1', agentId: 'agent-1' }
 
 function harness(options: { listed?: TerminalSessionSnapshot[]; held?: Record<string, Held> } = {}) {
   const held = new Map(Object.entries(options.held ?? {}))
   const reads: string[] = []
   const backends = {
     listTerminalSessions: () => options.listed ?? [],
+    getWorkspaceSyncSnapshot: () => ({ state: { workspaces: [], workspaceWindows: [] } }),
+    readRepositoryIdentity: async () => null,
     readTerminalOutputTail: (sessionId: string, read: { maxBytes: number; since?: string }) => {
       reads.push(sessionId)
       const session = held.get(sessionId)
@@ -44,9 +51,15 @@ function harness(options: { listed?: TerminalSessionSnapshot[]; held?: Record<st
   } as unknown as AutomationBackends
   const tools = createAutomationTools(backends)
   const terminalRead = tools.find((registration) => registration.name === 'terminal.read') as McpToolRegistration
+  const terminalList = tools.find((registration) => registration.name === 'terminal.list') as McpToolRegistration
   return {
-    read: (args: Record<string, unknown>) =>
-      terminalRead.handler(args, { metadata: { kind: 'studio-agent', workspaceId: 'ws-1', agentId: 'agent-1' } }),
+    read: (args: Record<string, unknown>) => terminalRead.handler(args, { metadata: AGENT_1 }),
+    readAs: (metadata: McpConnectionMetadata, args: Record<string, unknown>) =>
+      terminalRead.handler(args, { metadata }),
+    listAs: async (metadata: McpConnectionMetadata) =>
+      (
+        (await terminalList.handler({}, { metadata })).structuredContent as { terminals: Array<{ sessionId: string }> }
+      ).terminals.map((terminal) => terminal.sessionId),
     reads,
     held,
   }
@@ -252,4 +265,41 @@ test('a paired device is refused it whatever its grant, and it would need only a
   assert.match(localOnlyGatewayToolReason('terminal.read') ?? '', /not served over the tailnet/u)
   assert.equal(isStudioGatewayMutation('terminal.read'), false)
   assert.equal(requiredScopeForTool('terminal.read', isStudioGatewayMutation('terminal.read')), 'workspace:read')
+})
+
+test("an agent sees only the terminals it or its chat started, never the person's or another chat's", async () => {
+  const output = { output: bufferOf('secret\n') }
+  const listed = [
+    snapshot('mine', { kind: 'agent', agentId: 'agent-1', agentRecord: undefined }),
+    snapshot('launched', { kind: 'agent', workspaceId: 'ws-9', agentId: 'agent-7' }),
+    snapshot('shell', { agentRecord: undefined }),
+    snapshot('person-agent', { kind: 'agent', agentId: 'agent-2', agentRecord: undefined }),
+    snapshot('other-chat', {
+      kind: 'agent',
+      workspaceId: 'ws-2',
+      agentId: 'agent-3',
+      agentRecord: { launchedBy: { workspaceId: 'ws-2', agentId: 'agent-4' } } as AgentLaunchRecord,
+    }),
+  ] as TerminalSessionSnapshot[]
+  const held = Object.fromEntries(listed.map((session) => [session.sessionId, output]))
+  const { readAs, listAs, reads } = harness({ listed, held })
+
+  assert.deepEqual(await listAs(AGENT_1), ['mine', 'launched'])
+  assert.equal(answer(await readAs(AGENT_1, { sessionId: 'mine' })).text, 'secret')
+  assert.equal(answer(await readAs(AGENT_1, { sessionId: 'launched' })).text, 'secret')
+  // Another agent of the same chat sees what the chat launched, not agent-1's own terminal.
+  const sibling: McpConnectionMetadata = { kind: 'studio-agent', workspaceId: 'ws-1', agentId: 'agent-5' }
+  assert.deepEqual(await listAs(sibling), ['launched'])
+  reads.length = 0
+  for (const sessionId of ['shell', 'person-agent', 'other-chat']) {
+    const refused = await readAs(AGENT_1, { sessionId })
+    assert.equal(errorCode(refused), 'terminal_not_yours', sessionId)
+    assert.match(refused.content[0]?.type === 'text' ? refused.content[0].text : '', /not started by this agent/u)
+  }
+  // A caller with no identity of this app's gets nothing.
+  for (const metadata of [{ kind: 'external-local' }, { kind: 'studio-agent' }] as McpConnectionMetadata[]) {
+    assert.deepEqual(await listAs(metadata), [])
+    assert.equal(errorCode(await readAs(metadata, { sessionId: 'mine' })), 'terminal_not_yours')
+  }
+  assert.deepEqual(reads, [], 'no refused terminal was read')
 })
