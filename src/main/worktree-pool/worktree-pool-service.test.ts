@@ -90,6 +90,8 @@ function makeService(
   const sessions: string[] = []
   /** Paths the pool said it gave back while their chat or agent still exists. */
   const givenBack: string[] = []
+  /** The same, with the branch each is kept on and the branch its lease was on. */
+  const givenBackOn: Array<{ path: string; branch: string; leaseBranch: string }> = []
   const chats = options.chats
   const clock = { offset: 0 }
   const prefix = options.branchPrefix
@@ -100,7 +102,10 @@ function makeService(
     livePaths: () => [...live, ...sessions],
     liveSessionPaths: () => sessions,
     ...(chats ? { chats: () => chats } : {}),
-    onGivenBack: ({ path }) => givenBack.push(path),
+    onGivenBack: ({ path, branch, leaseBranch }) => {
+      givenBack.push(path)
+      givenBackOn.push({ path, branch, leaseBranch })
+    },
     log: process.env.POOL_TEST_LOG ? (line) => console.log(line) : () => {},
     timers: false,
     fetchFreshMs: 0,
@@ -115,7 +120,7 @@ function makeService(
       },
     },
   })
-  return { service, live, sessions, givenBack, chats, clock }
+  return { service, live, sessions, givenBack, givenBackOn, chats, clock }
 }
 
 type Harness = ReturnType<typeof makeService>
@@ -2347,4 +2352,184 @@ test('a slot an agent leased for itself is taken back while its chat is idle, ne
   assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/mcp'), 'its branch is kept')
   const next = await lease(harness, 'next')
   assert.notEqual(next.path, leased.path, 'its path is not handed to another agent while it exists')
+})
+
+// ── Slots whose owner is done with them ──────────────────────────────────
+
+/** A scheduled run's worktree chat: leased on the run's branch, with the branch as its owner until an agent has one. */
+async function scheduledRun(harness: Harness, branch: string) {
+  const leased = await harness.service.lease({ repoRoot: repo, name: branch, branch, owner: branch })
+  assert.equal(leased.ok, true, leased.ok ? '' : `${leased.reason}: ${leased.message}`)
+  return leased as Extract<typeof leased, { ok: true }>
+}
+
+/**
+ * Commit `content` to `file` in a slot. Its message is not the one
+ * `pushToOrigin` writes: the same change, parent, author and second would be
+ * the very same commit, an ancestor of main rather than a copy of one.
+ */
+async function commitIn(path: string, file: string, content: string): Promise<void> {
+  await writeFile(join(path, file), content)
+  await git(path, 'add', file)
+  await git(path, 'commit', '-q', '-m', `${file}, in the slot`)
+}
+
+test('a finished scheduled run whose agent moved to a branch of its own gives its slot back on that branch, and its chat comes back there', async () => {
+  const harness = makeService({ chats: [] })
+  installWorktreePool(harness.service)
+  const run = await scheduledRun(harness, 'agent/scheduled-20261017-012100')
+  harness.chats!.push(chatOn(run, 'ws-run', { name: 'Nightly fixes' }))
+  // The run named its pull request's branch, pushed it, and the pull request merged.
+  await git(run.path, 'switch', '-q', '-c', 'agent/daily-low')
+  await commitIn(run.path, 'fix.txt', 'fix\n')
+  await git(run.path, 'push', '-q', 'origin', 'agent/daily-low')
+  await git(run.path, 'push', '-q', 'origin', 'agent/daily-low:main')
+  await git(repo, 'fetch', '-q', 'origin')
+
+  const swept = await sweep(harness, [run.path], 3)
+  assert.equal(swept[0]?.verdict, 'returned', swept[0]?.detail ?? '')
+  const slot = await slotAt(harness, 'app-01')
+  assert.equal(slot.parked?.branch, 'agent/daily-low', 'kept on the branch its work is on')
+  assert.equal(slot.lastBranch, 'agent/daily-low')
+  assert.deepEqual(harness.givenBackOn, [
+    { path: run.path, branch: 'agent/daily-low', leaseBranch: 'agent/scheduled-20261017-012100' },
+  ])
+  assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/daily-low'), 'its branch is kept')
+
+  // Its chat, moved to that branch (worktree-services.ts), brings it back there.
+  assert.equal(harness.service.awaitsChat(run.path, 'agent/daily-low'), true)
+  const restored = await restoreGitWorktree({ repoRoot: repo, path: run.path, branchName: 'agent/daily-low' })
+  assert.equal(restored.ok, true, restored.ok ? '' : restored.message)
+  assert.equal(await git(run.path, 'branch', '--show-current'), 'agent/daily-low')
+  assert.equal((await slotAt(harness, 'app-01')).lease?.branch, 'agent/daily-low')
+})
+
+test('a slot whose agent moved to another branch is still kept while it is dirty, has a commit nowhere else, or is detached', async () => {
+  const harness = makeService({ chats: [] })
+  const dirty = await scheduledRun(harness, 'agent/scheduled-dirty')
+  const unpushed = await scheduledRun(harness, 'agent/scheduled-unpushed')
+  const detached = await scheduledRun(harness, 'agent/scheduled-detached')
+  harness.chats!.push(chatOn(dirty, 'ws-1'), chatOn(unpushed, 'ws-2'), chatOn(detached, 'ws-3'))
+  await git(dirty.path, 'switch', '-q', '-c', 'agent/dirty-work')
+  await writeFile(join(dirty.path, 'README.md'), '# changed\n')
+  await git(unpushed.path, 'switch', '-q', '-c', 'agent/unpushed-work')
+  await commitIn(unpushed.path, 'feature.txt', 'feature\n')
+  await git(detached.path, 'switch', '-q', '--detach')
+
+  const swept = await sweep(harness, [dirty.path, unpushed.path, detached.path], 3)
+  const why = (leased: { path: string }) => swept.find((entry) => entry.path === leased.path)
+  assert.equal(why(dirty)?.verdict, 'in-use')
+  assert.equal(why(dirty)?.detail, '1 uncommitted change')
+  assert.equal(why(unpushed)?.detail, 'it has commits not pushed')
+  assert.equal(why(detached)?.detail, 'it is on a detached HEAD, not agent/scheduled-detached')
+  assert.equal(await readFile(join(dirty.path, 'README.md'), 'utf8'), '# changed\n')
+  assert.equal(await git(unpushed.path, 'branch', '--show-current'), 'agent/unpushed-work')
+  assert.deepEqual(harness.givenBack, [])
+})
+
+test('a commit cherry-picked onto the default branch and edited there since holds nothing only it has; a commit of its own does', async () => {
+  const harness = makeService({ chats: [] })
+  const picked = await lease(harness, 'picked')
+  const own = await lease(harness, 'own')
+  harness.chats!.push(chatOn(picked, 'ws-1'), chatOn(own, 'ws-2'))
+  await commitIn(picked.path, 'README.md', '# app v2\n')
+  await commitIn(own.path, 'own.txt', 'only here\n')
+  // The same change landed on main under another commit, and main has edited
+  // that line again since: merging the branch in would conflict, though
+  // nothing on it is new.
+  await pushToOrigin('README.md', '# app v2\n')
+  await pushToOrigin('README.md', '# app v3\n')
+  await git(repo, 'fetch', '-q', 'origin')
+
+  const swept = await sweep(harness, [picked.path, own.path], 3)
+  const why = (leased: { path: string }) => swept.find((entry) => entry.path === leased.path)
+  assert.equal(why(picked)?.verdict, 'returned', why(picked)?.detail ?? '')
+  assert.equal(why(own)?.verdict, 'in-use')
+  assert.equal(why(own)?.detail, 'it has commits not pushed')
+  assert.equal(await git(own.path, 'branch', '--show-current'), 'agent/own')
+})
+
+test('a full pool takes the slot of a chat that ended minutes ago, without waiting out the idle period', async () => {
+  const harness = makeService({ chats: [] })
+  await harness.service.updateSettings({ maxSlots: 2 })
+  const ended = await lease(harness, 'ended')
+  const open = await lease(harness, 'open')
+  harness.chats!.push(chatOn(ended, 'ws-1'), chatOn(open, 'ws-2', { open: true }))
+  // Seen in use by a sweep, so neither is a lease made moments ago.
+  await sweep(harness, [ended.path, open.path])
+  // Its chat settled two minutes ago: nothing on record works in it now.
+  harness.chats!.splice(0, 1)
+  harness.clock.offset += 2 * 60_000
+
+  const third = await lease(harness, 'third')
+  assert.notEqual(third.path, ended.path)
+  assert.equal(await exists(ended.path), false, 'removed to make room')
+  assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/ended'), 'its branch is kept')
+  assert.equal(await git(open.path, 'branch', '--show-current'), 'agent/open', 'the open chat is untouched')
+})
+
+test('a full pool with one slot a finished scheduled run moved off its branch leases that slot’s place', async () => {
+  const harness = makeService({ chats: [] })
+  await harness.service.updateSettings({ maxSlots: 2 })
+  const run = await scheduledRun(harness, 'agent/scheduled-20261021-010000')
+  const dirty = await lease(harness, 'dirty')
+  harness.chats!.push(chatOn(run, 'ws-run'), chatOn(dirty, 'ws-2'))
+  await git(run.path, 'switch', '-q', '-c', 'agent/daily-lowmed')
+  await commitIn(run.path, 'fix.txt', 'fix\n')
+  await git(run.path, 'push', '-q', 'origin', 'agent/daily-lowmed')
+  await writeFile(join(dirty.path, 'notes.txt'), 'wip\n')
+  harness.clock.offset += 2 * HOUR
+
+  const next = await lease(harness, 'next')
+  assert.equal(next.created, true)
+  assert.equal(await exists(run.path), false, 'the run’s slot was removed to make room')
+  assert.equal(harness.service.reservesPath(run.path), true, 'its path is kept for its chat')
+  assert.deepEqual(harness.givenBackOn, [
+    { path: run.path, branch: 'agent/daily-lowmed', leaseBranch: 'agent/scheduled-20261021-010000' },
+  ])
+  assert.equal(await readFile(join(dirty.path, 'notes.txt'), 'utf8'), 'wip\n', 'the dirty slot is untouched')
+})
+
+test('a truly full pool says whose each slot is, why it stays, and when one may come free; the tool says what to do instead', async () => {
+  const harness = makeService({ chats: [] })
+  await harness.service.updateSettings({ maxSlots: 3 })
+  const recent = await lease(harness, 'recent')
+  const dirty = await lease(harness, 'dirty')
+  const mine = await harness.service.lease({
+    repoRoot: repo,
+    name: 'mcp',
+    owner: 'agent-7',
+    agentId: 'agent-7',
+    workspaceId: 'ws-3',
+  })
+  assert.ok(mine.ok)
+  harness.chats!.push(chatOn(recent, 'ws-1', { name: 'Fix the login' }), chatOn(dirty, 'ws-2'), {
+    ...chatOn(mine, 'ws-3', { name: 'Docs pass', open: true }),
+    folderPath: repo,
+  })
+  await writeFile(join(dirty.path, 'notes.txt'), 'wip\n')
+  harness.clock.offset += 2 * HOUR
+  // Its chat said something three minutes ago.
+  harness.chats![0].lastActiveAt = Date.now() + harness.clock.offset - 3 * 60_000
+
+  const refused = await harness.service.lease({ repoRoot: repo, name: 'fourth' })
+  assert.equal(refused.ok ? null : refused.reason, 'full')
+  const message = refused.ok ? '' : refused.message
+  assert.match(message, /app-01 \(agent\/recent, chat “Fix the login”\): used 3 minutes ago;/)
+  assert.match(message, /app-02 \(agent\/dirty\): 1 uncommitted change;/)
+  assert.match(message, /app-03 \(agent\/mcp, agent agent-7 in “Docs pass”\): its chat is open on screen\./)
+  assert.match(message, / app-01 may come free in 7 minutes, if nothing else holds it\. /)
+  assert.equal(refused.ok ? null : refused.retryInMs, 7 * 60_000)
+
+  const tools = createWorktreePoolTools({ pool: harness.service, findWorkspace: () => ({ folderPath: repo }) })
+  const answer = await tools[0].handler({ name: 'fifth' }, provenAgent('ws-9', 'agent-9'))
+  assert.equal(answer.isError, true)
+  const error = (answer.structuredContent as { error: { code: string; message: string } }).error
+  assert.equal(error.code, 'unavailable')
+  assert.match(error.message, /The pool already has 3 worktrees/)
+  assert.match(
+    error.message,
+    /Do not clone the repository or run `git worktree add` instead: call worktree\.lease again in 7 minutes, or tell the person/,
+  )
+  assert.deepEqual(harness.givenBack, [])
 })
