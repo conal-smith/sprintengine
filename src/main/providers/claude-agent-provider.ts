@@ -44,7 +44,7 @@ import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../.
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isWindowsPath, toWslPath } from '../../shared/host-paths'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
-import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV } from '../../shared/studio-env'
+import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, MCP_SECRET_ENV_PREFIX } from '../../shared/studio-env'
 import { inferConversationToolKind } from '../../shared/conversation/toolKind'
 import {
   CLAUDE_WORKTREE_LEASE_TOOLS,
@@ -1117,7 +1117,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         ? { plugins: plugins.map((dir) => ({ type: 'local' as const, path: wslTarget ? toWslPath(dir) : dir })) }
         : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
-      env: withClaudeTaskTools(env),
+      // The values the command line's MCP servers name by reference (claudeMcpLaunch).
+      env: withClaudeTaskTools({ ...env, ...mcpServers.env }),
       abortController: abort,
       canUseTool: (toolName, toolInput, callbackOptions) =>
         handleCanUseTool(state, toolName, toolInput, callbackOptions?.signal, callbackOptions),
@@ -4148,23 +4149,62 @@ export function claudeMcpServers(
  * first moment, whatever becomes of a request made once the child runs. The
  * session's own servers go over the control channel (`registerMcpServers`),
  * except one that names a `${NAME}` reference: the CLI expands those only in
- * what it reads from its command line, and a reference is not a secret.
+ * what it reads from its command line. Such a server's literal args, env
+ * values and header values are swapped for references too, to variables in
+ * `env` that the child's environment gets, so no value it carries is on the
+ * command line.
  */
 export function claudeMcpLaunch(
   gateway: ConversationMcpServer | null,
   sessionServers: readonly ConversationMcpServer[],
   options: { wsl?: boolean } = {},
-): { commandLine: NonNullable<Options['mcpServers']>; control: NonNullable<Options['mcpServers']> } {
+): {
+  commandLine: NonNullable<Options['mcpServers']>
+  control: NonNullable<Options['mcpServers']>
+  env: Record<string, string>
+} {
   const commandLine = claudeMcpServers(gateway ? [gateway] : [], options)
   const control: NonNullable<Options['mcpServers']> = {}
+  const env: Record<string, string> = {}
   for (const [id, server] of Object.entries(claudeMcpServers(sessionServers, options))) {
     // A session server of the gateway's own name stands in its place, as it
     // always did.
     delete commandLine[id]
-    if (JSON.stringify(server).includes('${')) commandLine[id] = server
+    if (JSON.stringify(server).includes('${')) commandLine[id] = withValuesByReference(server, env)
     else control[id] = server
   }
-  return { commandLine, control }
+  return { commandLine, control, env }
+}
+
+type SdkMcpServer = NonNullable<Options['mcpServers']>[string]
+
+/**
+ * `server` with each literal arg, env value and header value moved into `env`
+ * under a name of Studio's own and replaced by a `${NAME}` reference to it,
+ * which the CLI expands from its environment. A value that already holds a
+ * reference is the person's own and stays; so does one that spans lines, which
+ * a WSL child could not be handed on stdin.
+ */
+function withValuesByReference(server: SdkMcpServer, env: Record<string, string>): SdkMcpServer {
+  const reference = (value: string): string => {
+    if (value.includes('${') || /[\r\n\0]/u.test(value)) return value
+    let index = 1
+    while (`${MCP_SECRET_ENV_PREFIX}${index}` in env) index += 1
+    const name = `${MCP_SECRET_ENV_PREFIX}${index}`
+    env[name] = value
+    return `\${${name}}`
+  }
+  const values = (record: Record<string, string>): Record<string, string> =>
+    Object.fromEntries(Object.entries(record).map(([key, value]) => [key, reference(value)]))
+  if ('command' in server) {
+    return {
+      ...server,
+      ...(server.args ? { args: server.args.map(reference) } : {}),
+      ...(server.env ? { env: values(server.env) } : {}),
+    }
+  }
+  if ('headers' in server && server.headers) return { ...server, headers: values(server.headers) }
+  return server
 }
 
 // The gateway's bridge says which agent is calling from its environment. A
