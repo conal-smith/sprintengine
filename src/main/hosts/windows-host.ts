@@ -12,6 +12,7 @@ import { executionHostLabel, LOCAL_HOST_ID, type ExecutionHostSummary } from '..
 import { wslToWindowsPath } from '../../shared/host-paths'
 import { detectCliBatch } from '../cli-runtime-install'
 import { withGitExecutable } from '../git-executable'
+import { withGitSafetyConfig } from '../git-run'
 import { runSpawnDescriptor } from '../process-run'
 import {
   killCliSessionSurvivors,
@@ -74,13 +75,19 @@ export function createWindowsHost(): ExecutionHost {
         { timeoutMs: options.timeoutMs, ...(options.cwd ? { cwd: options.cwd } : {}) },
       ),
     // The real git.exe rather than Git for Windows' launcher; see git-executable.ts.
+    // Under the app's safety config (git-run.ts), which the shared runner may
+    // already have put in front.
     runGit: (cwd, args, options) => {
       const env = { ...process.env, ...options.env }
       return withGitExecutable(
         env,
         (file) =>
           runSpawnDescriptor(
-            { file, args: ['-C', cwd, ...args], ...(options.stdin !== undefined ? { stdin: options.stdin } : {}) },
+            {
+              file,
+              args: ['-C', cwd, ...withGitSafetyConfig(args)],
+              ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+            },
             { env, ...(options.timeoutMs !== null ? { timeoutMs: options.timeoutMs } : {}) },
           ),
         { didNotStart: (outcome) => outcome.spawnFailed === true },

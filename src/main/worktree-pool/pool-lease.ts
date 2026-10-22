@@ -8,7 +8,7 @@ import { poolSlotName, poolSlotNumber, poolSlotStemForContainer } from '../../sh
 import { agentWorktreeLockReason, lockAgentWorktree } from '../agent-worktree-lock'
 import { hiddenEditPaths } from '../agent-worktree-keep-checks'
 import { pathExists } from '../git-utils'
-import { GIT_NETWORK_TIMEOUT_MS } from '../git-run'
+import { explicitGitDir, GIT_NETWORK_TIMEOUT_MS } from '../git-run'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
@@ -87,6 +87,18 @@ function unsupportedHost(repoRoot: string, named: string | null | undefined): st
  * lease prepares its slot there while the fetch runs. Never rejects: a fetch
  * that throws is a base at `local`, with the reason as its note.
  */
+/**
+ * The repository's own git directory, named to git for a `worktree add` run
+ * from the main checkout: the slot is added to the repository the pool was
+ * made for, never to one git might find on its own from that folder. Git does
+ * not take a bare repository it only finds (`safe.bareRepository=explicit`,
+ * git-run.ts), so this is also what keeps the add working wherever the
+ * repository's directory is not the checkout's `.git`.
+ */
+function repositoryGitDir(pool: PoolRuntime): string[] {
+  return [explicitGitDir(pool.record.commonDir)]
+}
+
 function ensureBase(ctx: PoolContext, pool: PoolRuntime, local: { ref: string; sha: string }): Promise<LeaseBase> {
   if (pool.fetch) return pool.fetch
   const run = (async (): Promise<LeaseBase> => {
@@ -390,7 +402,16 @@ async function createSlot(
   if (!slot) return 'full'
   const checkoutConfig = await parallelCheckoutConfig(ctx.git, pool.record.repoRoot)
   const result = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
-    ctx.git(pool.record.repoRoot, [...checkoutConfig, 'worktree', 'add', '--quiet', '--detach', slot.path, base.sha]),
+    ctx.git(pool.record.repoRoot, [
+      ...checkoutConfig,
+      ...repositoryGitDir(pool),
+      'worktree',
+      'add',
+      '--quiet',
+      '--detach',
+      slot.path,
+      base.sha,
+    ]),
   )
   if (!result.ok) {
     ctx.log(`${slot.path}: worktree add failed (${tail(result.message, 300)})`)
@@ -1003,7 +1024,15 @@ async function recreateAtReservedPath(
   try {
     const checkoutConfig = await parallelCheckoutConfig(ctx.git, pool.record.repoRoot)
     const added = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
-      ctx.git(pool.record.repoRoot, [...checkoutConfig, 'worktree', 'add', '--quiet', made.path, branch]),
+      ctx.git(pool.record.repoRoot, [
+        ...checkoutConfig,
+        ...repositoryGitDir(pool),
+        'worktree',
+        'add',
+        '--quiet',
+        made.path,
+        branch,
+      ]),
     )
     if (!added.ok) {
       await ctx.withPool(pool, async () => {

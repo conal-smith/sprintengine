@@ -230,8 +230,59 @@ export type GitRunOptions = {
  * command line outranks every config file. The price is the speed a real
  * filesystem monitor buys on a very large repository, and the app's reads are
  * not where that matters.
+ *
+ * `safe.bareRepository=explicit` keeps git from working in a bare repository
+ * it finds on its own by walking up from the folder it was started in. A
+ * project can carry a bare repository inside its tree, with a config and
+ * hooks of its own, and a git started in that subfolder would otherwise take
+ * them as the repository it was asked about. A folder that really is a bare
+ * repository is named with `--git-dir` ({@link explicitGitDir}). A checkout,
+ * a linked worktree and a folder whose `.git` file points at a bare
+ * repository are found as before.
  */
-export const GIT_SAFETY_CONFIG: readonly string[] = ['-c', 'core.fsmonitor=false']
+const GIT_SAFETY_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['core.fsmonitor', 'false'],
+  ['safe.bareRepository', 'explicit'],
+]
+export const GIT_SAFETY_CONFIG: readonly string[] = GIT_SAFETY_PAIRS.flatMap(([key, value]) => [
+  '-c',
+  `${key}=${value}`,
+])
+
+/**
+ * `args` with {@link GIT_SAFETY_CONFIG} in front, unless it is already there:
+ * for a runner that may be handed arguments the shared runner has prefixed.
+ */
+export function withGitSafetyConfig(args: readonly string[]): string[] {
+  const prefixed = GIT_SAFETY_CONFIG.every((arg, index) => args[index] === arg)
+  return prefixed ? [...args] : [...GIT_SAFETY_CONFIG, ...args]
+}
+
+/**
+ * The global option that names a bare repository's directory to git
+ * explicitly. Under `safe.bareRepository=explicit` git will not work in a bare
+ * repository it merely finds by walking up from its working directory: a
+ * repository cloned with a bare one committed inside it (its config and hooks
+ * included) cannot have those picked up by a git the app starts in that
+ * subfolder. A caller that knows the folder it holds IS a bare repository —
+ * a bare clone opened as a project, the skills cache's own clones — says so
+ * with this, and git works there as before.
+ */
+export function explicitGitDir(gitDir: string): string {
+  return `--git-dir=${gitDir}`
+}
+
+/**
+ * `[--git-dir=<path>]` when `path` is itself a bare repository's directory,
+ * and `[]` otherwise (a checkout, a folder whose `.git` file points at a bare
+ * repository, not a repository at all, or git unavailable). One read-only
+ * `rev-parse`; never throws.
+ */
+export async function bareRepositoryGitDirArgs(path: string): Promise<string[]> {
+  const flag = explicitGitDir(path)
+  const result = await runGitCommand(path, [flag, 'rev-parse', '--is-bare-repository'])
+  return result.ok && result.stdout.trim() === 'true' ? [flag] : []
+}
 
 /**
  * {@link GIT_SAFETY_CONFIG} for a git the app does not start itself — the ones
@@ -247,7 +298,7 @@ export function gitSafetyEnv(
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   return withGitConfigEnv(base, [
-    ['core.fsmonitor', 'false'],
+    ...GIT_SAFETY_PAIRS.map(([key, value]): [string, string] => [key, value]),
     ...(cwd ? wslShareSafeDirectories(cwd, platform) : []).map((dir): [string, string] => ['safe.directory', dir]),
   ])
 }

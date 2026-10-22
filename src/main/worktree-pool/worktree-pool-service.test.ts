@@ -352,12 +352,14 @@ test('a slot is made and reset with parallel checkout, at the repository’s own
   await pushToOrigin('later.txt', 'later\n')
   await lease(harness, 'second')
   assert.deepEqual(
-    checkouts.map((args) => args.slice(0, 3)),
+    checkouts.map((args) => args.filter((arg) => !arg.startsWith('--git-dir=')).slice(0, 3)),
     [
       ['-c', 'checkout.workers=3', 'worktree'],
       ['-c', 'checkout.workers=3', 'read-tree'],
     ],
   )
+  // The add names the repository's own git directory rather than leaving git to find it.
+  assert.ok(checkouts[0].includes(`--git-dir=${join(repo, '.git')}`), checkouts[0].join(' '))
 })
 
 test('two leases at once get two different slots', async () => {

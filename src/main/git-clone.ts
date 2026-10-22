@@ -4,6 +4,7 @@ import { readdirSync, rmSync } from 'fs'
 import { lstat, mkdir, readdir, rm } from 'fs/promises'
 import { promisify } from 'util'
 import { withGitExecutable } from './git-executable'
+import { GIT_SAFETY_CONFIG } from './git-run'
 import type {
   CloneProgress,
   CloneProgressStage,
@@ -93,7 +94,11 @@ async function targetState(target: string): Promise<TargetState> {
 async function originOf(dir: string, env: NodeJS.ProcessEnv): Promise<string | null> {
   try {
     const { stdout } = await withGitExecutable(env, (file) =>
-      execFileAsync(file, ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true, env }),
+      execFileAsync(file, ['-C', dir, ...GIT_SAFETY_CONFIG, 'remote', 'get-url', 'origin'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        env,
+      }),
     )
     return stdout.trim() || null
   } catch {
@@ -388,7 +393,10 @@ export async function cloneRepository(
     }
   }
 
-  const args = ['clone', '--progress']
+  // The app's safety config (git-run.ts) for the clone's own process, which
+  // checks the new repository out. A global `-c` is not written into the
+  // clone's config.
+  const args = [...GIT_SAFETY_CONFIG, 'clone', '--progress']
   const credential = await tokenFor(source, deps)
   if (credential) {
     const signIn = tokenCredentialGit(credential.host, credential.token)

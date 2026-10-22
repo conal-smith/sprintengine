@@ -30,7 +30,7 @@
 import { spawn } from 'node:child_process'
 import type { Dirent } from 'node:fs'
 import { access, lstat, mkdir, readdir, rm, utimes } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 import {
   DEFAULT_SKILL_MAX_FILE_BYTES,
@@ -39,6 +39,7 @@ import {
 } from './github-tree'
 import { isSkillRepoSegment, splitSkillRepo, type SkillRepoLocation, type SkillRepoSsh } from '../../shared/skill-repo'
 import { withGitExecutable } from '../git-executable'
+import { explicitGitDir, GIT_SAFETY_CONFIG } from '../git-run'
 import type { SkillRepoReader } from './repo-reader'
 import type { SkillTreeEntry } from './scan'
 
@@ -69,6 +70,12 @@ export class GitRepoReadError extends Error {
 
 export type GitRunOptions = {
   cwd?: string
+  /**
+   * The bare clone the command works in, named to git with `--git-dir`: the
+   * app's git does not take a bare repository it only finds from its working
+   * directory (`safe.bareRepository=explicit`, git-run.ts).
+   */
+  gitDir?: string
   timeoutMs: number
   env?: NodeJS.ProcessEnv
   /** Written to the child's stdin and closed. Only `cat-file --batch-check` uses it. */
@@ -257,7 +264,8 @@ export function defaultRunGit(args: string[], options: GitRunOptions): Promise<G
   // git-executable.ts) — which also makes the child killed below git itself,
   // not a launcher whose git would outlive it.
   const env = gitEnv(options.env)
-  return withGitExecutable(env, (file) => startGit(file, args, env, options))
+  const argv = [...GIT_SAFETY_CONFIG, ...(options.gitDir ? [explicitGitDir(options.gitDir)] : []), ...args]
+  return withGitExecutable(env, (file) => startGit(file, argv, env, options))
 }
 
 function startGit(file: string, args: string[], env: NodeJS.ProcessEnv, options: GitRunOptions): Promise<GitRunResult> {
@@ -727,7 +735,7 @@ export function createGitRepoReader(options: GitRepoReaderOptions): SkillRepoRea
     const env = await networkEnv(parsed)
     const release = await network.acquire()
     try {
-      return await runGit(args, { cwd, timeoutMs: networkTimeoutMs, env, stdin })
+      return await runGit(args, { ...inClone(cwd), timeoutMs: networkTimeoutMs, env, stdin })
     } catch (error) {
       const other =
         parsed.host === host && !parsed.ssh
@@ -744,9 +752,20 @@ export function createGitRepoReader(options: GitRepoReaderOptions): SkillRepoRea
     }
   }
 
+  // Every command but two runs inside one of the bare clones under the cache
+  // directory; those two (`init --bare` and `ls-remote`) run in a folder that
+  // is not a repository, and are left to find none.
+  // A clone is `<cacheDir>/<host>/<owner>/<name>.git`, three levels down.
+  const isCloneDir = (cwd: string): boolean => {
+    const segments = relative(options.cacheDir, cwd).split(/[\\/]/u)
+    return segments.length === 3 && segments.every((segment) => segment !== '' && segment !== '..')
+  }
+  const inClone = (cwd: string | undefined): Pick<GitRunOptions, 'cwd' | 'gitDir'> =>
+    cwd === undefined || !isCloneDir(cwd) ? { cwd } : { cwd, gitDir: cwd }
+
   const runLocal = async (args: string[], cwd: string, what: string): Promise<GitRunResult> => {
     try {
-      return await runGit(args, { cwd, timeoutMs: localTimeoutMs })
+      return await runGit(args, { ...inClone(cwd), timeoutMs: localTimeoutMs })
     } catch (error) {
       throw classify(error, what)
     }
@@ -790,7 +809,7 @@ export function createGitRepoReader(options: GitRepoReaderOptions): SkillRepoRea
   const hasRemote = async (dir: string): Promise<boolean> => {
     try {
       const { stdout } = await runGit(['config', '--get', 'remote.origin.url'], {
-        cwd: dir,
+        ...inClone(dir),
         timeoutMs: localTimeoutMs,
       })
       return stdout.toString('utf8').trim().length > 0
@@ -842,7 +861,7 @@ export function createGitRepoReader(options: GitRepoReaderOptions): SkillRepoRea
   const hasCommit = async (dir: string, sha: string): Promise<boolean> => {
     try {
       await runGit(['cat-file', '-e', `${sha}^{commit}`], {
-        cwd: dir,
+        ...inClone(dir),
         timeoutMs: localTimeoutMs,
         env: { GIT_NO_LAZY_FETCH: '1' },
       })

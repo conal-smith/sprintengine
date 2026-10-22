@@ -400,7 +400,10 @@ test('git-branch-span', async () => {
       const dir = repo()
       const bare = mkdtempSync(join(tmpdir(), 'sprintengine-branch-span-bare-'))
       created.push(bare)
-      execFileSync('git', ['clone', '--quiet', '--bare', dir, bare])
+      execFileSync('git', ['clone', '--quiet', '--bare', dir, join(bare, '.bare')])
+      // Reached through a `.git` file, as a bare repository's container is:
+      // one git is only allowed to find, not named, is no repository at all.
+      writeFileSync(join(bare, '.git'), 'gitdir: ./.bare\n')
       const span = await readBranchSpan(bare)
       assert.equal(span?.readable, false)
       assert.equal(span?.stat.counts, null, 'a breakdown we could not take is absent')

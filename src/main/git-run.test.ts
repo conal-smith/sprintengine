@@ -252,17 +252,18 @@ test('the environment form carries the same entries after any already there', ()
     '//wsl.localhost/Ubuntu/home',
     'win32',
   )
-  assert.equal(env.GIT_CONFIG_COUNT, '4')
+  assert.equal(env.GIT_CONFIG_COUNT, '5')
   assert.equal(env.GIT_CONFIG_KEY_0, 'user.name')
   assert.deepEqual(
-    [1, 2, 3].map((n) => [env[`GIT_CONFIG_KEY_${n}`], env[`GIT_CONFIG_VALUE_${n}`]]),
+    [1, 2, 3, 4].map((n) => [env[`GIT_CONFIG_KEY_${n}`], env[`GIT_CONFIG_VALUE_${n}`]]),
     [
       ['core.fsmonitor', 'false'],
+      ['safe.bareRepository', 'explicit'],
       ['safe.directory', '%(prefix)///wsl.localhost/Ubuntu/home'],
       ['safe.directory', '%(prefix)///wsl.localhost/Ubuntu'],
     ],
   )
-  assert.equal(gitSafetyEnv({}, 'C:\\Users\\dev\\repo', 'win32').GIT_CONFIG_COUNT, '1')
+  assert.equal(gitSafetyEnv({}, 'C:\\Users\\dev\\repo', 'win32').GIT_CONFIG_COUNT, '2')
 })
 
 test("an agent's own git on This PC is told a distribution's folder is safe, after the person's own entries", () => {

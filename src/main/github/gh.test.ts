@@ -291,7 +291,7 @@ test('on Windows, a PATH that changed is searched again', async () => {
   }
 })
 
-test("the git that gh runs inside a repository ignores the repository's filesystem-monitor program", async () => {
+test("the git that gh runs inside a repository ignores the repository's filesystem-monitor program and stray bare repositories", async () => {
   const envs: NodeJS.ProcessEnv[] = []
   const spawn: GhSpawn = async (_file, _args, options) => {
     envs.push(options.env)
@@ -301,9 +301,14 @@ test("the git that gh runs inside a repository ignores the repository's filesyst
   await gh.run(['pr', 'list'], { cwd: '/Users/dev/repo' })
   const env = envs[0]
   const count = Number(env.GIT_CONFIG_COUNT)
-  const index = count - 1
-  assert.equal(env[`GIT_CONFIG_KEY_${index}`], 'core.fsmonitor')
-  assert.equal(env[`GIT_CONFIG_VALUE_${index}`], 'false')
+  const pairs = Array.from({ length: count }, (_, index) => [
+    env[`GIT_CONFIG_KEY_${index}`],
+    env[`GIT_CONFIG_VALUE_${index}`],
+  ])
+  assert.deepEqual(pairs.slice(-2), [
+    ['core.fsmonitor', 'false'],
+    ['safe.bareRepository', 'explicit'],
+  ])
 })
 
 test('gh off the app PATH is looked up once: many calls start at most one shell, then gh directly', async () => {

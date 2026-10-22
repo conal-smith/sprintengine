@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import type { CliRuntimeSettings } from '../../shared/electron-api'
 import { executionHostLabel, LOCAL_HOST_ID, type ExecutionHostSummary } from '../../shared/execution-host'
 import { detectCliBatch } from '../cli-runtime-install'
+import { withGitSafetyConfig } from '../git-run'
 import { runSpawnDescriptor } from '../process-run'
 import {
   killCliSessionSurvivors,
@@ -75,9 +76,15 @@ export function createPosixLocalHost(platform: NodeJS.Platform = process.platfor
         { file: argv[0] ?? '', args: argv.slice(1) },
         { timeoutMs: options.timeoutMs, ...(options.cwd ? { cwd: options.cwd } : {}) },
       ),
+    // Under the app's safety config (git-run.ts), which the shared runner may
+    // already have put in front.
     runGit: (cwd, args, options) =>
       runSpawnDescriptor(
-        { file: 'git', args: ['-C', cwd, ...args], ...(options.stdin !== undefined ? { stdin: options.stdin } : {}) },
+        {
+          file: 'git',
+          args: ['-C', cwd, ...withGitSafetyConfig(args)],
+          ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+        },
         {
           env: { ...process.env, ...options.env },
           ...(options.timeoutMs !== null ? { timeoutMs: options.timeoutMs } : {}),

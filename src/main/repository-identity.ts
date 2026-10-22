@@ -1,4 +1,5 @@
 import { getGitRepoRoot } from './git'
+import { bareRepositoryGitDirArgs, explicitGitDir } from './git-run'
 import { runGit } from './git-utils'
 import {
   parseRemoteFetchUrls,
@@ -45,9 +46,20 @@ export type RepositoryIdentityReaders = {
 // A bare repository has no work tree, so `--show-toplevel` refuses it — both a
 // bare clone and a container folder whose `.git` file points at `./.bare`, the
 // layout people keep several worktrees under. Such a folder is still a clone of
-// its remote and should group with that project's checkouts; `remote -v` reads
-// fine from the folder itself, so the folder stands in as its root.
+// its remote and should group with that project's checkouts, so the folder
+// stands in as its root. A bare clone is named to git with `--git-dir`: the
+// app's git does not take a bare repository it only finds from its working
+// directory (`safe.bareRepository=explicit`, git-run.ts). The container is
+// found through its `.git` file, as a checkout is.
+// The bare clones the root read just found, each taken back by the remote
+// read that follows it for the same folder.
+const bareClones = new Set<string>()
+
 async function readBareRepoRoot(folderPath: string): Promise<string | null> {
+  if ((await bareRepositoryGitDirArgs(folderPath)).length > 0) {
+    bareClones.add(folderPath)
+    return folderPath
+  }
   try {
     const stdout = await runGit(folderPath, ['rev-parse', '--is-bare-repository'])
     return stdout.trim() === 'true' ? folderPath : null
@@ -58,7 +70,8 @@ async function readBareRepoRoot(folderPath: string): Promise<string | null> {
 
 const defaultReaders: RepositoryIdentityReaders = {
   readRepoRoot: async (folderPath) => (await getGitRepoRoot(folderPath)) ?? (await readBareRepoRoot(folderPath)),
-  readRemotes: (repoRoot) => runGit(repoRoot, ['remote', '-v']),
+  readRemotes: (repoRoot) =>
+    runGit(repoRoot, [...(bareClones.delete(repoRoot) ? [explicitGitDir(repoRoot)] : []), 'remote', '-v']),
 }
 
 /**
