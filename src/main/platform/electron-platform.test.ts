@@ -5,7 +5,9 @@ import { createElectronPlatform, type ElectronPlatformDeps } from './electron-pl
 
 type FakeWindow = { destroyed: boolean; sent: Array<[string, unknown]>; throws?: boolean }
 
-function harness(options: { packaged?: boolean; notifications?: boolean } = {}) {
+function harness(
+  options: { packaged?: boolean; notifications?: boolean; platform?: NodeJS.Platform; backend?: string } = {},
+) {
   const paths: Record<string, string> = {
     userData: '/Users/dev/Library/Application Support/Studio',
     logs: '/Users/dev/Library/Logs/Studio',
@@ -16,6 +18,7 @@ function harness(options: { packaged?: boolean; notifications?: boolean } = {}) 
   const scramble = (bytes: Buffer): Buffer => Buffer.from(bytes.map((byte) => byte ^ 0x5a))
   const safeStorage = {
     isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: () => options.backend ?? 'gnome_libsecret',
     encryptString: (value: string) => scramble(Buffer.from(value, 'utf8')),
     decryptString: (value: Buffer) => scramble(value).toString('utf8'),
   }
@@ -65,6 +68,7 @@ function harness(options: { packaged?: boolean; notifications?: boolean } = {}) 
     },
     Notification: FakeNotification,
     resourcesPath: () => '/Applications/Studio.app/Contents/Resources',
+    ...(options.platform ? { platform: options.platform } : {}),
   } as unknown as ElectronPlatformDeps
   return { platform: createElectronPlatform(deps), paths, windows, banners, safeStorage }
 }
@@ -87,6 +91,14 @@ test('the cipher is safeStorage byte for byte, so a file an earlier build sealed
   assert.equal(platform.secrets.open(sealedBefore), 'sk-test-value')
   assert.deepEqual(platform.secrets.seal('sk-test-value'), sealedBefore)
   assert.equal(platform.secrets.available(), true)
+})
+
+test("Linux's plain-text safeStorage backend counts as no encryption, so secrets stay in memory", () => {
+  assert.equal(harness({ platform: 'linux', backend: 'basic_text' }).platform.secrets.available(), false)
+  assert.equal(harness({ platform: 'linux', backend: 'gnome_libsecret' }).platform.secrets.available(), true)
+  assert.equal(harness({ platform: 'linux', backend: 'kwallet6' }).platform.secrets.available(), true)
+  // The backend is a Linux notion; elsewhere the OS keychain is the only one.
+  assert.equal(harness({ platform: 'darwin', backend: 'basic_text' }).platform.secrets.available(), true)
 })
 
 test('a broadcast reaches every live window and survives one that throws', () => {
