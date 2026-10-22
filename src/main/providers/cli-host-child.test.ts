@@ -195,6 +195,32 @@ describe('a secret for a WSL child', () => {
     expect(plan.options.env).toEqual({ SPRINTENGINE_AGENT_ID: 'agent-1' })
   })
 
+  it("includes every value a chat's MCP servers name by reference, each read once", () => {
+    const env = { SPRINTENGINE_MCP_CHANNEL_TOKEN: TOKEN, SPRINTENGINE_MCP_SECRET_1: 'sk-test-header' }
+    const plan = cliHostSpawn(
+      {
+        command: 'codex',
+        args: [],
+        cwd: '',
+        env,
+        wsl: { ...wsl, stdinEnv: ['SPRINTENGINE_MCP_CHANNEL_TOKEN', 'SPRINTENGINE_MCP_SECRET_1'] },
+      },
+      { platform: 'win32', homedir: () => 'C:\\Users\\dev' },
+    )
+    expect(plan.stdin).toBe(`${TOKEN}\nsk-test-header\n`)
+    const script = decodedScript(plan.args)
+    expect(script).not.toContain('sk-test-header')
+    expect(script.match(/read -r SPRINTENGINE_MCP_SECRET_1/gu)).toHaveLength(1)
+    expect(plan.options.env).toEqual({})
+    // Named by nobody: still a secret, still on stdin.
+    const unnamed = cliHostSpawn(
+      { command: 'claude', args: [], cwd: '', env: { SPRINTENGINE_MCP_SECRET_1: 'sk-test-header' }, wsl },
+      { platform: 'win32', homedir: () => 'C:\\Users\\dev' },
+    )
+    expect(unnamed.stdin).toBe('sk-test-header\n')
+    expect(unnamed.args.join(' ')).not.toContain('sk-test-header')
+  })
+
   it('is not read at all when it has no value, and is refused when it spans lines', () => {
     const none = cliHostSpawn({ command: 'claude', args: [], cwd: '', env: {}, wsl })
     expect(none.stdin).toBeUndefined()

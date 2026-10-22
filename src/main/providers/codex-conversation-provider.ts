@@ -49,6 +49,7 @@ import {
 import type { ConversationCommand } from '../../shared/conversation/commands'
 import { CONVERSATION_GOAL_STATUS_WORDS } from '../../shared/conversation/goal'
 import { codexPlanInput, codexTool, codexToolResult } from './codex-items'
+import { codexMcpEnv, codexMcpServerFields, tomlInlineTable } from '../codex-mcp-overrides'
 import { saveToolResultImages, type SaveToolResultImages } from './tool-result-images'
 import type {
   ThreadForkParams,
@@ -1304,20 +1305,23 @@ export function createCodexConversationProvider(
           : null,
         state.input.mcpServers ?? [],
       )
+      // The gateway and the session's own MCP servers, as config overrides
+      // on top of the person's own `config.toml`, for this process only.
+      // The gateway's override is merged into an entry a terminal launch
+      // pinned into the workspace's `.codex/config.toml` under the same
+      // name, so the app-server starts one gateway, the launch's. Their env
+      // and header values go in the app-server's environment, which the
+      // overrides name; a WSL child reads them from stdin.
+      const mcp = codexMcpServerArgs(wsl ? mcpServersOnWsl(mcpServers) : mcpServers, env)
       const transport = (options.createTransport ?? createCodexRpcTransport)({
         command,
         cwd: state.input.workspaceRoot ?? '',
-        env,
-        wsl: wsl ? codexWslChild(wsl) : null,
+        env: { ...env, ...mcp.env },
+        wsl: wsl ? { ...codexWslChild(wsl), stdinEnv: Object.keys(mcp.env) } : null,
         args: [
           ...codexAppServerArgs(env.SPRINTENGINE_CODEX_APP_SERVER_ARGS),
           ...CODEX_MCP_STARTUP_GRACE_ARGS,
-          // The gateway and the session's own MCP servers, as config overrides
-          // on top of the person's own `config.toml`, for this process only.
-          // The gateway's override is merged into an entry a terminal launch
-          // pinned into the workspace's `.codex/config.toml` under the same
-          // name, so the app-server starts one gateway, the launch's.
-          ...codexMcpServerArgs(wsl ? mcpServersOnWsl(mcpServers) : mcpServers),
+          ...mcp.args,
         ],
         onMessage: (message) => onMessage(state, message),
         onToolFailure: (reason) => toolFailure(state, reason),
@@ -2077,32 +2081,18 @@ const CODEX_MCP_STATUS: Readonly<Record<string, AgentMcpServerStatus>> = {
   failed: 'failed',
 }
 
-export function codexMcpServerArgs(servers: readonly ConversationMcpServer[]): string[] {
-  const str = (value: string): string => JSON.stringify(value)
-  const table = (entries: Array<[string, string]>): string =>
-    `{ ${entries.map(([key, value]) => `${str(key)} = ${value}`).join(', ')} }`
-  const list = (values: readonly string[]): string => `[${values.map(str).join(', ')}]`
-  return servers.flatMap((server) => {
+export function codexMcpServerArgs(
+  servers: readonly ConversationMcpServer[],
+  base: Readonly<Record<string, string | undefined>>,
+): { args: string[]; env: Record<string, string> } {
+  const carrier = codexMcpEnv(base)
+  const args = servers.flatMap((server) => {
     if (server.id.includes('.') || !server.id.trim()) {
       throw new Error(
         `Codex cannot be given the MCP server "${server.name || server.id}": its id "${server.id}" is not a Codex config key.`,
       )
     }
-    const fields: Array<[string, string]> = []
-    if (server.transport === 'stdio') {
-      fields.push(['command', str(server.command ?? '')])
-      if (server.args?.length) fields.push(['args', list(server.args)])
-      if (server.envVarNames?.length) fields.push(['env_vars', list(server.envVarNames)])
-      if (server.env && Object.keys(server.env).length > 0)
-        fields.push(['env', table(Object.entries(server.env).map(([key, value]) => [key, str(value)]))])
-    } else {
-      fields.push(['url', str(server.url ?? '')])
-      if (server.envVarNames?.length) fields.push(['bearer_token_env_var', str(server.envVarNames[0])])
-      const headers = Object.entries(server.headers ?? {}).filter(
-        ([key]) => !server.envVarNames?.length || key.toLowerCase() !== 'authorization',
-      )
-      if (headers.length > 0) fields.push(['http_headers', table(headers.map(([key, value]) => [key, str(value)]))])
-    }
-    return ['-c', `mcp_servers.${server.id}=${table(fields)}`]
+    return ['-c', `mcp_servers.${server.id}=${tomlInlineTable(codexMcpServerFields(server, carrier))}`]
   })
+  return { args, env: carrier.env }
 }

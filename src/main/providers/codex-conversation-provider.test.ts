@@ -1858,30 +1858,85 @@ test("a chat's own MCP servers reach Codex as config overrides for its app-serve
     'features.code_mode_host=false',
     ...GRACE,
     '-c',
-    'mcp_servers.railway={ "command" = "npx", "args" = ["-y", "@railway/mcp"], "env_vars" = ["RAILWAY_TOKEN"], "env" = { "RAILWAY_ENV" = "prod" } }',
+    'mcp_servers.railway={ "command" = "npx", "args" = ["-y", "@railway/mcp"], "env_vars" = ["RAILWAY_TOKEN", "RAILWAY_ENV"] }',
   ])
+  // The server's own values ride the app-server's environment, which the entry names.
+  expect(f.connection.env.RAILWAY_ENV).toBe('prod')
 
-  // HTTP: the bearer token by the variable that holds it, other headers as they are.
+  // HTTP: the bearer token by the variable that holds it, other headers by the
+  // variables the app-server is given for them.
   expect(
-    codexMcpServerArgs([
-      {
-        id: 'linear',
-        name: 'Linear',
-        transport: 'http',
-        url: 'https://mcp.linear.app/mcp',
-        headers: { Authorization: 'Bearer stale', 'X-Team': 'acme' },
-        envVarNames: ['LINEAR_TOKEN'],
-      },
-    ]),
-  ).toEqual([
-    '-c',
-    'mcp_servers.linear={ "url" = "https://mcp.linear.app/mcp", "bearer_token_env_var" = "LINEAR_TOKEN", "http_headers" = { "X-Team" = "acme" } }',
-  ])
+    codexMcpServerArgs(
+      [
+        {
+          id: 'linear',
+          name: 'Linear',
+          transport: 'http',
+          url: 'https://mcp.linear.app/mcp',
+          headers: { Authorization: 'Bearer stale', 'X-Team': 'acme' },
+          envVarNames: ['LINEAR_TOKEN'],
+        },
+      ],
+      {},
+    ),
+  ).toEqual({
+    args: [
+      '-c',
+      'mcp_servers.linear={ "url" = "https://mcp.linear.app/mcp", "bearer_token_env_var" = "LINEAR_TOKEN", "env_http_headers" = { "X-Team" = "SPRINTENGINE_MCP_SECRET_1" } }',
+    ],
+    env: { SPRINTENGINE_MCP_SECRET_1: 'acme' },
+  })
   // A dotted id would be read as a deeper config path: refused, never mis-set.
-  expect(() => codexMcpServerArgs([{ id: 'acme.tools', name: 'Acme', transport: 'stdio', command: 'x' }])).toThrow(
+  expect(() => codexMcpServerArgs([{ id: 'acme.tools', name: 'Acme', transport: 'stdio', command: 'x' }], {})).toThrow(
     /"acme\.tools" is not a Codex config key/,
   )
-  expect(codexMcpServerArgs([])).toEqual([])
+  expect(codexMcpServerArgs([], {})).toEqual({ args: [], env: {} })
+})
+
+test("no MCP server's env value or header value is on the Codex app-server's command line", () => {
+  const secret = 'sk-test-0123456789abcdef'
+  const rendered = codexMcpServerArgs(
+    [
+      { id: 'stripe', name: 'Stripe', transport: 'stdio', command: 'npx', env: { STRIPE_SECRET_KEY: secret } },
+      {
+        id: 'acme',
+        name: 'Acme',
+        transport: 'http',
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: `Bearer ${secret}`, 'X-Api-Key': secret },
+      },
+    ],
+    { PATH: '/usr/bin' },
+  )
+  expect(rendered.args.join(' ')).not.toContain(secret)
+  expect(rendered.env).toEqual({
+    STRIPE_SECRET_KEY: secret,
+    SPRINTENGINE_MCP_SECRET_1: `Bearer ${secret}`,
+    SPRINTENGINE_MCP_SECRET_2: secret,
+  })
+  expect(rendered.args[1]).toContain('"env_vars" = ["STRIPE_SECRET_KEY"]')
+  expect(rendered.args[3]).toContain(
+    '"env_http_headers" = { "Authorization" = "SPRINTENGINE_MCP_SECRET_1", "X-Api-Key" = "SPRINTENGINE_MCP_SECRET_2" }',
+  )
+})
+
+test('a server value that would change a variable the app-server already has stays in its entry', () => {
+  const rendered = codexMcpServerArgs(
+    [
+      {
+        id: 'tool',
+        name: 'Tool',
+        transport: 'stdio',
+        command: 'tool',
+        env: { PATH: '/opt/tool/bin', SHARED: 'mine', SAME: 'v', NOTE: 'two\nlines' },
+      },
+    ],
+    { PATH: '/usr/bin', SHARED: 'theirs', SAME: 'v' },
+  )
+  expect(rendered.env).toEqual({ SAME: 'v' })
+  expect(rendered.args[1]).toBe(
+    'mcp_servers.tool={ "command" = "tool", "env_vars" = ["SAME"], "env" = { "PATH" = "/opt/tool/bin", "SHARED" = "mine", "NOTE" = "two\\nlines" } }',
+  )
 })
 
 const GATEWAY: ConversationMcpServer = {
@@ -2029,7 +2084,7 @@ test('each Codex app-server holds its own gateway token for its chat, off its co
         { PATH: '/usr/bin', SPRINTENGINE_WORKSPACE_ID: 'workspace', SPRINTENGINE_AGENT_ID: 'agent' },
         { sessionId: 'session' },
       ),
-      args: codexMcpServerArgs([{ ...GATEWAY, envVarNames: ['SPRINTENGINE_MCP_CHANNEL_TOKEN'] }]),
+      args: codexMcpServerArgs([{ ...GATEWAY, envVarNames: ['SPRINTENGINE_MCP_CHANNEL_TOKEN'] }], {}).args,
       spawnChild: ((_file: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
         spawned.push({ args, env: options.env })
         return child

@@ -47,7 +47,7 @@ import { homedir } from 'node:os'
 import { distroOfHostId, isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isWindowsPath, toWslPath } from '../../shared/host-paths'
 import type { ConversationMcpServer } from '../../shared/conversation-runtime'
-import { MCP_CHANNEL_TOKEN_ENV } from '../../shared/studio-env'
+import { MCP_CHANNEL_TOKEN_ENV, MCP_SECRET_ENV_PREFIX } from '../../shared/studio-env'
 import {
   issueGatewayLaunchToken,
   launchIdentityOfEnv,
@@ -225,7 +225,15 @@ export function cliHostSpawn(
       },
     }
   }
-  const secrets = (input.wsl.stdinEnv ?? []).flatMap((key) => {
+  // The values a chat's MCP servers name by reference are secrets wherever
+  // they came from, so they always take stdin.
+  const stdinEnv = [
+    ...new Set([
+      ...(input.wsl.stdinEnv ?? []),
+      ...Object.keys(input.env).filter((key) => key.startsWith(MCP_SECRET_ENV_PREFIX)),
+    ]),
+  ]
+  const secrets = stdinEnv.flatMap((key) => {
     const value = input.env[key]
     if (value === undefined || value === '') return []
     if (/[\r\n]/u.test(value)) throw new Error(`${key} cannot be handed to WSL: it spans more than one line.`)
@@ -249,7 +257,7 @@ export function cliHostSpawn(
     // need the secrets in its own environment: they arrive on stdin.
     options: {
       ...base,
-      ...(secrets.length > 0 ? { env: withoutKeys(input.env, input.wsl.stdinEnv ?? []) } : {}),
+      ...(secrets.length > 0 ? { env: withoutKeys(input.env, stdinEnv) } : {}),
       cwd: (deps.homedir ?? homedir)(),
     },
     ...(secrets.length > 0 ? { stdin: secrets.map(([, value]) => `${value}\n`).join('') } : {}),
