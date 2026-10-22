@@ -109,6 +109,14 @@
       "!node_modules/docx/dist/{charts,html,layout,macros,math,shapes,watermarks}.*",
       "!node_modules/docx/dist/index.{mjs,iife.js,umd.cjs,d.ts,d.cts}"
     ],
+    "electronFuses": {
+      "runAsNode": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "resetAdHocDarwinSignature": true
+    },
     "asarUnpack": [
       "node_modules/@vscode/ripgrep-*/bin/**"
     ],

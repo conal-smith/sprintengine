@@ -158,6 +158,39 @@ export function getManagedRuntimeShimDir(platform: NodeJS.Platform = process.pla
  */
 const writtenShims = new Map<string, { shimDir: string; prefixBinDir: string }>()
 
+// The packaged binary takes no NODE_OPTIONS and no NODE_EXTRA_CA_CERTS from the
+// environment (its `nodeOptions` fuse is off, package.json build.electronFuses),
+// and that holds when it runs as Node too: it removes both from its own
+// environment as it starts. The extra certificates are what an agent CLI or an
+// npm install behind a TLS-intercepting proxy needs (they are read from the
+// person's shell profile, login-shell-path.ts). So an Electron shim hands the
+// variable over under a name of Studio's, and loads this file first, on the
+// command line, which the fuse leaves alone: it adds those certificates to
+// Node's defaults, as Node itself would, and puts the variable back for
+// whatever the CLI starts.
+export const EXTRA_CA_PRELOAD_FILE = 'studio-extra-ca.cjs'
+export const EXTRA_CA_HANDOFF_VARIABLE = 'SPRINTENGINE_NODE_EXTRA_CA_CERTS'
+
+export const EXTRA_CA_PRELOAD_SOURCE = `'use strict'
+// Written by SprintEngine Studio (managed-runtime.ts): NODE_EXTRA_CA_CERTS for
+// Studio's own binary running as Node, which does not read the variable itself.
+const file = process.env.${EXTRA_CA_HANDOFF_VARIABLE} || process.env.NODE_EXTRA_CA_CERTS
+delete process.env.${EXTRA_CA_HANDOFF_VARIABLE}
+if (file) {
+  process.env.NODE_EXTRA_CA_CERTS = file
+  try {
+    const tls = require('tls')
+    const pem = require('fs').readFileSync(file, 'utf8')
+    const extra = pem.match(/-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----/g) || []
+    if (extra.length > 0 && typeof tls.setDefaultCACertificates === 'function') {
+      tls.setDefaultCACertificates([...tls.getCACertificates('default'), ...extra])
+    }
+  } catch (error) {
+    process.emitWarning('Ignoring extra certs from ' + file + ': ' + (error && error.message))
+  }
+}
+`
+
 /**
  * Writes `node`/`npm` shims that run this process's Node (the Electron binary
  * as Node, in the desktop), plus a `bin`
@@ -199,26 +232,42 @@ export function ensureManagedRuntimeShims(env: RuntimeEnv = currentRuntimeEnv())
     mkdirSync(shimDir, { recursive: true })
     mkdirSync(prefixBinDir, { recursive: true })
 
+    // The Electron binary only: a plain Node reads NODE_EXTRA_CA_CERTS itself.
+    const caPreload = join(shimDir, EXTRA_CA_PRELOAD_FILE)
+    if (runAsNode) writeFileSync(caPreload, EXTRA_CA_PRELOAD_SOURCE, 'utf8')
+
     if (env.platform === 'win32') {
       writeFileSync(
         join(shimDir, 'node.cmd'),
-        ['@echo off', ...(runAsNode ? ['set ELECTRON_RUN_AS_NODE=1'] : []), `"${node}" %*`, ''].join('\r\n'),
+        [
+          '@echo off',
+          ...(runAsNode
+            ? ['set ELECTRON_RUN_AS_NODE=1', `set "${EXTRA_CA_HANDOFF_VARIABLE}=%NODE_EXTRA_CA_CERTS%"`]
+            : []),
+          `"${node}"${runAsNode ? ` --require "${caPreload}"` : ''} %*`,
+          '',
+        ].join('\r\n'),
         'utf8',
       )
       writeFileSync(
         join(shimDir, 'npm.cmd'),
         [
           '@echo off',
-          ...(runAsNode ? ['set ELECTRON_RUN_AS_NODE=1'] : []),
-          `"${node}" "${npmCli}" --prefix "${prefixDir}" %*`,
+          ...(runAsNode
+            ? ['set ELECTRON_RUN_AS_NODE=1', `set "${EXTRA_CA_HANDOFF_VARIABLE}=%NODE_EXTRA_CA_CERTS%"`]
+            : []),
+          `"${node}"${runAsNode ? ` --require "${caPreload}"` : ''} "${npmCli}" --prefix "${prefixDir}" %*`,
           '',
         ].join('\r\n'),
         'utf8',
       )
     } else {
-      const exec = runAsNode ? 'exec env ELECTRON_RUN_AS_NODE=1' : 'exec'
+      const exec = runAsNode
+        ? `exec env ELECTRON_RUN_AS_NODE=1 ${EXTRA_CA_HANDOFF_VARIABLE}="\${NODE_EXTRA_CA_CERTS-}"`
+        : 'exec'
+      const preload = runAsNode ? ` --require ${shellQuote(caPreload)}` : ''
       const nodeShim = join(shimDir, 'node')
-      writeFileSync(nodeShim, ['#!/usr/bin/env bash', `${exec} ${shellQuote(node)} "$@"`, ''].join('\n'), {
+      writeFileSync(nodeShim, ['#!/usr/bin/env bash', `${exec} ${shellQuote(node)}${preload} "$@"`, ''].join('\n'), {
         encoding: 'utf8',
         mode: 0o755,
       })
@@ -228,7 +277,7 @@ export function ensureManagedRuntimeShims(env: RuntimeEnv = currentRuntimeEnv())
         npmShim,
         [
           '#!/usr/bin/env bash',
-          `${exec} ${shellQuote(node)} ${shellQuote(npmCli)} --prefix ${shellQuote(prefixDir)} "$@"`,
+          `${exec} ${shellQuote(node)}${preload} ${shellQuote(npmCli)} --prefix ${shellQuote(prefixDir)} "$@"`,
           '',
         ].join('\n'),
         { encoding: 'utf8', mode: 0o755 },
