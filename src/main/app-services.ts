@@ -117,6 +117,7 @@ import { countWorkingTerminalAgents, createQuitConfirmation } from './quit-confi
 import { askToQuitWhileWorking } from './quit-confirmation-electron'
 import { conversationSummaryPhase, conversationTurnInProgress } from '../shared/conversation/phase'
 import { createStudioAreaSkillStore } from './studio-area-skill-store'
+import { installGitRepoTrustFor } from './git-repo-trust'
 import { createAnalyticsService } from './telemetry/analytics-service'
 import { createTelemetryConsentStore } from './telemetry/consent-store'
 import { readInstallId } from './telemetry/install-id'
@@ -483,6 +484,13 @@ export function createAppServices(
   // every workspace (shared/studio-area-skills.ts). Read by every plugin copy
   // (this machine's launch home, each WSL distribution's) and the workspace
   // installer; a change re-runs them.
+  // Which repositories' own program settings (filters, merge drivers, hooks
+  // folders…) the person trusts: the banner on a project asks, and the app's
+  // own git reads the answer (git-repo-trust.ts).
+  const gitRepoTrust = installGitRepoTrustFor(app.getPath('userData'), (line) =>
+    console.warn(`[git-repo-trust] ${line}`),
+  )
+
   const studioAreaSkillStore = createStudioAreaSkillStore({
     resolveUserDataDir: () => app.getPath('userData'),
     logDiagnostic: (diagnostic) => {
@@ -2362,6 +2370,7 @@ export function createAppServices(
     builtinSkillManager,
     studioPluginService,
     studioAreaSkillStore,
+    gitRepoTrust,
     studioCore: core,
     conversationOwner,
     conversations,

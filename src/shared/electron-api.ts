@@ -150,6 +150,7 @@ import type {
 import type { TailnetPeerScan } from './tailnet-peers'
 import type { TailnetShareResult, TailnetShareStatus } from './tailnet-share'
 import type { RepositoryIdentityRead } from './repository-identity'
+import type { GitRepoTrustDecision, GitRepoTrustView } from './ipc/git-repo-trust'
 import type { ModuleWorkspaceGitInfoResult } from './modules/workspace-view'
 import type {
   MeshBrowse,
@@ -567,6 +568,7 @@ export type * from './ipc/skills'
 export type * from './ipc/terminal'
 export type * from './ipc/git'
 export type * from './ipc/worktree-pool'
+export type * from './ipc/git-repo-trust'
 export type * from './ipc/settled-chats'
 export type * from './ipc/diagnostics'
 export type * from './ipc/window'
@@ -1622,6 +1624,14 @@ export type ElectronApi = {
    * must not be written down as one. See `RepositoryIdentityRead`.
    */
   getGitRepositoryIdentity: (folderPath: string) => Promise<RepositoryIdentityRead>
+  /** The program settings the repository `folderPath` is in names, and the person's answer about them. */
+  getGitRepoTrust: (folderPath: string) => Promise<GitRepoTrustView | null>
+  answerGitRepoTrust: (input: {
+    folderPath: string
+    hash: string
+    decision: GitRepoTrustDecision
+  }) => Promise<GitRepoTrustView | null>
+  onGitRepoTrustChanged: (cb: (view: GitRepoTrustView | null) => void) => () => void
   /** A folder's branch and remotes, for a capability module's `getWorkspaceGitInfo`. */
   getModuleWorkspaceGitInfo: (folderPath: string) => Promise<ModuleWorkspaceGitInfoResult>
   getGitCommitGraph: (repoRoot: string, options?: GitGraphOptions) => Promise<GitGraphSnapshot>

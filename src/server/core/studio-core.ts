@@ -41,6 +41,7 @@ import { createGitWorktree, getGitRepoRoot } from '../../main/git'
 import { listGitWorktrees } from '../../main/git-worktree-list'
 import { startedDependencyInstall } from '../../main/worktree-pool/dependency-install'
 import { installGitHostResolver, withGitHost } from '../../main/git-run'
+import { installGitRepoTrustFor } from '../../main/git-repo-trust'
 import { createHostRegistry, installHostRegistry } from '../../main/hosts/host-registry'
 import { createAgentLaunchSettingsStore } from '../../main/launch-settings-store'
 import { setWorktreeBranchPrefixReader } from '../../main/worktree-branch-prefix'
@@ -242,6 +243,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
   // This PC when its workspace runs here (owner ruling 2026-10-03). A folder
   // no workspace holds goes by where it lives. macOS and Linux have one
   // machine, so their git never asks.
+  // The person's answers about repositories whose own config names programs,
+  // which the git this core starts by itself reads (git-repo-trust.ts).
+  installGitRepoTrustFor(platform.paths.dataDir())
+
   installGitHostResolver((cwd) => {
     if (process.platform !== 'win32') return null
     const id = gitHostIdForPath(cwd, workspaceSyncService.getSnapshot().state.workspaces)

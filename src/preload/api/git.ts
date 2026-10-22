@@ -1,6 +1,7 @@
 import type { IpcRendererEvent } from 'electron'
 import { ipc as ipcRenderer } from '../ipc-router'
 import type { RepositoryIdentityRead } from '../../shared/repository-identity'
+import type { GitRepoTrustDecision, GitRepoTrustView } from '../../shared/ipc/git-repo-trust'
 import type { ModuleWorkspaceGitInfoResult } from '../../shared/modules/workspace-view'
 import type { GitFileHunksResult, GitHunkRef, GitHunkScope } from '../../shared/git/hunks'
 import type { Changelist } from '../../shared/git/changelists'
@@ -114,6 +115,18 @@ export const gitApi = {
   getGitBranches: (repoRoot: string): Promise<GitBranchSnapshot> => ipcRenderer.invoke('git:get-branches', repoRoot),
   getGitRepositoryIdentity: (folderPath: string): Promise<RepositoryIdentityRead> =>
     ipcRenderer.invoke('git:get-repository-identity', folderPath),
+  getGitRepoTrust: (folderPath: string): Promise<GitRepoTrustView | null> =>
+    ipcRenderer.invoke('git-repo-trust:get', folderPath),
+  answerGitRepoTrust: (input: {
+    folderPath: string
+    hash: string
+    decision: GitRepoTrustDecision
+  }): Promise<GitRepoTrustView | null> => ipcRenderer.invoke('git-repo-trust:answer', input),
+  onGitRepoTrustChanged: (cb: (view: GitRepoTrustView | null) => void): (() => void) => {
+    const handler = (_: IpcRendererEvent, view: GitRepoTrustView | null) => cb(view)
+    ipcRenderer.on('git-repo-trust:changed', handler)
+    return () => ipcRenderer.removeListener('git-repo-trust:changed', handler)
+  },
   getModuleWorkspaceGitInfo: (folderPath: string): Promise<ModuleWorkspaceGitInfoResult> =>
     ipcRenderer.invoke('git:get-module-workspace-info', folderPath),
   getGitCommitGraph: (repoRoot: string, options?: GitGraphOptions): Promise<GitGraphSnapshot> =>
@@ -252,6 +265,9 @@ export const gitApi = {
   | 'getGitFileAtStage'
   | 'getGitBranches'
   | 'getGitRepositoryIdentity'
+  | 'getGitRepoTrust'
+  | 'answerGitRepoTrust'
+  | 'onGitRepoTrustChanged'
   | 'getModuleWorkspaceGitInfo'
   | 'getGitCommitGraph'
   | 'getGitConflictFile'

@@ -21,6 +21,7 @@ import { registerAppMenuIpc } from './app-menu'
 import { registerBuiltinSkillsIpc } from './ipc/builtin-skills-ipc'
 import { registerStudioPluginIpc } from './ipc/studio-plugin-ipc'
 import { registerStudioAreaSkillsIpc } from './ipc/studio-area-skills-ipc'
+import { registerGitRepoTrustIpc } from './ipc/git-repo-trust-ipc'
 import { registerCliRuntimeIpc } from './ipc/cli-runtime-ipc'
 import { registerTextGenerationIpc } from './ipc/text-generation-ipc'
 import { registerPullRequestCreateIpc } from './ipc/pull-request-create-ipc'
@@ -207,6 +208,7 @@ export function registerCoreIpc(
   registerBuiltinSkillsIpc(ipcMain, services.builtinSkillManager)
   registerStudioPluginIpc(ipcMain, services.studioPluginService)
   registerStudioAreaSkillsIpc(ipcMain, services.studioAreaSkillStore)
+  registerGitRepoTrustIpc(ipcMain, services.gitRepoTrust)
   registerMcpIpc(machineIpc, services.mcpConfigService)
   registerAgentConfigImportIpc(ipcMain, services.agentConfigImportService)
   registerSkillsIpc(ipcMain, services.skillsService)

@@ -393,6 +393,40 @@ function safeDirectoryConfig(cwd: string): string[] {
   return wslShareSafeDirectories(cwd).flatMap((dir) => ['-c', `safe.directory=${dir}`])
 }
 
+// ── Repositories whose own config names programs ───────────────────────────
+//
+// A repository's own git config can name programs for git to run: a filter, a
+// merge driver, a diff converter, a hooks folder, an ssh command, a shell
+// credential helper (git-repo-programs.ts). Whether the person trusts the ones
+// a repository names is theirs to say, once, on its project's banner
+// (git-repo-trust.ts); the answer is installed here for the runner.
+
+/** One config entry, as `git config --show-scope` names it. */
+export type GitRepoConfigEntry = { scope: string; key: string; value: string }
+
+/** A repository's program settings, and whether the person trusts them. */
+export type GitRepoTrustAnswer = {
+  /** True when the repository names no program, or the person trusted the ones it names. */
+  trusted: boolean
+  /** The repository's own entries that name a program. */
+  settings: readonly GitRepoConfigEntry[]
+  /** Every entry of those kinds git read, the person's own (global, system) included. */
+  entries: readonly GitRepoConfigEntry[]
+}
+
+let repoTrustResolver: ((cwd: string) => Promise<GitRepoTrustAnswer | null>) | null = null
+
+/** Installed by each process's services once the trust store exists; null uninstalls. */
+export function installGitRepoTrust(resolver: ((cwd: string) => Promise<GitRepoTrustAnswer | null>) | null): void {
+  repoTrustResolver = resolver
+}
+
+/** The trust answer for the repository `cwd` is in; null when none is installed or it could not be read. */
+export async function gitRepoTrustFor(cwd: string): Promise<GitRepoTrustAnswer | null> {
+  if (!repoTrustResolver) return null
+  return repoTrustResolver(cwd).catch(() => null)
+}
+
 type ExecGitResult = { stdout: string; stderr: string }
 type ExecGitError = Error & { stdout?: string; stderr?: string; timedOut?: boolean }
 

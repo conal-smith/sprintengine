@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioServerBanner } from '../studioServer/StudioServerBanner'
+import { RepoTrustBanner } from './RepoTrustBanner'
 import { hostIdForFolder, isWslHostId, LOCAL_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
 import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../shared/projectless-chats'
 import { nanoid } from 'nanoid'
@@ -4948,6 +4949,8 @@ export default function WorkspaceManager() {
       </React.Suspense>
       {/* The Studio server's state in words while it is not there (phase 6). */}
       <StudioServerBanner />
+      {/* A project whose repository's own config names programs for git to run, until the person answers. */}
+      <RepoTrustBanner folderPath={activeFolderPath} />
 
       <div className="relative flex min-h-0 flex-1 flex-row">
         {/* The app rail (app shell, 2026-09-05): the window's far-left
