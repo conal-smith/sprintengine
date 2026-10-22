@@ -48,6 +48,13 @@ test("a compaction gives context back: its after-size, else unknown until the ne
   assert.equal(contextRingValue(unknown), null, "no ring until a report says how much is left");
 });
 
+test("a handoff starts a new session, whose size is unknown until it reports", () => {
+  const before = fold([usage({ contextWindow: 1_000_000, contextUsed: 221_000 })]);
+  const after = applyContextEvent(before, { type: "context_handed_off", payload: { path: "/Users/dev/handoff.md" } });
+  assert.deepEqual(after, { used: null, window: 1_000_000 });
+  assert.equal(contextRingValue(after), null);
+});
+
 test("bad numbers are ignored rather than drawn", () => {
   assert.deepEqual(fold([usage({ contextWindow: -1, contextUsed: "lots", inputTokens: 5 })]), { used: 5, window: null });
   assert.deepEqual(fold([usage({ contextWindow: 0, contextUsed: 10 })]), { used: 10, window: null });

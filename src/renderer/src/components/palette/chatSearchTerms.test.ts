@@ -1,9 +1,13 @@
 import { expect, test } from 'vitest'
 import type { BranchPullRequest } from '../../../../shared/git/pull-request'
+import type { Workspace } from '../../types/workspace'
 import { commandMatchesQuery } from '../commandPaletteSearch'
 import {
   chatBranch,
+  chatMatchReason,
+  chatProjectName,
   chatPullRequestBadge,
+  chatPullRequestShown,
   chatSearchKeywords,
   mergeChatPullRequests,
   pullRequestSearchTerms,
@@ -124,3 +128,37 @@ function remoteOrigin(checkout: { mode: 'current' | 'worktree'; branch: string |
     checkout,
   }
 }
+
+test('a chat found by its pull request says so under its title, with the title the word was in', () => {
+  const chat = {
+    name: 'Fix open issues for production',
+    folderPath: '/Users/dev/.sprintengine-worktrees/app/pool-08',
+    pullRequests: [pullRequest({ number: 79, title: 'Read wave directions from open water' })],
+    branch: 'agent/open-water',
+  }
+  expect(chatMatchReason(chat, 'wave')).toEqual({
+    kind: 'pull-request',
+    text: '#79 Read wave directions from open water',
+  })
+  expect(chatMatchReason(chat, 'open-water')).toEqual({ kind: 'branch', text: 'agent/open-water' })
+  expect(chatMatchReason(chat, 'pool-08')).toEqual({ kind: 'folder', text: chat.folderPath })
+  // The title already says why; a match nothing on the row could show says nothing.
+  expect(chatMatchReason(chat, 'production')).toBeNull()
+  expect(chatMatchReason(chat, 'switch')).toBeNull()
+})
+
+test('the pull request a row draws carries its state as well as its number', () => {
+  const merged = pullRequest({ number: 79, state: 'merged' })
+  expect(chatPullRequestShown([merged], '')).toMatchObject({ number: 79, state: 'merged' })
+  expect(chatPullRequestShown([], '')).toBeNull()
+})
+
+test('a chat names its project as the sidebar does: the project a worktree was cut from, never the slot', () => {
+  const worktree = {
+    folderPath: '/Users/dev/.sprintengine-worktrees/app/pool-08',
+    worktree: { branch: 'agent/x', baseRef: 'HEAD', repoRoot: '/Users/dev/app' },
+  } as unknown as Workspace
+  expect(chatProjectName(worktree)).toBe('app')
+  expect(chatProjectName({ folderPath: '/Users/dev/app/' } as unknown as Workspace)).toBe('app')
+  expect(chatProjectName({ folderPath: null } as unknown as Workspace)).toBeNull()
+})

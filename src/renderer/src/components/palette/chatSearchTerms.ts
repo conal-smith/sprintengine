@@ -1,5 +1,7 @@
 import { primaryPullRequest, type BranchPullRequest } from '../../../../shared/git/pull-request'
 import type { Workspace } from '../../types/workspace'
+import { workspaceProjectRoot } from '../../utils/workspaceWorktree'
+import { folderDisplayName, remoteGroupDisplayName } from '../workspace/sidebar/folderGroups'
 
 // What a chat row in the palette can be found by beyond its title and folder:
 // the pull requests the chat holds and the branch it works on. Someone coming
@@ -86,13 +88,64 @@ export function sameChatPullRequests(a: readonly BranchPullRequest[], b: readonl
  * otherwise the one the sidebar's mark shows, which skips a closed one.
  */
 export function chatPullRequestBadge(pullRequests: readonly BranchPullRequest[], query: string): string | undefined {
-  if (pullRequests.length === 0) return undefined
+  const shown = chatPullRequestShown(pullRequests, query)
+  return shown ? `#${shown.number}` : undefined
+}
+
+/** The pull request behind `chatPullRequestBadge`, for a row that draws its state as well as its number. */
+export function chatPullRequestShown(
+  pullRequests: readonly BranchPullRequest[],
+  query: string,
+): BranchPullRequest | null {
+  if (pullRequests.length === 0) return null
   const normalized = query.trim().toLowerCase()
   const named = normalized
     ? pullRequests.find((pullRequest) =>
         pullRequestSearchTerms(pullRequest).some((term) => term.toLowerCase().includes(normalized)),
       )
     : undefined
-  const shown = named ?? primaryPullRequest(pullRequests.filter((pullRequest) => pullRequest.state !== 'closed'))
-  return shown ? `#${shown.number}` : undefined
+  return named ?? primaryPullRequest(pullRequests.filter((pullRequest) => pullRequest.state !== 'closed'))
+}
+
+/**
+ * Why a chat row is in the results when its title does not say: the pull
+ * request whose title or number matched, the branch, or the folder — the
+ * fields the row is searched by and never prints. Null when the title matched,
+ * or nothing the row could show did (a workspace type's search terms).
+ *
+ * A search for "wave" listed two chats whose titles had no "wave" in them and
+ * whose second line was their folder path: the match was in a pull request's
+ * title, so the row looked wrong. The line under it now says where the word was.
+ */
+export function chatMatchReason(
+  chat: { name: string; folderPath: string | null; pullRequests: readonly BranchPullRequest[]; branch: string | null },
+  query: string,
+): { kind: 'pull-request' | 'branch' | 'folder'; text: string } | null {
+  const needle = query.trim().toLowerCase()
+  if (!needle || chat.name.toLowerCase().includes(needle)) return null
+  const pullRequest = chat.pullRequests.find((candidate) =>
+    pullRequestSearchTerms(candidate).some((term) => term.toLowerCase().includes(needle)),
+  )
+  if (pullRequest) {
+    // The title is what was matched when it holds the word; otherwise the
+    // number or the URL did, and the number is the short way to say so.
+    const title = pullRequest.title?.trim()
+    return { kind: 'pull-request', text: title ? `#${pullRequest.number} ${title}` : `#${pullRequest.number}` }
+  }
+  if (chat.branch?.toLowerCase().includes(needle)) return { kind: 'branch', text: chat.branch }
+  if (chat.folderPath?.toLowerCase().includes(needle)) return { kind: 'folder', text: chat.folderPath }
+  return null
+}
+
+/**
+ * The project a chat belongs to, named the way the sidebar's header names it:
+ * the folder's own name, and for a worktree the project it was cut from — not
+ * `pool-08`, which is a slot, not a place. A chat on another machine is named
+ * by its folder there. Null for a chat with no folder, which belongs to no
+ * project and says nothing by repeating so.
+ */
+export function chatProjectName(workspace: Workspace): string | null {
+  if (workspace.remoteOrigin || workspace.environment) return remoteGroupDisplayName(workspace)
+  const root = workspaceProjectRoot(workspace) ?? workspace.folderPath
+  return root?.trim() ? folderDisplayName(root) : null
 }

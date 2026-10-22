@@ -133,6 +133,7 @@ import { useLocalServersOfConversation } from '../workspace/useLocalServers'
 import { useCreatePullRequestState } from './agentChat/createPullRequest'
 import { localPullRequestHost } from './agentChat/pullRequestHost'
 import { conversationContextReading } from './agentChat/contextReading'
+import type { ContextBreakdownSource } from './agentChat/ContextBreakdown'
 import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
 import { useUsageLimitSnapshot } from './agentChat/usageLimits'
@@ -2869,6 +2870,41 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const assistantName = supportsTools
     ? (session?.displayName ?? providerEntry?.displayName ?? currentModelLabel)
     : currentModelLabel
+  // Where the ring's breakdown is read: the chat's agent, over the transport,
+  // where both can (ContextBreakdown.tsx). It is read again as a turn ends,
+  // not while one runs: the key holds still through a turn and moves with
+  // the reading the turn's end leaves.
+  // A chat with no live session (the app restarted since it last ran) has
+  // no agent to ask until a message starts one, and says so.
+  const breakdownDeclared = capabilities?.contextBreakdown === true
+  const readContextBreakdown = breakdownDeclared ? transport.readContextBreakdown : undefined
+  const contextRefreshKey = projection.activeTurn ? 'turn' : (contextReading?.used ?? 0)
+  const hasContextReading = contextReading !== null
+  const contextBreakdownSource = useMemo<ContextBreakdownSource | null>(
+    () =>
+      hasContextReading
+        ? {
+            load: readContextBreakdown
+              ? sessionId
+                ? () => readContextBreakdown({ sessionId })
+                : async () => ({
+                    ok: false,
+                    reason: 'not-running',
+                    message: `${assistantName} is not running for this chat now. Send a message and it can say what fills the window.`,
+                  })
+              : null,
+            agentName: assistantName,
+            // A paired machine's chat, or a window on the Studio protocol:
+            // the agent could say, but nothing here can ask it.
+            ...(breakdownDeclared && !readContextBreakdown
+              ? { unavailable: 'This window cannot ask the agent what fills the window, only how full it is.' }
+              : {}),
+            cacheKey: sessionId,
+            refreshKey: contextRefreshKey,
+          }
+        : null,
+    [hasContextReading, breakdownDeclared, readContextBreakdown, sessionId, assistantName, contextRefreshKey],
+  )
   // Image attach is offered only where a provider actually reads the turn's
   // attachments, the transport carries them there, and the session can take a
   // turn — a control that stages images no one will receive is worse than no
@@ -3132,6 +3168,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // Offered where the provider can drop turns from its own context and this
   // view can operate the conversation.
   const rewindEnabled = operate && capabilities?.rewind === true && typeof transport.rewind === 'function'
+  // Handoff, where the provider can start a fresh session pointed at a file
+  // of the chat's messages and this view can operate the conversation.
+  const handoffEnabled = operate && capabilities?.handoff === true && typeof transport.handoff === 'function'
+  const handingOffRef = useRef(false)
+  const handoff = async () => {
+    if (handingOffRef.current || !transport.handoff) return
+    handingOffRef.current = true
+    try {
+      const root = binding.sessionRoot ?? workspaceRoot
+      if (!root) throw new Error('This chat has no folder to hand off from.')
+      const handed = await transport.handoff({ key: { workspaceRoot: root, workspaceId, agentId } })
+      if (!handed.ok) throw new Error(handed.message)
+    } catch (error) {
+      showToast({
+        tone: 'error',
+        title: 'The chat was not handed off',
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      handingOffRef.current = false
+    }
+  }
   // "Fork from here", where the provider can be forked and this machine can
   // open the fork in a tab. A provider that branches only the session it is
   // running (an ACP agent's `session/fork`, `forkFromLiveSession`) has this
@@ -3871,6 +3929,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                       reading={projection.promptCache}
                       busy={composerBusy}
                       onCompact={() => void sendTurn('/compact')}
+                      onHandoff={handoffEnabled ? () => void handoff() : undefined}
                     />
                   ) : null}
                   {contextReading ? (
@@ -4358,6 +4417,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               branch={stripFacts.branch}
               changes={stripFacts.changes}
               context={contextReading}
+              contextBreakdown={contextBreakdownSource}
               pullRequests={conversationPullRequests}
               {...(transport.kind === 'remote' ? {} : { onStopWatchingPullRequest: stopWatchingPullRequest })}
               createPullRequest={createPullRequest}

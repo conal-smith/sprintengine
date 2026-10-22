@@ -23,6 +23,7 @@ test("a usage report goes cold one lifetime after its own event, and a read-only
   assert.equal(applyPromptCacheEvent(reading, { type: "usage_updated", createdAt: 3, payload: {} }), reading);
   assert.deepEqual(applyPromptCacheEvent(reading, { type: "context_compacted", createdAt: 4 }), { ttl: "1h", expiresAt: null, recacheTokens: null });
   assert.equal(applyPromptCacheEvent(null, { type: "context_compacted", createdAt: 4 }), null);
+  assert.deepEqual(applyPromptCacheEvent(reading, { type: "context_handed_off", createdAt: 5 }), { ttl: "1h", expiresAt: null, recacheTokens: null });
 });
 
 test("expiring means the last two minutes of a five-minute cache and the last ten of an hour's", () => {

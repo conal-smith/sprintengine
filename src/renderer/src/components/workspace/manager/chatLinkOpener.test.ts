@@ -51,3 +51,17 @@ test('a chat filed under a window that is not this one is moved here first', () 
   openChatLink({ kind: 'chat', chatId: 'ws2', agentId: null }, deps)
   assert.deepEqual(calls, ['move ws1 from detached-a', 'select ws1', 'move ws2 from nowhere', 'select ws2'])
 })
+
+test('a chat a paired machine runs, linked by its id there, opens as its row does', () => {
+  const { deps, calls } = harness({ ws1: chat })
+  const remote: ChatLinkOpenerDeps = {
+    ...deps,
+    openRemote: (chatId) => {
+      calls.push(`open ${chatId} from its machine`)
+      return chatId === 'rw1'
+    },
+  }
+  assert.equal(openChatLink({ kind: 'chat', chatId: 'rw1', agentId: null }, remote), true)
+  assert.equal(openChatLink({ kind: 'chat', chatId: 'ws-gone', agentId: null }, remote), false)
+  assert.deepEqual(calls, ['open rw1 from its machine', 'open ws-gone from its machine', 'not on this machine'])
+})

@@ -1,7 +1,7 @@
 /**
  * The seam between the store's `appSettings` and main's agent-launch settings.
  *
- * Eleven `appSettings` fields are a read model of main's record rather than
+ * Twelve `appSettings` fields are a read model of main's record rather than
  * settings this window owns: they are filled from main, never persisted to
  * localStorage, and ignored when a persisted envelope is read back (except
  * once, as the migration offer — see `launchSettingsClient`). Everything that
@@ -31,6 +31,7 @@ export const LAUNCH_SETTINGS_KEYS = [
   'cliPermissionModes',
   'projectUsage',
   'worktreeBranchPrefix',
+  'autoCompactChats',
 ] as const
 
 type LaunchSettingsKey = (typeof LAUNCH_SETTINGS_KEYS)[number]
@@ -56,6 +57,7 @@ export function pickLaunchSettings(appSettings: AppSettings): LaunchSettingsFiel
     cliPermissionModes: appSettings.cliPermissionModes,
     projectUsage: appSettings.projectUsage,
     worktreeBranchPrefix: appSettings.worktreeBranchPrefix,
+    autoCompactChats: appSettings.autoCompactChats,
   }
 }
 
@@ -86,6 +88,7 @@ export function launchSettingsFromAppSettings(appSettings: AppSettings): AgentLa
     // is offered as never chosen.
     worktreeBranchPrefix:
       appSettings.worktreeBranchPrefix === AGENT_BRANCH_PREFIX ? null : appSettings.worktreeBranchPrefix,
+    autoCompactChats: appSettings.autoCompactChats ? true : null,
   }
 }
 
@@ -116,6 +119,7 @@ export function withLaunchSettings(
       cliPermissionModes: effective.cliPermissionModes,
       projectUsage: effective.projectUsage,
       worktreeBranchPrefix: effective.worktreeBranchPrefix,
+      autoCompactChats: effective.autoCompactChats,
     },
     workspaces,
   )

@@ -12,6 +12,9 @@ const noLifecycle = {
   settle: () => assert.fail('conversation.create does not settle'),
   visit: () => assert.fail('conversation.create does not visit'),
   markUnread: () => assert.fail('conversation.create does not mark anything unread'),
+  snooze: () => assert.fail('nothing is snoozed here'),
+  highlight: () => assert.fail('nothing is starred here'),
+  setAutoSettle: () => assert.fail('no Auto-settle is switched here'),
 }
 
 function tool(launch: (request: ConversationLaunchRequest) => Promise<ConversationLaunchResult>) {
@@ -24,10 +27,18 @@ function tool(launch: (request: ConversationLaunchRequest) => Promise<Conversati
   return registration!
 }
 
-test('starting, settling, visiting and marking a chat unread are audited mutations needing conversation:operate', () => {
+test("starting, settling, visiting, marking a chat unread and its row menu's marks are audited mutations needing conversation:operate", () => {
   assert.deepEqual(
     [...CONVERSATION_MUTATION_TOOL_NAMES],
-    ['conversation.create', 'conversation.settle', 'conversation.visit', 'conversation.mark_unread'],
+    [
+      'conversation.create',
+      'conversation.settle',
+      'conversation.visit',
+      'conversation.mark_unread',
+      'conversation.snooze',
+      'conversation.highlight',
+      'conversation.auto_settle',
+    ],
   )
   for (const name of CONVERSATION_MUTATION_TOOL_NAMES) {
     assert.equal(isStudioGatewayMutation(name), true, name)

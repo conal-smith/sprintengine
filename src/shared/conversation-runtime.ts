@@ -27,6 +27,7 @@ export type {
   ConversationEventType,
   ConversationGoal,
   ConversationGoalStatus,
+  ConversationHandoffPayload,
   ConversationJsonValue,
   ConversationMessageOrigin,
   ConversationPage,
@@ -413,6 +414,62 @@ export type ConversationSideQuestionResult =
   { ok: true; answer: string } | { ok: false; message: string; cancelled?: true; code?: string }
 export type ConversationCancelSideQuestionInput = { sessionId: string; requestId: string }
 
+/**
+ * What fills a chat's context window, item by item, as its agent measured it
+ * (Claude Code's own `/context` reading). Asked for when a person opens the
+ * composer strip's context ring, never on a timer: the agent answers from
+ * the conversation it holds, so there is nothing to keep fresh in between.
+ */
+export type ConversationContextBreakdownInput = { sessionId: string }
+
+/**
+ * One row of the window's breakdown. `used` fills the window, `free` is what
+ * is left of it, `buffer` is held back for compaction, and `deferred` is
+ * listed for awareness but not in the window (tool schemas loaded on demand).
+ */
+export type ConversationContextCategory = {
+  name: string
+  tokens: number
+  kind: 'used' | 'free' | 'buffer' | 'deferred'
+}
+
+/** A skill, memory file or custom agent and what it costs; `detail` is where it comes from. */
+export type ConversationContextItem = { name: string; tokens: number; detail?: string }
+
+/** An MCP server, the tokens its loaded tools' schemas take, and each tool. */
+export type ConversationContextMcpServer = {
+  name: string
+  /** Its loaded tools' tokens: a deferred tool is not in the window until it is used. */
+  tokens: number
+  tools: Array<{ name: string; tokens: number; loaded: boolean }>
+}
+
+export type ConversationContextBreakdown = {
+  model: string
+  usedTokens: number
+  /** The window the agent measures against: the model's, or a smaller one it compacts at. */
+  windowTokens: number
+  categories: ConversationContextCategory[]
+  mcpServers: ConversationContextMcpServer[]
+  skills: ConversationContextItem[]
+  memoryFiles: ConversationContextItem[]
+  agents: ConversationContextItem[]
+  /** Where the agent compacts on its own; null when it does not. */
+  autoCompactAt: number | null
+  /** The agent estimated the rows rather than counting each one with the API. */
+  estimated: boolean
+  measuredAt: number
+}
+
+/**
+ * `stale`: the agent is not running now, and this is the last reading it gave.
+ * `not-running`: nothing to ask and nothing read before. `unsupported`: the
+ * chat's agent, or its version, gives no breakdown.
+ */
+export type ConversationContextBreakdownResult =
+  | { ok: true; breakdown: ConversationContextBreakdown; stale?: true }
+  | { ok: false; reason: 'unsupported' | 'not-running' | 'failed'; message: string }
+
 export type ConversationStopSessionInput = {
   // What the command was, hashed by whoever named its id: a receipt keeps it,
   // and the same id coming back for a different command is refused rather
@@ -550,6 +607,10 @@ export type ConversationCapabilities = {
   // A fork at the newest reply branches the session the chat is running
   // (an ACP agent's `session/fork`), so the chat's session is started first.
   forkFromLiveSession?: boolean
+  // The chat can be handed off to a fresh provider session that is pointed
+  // at a file of its messages ("Handoff", `ConversationHandoffInput`).
+  // Without it the action is not offered.
+  handoff?: boolean
   // One agent the chat spawned can be stopped by itself, leaving the chat,
   // its turn and its other agents running. Without it a lane offers no Stop.
   stopSubagent?: boolean
@@ -557,6 +618,9 @@ export type ConversationCapabilities = {
   // context without entering it, even while a turn runs. Without it the
   // action is not offered.
   sideQuestion?: boolean
+  // The agent says what fills its context window, row by row and item by
+  // item (`readContextBreakdown`). Without it the ring opens on the total.
+  contextBreakdown?: boolean
 }
 export type ConversationCheckpointFile = {
   path: string
@@ -596,6 +660,17 @@ export type ConversationRevertResult =
  */
 export type ConversationRewindInput = { key: ConversationKey; turnSeq: number }
 export type ConversationRewindResult = { ok: true } | { ok: false; message: string }
+/**
+ * Hand a chat off to a fresh provider session instead of compacting it: its
+ * messages (no tool calls, no tool output) are saved to a file in the
+ * project's store, the provider session is let go, and the next message the
+ * person sends points the new session at the file. The chat's history stays
+ * as it was, with a divider where the handoff happened. Refused while the chat
+ * is doing anything: a turn, a question, an agent, a shell or a monitor all
+ * live in the process this ends.
+ */
+export type ConversationHandoffInput = { key: ConversationKey }
+export type ConversationHandoffResult = { ok: true; path: string } | { ok: false; message: string }
 /**
  * Start a new chat, `newAgentId`, holding this one up to a point: through the
  * reply of the turn `turnId` names, or up to (not including) the user message

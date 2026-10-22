@@ -76,6 +76,7 @@ function fakeChat(): StudioChatBackend & { calls: ChatCalls } {
       return { ok: true, files: [], reverted: true }
     },
     rewind: async () => ({ ok: true }),
+    handoff: async () => ({ ok: true, path: '/Users/dev/handoff.md' }),
     fork: async () => ({ ok: true }),
     attachment: async () => ({ ok: false, message: 'No such picture.' }),
     planDocument: async () => ({ ok: true, path: '/Users/dev/plan.md' }),

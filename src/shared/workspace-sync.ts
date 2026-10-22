@@ -194,6 +194,7 @@ export type WorkspaceFieldsPatch = {
   settledAt?: number | null
   settledOverride?: Workspace['settledOverride']
   autoSettleEnabled?: boolean | null
+  autoCompactEnabled?: boolean | null
   snoozedUntil?: number | null
   highlight?: Workspace['highlight'] | null
   worktree?: Workspace['worktree']

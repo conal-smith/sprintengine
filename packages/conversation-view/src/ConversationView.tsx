@@ -212,6 +212,8 @@ function Row({
       )
     case 'compaction':
       return <p className="se-row se-note">Earlier messages were summarised to make room.</p>
+    case 'handoff':
+      return <p className="se-row se-note">Handed off to a new session.</p>
     case 'commandOutput':
       return (
         <div className="se-row">

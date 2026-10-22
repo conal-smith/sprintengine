@@ -121,6 +121,18 @@
   }
 }
 
+/* The one scrim that blurs: the command palette's, and only while what it
+ * covers is a conversation with no terminal in view (owner ruling 2026-10-21,
+ * `components/palette/paletteBackdrop.ts`). It rides `.overlay-scrim`, which
+ * keeps the darkening; this adds the glass blur over a page that redraws a
+ * paragraph at a time. Over a terminal the scrim stays a plain tone, for the
+ * ~10fps reason above. Where backdrop-filter is unsupported it is the plain
+ * scrim. */
+@utility scrim-glass {
+  -webkit-backdrop-filter: blur(var(--sem-glass-blur));
+  backdrop-filter: blur(var(--sem-glass-blur));
+}
+
 /* Shared UI tokens — shared by the Automations and Review panels, and by
  * every module surface the SDK hands them to. Existing tool-identity / theme variables are kept
  * intact below; these tokens add a semantic layer that primitives consume.

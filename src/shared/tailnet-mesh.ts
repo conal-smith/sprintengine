@@ -1,5 +1,9 @@
 import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
-import type { ConversationQueuedMessage, ConversationThread } from '../../packages/conversation-protocol/src/public'
+import type {
+  ConversationHighlightColor,
+  ConversationQueuedMessage,
+  ConversationThread,
+} from '../../packages/conversation-protocol/src/public'
 import type { ConversationSessionFrame } from './conversation-runtime'
 import { conversationPhaseWorking, phaseWithBackgroundWork } from './conversation/phase'
 import type { RepositoryIdentity } from './repository-identity'
@@ -212,6 +216,22 @@ export type MeshVisitConversationResult =
   { ok: true; workspaceId: string; lastVisitedAt: number } | { ok: false; code: string; message: string }
 
 /**
+ * A row menu change to a chat on a paired machine, written to that machine's
+ * record of it: Snooze and Wake now (`until: null`), Star and Highlight color
+ * (a member left out stays as it is), Auto-settle (`chat-row-menu` there), and
+ * Mark unread (`chat-mark-unread` there).
+ */
+export type MeshConversationChange =
+  | { kind: 'snooze'; until: number | null }
+  | { kind: 'highlight'; starred?: boolean; color?: ConversationHighlightColor | null }
+  | { kind: 'auto-settle'; enabled: boolean }
+  | { kind: 'mark-unread' }
+
+/** That machine took the change, or why not. `row_menu_unsupported` is a machine without the tool. */
+export type MeshChangeConversationResult =
+  { ok: true; workspaceId: string } | { ok: false; code: string; message: string }
+
+/**
  * A pairing we have ASKED for and are waiting on, as a window sees
  * it. The collect secret is not here and never leaves main.
  */
@@ -357,6 +377,8 @@ export const MESH_CREATE_CONVERSATION_CHANNEL = 'mesh:create-conversation'
 export const MESH_SETTLE_CONVERSATION_CHANNEL = 'mesh:settle-conversation'
 /** Say a chat on a paired machine is on screen here, over its `conversation.visit`. */
 export const MESH_VISIT_CONVERSATION_CHANNEL = 'mesh:visit-conversation'
+/** A row menu change to a chat on a paired machine (`MeshConversationChange`). */
+export const MESH_CHANGE_CONVERSATION_CHANNEL = 'mesh:change-conversation'
 /** One remote workspace's checkout facts (branch, branches, worktrees) over `workspace.checkout`. */
 export const MESH_WORKSPACE_CHECKOUT_CHANNEL = 'mesh:workspace-checkout'
 export const MESH_WORKSPACE_EXTENSIONS_CHANNEL = 'mesh:workspace-extensions'
@@ -456,6 +478,12 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
+ *
+ * `rowMenu`: the machine advertises `chat-row-menu` — its chats' Star,
+ * Highlight color, Snooze and Auto-settle are offered here, and written there.
+ *
+ * `markUnread`: the machine advertises `chat-mark-unread` — its chats offer
+ * Mark unread here.
  */
 export type MeshConversationListResult =
   | {
@@ -469,6 +497,8 @@ export type MeshConversationListResult =
       sendSkills?: boolean
       steerSends?: boolean
       createPullRequest?: boolean
+      rowMenu?: boolean
+      markUnread?: boolean
     }
   | { ok: false; code: string; message: string }
 

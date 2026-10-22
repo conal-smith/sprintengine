@@ -279,6 +279,7 @@ interface WorkspacesSliceActions {
   setWorkspaceWorktreeReclaimed: (id: WorkspaceId, reclaimedAt: number | null) => void
   setWorkspaceChatFolder: (id: WorkspaceId, folderPath: string, worktree: WorkspaceWorktree | null) => void
   setWorkspaceAutoSettle: (id: WorkspaceId, enabled: boolean) => void
+  setWorkspaceAutoCompact: (id: WorkspaceId, enabled: boolean | null) => void
   /**
    * Put a chat to sleep until `wakeAt`, or wake it now with `null`. The RECORD
    * only: suspending the chat's terminals is the sidebar's half of the gesture
@@ -948,22 +949,35 @@ export function createWorkspacesSlice(
         normalizeWindowAssignments(state)
       }),
 
-    setWorkspaceHighlight: (id, highlight) =>
+    // A star and a colour are the person's marks on the record, reported as
+    // every hand-edited field is: main keeps them across a restart, the other
+    // windows learn them from its broadcast, and a paired device reads them
+    // off the chat list.
+    setWorkspaceHighlight: (id, highlight) => {
+      let next: WorkspaceHighlight | null = null
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws) return
         const current: WorkspaceHighlight = ws.highlight ?? { starred: false, color: null }
-        ws.highlight = {
+        next = {
           starred: highlight.starred ?? current.starred,
           color: highlight.color === undefined ? current.color : highlight.color,
         }
-      }),
+        ws.highlight = next
+      })
+      if (next) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, { highlight: next })
+    },
 
-    clearWorkspaceHighlight: (id) =>
+    clearWorkspaceHighlight: (id) => {
+      let cleared = false
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
-        if (ws) ws.highlight = undefined
-      }),
+        if (!ws) return
+        ws.highlight = undefined
+        cleared = true
+      })
+      if (cleared) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, { highlight: null })
+    },
 
     // A hand decision about rest (settled-chats, 2026-09-07). Settle parks the
     // row in its folder's Settled shelf and records the decision so the sweep
@@ -1024,6 +1038,21 @@ export function createWorkspacesSlice(
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws || (ws.autoSettleEnabled === true) === enabled) return
+        Object.assign(ws, patch)
+        changed = true
+      })
+      if (changed) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, patch)
+    },
+
+    // The row menu's Auto compact switch: `true` or `false` for this chat,
+    // `null` to follow the app-wide default again. Compacts nothing by
+    // itself: main's scheduler reads it the next time it looks.
+    setWorkspaceAutoCompact: (id, enabled) => {
+      const patch: WorkspaceFieldsPatch = { autoCompactEnabled: enabled }
+      let changed = false
+      set((state) => {
+        const ws = state.workspaces.find((w) => w.id === id)
+        if (!ws || (ws.autoCompactEnabled ?? null) === enabled) return
         Object.assign(ws, patch)
         changed = true
       })

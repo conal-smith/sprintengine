@@ -65,11 +65,15 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
   ConversationApprovalRuleRevokeResult,
   ConversationEventType,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
 } from '../../shared/conversation-runtime'
 import {
   parseProviderInput,
@@ -128,6 +132,7 @@ export type ConversationIpcHandlers = {
   cancelSideQuestion?(
     input: ConversationCancelSideQuestionInput,
   ): Promise<{ ok: true } | { ok: false; message: string }>
+  readContextBreakdown?(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult>
   stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult>
   suspendSession?(input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult>
   terminalHandoff?(input: ConversationTerminalHandoffInput): Promise<ConversationTerminalHandoffResult>
@@ -144,6 +149,7 @@ export type ConversationIpcHandlers = {
   getTurnDiff?(input: ConversationTurnDiffInput): Promise<ConversationTurnDiffResult>
   revertToTurn?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   rewindToTurn?(input: ConversationRewindInput): Promise<ConversationRewindResult>
+  handoffConversation?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   forkAtTurn?(input: ConversationForkInput): Promise<ConversationForkResult>
   listApprovalRules?(): Promise<ConversationApprovalRulesResult>
   revokeApprovalRule?(ruleId: string): Promise<ConversationApprovalRuleRevokeResult>
@@ -174,6 +180,7 @@ const BROADCAST_EVENT_TYPES: ReadonlySet<ConversationEventType> = new Set<Conver
   'usage_updated',
   'context_compacted',
   'context_compacting',
+  'context_handed_off',
   'command_output',
   'turn_completed',
   'turn_failed',
@@ -390,6 +397,9 @@ export function createConversationIpcHandlers(
     ): Promise<{ ok: true } | { ok: false; message: string }> {
       return runtime.cancelSideQuestion(input)
     },
+    readContextBreakdown(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult> {
+      return runtime.readContextBreakdown(input)
+    },
     stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
       return runtime.stopSession(input)
     },
@@ -431,6 +441,9 @@ export function createConversationIpcHandlers(
     },
     rewindToTurn(input) {
       return sessions.rewindToTurn(input)
+    },
+    handoffConversation(input) {
+      return sessions.handoffConversation(input)
     },
     forkAtTurn(input) {
       return sessions.forkAtTurn(input)
@@ -585,6 +598,17 @@ export function registerConversationIpc(
       handlers.rewindToTurn?.({ key: key.input, turnSeq: Number(input.turnSeq) }) ?? {
         ok: false,
         message: 'Editing an earlier message is unavailable.',
+      }
+    )
+  })
+  ipcMain.handle('conversation:handoff', async (_, input: unknown): Promise<ConversationHandoffResult> => {
+    if (!isRecord(input)) return { ok: false, message: 'The chat to hand off is required.' }
+    const key = parseTranscriptInput(input.key)
+    if (!key.ok) return key
+    return (
+      handlers.handoffConversation?.({ key: key.input }) ?? {
+        ok: false,
+        message: 'Handing a chat off is unavailable.',
       }
     )
   })
@@ -864,6 +888,21 @@ export function registerConversationIpc(
         return await handlers.cancelSideQuestion(parsed.input)
       } catch (err) {
         return { ok: false, message: formatError(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'conversation:sessions:context-breakdown',
+    async (_, input: unknown): Promise<ConversationContextBreakdownResult> => {
+      const parsed = parseSessionIdInput(input)
+      if (!parsed.ok) return { ok: false, reason: 'failed', message: parsed.message }
+      if (!handlers.readContextBreakdown)
+        return { ok: false, reason: 'unsupported', message: 'The context breakdown is unavailable.' }
+      try {
+        return await handlers.readContextBreakdown(parsed.input)
+      } catch (err) {
+        return { ok: false, reason: 'failed', message: formatError(err) }
       }
     },
   )

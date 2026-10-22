@@ -365,6 +365,11 @@ beside it.
 
 ### Added
 
+- **`context_handed_off`** joins `ModuleConversationEventType`: the chat was
+  handed off to a fresh session of its CLI instead of being compacted. Its
+  payload names the file its messages were saved to (`path`), the context the
+  old session held (`preTokens`) and that the next message still carries the
+  pointer to the file (`seedOwed`).
 - **`turn_retrying`** joins `ModuleConversationEventType`: a model call in
   the turn failed and the provider will try it again. The payload carries the
   attempt, the attempt limit, the wait before it and the failure's category.
