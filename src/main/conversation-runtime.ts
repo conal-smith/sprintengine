@@ -137,7 +137,6 @@ import { ACP_PROFILES, createAcpConversationProvider } from './providers/acp-con
 import { leadingCommandFor } from './conversation-commands/leading-command'
 import { cliForConversationProvider } from '../shared/conversation-harness'
 import { workspaceStorePath } from './workspace-store'
-import { writeHandoffMarkdown } from './chat-export/chat-export-handoff'
 import {
   ConversationEventLog,
   type ConversationAppendOutcome,
@@ -3936,6 +3935,10 @@ export class ConversationRuntime {
       if (cursor?.handoffPath && !cursor.sessionId)
         return { ok: false, message: 'This chat is handed off already: your next message starts the new session.' }
       const at = this.now()
+      // Loaded when a chat is handed off, not with the runtime: it reads
+      // replies with the export's Markdown parser, which a server checks for
+      // only once it is serving.
+      const { writeHandoffMarkdown } = await import('./chat-export/chat-export-handoff')
       const written = writeHandoffMarkdown(
         stored,
         {
