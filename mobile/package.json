@@ -46,5 +46,8 @@
     "katex": "0.16.47",
     "mermaid": "11.13.0",
     "typescript": "~5.9.0"
+  },
+  "overrides": {
+    "markdown-it": "^14.3.3"
   }
 }
