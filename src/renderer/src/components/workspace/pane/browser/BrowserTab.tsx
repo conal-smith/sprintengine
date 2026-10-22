@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
   BROWSER_PICK_CANCELLED_CHANNEL,
@@ -15,6 +15,7 @@ import {
   normalizeBrowserViewport,
   DEFAULT_BROWSER_DEVICE_PRESET_ID,
   fitViewportScale,
+  guestLayoutSize,
   presetViewport,
   type BrowserViewport,
 } from '../../../../../../shared/browser-devices'
@@ -145,6 +146,18 @@ function CameraGlyph() {
   )
 }
 
+// The window's own zoom, re-read on `resize`: a zoom step changes the
+// window's CSS viewport, so each one arrives as a resize.
+function subscribeToWindowZoom(onChange: () => void): () => void {
+  window.addEventListener('resize', onChange)
+  return () => window.removeEventListener('resize', onChange)
+}
+
+function readWindowZoom(): number {
+  const zoom: unknown = window.api.getWindowZoomFactor?.()
+  return typeof zoom === 'number' && Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+}
+
 type BrowserTabProps = {
   workspaceId: string
   tab: WorkspacePaneTab
@@ -162,6 +175,7 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
   useTabRecording(tab.id, workspaceId)
   const [picking, setPicking] = useState(false)
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
+  const windowZoom = useSyncExternalStore(subscribeToWindowZoom, readWindowZoom)
   // The URL the guest starts on. Read once: a later change to the tab record
   // (main reporting a navigation) must not re-navigate the guest.
   const initialSrcRef = useRef(tab.url && tab.url !== 'about:blank' ? tab.url : 'about:blank')
@@ -481,19 +495,24 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
     : initialSrcRef.current === 'about:blank'
   // The device frame waits while the tab floats, and comes back when it docks.
   const framed = !miniature && viewport.mode !== 'fill'
+  // The guest's element is sized in this window's CSS px, which the window's
+  // zoom stretches, so the device's size and the miniature's page width are
+  // divided by it: the page is laid out at the size asked for at any zoom.
+  const deviceSize = framed ? guestLayoutSize(viewport, windowZoom) : null
+  const miniaturePageWidth = guestLayoutSize({ width: FLOAT_PAGE_WIDTH, height: 0 }, windowZoom).width
   // Before the first measure, the player's own width stands in for the canvas.
-  const miniatureScale = (canvasSize.width > 0 ? canvasSize.width : FLOAT_DEFAULT_WIDTH) / FLOAT_PAGE_WIDTH
-  const scale = miniature ? miniatureScale : framed ? fitViewportScale(viewport, canvasSize) : 1
+  const miniatureScale = (canvasSize.width > 0 ? canvasSize.width : FLOAT_DEFAULT_WIDTH) / miniaturePageWidth
+  const scale = miniature ? miniatureScale : deviceSize ? fitViewportScale(deviceSize, canvasSize) : 1
   // The guest sits in ONE frame element in both modes; only the frame's
   // geometry changes. Moving a <webview> to another parent detaches and
   // re-attaches the guest, which reloads it from its initial `src` and gives
   // it a new WebContents main no longer knows.
-  const frameStyle: React.CSSProperties = framed
+  const frameStyle: React.CSSProperties = deviceSize
     ? {
-        width: Math.round(viewport.width * scale),
-        height: Math.round(viewport.height * scale),
-        left: CANVAS_INSET_PX + Math.max(0, (canvasSize.width - viewport.width * scale) / 2),
-        top: CANVAS_INSET_PX + Math.max(0, (canvasSize.height - viewport.height * scale) / 2),
+        width: Math.round(deviceSize.width * scale),
+        height: Math.round(deviceSize.height * scale),
+        left: CANVAS_INSET_PX + Math.max(0, (canvasSize.width - deviceSize.width * scale) / 2),
+        top: CANVAS_INSET_PX + Math.max(0, (canvasSize.height - deviceSize.height * scale) / 2),
       }
     : { inset: 0 }
   const guestStyle: React.CSSProperties = miniature
@@ -501,20 +520,20 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
         position: 'absolute',
         top: 0,
         left: 0,
-        width: FLOAT_PAGE_WIDTH,
+        width: miniaturePageWidth,
         height: Math.round((canvasSize.height > 0 ? canvasSize.height : FLOAT_DEFAULT_HEIGHT) / miniatureScale),
         transform: `scale(${miniatureScale})`,
         transformOrigin: 'top left',
         display: 'flex',
         pointerEvents: 'none',
       }
-    : framed
+    : deviceSize
       ? {
           position: 'absolute',
           top: 0,
           left: 0,
-          width: viewport.width,
-          height: viewport.height,
+          width: deviceSize.width,
+          height: deviceSize.height,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
           display: 'flex',

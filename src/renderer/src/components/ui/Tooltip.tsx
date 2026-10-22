@@ -64,6 +64,12 @@ type TooltipProps = {
    * context menu summoned afterwards.
    */
   layer?: 'popover' | 'menu'
+  /**
+   * Holds the tooltip shut while true, and shuts one already open. For a
+   * trigger whose own surface takes the same place: a menu row's flyout
+   * opens where the row's tooltip would stand.
+   */
+  suppressed?: boolean
 }
 
 // Gap between the trigger and the tooltip, and the minimum margin the tooltip
@@ -171,6 +177,7 @@ export function Tooltip({
   wrapperClassName,
   wrapperRole,
   layer = 'popover',
+  suppressed = false,
 }: TooltipProps) {
   const id = useId()
   const [open, setOpen] = useState(false)
@@ -254,6 +261,10 @@ export function Tooltip({
 
   useEffect(() => clearTimer, [clearTimer])
 
+  useEffect(() => {
+    if (suppressed) close()
+  }, [suppressed, close])
+
   const childProps = children.props
 
   const handleMouseEnter = useCallback(
@@ -263,11 +274,11 @@ export function Tooltip({
       // trigger portals out (a split button's chevron menu) counts as inside
       // it: entering its rows would summon the trigger's tooltip over them.
       // Only the trigger's own DOM is the trigger.
-      if (!triggerWrapRef.current?.contains(event.target as Node)) return
+      if (suppressed || !triggerWrapRef.current?.contains(event.target as Node)) return
       clearTimer()
       timer.current = window.setTimeout(() => setOpen(true), openDelayMs)
     },
-    [childProps, clearTimer, openDelayMs],
+    [childProps, clearTimer, openDelayMs, suppressed],
   )
 
   const handleMouseLeave = useCallback(
@@ -281,11 +292,11 @@ export function Tooltip({
   const handleFocus = useCallback(
     (event: React.FocusEvent) => {
       childProps.onFocus?.(event)
-      if (!isFocusVisible(event.target) || pointerSteeredFocus(event.target)) return
+      if (suppressed || !isFocusVisible(event.target) || pointerSteeredFocus(event.target)) return
       clearTimer()
       setOpen(true)
     },
-    [childProps, clearTimer],
+    [childProps, clearTimer, suppressed],
   )
 
   // Pressing the trigger answers the question the tooltip was for, and a

@@ -15,6 +15,7 @@ import type {
 import type { WorkspaceRegistryActor } from '../shared/workspace-registry'
 import type { AgentState, Workspace, WorkspaceId } from '../renderer/src/types/workspace'
 import { isRecord } from '../shared/records'
+import { isConversationHighlightColor } from '../../packages/conversation-protocol/src/public'
 
 const MAX_REPLAY_EVENTS = 500
 
@@ -696,6 +697,13 @@ const FIELD_VALUE_CHECKS: Partial<Record<(typeof EDITABLE_FIELDS)[number], (valu
   autoSettleEnabled: (value) => value === null || typeof value === 'boolean',
   autoCompactEnabled: (value) => value === null || typeof value === 'boolean',
   snoozedUntil: (value) => value === null || (typeof value === 'number' && Number.isFinite(value)),
+  // A star and one of the row menu's colours: what a paired device reads back
+  // off the chat list (`parseConversationWireHighlight`).
+  highlight: (value) =>
+    value === null ||
+    (isRecord(value) &&
+      typeof value.starred === 'boolean' &&
+      (value.color === null || isConversationHighlightColor(value.color))),
   lastTerminalActivityAt: (value) => value === null || (typeof value === 'number' && Number.isFinite(value)),
   lastUserMessageAt: (value) => value === null || (typeof value === 'number' && Number.isFinite(value)),
   lastTurnEndedAt: (value) => value === null || (typeof value === 'number' && Number.isFinite(value)),

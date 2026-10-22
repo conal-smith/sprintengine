@@ -75,7 +75,7 @@ export function rowAccent(workspace: Workspace): RowAccent {
 // A user-set highlight colour is workspace identity, not selection, so its rail
 // reads the same whether or not the row is the active one. Rows with no
 // highlight keep the base transparent 4px border and show no rail at all.
-export function highlightRailClass(workspace: Workspace): string {
+export function highlightRailClass(workspace: { highlight?: Workspace['highlight'] | null }): string {
   if (!hasHighlightOverride(workspace.highlight)) return ''
   return `border-l-[4px] ${getHighlightSwatch(workspace.highlight!.color!).border}`
 }
@@ -94,7 +94,7 @@ export function activeRowClass(workspace: Workspace): string {
 // The colored left rail plus a dimmed full-width tint of the same hue — the
 // quiet half of the dim/bright pair; selecting the row swaps to the brighter
 // `bg` fill in `activeRowClass`.
-export function inactiveHighlightClass(workspace: Workspace): string {
+export function inactiveHighlightClass(workspace: { highlight?: Workspace['highlight'] | null }): string {
   if (!hasHighlightOverride(workspace.highlight)) return ''
   const swatch = getHighlightSwatch(workspace.highlight!.color!)
   return `${highlightRailClass(workspace)} ${swatch.dimBg}`

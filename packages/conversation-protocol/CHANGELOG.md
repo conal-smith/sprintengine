@@ -27,6 +27,17 @@
   desktop sent a chat by itself, while it sat idle with its prompt cache about
   to go cold. `readConversationMessageOrigin` keeps it; an older reader still
   reads the message as Studio's, without a reason. Not a pinned file.
+- **A listed chat says how a person marked it.** `highlight` and
+  `autoSettle` are optional members of `ConversationThread`. `highlight`
+  (`ConversationWireHighlight`, `{ starred, color? }`) is the star and the
+  highlight colour a person put on the chat from its row menu, on any device;
+  `CONVERSATION_HIGHLIGHT_COLORS` names the colours, and
+  `isConversationHighlightColor` and `parseConversationWireHighlight` read
+  them. `autoSettle: true` says Auto-settle is on for the chat. Both are
+  absent for a chat with neither, and from a desktop built before they were
+  listed. `parseConversationServerFrame` keeps `highlight` when its star is a
+  boolean or its colour one it knows, and `autoSettle` only when it is `true`.
+  The pinned files are unchanged.
 - **A send says when it was written.** `composedAt` (epoch ms) and
   `confirmedStale` are optional members of a `send` command, beside any other.
   `isStaleConversationSend` says whether a desktop refuses one at a time: it

@@ -163,6 +163,11 @@ type PathTreeNode = {
   children: Map<string, PathTreeNode>
 }
 
+// Found files can hold a folder and a file at one path: a diff that deletes
+// the file `docs` and adds `docs/index.md` lists both. So the two are keyed
+// apart, and neither replaces the other whichever comes first.
+const pathTreeNodeKey = (path: string, isDir: boolean): string => `${isDir ? 'folder' : 'file'}:${path}`
+
 /**
  * Rows for a set of files that were found rather than listed — a search's
  * results, or the changed files — with the folders between them and the root
@@ -179,10 +184,11 @@ export function buildPathTreeRows(rootPath: string, entries: FileTreeEntry[]): F
     parentPath: string,
   ): PathTreeNode => {
     const path = `${parentPath}${separator}${name}`
-    const existing = children.get(path)
+    const key = pathTreeNodeKey(path, true)
+    const existing = children.get(key)
     if (existing) return existing
     const node: PathTreeNode = { entry: { name, isDir: true, path, parentPath }, children: new Map() }
-    children.set(path, node)
+    children.set(key, node)
     return node
   }
 
@@ -190,7 +196,7 @@ export function buildPathTreeRows(rootPath: string, entries: FileTreeEntry[]): F
     const relativePath = treeRelativePath(trimmedRoot, entry.path)
     const segments = relativePath ? relativePath.split('/').filter(Boolean) : []
     if (segments.length <= 1) {
-      rootChildren.set(entry.path, { entry, children: new Map() })
+      rootChildren.set(pathTreeNodeKey(entry.path, entry.isDir), { entry, children: new Map() })
       return
     }
 
@@ -201,7 +207,10 @@ export function buildPathTreeRows(rootPath: string, entries: FileTreeEntry[]): F
       parentPath = directory.entry.path
       currentChildren = directory.children
     })
-    currentChildren.set(entry.path, { entry: { ...entry, parentPath }, children: new Map() })
+    currentChildren.set(pathTreeNodeKey(entry.path, entry.isDir), {
+      entry: { ...entry, parentPath },
+      children: new Map(),
+    })
   })
 
   const rows: FileTreeRowModel[] = []
@@ -216,6 +225,30 @@ export function buildPathTreeRows(rootPath: string, entries: FileTreeEntry[]): F
 
   visit([...rootChildren.values()], 0)
   return rows
+}
+
+/**
+ * The folders among some rows that share their path with a file in the same
+ * rows. Only found files can do that (see `buildPathTreeRows`); a tree listed
+ * from disk always answers empty.
+ */
+export function folderPathsSharedWithFiles(rows: readonly FileTreeRowModel[]): ReadonlySet<string> {
+  const filePaths = new Set<string>()
+  for (const row of rows) if (!row.entry.isDir) filePaths.add(row.entry.path)
+  const shared = new Set<string>()
+  for (const row of rows) if (row.entry.isDir && filePaths.has(row.entry.path)) shared.add(row.entry.path)
+  return shared
+}
+
+/**
+ * A row's identity in the tree: what selects it, keys it and names its
+ * element. The path, except for a folder that shares its path with a file —
+ * that folder takes a trailing separator, which no file path ends in, so a
+ * cursor on the one never lights the other. The file keeps the bare path
+ * because a path the host follows (the diff on screen) is always a file.
+ */
+export function treeRowKey(entry: FileTreeEntry, sharedFolderPaths: ReadonlySet<string>): string {
+  return entry.isDir && sharedFolderPaths.has(entry.path) ? `${entry.path}${pathSeparatorFor(entry.path)}` : entry.path
 }
 
 /**

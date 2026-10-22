@@ -5,6 +5,7 @@ import {
   chooseCliUpdateCommand,
   clearNpmLatestCache,
   foreignPackageManager,
+  installedByHomebrew,
   npmGlobalPrefix,
   type CliInstallFs,
   deriveCliVersionStatus,
@@ -264,6 +265,28 @@ test('a formula that vendors an npm tree in its keg is still brew’s', () => {
     chooseCliUpdateCommand({ manifest: noFormula, resolvedPath: '/opt/homebrew/bin/codex', fs }),
     null,
     'npm is never pointed into a keg',
+  )
+})
+
+test('a cask whose manifest names no Homebrew package is left to Homebrew, not its vendor script', () => {
+  // Grok's cask links its binary into Homebrew's bin. Neither Grok's own
+  // updater nor its install script moves that copy: both write ~/.grok/bin.
+  const link = '/opt/homebrew/bin/grok'
+  const cask = fakeFs({ [link]: '/opt/homebrew/Caskroom/grok-build/1.0.41/grok' })
+  assert.equal(chooseCliUpdateCommand({ manifest: grok, resolvedPath: link, fs: cask }), null)
+  assert.equal(installedByHomebrew(link, cask.realPath(link)), true, 'by the path its link ends at')
+  assert.equal(installedByHomebrew('/usr/local/Cellar/grok/1.0.41/bin/grok'), true, 'by its own path')
+  // What Homebrew did not put there: the vendor script's install, and an npm
+  // global linked into Homebrew's bin by a Homebrew Node.
+  assert.equal(installedByHomebrew('/Users/dev/.grok/bin/grok', '/Users/dev/.grok/bin/grok-1.0.41'), false)
+  assert.equal(installedByHomebrew(link, '/opt/homebrew/lib/node_modules/@xai-official/grok/bin/grok-native'), false)
+  assert.equal(installedByHomebrew(null, null), false)
+  // A cask the manifest does name keeps brew's own upgrade.
+  const codex = manifest({ package: { npm: '@openai/codex', brew: 'codex' } })
+  const codexCask = fakeFs({ '/opt/homebrew/bin/codex': '/opt/homebrew/Caskroom/codex/0.161.0/bin/codex' })
+  assert.deepEqual(
+    chooseCliUpdateCommand({ manifest: codex, resolvedPath: '/opt/homebrew/bin/codex', fs: codexCask }),
+    { kind: 'brew', command: 'brew upgrade codex' },
   )
 })
 

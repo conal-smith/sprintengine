@@ -173,3 +173,21 @@ test('a terminal agent mid-turn holds Settle while another waits at a prompt', (
   // A paused process runs no turn, whatever it last said.
   assert.equal(workspaceIsWorking('idle', [], [terminal('working', false)]), false)
 })
+
+test('a plain shell printing holds neither Settle nor the rest of the chat', () => {
+  const session = (kind: 'agent' | 'terminal', activity: 'working' | 'idle') =>
+    ({
+      sessionId: `${kind}-${activity}`,
+      kind,
+      processAlive: true,
+      activity: { kind: activity, since: 1 },
+    }) as TerminalSessionSnapshot
+  // A chat holding only a shell: the row's activity reads working off the
+  // shell's output, and the chat settles all the same.
+  assert.equal(workspaceIsWorking('working', [], [session('terminal', 'working')]), false)
+  assert.equal(workspaceIsWorking('idle', [], [session('terminal', 'working')]), false)
+  // A shell beside an agent mid-turn: the agent still holds it.
+  assert.equal(workspaceIsWorking('working', [], [session('terminal', 'working'), session('agent', 'working')]), true)
+  // And the row's activity alone, with no shell printing, is still believed.
+  assert.equal(workspaceIsWorking('working', [], [session('terminal', 'idle')]), true)
+})
