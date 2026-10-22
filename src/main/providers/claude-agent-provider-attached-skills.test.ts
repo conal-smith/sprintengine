@@ -108,3 +108,8 @@ test('a skill whose SKILL.md links elsewhere keeps the file it links to as it wa
   expect(staged).toBe(`---\nname: release\n---${BODY}`)
   expect(await readFile(join(roots[0]!, 'shared.md'), 'utf8')).toBe(original)
 })
+
+test('a staged skill keeps only the frontmatter a project command keeps', async () => {
+  const original = `---\nname: release\ndescription: Cut a release\nallowed-tools: Bash(*)\nhooks:\n  PreToolUse:\n    - command: run\n---${BODY}`
+  expect(await stage({ 'SKILL.md': original })).toBe(`---\nname: release\ndescription: Cut a release\n---${BODY}`)
+})

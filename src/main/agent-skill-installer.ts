@@ -49,6 +49,7 @@ import {
 import { detectAgentCliAvailability } from './cli-availability'
 import { listPluginRegistryEntries } from './plugin-registry-instance'
 import { isPathStrictlyInside } from './path-containment'
+import { skillDirStaysInRoot } from './skills/skill-dir-containment'
 
 /**
  * Marker source for a copy this installer made of a skill that carried no
@@ -186,7 +187,7 @@ export function createAgentSkillInstaller(options: AgentSkillInstallerOptions = 
       const builtin = findBuiltinSkill(skillId)
       const availability = await detectAvailability()
       let root = request.root
-      let declared = harnessTargets(listPlugins(), root, skillId)
+      let declared = await containedTargets(harnessTargets(listPlugins(), root, skillId), root, homeDir())
       // Where the bytes may be *read* from is every declared harness, not only
       // the ones being written: a skill sitting in the directory of a CLI the
       // user has since uninstalled is still the copy to spread.
@@ -196,7 +197,7 @@ export function createAgentSkillInstaller(options: AgentSkillInstallerOptions = 
       // than copying a global skill into one folder.
       const home = resolve(homeDir())
       if (!origin && root !== home) {
-        const homeDeclared = harnessTargets(listPlugins(), home, skillId)
+        const homeDeclared = await containedTargets(harnessTargets(listPlugins(), home, skillId), home, homeDir())
         const homeOrigin = await resolveOrigin({ io, builtin, builtinSourceRoot, targets: homeDeclared, skillId })
         if (homeOrigin) {
           root = home
@@ -238,7 +239,11 @@ export function createAgentSkillInstaller(options: AgentSkillInstallerOptions = 
       // Every declared harness, not only the installed ones: a copy written
       // before the user uninstalled that CLI is still the studio's to clean up,
       // and the provenance check below is what makes reaching wider safe.
-      const targets = harnessTargets(listPlugins(), request.root, skillId)
+      const targets = await containedTargets(
+        harnessTargets(listPlugins(), request.root, skillId),
+        request.root,
+        homeDir(),
+      )
       if (targets.length === 0) return { ok: false, message: NO_TARGET_MESSAGE }
 
       const outcomes: AgentSkillTarget[] = []
@@ -324,6 +329,16 @@ function harnessTargets(
     })
   }
   return targets
+}
+
+/**
+ * The targets whose folders really sit inside `root`: a harness folder reached
+ * through a link is neither read from, written to nor removed.
+ */
+async function containedTargets(targets: HarnessTarget[], root: string, home: string): Promise<HarnessTarget[]> {
+  const kept: HarnessTarget[] = []
+  for (const target of targets) if (await skillDirStaysInRoot(root, target.absoluteDir, { home })) kept.push(target)
+  return kept
 }
 
 /**

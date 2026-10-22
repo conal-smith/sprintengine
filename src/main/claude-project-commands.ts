@@ -135,8 +135,20 @@ const FRONTMATTER_KEYS = new Set([
   'when_to_use',
 ])
 
+/**
+ * A skill's `SKILL.md` keeps the same keys, and its `name`, which is what the
+ * skill is called. A skill a project ships is copied into a plugin, or into a
+ * chat's instructions, on the same terms as a command.
+ */
+const SKILL_FRONTMATTER_KEYS = new Set([...FRONTMATTER_KEYS, 'name'])
+
+/** A skill entry's text with only the frontmatter keys a project command keeps, and its name. */
+export function skillWithoutPermissionKeys(text: string): string {
+  return withoutPermissionKeys(text, SKILL_FRONTMATTER_KEYS)
+}
+
 /** A command file's text with only `FRONTMATTER_KEYS` left in its frontmatter. */
-export function withoutPermissionKeys(text: string): string {
+export function withoutPermissionKeys(text: string, keys: ReadonlySet<string> = FRONTMATTER_KEYS): string {
   const open = /^---[ \t]*\r?\n/.exec(text)
   if (!open) return text
   const rest = text.slice(open[0].length)
@@ -154,10 +166,12 @@ export function withoutPermissionKeys(text: string): string {
       continue
     }
     const key = /^([^#:]+?)\s*:/.exec(line)?.[1]
-    keep = key !== undefined && FRONTMATTER_KEYS.has(key)
+    keep = key !== undefined && keys.has(key)
     if (keep) kept.push(line)
   }
-  return `${open[0]}${kept.length ? `${kept.join('\n')}\n` : ''}${rest.slice(close.index)}`
+  // The lines kept end the way the file's own lines do.
+  const eol = open[0].endsWith('\r\n') ? '\r\n' : '\n'
+  return `${open[0]}${kept.length ? `${kept.join(eol)}${eol}` : ''}${rest.slice(close.index)}`
 }
 
 /** One string per set of files, equal when the same commands would be staged. */

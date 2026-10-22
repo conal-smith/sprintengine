@@ -4,6 +4,9 @@ import type { ConversationSkillRef, ConversationCapabilities } from '../shared/c
 import { SKILL_HARNESS_DIR, SKILL_PACK_HARNESSES } from '../shared/skill-harnesses'
 import { createWorkspaceSkillsService } from './workspace-skills-service'
 import { createAgentSkillInstaller } from './agent-skill-installer'
+import { builtinSkillSourceRoot, findBuiltinSkill } from './builtin-skills'
+import { skillWithoutPermissionKeys } from './claude-project-commands'
+import { isOwnSkillEntry, skillDirStaysInRoot } from './skills/skill-dir-containment'
 
 /**
  * `invocation` is the CLI's own way of running the skills by name, to open the
@@ -122,13 +125,24 @@ export function createConversationSkillsResolver(
             }
           }
         }
+        // Studio's own copy of a skill it ships is the one read, whatever a
+        // project folder of the same name holds.
+        const shipped = await shippedSkillEntry(skill.id)
+        if (shipped) source = shipped
         if (!source || !(await isFile(source))) throw new Error(`Skill ${skill.id} is not available in this workspace.`)
-        source = await realpath(source)
-        if (!installedPaths.includes(source))
-          throw new Error(`Skill ${skill.id} source is not an installed workspace skill.`)
+        if (!shipped) {
+          // The SKILL.md must be the project's own file, in a folder really
+          // inside the project: a link would put another file's text here.
+          if (!(await isOwnSkillEntry(source)) || !(await skillDirStaysInRoot(workspaceRoot, dirname(source))))
+            throw new Error(`Skill ${skill.id} is reached through a link, so its instructions were not attached.`)
+          source = await realpath(source)
+          if (!installedPaths.includes(source))
+            throw new Error(`Skill ${skill.id} source is not an installed workspace skill.`)
+        }
         const size = (await stat(source)).size
         if (size > 24 * 1024) throw new Error(`Skill ${skill.id} exceeds the 24 KB instructions limit.`)
-        const body = await readFile(source, 'utf8')
+        // Only the frontmatter keys a project command keeps travel with it.
+        const body = skillWithoutPermissionKeys(await readFile(source, 'utf8'))
         totalBytes += Buffer.byteLength(body)
         if (totalBytes > 64 * 1024) throw new Error(`Skill ${skill.id} exceeds the 64 KB total instructions budget.`)
         sections.push(`Attached skill: ${skill.id}\nSource directory: ${dirname(source)}\n${body}`)
@@ -137,6 +151,18 @@ export function createConversationSkillsResolver(
     }
     return { ids, ...(sections.length ? { context: sections.join('\n\n') } : {}) }
   }
+}
+
+/** The `SKILL.md` Studio ships for `id`, when it ships one. */
+async function shippedSkillEntry(id: string): Promise<string | null> {
+  if (!findBuiltinSkill(id)) return null
+  let entry: string
+  try {
+    entry = join(builtinSkillSourceRoot(), id, 'SKILL.md')
+  } catch {
+    return null
+  }
+  return (await isOwnSkillEntry(entry)) ? entry : null
 }
 
 async function isFile(path: string): Promise<boolean> {
