@@ -277,6 +277,7 @@ test('plugin-registry', async () => {
       'bypassPermissions',
       '--session-id',
       'sid_demo',
+      '--',
       'do the thing',
     ])
 
@@ -309,9 +310,9 @@ test('plugin-registry', async () => {
       prompt: 'fix the parser',
       permissionPreset: 'bypass',
     })
-    assert.deepEqual(launched.argv, ['codex', '--dangerously-bypass-approvals-and-sandbox', 'fix the parser'])
+    assert.deepEqual(launched.argv, ['codex', '--dangerously-bypass-approvals-and-sandbox', '--', 'fix the parser'])
     const none = renderPluginLaunch(plugin!.manifest, { prompt: 'fix the parser', permissionPreset: 'none' })
-    assert.deepEqual(none.argv, ['codex', 'fix the parser'], 'none leaves Codex on its configured approvals')
+    assert.deepEqual(none.argv, ['codex', '--', 'fix the parser'], 'none leaves Codex on its configured approvals')
   }
 
   async function testGrokBundledRenderMatchesExpected(): Promise<void> {
@@ -473,14 +474,14 @@ test('plugin-registry', async () => {
       prompt: 'fix the tests',
       model: 'composer-2.5',
     })
-    assert.deepEqual(withModel.argv, ['cursor-agent', '--model', 'composer-2.5', 'fix the tests'])
+    assert.deepEqual(withModel.argv, ['cursor-agent', '--model', 'composer-2.5', '--', 'fix the tests'])
     const withoutModel = renderPluginLaunch(plugin!.manifest, {
       sessionId: 'sid_cursor',
       prompt: 'fix the tests',
     })
     assert.deepEqual(
       withoutModel.argv,
-      ['cursor-agent', 'fix the tests'],
+      ['cursor-agent', '--', 'fix the tests'],
       'an unset model still launches with no --model, so the CLI default (auto) wins',
     )
   }

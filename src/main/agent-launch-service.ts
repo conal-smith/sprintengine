@@ -54,6 +54,7 @@ import type {
   AgentLaunchRequest,
   AgentLaunchResult,
 } from '../shared/agent-launch'
+import { LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE, launchPromptReadsAsOption } from '../shared/agent-launch'
 import {
   effectiveAgentLaunchSettings,
   resolveAgentSpawnPermission,
@@ -289,6 +290,11 @@ export function createAgentLaunchService(deps: AgentLaunchServiceDeps): AgentLau
     // A resumed conversation already has its opening; a prompt would be sent
     // into it as a new message nobody typed there.
     const initialPrompt = resumeCliSessionId ? undefined : request.prompt
+    // Refused here as well as at each tool, so no caller of the service can
+    // hand the CLI a first message its option parser would read as a flag.
+    if (launchPromptReadsAsOption(initialPrompt)) {
+      return { ok: false, code: 'prompt_reads_as_option', message: LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE }
+    }
 
     const record: AgentLaunchRecord = {
       agentId,

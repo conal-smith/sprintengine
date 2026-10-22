@@ -468,6 +468,7 @@ test('agent-launch-render', async () => {
       'bypassPermissions',
       '--session-id',
       'sid_42',
+      '--',
       'build the auth flow',
     ])
   }
@@ -553,7 +554,7 @@ test('agent-launch-render', async () => {
       sessionId: 'sid_x',
       initialPrompt: 'fix the parser',
     })
-    assert.deepEqual(out.argv, ['codex', 'fix the parser'])
+    assert.deepEqual(out.argv, ['codex', '--', 'fix the parser'])
   }
 
   function testCodexRenderWithBypass(): void {
@@ -563,7 +564,7 @@ test('agent-launch-render', async () => {
       initialPrompt: 'fix it',
       cliPermissionPreset: 'bypass',
     })
-    assert.deepEqual(out.argv, ['codex', '--dangerously-bypass-approvals-and-sandbox', 'fix it'])
+    assert.deepEqual(out.argv, ['codex', '--dangerously-bypass-approvals-and-sandbox', '--', 'fix it'])
   }
 
   // The four modes, for every bundled CLI: each is that CLI's own setting for
@@ -618,7 +619,7 @@ test('agent-launch-render', async () => {
       initialPrompt: 'go',
       cliPermissionPreset: 'none',
     })
-    assert.deepEqual(none.argv, ['claude', '--session-id', 'sid_n', 'go'])
+    assert.deepEqual(none.argv, ['claude', '--session-id', 'sid_n', '--', 'go'])
 
     // Each CLI's other modes render their own flags at the preset they sit at.
     // A mode at another preset, or one the CLI does not have, renders the
@@ -746,7 +747,7 @@ test('agent-launch-render', async () => {
     })
     assert.equal(
       out,
-      `if ! command -v claude >/dev/null 2>&1; then echo 'Claude CLI was not found. Check the claude-code command in Settings.' >&2; exit 127; fi; claude --permission-mode bypassPermissions --session-id sid_42 'hello there'`,
+      `if ! command -v claude >/dev/null 2>&1; then echo 'Claude CLI was not found. Check the claude-code command in Settings.' >&2; exit 127; fi; claude --permission-mode bypassPermissions --session-id sid_42 -- 'hello there'`,
     )
 
     const resumeOut = buildAgentShellCommand({
@@ -789,6 +790,7 @@ test('agent-launch-render', async () => {
       'bypassPermissions',
       '--session-id',
       'sid_win',
+      '--',
       'do it',
     ])
 
@@ -810,7 +812,7 @@ test('agent-launch-render', async () => {
     })
     assert.equal(
       out,
-      `if ! command -v codex >/dev/null 2>&1; then echo 'Codex CLI was not found. Check the codex command in Settings.' >&2; exit 127; fi; codex --dangerously-bypass-approvals-and-sandbox 'fix it'`,
+      `if ! command -v codex >/dev/null 2>&1; then echo 'Codex CLI was not found. Check the codex command in Settings.' >&2; exit 127; fi; codex --dangerously-bypass-approvals-and-sandbox -- 'fix it'`,
     )
 
     const resumeOut = buildAgentShellCommand({
@@ -914,11 +916,11 @@ test('agent-launch-render', async () => {
 
     assert.deepEqual(
       script('high'),
-      ['-C', cwd, '--model', 'gpt-5.6-sol', '-c', 'model_reasoning_effort="high"', 'go'],
+      ['-C', cwd, '--model', 'gpt-5.6-sol', '-c', 'model_reasoning_effort="high"', '--', 'go'],
       'codex-legacy renders the effort flag after the model flag',
     )
     const baseline = script(undefined)
-    assert.deepEqual(baseline, ['-C', cwd, '--model', 'gpt-5.6-sol', 'go'])
+    assert.deepEqual(baseline, ['-C', cwd, '--model', 'gpt-5.6-sol', '--', 'go'])
     for (const level of [undefined, '', 'medium', 'bogus']) {
       assert.deepEqual(script(level), baseline, `codex-legacy passes no effort flag for ${JSON.stringify(level)}`)
     }
@@ -1233,7 +1235,7 @@ test('agent-launch-render', async () => {
       contextFile: pluginDir,
       contextText: HOST_CONTEXT_TEXT,
     })
-    assert.deepEqual(launch.argv, ['cursor-agent', '--plugin-dir', pluginDir, 'fix the tests'])
+    assert.deepEqual(launch.argv, ['cursor-agent', '--plugin-dir', pluginDir, '--', 'fix the tests'])
     assert.ok(!launch.argv.includes(HOST_CONTEXT_TEXT), 'the document itself does not ride argv or the prompt')
     const resume = renderAgentLaunchArgv({
       cli: 'cursor',

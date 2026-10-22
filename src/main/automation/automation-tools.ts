@@ -12,6 +12,7 @@ import { mergeCliModelCatalog, type DiscoveredCliModelCatalog } from '../../shar
 import { cliPickerModels } from '../../shared/cli-model-families'
 import { conversationProviderForCli } from '../../shared/conversation-harness'
 import type { AgentLaunchRequest, AgentLaunchResult } from '../../shared/agent-launch'
+import { LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE, launchPromptReadsAsOption } from '../../shared/agent-launch'
 import {
   launchingAgentOf,
   NOT_TOLD_NOT_AN_AGENT,
@@ -460,6 +461,14 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       'project_root_required',
       'This connection has no resolvable workspace to default from; pass "projectRoot" (the absolute path to the project folder).',
     )
+  }
+
+  // A launch prompt the CLI would parse as an option (`launchPromptReadsAsOption`)
+  // is refused at each launching tool, before a worktree or schedule is made
+  // for it; the launch service and the render refuse it again behind this.
+  function refuseOptionLikePrompt(prompt: unknown): McpToolResult | null {
+    if (typeof prompt !== 'string' || !launchPromptReadsAsOption(prompt)) return null
+    return failure('prompt_reads_as_option', LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE)
   }
 
   // Link a launched agent to the agent that asked for it, so the caller hears
@@ -1169,6 +1178,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       if (typeof workspaceId !== 'string') return workspaceId
       const invalid = firstInvalidOptionalString(args, ['cli', 'name', 'prompt', 'cliModel', 'connectorId', 'host'])
       if (invalid) return invalid
+      const dashed = refuseOptionLikePrompt(args.prompt)
+      if (dashed) return dashed
       if (args.notifyParent !== undefined && typeof args.notifyParent !== 'boolean') {
         return failure('invalid_arguments', '"notifyParent" must be a boolean when provided.')
       }
@@ -1697,6 +1708,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         'cliModel',
       ])
       if (invalid) return invalid
+      const dashed = refuseOptionLikePrompt(args.prompt)
+      if (dashed) return dashed
 
       const resolved = resolveTerminalWorkspace(args)
       if (!('workspace' in resolved)) return resolved
@@ -2293,6 +2306,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       const instructions = optionalString(args.instructions)
       const invocation = renderBacklogSkillInvocation(cli, read.item.relativePath)
       const prompt = instructions ? `${invocation}\n\n${instructions}` : invocation
+      const dashed = refuseOptionLikePrompt(prompt)
+      if (dashed) return dashed
 
       // Install the Backlog skill into the CLI's native dir before launch so the
       // invocation resolves. Non-fatal: a false result rides `skillEnsured` and
@@ -2479,6 +2494,10 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     handler: async (args, context) => {
       const refused = refuseScheduledRunCaller(context, 'create')
       if (refused) return refused
+      // Each run is launched later with nobody watching, so the prompt is held
+      // to the launch rule now rather than failing at every run.
+      const dashed = refuseOptionLikePrompt(args.prompt)
+      if (dashed) return dashed
       const workspaceId = requireString(args, 'workspaceId')
       if (typeof workspaceId !== 'string') return workspaceId
       const workspace = findWorkspace(workspaceId)
