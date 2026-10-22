@@ -2306,9 +2306,10 @@ test('the strip under the composer pins the context ring right, its tooltip the 
   })
   try {
     const strip = chat.host.querySelector('[data-conversation-strip]')
-    const ring = strip?.querySelector<HTMLElement>('[data-strip-context] [role="img"]')
+    // A button now: it opens what fills the window (ContextBreakdown.tsx).
+    const ring = strip?.querySelector<HTMLElement>('[data-strip-context] [data-strip-context-button]')
     const counts = `${(76_000).toLocaleString()} / ${(200_000).toLocaleString()} tokens`
-    expect(ring?.getAttribute('aria-label')).toBe(`Context 38% used, ${counts}`)
+    expect(ring?.getAttribute('aria-label')).toBe(`Context 38% used, ${counts} — show what fills it`)
     expect(ring?.closest('[data-strip-context]')?.className).toContain('ml-auto')
     await chat.act(async () => ring!.focus())
     expect(chat.dom.window.document.querySelector('[role="tooltip"]')?.textContent).toBe(counts)
@@ -2329,8 +2330,67 @@ test('a CLI chat’s ring takes its window from the CLI model catalog when the r
     events: [event('usage_updated', { contextUsed: 50_000 })],
   })
   try {
-    const ring = chat.host.querySelector('[data-strip-context] [role="img"]')
+    const ring = chat.host.querySelector('[data-strip-context] [data-strip-context-button]')
     expect(ring?.getAttribute('aria-label')).toMatch(/^Context 25% used, /)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('the ring opens what fills the window, read from the chat’s agent', async () => {
+  const readContextBreakdown = vi.fn(async (_input: { sessionId: string }) => ({
+    ok: true,
+    breakdown: {
+      model: 'opus',
+      usedTokens: 76_000,
+      windowTokens: 200_000,
+      categories: [
+        { name: 'MCP tools', tokens: 20_000, kind: 'used' },
+        { name: 'Messages', tokens: 56_000, kind: 'used' },
+        { name: 'Free space', tokens: 124_000, kind: 'free' },
+      ],
+      mcpServers: [{ name: 'linear', tokens: 20_000, tools: [] }],
+      skills: [],
+      memoryFiles: [],
+      agents: [],
+      autoCompactAt: null,
+      estimated: true,
+      measuredAt: 0,
+    },
+  }))
+  const chat = await mountChat({
+    providerId: 'claude-agent',
+    modelId: 'opus',
+    capabilities: { tools: true, contextBreakdown: true },
+    api: { conversationSessionContextBreakdown: readContextBreakdown },
+    events: [event('usage_updated', { contextWindow: 200_000, contextUsed: 76_000 })],
+  })
+  try {
+    const ring = () => chat.host.querySelector<HTMLButtonElement>('[data-strip-context] [data-strip-context-button]')!
+    const note = () => chat.dom.window.document.querySelector('[data-context-breakdown-note]')?.textContent
+    await chat.act(async () => ring().click())
+    // The Studio protocol has no method for it yet: the panel opens on the
+    // total, and says the window cannot ask rather than that Claude cannot say.
+    if (chatOverStudioUnderTest()) {
+      expect(note()).toMatch(/^This window cannot ask the agent/u)
+      return
+    }
+    // Before a session is live there is no agent to ask, and the panel says so.
+    expect(note()).toBe(
+      'Claude Code is not running for this chat now. Send a message and it can say what fills the window.',
+    )
+    await chat.act(async () => ring().click())
+    expect(readContextBreakdown).not.toHaveBeenCalled()
+    // A message starts the session; the ring then asks it.
+    await chat.act(async () => chat.type('Hello'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    await chat.act(async () => ring().click())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(readContextBreakdown).toHaveBeenCalledTimes(1)
+    expect(readContextBreakdown.mock.calls[0]![0]).toEqual({ sessionId: 'session' })
+    const panel = chat.dom.window.document.querySelector('[data-context-breakdown]')
+    expect(panel?.querySelector('[data-context-heaviest="mcp"]')?.textContent).toContain('linear')
   } finally {
     await chat.unmount()
   }

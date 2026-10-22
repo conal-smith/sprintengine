@@ -1,4 +1,3 @@
-import { comparablePath } from '../shared/host-paths'
 import { dependencyInstallSettingFor } from '../shared/ipc/worktree-pool'
 import { chatIdsOnRecord } from './agent-worktree-keep-checks'
 import { diagnosticLogger } from './diagnostics-service'
@@ -9,7 +8,7 @@ import type { WorkspaceSyncService } from './workspace-sync-service'
 import { installWorktreePool } from './worktree-pool/active-pool'
 import { createDependencyInstaller, installDependencyInstaller } from './worktree-pool/dependency-install'
 import { cachedDependencyInstallEnvironment } from './worktree-pool/install-environment'
-import { poolChatsOf } from './worktree-pool/pool-chats'
+import { markChatsReclaimed, poolChatsOf } from './worktree-pool/pool-chats'
 import { createPoolStore } from './worktree-pool/pool-store'
 import { createWorktreePoolService } from './worktree-pool/worktree-pool-service'
 import { createWorktreePoolTools } from './worktree-pool/worktree-pool-tools'
@@ -52,8 +51,9 @@ export function createWorktreeServices({
     chats: () => poolChatsOf(workspaceSyncService.getSnapshot().state),
     // The chat whose worktree it was is marked as the cleanup's report marks
     // it (`chatsReclaimedBy`), so opening it brings the worktree back: a slot
-    // a lease gave back to make room is in no report.
-    onGivenBack: ({ path }) => markChatsReclaimed(workspaceSyncService, path),
+    // a lease gave back to make room is in no report. Given back on the
+    // branch its agent moved to, the chat is moved to that branch too.
+    onGivenBack: (slot) => markChatsReclaimed(workspaceSyncService, slot),
   })
   installWorktreePool(worktreePool)
   void worktreePool.load()
@@ -84,20 +84,4 @@ export function createWorktreeServices({
       }),
   })
   return { worktreePool, dependencyInstaller, worktreeTools }
-}
-
-/**
- * Mark every chat whose own worktree is at `path` as given back
- * (`worktree.reclaimedAt`), as the renderer marks the ones a sweep's report
- * names: the chat then brings its worktree back when it is opened
- * (chatWorktreeRestore.ts), not when its folder is found missing.
- */
-function markChatsReclaimed(workspaceSyncService: WorkspaceSyncService, path: string): void {
-  const reclaimedAt = Date.now()
-  for (const workspace of workspaceSyncService.getSnapshot().state.workspaces) {
-    const worktree = workspace.worktree
-    if (!worktree?.branch || worktree.reclaimedAt !== undefined || !workspace.folderPath) continue
-    if (comparablePath(workspace.folderPath) !== comparablePath(path)) continue
-    workspaceSyncService.updateWorkspaceFields(workspace.id, { worktree: { ...worktree, reclaimedAt } }, 'system')
-  }
 }

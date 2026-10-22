@@ -35,6 +35,8 @@ import type {
   ConversationStopSessionInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationSuspendSessionInput,
@@ -1902,6 +1904,29 @@ export class ConversationRuntime {
     if (!abort) return { ok: false, message: 'That side question is not being answered.' }
     abort.abort()
     return { ok: true }
+  }
+
+  /**
+   * What fills the chat's context window, as its agent measures it
+   * (`capabilities.contextBreakdown`). A reading touches nothing: not the
+   * transcript, not the session's clocks, not the idle sweep's — opening the
+   * breakdown is not activity, and must not keep a child alive.
+   */
+  async readContextBreakdown(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult> {
+    const session = this.sessions.get(input.sessionId)
+    if (!session) return { ok: false, reason: 'failed', message: 'Conversation session not found.' }
+    const adapter = this.getAdapterForProviderId(session.providerId)
+    if (!adapter?.readContextBreakdown || session.capabilities?.contextBreakdown !== true)
+      return { ok: false, reason: 'unsupported', message: 'This chat’s agent does not say what fills its window.' }
+    try {
+      return await adapter.readContextBreakdown(session.sessionId)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'failed',
+        message: error instanceof Error ? error.message : 'The breakdown could not be read.',
+      }
+    }
   }
 
   async stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {

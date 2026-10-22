@@ -1,3 +1,4 @@
+import { comparablePath } from '../../shared/host-paths'
 import { changesAlreadyIn } from '../agent-worktree-cleanup'
 import {
   hiddenEditPaths,
@@ -8,7 +9,14 @@ import {
   worktreeLastUsedAt,
 } from '../agent-worktree-keep-checks'
 import { UNCLAIMED_LEASE_MS, type SlotKeeper, type SlotRecord } from './pool-store'
-import { isPerAgentFile, operationInProgress, readSlotGitDir, readSlotStatus, resolvePoolBaseRef } from './slot-git'
+import {
+  isPerAgentFile,
+  operationInProgress,
+  patchesAlreadyIn,
+  readSlotGitDir,
+  readSlotStatus,
+  resolvePoolBaseRef,
+} from './slot-git'
 import type { PoolContext, PoolRuntime } from './pool-context'
 import { isOurLock, lockReasonOf } from './pool-slot-steps'
 import { evictSlot } from './pool-eviction'
@@ -41,12 +49,16 @@ import { returnSlot } from './pool-return'
  * back to the same folder, without the installed dependencies.
  *
  * Only a slot its chat can be brought back to is given back: one whose
- * folder IS the chat's (a worktree chat), on the branch that chat records.
- * An agent working in it from a chat in another folder has no way back, and
- * keeps it. A slot an agent leased for itself (`worktree.lease`) goes while
- * the agent's chat is idle and not on screen, and is removed outright rather
- * than parked: the agent finds its folder gone, not a detached tree it might
- * write to, and leases again.
+ * folder IS the chat's (a worktree chat), leased on the branch that chat
+ * records. An agent working in it from a chat in another folder has no way
+ * back, and keeps it. The agent in a worktree chat often moves to a branch of
+ * its own (a scheduled run names its pull request's branch, `git switch -c`):
+ * the slot is given back on that branch, the chat's record is moved to it
+ * (`onGivenBack`), and the chat comes back where its agent left off, not on
+ * the branch the lease began with. A slot an agent leased for itself
+ * (`worktree.lease`) goes while the agent's chat is idle and not on screen,
+ * and is removed outright rather than parked: the agent finds its folder
+ * gone, not a detached tree it might write to, and leases again.
  */
 
 /**
@@ -69,6 +81,8 @@ export type PoolChat = {
   open: boolean
   /** When anything last happened in it: a message, a finished turn, terminal output, a visit. */
   lastActiveAt: number | null
+  /** What the sidebar calls it, so a refusal can say whose a slot is. */
+  name?: string | null
 }
 
 /** What the slots of one pass are weighed against: read once, spelled every way a path can be. */
@@ -105,7 +119,17 @@ export async function readIdleFacts(ctx: PoolContext): Promise<IdleFacts> {
   }
 }
 
-export type IdleVerdict = { ok: true; keeper: SlotKeeper } | { ok: false; reason: string }
+export type IdleVerdict =
+  | { ok: true; keeper: SlotKeeper }
+  | {
+      ok: false
+      reason: string
+      /**
+       * Set when the idle period keeps it: how long until that is up. What
+       * else may hold it then is not asked yet.
+       */
+      readyInMs?: number
+    }
 
 /** `12 minutes`, `3 hours`, `2 days`. */
 function span(ms: number): string {
@@ -118,8 +142,10 @@ function span(ms: number): string {
 
 /**
  * Whether HEAD holds nothing that exists only here: some remote-tracking ref
- * has it, or the default branch the pool forks from does (by ancestry, or by
- * content for a squash-merged pull request whose remote branch was deleted).
+ * has it, or the default branch the pool forks from does: by ancestry; by
+ * content, for a squash-merged pull request whose remote branch was deleted
+ * (merging it in would change nothing); or patch by patch, for commits
+ * cherry-picked or rebased onto it whose lines it has edited again since.
  */
 async function workIsElsewhere(ctx: PoolContext, pool: PoolRuntime, slot: SlotRecord, oid: string): Promise<boolean> {
   const remote = await ctx.git(slot.path, [
@@ -134,7 +160,8 @@ async function workIsElsewhere(ctx: PoolContext, pool: PoolRuntime, slot: SlotRe
   if (!base) return false
   const ancestor = await ctx.git(slot.path, ['merge-base', '--is-ancestor', oid, base])
   if (ancestor.ok) return true
-  return changesAlreadyIn(slot.path, base, oid, ctx.git)
+  if (await changesAlreadyIn(slot.path, base, oid, ctx.git)) return true
+  return patchesAlreadyIn(ctx.git, slot.path, base, oid)
 }
 
 /**
@@ -183,15 +210,25 @@ export async function judgeIdle(
   }
   const now = ctx.now()
   if (!lease.claimed && now - lease.leasedAt < UNCLAIMED_LEASE_MS) return no('leased moments ago')
-  const touched = Math.max(
-    lease.leasedAt,
-    slot.lastUsedAt ?? 0,
-    agentChat?.chat.lastActiveAt ?? 0,
-    ...chats.map(({ chat }) => chat.lastActiveAt ?? 0),
-  )
-  if (now - touched < idleMs) return no(`used ${span(now - touched)} ago`)
-  const gitUsedAt = await worktreeLastUsedAt(slot.path, ctx.git)
-  if (gitUsedAt !== null && now - gitUsedAt < idleMs) return no(`git used it ${span(now - gitUsedAt)} ago`)
+  // The idle period is for someone's next step. With no chat on record in
+  // it and no agent's chat (whoever it was leased for settled or was
+  // deleted), there is none: the sweep returns such a slot without waiting
+  // (pool-return.ts), and a lease that needs the room does not wait either.
+  if (chats.length > 0 || agentChat !== undefined) {
+    const touched = Math.max(
+      lease.leasedAt,
+      slot.lastUsedAt ?? 0,
+      agentChat?.chat.lastActiveAt ?? 0,
+      ...chats.map(({ chat }) => chat.lastActiveAt ?? 0),
+    )
+    if (now - touched < idleMs) {
+      return { ok: false, reason: `used ${span(now - touched)} ago`, readyInMs: idleMs - (now - touched) }
+    }
+    const gitUsedAt = await worktreeLastUsedAt(slot.path, ctx.git)
+    if (gitUsedAt !== null && now - gitUsedAt < idleMs) {
+      return { ok: false, reason: `git used it ${span(now - gitUsedAt)} ago`, readyInMs: idleMs - (now - gitUsedAt) }
+    }
+  }
 
   // Everything a return and an eviction check, asked before either runs.
   const lock = await lockReasonOf(ctx, pool, slot.path)
@@ -206,9 +243,11 @@ export async function judgeIdle(
   const changes =
     status.status.changedPaths - status.status.untrackedPaths.filter((path) => isPerAgentFile(path)).length
   if (changes > 0) return no(`${changes} uncommitted change${changes === 1 ? '' : 's'}`)
-  if (status.status.branch !== lease.branch) {
-    return no(`it is on ${status.status.branch ?? 'a detached HEAD'}, not ${lease.branch}`)
-  }
+  // On another branch than the lease's, it is given back on that one: the
+  // branch its agent moved to is where the work is, and where the chat comes
+  // back to (`giveBack`). A detached HEAD has no branch to come back to.
+  const branch = status.status.branch
+  if (branch === null) return no(`it is on a detached HEAD, not ${lease.branch}`)
   const oid = status.status.oid
   if (!oid || !(await workIsElsewhere(ctx, pool, slot, oid))) return no('it has commits not pushed')
   const hidden = await hiddenEditPaths(slot.path, ctx.git)
@@ -228,7 +267,7 @@ export async function judgeIdle(
   }
   return {
     ok: true,
-    keeper: { branch: lease.branch, agentId: lease.agentId, workspaceId: lease.workspaceId, since: now },
+    keeper: { branch, agentId: lease.agentId, workspaceId: lease.workspaceId, since: now },
   }
 }
 
@@ -236,9 +275,10 @@ export async function judgeIdle(
  * Give a slot {@link judgeIdle} cleared back, kept for its keeper. A chat's
  * slot stays on disk, parked; one an agent leased for itself, or any slot when
  * `evict` asks, is removed too, its path kept free for whoever it was kept
- * for. 'returned' once it is no longer leased; otherwise why not, as the
- * return said (the return checks everything again, and something may have
- * moved since the judgement).
+ * for. Kept on another branch than the lease's, the chat is told which
+ * (`onGivenBack`), so it comes back on it. 'returned' once it is no longer
+ * leased; otherwise why not, as the return said (the return checks
+ * everything again, and something may have moved since the judgement).
  */
 export async function giveBack(
   ctx: PoolContext,
@@ -247,11 +287,15 @@ export async function giveBack(
   keeper: SlotKeeper,
   options: { evict?: boolean; why: string },
 ): Promise<'returned' | 'held' | 'postponed' | 'skipped'> {
+  const leaseBranch = slot.lease?.branch ?? keeper.branch
   const outcome = await returnSlot(ctx, pool, slot, false, keeper)
   if (outcome !== 'returned') return outcome
-  ctx.log(`${slot.path}: given back while its ${keeper.agentId ? 'agent' : 'chat'} still exists (${options.why})`)
+  const moved = leaseBranch !== keeper.branch ? `; it comes back on ${keeper.branch}, not ${leaseBranch}` : ''
+  ctx.log(
+    `${slot.path}: given back while its ${keeper.agentId ? 'agent' : 'chat'} still exists (${options.why})${moved}`,
+  )
   try {
-    ctx.deps.onGivenBack?.({ repoRoot: pool.record.repoRoot, path: slot.path, branch: keeper.branch })
+    ctx.deps.onGivenBack?.({ repoRoot: pool.record.repoRoot, path: slot.path, branch: keeper.branch, leaseBranch })
   } catch (error) {
     ctx.log(`${slot.path}: telling the chat its worktree was given back failed: ${String(error)}`)
   }
@@ -261,10 +305,34 @@ export async function giveBack(
   return 'returned'
 }
 
-/** `app-03 (agent/fix-login)`: a slot as a list of reasons names it. */
-function label(slot: SlotRecord): string {
+/**
+ * `app-03 (agent/fix-login)`: a slot as a list of reasons names it, with
+ * whose it is when the records say: `app-03 (agent/fix-login, chat “Fix the
+ * login”)`, `app-04 (agent/docs, agent agent-7 in “Docs”)`, or
+ * `app-05 (agent/old, no chat on record)`.
+ */
+function label(slot: SlotRecord, facts: IdleFacts | null = null): string {
   const branch = slot.lease?.branch ?? slot.parked?.branch ?? slot.held?.branch ?? null
-  return branch ? `${slot.id} (${branch})` : slot.id
+  const holder = holderOf(slot, facts)
+  const parts = [branch, holder].filter((part): part is string => Boolean(part))
+  return parts.length > 0 ? `${slot.id} (${parts.join(', ')})` : slot.id
+}
+
+/** Whose a leased slot is, as the chats on record name it; null when they cannot say. */
+function holderOf(slot: SlotRecord, facts: IdleFacts | null): string | null {
+  const lease = slot.lease
+  const chats = facts?.chats
+  if (slot.state !== 'leased' || !lease || !chats) return null
+  const named = (name: string | null | undefined): string => (name?.trim() ? `“${name.trim()}”` : 'its chat')
+  if (lease.agentId !== null) {
+    const chat = chats.find(({ chat }) => chat.workspaceId === lease.workspaceId)?.chat
+    return `agent ${lease.agentId}${chat ? ` in ${named(chat.name)}` : ', whose chat is gone'}`
+  }
+  const chat = chats.find(
+    ({ chat }) => chat.folderPath !== null && comparablePath(chat.folderPath) === comparablePath(slot.path),
+  )?.chat
+  if (!chat) return 'no chat on record'
+  return chat.name?.trim() ? `chat ${named(chat.name)}` : null
 }
 
 /** Why a slot no lease could take is where it is, for the refusal that lists them. */
@@ -286,12 +354,13 @@ function standing(slot: SlotRecord): string {
  * that, a leased slot nothing uses is given back and removed the same way.
  * Never one that holds anything only it has (every eviction rule applies),
  * nor one in use. Otherwise every slot with the reason it is held, so the
- * refusal says what the person could free.
+ * refusal says what the person could free, and, when a slot is held only by
+ * the idle period, which one may come free first and when (`soonest`).
  */
 export async function makeRoom(
   ctx: PoolContext,
   pool: PoolRuntime,
-): Promise<{ ok: true } | { ok: false; reasons: string[] }> {
+): Promise<{ ok: true } | { ok: false; reasons: string[]; soonest: { slot: string; inMs: number } | null }> {
   const reasons = new Map<string, string>()
   const why = 'to make room for a new lease'
   const parked = pool.record.slots
@@ -310,13 +379,17 @@ export async function makeRoom(
     .filter((slot) => slot.state === 'leased' && slot.lease)
     .sort((a, b) => (a.lastUsedAt ?? a.createdAt) - (b.lastUsedAt ?? b.createdAt))
   let facts: IdleFacts | null = null
+  let soonest: { slot: string; inMs: number } | null = null
   for (const slot of leased) {
     if (ctx.stopped) break
-    const name = label(slot)
     facts ??= await readIdleFacts(ctx)
+    const name = label(slot, facts)
     const verdict = await judgeIdle(ctx, pool, slot, facts, idleMs)
     if (!verdict.ok) {
       reasons.set(slot.id, `${name}: ${verdict.reason}`)
+      if (verdict.readyInMs !== undefined && (!soonest || verdict.readyInMs < soonest.inMs)) {
+        soonest = { slot: slot.id, inMs: verdict.readyInMs }
+      }
       continue
     }
     const outcome = await giveBack(ctx, pool, slot, verdict.keeper, { evict: true, why })
@@ -327,7 +400,7 @@ export async function makeRoom(
     )
   }
   for (const slot of pool.record.slots) {
-    if (!reasons.has(slot.id)) reasons.set(slot.id, `${label(slot)}: ${standing(slot)}`)
+    if (!reasons.has(slot.id)) reasons.set(slot.id, `${label(slot, facts)}: ${standing(slot)}`)
   }
-  return { ok: false, reasons: [...reasons.values()] }
+  return { ok: false, reasons: [...reasons.values()], soonest }
 }
