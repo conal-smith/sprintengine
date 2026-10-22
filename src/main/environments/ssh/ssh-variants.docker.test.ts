@@ -14,7 +14,7 @@ import { afterAll, beforeAll, test } from 'vitest'
 import { DEFAULT_SSH_ENVIRONMENT_SETTINGS } from '../../../shared/ssh-environments'
 import { BACKEND_WIRE_VERSION } from '../../../server/wsl/backend-wire'
 import { createAskpassBroker, type AskpassRequest } from './askpass'
-import { DOCKER_TESTS, startSshd } from './__fixtures__/docker-sshd'
+import { DOCKER_TESTS, prepareSshdImage, SSHD_IMAGE_BUILD_MS, startSshd } from './__fixtures__/docker-sshd'
 import { parseDestination, resolveDestination, spawnSshSession } from './ssh-command'
 import { SshEnvironment } from './ssh-environment'
 import { ensureNodeBinary, serverTreeDigest } from './ssh-install'
@@ -27,8 +27,9 @@ let scratch = ''
 let tree = ''
 let digest = ''
 
-beforeAll(() => {
+beforeAll(async () => {
   if (!DOCKER_TESTS) return
+  await prepareSshdImage()
   scratch = mkdtempSync(join(tmpdir(), 'se-ssh-variants-'))
   tree = join(scratch, 'tree')
   execFileSync(process.execPath, [join(ROOT, 'scripts', 'build-server.mjs'), '--wsl', '--out-dir', tree], {
@@ -36,7 +37,7 @@ beforeAll(() => {
     stdio: 'pipe',
   })
   digest = serverTreeDigest(tree)
-})
+}, SSHD_IMAGE_BUILD_MS)
 afterAll(() => {
   if (scratch) rmSync(scratch, { recursive: true, force: true })
 })
