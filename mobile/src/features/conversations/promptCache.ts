@@ -94,6 +94,9 @@ export function applyPromptCacheEvent(
   }
   if (event.type === "context_compacted" && previous)
     return { ttl: previous.ttl, expiresAt: null, recacheTokens: null };
+  // A handoff lets the session go: the new one caches nothing of the old.
+  if (event.type === "context_handed_off" && previous)
+    return { ttl: previous.ttl, expiresAt: null, recacheTokens: null };
   return previous;
 }
 

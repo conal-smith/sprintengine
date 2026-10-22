@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Handoff** (`conversation-handoff`, owners): `conversation.handoff` hands a
+  chat off to a fresh session of its CLI instead of compacting it. The chat's
+  messages, without its tool calls, are saved to a file on the machine its
+  agent runs on, and the answer names that file (`{ ok: true, path }`); the
+  next message sent to the chat points the new session at it. A Studio built
+  before it does not advertise it and refuses the method as unknown, so a
+  client offers Handoff only where it is listed.
+
 - **The project's store as a file root** (`files-write`, owners): a
   `StudioFileRoot` may be `{ kind: 'store', workspaceId }`, the folder in the
   person's home where Studio keeps a project's browser captures, recordings

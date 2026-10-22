@@ -673,6 +673,31 @@ goes the way a local Settle takes a row. One that machine settles without
 asking here (on the phone, or on that machine) is followed once its browse says
 so, and the row here leaves the rail the same way.
 
+On a desktop that advertises `chat-row-menu` (2026-10-21), a paired
+desktop's row menu on one of its chats is the menu a local chat has, each
+item written there, to the record the desktop's own menu writes:
+**`conversation.highlight`** `{ workspaceId, starred?, color? }` is Star and
+Highlight color (one of `CONVERSATION_HIGHLIGHT_COLORS`, or `null` for none;
+a member left out stays as it is, and a chat left with neither has no
+highlight); **`conversation.snooze`** `{ workspaceId, until }` is Snooze, until
+a time still ahead, and with `until: null` Wake now (refused `working` while an
+agent there works and `settled` for a settled chat, and the desktop pauses the
+chat's processes as its own Snooze does); **`conversation.auto_settle`**
+`{ workspaceId, enabled }` is the Auto-settle switch. Each listed chat says
+what they wrote: `highlight` (`{ starred, color? }`) and `autoSettle: true`,
+beside the `snoozedUntil` it already carried, and a change to any of them
+moves the list. All three need `conversation:operate` and are audited. The
+paired desktop draws the chat as that machine does: starred in its Starred
+section, tinted with its colour, asleep in its project's Snoozed shelf until
+it wakes. Mark unread is `conversation.mark_unread` above, offered where the
+machine advertises `chat-mark-unread`. Copy link to chat links the chat by its
+id on that machine, which opens it there and on any desktop that follows it;
+Move to New Window opens it in a window of its own. Rename, New chat in
+project, Reveal folder and Close workspace are about a workspace on the
+desktop doing the asking, and are not offered for a chat no window there has
+open. A machine without the capability answers the tools "Unknown tool", and
+its chats offer none of the four.
+
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:
 **`conversation.pull_request_state`** `{ workspaceId, agentId }` answers

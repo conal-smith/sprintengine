@@ -23,6 +23,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationSendTurnInput,
   ConversationSessionActionResult,
   ConversationSessionFrame,
@@ -131,6 +133,7 @@ export type StudioChatBackend = {
   setModel(input: ConversationSetModelInput): Promise<ConversationSessionActionResult>
   revert(input: ConversationRevertInput): Promise<ConversationRevertResult>
   rewind(input: ConversationRewindInput): Promise<ConversationRewindResult>
+  handoff(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   fork(input: ConversationForkInput): Promise<ConversationForkResult>
   attachment(ref: string): Promise<ConversationAttachmentResult>
   planDocument(input: ConversationPlanDocumentInput): Promise<ConversationPlanDocumentResult>

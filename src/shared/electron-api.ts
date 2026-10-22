@@ -157,6 +157,8 @@ import type {
   MeshCreateConversationResult,
   MeshNewChatWorktree,
   MeshSettleConversationResult,
+  MeshChangeConversationResult,
+  MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
   MeshWorkspaceExtensionsResult,
@@ -239,6 +241,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -1006,6 +1010,16 @@ export type ElectronApi = {
   }) => Promise<MeshSettleConversationResult>
   /** Say a chat on a paired machine is on screen here (`conversation.visit` there). */
   meshVisitConversation: (input: { connectionId: string; workspaceId: string }) => Promise<MeshVisitConversationResult>
+  /**
+   * A row menu change to a chat on a paired machine: Star, Highlight color,
+   * Snooze, Auto-settle (`chat-row-menu` there) or Mark unread
+   * (`chat-mark-unread` there), written to that machine's record of it.
+   */
+  meshChangeConversation: (input: {
+    connectionId: string
+    workspaceId: string
+    change: MeshConversationChange
+  }) => Promise<MeshChangeConversationResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */
@@ -1338,6 +1352,9 @@ export type ElectronApi = {
   // Take the conversation back to before one of its user messages ("Edit from
   // here"); gated on the provider's `rewind` capability.
   conversationRewindToTurn: (input: ConversationRewindInput) => Promise<ConversationRewindResult>
+  // Hand the chat off to a fresh session pointed at a file of its messages,
+  // instead of compacting it; gated on the provider's `handoff` capability.
+  conversationHandoff: (input: ConversationHandoffInput) => Promise<ConversationHandoffResult>
   // Start a new chat holding this one up to an earlier message ("Fork from
   // here"); gated on the provider's `fork` capability.
   conversationForkAtTurn: (input: ConversationForkInput) => Promise<ConversationForkResult>

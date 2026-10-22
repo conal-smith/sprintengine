@@ -319,6 +319,15 @@ export const SETTLE_TICK_GLYPH = (
   </svg>
 )
 
+/** The sleeping row's one-click seat, Wake now: the clock is what is cancelled. */
+export const WAKE_ALARM_GLYPH = (
+  <svg viewBox="0 0 16 16" fill="none" className="icon-xs" aria-hidden="true">
+    <circle cx="8" cy="9" r="4.6" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M8 6.6V9l1.6 1.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2.6 4.2 4.7 2.5M13.4 4.2l-2.1-1.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+)
+
 export function WorkingElapsed({ since }: { since: number }) {
   // Seconds for the turn's first minute, the sidebar's coarse scale after.
   // Both beats are the window's shared clocks, so every working row ticks on

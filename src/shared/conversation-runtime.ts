@@ -27,6 +27,7 @@ export type {
   ConversationEventType,
   ConversationGoal,
   ConversationGoalStatus,
+  ConversationHandoffPayload,
   ConversationJsonValue,
   ConversationMessageOrigin,
   ConversationPage,
@@ -550,6 +551,10 @@ export type ConversationCapabilities = {
   // A fork at the newest reply branches the session the chat is running
   // (an ACP agent's `session/fork`), so the chat's session is started first.
   forkFromLiveSession?: boolean
+  // The chat can be handed off to a fresh provider session that is pointed
+  // at a file of its messages ("Handoff", `ConversationHandoffInput`).
+  // Without it the action is not offered.
+  handoff?: boolean
   // One agent the chat spawned can be stopped by itself, leaving the chat,
   // its turn and its other agents running. Without it a lane offers no Stop.
   stopSubagent?: boolean
@@ -596,6 +601,17 @@ export type ConversationRevertResult =
  */
 export type ConversationRewindInput = { key: ConversationKey; turnSeq: number }
 export type ConversationRewindResult = { ok: true } | { ok: false; message: string }
+/**
+ * Hand a chat off to a fresh provider session instead of compacting it: its
+ * messages (no tool calls, no tool output) are saved to a file in the
+ * project's store, the provider session is let go, and the next message the
+ * person sends points the new session at the file. The chat's history stays
+ * as it was, with a divider where the handoff happened. Refused while the chat
+ * is doing anything: a turn, a question, an agent, a shell or a monitor all
+ * live in the process this ends.
+ */
+export type ConversationHandoffInput = { key: ConversationKey }
+export type ConversationHandoffResult = { ok: true; path: string } | { ok: false; message: string }
 /**
  * Start a new chat, `newAgentId`, holding this one up to a point: through the
  * reply of the turn `turnId` names, or up to (not including) the user message

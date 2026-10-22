@@ -91,6 +91,7 @@ import { questionAnswers, questionStep } from "./questionStepLogic";
 import {
   cliModelLabel,
   compactionLabel,
+  handoffLabel,
   composerActionKind,
   conversationCanOperate,
   DEFAULT_MODEL_ID,
@@ -1818,6 +1819,16 @@ const ConversationItem = memo(function ConversationItem({
       <View accessibilityRole="text" accessibilityLabel={label} style={styles.divider}>
         <View style={styles.rule} />
         <CompactGlyph color={colors.textSubtle} size={iconSize.xs - 1} />
+        <Text style={styles.dividerText}>{label}</Text>
+        <View style={styles.rule} />
+      </View>
+    );
+  }
+  if (row.kind === "handoff") {
+    const label = handoffLabel(row);
+    return (
+      <View accessibilityRole="text" accessibilityLabel={label} style={styles.divider}>
+        <View style={styles.rule} />
         <Text style={styles.dividerText}>{label}</Text>
         <View style={styles.rule} />
       </View>

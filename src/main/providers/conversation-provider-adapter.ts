@@ -92,6 +92,14 @@ export type ConversationProviderAdapter = {
   // the next turn, so the turns after the point leave the provider's context.
   // An adapter that implements this declares `capabilities.rewind`.
   rewind?(input: MockAdapterRewindInput): Promise<ConversationProviderPermissionResult>
+  // Let an idle session's provider session go, and start the next one afresh,
+  // pointed at a file of the conversation's messages (`handoffPath`) by the
+  // next message that is not a command: what "Handoff" does instead of a
+  // compaction. The adapter drops its live child, owes the pointer until a
+  // message carries it, and then says so with `session_updated`
+  // `historySeeded: true`. An adapter that implements this declares
+  // `capabilities.handoff`.
+  handoff?(input: MockAdapterHandoffInput): Promise<ConversationProviderPermissionResult>
   // Say where a new chat forked from this one starts its provider session
   // ("Fork from here"). Asked once, as the fork is made, with the chat's
   // session context (live or not) and where its provider stood at the point
@@ -162,6 +170,10 @@ export type MockAdapterSessionInput = {
   // message the provider is sent carries `fallbackHistory` ahead of it, the
   // only context the new session gets.
   seedFromHistory?: boolean
+  // A handoff no message has carried yet (`handoff`): the next message that
+  // is not a command points the new session at this file of the
+  // conversation's messages.
+  handoffPath?: string
   // The tool call that first spawned each agent the chat has seen, by task, as
   // its transcript and earlier sessions recorded them: an agent resumed after a
   // restart goes on in the lane it started in.
@@ -253,7 +265,15 @@ export type ConversationProviderCursor = { sessionId: string; at: string | null 
 
 // The session context plus where to take it back to; null is before the
 // conversation's first turn.
-export type MockAdapterRewindInput = MockAdapterSessionInput & { cursor: ConversationProviderCursor | null }
+export type MockAdapterRewindInput = MockAdapterSessionInput & {
+  cursor: ConversationProviderCursor | null
+  // The point gone back to is the start of a session a handoff began, before
+  // any message carried its pointer: the next message carries it again.
+  handoffPath?: string
+}
+
+// The session context plus the file the conversation's messages were saved to.
+export type MockAdapterHandoffInput = MockAdapterSessionInput & { handoffPath: string }
 
 // The parent chat's session context (its session id may name no live
 // session), plus where to fork it. `resumeSessionId` is the provider session

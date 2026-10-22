@@ -55,6 +55,8 @@ export function applyContextEvent(
   // else unknown until the next request reports.
   if (event.type === "context_compacted" && previous)
     return { window: previous.window, used: tokens(p.postTokens) ?? null };
+  // A handoff starts a new session, whose size its first request says.
+  if (event.type === "context_handed_off" && previous) return { window: previous.window, used: null };
   return previous;
 }
 

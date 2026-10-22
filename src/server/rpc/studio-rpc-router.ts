@@ -886,6 +886,12 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
         if (!key) return notFound(wire)
         return once(keptId(commandId), async () => outcome(await chat.rewind({ key, turnSeq })), voice, method)
       }
+      case 'conversation.handoff': {
+        const { commandId, key: wire } = params as StudioMethodParams<'conversation.handoff'>
+        const key = resolve(wire, grant)
+        if (!key) return notFound(wire)
+        return once(keptId(commandId), async () => outcome(await chat.handoff({ key })), voice, method)
+      }
       case 'conversation.fork': {
         const { commandId, key: wire, ...input } = params as StudioMethodParams<'conversation.fork'>
         const key = resolve(wire, grant)
