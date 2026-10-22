@@ -280,6 +280,26 @@ export async function commitIsReachable(run: SlotGitRunner, cwd: string, oid: st
 }
 
 /**
+ * Whether every commit `head` has that `base` lacks is already on `base` as
+ * the same patch (`git cherry`: the same diff under another commit, as a
+ * cherry-pick or a rebase-and-merge lands it). It answers where comparing
+ * trees cannot: once the default branch edits the same lines again, merging
+ * the branch in conflicts, though nothing on it is new.
+ *
+ * A merge commit on the branch side has no patch of its own to compare, and
+ * may carry a conflict's resolution, so a range with one is "not there".
+ * Unreadable is "not there" too: the caller then keeps the slot.
+ */
+export async function patchesAlreadyIn(run: SlotGitRunner, cwd: string, base: string, head: string): Promise<boolean> {
+  const merges = await run(cwd, ['rev-list', '--count', '--merges', `${base}..${head}`])
+  if (!merges.ok || merges.stdout.trim() !== '0') return false
+  const cherry = await run(cwd, ['cherry', base, head])
+  if (!cherry.ok) return false
+  const lines = cherry.stdout.split(/\r?\n/u).filter((line) => line.trim())
+  return lines.length > 0 && lines.every((line) => line.startsWith('- '))
+}
+
+/**
  * Files that belong to one agent's run and must not reach the next agent
  * leased the same slot: the app's managed MCP config, which every launch
  * writes into its worktree (a connector launch's carries that connector's

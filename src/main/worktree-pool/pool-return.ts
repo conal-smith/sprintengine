@@ -113,8 +113,10 @@ export async function returnSlot(
       })
     }
     // Kept for a chat that comes back to its branch: the slot must be on it,
-    // or the chat would come back to whatever this is.
+    // or the chat would come back to whatever this is. That is the branch the
+    // tree is on, which its agent may have moved to from the lease's.
     if (park && status.status.branch !== park.branch) return await putBack()
+    const kept = status.status.branch ?? branch
     const oid = status.status.oid
     // Detaching is free when HEAD is on a branch (the branch keeps it) or at
     // a commit some ref already reaches. A detached HEAD with commits of its
@@ -148,7 +150,7 @@ export async function returnSlot(
       slot.state = 'idle'
       // Where the slot is now: the next lease holds it if anything moves it.
       slot.baseSha = oid
-      if (branch) slot.lastBranch = branch
+      if (kept) slot.lastBranch = kept
       slot.lease = null
       slot.held = null
       slot.op = null
@@ -157,7 +159,7 @@ export async function returnSlot(
       slot.lastUsedAt = ctx.now()
       await ctx.persist(pool)
     })
-    ctx.log(`${slot.path}: returned clean${branch ? ` (${branch} kept)` : ''}`)
+    ctx.log(`${slot.path}: returned clean${kept ? ` (${kept} kept)` : ''}`)
   } catch (error) {
     await holdAfterFailure(ctx, pool, slot, messageOf(error), { branch })
     return 'held'

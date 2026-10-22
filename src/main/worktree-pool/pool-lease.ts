@@ -507,13 +507,23 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
         if (made === 'full') {
           const { maxSlots } = await ctx.getSettings()
           const held = room.ok ? [] : room.reasons
+          // The slot only the idle period holds that is up first: when to ask
+          // again, in whole minutes.
+          const soonest = room.ok ? null : room.soonest
+          const minutes = soonest ? Math.max(1, Math.ceil(soonest.inMs / 60_000)) : null
+          const retryInMs = minutes !== null ? minutes * 60_000 : undefined
+          const when =
+            soonest && minutes !== null
+              ? ` ${soonest.slot} may come free in ${minutes} minute${minutes === 1 ? '' : 's'}, if nothing else holds it.`
+              : ''
           return {
             ok: false,
             reason: 'full',
             message:
               held.length > 0
-                ? `The pool already has ${maxSlots} worktrees, and none can be given back now. ${held.join('; ')}. Commit and push what is done, close what you are not using, or raise the limit in Settings ▸ Worktrees.`
+                ? `The pool already has ${maxSlots} worktrees, and none can be given back now. ${held.join('; ')}.${when} Commit and push what is done, close what you are not using, or raise the limit in Settings ▸ Worktrees.`
                 : `The pool already has ${maxSlots} worktrees.`,
+            ...(retryInMs !== undefined ? { retryInMs } : {}),
             base: await fetching,
           }
         }
