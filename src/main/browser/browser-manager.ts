@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { chmodSync, existsSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -43,7 +43,7 @@ import { listProcListeners } from '../../server/web/preview-ports'
 import { safeExternalUrl } from '../ipc/external-url'
 import { parsePsTree, type ProcRow } from '../terminal-subtree-probe'
 import { ensureWorkspaceStoreDir, ensureWorkspaceStoreDirSync } from '../workspace-store'
-import { createAgentDownloads, type AgentDownloadItem } from './agent-downloads'
+import { createAgentDownloads, reportedDownloadUrl, type AgentDownloadItem } from './agent-downloads'
 
 // The embedded browser's main-process half (browser-pane epic). The renderer
 // owns the `<webview>` elements; this owns everything the renderer must not:
@@ -523,10 +523,12 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
     let directory: string
     try {
       directory = ensureWorkspaceStoreDirSync(resolve(workspaceRoot), 'browser', 'downloads')
+      // What a page hands over is the person's business: the folder is theirs alone.
+      if (process.platform !== 'win32') chmodSync(directory, 0o700)
     } catch {
       return
     }
-    const url = item.getURL()
+    const url = reportedDownloadUrl(item.getURL())
     const path = agentDownloads.save(item, directory)
     const tell = (state: BrowserDownload['state']) => {
       for (const listener of downloadListeners) listener(tab.tabId, { url, path, state })

@@ -40,6 +40,17 @@ export function safeDownloadName(suggested: string): string {
   return name || 'download'
 }
 
+/**
+ * A download's address as it is told to the agent and the app: a `data:` URL
+ * is its media type alone, never the bytes it carries, which may be the whole
+ * file, a megabyte of it in every message that names the download.
+ */
+export function reportedDownloadUrl(url: string): string {
+  if (!/^data:/i.test(url)) return url
+  const type = /^data:([^,;]*)/i.exec(url)?.[1]?.trim().slice(0, 100) ?? ''
+  return `data:${type.replace(/[^\w.+/-]/g, '')},…`
+}
+
 /** Saves the agent's downloads into a folder, each under a name no other file or running download holds. */
 export function createAgentDownloads(exists: (path: string) => boolean = existsSync) {
   // Chromium writes a download under a temporary name until it completes, so
