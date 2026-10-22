@@ -30,6 +30,18 @@ export function contextRingTokensLabel(used: number, total: number): string {
   return `${Math.round(used).toLocaleString()} / ${Math.round(total).toLocaleString()} tokens`
 }
 
+/**
+ * The ring's sentence, which is its accessible name: "Context 38% used", and
+ * with counts "Context 38% used, 76,000 / 200,000 tokens". The share is
+ * clamped and rounded as the sweep's is, so the two always agree.
+ */
+export function contextRingLabel(usedPercentage: number, tokens?: { used: number; total: number }): string {
+  const percentage = Math.max(0, Math.min(100, Math.round(usedPercentage)))
+  return tokens
+    ? `Context ${percentage}% used, ${contextRingTokensLabel(tokens.used, tokens.total)}`
+    : `Context ${percentage}% used`
+}
+
 /** Geometry of the drawn ring, in the SVG's own 16-unit box. */
 const RING_RADIUS = 6
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
@@ -79,7 +91,7 @@ export function ContextRing({
   // answer a screen reader does. With counts the tooltip is the counts alone,
   // and the name says the share and the counts both.
   const counts = tokens ? contextRingTokensLabel(tokens.used, tokens.total) : null
-  const label = counts ? `Context ${percentage}% used, ${counts}` : `Context ${percentage}% used`
+  const label = contextRingLabel(percentage, tokens)
   const high = percentage >= CONTEXT_RING_WARN_PERCENTAGE
   // The dash is the spent arc, the gap the whole circumference — so the sweep
   // is the value and nothing else has to be computed at paint time.

@@ -11,8 +11,9 @@ this sits beside a title at 14px, in a place with no room to read one. The
 number is still there for anyone who wants it, in the tooltip and in the
 accessible name.
 
-It is a **display of one proportion**. It is not a control, and it is not a
-progress indicator: nothing is loading, and the value can fall as well as rise
+It is a **display of one proportion**. The mark is not a control (one surface
+puts it inside one; see "As a button" below), and it is not a progress
+indicator: nothing is loading, and the value can fall as well as rise
 (a compaction gives context back). Do not reach for it to show a percentage of
 anything that completes — that is a different component, and this one's whole
 meaning is "how full is the thing you are about to add to".
@@ -53,6 +54,18 @@ conversation's composer strip does), the tooltip says them and nothing else —
 "76,000 / 200,000 tokens" — and the accessible name says the share and the
 counts both: "Context 38% used, 76,000 / 200,000 tokens". The sweep already
 shows the share; the counts are what a glance cannot read off it.
+
+**As a button.** On a conversation's composer strip the ring opens what fills
+the window: a dialog popover with one stacked bar of the window (each content
+row in the categorical chart slots, in the order the agent lists them; free
+space as the track; the compaction buffer in `border.strong`), the rows in
+words, the heaviest MCP server, skill or memory file the person loaded, and
+those groups heaviest first. There the mark is drawn `decorative` inside an
+`IconButton` at `xs`, the 24px hit target, and the button takes the
+anchor's place: the same tooltip, and the accessible name with "— show what
+fills it" after it. An agent that reports a total and nothing under it still
+opens the dialog, on the total alone and saying so, so the ring behaves the
+same on every chat.
 
 ## States
 

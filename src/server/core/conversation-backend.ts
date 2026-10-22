@@ -36,6 +36,7 @@ export type ConversationBackendMember =
   | 'stopSubagent'
   | 'askSideQuestion'
   | 'cancelSideQuestion'
+  | 'readContextBreakdown'
   | 'stopSession'
   | 'suspendSession'
   | 'terminalHandoffTarget'

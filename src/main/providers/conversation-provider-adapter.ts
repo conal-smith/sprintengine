@@ -1,6 +1,7 @@
 import type {
   ConversationCapabilities,
   ConversationCliRuntimeOverrides,
+  ConversationContextBreakdownResult,
   ConversationEvent,
   ConversationImageAttachment,
   ConversationMcpServer,
@@ -148,6 +149,11 @@ export type ConversationProviderAdapter = {
     sessionId: string,
     input: ConversationProviderSideQuestionInput,
   ): Promise<ConversationSideQuestionResult>
+  // Say what fills the session's context window, row by row and item by item,
+  // as the provider itself measures it, adding nothing to the conversation.
+  // Asked when a person opens the window's breakdown, never on a timer. An
+  // adapter that implements this declares `capabilities.contextBreakdown`.
+  readContextBreakdown?(sessionId: string): Promise<ConversationContextBreakdownResult>
   disposeAll?(): void | Promise<void>
 }
 

@@ -2,7 +2,7 @@ import React, { useLayoutEffect, useRef, useState } from 'react'
 
 import type { MachineIdentity } from '../../../../../shared/machine-identity'
 import { GitBranchGlyph } from '../../AppIcons'
-import { ContextRing, DiffStatPill, GhostButton, MachineGlyph, OverflowMenu, Tooltip, WorktreeGlyph } from '../../ui'
+import { DiffStatPill, GhostButton, MachineGlyph, OverflowMenu, Tooltip, WorktreeGlyph } from '../../ui'
 import type { OverflowMenuItem } from '../../ui/OverflowMenu'
 import { FOCUS_RING_CLASS } from '../../ui/tokens'
 import { ComposerStrip } from '../../workspace/agentComposer/ComposerStrip'
@@ -16,6 +16,7 @@ import type { PullRequestHost } from './pullRequestHost'
 import { fitComposerStrip, fullComposerStripFit, sameComposerStripFit, type ComposerStripFit } from './composerStripFit'
 import type { UsageLimitSnapshot } from '../../../../../shared/usage-limits'
 import { UsageLimitsStripButton } from './usageLimits'
+import { ContextStripButton, type ContextBreakdownSource } from './ContextBreakdown'
 
 // The strip under an open conversation's composer (owner ruling 2026-10-04):
 // the facts of where this agent works, read-only, on the same strip the New
@@ -30,7 +31,7 @@ import { UsageLimitsStripButton } from './usageLimits'
 //   request ("Open PR #123"), or "Create PR" when the branch is ready to
 //   propose (createPullRequest.tsx), never both · the subscription's usage
 //   limits, as a small bar (usageLimits.tsx) · the context ring, pinned to the
-//   right corner.
+//   right corner, which opens what fills the window (ContextBreakdown.tsx).
 //
 // The project is not here: the title bar names it, and the person knows which
 // project they are in. Nothing here is a choice — the conversation has
@@ -91,6 +92,7 @@ export function ConversationComposerStrip({
   branch,
   changes,
   context,
+  contextBreakdown = null,
   pullRequests = NO_PULL_REQUESTS,
   onStopWatchingPullRequest,
   createPullRequest = null,
@@ -103,6 +105,11 @@ export function ConversationComposerStrip({
   changes: ConversationStripChanges | null
   /** The context reading; null when the runtime has reported none (no ring is drawn then). */
   context: { used: number; total: number } | null
+  /**
+   * Where the ring's breakdown is read from. Null, or no `load`, and the ring
+   * still opens, on the total alone.
+   */
+  contextBreakdown?: ContextBreakdownSource | null
   /** The pull requests this conversation opened; none draws no button. */
   pullRequests?: readonly BranchPullRequest[]
   /** Stop Studio watching one of them; absent where this window cannot, and then none is offered. */
@@ -429,7 +436,7 @@ export function ConversationComposerStrip({
           className={`${pullRequestText !== null || serversText !== null || usageLimits ? '' : 'ml-auto '}inline-flex shrink-0`}
           data-strip-context=""
         >
-          <ContextRing usedPercentage={percentage} tokens={context} />
+          <ContextStripButton percentage={percentage} context={context} source={contextBreakdown} />
         </span>
       ) : null}
     </ComposerStrip>
