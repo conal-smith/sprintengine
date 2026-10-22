@@ -109,6 +109,8 @@ export type StudioRpcAttachOptions = {
   shell?: boolean
   /** Audit its mutations although it is Studio's own view: an owner's web tab. */
   audited?: boolean
+  /** Hold the folders it names to the ones Studio knows: a browser on the tailnet. */
+  knownFoldersOnly?: boolean
 }
 
 export type StudioRpcServer = StudioRpcListener & {
@@ -211,6 +213,7 @@ export function createStudioRpcServer(options: StudioRpcServerOptions): StudioRp
         ownWindow: attachOptions.ownWindow,
         shell: attachOptions.shell === true,
         ...(attachOptions.audited === undefined ? {} : { audited: attachOptions.audited }),
+        ...(attachOptions.knownFoldersOnly ? { knownFoldersOnly: true } : {}),
         welcome,
         audit: options.audit,
         ...(options.tools ? { tools: options.tools } : {}),

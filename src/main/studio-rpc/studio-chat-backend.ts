@@ -262,6 +262,7 @@ export function createStudioChatBackend(deps: StudioChatBackendDeps): StudioChat
     stat: async (path) => deps.files.statPath(await confined(expandHomePath(path))),
     readImage: async (path) => deps.files.readImageDataUrl(await confined(expandHomePath(path))),
     repoRoot: (folderPath, hostId) => deps.repoRoot(folderPath, hostId),
+    isKnownFolder: async (path) => (await confineToRoots(path, await deps.readableRoots())).ok,
     workspaces: () => deps.workspaces(),
   }
 }

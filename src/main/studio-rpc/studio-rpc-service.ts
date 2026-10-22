@@ -101,7 +101,7 @@ export type StudioRpcService = {
    */
   connectWeb(
     stream: Duplex,
-    input: { authenticator: StudioAuthenticator; ownWindow: boolean },
+    input: { authenticator: StudioAuthenticator; ownWindow: boolean; knownFoldersOnly?: boolean },
   ): { connectionId: string }
   /** The chat surface, from the handlers the app's own IPC serves its windows with. */
   provideChat(chat: StudioChatBackend): void
@@ -461,6 +461,7 @@ export function createStudioRpcService(options: StudioRpcServiceOptions): Studio
         authenticator: input.authenticator,
         ownWindow: input.ownWindow,
         audited: true,
+        ...(input.knownFoldersOnly ? { knownFoldersOnly: true } : {}),
       })
       return { connectionId: connection.connectionId }
     },

@@ -128,3 +128,32 @@ test('a result JSON would change is sent as the failure it is, not mangled', () 
   }
   expect(JSON.parse(sent[0])).toMatchObject({ t: 'ipc.result', id: 3, ok: false, error: { name: 'NotJsonSafe' } })
 })
+
+test('a browser held to known folders creates a workspace only on a folder Studio already has one for', () => {
+  const created = (id: number, folderPath: string) => ({
+    t: 'ipc.invoke',
+    id,
+    channel: 'workspace-sync:dispatch',
+    args: [{ type: 'workspace.created', payload: { insert: { kind: 'folder_head', folderPath } } }],
+  })
+  const inner = fakePort()
+  const heard: unknown[] = []
+  const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, {
+    audit: () => undefined,
+    knownFolder: (path) => path === '/Users/dev/app',
+  })
+  guarded.on('message', (event) => heard.push(event.data))
+  inner.deliver(created(1, '/Users/dev/app'))
+  inner.deliver(created(2, '/Users/dev'))
+  expect(heard).toEqual([created(1, '/Users/dev/app')])
+  expect(inner.posted).toMatchObject([{ t: 'ipc.result', id: 2, ok: false, error: { name: 'UnknownFolder' } }])
+
+  // Without the hold, as for a browser on this machine, any folder is passed on.
+  const local = fakePort()
+  const passed: unknown[] = []
+  guardWebTunnelPort(local as unknown as TunnelPort, { audit: () => undefined }).on('message', (event) =>
+    passed.push(event.data),
+  )
+  local.deliver(created(3, '/Users/dev'))
+  expect(passed).toEqual([created(3, '/Users/dev')])
+})
