@@ -74,7 +74,8 @@ export function createTailnetTools(options: {
       'Read tailnet remote control on this machine: whether it is enabled, whether the listener is actually running ' +
       "and on what endpoint, this machine's Tailscale address, the paired devices, the outstanding pairing offer " +
       '(its scopes and expiry — never the code itself), and any pairing requests from other machines waiting to be ' +
-      'answered here. Served only over the local socket.',
+      'answered here (who asked, from where, and when — never the six digits the asking machine shows). Served ' +
+      'only over the local socket.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => {
       const service = front()
@@ -217,8 +218,8 @@ export function createTailnetTools(options: {
     name: 'tailnet.approve_pair_request',
     description:
       'Approve a pairing request another machine has made (see tailnet.status for the waiting ones), granting exactly ' +
-      "the scopes named here. Requires the six-digit code shown on the ASKING machine's screen — ask the person for " +
-      'it; it is not in tailnet.status. Three wrong codes decline the request. The requesting machine collects its ' +
+      "the scopes named here. Requires the six-digit code shown on the ASKING machine's screen — ask the person to " +
+      'read it off that screen; nothing on this machine reports it. Three wrong codes decline the request. The requesting machine collects its ' +
       'device token on its next poll. The scopes are NOT the ones the requester asked for — it cannot influence what ' +
       'approving it grants. Served only over the local socket.',
     inputSchema: {

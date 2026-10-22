@@ -213,3 +213,21 @@ test('the stderr a failure quotes is the line refusing the setting, however much
   assert.equal(cliStderrSummary('starting\nloading\nconnection reset\nbye'), 'loading\nconnection reset\nbye')
   assert.equal(cliStderrSummary(''), '')
 })
+
+test('auto asks, every time, before a gateway tool that changes which machines can reach this one', () => {
+  for (const tool of [
+    'tailnet_set_enabled',
+    'tailnet.offer_pairing',
+    'tailnet_approve_pair_request',
+    'tailnet_revoke_device',
+  ]) {
+    const request = { action: `mcp__sprintengine-studio__${tool}`, toolKind: 'mcp' as const }
+    assert.equal(permissionModeAllows('auto', request, root), false, tool)
+    assert.equal(approvalRuleCandidate(request, root), null, `${tool}: no rule remembers it`)
+  }
+  // Reading the status is still answered.
+  assert.equal(
+    permissionModeAllows('auto', { action: 'mcp__sprintengine-studio__tailnet_status', toolKind: 'mcp' }, root),
+    true,
+  )
+})

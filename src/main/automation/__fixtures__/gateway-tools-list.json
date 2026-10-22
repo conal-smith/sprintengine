@@ -358,7 +358,7 @@
     },
     {
       "name": "tailnet.status",
-      "sha256": "cc199cfc73135e699938fd9e369ae707fb1ee041fca8b37e42f22289c42af576"
+      "sha256": "a52a946fe0082fa84e6bb392f2d3224b60d15ab424a6bf1a95322de513a48890"
     },
     {
       "name": "tailnet.set_enabled",
@@ -378,7 +378,7 @@
     },
     {
       "name": "tailnet.approve_pair_request",
-      "sha256": "2f80f5b28b8734537b69dde639c18a7241e63a40e32b17330ebc7959177452d5"
+      "sha256": "0c13d2ed939527d2217582400ed94c6d287c2062c5803bd15e782e8090000520"
     },
     {
       "name": "tailnet.deny_pair_request",
@@ -748,7 +748,7 @@
     },
     {
       "name": "tailnet.status",
-      "sha256": "cc199cfc73135e699938fd9e369ae707fb1ee041fca8b37e42f22289c42af576"
+      "sha256": "a52a946fe0082fa84e6bb392f2d3224b60d15ab424a6bf1a95322de513a48890"
     },
     {
       "name": "tailnet.set_enabled",
@@ -768,7 +768,7 @@
     },
     {
       "name": "tailnet.approve_pair_request",
-      "sha256": "2f80f5b28b8734537b69dde639c18a7241e63a40e32b17330ebc7959177452d5"
+      "sha256": "0c13d2ed939527d2217582400ed94c6d287c2062c5803bd15e782e8090000520"
     },
     {
       "name": "tailnet.deny_pair_request",
