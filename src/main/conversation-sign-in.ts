@@ -4,6 +4,7 @@ import { cliForConversationProvider, conversationSignIn } from '../shared/conver
 import { isWslHostId, type ExecutionHostId } from '../shared/execution-host'
 import { argvToPosixShellCommand } from './agent-launch-render'
 import { detectCli } from './cli-runtime-install'
+import { powerShellSingleQuoted } from '../shared/powershell-quote'
 
 /**
  * The line a plain Studio terminal runs to sign a chat's CLI back in. It names
@@ -16,7 +17,7 @@ import { detectCli } from './cli-runtime-install'
 export function signInCommandLine(executablePath: string, args: string[], platform: NodeJS.Platform): string {
   // A plain terminal on Windows opens PowerShell, which runs a quoted path
   // only through the call operator.
-  if (platform === 'win32') return `& '${executablePath.replace(/'/g, "''")}' ${args.join(' ')}`
+  if (platform === 'win32') return `& ${powerShellSingleQuoted(executablePath)} ${args.join(' ')}`
   return argvToPosixShellCommand([executablePath, ...args])
 }
 

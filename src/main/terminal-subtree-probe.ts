@@ -31,6 +31,7 @@ import { execFile } from 'node:child_process'
 import { runSpawnDescriptor, type RunOutcome } from './process-run'
 import { killProcessTree } from './process-tree-kill'
 import { windowsPowerShellPath } from './command-on-path'
+import { escapePowerShellSingleQuoted } from '../shared/powershell-quote'
 
 // A subtree process above this CPU share counts as "doing work" → keep alive.
 // High enough to ignore idle MCP/helper jitter, low enough to catch a build.
@@ -393,7 +394,7 @@ export async function probeWindowsSubtrees(
  * another process's command line.
  */
 export function buildWindowsSurvivorQueryScript(cliSessionId: string): string {
-  const needle = `--session-id ${cliSessionId}`.replace(/'/g, "''")
+  const needle = escapePowerShellSingleQuoted(`--session-id ${cliSessionId}`)
   return [
     `$ErrorActionPreference = 'Stop'`,
     `$needle = '${needle}'`,

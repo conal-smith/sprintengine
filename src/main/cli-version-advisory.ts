@@ -20,6 +20,7 @@ import { win32 } from 'node:path'
 import { LOCAL_HOST_ID, type ExecutionHostId } from '../shared/execution-host'
 import type { PluginManifest } from '../shared/plugin-manifest'
 import { compareSemver } from '../shared/semver'
+import { powerShellSingleQuoted } from '../shared/powershell-quote'
 
 const NPM_LATEST_CACHE_TTL_MS = 60 * 60 * 1_000
 const NPM_LATEST_TIMEOUT_MS = 4_000
@@ -181,7 +182,7 @@ export function npmGlobalPrefix(resolvedPath: string, packageName: string, fs: C
 // is quoted for the shell the update runs in (PowerShell on Windows).
 function shellPath(path: string): string {
   if (/^[\w@%+=:,./\\-]+$/.test(path)) return path
-  return isWindowsPath(path) ? `'${path.replace(/'/g, "''")}'` : `'${path.replace(/'/g, `'\\''`)}'`
+  return isWindowsPath(path) ? powerShellSingleQuoted(path) : `'${path.replace(/'/g, `'\\''`)}'`
 }
 
 // The update the button runs, in precedence order: the CLI's own updater when

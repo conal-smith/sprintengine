@@ -29,6 +29,7 @@ import { randomBytes } from 'crypto'
 import { open, unlink } from 'fs/promises'
 import path from 'path'
 import { windowsPowerShellPath } from './command-on-path'
+import { powerShellSingleQuoted } from '../shared/powershell-quote'
 
 /**
  * electron-builder's registry id for this app: the installer writes
@@ -187,11 +188,6 @@ export function spawnInstallerVerbatim(installerPath: string, args: readonly str
   })
 }
 
-/** A PowerShell single-quoted string literal. */
-export function psSingleQuoted(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
-}
-
 /** ERROR_CANCELLED: the person chose No on the UAC prompt. */
 export const ELEVATION_DECLINED_EXIT_CODE = 1223
 
@@ -217,8 +213,8 @@ export function elevatedLaunchScript(options: {
   return [
     "$ErrorActionPreference = 'Stop'",
     '$psi = New-Object System.Diagnostics.ProcessStartInfo',
-    `$psi.FileName = ${psSingleQuoted(options.installerPath)}`,
-    `$psi.Arguments = ${psSingleQuoted(nsisCommandLineTail(options.args))}`,
+    `$psi.FileName = ${powerShellSingleQuoted(options.installerPath)}`,
+    `$psi.Arguments = ${powerShellSingleQuoted(nsisCommandLineTail(options.args))}`,
     "$psi.Verb = 'runas'",
     '$psi.UseShellExecute = $true',
     '$psi.ErrorDialog = $true',
