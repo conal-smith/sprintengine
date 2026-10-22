@@ -194,7 +194,7 @@
     },
     {
       "name": "pull_request.link",
-      "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
+      "sha256": "8c755fdaccf265bc58c116dced46982cdf5fb52330da719cfaebc581c9151ea7"
     },
     {
       "name": "pull_request.watch",
@@ -584,7 +584,7 @@
     },
     {
       "name": "pull_request.link",
-      "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
+      "sha256": "8c755fdaccf265bc58c116dced46982cdf5fb52330da719cfaebc581c9151ea7"
     },
     {
       "name": "pull_request.watch",
