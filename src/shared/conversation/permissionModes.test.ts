@@ -8,6 +8,7 @@ import {
   permissionModeApprovalLabel,
   type PermissionModeRequest,
 } from './permissionModes'
+import { approvalRuleCandidate } from './approvalRules'
 
 const root = '/Users/dev/app'
 const edit = (input: unknown): PermissionModeRequest => ({ action: 'Edit', toolKind: 'file_edit', input })
@@ -69,6 +70,26 @@ test('auto answers MCP tools, but never the gateway tools that start an agent', 
     permissionModeAllows('auto', { action: 'github create_pr', toolKind: 'mcp' }, root),
     false,
     'unread name',
+  )
+})
+
+test('auto asks, every time, before a gateway tool that publishes this machine’s files', () => {
+  for (const tool of ['artifacts_publish', 'artifacts.publish', 'artifacts_update', 'artifacts_setup']) {
+    assert.equal(
+      permissionModeAllows('auto', { action: `mcp__sprintengine-studio__${tool}`, toolKind: 'mcp' }, root),
+      false,
+      tool,
+    )
+    assert.equal(
+      approvalRuleCandidate({ action: `mcp__sprintengine-studio__${tool}`, toolKind: 'mcp' }, root),
+      null,
+      `${tool}: no rule remembers it`,
+    )
+  }
+  // The reads beside them are still answered.
+  assert.equal(
+    permissionModeAllows('auto', { action: 'mcp__sprintengine-studio__artifacts_list', toolKind: 'mcp' }, root),
+    true,
   )
 })
 

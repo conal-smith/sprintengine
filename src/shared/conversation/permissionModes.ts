@@ -19,7 +19,7 @@ import { inferConversationToolKind } from './toolKind'
 import {
   approvalFilePath,
   approvalInput,
-  isAgentLaunchingGatewayTool,
+  isAlwaysAskGatewayTool,
   isApprovalPathInGitDirectory,
   isPathWithinApprovalRoot,
   mcpCallOf,
@@ -71,11 +71,12 @@ export function permissionModeAllows(
   // call to it was most of what Auto still asked (owner ruling 2026-10-01).
   // Never the gateway tools that start an agent or give one a workspace: each
   // hands a prompt of the caller's choosing to an agent that then acts on its
-  // own, which no remembered grant covers either. A name the checks cannot read
-  // as an MCP call asks.
+  // own, which no remembered grant covers either. Nor the ones that publish
+  // this machine's files (`isAlwaysAskGatewayTool`). A name the checks cannot
+  // read as an MCP call asks.
   if (kind === 'mcp') {
     const call = mcpCallOf(request.action)
-    return call !== null && !isAgentLaunchingGatewayTool(call.server, call.tool)
+    return call !== null && !isAlwaysAskGatewayTool(call.server, call.tool)
   }
   const paths = LOOKUP_TOOL_KINDS.has(kind)
     ? mentionsOutside(request.input, workspaceRoot)
