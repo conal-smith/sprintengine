@@ -5,11 +5,11 @@
  * On Linux, Chromium pastes the primary selection (whatever text was last
  * highlighted) into the focused field when a middle button is released and
  * nothing cancelled the mouseup. Cancelling the mousedown is not enough: it is
- * what keeps focus in the composer when a chat row is closed by a middle
+ * what keeps focus in the composer when a chat row is settled by a middle
  * press, so the release pasted straight into it.
  *
  * The listener sits on the window, not on the element pressed: a press that
- * closes on mousedown has taken its element out of the document before the
+ * acts on mousedown has taken its element out of the document before the
  * button comes back up, so the release lands on whatever slid in under the
  * pointer. A strip that closes on the auxclick instead still has its element,
  * and cancels the release there.
