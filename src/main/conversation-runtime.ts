@@ -1,4 +1,5 @@
-import { stat } from 'fs/promises'
+import { readdir, stat } from 'fs/promises'
+import { basename, join } from 'node:path'
 import {
   MAX_CONVERSATION_METADATA_BYTES,
   readConversationStorage,
@@ -34,6 +35,8 @@ import type {
   ConversationStopSessionInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationSuspendSessionInput,
@@ -50,6 +53,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationImportTranscriptInput,
@@ -177,6 +182,9 @@ type RuntimeSession = ConversationSessionSummary & {
   // reads them beside it, so a child a side question started or is using is
   // not ended under it.
   sideQuestionsOpen?: number
+  // Turns Studio opened with its own `/compact` before the chat's cache
+  // expired, whose end is not one the person is told about.
+  quietTurnIds?: Set<string>
   sideQuestionAt?: number
   // The tool call that first spawned each agent the chat has seen, by task:
   // a provider started again resumes an agent in that lane.
@@ -862,6 +870,7 @@ export class ConversationRuntime {
           resumeSessionId: resume?.sessionId,
           ...(resume?.at ? { resumeSessionAt: resume.at } : {}),
           ...(resume?.seedFromHistory ? { seedFromHistory: true } : {}),
+          ...(resume?.handoffPath ? { handoffPath: resume.handoffPath } : {}),
           ...(session.history ? { fallbackHistory: session.history } : fallbackHistory ? { fallbackHistory } : {}),
           ...(session.subagentLanes.size > 0 ? { knownSubagentLanes: Array.from(session.subagentLanes) } : {}),
           // Continuation channel: the adapter opens a mirror turn here when its
@@ -1897,6 +1906,29 @@ export class ConversationRuntime {
     return { ok: true }
   }
 
+  /**
+   * What fills the chat's context window, as its agent measures it
+   * (`capabilities.contextBreakdown`). A reading touches nothing: not the
+   * transcript, not the session's clocks, not the idle sweep's — opening the
+   * breakdown is not activity, and must not keep a child alive.
+   */
+  async readContextBreakdown(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult> {
+    const session = this.sessions.get(input.sessionId)
+    if (!session) return { ok: false, reason: 'failed', message: 'Conversation session not found.' }
+    const adapter = this.getAdapterForProviderId(session.providerId)
+    if (!adapter?.readContextBreakdown || session.capabilities?.contextBreakdown !== true)
+      return { ok: false, reason: 'unsupported', message: 'This chat’s agent does not say what fills its window.' }
+    try {
+      return await adapter.readContextBreakdown(session.sessionId)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'failed',
+        message: error instanceof Error ? error.message : 'The breakdown could not be read.',
+      }
+    }
+  }
+
   async stopSession(input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> {
     if (input.commandId)
       return this.runCommand(
@@ -2626,7 +2658,20 @@ export class ConversationRuntime {
     if (event.type === 'turn_completed' && event.payload?.steered === true) return
     // When the last turn ended, read off the event rather than the clock so
     // the transcript replay on resume restores the true time, not the resume.
-    if (event.type === 'turn_completed' || event.type === 'turn_failed') session.lastTurnEndedAt = event.createdAt
+    // Studio's own compaction before a cache expired is not the agent
+    // finishing anything: a chat that sat idle stays as read as it was.
+    const endedTurnId = typeof event.payload?.turnId === 'string' ? event.payload.turnId : undefined
+    if (
+      event.type === 'user_message' &&
+      endedTurnId &&
+      readConversationMessageOrigin(event.payload?.origin)?.reason === 'auto-compact'
+    )
+      (session.quietTurnIds ??= new Set()).add(endedTurnId)
+    if (
+      (event.type === 'turn_completed' || event.type === 'turn_failed') &&
+      !(endedTurnId && session.quietTurnIds?.has(endedTurnId))
+    )
+      session.lastTurnEndedAt = event.createdAt
     const wasWaiting = isWaitingPhase(session.phase)
     // A turn the person stopped ended where they asked it to: the chat reads as
     // done, as its own transcript does, not as failed and needing a look.
@@ -3233,6 +3278,7 @@ export class ConversationRuntime {
       await this.checkpoints.deleteConversation(input)
       await this.attachmentStore.deleteConversation(input)
       await this.planStore.deleteConversation(input)
+      await this.deleteHandoffFiles(input)
       const receiptsPath = path.replace(/\.jsonl$/, '.receipts.json')
       await this.receiptWrites.get(receiptsPath)
       await removeConversationStorage(input.workspaceRoot, receiptsPath)
@@ -3818,7 +3864,11 @@ export class ConversationRuntime {
       // A live session drops its child now; without one, the next session
       // starts from the cursor the event below records.
       for (const session of live) {
-        const rewound = await adapter.rewind({ ...session, cursor: target.cursor })
+        const rewound = await adapter.rewind({
+          ...session,
+          cursor: target.cursor,
+          ...(target.handoffPath ? { handoffPath: target.handoffPath } : {}),
+        })
         if (!rewound.ok) return rewound
       }
       const pending = (this.emissionTails.get(path) ?? Promise.resolve())
@@ -3840,6 +3890,9 @@ export class ConversationRuntime {
               rewoundFromSeq: target.fromSeq,
               providerSessionId: target.cursor?.sessionId ?? null,
               ...(target.cursor?.at ? { providerResumeAt: target.cursor.at } : {}),
+              // Back to the start of a handed-off session: its next message
+              // points it at the file again.
+              ...(target.handoffPath ? { handoffSeedOwed: target.handoffPath } : {}),
             },
           }
           this.sequences.set(path, event.seq!)
@@ -3857,16 +3910,172 @@ export class ConversationRuntime {
   }
 
   /**
+   * Handoff: let the chat's provider session go and start the next one afresh,
+   * pointed at a file of the conversation's messages, instead of compacting a
+   * conversation whose cache has gone cold (re-reading it uncached costs as
+   * much as the compaction saves). The file is written first, beside the
+   * transcript in the project's store on the machine the agent runs on, so a
+   * file that cannot be written leaves the chat as it was. Then the live
+   * child goes, and a `context_handed_off` records the file: the resume
+   * cursor of a session that does not exist yet, which the next message that
+   * is not a command starts, carrying the pointer (readResumeCursor).
+   *
+   * The locks are a rewind's, and more: everything the chat still has
+   * running lives in the child this ends, so an agent, a shell or a monitor
+   * refuses it as a turn or a card does. Gated on the adapter's `handoff`.
+   */
+  async handoffConversation(input: ConversationHandoffInput): Promise<ConversationHandoffResult> {
+    const { key } = input
+    if (!key?.workspaceRoot?.trim() || !key.workspaceId?.trim() || !key.agentId?.trim())
+      return { ok: false, message: 'Conversation identity is required.' }
+    const path = this.transcriptPath(key.workspaceRoot, key.workspaceId, key.agentId)
+    const scope = await this.checkpoints.fileScope(key.workspaceRoot)
+    if (
+      this.revertingScopes.has(scope) ||
+      this.deletingTranscripts.has(path) ||
+      this.startingTranscripts.has(path) ||
+      this.rewindingTranscripts.has(path)
+    )
+      return { ok: false, message: 'A workspace lifecycle operation is already in progress.' }
+    const live = Array.from(this.sessions.values()).filter(
+      (session) =>
+        session.workspaceRoot === key.workspaceRoot &&
+        session.workspaceId === key.workspaceId &&
+        session.agentId === key.agentId &&
+        session.status !== 'stopped',
+    )
+    const refused = live.map(handoffRefusal).find((reason) => reason !== null)
+    if (refused) return { ok: false, message: refused }
+    this.rewindingTranscripts.add(path)
+    try {
+      await this.initializeSequence(key)
+      await this.eventLog.flush(path)
+      const stored = await this.transcripts.tail(key.workspaceRoot, path)
+      const providerId = live[0]?.providerId ?? stored.at(-1)?.providerId ?? ''
+      const modelId = live[0]?.modelId ?? stored.at(-1)?.modelId ?? ''
+      const adapter = this.getAdapterForProviderId(providerId)
+      if (!adapter?.handoff || adapter.capabilities?.handoff !== true)
+        return { ok: false, message: 'This agent cannot hand a chat off to a new session.' }
+      const cursor = await this.readResumeCursor(key.workspaceRoot, key.workspaceId, key.agentId, providerId)
+      if (cursor?.handoffPath && !cursor.sessionId)
+        return { ok: false, message: 'This chat is handed off already: your next message starts the new session.' }
+      const at = this.now()
+      // Loaded when a chat is handed off, not with the runtime: it reads
+      // replies with the export's Markdown parser, which a server checks for
+      // only once it is serving.
+      const { writeHandoffMarkdown } = await import('./chat-export/chat-export-handoff')
+      const written = writeHandoffMarkdown(
+        stored,
+        {
+          title: latestConversationTitle(stored) ?? 'Chat',
+          project: basename(key.workspaceRoot) || null,
+          engine: adapter.displayName ?? null,
+          model: modelId || null,
+          workspaceRoot: key.workspaceRoot,
+          exportedAt: at,
+          ...handoffClock(),
+        },
+        // The tail is the newest part of a transcript longer than its budget
+        // when it does not open on the transcript's first event.
+        { truncated: (stored[0]?.seq ?? 1) > 1, maxBytes: MAX_CONVERSATION_METADATA_BYTES },
+      )
+      if (written.messages === 0) return { ok: false, message: 'This chat has no messages to hand off yet.' }
+      const file = this.handoffFilePath(key, at)
+      await writeConversationStorage(key.workspaceRoot, file, written.markdown)
+      // Only now, with the file on disk, does the session go.
+      for (const session of live) {
+        const handed = await adapter.handoff({ ...session, handoffPath: file })
+        if (!handed.ok) return handed
+      }
+      const preTokens = handoffContextTokens(live[0], stored)
+      const payload = {
+        path: file,
+        ...(preTokens !== undefined ? { preTokens } : {}),
+        seedOwed: true,
+        providerSessionId: null,
+      }
+      const session = live[0]
+      if (session) {
+        await this.emit(session, this.eventForSession(session, 'context_handed_off', payload))
+      } else {
+        const pending = (this.emissionTails.get(path) ?? Promise.resolve())
+          .catch(() => undefined)
+          .then(async () => {
+            const event: ConversationEvent = {
+              id: `conv_evt_${this.eventEpoch}_${++this.eventSequence}`,
+              seq: (this.sequences.get(path) ?? 0) + 1,
+              createdAt: at,
+              workspaceId: key.workspaceId,
+              agentId: key.agentId,
+              sessionId: stored.at(-1)?.sessionId ?? 'handed-off',
+              providerId,
+              modelId,
+              type: 'context_handed_off',
+              payload,
+            }
+            this.sequences.set(path, event.seq!)
+            const outcome = await this.eventLog.append(path, event, key.workspaceRoot)
+            this.publish(key.workspaceRoot, path, event, outcome)
+          })
+        this.emissionTails.set(path, pending)
+        await pending
+      }
+      return { ok: true, path: file }
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'The conversation could not be handed off.',
+      }
+    } finally {
+      this.rewindingTranscripts.delete(path)
+    }
+  }
+
+  // Beside the chat's transcript, in its workspace's store: one file per
+  // handoff, named by the chat and the minute it was handed off.
+  private handoffFilePath(key: ConversationTranscriptInput, at: number): string {
+    return workspaceStorePath(
+      key.workspaceRoot,
+      'conversations',
+      safeSegment(key.workspaceId),
+      HANDOFFS_FOLDER,
+      `${safeSegment(key.agentId)}-${handoffStamp(at)}.md`,
+    )
+  }
+
+  // A chat's handoff files go with it. The folder is the workspace's, shared
+  // by its chats, so only this chat's are taken.
+  private async deleteHandoffFiles(key: ConversationTranscriptInput): Promise<void> {
+    const folder = workspaceStorePath(key.workspaceRoot, 'conversations', safeSegment(key.workspaceId), HANDOFFS_FOLDER)
+    const prefix = `${safeSegment(key.agentId)}-`
+    const names = await readdir(folder).catch(() => [] as string[])
+    for (const name of names)
+      if (name.startsWith(prefix) && name.endsWith('.md') && isHandoffStamp(name.slice(prefix.length, -3)))
+        await removeConversationStorage(key.workspaceRoot, join(folder, name)).catch(() => undefined)
+  }
+
+  /**
    * The user message at `turnSeq` and where the provider stood before it: the
    * cursor on the end of the newest turn still in view before it, or null when
    * it is the conversation's first. Read from the end back, so rewinds already
    * made (each after the turns it hid) are known before the turns they hid.
+   * A handoff before it, with no turn's end between, is where the session it
+   * goes back to began: none yet, owing the handoff's pointer (`handoffPath`)
+   * again. Past a turn's end the pointer is still owed when a handoff comes
+   * before any message that carried it, read on back as readResumeCursor
+   * reads it.
    */
   private async findRewindTarget(
     key: ConversationTranscriptInput,
     turnSeq: number,
   ): Promise<
-    | { ok: true; event: ConversationEvent; cursor: ConversationProviderCursor | null; fromSeq: number }
+    | {
+        ok: true
+        event: ConversationEvent
+        cursor: ConversationProviderCursor | null
+        fromSeq: number
+        handoffPath?: string
+      }
     | { ok: false; message: string }
   > {
     const hidden: Array<{ from: number; before: number }> = []
@@ -3878,16 +4087,23 @@ export class ConversationRuntime {
     // before it goes back before that turn's own message as well, and both
     // leave the view: what stays on screen is what the agent still knows.
     const joined = new Set<string>()
+    const completed = new Set<string>()
     const walk: {
       target?: ConversationEvent
       cursor: ConversationProviderCursor | null
+      cursorKnown: boolean
       uncharted: boolean
       fromSeq: number
+      handoff?: string
+      handoffKnown: boolean
     } = {
       cursor: null,
+      cursorKnown: false,
       uncharted: false,
       fromSeq: turnSeq,
+      handoffKnown: false,
     }
+    let providerId: string | undefined
     await this.transcripts.findLast(
       key.workspaceRoot,
       this.transcriptPath(key.workspaceRoot, key.workspaceId, key.agentId),
@@ -3902,35 +4118,50 @@ export class ConversationRuntime {
         if (!walk.target) {
           if (seq === turnSeq) {
             walk.target = event
+            providerId = event.providerId
             return event.type !== 'user_message'
           }
           // Past it without meeting it: hidden by a rewind, or never there.
           return seq < turnSeq
         }
         const turnId = typeof event.payload?.turnId === 'string' ? event.payload.turnId : undefined
-        if (event.type === 'turn_completed' || event.type === 'turn_failed') {
-          const found = readProviderCursor(event.payload?.providerCursor)
-          if (found?.at) {
-            walk.cursor = found
+        if (event.type === 'turn_completed' && turnId) completed.add(turnId)
+        const owed = providerId !== undefined ? handoffMarkPath(event, providerId) : undefined
+        if (!walk.cursorKnown) {
+          if (owed) {
+            // The session the handoff began: nothing in it yet.
+            walk.cursorKnown = true
+            walk.handoff = owed
+            walk.handoffKnown = true
             return true
           }
-          if (turnId && event.payload?.steered === true) joined.add(turnId)
-          const reason = event.payload?.reason
-          if (turnId && !found && (reason === 'runtime' || reason === 'spawn')) unreached.add(turnId)
-          return false
+          if (event.type === 'turn_completed' || event.type === 'turn_failed') {
+            const found = readProviderCursor(event.payload?.providerCursor)
+            if (found?.at) {
+              walk.cursor = found
+              walk.cursorKnown = true
+            } else {
+              if (turnId && event.payload?.steered === true) joined.add(turnId)
+              const reason = event.payload?.reason
+              if (turnId && !found && (reason === 'runtime' || reason === 'spawn')) unreached.add(turnId)
+            }
+          } else if (event.type === 'user_message' && turnId && joined.has(turnId)) {
+            walk.fromSeq = seq
+          } else if (event.type === 'user_message' && !(turnId && unreached.has(turnId))) {
+            walk.uncharted = true
+            return true
+          }
         }
-        if (event.type === 'user_message' && turnId && joined.has(turnId)) {
-          walk.fromSeq = seq
-          return false
+        if (!walk.handoffKnown) {
+          if (owed) walk.handoff = owed
+          const completedMessage = event.type === 'user_message' && turnId !== undefined && completed.has(turnId)
+          if (owed || event.payload?.historySeeded === true || (completedMessage && !opensWithSlash(event)))
+            walk.handoffKnown = true
         }
-        if (event.type === 'user_message' && !(turnId && unreached.has(turnId))) {
-          walk.uncharted = true
-          return true
-        }
-        return false
+        return walk.cursorKnown && walk.handoffKnown
       },
     )
-    const { target, cursor, uncharted, fromSeq } = walk
+    const { target, cursor, uncharted, fromSeq, handoff } = walk
     if (target?.type !== 'user_message')
       return { ok: false, message: 'That message is no longer in this conversation.' }
     if (!cursor && uncharted)
@@ -3939,7 +4170,7 @@ export class ConversationRuntime {
         message:
           'There is no record of where the agent stood before this message, so the conversation cannot go back to it.',
       }
-    return { ok: true, event: target, cursor, fromSeq }
+    return { ok: true, event: target, cursor, fromSeq, ...(handoff ? { handoffPath: handoff } : {}) }
   }
 
   /**
@@ -4188,13 +4419,18 @@ export class ConversationRuntime {
   // next message carries the conversation as text (`seedFromHistory`): owed
   // until the adapter says a message carried it (`historySeeded`), so a first
   // send that never reached the provider (signed out, a CLI that would not
-  // start) owes it still.
+  // start) owes it still. A handoff is a cursor to no session as well, owing
+  // its file's pointer (`handoffPath`) the same way: until a message carries
+  // it, which a completed message that was a command does not, and never once
+  // a rewind took the conversation back before it.
   private async readResumeCursor(
     workspaceRoot: string,
     workspaceId: string,
     agentId: string,
     providerId: string,
-  ): Promise<{ sessionId?: string; at?: string; forked?: true; seedFromHistory?: true } | undefined> {
+  ): Promise<
+    { sessionId?: string; at?: string; forked?: true; seedFromHistory?: true; handoffPath?: string } | undefined
+  > {
     const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined)
     // Only a cursor this provider wrote: a transcript restarted on another
     // provider holds that one's cursors too, and a session id means nothing to
@@ -4202,20 +4438,25 @@ export class ConversationRuntime {
     // Codex, or a Codex thread id to Claude, fails every turn).
     const isCursor = (event: ConversationEvent) =>
       event.providerId === providerId &&
-      (event.type === 'session_updated' || event.type === 'session_started') &&
-      (text(event.payload?.providerSessionId) !== undefined ||
-        typeof event.payload?.rewoundFromSeq === 'number' ||
-        isForkMark(event))
+      (((event.type === 'session_updated' || event.type === 'session_started') &&
+        (text(event.payload?.providerSessionId) !== undefined ||
+          typeof event.payload?.rewoundFromSeq === 'number' ||
+          isForkMark(event))) ||
+        event.type === 'context_handed_off')
     // The newest cursor, read on back to a message whose turn completed, a
     // seed's delivery or a fork's mark, whichever comes first: only a mark
-    // read before either still speaks for the next start.
+    // read before either still speaks for the next start. A handoff's
+    // pointer is read on past messages that were commands, which carry none.
     const walk: {
       found?: ConversationEvent
       settled: boolean
       completed: Set<string>
       forked: boolean
       seed: boolean
-    } = { settled: false, completed: new Set(), forked: false, seed: false }
+      handoff?: string
+      handoffKnown: boolean
+      hidden: Array<{ from: number; before: number }>
+    } = { settled: false, completed: new Set(), forked: false, seed: false, handoffKnown: false, hidden: [] }
     try {
       await this.eventLog.flush(this.transcriptPath(workspaceRoot, workspaceId, agentId))
       await this.transcripts.findLast(
@@ -4224,18 +4465,26 @@ export class ConversationRuntime {
         (event) => {
           const turnId = typeof event.payload?.turnId === 'string' ? event.payload.turnId : undefined
           if (event.type === 'turn_completed' && turnId) walk.completed.add(turnId)
-          if (
-            (event.type === 'user_message' && turnId && walk.completed.has(turnId)) ||
-            event.payload?.historySeeded === true
-          )
-            walk.settled = true
+          const completedMessage = event.type === 'user_message' && turnId !== undefined && walk.completed.has(turnId)
+          if (completedMessage || event.payload?.historySeeded === true) walk.settled = true
           if (!walk.found && isCursor(event)) walk.found = event
+          // A rewind takes the turns from its message on out of the
+          // conversation, and a handoff among them with them.
+          const seq = event.seq ?? 0
+          const rewoundFrom = event.type === 'session_updated' ? event.payload?.rewoundFromSeq : undefined
+          if (typeof rewoundFrom === 'number') walk.hidden.push({ from: rewoundFrom, before: seq })
+          if (!walk.handoffKnown && !walk.hidden.some((range) => seq >= range.from && seq < range.before)) {
+            const owed = handoffMarkPath(event, providerId)
+            if (owed) walk.handoff = owed
+            if (owed || event.payload?.historySeeded === true || (completedMessage && !opensWithSlash(event)))
+              walk.handoffKnown = true
+          }
           if (isForkMark(event)) {
             walk.forked = !walk.settled
             walk.seed = !walk.settled && event.payload?.seedFromHistory === true
             return true
           }
-          return walk.found !== undefined && walk.settled
+          return walk.found !== undefined && walk.settled && walk.handoffKnown
         },
       )
       const sessionId = text(walk.found?.payload?.providerSessionId)
@@ -4245,6 +4494,7 @@ export class ConversationRuntime {
         ...(at ? { at } : {}),
         ...(walk.forked ? { forked: true as const } : {}),
         ...(walk.seed ? { seedFromHistory: true as const } : {}),
+        ...(walk.handoff ? { handoffPath: walk.handoff } : {}),
       }
       return Object.keys(cursor).length > 0 ? cursor : undefined
     } catch {
@@ -4466,6 +4716,101 @@ function readProviderCursor(value: unknown): ConversationProviderCursor | null {
   return { sessionId, at: typeof at === 'string' && at ? at : null }
 }
 
+/** Where a chat's handoff files are kept, beside its workspace's transcripts. */
+const HANDOFFS_FOLDER = 'handoffs'
+
+/**
+ * Why a live session cannot be handed off now, or null when it can. Everything
+ * still running lives in the child a handoff ends: a turn, a card waiting on
+ * the person, an agent, a shell or a monitor, a side question.
+ */
+function handoffRefusal(session: RuntimeSession): string | null {
+  if (session.status === 'starting') return 'The chat is still starting. Try again in a moment.'
+  if (session.pendingApprovalRequestIds.size > 0)
+    return 'Answer what the agent is waiting on before handing the chat off.'
+  if (session.activeTurnId !== null || session.pendingRequestId !== null)
+    return 'Stop the running turn before handing the chat off.'
+  if (session.runningSubagents.size > 0)
+    return 'An agent this chat started is still working. Hand the chat off once it has finished, or stop it first.'
+  if (session.backgroundTasks?.length)
+    return 'A shell or monitor this chat started is still running. Hand the chat off once it has finished, or stop it first.'
+  if (session.sideQuestionsOpen) return 'A side question about this chat is still open.'
+  return null
+}
+
+/** The chat's title as its transcript last named it, when it did. */
+function latestConversationTitle(events: readonly ConversationEvent[]): string | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const title = events[index]?.payload?.conversationTitle
+    if (typeof title === 'string' && title.trim()) return title.trim()
+  }
+  return null
+}
+
+/** How a handoff file writes its dates: this machine's own way, as a person would read them here. */
+function handoffClock(): { locale: string; timeZone: string } {
+  const options = new Intl.DateTimeFormat().resolvedOptions()
+  return { locale: options.locale || 'en', timeZone: options.timeZone || 'UTC' }
+}
+
+/**
+ * What the old session held when it was handed off: the size the prompt
+ * cache would re-read, else the context the last request reported.
+ */
+function handoffContextTokens(
+  session: RuntimeSession | undefined,
+  events: readonly ConversationEvent[],
+): number | undefined {
+  let reading = session?.promptCache ?? null
+  let contextUsed: number | undefined
+  if (!reading)
+    for (const event of events) {
+      reading = applyPromptCacheEvent(reading, event)
+      const used = event.type === 'usage_updated' ? event.payload?.contextUsed : undefined
+      if (typeof used === 'number' && Number.isFinite(used) && used >= 0) contextUsed = Math.floor(used)
+      else if (event.type === 'context_compacted' || event.type === 'context_handed_off') contextUsed = undefined
+    }
+  return reading?.recacheTokens ?? contextUsed
+}
+
+// `20261021-0942`, in this machine's time: when, at a glance, in a name that
+// sorts.
+function handoffStamp(at: number): string {
+  const date = new Date(at)
+  const two = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}`
+}
+
+function isHandoffStamp(value: string): boolean {
+  return /^\d{8}-\d{4}$/u.test(value)
+}
+
+/**
+ * The file a handoff mark owes the next message, when the event is one: the
+ * handoff itself, or a rewind back to the start of the session it began
+ * (`handoffSeedOwed`), before any message carried the pointer.
+ */
+function handoffMarkPath(event: ConversationEvent, providerId: string): string | undefined {
+  if (event.providerId !== providerId) return undefined
+  const path =
+    event.type === 'context_handed_off'
+      ? event.payload?.path
+      : event.type === 'session_updated'
+        ? event.payload?.handoffSeedOwed
+        : undefined
+  return typeof path === 'string' && path.trim() ? path : undefined
+}
+
+/**
+ * Whether a stored message opened with a slash command, which the CLI runs
+ * rather than reads, so it carries no handoff's pointer (the provider keeps
+ * it for the next message).
+ */
+function opensWithSlash(event: ConversationEvent): boolean {
+  const text = event.payload?.text
+  return typeof text === 'string' && text.trimStart().startsWith('/')
+}
+
 /** The mark a fork's transcript starts from (`forkAtTurn`). */
 function isForkMark(event: ConversationEvent): boolean {
   const from = event.payload?.forkedFrom
@@ -4587,6 +4932,11 @@ function planFork(
     const start = kept.findIndex((event, index) => index >= from && event.type === 'user_message')
     kept = kept.slice(start === -1 ? from : start)
   }
+  // A handoff no kept message came after says nothing about the fork: it
+  // starts from the session before it, where the cursor above points.
+  const handoff = kept.findLastIndex((event) => event.type === 'context_handed_off')
+  if (handoff >= 0 && !kept.slice(handoff + 1).some((event) => event.type === 'user_message'))
+    kept = kept.filter((_, index) => index !== handoff)
   return { ok: true, kept, fromSeq, cursor, exact: cursor !== null || !uncharted, latest }
 }
 

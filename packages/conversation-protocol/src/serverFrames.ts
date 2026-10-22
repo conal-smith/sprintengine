@@ -151,6 +151,21 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    */
   snoozedUntil?: number
   /**
+   * The mark a person put on the chat from its row menu, on any device: a
+   * star, and a highlight colour, one of `CONVERSATION_HIGHLIGHT_COLORS`. The
+   * desktop draws a starred chat in its Starred section and tints a coloured
+   * one's row. Absent for a chat with neither, and from a desktop built before
+   * it was listed.
+   */
+  highlight?: ConversationWireHighlight
+  /**
+   * The person switched Auto-settle on for the chat: the desktop settles it by
+   * itself after three quiet days, or when its pull requests land. Absent when
+   * it is off, which is the default, and from a desktop built before it was
+   * listed.
+   */
+  autoSettle?: true
+  /**
    * The opening of the agent's last reply, as the desktop's own sidebar
    * previews it under the chat's title: the reply's first characters as
    * written, markdown and all, at most `CONVERSATION_MAX_REPLY_PREVIEW`. Absent
@@ -447,6 +462,33 @@ export function parseConversationWireChanges(value: unknown): ConversationWireCh
   return { ...counts, ...(scope ? { scope } : {}), ...(uncommitted ? { uncommitted } : {}) }
 }
 
+/**
+ * The highlight colours a chat's row may wear, as the desktop's row menu
+ * offers them. A colour a client does not know is left out of the listed
+ * `highlight` rather than drawn as something else.
+ */
+export const CONVERSATION_HIGHLIGHT_COLORS = ['red', 'orange', 'amber', 'green', 'blue', 'purple', 'pink'] as const
+export type ConversationHighlightColor = (typeof CONVERSATION_HIGHLIGHT_COLORS)[number]
+
+/** A chat's star and highlight colour (`ConversationThread.highlight`). Never both off. */
+export type ConversationWireHighlight = { starred: boolean; color?: ConversationHighlightColor }
+
+export function isConversationHighlightColor(value: unknown): value is ConversationHighlightColor {
+  return typeof value === 'string' && (CONVERSATION_HIGHLIGHT_COLORS as readonly string[]).includes(value)
+}
+
+/**
+ * A listed `highlight`, or null for anything that says neither a star nor a
+ * known colour: the row then reads as one with no mark.
+ */
+export function parseConversationWireHighlight(value: unknown): ConversationWireHighlight | null {
+  if (!record(value)) return null
+  const starred = value.starred === true
+  const color = isConversationHighlightColor(value.color) ? value.color : null
+  if (!starred && !color) return null
+  return { starred, ...(color ? { color } : {}) }
+}
+
 /** One listed conversation, or null. Capabilities absent or malformed read as unknown, not as refused. */
 function thread(value: unknown): ConversationThread | null {
   if (!record(value)) return null
@@ -484,6 +526,7 @@ function thread(value: unknown): ConversationThread | null {
       : null
   const backgroundWork = parseConversationBackgroundWork(value.backgroundWork)
   const changes = parseConversationWireChanges(value.changes)
+  const highlight = parseConversationWireHighlight(value.highlight)
   const lastAssistantText =
     typeof value.lastAssistantText === 'string' && value.lastAssistantText.trim()
       ? value.lastAssistantText.slice(0, CONVERSATION_MAX_REPLY_PREVIEW)
@@ -523,6 +566,8 @@ function thread(value: unknown): ConversationThread | null {
     ...(clock(value.visitRewoundAt) ? { visitRewoundAt: value.visitRewoundAt } : {}),
     ...(id(value.scheduledAgentId) ? { scheduledAgentId: value.scheduledAgentId } : {}),
     ...(clock(value.snoozedUntil) ? { snoozedUntil: value.snoozedUntil } : {}),
+    ...(highlight ? { highlight } : {}),
+    ...(value.autoSettle === true ? { autoSettle: true as const } : {}),
     ...(lastAssistantText ? { lastAssistantText } : {}),
     ...(branch ? { branch } : {}),
     ...(backgroundWork ? { backgroundWork } : {}),

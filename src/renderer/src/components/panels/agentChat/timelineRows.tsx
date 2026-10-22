@@ -18,6 +18,7 @@ import {
 } from '../../../../../shared/conversation/macosPrivacyFolders'
 import { attachedFileName } from '../../../utils/attachedFiles'
 import { useConversationTransport } from './conversationTransport'
+import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { StoredAttachmentThumbnail } from './storedAttachments'
 import {
   Badge,
@@ -55,7 +56,7 @@ import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
 import { markdownClipboardHtml } from '../../../utils/markdownClipboardHtml'
 import { useMessageCopyMenu } from './messageCopyMenu'
 import { ReasoningBlock } from './reasoningBlock'
-import { CompactionDivider, TurnMeta } from './turnMeta'
+import { CompactionDivider, HandoffDivider, TurnMeta } from './turnMeta'
 import { CommandOutputRow } from './commandOutputRow'
 import { ChevronRightGlyph, ThoughtGlyph, ToolKindGlyph } from './toolRows/ToolKindGlyph'
 import { ChangedFilesCard, hasTurnChanges, RevertTurnAction } from './changedFilesCard'
@@ -200,12 +201,32 @@ export const TimelineRow = React.memo(function TimelineRow({
         />
       ) : null}
       {row.kind === 'compaction' ? <CompactionDivider entry={row.entry} /> : null}
+      {row.kind === 'handoff' ? <HandoffTimelineRow entry={row.entry} /> : null}
       {row.kind === 'commandOutput' ? <CommandOutputRow entry={row.entry} /> : null}
       {row.kind === 'approval' ? <ResolvedDecisions rows={row.decisions} className="pb-6" /> : null}
       {row.kind === 'working' ? <WorkingTimelineRow row={row} /> : null}
     </div>
   )
 })
+
+// The handoff's seam, with the file the new session was given opened in the
+// workspace pane as a document. Only where the agent runs on this machine's
+// side of the transport: a paired machine's file is a path on that machine.
+function HandoffTimelineRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'handoff' }> }) {
+  const context = useConversationLinkContext()
+  const transport = useConversationTransport()
+  const workspaceId = context?.workspaceId
+  const open =
+    transport.kind === 'local' && workspaceId
+      ? (path: string) =>
+          useWorkspaceStore.getState().openPaneTab(workspaceId, {
+            kind: 'document',
+            title: 'Handoff',
+            document: { path },
+          })
+      : undefined
+  return <HandoffDivider entry={entry} onOpenFile={open} />
+}
 
 // User message: quiet right-aligned card that hugs what was sent. The clock,
 // Copy and Revert sit on a line under the card rather than inside it — inside,

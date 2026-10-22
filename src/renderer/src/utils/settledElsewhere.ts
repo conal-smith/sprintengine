@@ -10,7 +10,13 @@
 // (`settledElsewhere` in WorkspaceSidebar). Held until the sidebar takes it,
 // so a note made before it mounts is not lost.
 
+// A Snooze is more than its record in the same way: a sleeping chat holds no
+// processes either (they are paused, to be resumed on the next keystroke), so
+// one snoozed from a paired desktop is noted beside the settles, and the
+// sidebar pauses it as its own Snooze does.
+
 const pending = new Set<string>()
+const pendingSnoozes = new Set<string>()
 const listeners = new Set<() => void>()
 
 /** A chat moved from in the list to resting through a patch from elsewhere. */
@@ -30,4 +36,17 @@ export function takeWorkspacesSettledElsewhere(): string[] {
 export function onWorkspaceSettledElsewhere(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
+}
+
+/** A chat that went to sleep through a patch from elsewhere. */
+export function noteWorkspaceSnoozedElsewhere(workspaceId: string): void {
+  pendingSnoozes.add(workspaceId)
+  for (const listener of [...listeners]) listener()
+}
+
+/** The snoozed chats noted since the last take, each once. */
+export function takeWorkspacesSnoozedElsewhere(): string[] {
+  const taken = [...pendingSnoozes]
+  pendingSnoozes.clear()
+  return taken
 }

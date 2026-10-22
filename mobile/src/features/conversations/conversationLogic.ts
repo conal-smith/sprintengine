@@ -201,7 +201,20 @@ export type ConversationRow =
   /** An agent the chat spawned: its own card, standing between the turn's steps. */
   | { kind: "agent"; id: string; lane: AgentLane }
   /** The provider summarised the conversation to free context. */
-  | { kind: "compaction"; id: string; trigger?: "manual" | "auto"; preTokens?: number; postTokens?: number }
+  | {
+      kind: "compaction";
+      id: string;
+      trigger?: "manual" | "auto";
+      /** Studio compacted the idle chat itself, just before its prompt cache expired. */
+      beforeCacheExpiry?: true;
+      preTokens?: number;
+      postTokens?: number;
+    }
+  /**
+   * The chat was handed off to a fresh session, pointed at a file of its
+   * messages on the desktop, instead of being compacted.
+   */
+  | { kind: "handoff"; id: string; preTokens?: number }
   /** What a command the CLI ran by itself printed (`/context`, `/usage`); a `note` is the desktop's own remark. */
   | { kind: "command"; id: string; command?: string; output: string; note?: boolean }
   /**
@@ -292,6 +305,8 @@ export function projectConversation(events: ConversationEvent[]) {
   const rows: ConversationRow[] = [];
   const pending = new Map<string, PendingRequest>();
   const acknowledged = new Set<string>();
+  // Turns Studio opened with its own `/compact` before the cache expired.
+  const autoCompactTurns = new Set<string>();
   // A turn in flight, and when this spell of work began.
   let turnBusy = false;
   let turnSince: number | undefined;
@@ -368,7 +383,11 @@ export function projectConversation(events: ConversationEvent[]) {
       checkpointSeq = event.seq;
       const text = stringValue(p.text) || stringValue(p.message);
       const origin = readMessageOrigin(p.origin);
-      if (origin)
+      // Studio's own `/compact` is said by the divider its compaction draws.
+      if (origin?.reason === "auto-compact") {
+        const turnId = stringValue(p.turnId);
+        if (turnId) autoCompactTurns.add(turnId);
+      } else if (origin)
         rows.push({
           kind: "studio", id: event.id, text: withoutStudioNoticePrefix(text), at: event.createdAt,
           ...(origin.reason ? { reason: origin.reason } : {}),
@@ -565,8 +584,15 @@ export function projectConversation(events: ConversationEvent[]) {
       rows.push({
         kind: "compaction", id: event.id,
         ...(p.trigger === "manual" || p.trigger === "auto" ? { trigger: p.trigger } : {}),
+        ...(turn && autoCompactTurns.has(turn) ? { beforeCacheExpiry: true as const } : {}),
         ...(numberValue(p.preTokens) !== undefined ? { preTokens: numberValue(p.preTokens) } : {}),
         ...(numberValue(p.postTokens) !== undefined ? { postTokens: numberValue(p.postTokens) } : {}),
+      });
+    } else if (event.type === "context_handed_off") {
+      toolGroup = undefined;
+      rows.push({
+        kind: "handoff", id: event.id,
+        ...(numberValue(p.preTokens) !== undefined ? { preTokens: numberValue(p.preTokens) } : {}),
       });
     } else if (event.type === "command_output") {
       const output = stringValue(p.output);
@@ -1059,8 +1085,20 @@ export function compactionLabel(row: Extract<ConversationRow, { kind: "compactio
       : row.postTokens === undefined
         ? `from ${formatTokenCount(row.preTokens)} tokens`
         : `${formatTokenCount(row.preTokens)} → ${formatTokenCount(row.postTokens)}`;
-  const trigger = row.trigger === "auto" ? "automatically" : row.trigger === "manual" ? "on request" : undefined;
+  const trigger = row.beforeCacheExpiry
+    ? "automatically, before the cache expired"
+    : row.trigger === "auto"
+      ? "automatically"
+      : row.trigger === "manual"
+        ? "on request"
+        : undefined;
   return ["Context compacted", trigger, tokens].filter(Boolean).join(" · ");
+}
+
+/** "Handed off to a new session · 221k tokens left behind", as the desktop's divider says it. */
+export function handoffLabel(row: Extract<ConversationRow, { kind: "handoff" }>): string {
+  const left = row.preTokens !== undefined ? `${formatTokenCount(row.preTokens)} tokens left behind` : undefined;
+  return ["Handed off to a new session", left].filter(Boolean).join(" · ");
 }
 
 /** A model id as a person reads it: the chat's catalog name, else the id without its date suffix. */

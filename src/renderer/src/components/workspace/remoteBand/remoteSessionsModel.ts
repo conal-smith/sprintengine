@@ -16,7 +16,7 @@ import type {
 } from '../../../../../../packages/conversation-protocol/src/public'
 import { classifyPullRequestUrl } from '../../../../../shared/git/pr-url'
 import { pullRequestRepository, type BranchPullRequest } from '../../../../../shared/git/pull-request'
-import type { Workspace, WorkspaceRemoteOrigin } from '../../../types/workspace'
+import type { Workspace, WorkspaceHighlight, WorkspaceRemoteOrigin } from '../../../types/workspace'
 import { workspaceLastUserMessageAt } from '../../../utils/workspaceRecency'
 import { finishedUnseen } from '../../../../../shared/workspace-lifecycle'
 import type { Tone } from '../../ui'
@@ -55,7 +55,30 @@ export type RemoteBrowseEntry = {
   lifecycle?: boolean
   /** What the pairing may do with the machine's chats, as its newest list said. Absent before a list. */
   access?: MeshConversationAccess
+  /**
+   * The machine advertises `chat-row-menu`: its chats' Star, Highlight color,
+   * Snooze and Auto-settle are written there. Absent before a list.
+   */
+  rowMenu?: boolean
+  /** The machine advertises `chat-mark-unread`. Absent before a list. */
+  markUnread?: boolean
 }
+
+/**
+ * Whether this pairing may write a machine's chats' row menu marks: the
+ * machine takes them (`chat-row-menu`), and the pairing may drive its chats.
+ */
+export function remoteRowMenuWritable(entry: RemoteBrowseEntry | undefined): boolean {
+  return entry?.rowMenu === true && entry.access === 'operate'
+}
+
+/** Whether this pairing may mark a machine's chats unread there (`chat-mark-unread`). */
+export function remoteMarkUnreadWritable(entry: RemoteBrowseEntry | undefined): boolean {
+  return entry?.markUnread === true && remoteLifecycleWritable(entry)
+}
+
+/** What a machine's row menu may do from here, for each of its chats. */
+type RemoteRowWrites = { lifecycle: boolean; rowMenu: boolean; markUnread: boolean }
 
 /**
  * Whether this pairing may write a machine's chats' rest and read state:
@@ -144,6 +167,17 @@ export type RemoteSessionRow = {
    * and a visit said.
    */
   lifecycle: boolean
+  /** The chat's star and highlight colour, as its machine records them; null for neither. */
+  highlight: WorkspaceHighlight | null
+  /** Auto-settle is on for the chat over there. */
+  autoSettle: boolean
+  /**
+   * Its machine takes the row menu's Star, Highlight color, Snooze and
+   * Auto-settle from here (`remoteRowMenuWritable`).
+   */
+  rowMenu: boolean
+  /** Its machine takes Mark unread from here (`remoteMarkUnreadWritable`). */
+  markUnread: boolean
 }
 
 /** One paired machine's sub-group in the band. */
@@ -195,6 +229,16 @@ export type RemoteConversation = {
   stale: boolean
   /** Its row's place in the list; see `RemoteSessionRow.recencyAt`. */
   recencyAt: number
+  /** The chat's star and highlight colour over there; null for neither. */
+  highlight: WorkspaceHighlight | null
+  /** When the chat wakes, while it is snoozed over there. */
+  snoozedUntil: number | null
+  /** Auto-settle is on for the chat over there. */
+  autoSettle: boolean
+  /** Its machine takes the row menu's marks from here (`RemoteSessionRow.rowMenu`). */
+  rowMenu: boolean
+  /** Its machine takes Mark unread from here. */
+  markUnread: boolean
 }
 
 /**
@@ -331,7 +375,7 @@ function remoteChatRowOf(
   conversation: MeshConversation,
   browse: MeshBrowse | null,
   workspaces: readonly Workspace[],
-  lifecycle: boolean,
+  writes: RemoteRowWrites,
 ): RemoteSessionRow {
   const remoteWorkspace = browse?.workspaces.find((workspace) => workspace.id === conversation.workspaceId) ?? null
   const sessionId = meshConversationSessionId(conversation.workspaceId, conversation.agentId)
@@ -388,7 +432,13 @@ function remoteChatRowOf(
     lastVisitedAt: conversation.lastVisitedAt ?? null,
     scheduledAgentId: conversation.scheduledAgentId ?? null,
     snoozedUntil: conversation.snoozedUntil ?? null,
-    lifecycle,
+    lifecycle: writes.lifecycle,
+    highlight: conversation.highlight
+      ? { starred: conversation.highlight.starred, color: conversation.highlight.color ?? null }
+      : null,
+    autoSettle: conversation.autoSettle === true,
+    rowMenu: writes.rowMenu,
+    markUnread: writes.markUnread,
   }
 }
 
@@ -474,11 +524,14 @@ export function buildRemoteBand(input: {
       )
       // A machine that keeps its chats' rest lists them in its own sidebar's
       // order, which is kept; one from before that is ordered here.
+      const writes: RemoteRowWrites = {
+        lifecycle: remoteLifecycleWritable(entry),
+        rowMenu: remoteRowMenuWritable(entry),
+        markUnread: remoteMarkUnreadWritable(entry),
+      }
       const listed = (entry?.conversations ?? [])
         .filter((conversation) => !resting.has(conversation.workspaceId))
-        .map((conversation) =>
-          remoteChatRowOf(connection, conversation, browse, workspaces, remoteLifecycleWritable(entry)),
-        )
+        .map((conversation) => remoteChatRowOf(connection, conversation, browse, workspaces, writes))
       const rows = entry?.lifecycle === true ? listed : listed.sort(compareByRecency)
       const attachedIds = new Set(rows.map((row) => row.attachedWorkspaceId).filter((id): id is string => id !== null))
       const parked = workspaces.filter(
@@ -569,6 +622,13 @@ export function conversationsOf(group: RemoteMachineGroup): RemoteConversation[]
       attachedWorkspaceId: lead.attachedWorkspaceId,
       stale: group.stale,
       recencyAt: Math.max(...agents.map((row) => row.recencyAt)),
+      // The chat's own marks, which its machine keeps on the chat rather than
+      // on an agent: every agent of it lists the same ones.
+      highlight: lead.highlight,
+      snoozedUntil: lead.snoozedUntil,
+      autoSettle: lead.autoSettle,
+      rowMenu: lead.rowMenu,
+      markUnread: lead.markUnread,
     }
   })
 }
@@ -908,3 +968,122 @@ export function followedRemoteRestsToKeep(
   }
   return JSON.stringify(kept)
 }
+
+// ── A paired machine's chat's row menu marks ─────────────────────────────
+//
+// Its star, colour, sleep and Auto-settle are kept by the machine it runs on
+// (`chat-row-menu`), and read back off that machine's list. A change asked
+// from here is drawn at once, as a local Star flips at once, and held until a
+// list read after the machine took it says the same thing for itself.
+
+/** The marks a chat's row wears from its machine's list. */
+export type RemoteChatMarks = Pick<RemoteSessionRow, 'highlight' | 'snoozedUntil' | 'autoSettle'>
+
+/** A change asked of a paired machine and not yet read back off its list. */
+export type PendingRemoteMarks = {
+  connectionId: string
+  /** The chat's id on that machine. */
+  workspaceId: string
+  marks: Partial<RemoteChatMarks>
+  /** When the machine said it took them; null while it has not answered. */
+  takenAt: number | null
+}
+
+/** The key a chat's pending marks are held under. */
+export function remoteChatKey(connectionId: string, workspaceId: string): string {
+  return `${connectionId}:${workspaceId}`
+}
+
+/** Each machine's rows, wearing the marks asked of it that its list does not say yet. */
+export function withPendingRemoteMarks(
+  groups: RemoteMachineGroup[],
+  pending: ReadonlyMap<string, PendingRemoteMarks>,
+): RemoteMachineGroup[] {
+  if (pending.size === 0) return groups
+  return groups.map((group) => {
+    if (!group.connectionId || !group.rows.some((row) => pending.has(remoteChatKey(row.connectionId, row.workspaceId))))
+      return group
+    return {
+      ...group,
+      rows: group.rows.map((row) => {
+        const asked = pending.get(remoteChatKey(row.connectionId, row.workspaceId))
+        return asked ? { ...row, ...asked.marks } : row
+      }),
+    }
+  })
+}
+
+/** Whether a list read since the machine took the change has come in, so the list says it now. */
+export function pendingRemoteMarksRead(
+  pending: PendingRemoteMarks,
+  browses: ReadonlyMap<string, RemoteBrowseEntry>,
+): boolean {
+  if (pending.takenAt === null) return false
+  const at = browses.get(pending.connectionId)?.at ?? null
+  return at !== null && at > pending.takenAt
+}
+
+/** The highlight a chat would have after a Star or colour change: none when neither is left. */
+export function remoteHighlightAfter(
+  current: WorkspaceHighlight | null,
+  change: { starred?: boolean; color?: WorkspaceHighlight['color'] },
+): WorkspaceHighlight | null {
+  const starred = change.starred ?? current?.starred === true
+  const color = change.color === undefined ? (current?.color ?? null) : change.color
+  return starred || color ? { starred, color } : null
+}
+
+/** Whether a sleeping chat over there is asleep still, as its machine's own row reads one. */
+export function remoteConversationAsleep(conversation: Pick<RemoteConversation, 'snoozedUntil'>, now: number): boolean {
+  return typeof conversation.snoozedUntil === 'number' && conversation.snoozedUntil > now
+}
+
+/** Whether two readings of a chat carry the same marks for a row opened here. */
+export function sameRemoteChatMarks(
+  a: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle'>,
+  b: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle'>,
+): boolean {
+  return (
+    a.rowMenu === b.rowMenu &&
+    a.snoozedUntil === b.snoozedUntil &&
+    a.autoSettle === b.autoSettle &&
+    (a.highlight?.starred ?? false) === (b.highlight?.starred ?? false) &&
+    (a.highlight?.color ?? null) === (b.highlight?.color ?? null)
+  )
+}
+
+/**
+ * A row opened here from a paired machine's chat, wearing the marks that
+ * machine keeps for it, when it keeps them (`rowMenu`): its star, colour,
+ * sleep and Auto-settle are the chat's there, not this row's. A row from a
+ * machine that does not keep them is its own record, as before.
+ */
+export function withRemoteChatMarks(workspace: Workspace, conversation: RemoteConversation): Workspace {
+  if (!conversation.rowMenu) return workspace
+  const highlight = conversation.highlight ?? undefined
+  const autoSettleEnabled = conversation.autoSettle ? true : null
+  const same =
+    (workspace.highlight?.starred ?? false) === (highlight?.starred ?? false) &&
+    (workspace.highlight?.color ?? null) === (highlight?.color ?? null) &&
+    (workspace.snoozedUntil ?? null) === conversation.snoozedUntil &&
+    (workspace.autoSettleEnabled === true) === conversation.autoSettle
+  if (same) return workspace
+  return { ...workspace, highlight, snoozedUntil: conversation.snoozedUntil, autoSettleEnabled }
+}
+
+/**
+ * Whether a paired machine's chat has something for Mark unread to mark: its
+ * machine takes it from here, an agent there has finished a turn, and the row
+ * is not already marked finished-unseen.
+ */
+export function canMarkRemoteConversationUnread(
+  conversation: Pick<RemoteConversation, 'markUnread' | 'agents'>,
+  now: number = Date.now(),
+): boolean {
+  if (!conversation.markUnread) return false
+  if (conversation.agents.some((row) => remoteFinishUnseen(row, now))) return false
+  return conversation.agents.some((row) => row.lastTurnEndedAt !== null)
+}
+
+/** Where a paired machine's chat opens when its menu moves it: a window of its own, or the main one. */
+export type RemoteWindowPlace = 'new-window' | 'main-window'

@@ -794,6 +794,7 @@ test('tailnet', async () => {
         'workspace-extensions',
         'new-chat-skills',
         'chat-create-pull-request',
+        'chat-row-menu',
         'usage-report',
       ])
 
@@ -899,6 +900,7 @@ test('tailnet', async () => {
         'workspace-extensions',
         'new-chat-skills',
         'chat-create-pull-request',
+        'chat-row-menu',
         'usage-report',
       ])
       // Every one the wire defines but shrinking an upload, which only a

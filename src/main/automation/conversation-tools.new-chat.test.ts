@@ -9,6 +9,9 @@ const noLifecycle = {
   settle: () => assert.fail('conversation.create does not settle'),
   visit: () => assert.fail('conversation.create does not visit'),
   markUnread: () => assert.fail('conversation.create does not mark anything unread'),
+  snooze: () => assert.fail('nothing is snoozed here'),
+  highlight: () => assert.fail('nothing is starred here'),
+  setAutoSettle: () => assert.fail('no Auto-settle is switched here'),
 }
 
 // A phone's New chat: `worktree` and `effort` on conversation.create, checked

@@ -376,6 +376,84 @@ test('a sparse account/rateLimits/updated snapshot updates the windows it carrie
   expect(codexRateLimitUpdates(null)).toEqual([])
 })
 
+// A RateLimitSnapshot for an Enterprise usage-based plan: no session or weekly
+// window, the allowance a monthly credit limit.
+function enterpriseBucket(fields: Record<string, unknown> = {}) {
+  return {
+    limitId: 'codex',
+    limitName: null,
+    normalModelSlug: null,
+    primary: null,
+    secondary: null,
+    credits: null,
+    individualLimit: { limit: '500', used: '5', remainingPercent: 99, resetsAt: RESET_S },
+    spendControlReached: false,
+    planType: 'enterprise_cbp_usage_based',
+    rateLimitReachedType: null,
+    ...fields,
+  }
+}
+
+test("a Codex Enterprise plan's monthly credit limit is its one window, on the read and on a push", () => {
+  const window = {
+    id: 'codex:individual',
+    label: 'Monthly credit limit',
+    usedPercent: 1,
+    resetsAt: RESET_S * 1000,
+    status: 'allowed',
+  }
+  expect(
+    codexRateLimitUpdates({ rateLimits: enterpriseBucket(), rateLimitsByLimitId: { codex: enterpriseBucket() } }),
+  ).toEqual([window])
+  expect(codexRateLimitUpdates(enterpriseBucket())).toEqual([window])
+  // Spent, it refuses turns as a full window does; a limit with no reset time
+  // is still shown.
+  expect(
+    codexRateLimitUpdates(
+      enterpriseBucket({ individualLimit: { limit: '500', used: '500', remainingPercent: 0, resetsAt: null } }),
+    ),
+  ).toEqual([{ id: 'codex:individual', label: 'Monthly credit limit', usedPercent: 100, status: 'rejected' }])
+  // Nothing to read, nothing reported.
+  expect(codexRateLimitUpdates(enterpriseBucket({ individualLimit: null }))).toEqual([])
+  expect(
+    codexRateLimitUpdates(
+      enterpriseBucket({ individualLimit: { limit: '500', used: '5', remainingPercent: null, resetsAt: RESET_S } }),
+    ),
+  ).toEqual([])
+})
+
+test('a monthly credit limit is read only off the default Codex bucket, and only when it has no window', () => {
+  // A model's own bucket is not the account's allowance.
+  expect(
+    codexRateLimitUpdates({
+      rateLimitsByLimitId: { codex_mini: enterpriseBucket({ limitId: 'codex_mini', limitName: 'Mini' }) },
+    }),
+  ).toEqual([])
+  // A plan that meters by session and week shows those windows alone, as before.
+  expect(
+    codexRateLimitUpdates(
+      enterpriseBucket({
+        primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: RESET_S },
+        secondary: { usedPercent: 37, windowDurationMins: 10080, resetsAt: RESET_S + 86_400 },
+      }),
+    ).map((update) => update.id),
+  ).toEqual(['codex:primary', 'codex:secondary'])
+  expect(
+    codexRateLimitUpdates(
+      enterpriseBucket({ primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: RESET_S } }),
+    ),
+  ).toEqual([
+    {
+      id: 'codex:primary',
+      label: 'Session (5h)',
+      usedPercent: 100,
+      resetsAt: RESET_S * 1000,
+      durationMs: 5 * HOUR,
+      status: 'rejected',
+    },
+  ])
+})
+
 test("Codex's billing comes from account/read: ChatGPT is a plan, an API key or Bedrock is not", () => {
   expect(
     codexBillingOf({

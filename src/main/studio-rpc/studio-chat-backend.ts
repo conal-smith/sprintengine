@@ -39,6 +39,7 @@ type ChatHandlers = Pick<
   | 'setModel'
   | 'revertToTurn'
   | 'rewindToTurn'
+  | 'handoffConversation'
   | 'forkAtTurn'
   | 'readAttachment'
   | 'planDocument'
@@ -188,6 +189,15 @@ export function createStudioChatBackend(deps: StudioChatBackendDeps): StudioChat
       try {
         return (
           (await handlers.rewindToTurn?.(input)) ?? { ok: false, message: 'Editing an earlier message is unavailable.' }
+        )
+      } catch (error) {
+        return failed(error)
+      }
+    },
+    async handoff(input) {
+      try {
+        return (
+          (await handlers.handoffConversation?.(input)) ?? { ok: false, message: 'Handing a chat off is unavailable.' }
         )
       } catch (error) {
         return failed(error)

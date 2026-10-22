@@ -7,6 +7,10 @@ import {
 import type { WorkspaceRegistryActor } from '../../shared/workspace-registry'
 import type { ConversationLifecycle } from './conversation-lifecycle'
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
+import {
+  CONVERSATION_HIGHLIGHT_COLORS as HIGHLIGHT_COLORS,
+  isConversationHighlightColor,
+} from '../../../packages/conversation-protocol/src/public'
 import type { ConversationLaunchService } from '../conversation-launch-service'
 import type { WorktreeDependencyInstallView } from '../../shared/ipc/worktree-pool'
 import {
@@ -36,6 +40,9 @@ export const CONVERSATION_MUTATION_TOOL_NAMES: readonly string[] = [
   'conversation.settle',
   'conversation.visit',
   'conversation.mark_unread',
+  'conversation.snooze',
+  'conversation.highlight',
+  'conversation.auto_settle',
 ]
 
 const EFFORT_ID = /^[a-z0-9_-]{1,40}$/i
@@ -48,7 +55,7 @@ export type ConversationToolsDeps = {
   /** The calling agent's own preset, which a chat it starts may not exceed (launch-permission-cap.ts). */
   resolveAgentPermissionPreset: AgentPermissionResolver
   /** A chat's rest and visit clock, written to the desktop's own record (conversation-lifecycle.ts). */
-  lifecycle: Pick<ConversationLifecycle, 'settle' | 'visit' | 'markUnread'>
+  lifecycle: Pick<ConversationLifecycle, 'settle' | 'visit' | 'markUnread' | 'snooze' | 'highlight' | 'setAutoSettle'>
   /**
    * Remember that the calling agent started this chat, so the caller is told
    * when its turn ends or it waits on someone (agent-launch-notices.ts).
@@ -402,6 +409,109 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         const marked = await deps.lifecycle.markUnread(args.workspaceId.trim(), lifecycleActor(context))
         if (!marked.ok) return toolError(marked.code, marked.message)
         return toolSuccess(marked)
+      },
+    },
+    {
+      name: 'conversation.snooze',
+      description:
+        "Snooze a chat on this machine, as its row menu's Snooze does: it leaves the chat list for its " +
+        "project's Snoozed shelf until `until`, and its agents' processes are paused. With until: null it " +
+        'wakes now, as Wake now does. Refused with "working" while an agent in the chat is working, and ' +
+        'with "settled" for a settled chat. Waking a chat that is awake changes nothing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId, from the conversation list." },
+          until: {
+            type: ['number', 'null'],
+            description: 'When it wakes, in epoch milliseconds and still ahead; null wakes it now.',
+          },
+        },
+        required: ['workspaceId', 'until'],
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        if (args.until !== null && !(typeof args.until === 'number' && Number.isFinite(args.until))) {
+          return toolError('invalid_arguments', '"until" must be a time in epoch milliseconds, or null to wake.')
+        }
+        const snoozed = deps.lifecycle.snooze(args.workspaceId.trim(), args.until, lifecycleActor(context))
+        if (!snoozed.ok) return toolError(snoozed.code, snoozed.message)
+        return toolSuccess(snoozed)
+      },
+    },
+    {
+      name: 'conversation.highlight',
+      description:
+        "Star a chat on this machine, or give its row a highlight color, as its row menu's Star and " +
+        'Highlight color do. A starred chat is listed in the Starred section. Name either or both; one left ' +
+        'out stays as it is. color: null clears the color.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId, from the conversation list." },
+          starred: { type: 'boolean', description: 'true stars the chat, false unstars it.' },
+          color: {
+            type: ['string', 'null'],
+            enum: [...HIGHLIGHT_COLORS, null],
+            description: "The row's highlight color, or null for none.",
+          },
+        },
+        required: ['workspaceId'],
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        if (args.starred !== undefined && typeof args.starred !== 'boolean') {
+          return toolError('invalid_arguments', '"starred" must be a boolean when provided.')
+        }
+        if (args.color !== undefined && args.color !== null && !isConversationHighlightColor(args.color)) {
+          return toolError('invalid_arguments', `"color" must be one of ${HIGHLIGHT_COLORS.join(', ')}, or null.`)
+        }
+        if (args.starred === undefined && args.color === undefined) {
+          return toolError('invalid_arguments', 'Name "starred", "color", or both.')
+        }
+        const marked = deps.lifecycle.highlight(
+          args.workspaceId.trim(),
+          {
+            ...(args.starred !== undefined ? { starred: args.starred } : {}),
+            ...(args.color !== undefined ? { color: args.color } : {}),
+          },
+          lifecycleActor(context),
+        )
+        if (!marked.ok) return toolError(marked.code, marked.message)
+        return toolSuccess(marked)
+      },
+    },
+    {
+      name: 'conversation.auto_settle',
+      description:
+        "Switch Auto-settle on or off for a chat on this machine, as its row menu's Auto-settle does. With it " +
+        'on, the chat settles by itself after three quiet days, or once its pull requests land. Off by ' +
+        'default. Settles nothing at once.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId, from the conversation list." },
+          enabled: { type: 'boolean', description: 'true switches it on, false off.' },
+        },
+        required: ['workspaceId', 'enabled'],
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        if (typeof args.enabled !== 'boolean') {
+          return toolError('invalid_arguments', '"enabled" must be a boolean.')
+        }
+        const set = deps.lifecycle.setAutoSettle(args.workspaceId.trim(), args.enabled, lifecycleActor(context))
+        if (!set.ok) return toolError(set.code, set.message)
+        return toolSuccess(set)
       },
     },
   ]

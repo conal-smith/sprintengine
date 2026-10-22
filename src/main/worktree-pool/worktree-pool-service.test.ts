@@ -617,6 +617,81 @@ test('removing an idle slot holding commits no branch has holds it instead', asy
   assert.equal((await slotAt(harness, 'app-01')).state, 'held')
 })
 
+/**
+ * Gives origin a submodule from a local `file://` remote, which git refuses to
+ * clone unless allowed: allowed until the returned function puts the
+ * environment back.
+ */
+async function addSubmoduleToOrigin(): Promise<() => void> {
+  const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] as const
+  const before = keys.map((key) => process.env[key])
+  process.env.GIT_CONFIG_COUNT = '1'
+  process.env.GIT_CONFIG_KEY_0 = 'protocol.file.allow'
+  process.env.GIT_CONFIG_VALUE_0 = 'always'
+  const restore = () =>
+    keys.forEach((key, index) => {
+      if (before[index] === undefined) delete process.env[key]
+      else process.env[key] = before[index]
+    })
+  const libSeed = join(caseDir, 'lib-seed')
+  await mkdir(libSeed, { recursive: true })
+  await git(libSeed, 'init', '-q', '-b', 'main')
+  await writeFile(join(libSeed, 'lib.txt'), 'lib\n')
+  await git(libSeed, 'add', '.')
+  await git(libSeed, 'commit', '-q', '-m', 'lib')
+  const libOrigin = join(caseDir, 'lib.git')
+  await git(caseDir, 'clone', '-q', '--bare', libSeed, libOrigin)
+  const pusher = join(caseDir, 'pusher')
+  if (!(await exists(pusher))) await git(caseDir, 'clone', '-q', origin, pusher)
+  await git(pusher, 'pull', '-q', 'origin', 'main')
+  await git(pusher, 'submodule', 'add', '-q', `file://${libOrigin}`, 'lib')
+  await git(pusher, 'commit', '-q', '-m', 'add lib')
+  await git(pusher, 'push', '-q', 'origin', 'HEAD:main')
+  return restore
+}
+
+test('removing an idle slot with a checked-out submodule removes it', async () => {
+  const restore = await addSubmoduleToOrigin()
+  try {
+    const harness = makeService()
+    const first = await lease(harness, 'first')
+    assert.equal(await exists(join(first.path, 'lib', 'lib.txt')), true, 'the lease checked the submodule out')
+    await returnAll(harness)
+    const removed = await harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
+    assert.equal(removed.ok, true, removed.message ?? '')
+    assert.equal(await exists(first.path), false)
+  } finally {
+    restore()
+  }
+})
+
+test('removing an idle slot whose submodule holds a branch no remote has holds it instead', async () => {
+  const restore = await addSubmoduleToOrigin()
+  try {
+    const harness = makeService()
+    const first = await lease(harness, 'first')
+    await returnAll(harness)
+    // Someone commits on a branch in the idle slot's submodule and switches
+    // back, so the slot's own status reads clean.
+    const lib = join(first.path, 'lib')
+    await git(lib, 'switch', '-q', '-c', 'local-only')
+    await writeFile(join(lib, 'lib.txt'), 'work\n')
+    await git(lib, 'commit', '-q', '-am', 'local work')
+    await git(lib, 'switch', '-q', '--detach', 'origin/main')
+    assert.equal(await git(first.path, 'status', '--porcelain'), '')
+
+    const evicted = await harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
+    assert.equal(evicted.ok, false)
+    assert.match(evicted.message ?? '', /submodules hold work/)
+    assert.equal(await git(lib, 'show', 'local-only:lib.txt'), 'work', 'the commit is still there')
+    const slot = await slotAt(harness, 'app-01')
+    assert.equal(slot.state, 'held')
+    assert.equal(slot.held?.reason, 'dirty')
+  } finally {
+    restore()
+  }
+})
+
 test('removing an idle slot with edits hidden from git status holds it instead', async () => {
   const harness = makeService()
   const first = await lease(harness, 'first')

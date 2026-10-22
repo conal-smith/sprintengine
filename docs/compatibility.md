@@ -46,7 +46,9 @@ made side by side take one each. The backend wire went from 2 to 3 when
 `sendTurn` took `origin` (a message Studio sends a chat itself), and to 4 when
 it took `files` (a message's files attached by path), both on 2026-10-07. It
 went to 5 when `sendTurn` took `composedAt` and `confirmedStale` and could
-answer `stale` (2026-10-20).
+answer `stale` (2026-10-20), and to 6 when it gained `handoffConversation`, a
+chat handed off to a fresh session, and `sendTurn`'s `origin` the reason
+`auto-compact` (2026-10-21).
 
 A session's summary, which that wire pushes with every chat event, carries
 three optional clocks a reader must not count on: `lastTurnEndedAt` (when
@@ -68,6 +70,11 @@ reading and editing, and the ones they finished with in the last minute, which
 the Files tree marks. It is additive in the same way. A server built before it
 leaves it out, and the tree reads that as an agent touching nothing: the tree
 draws no trail for that chat, and nothing else reads the member.
+
+A conversation search hit carries `from`: who wrote the matching words (the
+person, the agent, or Studio). It is additive in the same way. A server built
+before it leaves it out, and the palette still shows the match, without the
+"You:" or "Agent:" in front of it, ranked after the hits that say.
 
 So is `backgroundTasks`: the shells, monitors and workflows the chat's process
 still runs after its turn ended, which a `session_updated` event carries as the
@@ -457,6 +464,21 @@ and records a pull request it creates as the chat's, so its next list carries
 it. All of it is additive: a client offers Create PR under a machine's chats
 only where it is advertised, and an older machine answers the tools "Unknown
 tool". The Studio RPC does not advertise it, having no method for them.
+A paired desktop's row menu on a machine's chat is `chat-row-menu`
+(2026-10-21), gateway tools beside `conversation.mark_unread` and, like it,
+without the `conversation-` prefix: `conversation.highlight` (Star and
+Highlight color), `conversation.snooze` (Snooze, and Wake now with `until:
+null`) and `conversation.auto_settle`, each on `conversation:operate` and
+audited. Each listed chat names what they write as two new optional members
+of `ConversationThread`, `highlight` (`{ starred, color? }`, the colour one
+of `CONVERSATION_HIGHLIGHT_COLORS`) and `autoSettle: true`, with no
+capability of their own; `parseConversationServerFrame` keeps a `highlight`
+it can read, a known colour and a boolean star, and `autoSettle` only when it
+is `true`. All of it is additive: a client offers Star, Highlight color,
+Snooze and Auto-settle for a machine's chats only where it is advertised, an
+older machine answers the tools "Unknown tool", and an older client ignores
+the members. The pinned phone files are unchanged. The Studio RPC does not
+advertise it, having no method for them.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.
@@ -498,6 +520,9 @@ stream, the server frames `call` and `cancel`, and the client frames `reply`
 and `progress`. A Studio sends `call` only to a connection that offered a
 toolset, and the SDK sends `reply` only to a Studio that advertised the
 capability, so neither end is handed a frame type it does not know.
+`conversation-handoff` (2026-10-21) adds the owner-only
+`conversation.handoff`, a chat handed off to a fresh session instead of
+compacted, answered with the path of the file its messages were saved to.
 `files-write` adds the owner-only `files.*` by root, which the canvas uses
 over a Studio's boards. The `store` root kind (2026-10-16), the project's
 store in the person's home where a Studio keeps the captures, recordings and

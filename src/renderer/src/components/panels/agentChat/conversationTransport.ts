@@ -16,6 +16,8 @@ import type {
   ConversationRevertInput,
   ConversationRevertResult,
   ConversationRewindInput,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationRewindResult,
   ConversationSendTurnInput,
   ConversationSessionFrame,
@@ -23,6 +25,8 @@ import type {
   ConversationSetModelInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationSetPermissionInput,
@@ -174,6 +178,12 @@ export type ConversationTransport = {
    */
   rewind?(input: ConversationRewindInput): Promise<ConversationRewindResult>
   /**
+   * Hand the chat off to a fresh session pointed at a file of its messages,
+   * instead of compacting it. Absent where the transport cannot; offered only
+   * where the provider declares `handoff` as well.
+   */
+  handoff?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
+  /**
    * Start a new chat beside this one holding it up to an earlier message
    * ("Fork from here"). Absent where the transport cannot: a paired machine's
    * chat would fork into a chat over there that no tab here could open.
@@ -210,6 +220,13 @@ export type ConversationTransport = {
     input: ConversationCancelSideQuestionInput,
   ): Promise<{ ok: true } | { ok: false; message: string }>
   /**
+   * What fills the chat's context window, as its agent measures it. Absent
+   * where the transport cannot ask, as `stopSubagent` is; the ring then opens
+   * on the total alone. Asked only where the provider declares
+   * `contextBreakdown` as well.
+   */
+  readContextBreakdown?(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult>
+  /**
    * The Studio this window belongs to: providers, files, plans and command
    * lists. The same for every chat in the window, whichever machine it runs on.
    */
@@ -243,7 +260,7 @@ type LocalParts = Omit<ConversationTransport, 'kind' | 'capabilities' | 'service
 
 /** The conversation IPC, read off `window.api` at call time so a test's stub is the one used. */
 const ipcConversationParts: Required<
-  Pick<LocalParts, 'setModel' | 'attachment' | 'rewind' | 'fork' | 'startSession' | 'revert'>
+  Pick<LocalParts, 'setModel' | 'attachment' | 'rewind' | 'handoff' | 'fork' | 'startSession' | 'revert'>
 > &
   LocalParts = {
   subscribe: (input, cb) => window.api.onConversationSession(input, cb),
@@ -260,12 +277,14 @@ const ipcConversationParts: Required<
   setModel: (input) => window.api.conversationSessionSetModel(input),
   attachment: (input) => window.api.conversationAttachment(input),
   rewind: (input) => window.api.conversationRewindToTurn(input),
+  handoff: (input) => window.api.conversationHandoff(input),
   fork: (input) => window.api.conversationForkAtTurn(input),
   startSession: (input) => window.api.conversationSessionStart(input),
   revert: (input) => window.api.conversationRevertToTurn(input),
   stopSubagent: (input) => window.api.conversationSessionStopSubagent(input),
   askSideQuestion: (input) => window.api.conversationSessionAskSideQuestion(input),
   cancelSideQuestion: (input) => window.api.conversationSessionCancelSideQuestion(input),
+  readContextBreakdown: (input) => window.api.conversationSessionContextBreakdown(input),
 }
 
 // One Studio implementation per window object, so its client and the
@@ -340,6 +359,7 @@ export const localConversationTransport: ConversationTransport = {
   setModel: (input) => localParts().setModel(input),
   attachment: (input) => localParts().attachment(input),
   rewind: (input) => localParts().rewind(input),
+  handoff: (input) => localParts().handoff(input),
   fork: (input) => localParts().fork(input),
   startSession: (input) => localParts().startSession(input),
   revert: (input) => localParts().revert(input),
@@ -353,6 +373,9 @@ export const localConversationTransport: ConversationTransport = {
   },
   get cancelSideQuestion() {
     return localParts().cancelSideQuestion
+  },
+  get readContextBreakdown() {
+    return localParts().readContextBreakdown
   },
   services: windowServices,
 }

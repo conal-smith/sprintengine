@@ -407,6 +407,8 @@ export function createStudioConversationParts(client: ClientSource): StudioTrans
       outcome(() =>
         ask(client, 'conversation.rewind', { key: refOf(input.key), turnSeq: input.turnSeq, commandId: commandId() }),
       ),
+    handoff: (input) =>
+      outcome(() => ask(client, 'conversation.handoff', { key: refOf(input.key), commandId: commandId() })),
     fork: (input) =>
       outcome(() =>
         ask(client, 'conversation.fork', {

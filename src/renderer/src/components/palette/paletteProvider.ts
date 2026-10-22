@@ -42,6 +42,13 @@ export type PaletteRowMark =
   | { kind: 'remote' }
   | { kind: 'chat'; workspaceId: string; mode: Workspace['mode'] }
 
+/** A chat's matching message, as its row carries it (`PaletteCommand.conversationMatch`). */
+export type PaletteConversationMatch = {
+  snippet: string
+  from?: 'person' | 'agent' | 'studio'
+  count: number
+}
+
 /** The artwork a row wears, in the props `ExtensionIcon` takes. */
 export type PaletteRowIcon = {
   glyph?: string
@@ -93,6 +100,12 @@ export interface PaletteCommand {
   line?: number
   /** The row's glyph, for the rows that are neither a file nor an extension. */
   mark?: PaletteRowMark
+  /**
+   * For a chat found by what was said in it: the message the row shows, who
+   * wrote it, and how many of the chat's messages matched. The palette draws
+   * the message under the title, with the query in it marked.
+   */
+  conversationMatch?: PaletteConversationMatch
   /** A short chip after the name: the source's name, "Installed", "Available". */
   badge?: string
   /** Tri-state on purpose — see `PaletteRankable` in commandPaletteSearch.ts. */

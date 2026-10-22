@@ -114,6 +114,14 @@ export type AgentLaunchSettings = {
    * reads every other launch input; held sanitized (`worktree-branch.ts`).
    */
   worktreeBranchPrefix: string | null
+  /**
+   * Whether a chat whose own menu leaves Auto compact unset (`autoCompactEnabled`
+   * null) compacts by itself while it sits idle, just before its prompt cache
+   * expires (Settings ▸ Settled chats). `null` = never chosen, which reads as
+   * off. Kept here because main runs the compaction with no window open
+   * (conversation-auto-compact.ts), as it reads every other launch input.
+   */
+  autoCompactChats: boolean | null
 }
 
 /** Names the process boundary a write came through, never the human. */
@@ -157,6 +165,8 @@ export type AgentLaunchSettingsRecord = {
  *   so two windows and the phone each starting a chat all count.
  * - `worktreeBranchPrefix` replaces the prefix, sanitized; `null` returns it
  *   to "never chosen", which reads as `agent`.
+ * - `autoCompactChats` replaces the default; `null` returns it to "never
+ *   chosen", which reads as off.
  */
 export type AgentLaunchSettingsPatch = {
   cliRuntimes?: Record<string, AgentLaunchCliRuntimeSettings | null>
@@ -175,6 +185,7 @@ export type AgentLaunchSettingsPatch = {
   cliPermissionModes?: Record<string, string | null>
   projectUse?: { folderPath: string; at: number }
   worktreeBranchPrefix?: string | null
+  autoCompactChats?: boolean | null
 }
 
 /**
@@ -242,11 +253,12 @@ export const DEFAULT_AGENT_SPAWN_PERMISSION_PRESET: CliPermissionPreset = DEFAUL
 /** The launch settings with every never-chosen value read as the app default. */
 export type EffectiveAgentLaunchSettings = Omit<
   AgentLaunchSettings,
-  'lastSelectedCli' | 'lastAgentSpawnPermissionPreset' | 'worktreeBranchPrefix'
+  'lastSelectedCli' | 'lastAgentSpawnPermissionPreset' | 'worktreeBranchPrefix' | 'autoCompactChats'
 > & {
   lastSelectedCli: string
   lastAgentSpawnPermissionPreset: CliPermissionPreset
   worktreeBranchPrefix: string
+  autoCompactChats: boolean
 }
 
 /**
@@ -261,6 +273,7 @@ export function effectiveAgentLaunchSettings(settings: AgentLaunchSettings): Eff
     lastSelectedCli: settings.lastSelectedCli || DEFAULT_AGENT_LAUNCH_CLI,
     lastAgentSpawnPermissionPreset: settings.lastAgentSpawnPermissionPreset ?? DEFAULT_AGENT_SPAWN_PERMISSION_PRESET,
     worktreeBranchPrefix: effectiveWorktreeBranchPrefix(settings.worktreeBranchPrefix),
+    autoCompactChats: settings.autoCompactChats ?? false,
   }
 }
 
@@ -326,6 +339,7 @@ export function emptyAgentLaunchSettings(): AgentLaunchSettings {
     cliPermissionModes: {},
     projectUsage: {},
     worktreeBranchPrefix: null,
+    autoCompactChats: null,
   }
 }
 
@@ -425,6 +439,7 @@ export function normalizeAgentLaunchSettings(raw: unknown): AgentLaunchSettings 
     cliPermissionModes: normalizeCliPermissionModes(raw.cliPermissionModes),
     projectUsage: normalizeProjectUsageMap(raw.projectUsage),
     worktreeBranchPrefix: normalizeWorktreeBranchPrefix(raw.worktreeBranchPrefix),
+    autoCompactChats: typeof raw.autoCompactChats === 'boolean' ? raw.autoCompactChats : null,
   }
 }
 
@@ -540,6 +555,9 @@ export function normalizeAgentLaunchSettingsPatch(raw: unknown): AgentLaunchSett
   if (raw.worktreeBranchPrefix === null || typeof raw.worktreeBranchPrefix === 'string') {
     patch.worktreeBranchPrefix = normalizeWorktreeBranchPrefix(raw.worktreeBranchPrefix)
   }
+  if (raw.autoCompactChats === null || typeof raw.autoCompactChats === 'boolean') {
+    patch.autoCompactChats = raw.autoCompactChats
+  }
   return patch
 }
 
@@ -599,6 +617,7 @@ export function applyAgentLaunchSettingsPatch(
     next.projectUsage = withProjectUse(next.projectUsage, patch.projectUse.folderPath, patch.projectUse.at)
   }
   if (patch.worktreeBranchPrefix !== undefined) next.worktreeBranchPrefix = patch.worktreeBranchPrefix
+  if (patch.autoCompactChats !== undefined) next.autoCompactChats = patch.autoCompactChats
   return next
 }
 

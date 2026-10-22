@@ -11,7 +11,7 @@ export type { DefinitionItem } from './DefinitionList'
 export { StatusDot } from './StatusDot'
 export { WorkingMark, WORKING_MARK_VARIANTS, type WorkingMarkVariant } from './WorkingMark'
 export { AgentGlyph, type AgentGlyphState } from './AgentGlyph'
-export { ContextRing, CONTEXT_RING_WARN_PERCENTAGE, contextRingTokensLabel } from './ContextRing'
+export { ContextRing, CONTEXT_RING_WARN_PERCENTAGE, contextRingLabel, contextRingTokensLabel } from './ContextRing'
 export { DiffStatPill } from './DiffStatPill'
 export { FrontTruncatedText, frontTruncate } from './FrontTruncatedText'
 export { Spinner } from './Spinner'
@@ -124,6 +124,7 @@ export {
   MenuDivider,
   MenuFlyoutItem,
   MenuItem,
+  DescribedMenuItem,
   MenuSwatchRow,
   ProjectColorSwatchRow,
   roveMenuFocus,

@@ -5,6 +5,7 @@ import {
   MESH_CREATE_CONVERSATION_CHANNEL,
   MESH_SETTLE_CONVERSATION_CHANNEL,
   MESH_VISIT_CONVERSATION_CHANNEL,
+  MESH_CHANGE_CONVERSATION_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -128,6 +129,16 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
     return service.mesh().visitConversation({
       connectionId: record.connectionId,
       workspaceId: record.workspaceId,
+    })
+  })
+  // A remote chat's row menu: its star, colour, snooze, Auto-settle and Mark
+  // unread, kept by the machine it runs on.
+  ipcMain.handle(MESH_CHANGE_CONVERSATION_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().changeConversation({
+      connectionId: record.connectionId,
+      workspaceId: record.workspaceId,
+      change: record.change,
     })
   })
   ipcMain.handle(MESH_WORKSPACE_CHECKOUT_CHANNEL, (_event, input: unknown) => {

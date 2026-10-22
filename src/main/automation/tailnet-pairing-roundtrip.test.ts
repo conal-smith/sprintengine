@@ -225,6 +225,7 @@ test('tailnet-pairing-roundtrip', async () => {
         'workspace-extensions',
         'new-chat-skills',
         'chat-create-pull-request',
+        'chat-row-menu',
         'usage-report',
       ])
 
@@ -390,6 +391,7 @@ test('tailnet-pairing-roundtrip', async () => {
         'workspace-extensions',
         'new-chat-skills',
         'chat-create-pull-request',
+        'chat-row-menu',
         'usage-report',
       ])
 

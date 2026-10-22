@@ -33,6 +33,8 @@ import type {
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
@@ -64,6 +66,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -98,6 +102,7 @@ type ConversationIpcRenderer = {
   invoke(channel: 'conversation:turn:diff', input: ConversationTurnDiffInput): Promise<ConversationTurnDiffResult>
   invoke(channel: 'conversation:turn:revert', input: ConversationRevertInput): Promise<ConversationRevertResult>
   invoke(channel: 'conversation:turn:rewind', input: ConversationRewindInput): Promise<ConversationRewindResult>
+  invoke(channel: 'conversation:handoff', input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   invoke(channel: 'conversation:turn:fork', input: ConversationForkInput): Promise<ConversationForkResult>
   invoke(
     channel: 'conversation:session:subscribe',
@@ -175,6 +180,10 @@ type ConversationIpcRenderer = {
     input: ConversationCancelSideQuestionInput,
   ): Promise<{ ok: true } | { ok: false; message: string }>
   invoke(
+    channel: 'conversation:sessions:context-breakdown',
+    input: ConversationContextBreakdownInput,
+  ): Promise<ConversationContextBreakdownResult>
+  invoke(
     channel: 'conversation:sessions:stop',
     input: ConversationStopSessionInput,
   ): Promise<ConversationSessionActionResult>
@@ -244,6 +253,8 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
       renderer.invoke('conversation:turn:revert', input),
     conversationRewindToTurn: (input: ConversationRewindInput): Promise<ConversationRewindResult> =>
       renderer.invoke('conversation:turn:rewind', input),
+    conversationHandoff: (input: ConversationHandoffInput): Promise<ConversationHandoffResult> =>
+      renderer.invoke('conversation:handoff', input),
     conversationForkAtTurn: (input: ConversationForkInput): Promise<ConversationForkResult> =>
       renderer.invoke('conversation:turn:fork', input),
     conversationProvidersList: (input?: ConversationProvidersListInput): Promise<ConversationProviderListResult> =>
@@ -284,6 +295,9 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
       input: ConversationCancelSideQuestionInput,
     ): Promise<{ ok: true } | { ok: false; message: string }> =>
       renderer.invoke('conversation:sessions:cancel-side-question', input),
+    conversationSessionContextBreakdown: (
+      input: ConversationContextBreakdownInput,
+    ): Promise<ConversationContextBreakdownResult> => renderer.invoke('conversation:sessions:context-breakdown', input),
     conversationSessionStop: (input: ConversationStopSessionInput): Promise<ConversationSessionActionResult> =>
       renderer.invoke('conversation:sessions:stop', input),
     conversationSessionSuspend: (input: ConversationSuspendSessionInput): Promise<ConversationSessionActionResult> =>
@@ -381,6 +395,7 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     | 'conversationSessionStopSubagent'
     | 'conversationSessionAskSideQuestion'
     | 'conversationSessionCancelSideQuestion'
+    | 'conversationSessionContextBreakdown'
     | 'conversationSessionStop'
     | 'conversationSessionSuspend'
     | 'conversationSessionTerminalHandoff'
@@ -393,6 +408,7 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     | 'conversationTurnDiff'
     | 'conversationRevertToTurn'
     | 'conversationRewindToTurn'
+    | 'conversationHandoff'
     | 'conversationForkAtTurn'
     | 'conversationApprovalRules'
     | 'conversationRevokeApprovalRule'
