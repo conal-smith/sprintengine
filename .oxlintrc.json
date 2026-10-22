@@ -39,9 +39,28 @@
     // Stylistic: flags `createElement(tag, { children })` and
     // `new Array(n).fill(...)`, both used deliberately.
     "react/no-children-prop": "off",
-    "unicorn/no-new-array": "off"
+    "unicorn/no-new-array": "off",
+
+    // Main registers IPC only through src/main/ipc/app-ipc.ts, which checks
+    // every sender; Electron's own ipcMain is taken there and nowhere else.
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "electron",
+            "importNames": ["ipcMain"],
+            "message": "Register IPC through src/main/ipc/app-ipc.ts (or the ipcMain your caller hands you)."
+          }
+        ]
+      }
+    ]
   },
   "overrides": [
+    {
+      "files": ["src/main/ipc/app-ipc.ts", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": { "no-restricted-imports": "off" }
+    },
     {
       "files": ["**/*.test.ts", "**/*.test.tsx", "src/seams/**"],
       // A TypeError from `(x?.y as T).z` in a test is a failed test, which is

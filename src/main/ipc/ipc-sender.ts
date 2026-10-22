@@ -36,8 +36,70 @@ export function isAppRendererUrl(url: string): boolean {
   return parsed.protocol === 'file:' && parsed.pathname.endsWith('/renderer/index.html')
 }
 
+/**
+ * The canvas worker's document (canvas-worker-window.ts): a hidden window main
+ * opens to hold a drawing editor's DOM, loaded beside index.html.
+ */
+export function isCanvasWorkerUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  const devOrigin = devRendererOrigin()
+  if (devOrigin) return parsed.origin === devOrigin && parsed.pathname === '/canvas-worker.html'
+  return parsed.protocol === 'file:' && parsed.pathname.endsWith('/renderer/canvas-worker.html')
+}
+
 // The shape this reads, so a test can hand it a plain object.
-type SenderEvent = Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>
+export type SenderEvent = Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>
+
+// Every window main opens, and what it may say over ipcMain (app-ipc.ts
+// applies this to every registration):
+//
+//   * The app's windows: the workspace window, a detached workspace window
+//     (Move to new window), Diagnostics, and the aux windows (a diff, the
+//     external file editor, a popped-out pane). All of them load index.html
+//     with the app's preload (window-factory.ts), so all of them are 'app'
+//     and may use any channel; a handler that answers only some of them
+//     says so itself (a workspace window only, the owning window).
+//   * The canvas worker: its own document, its two channels.
+//   * The launch plate (splash-window.ts): a preload that only listens, so
+//     no channel.
+//   * The PDF export window (chat-export-pdf.ts) and the artifact thumbnail
+//     window: no preload, and no script at all in the first, so no channel.
+//   * The browser pane's guests and their popups, and a page opened in a
+//     window of its own (browser-manager.ts): web pages, refused everywhere.
+//     The element picker talks to the window hosting the guest, never main.
+//   * The web client is a browser tab on a socket to the Studio server, and
+//     the server's own process takes each window's requests on a port main
+//     hands it (ipc-tunnel.ts): neither goes through ipcMain.
+export type IpcSenderKind = 'app' | 'canvas-worker'
+
+const CHANNELS_BY_KIND: Readonly<Record<Exclude<IpcSenderKind, 'app'>, ReadonlySet<string>>> = {
+  'canvas-worker': new Set(['canvas-worker:ready', 'canvas-worker:response']),
+}
+
+/**
+ * Which of Studio's documents is asking, or null for anything else: a webview
+ * guest or any other contents that are not a window's own, a subframe, a frame
+ * already gone, or a page that is not one of Studio's.
+ */
+export function ipcSenderKind(event: SenderEvent | null | undefined): IpcSenderKind | null {
+  const frame = event?.senderFrame
+  if (!frame) return null
+  if (frame.parent !== null) return null
+  const sender = event.sender
+  if (!sender || typeof sender.getType !== 'function' || sender.getType() !== 'window') return null
+  if (isAppRendererUrl(frame.url)) return 'app'
+  if (isCanvasWorkerUrl(frame.url)) return 'canvas-worker'
+  return null
+}
+
+export function senderMayUseChannel(kind: IpcSenderKind, channel: string): boolean {
+  return kind === 'app' || CHANNELS_BY_KIND[kind].has(channel)
+}
 
 export function isAppSender(event: SenderEvent | null | undefined): boolean {
   const frame = event?.senderFrame

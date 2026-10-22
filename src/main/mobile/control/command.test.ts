@@ -566,7 +566,12 @@ test('command', async () => {
     const getHandler = (channel: string): ((...args: unknown[]) => Promise<unknown>) => {
       const handler = ipcHandlers.get(channel)
       assert.ok(handler, `${channel} handler should be registered`)
-      return async (...args) => handler(null, ...args) as Promise<unknown>
+      // Asked as the app's own window would: every registration checks its sender (app-ipc.ts).
+      const appWindow = {
+        sender: { getType: () => 'window' },
+        senderFrame: { url: 'file:///Applications/Studio.app/Contents/Resources/app.asar/out/renderer/index.html', parent: null },
+      }
+      return async (...args) => handler(appWindow, ...args) as Promise<unknown>
     }
 
     return {

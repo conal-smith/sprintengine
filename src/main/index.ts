@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage } from 'electron'
+import { app, BrowserWindow, Notification, protocol, safeStorage } from 'electron'
+import { ipcMain } from './ipc/app-ipc'
 import { MODULE_ASSET_SCHEME } from '../shared/modules/assets'
 import { installStudioPlatform } from '../server/platform/platform'
 import { claimAppInstance, configureDevUserData } from './app-instance'

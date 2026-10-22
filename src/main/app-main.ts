@@ -1,4 +1,5 @@
-import { app, ipcMain, protocol, session, shell } from 'electron'
+import { app, protocol, session, shell } from 'electron'
+import { ipcMain } from './ipc/app-ipc'
 import { buildStamp as mainBuildStamp } from 'virtual:sprintengine-build-stamp'
 import { MODULE_EVENTS_CHANNEL } from '../shared/modules/events'
 import { MODULE_NOTIFICATIONS_CHANNEL } from '../shared/modules/notifications'

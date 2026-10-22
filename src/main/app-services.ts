@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, net, powerMonitor, powerSaveBlocker, safeStorage } from 'electron'
+import { app, BrowserWindow, net, powerMonitor, powerSaveBlocker, safeStorage } from 'electron'
+import { ipcMain } from './ipc/app-ipc'
 import { createHash } from 'crypto'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'

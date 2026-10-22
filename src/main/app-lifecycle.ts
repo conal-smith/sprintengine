@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, Menu, net, powerMonitor } from 'electron'
+import { app, BrowserWindow, Menu, net, powerMonitor } from 'electron'
+import { ipcMain } from './ipc/app-ipc'
 import { createAppMenu, setChatWindowsForCloseChord } from './app-menu'
 import { sweepRetiredCheckpoints } from './checkpoint-sweep'
 import { createBootReveal } from './boot-reveal'

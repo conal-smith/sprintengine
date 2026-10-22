@@ -1,6 +1,7 @@
 import { hostname } from 'node:os'
 
-import { app, ipcMain, MessageChannelMain, net, powerMonitor, session } from 'electron'
+import { app, MessageChannelMain, net, powerMonitor, session } from 'electron'
+import { ipcMain } from '../../ipc/app-ipc'
 
 import { writeDiagnosticLog } from '../../diagnostics-service'
 import { allowMachinePartitions } from '../../browser/guest-policy'
