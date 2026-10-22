@@ -441,6 +441,21 @@ and records a pull request it creates as the chat's, so its next list carries
 it. All of it is additive: a client offers Create PR under a machine's chats
 only where it is advertised, and an older machine answers the tools "Unknown
 tool". The Studio RPC does not advertise it, having no method for them.
+A paired desktop's row menu on a machine's chat is `chat-row-menu`
+(2026-10-21), gateway tools beside `conversation.mark_unread` and, like it,
+without the `conversation-` prefix: `conversation.highlight` (Star and
+Highlight color), `conversation.snooze` (Snooze, and Wake now with `until:
+null`) and `conversation.auto_settle`, each on `conversation:operate` and
+audited. Each listed chat names what they write as two new optional members
+of `ConversationThread`, `highlight` (`{ starred, color? }`, the colour one
+of `CONVERSATION_HIGHLIGHT_COLORS`) and `autoSettle: true`, with no
+capability of their own; `parseConversationServerFrame` keeps a `highlight`
+it can read, a known colour and a boolean star, and `autoSettle` only when it
+is `true`. All of it is additive: a client offers Star, Highlight color,
+Snooze and Auto-settle for a machine's chats only where it is advertised, an
+older machine answers the tools "Unknown tool", and an older client ignores
+the members. The pinned phone files are unchanged. The Studio RPC does not
+advertise it, having no method for them.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.

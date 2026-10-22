@@ -948,22 +948,35 @@ export function createWorkspacesSlice(
         normalizeWindowAssignments(state)
       }),
 
-    setWorkspaceHighlight: (id, highlight) =>
+    // A star and a colour are the person's marks on the record, reported as
+    // every hand-edited field is: main keeps them across a restart, the other
+    // windows learn them from its broadcast, and a paired device reads them
+    // off the chat list.
+    setWorkspaceHighlight: (id, highlight) => {
+      let next: WorkspaceHighlight | null = null
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws) return
         const current: WorkspaceHighlight = ws.highlight ?? { starred: false, color: null }
-        ws.highlight = {
+        next = {
           starred: highlight.starred ?? current.starred,
           color: highlight.color === undefined ? current.color : highlight.color,
         }
-      }),
+        ws.highlight = next
+      })
+      if (next) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, { highlight: next })
+    },
 
-    clearWorkspaceHighlight: (id) =>
+    clearWorkspaceHighlight: (id) => {
+      let cleared = false
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
-        if (ws) ws.highlight = undefined
-      }),
+        if (!ws) return
+        ws.highlight = undefined
+        cleared = true
+      })
+      if (cleared) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, { highlight: null })
+    },
 
     // A hand decision about rest (settled-chats, 2026-09-07). Settle parks the
     // row in its folder's Settled shelf and records the decision so the sweep

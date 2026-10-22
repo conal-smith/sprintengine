@@ -1,4 +1,4 @@
-import type { Workspace } from '../renderer/src/types/workspace'
+import type { HighlightColor, Workspace } from '../renderer/src/types/workspace'
 import type { WorkspaceFieldsPatch } from './workspace-sync'
 
 // A chat's rest and its ordering key, as pure functions of the registry
@@ -52,6 +52,20 @@ export function settleWorkspacePatch(
 
 export function wakeWorkspacePatch(override: 'active' | null): WorkspaceFieldsPatch {
   return { settledAt: null, settledOverride: override }
+}
+
+/**
+ * The row menu's star and colour as a patch: `change` says what moved (a
+ * member left out keeps what the record has), and a chat left with neither
+ * has its highlight cleared rather than kept as an empty one.
+ */
+export function highlightWorkspacePatch(
+  workspace: Pick<Workspace, 'highlight'>,
+  change: { starred?: boolean; color?: HighlightColor | null },
+): WorkspaceFieldsPatch {
+  const starred = change.starred ?? workspace.highlight?.starred === true
+  const color = change.color === undefined ? (workspace.highlight?.color ?? null) : change.color
+  return { highlight: starred || color ? { starred, color } : null }
 }
 
 /** The latest of when the chat was created and the person's last keystroke into it. */

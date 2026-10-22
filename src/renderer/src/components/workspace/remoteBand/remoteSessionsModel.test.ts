@@ -26,6 +26,14 @@ import {
   unattachedConversations,
   interleaveChats,
   chatRecencyOf,
+  canMarkRemoteConversationUnread,
+  pendingRemoteMarksRead,
+  remoteChatKey,
+  remoteConversationAsleep,
+  remoteHighlightAfter,
+  withPendingRemoteMarks,
+  withRemoteChatMarks,
+  type RemoteBrowseEntry,
   type RemoteConversation,
 } from './remoteSessionsModel'
 import { test } from 'vitest'
@@ -801,4 +809,131 @@ test('a remote-born row names its chat by the session it was stamped with', () =
   )
   assert.equal(remoteOriginChatWorkspaceId({ workspaceId: 'ws:1', sessionId: 'conversation:ws:1:agent-9' }), 'ws:1')
   assert.equal(remoteOriginChatWorkspaceId({ workspaceId: 'seat' }), 'seat', 'a row born before the stamp')
+})
+
+// The row menu's marks on a paired machine's chat (`chat-row-menu`): read off
+// its list, drawn at once when asked for here, and worn by a row opened here.
+function bandOfListed(over: Partial<MeshConversation>, entry: Partial<RemoteBrowseEntry> = {}) {
+  const listed: MeshConversation = {
+    workspaceId: 'rw1',
+    agentId: 'agent-1',
+    title: 'Nightly triage',
+    phase: 'completed',
+    updatedAt: 9_000,
+    createdAt: 1_000,
+    providerId: 'claude-agent',
+    modelId: 'opus',
+    turnCount: 3,
+    lastSeq: 40,
+    ...over,
+  }
+  return buildRemoteBand({
+    connections: [miniConnection],
+    browses: new Map([
+      [miniConnection.id, { browse: null, loading: false, error: null, at: 1, conversations: [listed], ...entry }],
+    ]),
+    reachability: new Map(),
+    workspaces: [],
+  })
+}
+const operate: Partial<RemoteBrowseEntry> = {
+  lifecycle: true,
+  access: 'operate',
+  rowMenu: true,
+  markUnread: true,
+}
+
+test('a remote row carries its machine’s star, colour and Auto-settle, and whether that machine takes them from here', () => {
+  const [group] = bandOfListed({ highlight: { starred: true, color: 'green' }, autoSettle: true }, operate)
+  const [conversation] = conversationsOf(group!)
+  assert.deepEqual(conversation!.highlight, { starred: true, color: 'green' })
+  assert.equal(conversation!.autoSettle, true)
+  assert.equal(conversation!.rowMenu, true)
+  assert.equal(conversation!.markUnread, true)
+
+  // A machine from before the marks: none listed, and none offered.
+  const [older] = conversationsOf(bandOfListed({}, { lifecycle: true, access: 'operate' })[0]!)
+  assert.equal(older!.highlight, null)
+  assert.equal(older!.autoSettle, false)
+  assert.equal(older!.rowMenu, false)
+  assert.equal(older!.markUnread, false)
+  // A pairing that may only follow the machine's chats may not mark them.
+  const [follower] = conversationsOf(bandOfListed({}, { ...operate, access: 'read' })[0]!)
+  assert.equal(follower!.rowMenu, false)
+  assert.equal(follower!.markUnread, false)
+})
+
+test('a mark asked for here is worn at once, and the list stands in for it once a read after the machine took it lands', () => {
+  const band = bandOfListed({ highlight: { starred: false, color: 'blue' } }, operate)
+  const key = remoteChatKey(miniConnection.id, 'rw1')
+  const pending = new Map([
+    [
+      key,
+      {
+        connectionId: miniConnection.id,
+        workspaceId: 'rw1',
+        marks: { highlight: { starred: true, color: 'blue' as const }, snoozedUntil: 50_000 },
+        takenAt: null,
+      },
+    ],
+  ])
+  const [conversation] = conversationsOf(withPendingRemoteMarks(band, pending)[0]!)
+  assert.deepEqual(conversation!.highlight, { starred: true, color: 'blue' })
+  assert.equal(conversation!.snoozedUntil, 50_000)
+  assert.equal(withPendingRemoteMarks(band, new Map()), band, 'nothing pending, nothing copied')
+
+  const browses = (at: number) =>
+    new Map<string, RemoteBrowseEntry>([[miniConnection.id, { browse: null, loading: false, error: null, at }]])
+  const asked = pending.get(key)!
+  assert.equal(pendingRemoteMarksRead(asked, browses(10_000)), false, 'not answered yet')
+  assert.equal(pendingRemoteMarksRead({ ...asked, takenAt: 5_000 }, browses(4_000)), false, 'a read from before')
+  assert.equal(pendingRemoteMarksRead({ ...asked, takenAt: 5_000 }, browses(6_000)), true)
+})
+
+test('a star or colour change keeps the other half, and leaves no highlight when neither is left', () => {
+  assert.deepEqual(remoteHighlightAfter(null, { starred: true }), { starred: true, color: null })
+  assert.deepEqual(remoteHighlightAfter({ starred: true, color: null }, { color: 'pink' }), {
+    starred: true,
+    color: 'pink',
+  })
+  assert.equal(remoteHighlightAfter({ starred: true, color: null }, { starred: false }), null)
+  assert.equal(remoteHighlightAfter({ starred: false, color: 'pink' }, { color: null }), null)
+})
+
+test('a row opened here wears its machine’s marks where that machine keeps them, and its own where it does not', () => {
+  const workspace = {
+    id: 'ws-here',
+    name: 'Nightly triage',
+    highlight: { starred: false, color: 'red' },
+    createdAt: 0,
+  } as unknown as Workspace
+  const conversation = {
+    rowMenu: true,
+    highlight: { starred: true, color: null },
+    snoozedUntil: 70_000,
+    autoSettle: true,
+  } as unknown as RemoteConversation
+  const marked = withRemoteChatMarks(workspace, conversation)
+  assert.deepEqual(marked.highlight, { starred: true, color: null })
+  assert.equal(marked.snoozedUntil, 70_000)
+  assert.equal(marked.autoSettleEnabled, true)
+  assert.equal(withRemoteChatMarks(workspace, { ...conversation, rowMenu: false }), workspace)
+  assert.equal(withRemoteChatMarks(marked, conversation), marked, 'the same marks, the same row')
+})
+
+test('a sleeping remote chat is asleep until its wake, and Mark unread is offered where there is something to mark', () => {
+  assert.equal(remoteConversationAsleep({ snoozedUntil: 10 }, 5), true)
+  assert.equal(remoteConversationAsleep({ snoozedUntil: 10 }, 10), false)
+  assert.equal(remoteConversationAsleep({ snoozedUntil: null }, 5), false)
+
+  const [finished] = conversationsOf(bandOfListed({ lastTurnEndedAt: 5_000, lastVisitedAt: 6_000 }, operate)[0]!)
+  assert.equal(canMarkRemoteConversationUnread(finished!, 7_000), true)
+  const [unseen] = conversationsOf(bandOfListed({ lastTurnEndedAt: 5_000, lastVisitedAt: 4_000 }, operate)[0]!)
+  assert.equal(canMarkRemoteConversationUnread(unseen!, 7_000), false, 'already marked finished-unseen')
+  const [fresh] = conversationsOf(bandOfListed({}, operate)[0]!)
+  assert.equal(canMarkRemoteConversationUnread(fresh!, 7_000), false, 'nothing finished yet')
+  const [older] = conversationsOf(
+    bandOfListed({ lastTurnEndedAt: 5_000, lastVisitedAt: 6_000 }, { ...operate, markUnread: false })[0]!,
+  )
+  assert.equal(canMarkRemoteConversationUnread(older!, 7_000), false, 'a machine that does not take it')
 })

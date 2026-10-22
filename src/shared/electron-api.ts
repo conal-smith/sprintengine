@@ -157,6 +157,8 @@ import type {
   MeshCreateConversationResult,
   MeshNewChatWorktree,
   MeshSettleConversationResult,
+  MeshChangeConversationResult,
+  MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
   MeshWorkspaceExtensionsResult,
@@ -1004,6 +1006,16 @@ export type ElectronApi = {
   }) => Promise<MeshSettleConversationResult>
   /** Say a chat on a paired machine is on screen here (`conversation.visit` there). */
   meshVisitConversation: (input: { connectionId: string; workspaceId: string }) => Promise<MeshVisitConversationResult>
+  /**
+   * A row menu change to a chat on a paired machine: Star, Highlight color,
+   * Snooze, Auto-settle (`chat-row-menu` there) or Mark unread
+   * (`chat-mark-unread` there), written to that machine's record of it.
+   */
+  meshChangeConversation: (input: {
+    connectionId: string
+    workspaceId: string
+    change: MeshConversationChange
+  }) => Promise<MeshChangeConversationResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */
