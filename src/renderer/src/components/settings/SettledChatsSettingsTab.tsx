@@ -4,11 +4,13 @@ import type { WorkspaceId } from '../../types/workspace'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { showToast } from '../../store/toastStore'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
-import { EmptyState, GhostButton, OutlineButton } from '../ui'
+import { Checkbox, EmptyState, GhostButton, OutlineButton, Tooltip } from '../ui'
+import { DangerButton } from '../ui/Buttons'
 import { SettingCard, SettingToggle, SettingsPageHeader } from './SettingsAtoms'
 import { createSettledChatsSelector, type SettledChatEntry } from './settledChatsModel'
 import { remoteOriginChatWorkspaceId } from '../workspace/remoteBand/remoteSessionsModel'
 import { useStableCallback } from '../../hooks/useStableCallback'
+import { useDeleteSettledChats } from './useDeleteSettledChats'
 
 const SETTLED_PAGE = 100
 
@@ -19,9 +21,15 @@ const SETTLED_PAGE = 100
  * already called finished, so the rail stopped drawing them and this page
  * holds them instead.
  *
- * Two things to do with one, both the ones the shelf offered: Open reads it
- * (and, as opening any settled chat does, leaves it settled — reading is not
- * activity), and Un-settle puts it back in its project's list.
+ * Three things to do with one: Open reads it (and, as opening any settled
+ * chat does, leaves it settled — reading is not activity), Un-settle puts it
+ * back in its project's list, and Delete is rid of it for good, with its
+ * history and the worktree it owns (`useDeleteSettledChats`). Delete is a
+ * button on the row, not hidden in a right-click menu, and the boxes beside
+ * the rows delete many at once: a long-lived profile settles hundreds, and
+ * clearing them one confirmation at a time is no way to do it. Select all
+ * takes every settled chat, the ones folded under "Show more" included, and
+ * the confirmation counts them.
  */
 export function SettledChatsSettingsTab({
   onOpenChat,
@@ -75,6 +83,27 @@ export function SettledChatsSettingsTab({
   )
   const open = useStableCallback(onOpenChat)
   const remaining = chats.length - shown
+  const { deleteChats, deleting } = useDeleteSettledChats()
+  const [selected, setSelected] = useState<ReadonlySet<WorkspaceId>>(new Set())
+  // A chat that left the list (deleted, un-settled, deleted elsewhere) leaves the selection.
+  const selectedIds = chats.filter((chat) => selected.has(chat.id)).map((chat) => chat.id)
+  const allSelected = chats.length > 0 && selectedIds.length === chats.length
+  const toggleSelected = useCallback((id: WorkspaceId) => {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  const remove = useCallback(
+    async (ids: readonly WorkspaceId[]) => {
+      const gone = await deleteChats(ids)
+      if (gone.length > 0) setSelected((current) => new Set([...current].filter((id) => !gone.includes(id))))
+    },
+    [deleteChats],
+  )
+  const removeOne = useCallback((id: WorkspaceId) => void remove([id]), [remove])
 
   return (
     <div role="tabpanel" id="settings-panel-settled-chats" aria-labelledby="settings-tab-settled-chats">
@@ -100,11 +129,31 @@ export function SettledChatsSettingsTab({
           body="A chat settles when you settle it from its menu. Switch on Auto-settle there and it also settles after three days without activity, or when its pull requests merge."
         />
       ) : (
-        <SettingCard as="ul" ariaLabel="Settled chats">
-          {chats.slice(0, shown).map((chat) => (
-            <SettledChatRow key={chat.id} chat={chat} now={now} onUnsettle={unsettle} onOpen={open} />
-          ))}
-        </SettingCard>
+        <>
+          <div className="mb-2 flex items-center gap-3 px-4">
+            <Checkbox
+              checked={allSelected}
+              indeterminate={selectedIds.length > 0 && !allSelected}
+              onChange={() => setSelected(allSelected ? new Set() : new Set(chats.map((chat) => chat.id)))}
+              label={allSelected ? `All ${chats.length} selected` : 'Select all'}
+            />
+          </div>
+          <SettingCard as="ul" ariaLabel="Settled chats">
+            {chats.slice(0, shown).map((chat) => (
+              <SettledChatRow
+                key={chat.id}
+                chat={chat}
+                now={now}
+                selected={selected.has(chat.id)}
+                busy={deleting.has(chat.id)}
+                onToggleSelected={toggleSelected}
+                onUnsettle={unsettle}
+                onOpen={open}
+                onDelete={removeOne}
+              />
+            ))}
+          </SettingCard>
+        </>
       )}
       {remaining > 0 ? (
         <div className="mt-2 flex justify-center">
@@ -113,23 +162,67 @@ export function SettledChatsSettingsTab({
           </GhostButton>
         </div>
       ) : null}
+      {selectedIds.length > 0 ? (
+        <div className="sticky bottom-0 mt-4 flex items-center gap-3 rounded-[var(--radius-shell)] border border-[color:var(--border-strong)] bg-[color:var(--bg-surface-raised)] px-4 py-2.5">
+          <span className="text-body font-medium text-[color:var(--text-strong)]">{selectedIds.length} selected</span>
+          <span className="flex-1" />
+          <GhostButton size="xs" onClick={() => setSelected(new Set())}>
+            Clear selection
+          </GhostButton>
+          <Tooltip
+            multiline
+            content="Deletes the selected chats and their history for good. Each one's worktree is removed or goes back to the pool unless it has uncommitted changes, and branches are kept. You confirm first."
+          >
+            <DangerButton
+              size="xs"
+              disabled={selectedIds.some((id) => deleting.has(id))}
+              onClick={() => void remove(selectedIds)}
+            >
+              Delete {selectedIds.length === 1 ? '1 chat' : `${selectedIds.length} chats`}
+            </DangerButton>
+          </Tooltip>
+        </div>
+      ) : null}
     </div>
   )
+}
+
+/** What a row's Delete says it does, on hover and keyboard focus. */
+export function settledChatDeleteTooltip(remoteMachine: string | null): string {
+  return remoteMachine
+    ? `Removes this chat from this computer only. The chat, its history and its worktree stay on ${remoteMachine}, where it can be deleted. You confirm first.`
+    : 'Deletes this chat and its history for good. Its worktree is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.'
 }
 
 const SettledChatRow = React.memo(function SettledChatRow({
   chat,
   now,
+  selected,
+  busy,
+  onToggleSelected,
   onUnsettle,
   onOpen,
+  onDelete,
 }: {
   chat: SettledChatEntry
   now: number
+  selected: boolean
+  /** Being deleted now. */
+  busy: boolean
+  onToggleSelected: (id: WorkspaceId) => void
   onUnsettle: (id: WorkspaceId) => void
   onOpen: (id: WorkspaceId) => void
+  onDelete: (id: WorkspaceId) => void
 }) {
+  const removeWord = chat.remoteMachine ? 'Remove' : 'Delete'
   return (
     <li className="flex items-center gap-3 px-4 py-3">
+      <Checkbox
+        checked={selected}
+        onChange={() => onToggleSelected(chat.id)}
+        ariaLabel={`Select ${chat.title}`}
+        disabled={busy}
+      />
       <div className="min-w-0 flex-1">
         <div className="truncate text-body font-medium text-[color:var(--text-strong)]" title={chat.title}>
           {chat.title}
@@ -148,6 +241,18 @@ const SettledChatRow = React.memo(function SettledChatRow({
         <OutlineButton size="xs" aria-label={`Open ${chat.title}`} onClick={() => onOpen(chat.id)}>
           Open
         </OutlineButton>
+        <Tooltip multiline content={settledChatDeleteTooltip(chat.remoteMachine)}>
+          <GhostButton
+            size="xs"
+            tone="danger"
+            busy={busy}
+            disabled={busy}
+            aria-label={`${removeWord} ${chat.title}`}
+            onClick={() => onDelete(chat.id)}
+          >
+            {removeWord}
+          </GhostButton>
+        </Tooltip>
       </div>
     </li>
   )
