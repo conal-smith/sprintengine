@@ -4,6 +4,7 @@ import { cp, mkdir, rename, writeFile } from 'fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
 import { writeAttachmentImageFile } from '../attachment-image-file'
 import type { AttachmentImageInput } from '../attachment-image-file'
+import { resolveEditorSaveTarget } from '../editor-save-target'
 
 type FilesystemMutationIpcDependencies = {
   getUniqueCopyPath(destinationDir: string, sourceName: string, sourcePath: string): Promise<string>
@@ -38,9 +39,15 @@ function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
 }
 
 export function registerFilesystemMutationIpc(ipcMain: IpcMain, deps: FilesystemMutationIpcDependencies): void {
-  ipcMain.handle('fs:writefile', async (_, filePath: string, content: string): Promise<void> => {
-    await writeFile(filePath, content, 'utf-8')
-  })
+  // `roots` are the folders of the project the file was opened in; a save
+  // there does not write through a link that leads out of them.
+  ipcMain.handle(
+    'fs:writefile',
+    async (_, filePath: string, content: string, options?: { roots?: unknown }): Promise<void> => {
+      const roots = Array.isArray(options?.roots) ? options.roots : []
+      await writeFile(await resolveEditorSaveTarget(filePath, roots), content, 'utf-8')
+    },
+  )
 
   ipcMain.handle('fs:save-dropped-image', async (_, input: AttachmentImageInput): Promise<string> => {
     return writeAttachmentImageFile(input, 'pasted')

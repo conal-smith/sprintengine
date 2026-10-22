@@ -469,7 +469,10 @@ export default function ExternalEditorWindow({ incoming, nonce }: Props) {
         return { ...prev, [path]: { ...current, saved: value } }
       })
       try {
-        await window.api.writefile(path, value)
+        // The workspace's folder, when the opener named one, so the save does
+        // not follow a link out of it.
+        const root = tabsRef.current.find((candidate) => candidate.path === path)?.rootPath
+        await window.api.writefile(path, value, { roots: root ? [root] : [] })
         setDiskNotice(path, null)
         return true
       } catch (error) {
