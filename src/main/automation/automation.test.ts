@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { readAutomationSettings, writeAutomationSettings } from './automation-settings'
 import {
@@ -288,8 +288,20 @@ test('automation', async () => {
     assert.equal(mac, '/Users/test/Library/Application Support/sprintengine/automation.sock')
     const linux = resolveSocketPath('/home/test/.config/sprintengine', 'linux')
     assert.equal(linux, '/home/test/.config/sprintengine/automation.sock')
-    const longLinux = resolveSocketPath(`/home/test/${'nested/'.repeat(20)}sprintengine`, 'linux', '/tmp')
-    assert.match(longLinux, /^\/tmp\/sprintengine-automation-[a-f0-9]{12}\.sock$/)
+    if (process.platform !== 'win32') {
+      // Too long for a socket: a folder only this user can enter, never a
+      // fixed name in the shared temp folder.
+      const base = mkdtempSync(join(tmpdir(), 'se-socket-base-'))
+      try {
+        const longLinux = resolveSocketPath(`/home/test/${'nested/'.repeat(20)}sprintengine`, 'linux', base)
+        const uid = process.getuid?.() ?? 0
+        assert.equal(dirname(longLinux), join(base, `sprintengine-${uid}`))
+        assert.match(basename(longLinux), /^automation-[a-f0-9]{12}\.sock$/)
+        assert.equal(statSync(dirname(longLinux)).mode & 0o777, 0o700)
+      } finally {
+        rmSync(base, { recursive: true, force: true })
+      }
+    }
   }
 
   async function testToolListNamesTheToolSurface(): Promise<void> {
