@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
 import { defaultAgent } from '../../shared/agent-state'
-import type { McpToolResult } from '../../shared/modules/mcp-tools'
+import type { McpConnectionContext, McpToolResult } from '../../shared/modules/mcp-tools'
+import { bindGatewayConversation } from '../../server/tools/client-tool-gateway'
 import type { PullRequestTextRequest } from '../../shared/text-generation/contract'
 import { DEFAULT_WRITING_STYLE } from '../../shared/text-generation/writing-style'
 import type { WorkspaceRegistryRecord } from '../../shared/workspace-registry'
@@ -113,18 +114,23 @@ test('a chat this machine does not hold, or whose checkout is on another machine
       id === 'ws-ssh' ? record({ environment: { kind: 'ssh' } } as never) : id === 'ws-1' ? record() : null,
     ),
   })
-  assert.equal(errorCode(await tool('state').handler({ workspaceId: 'ws-9', agentId: 'agent-1' })), 'unknown_workspace')
   assert.equal(
-    errorCode(await tool('push').handler({ workspaceId: 'ws-1', agentId: 'agent-9' })),
+    errorCode(await tool('state').handler({ workspaceId: 'ws-9', agentId: 'agent-1' }, DEVICE)),
+    'unknown_workspace',
+  )
+  assert.equal(
+    errorCode(await tool('push').handler({ workspaceId: 'ws-1', agentId: 'agent-9' }, DEVICE)),
     'unknown_conversation',
   )
   assert.equal(
-    errorCode(await tool('create').handler({ workspaceId: 'ws-ssh', agentId: 'agent-1', title: 't', body: '' })),
+    errorCode(
+      await tool('create').handler({ workspaceId: 'ws-ssh', agentId: 'agent-1', title: 't', body: '' }, DEVICE),
+    ),
     'checkout_elsewhere',
   )
   // A folder is never taken from the caller.
   assert.equal(
-    errorCode(await tool('state').handler({ workspaceId: '', agentId: 'agent-1', cwd: '/etc' })),
+    errorCode(await tool('state').handler({ workspaceId: '', agentId: 'agent-1', cwd: '/etc' }, DEVICE)),
     'invalid_arguments',
   )
   assert.deepEqual(calls, [])
@@ -161,10 +167,13 @@ test('the push and the creation run in the chat checkout with the pin, and what 
 
 test('a pin that is not one is refused rather than dropped, and a record that fails is said with the address', async () => {
   const { tool, calls } = harness({ link: async () => ({ ok: false, message: 'Opened by another conversation.' }) })
-  const refused = await tool('push').handler({ workspaceId: 'ws-1', agentId: 'agent-1', pin: { branch: 'x' } })
+  const refused = await tool('push').handler({ workspaceId: 'ws-1', agentId: 'agent-1', pin: { branch: 'x' } }, DEVICE)
   assert.equal(errorCode(refused), 'invalid_arguments')
   assert.deepEqual(calls, [])
-  const created = await tool('create').handler({ workspaceId: 'ws-1', agentId: 'agent-1', title: 'feat', body: '' })
+  const created = await tool('create').handler(
+    { workspaceId: 'ws-1', agentId: 'agent-1', title: 'feat', body: '' },
+    DEVICE,
+  )
   assert.equal(structured(created).recorded, false)
   assert.match(
     String(structured(created).recordMessage),
@@ -217,4 +226,37 @@ test('reading whether the button may show is a read; every other step needs the 
     'conversation.pull_request_create': 'conversation:operate',
   })
   assert.ok((TAILNET_CAPABILITIES as readonly string[]).includes('chat-create-pull-request'))
+})
+
+test("an agent on this machine works on its own chat's pull request only", async () => {
+  const { tool, calls } = harness()
+  const proven: McpConnectionContext = { metadata: { kind: 'studio-agent', workspaceId: 'ws-1', agentId: 'agent-1' } }
+  bindGatewayConversation(proven, { workspaceId: 'ws-1', agentId: 'agent-1' })
+  const pin = { branch: 'agent/remote-pr', headSha: 'abc1234def' }
+
+  assert.deepEqual(structured(await tool('push').handler({ workspaceId: 'ws-1', agentId: 'agent-1', pin }, proven)), {
+    ok: true,
+    pushed: true,
+  })
+  // Another chat on this machine, named by the same agent: refused before git runs.
+  const other = { workspaceId: 'ws-1', agentId: 'agent-wt' }
+  const argsFor: Record<string, Record<string, unknown>> = {
+    state: other,
+    draft: { ...other, draftId: 'd-1' },
+    draft_cancel: { ...other, draftId: 'd-1' },
+    push: other,
+    create: { ...other, title: 't', body: '' },
+  }
+  for (const [name, args] of Object.entries(argsFor)) {
+    assert.equal(errorCode(await tool(name).handler(args, proven)), 'forbidden', name)
+  }
+  // A declared identity is not a proven one, and the socket's other callers have no chat.
+  const declared: McpConnectionContext = { metadata: { kind: 'studio-agent', workspaceId: 'ws-1', agentId: 'agent-1' } }
+  for (const context of [declared, { metadata: { kind: 'external-local' as const } }, undefined]) {
+    assert.equal(
+      errorCode(await tool('push').handler({ workspaceId: 'ws-1', agentId: 'agent-1' }, context)),
+      'forbidden',
+    )
+  }
+  assert.deepEqual(calls, [['push', '/Users/dev/app', pin]])
 })
