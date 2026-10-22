@@ -94,6 +94,7 @@
       { "spreadIf": "integrationArgs" },
       "--session-id",
       "{{sessionId}}",
+      { "valueIf": "prompt", "value": "--" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
   },
@@ -109,10 +110,12 @@
       { "spreadIf": "integrationArgs" },
       "--resume",
       "{{sessionId}}",
+      { "valueIf": "prompt", "value": "--" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
   },
   "promptInjection": {
+    "$comment": "The first message goes after `--`, so one that starts with a dash is never read as an option. Checked 2026-10-22 against Claude Code 2.1.296: `claude --help` prints `Usage: claude [options] [command] [prompt]`, `claude --bogus` failed with `unknown option`, and `claude -- --bogus` took `--bogus` as the prompt.",
     "mode": "positional-arg",
     "overflow": {
       "$comment": "A first message too long for the platform's command line (a pasted log; see src/main/launch-arg-budget.ts) is typed in instead: the launch drops it and the host pastes it, bracketed, then presses Enter once the TUI is reading. Verified 2026-09-24 against the installed CLI 2.1.282: --help documents no prompt-file option and no stdin prompt for an interactive session (--input-format and piped stdin apply only with --print), and a 300 KB bracketed paste followed by Enter, written once output had gone quiet after the TUI enabled bracketed paste, was submitted as one message and answered once.",

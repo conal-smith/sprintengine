@@ -183,6 +183,14 @@ export async function startWebFrontDoor(input: {
     if (!sessionId) throw new Error('This tab is not paired with Studio.')
     return sessionId
   }
+  // A folder Studio already has a workspace for, spelled as that workspace has it.
+  const isWorkspaceFolder = (folderPath: string): boolean => {
+    const plain = (path: string) => path.replace(/[\\/]+$/u, '')
+    const asked = plain(folderPath)
+    return core.workspaceRegistry
+      .getRecords()
+      .some((record) => !!record.folderPath && plain(record.folderPath) === asked)
+  }
   const onLoopback = (event: { caller: { clientId: string } }): boolean =>
     sessions.get(sessionOfClient.get(event.caller.clientId) ?? '')?.route === 'loopback'
   // A preview exposes the server's loopback to the device, so a tailnet
@@ -323,6 +331,8 @@ export async function startWebFrontDoor(input: {
           rpc.connectWeb(stream, {
             authenticator: sessionAuthenticator(sessions, who.ticket.sessionId),
             ownWindow: false,
+            // A browser on the tailnet searches only the folders Studio knows.
+            knownFoldersOnly: sessions.get(who.ticket.sessionId)?.route !== 'loopback',
           })
           return
         }
@@ -359,6 +369,7 @@ export async function startWebFrontDoor(input: {
                 result: entry.ok ? toolSuccess({ ok: true }) : toolError('failed', 'The call did not succeed.'),
               }),
             log: input.log,
+            ...(session.route === 'loopback' ? {} : { knownFolder: isWorkspaceFolder }),
           }),
         )
       },

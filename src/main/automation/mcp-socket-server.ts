@@ -1,6 +1,8 @@
 import { createServer, type Server, type Socket } from 'net'
 import { chmodSync, existsSync, unlinkSync } from 'fs'
 
+import { withOwnerOnlyUmask } from '../private-socket-dir'
+
 import {
   createMcpDispatcher,
   declaredProtocolVersion,
@@ -114,7 +116,9 @@ export function createMcpSocketServer(options: McpSocketServerOptions): McpSocke
       }
       next.once('error', onError)
       next.once('listening', onListening)
-      next.listen(options.socketPath)
+      // Created owner-only, not narrowed after the fact.
+      if (process.platform === 'win32') next.listen(options.socketPath)
+      else withOwnerOnlyUmask(() => next.listen(options.socketPath))
     })
     if (process.platform !== 'win32') {
       // Owner-only access; the socket is the entire authentication model.

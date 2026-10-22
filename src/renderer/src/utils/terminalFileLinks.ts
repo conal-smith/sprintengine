@@ -1,6 +1,7 @@
 import type { IBufferLine, ILink, ILinkProvider, Terminal } from '@xterm/xterm'
 import { distroOfHostId } from '../../../shared/execution-host'
 import { distroOfUncPath, isWindowsPath, isWslDriveMountPath, wslToWindowsPath } from '../../../shared/host-paths'
+import { namesNetworkLocation } from '../../../shared/network-paths'
 import { basename, isAbsoluteFilePath, joinFilePath, pathSeparatorFor } from './paths'
 
 export type TerminalFileReference = {
@@ -225,7 +226,9 @@ export function normalizePath(pathValue: string): string {
  * reaches terminal diagnostics.
  */
 export function resolveTerminalFileReferencePath(filePath: string, roots: TerminalFileReferenceRoots): string | null {
-  if (isRemoteOrShellReference(filePath)) return null
+  // A file on another machine is not looked at: on Windows even a stat of one
+  // connects to that server with the person's credentials.
+  if (isRemoteOrShellReference(filePath) || namesNetworkLocation(filePath)) return null
   if (isAbsoluteFilePath(filePath)) return normalizeResolvedPath(toHostPath(filePath, roots))
 
   const base = roots.executionRoot || roots.workspaceRoot

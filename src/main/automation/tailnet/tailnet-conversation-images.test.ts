@@ -100,6 +100,7 @@ let server: TailnetGatewayServer
 let port: number
 let reader: string
 let noConversations: string
+let elsewhere: string
 let meshDir: string
 let mesh: TailnetMeshService
 let connectionId: string
@@ -119,6 +120,11 @@ beforeAll(async () => {
   writeFileSync(join(files, 'linked-target.webp'), WEBP)
   symlinkSync(join(files, 'linked-target.webp'), join(files, 'linked.webp'))
   mkdirSync(join(files, 'folder.png'))
+  // Outside the chat's folder and Studio's picture folders, and a link in the
+  // chat's folder that leads there.
+  elsewhere = mkdtempSync(join(tmpdir(), 'conversation-images-elsewhere-'))
+  writeFileSync(join(elsewhere, 'outside.png'), PNG)
+  symlinkSync(join(elsewhere, 'outside.png'), join(workspaceRoot, 'leads-out.png'))
 
   const provider = stepProvider()
   runtime = new ConversationRuntime({ adapters: [provider], getProviderById: () => undefined })
@@ -126,6 +132,12 @@ beforeAll(async () => {
     runtime,
     (id) => (id === workspaceId ? workspaceRoot : null),
     () => [{ workspaceRoot, workspaceId }],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    // Stands for Studio's own picture folders, which a step's picture may be in.
+    { imageRoots: () => [files] },
   )
   const started = await runtime.startSession({
     workspaceRoot,
@@ -148,6 +160,13 @@ beforeAll(async () => {
     },
     { id: 'read-image', name: 'Read', kind: 'file_read', input: { file_path: join(files, 'screenshot.png') } },
     { id: 'read-relative', name: 'Read', input: { path: 'relative.gif' } },
+    { id: 'read-outside', name: 'Read', kind: 'file_read', input: { file_path: join(elsewhere, 'outside.png') } },
+    {
+      id: 'read-leads-out',
+      name: 'Read',
+      kind: 'file_read',
+      input: { file_path: join(workspaceRoot, 'leads-out.png') },
+    },
     { id: 'read-linked', name: 'Read', kind: 'file_read', input: { filePath: join(files, 'linked.webp') } },
     { id: 'read-text', name: 'Read', kind: 'file_read', input: { file_path: join(files, 'notes.txt') } },
     { id: 'read-words', name: 'Read', kind: 'file_read', input: { file_path: join(files, 'notes.png') } },
@@ -227,7 +246,8 @@ afterAll(async () => {
   mesh?.shutdown()
   await server?.stop()
   await runtime?.shutdown()
-  for (const dir of [workspaceRoot, devicesDir, files, meshDir]) if (dir) rmSync(dir, { recursive: true, force: true })
+  for (const dir of [workspaceRoot, devicesDir, files, meshDir, elsewhere])
+    if (dir) rmSync(dir, { recursive: true, force: true })
 })
 
 type Answer = { status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }
@@ -270,6 +290,14 @@ function errorOf(answer: Answer): { code: string; message: string } {
   assert.equal(answer.headers['content-type'], 'application/json; charset=utf-8')
   return (JSON.parse(answer.body.toString('utf8')) as { error: { code: string; message: string } }).error
 }
+
+test('a picture outside the chat’s folders and Studio’s picture folders is not served', async () => {
+  for (const id of ['read-outside', 'read-leads-out']) {
+    const answer = await get(imagePath(id), { token: reader })
+    assert.equal(answer.status, 404, id)
+    assert.equal(errorOf(answer).code, 'unknown_image', id)
+  }
+})
 
 test('a generated picture is served as the bytes on disk, under the path its last announcement named', async () => {
   const answer = await get(imagePath('generate'), { token: reader })

@@ -26,6 +26,7 @@ import {
   type SecureRefreshTokenStore,
 } from './account-client'
 import { getErrorMessage } from './error-message'
+import { safeStorageProtects } from './platform/safe-storage-protects'
 import { DEFAULT_MULTIAUTH_BASE_URL } from './service-endpoints'
 import { readStudioEnv } from '../shared/studio-env'
 import { broadcastToAllWindows } from './window-broadcast'
@@ -103,7 +104,7 @@ class ElectronSafeRefreshTokenStore implements SecureRefreshTokenStore {
 
   async readRefreshToken(): Promise<string | null> {
     if (this.inMemoryRefreshToken) return this.inMemoryRefreshToken
-    if (!safeStorage.isEncryptionAvailable()) return null
+    if (!safeStorageProtects(safeStorage)) return null
 
     try {
       const encrypted = await readFile(this.tokenPath)
@@ -117,7 +118,7 @@ class ElectronSafeRefreshTokenStore implements SecureRefreshTokenStore {
 
   async writeRefreshToken(refreshToken: string): Promise<void> {
     this.inMemoryRefreshToken = refreshToken
-    if (!safeStorage.isEncryptionAvailable()) return
+    if (!safeStorageProtects(safeStorage)) return
 
     await mkdir(dirname(this.tokenPath), { recursive: true })
     await writeFile(this.tokenPath, safeStorage.encryptString(refreshToken), { mode: 0o600 })

@@ -63,6 +63,7 @@ export type GatewayBackendDeps = Pick<
   | 'listModuleContributedTools'
   | 'readMarketplaceRegistry'
   | 'readWorkspaceExtensions'
+  | 'studioDataDirs'
 > & {
   /**
    * The ids the person added for a CLI in Settings, from the launch settings

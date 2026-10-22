@@ -67,3 +67,12 @@ test('forgetting a device removes everything it sent, and nothing another sent',
   assert.equal(existsSync(mine.path), false)
   assert.ok(existsSync(theirs.path))
 })
+
+test('two devices whose ids differ only in characters a folder name drops keep apart', () => {
+  const uploads = createTailnetFileUploads({ root })
+  const first = uploads.place('device.1', 'a.txt')
+  const second = uploads.place('device1', 'a.txt')
+  assert.notEqual(dirname(dirname(first.path)), dirname(dirname(second.path)))
+  uploads.forgetDevice('device1')
+  assert.ok(existsSync(dirname(first.path)))
+})

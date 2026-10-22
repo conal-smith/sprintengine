@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ChipButton, GhostButton, IconButton, Skeleton, Tooltip, TruncatedText } from '../ui'
 import { basename } from '../../utils/paths'
+import { inertHtml } from '../../utils/inertHtml'
 
 // The generated-HTML artifact viewer: one file on disk, live-rendered in a
 // scripts-off sandbox, with device widths, zoom and an optional source view.
@@ -415,7 +416,11 @@ export function HtmlArtifactFrame({
               <iframe
                 key={`${absolutePath}::${allowScripts ? 'scripts' : 'no-scripts'}::${reloadNonce}`}
                 title={`Preview · ${pageTitle}`}
-                srcDoc={stripHtmlFrontmatter(frameState.content)}
+                srcDoc={
+                  allowScripts
+                    ? stripHtmlFrontmatter(frameState.content)
+                    : inertHtml(stripHtmlFrontmatter(frameState.content))
+                }
                 sandbox={htmlFrameSandbox(allowScripts)}
                 onLoad={() => setFrameLoaded(true)}
                 className={`border-0 bg-white transition-opacity duration-150 ${frameLoaded ? 'opacity-100' : 'opacity-0'}`}

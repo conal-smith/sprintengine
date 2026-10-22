@@ -81,7 +81,16 @@ export type AgentLaunchRequest = {
    * startup prompt. Refused for a CLI whose manifest declares no resume.
    */
   resumeCliSessionId?: string
+  /**
+   * The agent of this app whose tool call asked for the launch, and its chat.
+   * Recorded on the session so the terminal tools show an agent the terminals
+   * it or its chat started, and no others. Absent for a launch the person made.
+   */
+  launchedBy?: AgentLaunchCaller
 }
+
+/** An agent of this app that asked for a launch: its chat (workspace) and, when it declared one, its own id. */
+export type AgentLaunchCaller = { workspaceId: string; agentId?: string }
 
 export type AgentDisposeRequest = {
   workspaceId: string
@@ -115,6 +124,8 @@ export type AgentLaunchRecord = {
   worktreePath?: string
   /** The machine main launched on, so the agent resumes on the same one. */
   hostId?: ExecutionHostId
+  /** The agent that asked for this launch through a tool, as the request named it. */
+  launchedBy?: AgentLaunchCaller
 }
 
 export type AgentLaunchResult =
@@ -141,3 +152,22 @@ export type AgentLaunchResult =
 
 export type AgentDisposeResult =
   { ok: true; workspaceId: string; agentId: string } | { ok: false; code: string; message: string }
+
+/**
+ * Whether a launch prompt would be read as an option rather than a message.
+ *
+ * A terminal agent's first message becomes the last token on its CLI's
+ * command line (`{{prompt}}` in its plugin manifest). The shell
+ * is safe, since every value is quoted, but the CLI's own option parser is not:
+ * a message that begins with `-` is parsed as a flag. Every launch door refuses
+ * one, the same line the card executor draws (`run-card.ts`), and the render
+ * refuses one that would land on a command line with no `--` before it.
+ */
+export function launchPromptReadsAsOption(prompt: string | null | undefined): boolean {
+  return typeof prompt === 'string' && prompt.trim().startsWith('-')
+}
+
+/** What a launch door answers when {@link launchPromptReadsAsOption} refuses its prompt. */
+export const LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE =
+  'The prompt begins with a dash, which an agent CLI would read as an option, so it was not sent. ' +
+  'Start it with a word instead.'

@@ -53,10 +53,11 @@ test('in a UNC folder an npm batch shim runs what it names directly, never throu
   const files: Record<string, string> = {
     [shim]: NPM_SHIM('"%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*'),
   }
-  const present = new Set([script])
+  const nodeOnPath = 'C:\\Program Files\\nodejs\\node.exe'
+  const present = new Set([script, nodeOnPath])
   const deps = {
     platform: 'win32' as const,
-    env: {},
+    env: { PATH: 'C:\\Program Files\\nodejs;.' },
     cwd,
     exists: (path: string) => present.has(path),
     readText: (path: string) => files[path] ?? null,
@@ -64,9 +65,15 @@ test('in a UNC folder an npm batch shim runs what it names directly, never throu
   // Every argument is handed over as it is: Node quotes it for the CLI's own
   // parser, and no command processor or PowerShell reads it on the way.
   expect(cliSpawnTarget(shim, ['app-server', '-c', 'model="o3"', ''], deps)).toEqual({
-    file: 'node',
+    file: nodeOnPath,
     args: [script, 'app-server', '-c', 'model="o3"', ''],
   })
+  // Node is named by its full path from PATH, never by a bare name the
+  // workspace folder could answer: with none on PATH the shim is refused.
+  present.delete(nodeOnPath)
+  present.add(`${cwd}\\node.exe`)
+  expect(() => cliSpawnTarget(shim, ['app-server'], deps)).toThrow('cannot start one in')
+  present.add(nodeOnPath)
   present.add(`${npm}\\node.exe`)
   expect(cliSpawnTarget(shim, ['app-server'], deps).file).toBe(`${npm}\\node.exe`)
 
@@ -121,21 +128,26 @@ test('in a UNC folder an npm batch shim runs what it names directly, never throu
 })
 
 test('a PowerShell shim runs through PowerShell and executables are spawned directly', () => {
-  expect(cliSpawnTarget('C:\\Users\\dev\\AppData\\Roaming\\npm\\opencode.ps1', ['acp'], { platform: 'win32' })).toEqual(
-    {
-      file: 'powershell.exe',
-      args: [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        'C:\\Users\\dev\\AppData\\Roaming\\npm\\opencode.ps1',
-        'acp',
-      ],
-    },
-  )
+  expect(
+    cliSpawnTarget('C:\\Users\\dev\\AppData\\Roaming\\npm\\opencode.ps1', ['acp'], {
+      platform: 'win32',
+      env: { SystemRoot: 'C:\\Windows' },
+      cwd: 'C:\\Users\\dev\\repo',
+    }),
+  ).toEqual({
+    // By its full path: a bare name is looked for in the workspace first.
+    file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    args: [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      'C:\\Users\\dev\\AppData\\Roaming\\npm\\opencode.ps1',
+      'acp',
+    ],
+  })
   expect(cliSpawnTarget('C:\\tools\\grok.exe', ['stdio'], { platform: 'win32' })).toEqual({
     file: 'C:\\tools\\grok.exe',
     args: ['stdio'],

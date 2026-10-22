@@ -4,6 +4,7 @@ import type { AgentSkill } from '../../../shared/skills'
 import { plainSkillInvocation } from '../../../shared/skill-invocation'
 import { hasInstalledNativeSkillTarget, renderSkillInvocationTemplate } from './skillInvocation'
 import { isWindowsPath, isWslDriveMountPath, toWslPath, wslToWindowsPath } from '../../../shared/host-paths'
+import { powerShellSingleQuoted } from '../../../shared/powershell-quote'
 
 export const SPRINTENGINE_FILE_DROP_MIME = 'application/x-sprintengine-file-drop'
 const SPRINTENGINE_COMMIT_DROP_MIME = 'application/x-sprintengine-commit-drop'
@@ -482,7 +483,7 @@ export function bracketedPaste(text: string): string {
 
 function quotePathForTerminal(pathValue: string, style: TerminalPathStyle): string {
   if (style === 'windows') {
-    return `'${pathValue.replace(/'/g, "''")}'`
+    return powerShellSingleQuoted(pathValue)
   }
 
   return `'${pathValue.replace(/'/g, `'"'"'`)}'`

@@ -7,6 +7,7 @@ import { useAgentFileTrail } from './useAgentFileTrail'
 import { getGitLineChanges, type GitLineChange } from '../../utils/gitDiff'
 import { renderMarkdown } from '../../utils/markdown'
 import { isImageFile } from '../../utils/files'
+import { workspaceWorkingRoot } from '../../utils/workspaceWorktree'
 import { basename, isPathOrChild, trimPath } from '../../utils/paths'
 import {
   getEditorBuffer,
@@ -353,7 +354,9 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
       const previousBaseline = getEditorDiskBaseline(workspaceId, file.path)
       setEditorDiskBaseline(workspaceId, file.path, content)
       try {
-        await window.api.writefile(file.path, content)
+        // The project's folders, so the save does not follow a link out of them.
+        const roots = ws ? [ws.folderPath, workspaceWorkingRoot(ws)].filter((root): root is string => !!root) : []
+        await window.api.writefile(file.path, content, { roots })
       } catch (error) {
         if (previousBaseline !== undefined) setEditorDiskBaseline(workspaceId, file.path, previousBaseline)
         throw error

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { WarningIcon } from '../AppIcons'
 import { TruncatedText } from './TruncatedText'
+import { inertHtml } from '../../utils/inertHtml'
 
 // Shared card primitive: a small live render of one HTML file on disk + title +
 // mono path meta + click-through. The live render holds the same scripts-off
@@ -86,7 +87,7 @@ export function HtmlPreviewCard({ absolutePath, relativePath, title, onOpen, tab
           <iframe
             title=""
             tabIndex={-1}
-            srcDoc={state.content}
+            srcDoc={inertHtml(state.content)}
             sandbox={htmlArtifactFrameSandbox(false)}
             onLoad={() => setFrameLoaded(true)}
             // Zoomed-out thumbnail: render at 2× logical size anchored top-left

@@ -4,6 +4,7 @@ import { cp, mkdir, rename, writeFile } from 'fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
 import { writeAttachmentImageFile } from '../attachment-image-file'
 import type { AttachmentImageInput } from '../attachment-image-file'
+import { resolveEditorSaveTarget } from '../editor-save-target'
 
 type FilesystemMutationIpcDependencies = {
   getUniqueCopyPath(destinationDir: string, sourceName: string, sourcePath: string): Promise<string>
@@ -11,6 +12,8 @@ type FilesystemMutationIpcDependencies = {
   trashItem(targetPath: string): Promise<void>
 }
 
+// One name, never a path: what a rename, a new file or a new folder is called
+// stays in the folder it was made in.
 function normalizeRenamedFileSystemEntryName(rawName: string): string {
   if (/[. ]$/u.test(rawName)) {
     throw new Error('File and folder names cannot end with a period or space.')
@@ -36,9 +39,15 @@ function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
 }
 
 export function registerFilesystemMutationIpc(ipcMain: IpcMain, deps: FilesystemMutationIpcDependencies): void {
-  ipcMain.handle('fs:writefile', async (_, filePath: string, content: string): Promise<void> => {
-    await writeFile(filePath, content, 'utf-8')
-  })
+  // `roots` are the folders of the project the file was opened in; a save
+  // there does not write through a link that leads out of them.
+  ipcMain.handle(
+    'fs:writefile',
+    async (_, filePath: string, content: string, options?: { roots?: unknown }): Promise<void> => {
+      const roots = Array.isArray(options?.roots) ? options.roots : []
+      await writeFile(await resolveEditorSaveTarget(filePath, roots), content, 'utf-8')
+    },
+  )
 
   ipcMain.handle('fs:save-dropped-image', async (_, input: AttachmentImageInput): Promise<string> => {
     return writeAttachmentImageFile(input, 'pasted')
@@ -58,19 +67,19 @@ export function registerFilesystemMutationIpc(ipcMain: IpcMain, deps: Filesystem
   })
 
   ipcMain.handle('fs:create-file', async (_, parentDir: string, name: string): Promise<string> => {
-    const filePath = join(parentDir, name)
+    const filePath = join(parentDir, normalizeRenamedFileSystemEntryName(name))
     await writeFile(filePath, '', { encoding: 'utf-8', flag: 'wx' })
     return filePath
   })
 
   ipcMain.handle('fs:create-dir', async (_, parentDir: string, name: string): Promise<string> => {
-    const dirPath = join(parentDir, name)
+    const dirPath = join(parentDir, normalizeRenamedFileSystemEntryName(name))
     await mkdir(dirPath)
     return dirPath
   })
 
   ipcMain.handle('fs:ensure-dir', async (_, parentDir: string, name: string): Promise<string> => {
-    const dirPath = join(parentDir, name)
+    const dirPath = join(parentDir, normalizeRenamedFileSystemEntryName(name))
     await mkdir(dirPath, { recursive: true })
     return dirPath
   })

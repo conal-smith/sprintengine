@@ -94,7 +94,8 @@ export const filesystemApi = {
   diagnosticsGetProcessMetrics: (): Promise<ProcessMetricsSnapshot> =>
     ipcRenderer.invoke('diagnostics:get-process-metrics'),
   diagnosticsOpenWindow: (): Promise<void> => ipcRenderer.invoke('diagnostics:open-window'),
-  writefile: (path: string, content: string) => ipcRenderer.invoke('fs:writefile', path, content),
+  writefile: (path: string, content: string, options?: { roots?: readonly string[] }) =>
+    ipcRenderer.invoke('fs:writefile', path, content, options),
   saveDroppedImage: (input: { mediaType: string; dataBase64: string }): Promise<string> =>
     ipcRenderer.invoke('fs:save-dropped-image', input),
   openImageAttachment: (input: { mediaType: string; dataBase64: string; name?: string }): Promise<void> =>

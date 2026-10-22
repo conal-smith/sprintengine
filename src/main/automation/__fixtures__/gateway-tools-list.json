@@ -194,7 +194,7 @@
     },
     {
       "name": "pull_request.link",
-      "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
+      "sha256": "8c755fdaccf265bc58c116dced46982cdf5fb52330da719cfaebc581c9151ea7"
     },
     {
       "name": "pull_request.watch",
@@ -250,11 +250,11 @@
     },
     {
       "name": "terminal.list",
-      "sha256": "15b401938a4e2b18ce26197dc9f5a3ce2a0b513e2a7550f5b4179e0403cfae43"
+      "sha256": "73e4b47ac5846201f85c6a78e919ffb39ebbee616a91c7873da058399fb9301e"
     },
     {
       "name": "terminal.read",
-      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
+      "sha256": "19ed821f846a6c7be6f1413a23daf32049d68b5940098a714753856f241982a2"
     },
     {
       "name": "terminal.create",
@@ -334,7 +334,7 @@
     },
     {
       "name": "artifacts.publish",
-      "sha256": "cb48ca6f1b90606c9ff9edd924e551f5f3677647e1c95b1f55dedc0cda6b4b81"
+      "sha256": "4a36db11fe25b45269f851fadc846e2ed76c38d7999cfd44171deac5f4c0ba08"
     },
     {
       "name": "artifacts.list",
@@ -350,7 +350,7 @@
     },
     {
       "name": "artifacts.update",
-      "sha256": "57c71fc00581b34c3b97dc290af8961691ab0306e06315d6e8dc22b54b09c01b"
+      "sha256": "bfdd71719ce772639e546e731c30aa562d8e09ec2efcb7f39b920ad4fbe2550c"
     },
     {
       "name": "artifacts.delete",
@@ -358,7 +358,7 @@
     },
     {
       "name": "tailnet.status",
-      "sha256": "cc199cfc73135e699938fd9e369ae707fb1ee041fca8b37e42f22289c42af576"
+      "sha256": "a52a946fe0082fa84e6bb392f2d3224b60d15ab424a6bf1a95322de513a48890"
     },
     {
       "name": "tailnet.set_enabled",
@@ -378,7 +378,7 @@
     },
     {
       "name": "tailnet.approve_pair_request",
-      "sha256": "2f80f5b28b8734537b69dde639c18a7241e63a40e32b17330ebc7959177452d5"
+      "sha256": "0c13d2ed939527d2217582400ed94c6d287c2062c5803bd15e782e8090000520"
     },
     {
       "name": "tailnet.deny_pair_request",
@@ -584,7 +584,7 @@
     },
     {
       "name": "pull_request.link",
-      "sha256": "20e4fcd9314ed05c8a6af5d22ef5d58e61e8949bc61ecf229eee512b71fcdee9"
+      "sha256": "8c755fdaccf265bc58c116dced46982cdf5fb52330da719cfaebc581c9151ea7"
     },
     {
       "name": "pull_request.watch",
@@ -640,11 +640,11 @@
     },
     {
       "name": "terminal.list",
-      "sha256": "15b401938a4e2b18ce26197dc9f5a3ce2a0b513e2a7550f5b4179e0403cfae43"
+      "sha256": "73e4b47ac5846201f85c6a78e919ffb39ebbee616a91c7873da058399fb9301e"
     },
     {
       "name": "terminal.read",
-      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
+      "sha256": "19ed821f846a6c7be6f1413a23daf32049d68b5940098a714753856f241982a2"
     },
     {
       "name": "terminal.create",
@@ -724,7 +724,7 @@
     },
     {
       "name": "artifacts.publish",
-      "sha256": "cb48ca6f1b90606c9ff9edd924e551f5f3677647e1c95b1f55dedc0cda6b4b81"
+      "sha256": "4a36db11fe25b45269f851fadc846e2ed76c38d7999cfd44171deac5f4c0ba08"
     },
     {
       "name": "artifacts.list",
@@ -740,7 +740,7 @@
     },
     {
       "name": "artifacts.update",
-      "sha256": "57c71fc00581b34c3b97dc290af8961691ab0306e06315d6e8dc22b54b09c01b"
+      "sha256": "bfdd71719ce772639e546e731c30aa562d8e09ec2efcb7f39b920ad4fbe2550c"
     },
     {
       "name": "artifacts.delete",
@@ -748,7 +748,7 @@
     },
     {
       "name": "tailnet.status",
-      "sha256": "cc199cfc73135e699938fd9e369ae707fb1ee041fca8b37e42f22289c42af576"
+      "sha256": "a52a946fe0082fa84e6bb392f2d3224b60d15ab424a6bf1a95322de513a48890"
     },
     {
       "name": "tailnet.set_enabled",
@@ -768,7 +768,7 @@
     },
     {
       "name": "tailnet.approve_pair_request",
-      "sha256": "2f80f5b28b8734537b69dde639c18a7241e63a40e32b17330ebc7959177452d5"
+      "sha256": "0c13d2ed939527d2217582400ed94c6d287c2062c5803bd15e782e8090000520"
     },
     {
       "name": "tailnet.deny_pair_request",

@@ -107,7 +107,6 @@ test('ToastHost', async () => {
       deviceName: 'macbook-air',
       peerNode,
       peerAddress: '100.4.4.4',
-      comparisonCode: '481972',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 4 * 60_000).toISOString(),
     }

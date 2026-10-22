@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'vitest'
@@ -59,4 +59,28 @@ test('a service’s narrated lines reach the diagnostics log under its title', a
   const text = await readFile(join(logsDir, file), 'utf8')
   assert.match(text, /"title":"worktree-pool"/)
   assert.match(text, /pool-01: recovery failed/)
+})
+
+test('the diagnostics log is written redacted, readable by its owner alone', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'studio-data-paths-'))
+  directories.push(root)
+  const logsDir = join(root, 'logs')
+  installStudioPlatform(
+    createNodeStudioPlatform({ dataDir: join(root, 'data'), logsDir, packaged: false, version: '0.0.0' }),
+  )
+  const entry = await writeDiagnosticLog({
+    level: 'warning',
+    source: 'agents',
+    title: 'Probe',
+    message: 'token=abc123 Bearer eyJhbGciOi.payload https://dev:p4ss@example.com/x',
+    details: 'gh ghp_0123456789abcdefghijABCDEFGHIJ',
+  })
+  const text = await readFile(entry.logPath ?? '', 'utf8')
+  for (const secret of ['abc123', 'eyJhbGciOi', 'p4ss', 'ghp_0123']) assert.equal(text.includes(secret), false, secret)
+  assert.match(text, /token=\[redacted\] Bearer \[redacted\] https:\/\/\[redacted\]@example\.com\/x/u)
+  assert.equal(entry.message.includes('abc123'), false, 'the entry handed back is the one written')
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(logsDir)).mode & 0o777, 0o700)
+    assert.equal((await stat(entry.logPath ?? '')).mode & 0o777, 0o600)
+  }
 })

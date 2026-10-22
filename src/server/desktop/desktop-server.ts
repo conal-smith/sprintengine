@@ -311,6 +311,7 @@ export const startDesktopServer: ServerStart = async ({ envelope, rpc, log, requ
           launchAgent: (request) => bridge.terminals.launchAgent(request),
           resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
           createWorkspace: (input, actor) => workspaceSyncService.createWorkspace(input, actor),
+          studioDataDirs: () => [envelope.dataDir],
           getScheduledAgents: () => modules.scheduledAgents(),
           ...launchSettingsGatewayDeps(agentLaunchSettings),
           getModuleRegistrySnapshot: () => moduleRegistry,

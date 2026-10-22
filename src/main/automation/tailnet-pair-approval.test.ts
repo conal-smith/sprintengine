@@ -161,11 +161,17 @@ test('tailnet-pair-approval', async () => {
         'six digits come back to show beside the other screen',
       )
 
-      // The person at this machine sees it waiting, with the same digits.
+      // The person at this machine sees it waiting, without the digits: they
+      // are read off the asking machine's screen, and nothing here reports them.
       const waiting = harness.service.getStatus().pairRequests
       assert.equal(waiting.length, 1, 'the request is waiting to be answered here')
       assert.equal(waiting[0].deviceName, 'Sam’s MacBook Air')
-      assert.equal(waiting[0].comparisonCode, asked.body.comparisonCode, 'both screens show the same code')
+      assert.equal('comparisonCode' in waiting[0], false, 'the status never carries the code')
+      assert.doesNotMatch(
+        JSON.stringify(harness.service.getStatus()),
+        new RegExp(String(asked.body.comparisonCode), 'u'),
+        'nor anything else in it',
+      )
 
       // Nothing is collectable until someone answers.
       const early = await call(

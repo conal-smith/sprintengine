@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { parseArtifactsRepositoryUrl, type ArtifactsSettings } from '../../shared/artifacts'
-import { collectArtifactBundle, type ArtifactBundle } from './artifact-bundle'
+import { collectArtifactBundle, isInsideArtifactRoots, type ArtifactBundle } from './artifact-bundle'
 import {
   ARTIFACTS_DIR,
   ARTIFACTS_SCHEMA,
@@ -58,6 +58,11 @@ export type ArtifactPublishInput = ArtifactSourceInput & {
   slug?: string
   /** A picture to use instead of the one Studio takes: PNG, JPEG or WebP. */
   thumbnail?: string
+  /**
+   * The folders the caller may publish from (`ArtifactBundleInput.roots`):
+   * the page, what it references and the thumbnail must be inside them.
+   */
+  roots?: readonly string[]
 }
 
 export type ArtifactUpdateInput = Partial<Omit<ArtifactPublishInput, 'slug'>> & { slug: string }
@@ -184,7 +189,7 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
 
   /** The page laid out in a folder of its own, with its picture taken there. */
   async function stage(
-    input: Pick<ArtifactPublishInput, 'path' | 'entry' | 'stylesheets' | 'thumbnail'>,
+    input: Pick<ArtifactPublishInput, 'path' | 'entry' | 'stylesheets' | 'thumbnail' | 'roots'>,
   ): Promise<
     { ok: true; dir: string; bundle: ArtifactBundle; thumbnail: { bytes: Buffer; type: string } | null } | Failure
   > {
@@ -192,6 +197,7 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
       path: input.path,
       ...(input.entry ? { entry: input.entry } : {}),
       ...(input.stylesheets?.length ? { stylesheets: input.stylesheets } : {}),
+      ...(input.roots ? { roots: input.roots } : {}),
     })
     if (!collected.ok) return { ok: false, code: 'invalid_page', message: collected.message }
     const bundle = collected.bundle
@@ -208,6 +214,13 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
       }
       if (info.size > MAX_THUMBNAIL_BYTES)
         return { ok: false, code: 'invalid_arguments', message: 'The thumbnail is over 5 MB.' }
+      if (input.roots && !(await isInsideArtifactRoots(input.thumbnail, input.roots))) {
+        return {
+          ok: false,
+          code: 'invalid_arguments',
+          message: 'The thumbnail is outside the folders this chat may publish from (its project, its worktree).',
+        }
+      }
       given = { bytes: await readFile(input.thumbnail), type }
     }
     const dir = await mkdtemp(join(tmpdir(), 'artifact-stage-'))

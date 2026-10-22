@@ -505,3 +505,35 @@ test('an owner’s web tab is Studio’s own view, and its mutations are audited
   assert.deepEqual(audited, ['session.send'])
   router.close()
 })
+
+test('a connection held to known folders searches and asks only about the folders Studio knows', async () => {
+  const chat: StudioChatBackend = {
+    ...fakeChat(),
+    isKnownFolder: async (path) => path === '/Users/dev/app' || path.startsWith('/Users/dev/app/'),
+  }
+  const uploads = createStudioUploads()
+  disposers.push(async () => uploads.close())
+  const router = createStudioRpcRouter({
+    backend: createFakeBackend(),
+    chat: () => chat,
+    info: () => ({}) as never,
+    uploads,
+  })
+  const grant = studioWindowGrant()
+  const tailnet = { connectionId: 'w1', slot: 1, ownWindow: false, knownFoldersOnly: true }
+  const loopback = { connectionId: 'w2', slot: 2, ownWindow: false }
+  const search = (rootPath: string, context: typeof loopback) =>
+    router.handle(grant, 'files.search', { rootPath, query: 'a' }, context)
+  const repoRoot = (folderPath: string, context: typeof loopback) =>
+    router.handle(grant, 'files.repoRoot', { folderPath }, context)
+
+  assert.ok((await search('/Users/dev/app', tailnet)).ok)
+  const elsewhere = await search('/Users/dev', tailnet)
+  assert.equal(!elsewhere.ok && elsewhere.error.code, 'not_found')
+  assert.ok((await repoRoot('/Users/dev/app/src', tailnet)).ok)
+  const other = await repoRoot('/etc', tailnet)
+  assert.equal(!other.ok && other.error.code, 'not_found')
+  // A browser on this machine names any folder, as before.
+  assert.ok((await search('/Users/dev', loopback)).ok)
+  assert.ok((await repoRoot('/etc', loopback)).ok)
+})

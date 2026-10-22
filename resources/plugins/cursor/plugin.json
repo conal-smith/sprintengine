@@ -53,6 +53,7 @@
       { "spreadIf": "modelArgs" },
       { "spreadIf": "contextArgs" },
       { "spreadIf": "integrationArgs" },
+      { "valueIf": "prompt", "value": "--" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
   },
@@ -71,6 +72,7 @@
     ]
   },
   "promptInjection": {
+    "$comment": "The first message goes after `--`, so one that starts with a dash is never read as an option. Checked 2026-10-22 against Cursor Agent 2026.10.14: `cursor-agent --bogus` failed with `unknown option`, and `cursor-agent -- --version` took `--version` as the prompt (it asked to sign in rather than printing the version).",
     "mode": "positional-arg",
     "overflow": {
       "$comment": "cursor-agent 2026.09.15 documents no prompt-file option and no stdin prompt for an interactive session (-p/--prompt is a one-shot print mode), so a first message too long for the platform's command line is typed in: launched without it, then pasted (bracketed) and submitted once the TUI is reading. Verified 2026-09-24 that the composer takes the bracketed paste once the TUI has enabled bracketed paste and gone quiet.",

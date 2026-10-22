@@ -275,7 +275,7 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       : facts.defaultBranch
     const [commits, diffStat, patch, history] = await Promise.all([
       out(gitRoot, ['log', '--no-merges', '--format=%s%n%n%b%n---', `${base}..HEAD`]),
-      out(gitRoot, ['diff', '--stat', `${base}...HEAD`]),
+      out(gitRoot, ['diff', '--stat', '--no-ext-diff', '--no-textconv', `${base}...HEAD`]),
       // Git's own patch for the model to read, whatever diff tool or textconv
       // filter the repository has set up for people.
       out(gitRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', `${base}...HEAD`]),

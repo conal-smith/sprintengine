@@ -351,3 +351,25 @@ test('the launch files are emptied at the next start', async () => {
   assert.deepEqual(await readdir(dir), [])
   await pruneLaunchFiles(join(dir, 'missing'))
 })
+
+test("a Codex launch hands the synced servers' env values and headers to the terminal's environment, not its command line", () => {
+  const secret = 'sk-test-0123456789abcdef'
+  const integration = buildCodexLaunchIntegration({
+    gateway: null,
+    servers: [
+      server({ id: 'stripe', env: { STRIPE_TEST_SECRET_KEY: secret } }),
+      server({
+        id: 'acme',
+        transport: 'http',
+        command: undefined,
+        args: undefined,
+        url: 'https://mcp.example.com/mcp',
+        headers: { 'X-Api-Key': secret },
+      }),
+    ],
+  })
+  assert.equal(integration.args.join(' ').includes(secret), false)
+  assert.deepEqual(integration.env, { STRIPE_TEST_SECRET_KEY: secret, SPRINTENGINE_MCP_SECRET_1: secret })
+  assert.match(integration.args[1], /"env_vars" = \["STRIPE_TEST_SECRET_KEY"\]/u)
+  assert.match(integration.args[3], /"env_http_headers" = \{ "X-Api-Key" = "SPRINTENGINE_MCP_SECRET_1" \}/u)
+})

@@ -1463,7 +1463,11 @@ export type ElectronApi = {
   /** The SSH machines preview switch: this session's, and the next launch's. */
   sshPreviewStatus: () => Promise<SshPreviewStatus>
   sshPreviewSet: (enabled: boolean) => Promise<SshPreviewStatus>
-  writefile: (path: string, content: string) => Promise<void>
+  /**
+   * Write a text file. `roots` are the folders of the project it was opened in:
+   * a save there does not write through a link that leads out of them.
+   */
+  writefile: (path: string, content: string, options?: { roots?: readonly string[] }) => Promise<void>
   /**
    * Save one pasted/dropped image that exists only as bytes (a clipboard
    * screenshot, an image dragged out of a browser) into the app's temp images

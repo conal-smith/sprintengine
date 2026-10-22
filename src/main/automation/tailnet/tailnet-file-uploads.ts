@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { safeUploadName } from '../../../server/web/web-uploads'
+import { legacyUploadOwnerDir, safeUploadName, uploadOwnerDir } from '../../../server/web/web-uploads'
 
 // Files a paired device sends with a chat's message (`upload?kind=file`,
 // `conversation-message-files`). A picture is read into the turn and its
@@ -36,11 +36,6 @@ export type TailnetFileUploads = {
   place(deviceId: string, name: string): TailnetFilePlace
   /** Remove everything a device sent, as the device is removed. */
   forgetDevice(deviceId: string): void
-}
-
-/** A device id as a folder name: its own characters, never a path. */
-function deviceDir(deviceId: string): string {
-  return deviceId.replace(/[^A-Za-z0-9_-]/gu, '').slice(0, 64) || 'device'
 }
 
 export function createTailnetFileUploads(options: { root: string; now?: () => number }): TailnetFileUploads {
@@ -77,7 +72,7 @@ export function createTailnetFileUploads(options: { root: string; now?: () => nu
       prune()
       const dir = join(
         options.root,
-        deviceDir(deviceId),
+        uploadOwnerDir(deviceId),
         `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}`,
       )
       mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -89,7 +84,8 @@ export function createTailnetFileUploads(options: { root: string; now?: () => nu
       }
     },
     forgetDevice(deviceId) {
-      rmSync(join(options.root, deviceDir(deviceId)), { recursive: true, force: true })
+      rmSync(join(options.root, uploadOwnerDir(deviceId)), { recursive: true, force: true })
+      rmSync(join(options.root, legacyUploadOwnerDir(deviceId, 'device')), { recursive: true, force: true })
     },
   }
 }

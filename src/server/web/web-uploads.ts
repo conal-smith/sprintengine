@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { createWriteStream, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import type { IncomingMessage } from 'node:http'
@@ -30,21 +30,66 @@ export type WebUploads = {
   forgetSession(sessionId: string): void
 }
 
-/** A dropped file's name, as a single path segment that is safe on every OS. */
-export function safeUploadName(name: string | null): string {
-  const base = (name ?? '').split(/[\\/]/u).pop() ?? ''
-  const cleaned = base
-    .replace(/[\u0000-\u001f\u007f]/gu, '')
-    .replace(/[<>:"|?*]/gu, '_')
-    .replace(/^\.+/u, '')
-    .trim()
-    .slice(0, 120)
-  return cleaned || 'upload'
+/** The longest a saved upload's name is, in UTF-8 bytes; file systems allow 255. */
+const MAX_UPLOAD_NAME_BYTES = 200
+const WINDOWS_RESERVED_NAME =
+  /^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])\s*(?:\..*)?$/iu
+
+/** `text` cut to at most `max` UTF-8 bytes, never inside a character. */
+function cutToBytes(text: string, max: number): string {
+  let out = ''
+  let used = 0
+  for (const char of text) {
+    const size = Buffer.byteLength(char)
+    if (used + size > max) break
+    out += char
+    used += size
+  }
+  return out
 }
 
-/** A session id as a directory name: its own characters, never a path. */
-function sessionDir(sessionId: string): string {
-  return sessionId.replace(/[^A-Za-z0-9_-]/gu, '').slice(0, 64) || 'session'
+/**
+ * A dropped file's name, as a single path segment that is safe on every OS:
+ * no separators, control or invisible formatting characters (which can make a
+ * name read backwards), leading dots, trailing dots or spaces, or a name
+ * Windows keeps for a device. Long names are cut to 200 bytes, keeping their
+ * extension.
+ */
+export function safeUploadName(name: string | null): string {
+  const base = (name ?? '').split(/[\\/]/u).pop() ?? ''
+  const tidy = (text: string) =>
+    text
+      .trim()
+      .replace(/^[.\s]+/u, '')
+      .replace(/[.\s]+$/u, '')
+  let cleaned = tidy(
+    base
+      .replace(/[\u0000-\u001f\u007f]/gu, '')
+      .replace(/\p{Cf}/gu, '')
+      .replace(/[<>:"|?*]/gu, '_'),
+  )
+  if (WINDOWS_RESERVED_NAME.test(cleaned)) cleaned = `_${cleaned}`
+  if (Buffer.byteLength(cleaned) > MAX_UPLOAD_NAME_BYTES) {
+    const dot = cleaned.lastIndexOf('.')
+    const extension = dot > 0 && Buffer.byteLength(cleaned.slice(dot)) <= 16 ? cleaned.slice(dot) : ''
+    const stem = extension ? cleaned.slice(0, dot) : cleaned
+    cleaned = tidy(cutToBytes(stem, MAX_UPLOAD_NAME_BYTES - Buffer.byteLength(extension))) + extension
+  }
+  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'upload'
+}
+
+/**
+ * The folder one session's, or one device's, uploads go in. A hash of its id,
+ * so two ids that differ only in characters a folder name cannot hold never
+ * share one.
+ */
+export function uploadOwnerDir(id: string): string {
+  return createHash('sha256').update(id).digest('hex').slice(0, 32)
+}
+
+/** The folder an earlier build named for an id, still removed with the id's uploads. */
+export function legacyUploadOwnerDir(id: string, fallback: string): string {
+  return id.replace(/[^A-Za-z0-9_-]/gu, '').slice(0, 64) || fallback
 }
 
 export function createWebUploads(options: { dataDir: string; now?: () => number }): WebUploads {
@@ -85,7 +130,7 @@ export function createWebUploads(options: { dataDir: string; now?: () => number 
       prune()
       const dir = join(
         root,
-        sessionDir(sessionId),
+        uploadOwnerDir(sessionId),
         `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}`,
       )
       const path = join(dir, safeUploadName(name))
@@ -132,7 +177,8 @@ export function createWebUploads(options: { dataDir: string; now?: () => number 
       })
     },
     forgetSession(sessionId) {
-      rmSync(join(root, sessionDir(sessionId)), { recursive: true, force: true })
+      rmSync(join(root, uploadOwnerDir(sessionId)), { recursive: true, force: true })
+      rmSync(join(root, legacyUploadOwnerDir(sessionId, 'session')), { recursive: true, force: true })
     },
   }
 }

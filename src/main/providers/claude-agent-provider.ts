@@ -31,17 +31,20 @@ import { openConfinedExistingFile, readBoundedConversationFile } from '../conver
 import {
   projectCommandsFingerprint,
   readProjectCommands,
+  skillWithoutPermissionKeys,
   stageProjectCommands,
   STAGED_PLUGIN_PREFIX,
   writeProjectCommandsPlugin,
   type StagedProjectCommands,
 } from '../claude-project-commands'
+import { builtinSkillSourceRoot, findBuiltinSkill } from '../builtin-skills'
+import { isOwnSkillEntry, skillDirStaysInRoot } from '../skills/skill-dir-containment'
 import { asRecord } from '../../shared/records'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isWindowsPath, toWslPath } from '../../shared/host-paths'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
-import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV } from '../../shared/studio-env'
+import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, MCP_SECRET_ENV_PREFIX } from '../../shared/studio-env'
 import { inferConversationToolKind } from '../../shared/conversation/toolKind'
 import {
   CLAUDE_WORKTREE_LEASE_TOOLS,
@@ -1066,6 +1069,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     const inputQueue = new PushStream<SDKUserMessage>()
     const abort = new AbortController()
     const permissionMode = nativePermissionMode(state, state.mode)
+    const handoffRule = handoffReadRule(state)
+    const allowedTools = [...(state.allowedTools ?? []), ...(handoffRule ? [handoffRule] : [])]
     const queryOptions: Options = {
       cwd: state.workspaceRoot,
       pathToClaudeCodeExecutable: executablePath,
@@ -1084,9 +1089,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // also lets a `defaultMode` of bypassPermissions in the user's own
       // settings stand under `none`, which is that CLI's own default.
       allowDangerouslySkipPermissions: true,
-      ...(state.allowedTools?.length || state.handoff
-        ? { allowedTools: [...(state.allowedTools ?? []), ...(state.handoff ? [handoffReadRule(state)] : [])] }
-        : {}),
+      ...(allowedTools.length ? { allowedTools } : {}),
       systemPrompt: { type: 'preset', preset: 'claude_code', ...(systemAppend ? { append: systemAppend } : {}) },
       // Never the repository's own settings. `.claude/settings.json` and
       // `settings.local.json` can carry allow rules, which would answer tool
@@ -1114,7 +1117,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         ? { plugins: plugins.map((dir) => ({ type: 'local' as const, path: wslTarget ? toWslPath(dir) : dir })) }
         : {}),
       ...(state.skillIds?.length ? { skills: state.skillIds.map(attachedSkillName) } : {}),
-      env: withClaudeTaskTools(env),
+      // The values the command line's MCP servers name by reference (claudeMcpLaunch).
+      env: withClaudeTaskTools({ ...env, ...mcpServers.env }),
       abortController: abort,
       canUseTool: (toolName, toolInput, callbackOptions) =>
         handleCanUseTool(state, toolName, toolInput, callbackOptions?.signal, callbackOptions),
@@ -2243,11 +2247,14 @@ async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skill
     )
     for (const id of skillIds) {
       if (!/^[\w.-]+$/.test(id) || id === '.' || id === '..') throw new Error(`Attached skill ${id} is invalid.`)
-      const source = await realpath(join(workspaceRoot, '.claude', 'skills', id))
+      const source = await attachedSkillSource(workspaceRoot, id)
       await cp(source, join(dir, 'skills', id), { recursive: true })
       const staged = join(dir, 'skills', id, 'SKILL.md')
       const text = await readFile(staged, 'utf8').catch(() => null)
-      const usable = text === null ? null : withoutModelInvocationGuard(text)
+      // A skill the project ships keeps only the frontmatter a project command
+      // keeps: the plugin it is staged into is loaded on the person's own
+      // terms, so a key that grants tools or runs hooks is not carried there.
+      const usable = text === null ? null : withoutModelInvocationGuard(skillWithoutPermissionKeys(text))
       if (usable !== null && usable !== text) {
         // Removed first: a SKILL.md the skill links to elsewhere is copied as
         // the link, and writing through it would change the skill's own file.
@@ -2260,6 +2267,28 @@ async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skill
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
     throw error
   }
+}
+
+/**
+ * The folder an attached skill is staged from. The copy Studio ships when the
+ * id is one of its own, so a project folder of the same name never stands in
+ * for it; otherwise the project's `.claude/skills/<id>`, which must really be
+ * inside the project.
+ */
+async function attachedSkillSource(workspaceRoot: string, id: string): Promise<string> {
+  if (findBuiltinSkill(id)) {
+    let shipped: string | null = null
+    try {
+      shipped = join(builtinSkillSourceRoot(), id)
+    } catch {
+      shipped = null
+    }
+    if (shipped && (await isOwnSkillEntry(join(shipped, 'SKILL.md')))) return shipped
+  }
+  const dir = join(workspaceRoot, '.claude', 'skills', id)
+  if (!(await skillDirStaysInRoot(workspaceRoot, dir)))
+    throw new Error(`Attached skill ${id} is reached through a linked folder.`)
+  return realpath(dir)
 }
 
 /**
@@ -3892,9 +3921,16 @@ function handoffSeedText(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): 
  * not stop on a permission card for a file Studio handed it: Claude Code's
  * `Read(//…)` names a path from the root of the filesystem, a Windows one as
  * `//c/…`.
+ *
+ * The rule is a pattern, not a path: `*`, `?`, `[`, `{` and `!` match other
+ * files, and a parenthesis ends the rule early. A path holding any of them
+ * (a home folder or a store location with one in its name) gets no rule, and
+ * the read asks like any other.
  */
-function handoffReadRule(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string {
+function handoffReadRule(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string | null {
+  if (!state.handoff) return null
   const path = handoffAgentPath(state).replace(/\\/gu, '/')
+  if (!path || /[*?[\]{}()!]/u.test(path)) return null
   const posix = /^[A-Za-z]:\//u.test(path) ? `/${path[0]!.toLowerCase()}${path.slice(2)}` : path
   return `Read(/${posix.startsWith('/') ? posix : `/${posix}`})`
 }
@@ -4113,23 +4149,62 @@ export function claudeMcpServers(
  * first moment, whatever becomes of a request made once the child runs. The
  * session's own servers go over the control channel (`registerMcpServers`),
  * except one that names a `${NAME}` reference: the CLI expands those only in
- * what it reads from its command line, and a reference is not a secret.
+ * what it reads from its command line. Such a server's literal args, env
+ * values and header values are swapped for references too, to variables in
+ * `env` that the child's environment gets, so no value it carries is on the
+ * command line.
  */
 export function claudeMcpLaunch(
   gateway: ConversationMcpServer | null,
   sessionServers: readonly ConversationMcpServer[],
   options: { wsl?: boolean } = {},
-): { commandLine: NonNullable<Options['mcpServers']>; control: NonNullable<Options['mcpServers']> } {
+): {
+  commandLine: NonNullable<Options['mcpServers']>
+  control: NonNullable<Options['mcpServers']>
+  env: Record<string, string>
+} {
   const commandLine = claudeMcpServers(gateway ? [gateway] : [], options)
   const control: NonNullable<Options['mcpServers']> = {}
+  const env: Record<string, string> = {}
   for (const [id, server] of Object.entries(claudeMcpServers(sessionServers, options))) {
     // A session server of the gateway's own name stands in its place, as it
     // always did.
     delete commandLine[id]
-    if (JSON.stringify(server).includes('${')) commandLine[id] = server
+    if (JSON.stringify(server).includes('${')) commandLine[id] = withValuesByReference(server, env)
     else control[id] = server
   }
-  return { commandLine, control }
+  return { commandLine, control, env }
+}
+
+type SdkMcpServer = NonNullable<Options['mcpServers']>[string]
+
+/**
+ * `server` with each literal arg, env value and header value moved into `env`
+ * under a name of Studio's own and replaced by a `${NAME}` reference to it,
+ * which the CLI expands from its environment. A value that already holds a
+ * reference is the person's own and stays; so does one that spans lines, which
+ * a WSL child could not be handed on stdin.
+ */
+function withValuesByReference(server: SdkMcpServer, env: Record<string, string>): SdkMcpServer {
+  const reference = (value: string): string => {
+    if (value.includes('${') || /[\r\n\0]/u.test(value)) return value
+    let index = 1
+    while (`${MCP_SECRET_ENV_PREFIX}${index}` in env) index += 1
+    const name = `${MCP_SECRET_ENV_PREFIX}${index}`
+    env[name] = value
+    return `\${${name}}`
+  }
+  const values = (record: Record<string, string>): Record<string, string> =>
+    Object.fromEntries(Object.entries(record).map(([key, value]) => [key, reference(value)]))
+  if ('command' in server) {
+    return {
+      ...server,
+      ...(server.args ? { args: server.args.map(reference) } : {}),
+      ...(server.env ? { env: values(server.env) } : {}),
+    }
+  }
+  if ('headers' in server && server.headers) return { ...server, headers: values(server.headers) }
+  return server
 }
 
 // The gateway's bridge says which agent is calling from its environment. A

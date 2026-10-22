@@ -154,7 +154,8 @@ const PAGE_PROPERTIES = {
   path: {
     type: 'string',
     description:
-      'Absolute path to the HTML file, or to a folder holding the page and its assets. Every local file the page references (stylesheets, scripts, images, fonts, `../` paths included) is published beside it as laid out on disk, so its relative links keep working.',
+      'Absolute path to the HTML file, or to a folder holding the page and its assets. Every local file the page references (stylesheets, scripts, images, fonts, `../` paths included) is published beside it as laid out on disk, so its relative links keep working. ' +
+      'The page and everything it references must be inside your chat’s project or worktree; a file outside them refuses the publish.',
   },
   entry: {
     type: 'string',
@@ -194,8 +195,25 @@ export type ArtifactsSetupToolDeps = {
 export function createArtifactsTools(deps: {
   service: ArtifactsService
   setup?: ArtifactsSetupToolDeps
+  /**
+   * The folders a caller may publish a page from: its chat's project and
+   * worktree, and the app's own artifacts folder. Null for a caller that is no
+   * agent of this app, which publishes nothing.
+   */
+  publishRoots: (context: McpConnectionContext | undefined) => Promise<readonly string[] | null>
 }): McpToolRegistration[] {
   const { service } = deps
+  // A page goes to a site anyone with its address can read, so what it may
+  // carry is held to the caller's own folders: a `../` or a linked folder that
+  // reaches past them refuses the publish rather than taking the file along.
+  const rootsFor = async (context: McpConnectionContext | undefined): Promise<readonly string[] | McpToolResult> => {
+    const roots = await deps.publishRoots(context)
+    if (roots && roots.length > 0) return roots
+    return toolError(
+      'forbidden',
+      'Only an agent SprintEngine Studio started publishes a page here, and only from its own chat’s folders.',
+    )
+  }
   return [
     createSetupTool(deps.setup),
     {
@@ -226,7 +244,7 @@ export function createArtifactsTools(deps: {
         additionalProperties: false,
       },
       mutates: true,
-      handler: async (args) => {
+      handler: async (args, context) => {
         const fields = readPageFields(args)
         if (isInvalid(fields)) return toolError('invalid_arguments', fields.invalid)
         if (typeof fields.path !== 'string')
@@ -238,12 +256,15 @@ export function createArtifactsTools(deps: {
           if (isInvalid(checked)) return toolError('invalid_arguments', checked.invalid)
           slug = checked
         }
+        const roots = await rootsFor(context)
+        if ('content' in roots) return roots
         return answer(
           await service.publish({
             ...(fields as Record<string, never>),
             path: fields.path,
             title: fields.title.trim(),
             ...(slug ? { slug } : {}),
+            roots,
           }),
         )
       },
@@ -320,13 +341,27 @@ export function createArtifactsTools(deps: {
         additionalProperties: false,
       },
       mutates: true,
-      handler: async (args) => {
+      handler: async (args, context) => {
         const slug = slugArg(args)
         if (isInvalid(slug)) return toolError('invalid_arguments', slug.invalid)
         const fields = readPageFields(args)
         if (isInvalid(fields)) return toolError('invalid_arguments', fields.invalid)
         const title = typeof fields.title === 'string' ? fields.title.trim() : undefined
-        return answer(await service.update({ ...(fields as Record<string, never>), ...(title ? { title } : {}), slug }))
+        // A new version reads files; a retitle or a re-tag reads none.
+        let roots: readonly string[] | undefined
+        if (fields.path !== undefined || fields.thumbnail !== undefined || fields.stylesheets !== undefined) {
+          const resolved = await rootsFor(context)
+          if ('content' in resolved) return resolved
+          roots = resolved
+        }
+        return answer(
+          await service.update({
+            ...(fields as Record<string, never>),
+            ...(title ? { title } : {}),
+            slug,
+            ...(roots ? { roots } : {}),
+          }),
+        )
       },
     },
     {

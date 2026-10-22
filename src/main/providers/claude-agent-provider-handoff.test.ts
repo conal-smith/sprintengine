@@ -157,6 +157,24 @@ test('a handed-off session may read its file unasked, in every child it spawns',
   }
 })
 
+test('a handoff path that would read as a pattern gets no allow rule, so its read asks', async () => {
+  for (const path of [
+    '/Users/dev/.sprintengine/workspaces/app/conversations/a*b/handoffs/agent-20261021-0942.md',
+    '/Users/dev (work)/.sprintengine/workspaces/app/conversations/c/handoffs/agent-20261021-0942.md',
+    '/Users/dev/.sprintengine/workspaces/app/conversations/[x]/handoffs/agent-20261021-0942.md',
+    '/Users/dev/.sprintengine/workspaces/app/conversations/{a,b}/handoffs/agent?.md',
+  ]) {
+    const h = harness()
+    try {
+      await h.adapter.startSession({ ...h.turn('turn_1'), allowedTools: ['Grep'], handoffPath: path })
+      await h.run('turn_1', 'hello', 'native-2')
+      assert.deepEqual(h.children[0].options.allowedTools, ['Grep'], path)
+    } finally {
+      await h.adapter.disposeAll()
+    }
+  }
+})
+
 test('a rewind before the handoff forgets the pointer; one back to its start owes it again', async () => {
   const h = harness()
   try {

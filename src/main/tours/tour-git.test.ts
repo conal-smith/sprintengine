@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, test } from 'vitest'
@@ -141,4 +141,36 @@ test('a committed range is read at its two SHAs, whatever the working tree says'
   const file = await readTourFile(repo, revisions, listed.files[0])
   assert.equal(file.newText, 'export function retry() {\n  return 2\n}\n')
   assert.equal(file.hunks.length, 1)
+})
+
+test("a repository's own textconv program is never run to read a tour's diff", async (context) => {
+  if (process.platform === 'win32') {
+    context.skip('the planted program is a shell script')
+    return
+  }
+  const planted = join(root, 'textconv-repo')
+  const marker = join(root, 'textconv-ran')
+  const program = join(root, 'textconv.sh')
+  writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\ncat "$1"\n`)
+  chmodSync(program, 0o755)
+  const run = (args: string[]) => execFileSync('git', ['-C', planted, ...args], { encoding: 'utf8' })
+  execFileSync('git', ['init', '--quiet', '--initial-branch=main', planted])
+  run(['config', 'user.email', 'dev@example.com'])
+  run(['config', 'user.name', 'Dev'])
+  run(['config', 'commit.gpgsign', 'false'])
+  run(['config', 'diff.planted.textconv', program])
+  writeFileSync(join(planted, '.gitattributes'), '*.txt diff=planted\n')
+  writeFileSync(join(planted, 'notes.txt'), 'one\n')
+  run(['add', '-A'])
+  run(['commit', '--quiet', '-m', 'first'])
+  const base = run(['rev-parse', 'HEAD']).trim()
+  writeFileSync(join(planted, 'notes.txt'), 'two\n')
+
+  const revisions = { base, head: 'worktree' as const }
+  const listed = await listTourFiles(planted, revisions)
+  assert.ok(listed.ok)
+  if (!listed.ok) return
+  const file = await readTourFile(planted, revisions, listed.files[0])
+  assert.equal(file.hunks.length, 1)
+  assert.equal(existsSync(marker), false, 'the planted program never ran')
 })

@@ -47,7 +47,7 @@ test('cli-runtime-install', async () => {
 
     // Windows probe is PowerShell + Get-Command.
     const winProbe = buildProbeDescriptor({ binary: 'claude', versionArgs: ['--version'], target: 'win32' })
-    assert.equal(winProbe.file, 'powershell.exe')
+    assert.match(winProbe.file, /\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u)
     assert.match(winProbe.args.join(' '), /Get-Command 'claude'/)
     assert.match(winProbe.args.join(' '), /exit 3/)
 
@@ -66,7 +66,7 @@ test('cli-runtime-install', async () => {
     assert.equal(posixInstall.args[0], '-lc')
     assert.equal(posixInstall.args[1], 'curl -fsSL https://example/install.sh | bash')
     const winInstall = buildInstallDescriptor({ shell: 'irm https://example/install.ps1 | iex', target: 'win32' })
-    assert.equal(winInstall.file, 'powershell.exe')
+    assert.match(winInstall.file, /\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u)
     assert.equal(winInstall.args.at(-1), 'irm https://example/install.ps1 | iex')
 
     // Single quotes in a binary path are escaped for POSIX.
@@ -99,7 +99,7 @@ test('cli-runtime-install', async () => {
     assert.deepEqual(wslUpdate.args.slice(-5), ['--cd', '~', '--exec', 'sh', '-s'])
     assert.ok(wslUpdate.stdin?.includes("'claude' 'update'"), wslUpdate.stdin ?? '')
     const winUpdate = buildUpdateDescriptor({ binary: 'claude', args: ['update'], target: 'win32' })
-    assert.equal(winUpdate.file, 'powershell.exe')
+    assert.match(winUpdate.file, /\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u)
     assert.equal(winUpdate.args.at(-1), "& 'claude' 'update'")
     // A runtime command override with awkward characters stays safely quoted.
     const quotedUpdate = buildUpdateDescriptor({ binary: "/o'dd/claude", args: ['update'], target: 'linux' })

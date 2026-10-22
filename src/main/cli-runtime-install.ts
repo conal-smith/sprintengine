@@ -25,6 +25,8 @@ import { findExecutable, searchDirectories, sharedLoginShellPath } from './login
 import { forgetSharedGhLocation } from './github/gh'
 import { access, constants as fsConstants } from 'node:fs/promises'
 import { cliProbeEnv } from './cli-probe-env'
+import { windowsPowerShellPath } from './command-on-path'
+import { powerShellSingleQuoted } from '../shared/powershell-quote'
 
 // Exit code our probe scripts use to signal "binary not found on PATH" so we
 // can distinguish a missing CLI from a CLI that exists but whose --version
@@ -69,10 +71,6 @@ function posixSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function powerShellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
-}
-
 // Wraps a shell snippet in the right host shell for the target. POSIX targets
 // run through a login shell so user-local install dirs (~/.local/bin, npm
 // global prefix) are on PATH. WSL routes through wsl.exe into the named
@@ -87,7 +85,7 @@ function shellDescriptorForScript(
 ): SpawnDescriptor {
   if (target === 'win32') {
     return {
-      file: 'powershell.exe',
+      file: windowsPowerShellPath(),
       args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
     }
   }
@@ -116,8 +114,8 @@ export function buildProbeDescriptor(input: {
     ].join('\n')
     return shellDescriptorForScript(target, script, distro)
   }
-  const bin = powerShellSingleQuote(binary)
-  const versionPart = versionArgs.map(powerShellSingleQuote).join(' ')
+  const bin = powerShellSingleQuoted(binary)
+  const versionPart = versionArgs.map(powerShellSingleQuoted).join(' ')
   const script = [
     `$ErrorActionPreference='SilentlyContinue'`,
     `$c = Get-Command ${bin}`,
@@ -140,7 +138,7 @@ export function buildExistsDescriptor(input: {
     const bin = posixSingleQuote(binary)
     return shellDescriptorForScript(target, `command -v ${bin} >/dev/null 2>&1 || exit ${NOT_FOUND_EXIT}`, distro)
   }
-  const bin = powerShellSingleQuote(binary)
+  const bin = powerShellSingleQuoted(binary)
   return shellDescriptorForScript(
     target,
     `if (-not (Get-Command ${bin} -ErrorAction SilentlyContinue)) { exit ${NOT_FOUND_EXIT} }`,
@@ -342,7 +340,7 @@ export function buildCommandDescriptor(input: {
   if (isPosixTarget(target)) {
     return shellDescriptorForScript(target, `exec ${[binary, ...args].map(posixSingleQuote).join(' ')}`, distro)
   }
-  const argv = [binary, ...args].map(powerShellSingleQuote).join(' ')
+  const argv = [binary, ...args].map(powerShellSingleQuoted).join(' ')
   return shellDescriptorForScript(target, `& ${argv}\nexit $LASTEXITCODE`)
 }
 
@@ -447,7 +445,7 @@ function powerShellBatchProbeScript(requests: readonly BatchProbeRequest[], perC
   const list = requests
     .map(
       (request) =>
-        `@{ b = ${powerShellSingleQuote(request.binary)}; a = @(${request.versionArgs.map(powerShellSingleQuote).join(', ')}) }`,
+        `@{ b = ${powerShellSingleQuoted(request.binary)}; a = @(${request.versionArgs.map(powerShellSingleQuoted).join(', ')}) }`,
     )
     .join(', ')
   return [
@@ -485,7 +483,7 @@ export function buildBatchProbeDescriptor(input: {
 }): SpawnDescriptor {
   const script = powerShellBatchProbeScript(input.requests, input.perCliTimeoutMs ?? BATCH_PER_CLI_TIMEOUT_MS)
   return {
-    file: 'powershell.exe',
+    file: windowsPowerShellPath(),
     args: [
       '-NoProfile',
       '-NonInteractive',
@@ -1054,7 +1052,7 @@ export function buildUpdateDescriptor(input: {
   if (isPosixTarget(target)) {
     return shellDescriptorForScript(target, [binary, ...args].map(posixSingleQuote).join(' '), distro)
   }
-  return shellDescriptorForScript(target, `& ${[binary, ...args].map(powerShellSingleQuote).join(' ')}`)
+  return shellDescriptorForScript(target, `& ${[binary, ...args].map(powerShellSingleQuoted).join(' ')}`)
 }
 
 // Run one update command and detect the CLI again once it has finished, so
