@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -391,6 +401,61 @@ test('bundle-read', async () => {
     }
   })
 
+  if (process.platform !== 'win32')
+    run('an asset linked from inside the bundle to outside it is not inlined', async () => {
+      const dir = exampleCopy()
+      const outside = mkdtempSync(join(tmpdir(), 'ds-read-outside-'))
+      try {
+        writeFileSync(
+          join(outside, 'private.svg'),
+          '<svg xmlns="http://www.w3.org/2000/svg"><title>private</title></svg>',
+        )
+        const componentDir = join(dir, 'components', 'button')
+        symlinkSync(join(outside, 'private.svg'), join(componentDir, 'linked.svg'))
+        writeFileSync(join(componentDir, 'component.css'), '.a{background:url("linked.svg")}')
+        const result = await readDesignSystemBundle(dir)
+        assert.equal(result.ok, true)
+        if (!result.ok) return
+        const button = result.view.components.find((component) => component.name === 'button')
+        assert.ok(button)
+        assert.ok(!button.css.includes('data:image/svg+xml'), 'the linked file never became a data URI')
+        assert.ok(button.unresolvedRefs.includes('linked.svg'), button.unresolvedRefs.join(', '))
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+        rmSync(outside, { recursive: true, force: true })
+      }
+    })
+
+  run('a glyph or pattern named by a path that climbs out of the bundle is not read', async () => {
+    const dir = exampleCopy()
+    const outside = `${dir}-outside`
+    try {
+      mkdirSync(outside)
+      writeFileSync(
+        join(outside, 'private.svg'),
+        '<svg xmlns="http://www.w3.org/2000/svg"><title>private</title></svg>',
+      )
+      writeFileSync(join(outside, 'private.html'), '<p>private</p>')
+      const manifestPath = join(dir, 'design-system.json')
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, any>
+      const name = dir.split(/[\\/]/).pop()!
+      manifest.contents.glyphs = ['check', `../../${name}-outside/private`]
+      manifest.contents.patterns = [`../../${name}-outside/private`]
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+      const result = await readDesignSystemBundle(dir)
+      assert.equal(result.ok, true)
+      if (!result.ok) return
+      assert.deepEqual(
+        result.view.glyphs.map((glyph) => glyph.name),
+        ['check'],
+      )
+      assert.equal(result.view.patterns.length, 0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
   run('opening a system spawns no process and writes nothing', async () => {
     const dir = exampleCopy()
     try {
@@ -422,7 +487,7 @@ test('bundle-read', async () => {
         .split(',')
         .map((name) => name.trim())
         .filter(Boolean)
-      assert.deepEqual(imported.sort(), ['readFile', 'readdir', 'stat'], 'read-only fs surface')
+      assert.deepEqual(imported.sort(), ['readFile', 'readdir', 'realpath', 'stat'], 'read-only fs surface')
 
       // The one module the read path reaches that DOES run a process is
       // `entry-added-at`, and it is held to the other half of the same contract:
