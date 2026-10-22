@@ -72,9 +72,7 @@ test('Studio’s own compaction before the cache expired says so', () => {
     preTokens: 221_000,
     postTokens: 30_000,
   }
-  expect(compactionLabel(entry)).toBe(
-    'Context compacted · automatically, before the cache expired · 221k → 30k tokens',
-  )
+  expect(compactionLabel(entry)).toBe('Context compacted · automatically, before the cache expired · 221k → 30k tokens')
 })
 
 test('a handoff divider says what was left behind, and opens the file', () => {

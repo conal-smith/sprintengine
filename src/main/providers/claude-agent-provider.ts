@@ -2029,7 +2029,10 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       if (!state) return { ok: false, message: 'Conversation session is not registered with the Claude provider.' }
       if (state.turn) return { ok: false, message: 'Stop the running turn before handing the chat off.' }
       if (backgroundWorkRunning(state))
-        return { ok: false, message: 'Work this chat started is still running. Hand the chat off once it has finished.' }
+        return {
+          ok: false,
+          message: 'Work this chat started is still running. Hand the chat off once it has finished.',
+        }
       disposeChild(state)
       state.providerSessionId = null
       state.resumeAt = null

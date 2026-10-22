@@ -216,7 +216,9 @@ test('a handoff writes the messages to a file before the session goes, and the n
     { message: 'and after that?' },
   ])
   // The history above the divider is still there, and the pointer is not a message.
-  const texts = (await chat.events()).filter((entry) => entry.type === 'user_message').map((entry) => entry.payload?.text)
+  const texts = (await chat.events())
+    .filter((entry) => entry.type === 'user_message')
+    .map((entry) => entry.payload?.text)
   assert.deepEqual(texts, ['make the release script check the tag', 'ship it', 'where were we?', 'and after that?'])
 })
 
@@ -285,7 +287,11 @@ test('Edit from here before the handoff resumes the old session at that point an
   assert.deepEqual(await chat.runtime.rewindToTurn({ key: chat.key, turnSeq: two }), { ok: true })
   assert.deepEqual(chat.record.rewinds.at(-1), { cursor: { sessionId: 'provider-1', at: 'entry-1' } })
   const marker = (await chat.events()).at(-1)
-  assert.deepEqual(marker?.payload, { rewoundFromSeq: two, providerSessionId: 'provider-1', providerResumeAt: 'entry-1' })
+  assert.deepEqual(marker?.payload, {
+    rewoundFromSeq: two,
+    providerSessionId: 'provider-1',
+    providerResumeAt: 'entry-1',
+  })
   await chat.restart()
   assert.deepEqual(chat.record.starts.at(-1), {
     resumeSessionId: 'provider-1',
@@ -352,7 +358,12 @@ test('a handoff is refused while the agent waits on an answer', async () => {
   const chat = await setup({
     hold,
     turn: (input) => [
-      event(input, 'approval_requested', { turnId: input.turnId, requestId: 'ask-1', kind: 'tool', summary: 'Run npm test' }),
+      event(input, 'approval_requested', {
+        turnId: input.turnId,
+        requestId: 'ask-1',
+        kind: 'tool',
+        summary: 'Run npm test',
+      }),
     ],
   })
   const turn = chat.sendLater('test it')
@@ -366,9 +377,7 @@ test('a handoff is refused while the agent waits on an answer', async () => {
 
 test('a handoff is refused while an agent the chat started is still working', async () => {
   const chat = await setup({
-    turn: (input) => [
-      event(input, 'subagent_status', { toolUseId: 'agent-1', status: 'running', background: true }),
-    ],
+    turn: (input) => [event(input, 'subagent_status', { toolUseId: 'agent-1', status: 'running', background: true })],
   })
   await chat.send('look into it in the background')
   const handed = await chat.runtime.handoffConversation({ key: chat.key })

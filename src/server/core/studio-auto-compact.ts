@@ -61,7 +61,9 @@ export type StudioAutoCompactDeps = {
   } | null
   enabledByDefault: () => boolean
   /** A conversation host whose sends carry `origin` and stamp no one's message clock. */
-  createHost: (options: { origin: ConversationMessageOrigin }) => Pick<ConversationGatewayHost, 'resolveKey' | 'command'>
+  createHost: (options: {
+    origin: ConversationMessageOrigin
+  }) => Pick<ConversationGatewayHost, 'resolveKey' | 'command'>
   now?: () => number
   setTimer?: (callback: () => void, ms: number) => unknown
   clearTimer?: (timer: unknown) => void

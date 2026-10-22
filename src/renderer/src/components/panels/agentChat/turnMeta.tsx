@@ -172,7 +172,7 @@ export function HandoffDivider({ entry, onOpenFile }: { entry: HandoffEntry; onO
 }
 
 // A page handed across: what the new session is given in place of the old one.
-function HandoffGlyph({ className }: { className?: string }) {
+export function HandoffGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
       <path d="M4 2.5h5l3 3v8H4z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />

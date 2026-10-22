@@ -30,6 +30,7 @@ function settings(overrides: Partial<AgentLaunchSettings> = {}): AgentLaunchSett
     cliPermissionModes: {},
     projectUsage: {},
     worktreeBranchPrefix: null,
+    autoCompactChats: null,
     ...overrides,
   }
 }

@@ -3994,7 +3994,10 @@ export class ConversationRuntime {
       }
       return { ok: true, path: file }
     } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : 'The conversation could not be handed off.' }
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'The conversation could not be handed off.',
+      }
     } finally {
       this.rewindingTranscripts.delete(path)
     }
@@ -4726,7 +4729,10 @@ function handoffClock(): { locale: string; timeZone: string } {
  * What the old session held when it was handed off: the size the prompt
  * cache would re-read, else the context the last request reported.
  */
-function handoffContextTokens(session: RuntimeSession | undefined, events: readonly ConversationEvent[]): number | undefined {
+function handoffContextTokens(
+  session: RuntimeSession | undefined,
+  events: readonly ConversationEvent[],
+): number | undefined {
   let reading = session?.promptCache ?? null
   let contextUsed: number | undefined
   if (!reading)

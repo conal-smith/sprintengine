@@ -97,9 +97,7 @@ function harness() {
   const lastPrompt = (): string => {
     const content = (prompts().at(-1) as { message?: { content?: unknown } } | undefined)?.message?.content
     if (typeof content === 'string') return content
-    return Array.isArray(content)
-      ? content.map((block) => (block as { text?: string }).text ?? '').join('')
-      : ''
+    return Array.isArray(content) ? content.map((block) => (block as { text?: string }).text ?? '').join('') : ''
   }
   return { adapter, children, turn, run, lastPrompt }
 }
@@ -112,7 +110,7 @@ test('a handoff drops the child, and the next message starts a new session openi
   try {
     await h.adapter.startSession(h.turn('turn_1'))
     await h.run('turn_1', 'make it check the tag')
-    assert.deepEqual(await h.adapter.handoff({ ...h.turn('x'), handoffPath: FILE }), { ok: true })
+    assert.deepEqual(await h.adapter.handoff!({ ...h.turn('x'), handoffPath: FILE }), { ok: true })
     assert.equal(h.adapter.listLiveSessions()[0]?.hasChildProcess, false)
 
     const first = await h.run('turn_2', 'where were we?', 'native-2')
@@ -186,7 +184,7 @@ test('a handoff is refused while a turn runs', async () => {
     })()
     for (let attempt = 0; attempt < 2000 && !h.children[0]?.prompts.length; attempt++)
       await new Promise((resolve) => setTimeout(resolve, 5))
-    const refused = await h.adapter.handoff({ ...h.turn('x'), handoffPath: FILE })
+    const refused = await h.adapter.handoff!({ ...h.turn('x'), handoffPath: FILE })
     assert.deepEqual(refused, { ok: false, message: 'Stop the running turn before handing the chat off.' })
     h.children[0]!.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'native-1' })
     await done

@@ -70,14 +70,13 @@ test('a handoff resets the prompt cache and the context, as a compaction does', 
 test('the incremental projection draws the same divider', () => {
   let state = createConversationProjectionState()
   for (const each of handedOff) state = applyEvent(state, each)
-  expect(state.projection.entries.map((entry) => entry.kind)).toEqual(projectConversation(handedOff).entries.map((entry) => entry.kind))
+  expect(state.projection.entries.map((entry) => entry.kind)).toEqual(
+    projectConversation(handedOff).entries.map((entry) => entry.kind),
+  )
 })
 
 test('a handoff taken back by Edit from here before it leaves the view with its turn', () => {
-  const rewound = [
-    ...handedOff,
-    event('session_updated', 12, { rewoundFromSeq: 1, providerSessionId: null }),
-  ]
+  const rewound = [...handedOff, event('session_updated', 12, { rewoundFromSeq: 1, providerSessionId: null })]
   expect(projectConversation(rewound).entries).toEqual([])
 })
 

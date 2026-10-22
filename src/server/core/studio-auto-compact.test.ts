@@ -88,7 +88,12 @@ test('streamed text does not make it look', async () => {
 })
 
 test('a chat switched off, settled, or not in the registry is not compacted', async () => {
-  for (const record of [{ autoCompactEnabled: false }, { autoCompactEnabled: null }, { autoCompactEnabled: true, settledAt: NOW }, null]) {
+  for (const record of [
+    { autoCompactEnabled: false },
+    { autoCompactEnabled: null },
+    { autoCompactEnabled: true, settledAt: NOW },
+    null,
+  ]) {
     const chat = wired(record)
     chat.compact.recompute()
     await chat.run()

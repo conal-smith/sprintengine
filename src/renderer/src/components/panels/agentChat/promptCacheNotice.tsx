@@ -17,6 +17,7 @@ import type { PromptCacheReading } from '../../../../../shared/prompt-cache'
 import { promptCacheNeedsAttention, promptCacheNoticeLine, promptCacheState } from '../../workspace/promptCacheState'
 import { ComposerTrayRow } from './composerTray'
 import { CompactGlyph } from './toolRows/ToolKindGlyph'
+import { HandoffGlyph } from './turnMeta'
 
 // What a dismissal is about: this reading. The next request writes a new one,
 // and a cache that goes cold after that is news again.
@@ -63,6 +64,7 @@ export function PromptCacheComposerNotice({
           <SplitButton
             quiet
             label="Handoff"
+            glyph={<HandoffGlyph className="icon-xs" />}
             primaryAriaLabel="Hand off to a new session"
             primaryTooltip={handoffTooltip(state.recacheTokens)}
             menuAriaLabel="Other ways to make the next message smaller"
