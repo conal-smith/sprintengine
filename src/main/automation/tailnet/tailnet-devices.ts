@@ -131,8 +131,16 @@ type TailnetPairingResult =
       message: string
     }
 
+/**
+ * A pair request as the store holds it, with the six digits the asking machine
+ * shows and the person here types to allow it. Only the asking machine is
+ * answered with them (`requestPairing`); `listPairRequests` and everything
+ * built on it carry the request without them.
+ */
+export type TailnetPairRequestWithCode = TailnetPairRequest & { comparisonCode: string }
+
 type TailnetPairRequestResult =
-  | { ok: true; request: TailnetPairRequest }
+  | { ok: true; request: TailnetPairRequestWithCode }
   | {
       ok: false
       code: 'invalid_device_name' | 'invalid_collect_hash' | 'too_many_requests' | 'denied_recently'
@@ -321,7 +329,7 @@ export function createTailnetDeviceStore(options: {
   const pairRequests = new Map<
     string,
     {
-      request: TailnetPairRequest
+      request: TailnetPairRequestWithCode
       collectHash: string
       state: PendingState
       codeAttempts: number
@@ -630,7 +638,7 @@ export function createTailnetDeviceStore(options: {
           message: 'There is already a pairing request waiting to be answered on that machine.',
         }
       }
-      const request: TailnetPairRequest = {
+      const request: TailnetPairRequestWithCode = {
         id: `tpr_${randomBytes(12).toString('base64url')}`,
         deviceName: name,
         peerNode: input.peerNode,
@@ -652,9 +660,11 @@ export function createTailnetDeviceStore(options: {
 
     listPairRequests(): TailnetPairRequest[] {
       prunePairRequests()
+      // Without the code: this list is what the status, its events and the
+      // tools carry, and the person reads the code off the asking machine.
       return [...pairRequests.values()]
         .filter((entry) => entry.state.kind === 'pending')
-        .map((entry) => ({ ...entry.request }))
+        .map(({ request: { comparisonCode: _code, ...request } }) => request)
     },
 
     cancelPairRequests(): string[] {

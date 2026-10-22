@@ -297,11 +297,7 @@ test('tailnet-mesh-reachability', async () => {
         await new Promise((resolve) => setTimeout(resolve, 200))
         const pending = mini.devices.listPairRequests()
         assert.equal(pending.length, 1)
-        assert.equal(
-          pending[0].comparisonCode,
-          asked.request.comparisonCode,
-          'the code shown here is the one typed there',
-        )
+        assert.equal('comparisonCode' in pending[0], false, 'the code is shown on the asking machine only')
 
         // A wrong code over there is refused; the right one approves.
         const wrong = mini.devices.approvePairRequest({ id: pending[0].id, scopes: ['workspace:read'], code: '000000' })
@@ -309,7 +305,7 @@ test('tailnet-mesh-reachability', async () => {
         const approved = mini.devices.approvePairRequest({
           id: pending[0].id,
           scopes: ['workspace:read'],
-          code: pending[0].comparisonCode === '000000' ? '000000' : asked.request.comparisonCode,
+          code: asked.request.comparisonCode,
         })
         assert.ok(approved.ok)
 
@@ -405,8 +401,11 @@ test('tailnet-mesh-reachability', async () => {
 
         const pending = mini.devices.listPairRequests()[0]
         assert.ok(
-          mini.devices.approvePairRequest({ id: pending.id, scopes: ['workspace:read'], code: pending.comparisonCode })
-            .ok,
+          mini.devices.approvePairRequest({
+            id: pending.id,
+            scopes: ['workspace:read'],
+            code: asked.ok ? asked.request.comparisonCode : '',
+          }).ok,
         )
         await waitFor(
           () => laptop.events.find((event) => event.kind === 'pair-request' && event.phase === 'approved'),
@@ -488,8 +487,11 @@ test('tailnet-mesh-reachability', async () => {
         const pending = mini.devices.listPairRequests().find((request) => request.id === requestId)
         assert.ok(pending)
         assert.ok(
-          mini.devices.approvePairRequest({ id: requestId, scopes: ['workspace:read'], code: pending.comparisonCode })
-            .ok,
+          mini.devices.approvePairRequest({
+            id: requestId,
+            scopes: ['workspace:read'],
+            code: (askedRaw.body as { comparisonCode: string }).comparisonCode,
+          }).ok,
         )
         const collected = await requestTailnetJson({
           endpoint: { host: '127.0.0.1', port: mini.port },

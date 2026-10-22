@@ -624,15 +624,35 @@ const AGENT_LAUNCHING_GATEWAY_TOOLS = new Set([
   'workspace.create',
 ])
 
+/**
+ * A gateway tool's name as the gateway spells it: a CLI that takes no dot in a
+ * name writes `tailnet_offer_pairing` for `tailnet.offer_pairing`, and only
+ * that first separator is the family's.
+ */
+function gatewayToolName(tool: string): string {
+  return tool.includes('.') ? tool : tool.replace('_', '.')
+}
+
 export function isAgentLaunchingGatewayTool(server: string, tool: string): boolean {
-  return server.includes(STUDIO_MCP_SERVER_ID) && AGENT_LAUNCHING_GATEWAY_TOOLS.has(tool.replace('_', '.'))
+  return server.includes(STUDIO_MCP_SERVER_ID) && AGENT_LAUNCHING_GATEWAY_TOOLS.has(gatewayToolName(tool))
 }
 
 // The gateway tools that start nothing but are asked for every time all the
-// same, in Auto as in Manual, and that no remembered grant covers: each puts
-// this machine's files somewhere anyone with the address can read them, or
-// changes where they go. Matched as the launching tools are.
-const ALWAYS_ASK_GATEWAY_TOOLS = new Set(['artifacts.publish', 'artifacts.update', 'artifacts.setup'])
+// same, in Auto as in Manual, and that no remembered grant covers. Matched as
+// the launching tools are.
+const ALWAYS_ASK_GATEWAY_TOOLS = new Set([
+  // Each puts this machine's files somewhere anyone with the address can read
+  // them, or changes where they go.
+  'artifacts.publish',
+  'artifacts.update',
+  'artifacts.setup',
+  // Each changes which other machines can reach this one: opening the
+  // listener, letting a machine in, or putting one out.
+  'tailnet.set_enabled',
+  'tailnet.offer_pairing',
+  'tailnet.approve_pair_request',
+  'tailnet.revoke_device',
+])
 
 /**
  * Whether a call is one Auto never approves on its own and no rule may
@@ -641,7 +661,7 @@ const ALWAYS_ASK_GATEWAY_TOOLS = new Set(['artifacts.publish', 'artifacts.update
 export function isAlwaysAskGatewayTool(server: string, tool: string): boolean {
   return (
     isAgentLaunchingGatewayTool(server, tool) ||
-    (server.includes(STUDIO_MCP_SERVER_ID) && ALWAYS_ASK_GATEWAY_TOOLS.has(tool.replace('_', '.')))
+    (server.includes(STUDIO_MCP_SERVER_ID) && ALWAYS_ASK_GATEWAY_TOOLS.has(gatewayToolName(tool)))
   )
 }
 
