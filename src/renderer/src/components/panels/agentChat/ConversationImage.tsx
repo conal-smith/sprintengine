@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { LinkButton, MediaButton } from '../../ui'
 import { showToast } from '../../../store/toastStore'
 import { isHomePath, isPreviewableImagePath, useLocalImage } from './useLocalImage'
+import { namesNetworkLocation } from '../../../../../shared/network-paths'
 
 type ImageSource = { kind: 'web'; url: string } | { kind: 'data'; url: string } | { kind: 'path'; path: string }
 
@@ -9,11 +10,13 @@ const DATA_IMAGE = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/iu
 
 // What an image in a reply points at. A web or data URL is shown as it is; a
 // `file:` URL or a path is a file on the agent's disk and is read through main.
-// Any other scheme, and a path that is not a picture, is stated by its alt text.
+// Any other scheme, a path that is not a picture, and a file on another
+// machine (a UNC path, a `file:` URL with a host) is stated by its alt text.
 export function conversationImageSource(src: string): ImageSource | null {
   const value = src.trim()
   if (/^https?:\/\//iu.test(value)) return { kind: 'web', url: value }
   if (DATA_IMAGE.test(value)) return { kind: 'data', url: value }
+  if (namesNetworkLocation(value)) return null
   let path = value
   if (/^file:/iu.test(value)) {
     try {
@@ -31,7 +34,7 @@ export function conversationImageSource(src: string): ImageSource | null {
       path = value
     }
   }
-  return isPreviewableImagePath(path) ? { kind: 'path', path } : null
+  return isPreviewableImagePath(path) && !namesNetworkLocation(path) ? { kind: 'path', path } : null
 }
 
 async function openImage(source: ImageSource, dataUrl: string | undefined, name: string, open?: () => void) {

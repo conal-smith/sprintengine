@@ -6,6 +6,7 @@ import { MAX_IMAGE_DATA_URL_BYTES, MAX_TEXT_FILE_READ_BYTES } from './filesystem
 import { checkWorkspaceFolder, pathExists } from './filesystem-workspace'
 import { expandHomePath } from './home-path'
 import { createProjectLogoResolver, type ProjectLogoIo } from './project-logo'
+import { namesNetworkLocation } from '../shared/network-paths'
 
 const BINARY_SNIFF_BYTES = 4096
 const MAX_CONTROL_CHARACTER_RATIO = 0.05
@@ -60,6 +61,10 @@ export function createFilesystemReadHandlers(options: { opener?: FileOpener; pro
       return content.toString('utf-8')
     },
     async readImageDataUrl(requested: string) {
+      // Refused before the disk is asked: on Windows a stat of a UNC path is a
+      // connection to that server offering it the person's credentials.
+      if (typeof requested !== 'string' || namesNetworkLocation(requested))
+        throw new Error('Images on another computer are not previewed.')
       const filePath = expandHomePath(requested)
       const mimeType = imageMimeType(filePath)
       if (!mimeType) throw new Error('Unsupported image file type.')
