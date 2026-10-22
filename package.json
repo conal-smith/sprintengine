@@ -83,6 +83,18 @@
       "output": "dist"
     },
     "artifactName": "SprintEngine-Studio-${version}-${os}-${arch}.${ext}",
+    "electronLanguages": [
+      "en",
+      "de",
+      "fr",
+      "es",
+      "pt",
+      "ja",
+      "zh",
+      "ko",
+      "it",
+      "ru"
+    ],
     "files": [
       "out/**/*",
       "!out/**/*.map",

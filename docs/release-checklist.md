@@ -247,6 +247,15 @@ sometimes drops the connection (`Failed to staple your application with code:
 failure, and a fourth network failure, fails the leg. The DMG itself is not
 signed, notarized or stapled; the app inside it is.
 
+After packaging, each leg checks the app it built. `app.asar` may hold only
+the packages main and preload load, within its size budget, and nothing that
+is also unpacked (`scripts/release/check-app-asar.mjs`). The app may hold only
+the Chromium locales `build.electronLanguages` keeps: English, German, French,
+Spanish, Portuguese, Japanese, Chinese, Korean, Italian and Russian, with their
+regional variants. Any other system language runs the app in en-US, with US
+dates and numbers (`scripts/release/check-locales.mjs` says why). To keep
+another language, add it to both.
+
 A tag left by an interrupted draft reserves its version. No version-bump commit
 is pushed to main, and the workflow's own token does not trigger a second
 release from the tag it creates.
