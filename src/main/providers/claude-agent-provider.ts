@@ -31,11 +31,14 @@ import { openConfinedExistingFile, readBoundedConversationFile } from '../conver
 import {
   projectCommandsFingerprint,
   readProjectCommands,
+  skillWithoutPermissionKeys,
   stageProjectCommands,
   STAGED_PLUGIN_PREFIX,
   writeProjectCommandsPlugin,
   type StagedProjectCommands,
 } from '../claude-project-commands'
+import { builtinSkillSourceRoot, findBuiltinSkill } from '../builtin-skills'
+import { isOwnSkillEntry, skillDirStaysInRoot } from '../skills/skill-dir-containment'
 import { asRecord } from '../../shared/records'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationPermissionModes } from '../../shared/conversation-harness'
 import { isWslHostId, type ExecutionHostId } from '../../shared/execution-host'
@@ -2243,11 +2246,14 @@ async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skill
     )
     for (const id of skillIds) {
       if (!/^[\w.-]+$/.test(id) || id === '.' || id === '..') throw new Error(`Attached skill ${id} is invalid.`)
-      const source = await realpath(join(workspaceRoot, '.claude', 'skills', id))
+      const source = await attachedSkillSource(workspaceRoot, id)
       await cp(source, join(dir, 'skills', id), { recursive: true })
       const staged = join(dir, 'skills', id, 'SKILL.md')
       const text = await readFile(staged, 'utf8').catch(() => null)
-      const usable = text === null ? null : withoutModelInvocationGuard(text)
+      // A skill the project ships keeps only the frontmatter a project command
+      // keeps: the plugin it is staged into is loaded on the person's own
+      // terms, so a key that grants tools or runs hooks is not carried there.
+      const usable = text === null ? null : withoutModelInvocationGuard(skillWithoutPermissionKeys(text))
       if (usable !== null && usable !== text) {
         // Removed first: a SKILL.md the skill links to elsewhere is copied as
         // the link, and writing through it would change the skill's own file.
@@ -2260,6 +2266,28 @@ async function stageAttachedSkills(tempDir: string, workspaceRoot: string, skill
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
     throw error
   }
+}
+
+/**
+ * The folder an attached skill is staged from. The copy Studio ships when the
+ * id is one of its own, so a project folder of the same name never stands in
+ * for it; otherwise the project's `.claude/skills/<id>`, which must really be
+ * inside the project.
+ */
+async function attachedSkillSource(workspaceRoot: string, id: string): Promise<string> {
+  if (findBuiltinSkill(id)) {
+    let shipped: string | null = null
+    try {
+      shipped = join(builtinSkillSourceRoot(), id)
+    } catch {
+      shipped = null
+    }
+    if (shipped && (await isOwnSkillEntry(join(shipped, 'SKILL.md')))) return shipped
+  }
+  const dir = join(workspaceRoot, '.claude', 'skills', id)
+  if (!(await skillDirStaysInRoot(workspaceRoot, dir)))
+    throw new Error(`Attached skill ${id} is reached through a linked folder.`)
+  return realpath(dir)
 }
 
 /**
