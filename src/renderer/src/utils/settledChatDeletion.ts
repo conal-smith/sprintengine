@@ -2,7 +2,7 @@ import type {
   SettledChatDeletionOutcome,
   SettledChatDeletionPlan,
   SettledChatWorktreePlan,
-} from '../../../../shared/ipc/settled-chats'
+} from '../../../shared/ipc/settled-chats'
 
 // What the confirmation and the toast after a delete say, from main's plan
 // and outcome (src/main/settled-chat-deletion.ts). Pure, so the words are

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 
-import type { SettledChatDeletionPlan, SettledChatWorktreePlan } from '../../../../shared/ipc/settled-chats'
+import type { SettledChatDeletionPlan, SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
 import { deletionConfirmation, deletionToast } from './settledChatDeletion'
 
 const titles: Record<string, string> = { w1: 'Fix the login banner', w2: 'Tidy the release notes', w3: 'Spike' }

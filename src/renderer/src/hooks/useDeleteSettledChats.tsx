@@ -1,11 +1,11 @@
 import React, { useCallback, useState } from 'react'
 
-import type { WorkspaceId } from '../../types/workspace'
-import { useWorkspaceStore } from '../../store/workspaceStore'
-import { showToast } from '../../store/toastStore'
-import { useConfirmDialog } from '../ui'
-import { remoteConversationTitle } from '../workspace/remoteBand/remoteSessionsModel'
-import { deletionConfirmation, deletionToast } from './settledChatDeletion'
+import type { WorkspaceId } from '../types/workspace'
+import { useWorkspaceStore } from '../store/workspaceStore'
+import { showToast } from '../store/toastStore'
+import { useConfirmDialog } from '../components/ui/ConfirmDialog'
+import { remoteConversationTitle } from '../components/workspace/remoteBand/remoteSessionsModel'
+import { deletionConfirmation, deletionToast } from '../utils/settledChatDeletion'
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 

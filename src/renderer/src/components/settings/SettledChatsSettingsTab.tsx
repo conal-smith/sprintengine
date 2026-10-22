@@ -10,7 +10,7 @@ import { SettingCard, SettingToggle, SettingsPageHeader } from './SettingsAtoms'
 import { createSettledChatsSelector, type SettledChatEntry } from './settledChatsModel'
 import { remoteOriginChatWorkspaceId } from '../workspace/remoteBand/remoteSessionsModel'
 import { useStableCallback } from '../../hooks/useStableCallback'
-import { useDeleteSettledChats } from './useDeleteSettledChats'
+import { useDeleteSettledChats } from '../../hooks/useDeleteSettledChats'
 
 const SETTLED_PAGE = 100
 
