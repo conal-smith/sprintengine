@@ -199,20 +199,21 @@ test('renderer-host', async () => {
     /Module command "demo-module\.hello" is already registered/,
     'duplicate command-id registration is an explicit error',
   )
-  // `workspace.close`, not the `workspace.new` this named until the shell retired
-  // that command. A test that names a command nothing registers any more asserts
-  // nothing — and this one threw, which killed the whole file: every assertion
-  // below it, the surface contracts included, stopped running the day the shell's
-  // command list moved. Pinned against the registry so it says so next time.
+  // `chat.settle`, not the `workspace.new` or `workspace.close` this named until
+  // the shell retired each of them. A test that names a command nothing
+  // registers any more asserts nothing — and this one threw, which killed the
+  // whole file: every assertion below it, the surface contracts included,
+  // stopped running the day the shell's command list moved. Pinned against the
+  // registry so it says so next time.
   assert.ok(
-    COMMAND_REGISTRY.some((command) => command.id === 'workspace.close'),
+    COMMAND_REGISTRY.some((command) => command.id === 'chat.settle'),
     'the shadowing test has to name a command the shell actually registers, or it proves nothing',
   )
   assert.throws(
     () =>
-      commandHost.hostFor('workspace').registerCommand({
-        id: 'close',
-        title: 'Shadow Close Workspace',
+      commandHost.hostFor('chat').registerCommand({
+        id: 'settle',
+        title: 'Shadow Settle Chat',
         category: 'Shadow',
         scopes: ['global'],
         run() {},

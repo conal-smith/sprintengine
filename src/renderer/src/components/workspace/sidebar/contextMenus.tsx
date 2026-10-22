@@ -60,7 +60,6 @@ export type ContextMenuAction =
   | 'copy-link'
   | 'move-to-new-window'
   | 'move-to-main-window'
-  | 'close'
   | 'toggle-star'
   | 'toggle-settle'
   | 'toggle-auto-settle'
@@ -84,7 +83,6 @@ export function WorkspaceContextMenu({
   isDetachedWindow,
   now,
   working,
-  remoteSettle = false,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
   schedule = null,
@@ -101,11 +99,6 @@ export function WorkspaceContextMenu({
   working: boolean
   /** The clock the wake times and the asleep/awake reading are resolved against. */
   now: number
-  /**
-   * A row born on a paired machine whose machine keeps its chats' rest
-   * (`conversation-lifecycle`): Settle asks that machine, which owns the chat.
-   */
-  remoteSettle?: boolean
   /**
    * An agent here has finished something, the chat is not the one in front,
    * and its row is not already marked: Mark unread has something to mark.
@@ -196,17 +189,18 @@ export function WorkspaceContextMenu({
           {schedule.paused ? 'Resume this schedule' : 'Pause this schedule'}
         </MenuItem>
       ) : null}
-      {/* Rest by hand (settled-chats, 2026-09-07). Un-settle also holds the
-          row out of the sweep until it sees new activity. A row born on a
-          paired machine is settled by that machine, which owns the chat, so
-          it offers Settle only where the machine keeps its chats' rest, and
-          never Un-settle: a settled one is off the rail here. */}
+      {/* Rest by hand (settled-chats, 2026-09-07), and the one way a row is
+          put away: there is no Close beside it. Un-settle also holds the row
+          out of the sweep until it sees new activity. A row born on a paired
+          machine asks that machine first where it keeps its chats' rest, and
+          rests here alone where it keeps none; it never offers Un-settle: a
+          settled one is off the rail here. */}
       {workspace.remoteOrigin ? (
-        remoteSettle && !settled ? (
+        settled ? null : (
           <MenuItem disabled={working} hint={working ? 'Working' : undefined} onClick={() => onSelect('toggle-settle')}>
             Settle
           </MenuItem>
-        ) : null
+        )
       ) : settled ? (
         <MenuItem onClick={() => onSelect('toggle-settle')}>Un-settle</MenuItem>
       ) : (
@@ -255,13 +249,16 @@ export function WorkspaceContextMenu({
         onPick={onPickColor}
         onClear={() => onSelect('clear-color')}
       />
-      <MenuDivider />
-      {typeActions.map((action) => (
-        <MenuItem key={action.id} variant={action.variant} onClick={() => onSelect(`type-action:${action.id}`)}>
-          {action.label}
-        </MenuItem>
-      ))}
-      <MenuItem onClick={() => onSelect('close')}>Close workspace</MenuItem>
+      {typeActions.length > 0 ? (
+        <>
+          <MenuDivider />
+          {typeActions.map((action) => (
+            <MenuItem key={action.id} variant={action.variant} onClick={() => onSelect(`type-action:${action.id}`)}>
+              {action.label}
+            </MenuItem>
+          ))}
+        </>
+      ) : null}
     </ContextMenu>
   )
 }

@@ -1249,7 +1249,6 @@ test('premiumFeelSeam', async () => {
                 onSelectWorkspace: () => {},
                 onMoveWorkspaceToNewWindow: () => {},
                 onMoveWorkspaceToMainWindow: () => {},
-                onCloseWorkspace: () => {},
                 onForgetFolder: () => {},
                 onNewChat: () => {},
                 onNewChatInFolder: () => {},
