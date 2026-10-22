@@ -7,8 +7,14 @@ import { Modal, ModalBody, ModalButton, ModalFooter, ModalHeader } from '../ui/M
 // Review → trust and turn on, in one step. The dialog is the consent: what
 // needs care with a short why for each, the rest as quiet pills, and — for
 // unsigned code only — one box the person ticks to say they trust it anyway,
-// which is what enables the primary action. Nothing explains the dialog to
-// itself: no sentence under the box, no reassurance under the title.
+// which is what enables the primary action. One sentence says what trusting
+// means, because the access list reads like a limit and is not one: a trusted
+// module's code runs in the app with everything the app can reach. Beyond that
+// nothing explains the dialog to itself: no sentence under the box, no
+// reassurance under the title.
+
+export const TRUSTED_MODULE_ACCESS_NOTE =
+  'A trusted extension’s code runs inside SprintEngine Studio with full access to the app: your projects, your terminals and the credentials your agents use. The access below is what it says it uses, not a limit on what it can do.'
 
 export type TrustReviewDialogProps = {
   module: ThirdPartyModuleView | null
@@ -46,6 +52,7 @@ export function TrustReviewDialog({
     <Modal open onClose={onCancel} labelledBy={titleId} size="standard">
       <ModalHeader title={`Trust ${module.manifest.displayName}?`} titleId={titleId} subtitle={meta} leading={icon} />
       <ModalBody className="space-y-4">
+        <p className="text-meta leading-4 text-[color:var(--text-subtle)]">{TRUSTED_MODULE_ACCESS_NOTE}</p>
         {care.length > 0 ? (
           <section
             aria-label="Needs care"

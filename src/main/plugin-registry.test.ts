@@ -11,6 +11,7 @@ import { createPluginRegistry, validateManifestSource } from './plugin-registry'
 import { renderPluginLaunch } from './plugin-render'
 import { manifestFingerprint, verifyModuleSignature } from './modules/module-signature'
 import { createAppPluginRegistryOptions } from './plugin-registry-instance'
+import { setModuleTrust } from './modules/trust-store'
 import { test } from 'vitest'
 
 test('plugin-registry', async () => {
@@ -1201,9 +1202,10 @@ test('plugin-registry', async () => {
     }
   }
 
+  // Through the store, as the app grants trust: a record written any other way is not honoured.
   async function writeTrustedModules(userDataDir: string, trusted: Record<string, string>): Promise<void> {
     await mkdir(userDataDir, { recursive: true })
-    await writeFile(join(userDataDir, 'trusted-modules.json'), JSON.stringify(trusted), 'utf-8')
+    for (const [id, fingerprint] of Object.entries(trusted)) await setModuleTrust(userDataDir, id, fingerprint)
   }
 
   const ADAPTER_CONTENT = 'export default function providerAdapter() { return null }\n'

@@ -64,7 +64,7 @@ function reviewCopy(review: ExtensionTrustReviewData): { heading: string; body: 
   if (trustCodeRequired(review)) {
     return {
       heading: 'Unsigned code — review before trusting',
-      body: 'This extension runs code inside SprintEngine Studio, and it isn’t signed, so nobody can vouch for who wrote it. Trust it only if you trust where it came from — it runs with the app’s access, not in a sandbox.',
+      body: 'This extension runs code inside SprintEngine Studio, and it isn’t signed, so nobody can vouch for who wrote it. Trust it only if you trust where it came from — it runs with full access to the app, not in a sandbox.',
     }
   }
   const inlineMcp = !review.sourceUrl && (review.mcpServers?.length ?? 0) > 0
@@ -83,7 +83,7 @@ function reviewCopy(review: ExtensionTrustReviewData): { heading: string; body: 
   if (review.classification === 'unsigned') {
     return {
       heading: 'Unsigned extension — review before trusting',
-      body: 'This extension isn’t signed, so its publisher and contents can’t be verified. Trusting it installs it with the app’s access — install-time disclosure, not a runtime sandbox.',
+      body: 'This extension isn’t signed, so its publisher and contents can’t be verified. Trusting it installs it with full access to the app — the access below is install-time disclosure, not a runtime sandbox.',
     }
   }
   if (review.classification === 'verified') {
@@ -94,7 +94,7 @@ function reviewCopy(review: ExtensionTrustReviewData): { heading: string; body: 
   }
   return {
     heading: 'Community extension — review the access it requests',
-    body: 'This publisher isn’t verified. Trusting it lets its code run with the app’s access — requested access is install-time disclosure, not a runtime sandbox.',
+    body: 'This publisher isn’t verified. Trusting it lets its code run with full access to the app — requested access is install-time disclosure, not a runtime sandbox.',
   }
 }
 
