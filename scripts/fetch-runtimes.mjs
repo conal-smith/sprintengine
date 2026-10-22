@@ -15,13 +15,19 @@
 // This script is deliberately self-contained (no new npm deps): it downloads
 // over https and extracts via the system `tar`, which is present on macOS,
 // Linux, and modern Windows.
+//
+// The tarball becomes the npm every user's CLI installs run with, inside a
+// signed app, so it is checked against the registry's own integrity for the
+// pinned version before anything is extracted, and a vendored copy of any
+// other version is replaced rather than kept.
 
 import { spawnSync } from 'node:child_process'
-import { cpSync, createWriteStream, existsSync, mkdirSync, rmSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { cpSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
@@ -29,8 +35,13 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const RUNTIME_DIR = join(REPO_ROOT, 'resources', 'runtime')
 
 // --- pinned versions -------------------------------------------------------
-// npm is pure JS and runs on any Node, including Electron's embedded one.
-const NPM_VERSION = '10.9.0'
+// npm is pure JS and runs on any Node, including Electron's embedded one
+// (npm 11 needs Node ^20.17.0 || >=22.9.0; Electron 44 embeds Node 24).
+export const NPM_VERSION = '11.21.1'
+// The registry's `dist.integrity` for that version
+// (`npm view npm@<version> dist.integrity`). Change both together.
+export const NPM_INTEGRITY =
+  'sha512-YTzL6QBEJXyHcTu0JiUc7RKMp+mzlJtl7rGLmERaXUQeFHIMc9atdr6G9M9C8vDWbv40epoTQAzNL2/PtZVDhQ=='
 
 function parseArgs(argv) {
   const opts = { platform: process.platform, arch: process.arch, force: false }
@@ -57,6 +68,30 @@ async function download(url, destFile) {
   await pipeline(Readable.fromWeb(response.body), createWriteStream(destFile))
 }
 
+/**
+ * Throws unless `bytes` hash to `integrity`, a Subresource Integrity string
+ * (`sha512-<base64>`) as the npm registry publishes it.
+ */
+export function verifyIntegrity(bytes, integrity, label = 'download') {
+  const match = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(integrity)
+  if (!match) throw new Error(`unsupported integrity for ${label}: ${integrity}`)
+  const actual = createHash('sha512').update(bytes).digest('base64')
+  if (actual !== match[1]) {
+    throw new Error(`integrity mismatch for ${label}: expected sha512-${match[1]}, got sha512-${actual}`)
+  }
+}
+
+/** The version of the npm vendored at `npmDir`, or null when there is none or it cannot be read. */
+export function vendoredNpmVersion(npmDir) {
+  if (!existsSync(join(npmDir, 'bin', 'npm-cli.js'))) return null
+  try {
+    const version = JSON.parse(readFileSync(join(npmDir, 'package.json'), 'utf8')).version
+    return typeof version === 'string' ? version : null
+  } catch {
+    return null
+  }
+}
+
 function extractTarGz(archive, destDir) {
   mkdirSync(destDir, { recursive: true })
   const result = spawnSync('tar', ['-xzf', archive, '-C', destDir], { stdio: 'inherit' })
@@ -69,6 +104,7 @@ async function fetchNpm(tmp) {
   const url = `https://registry.npmjs.org/npm/-/npm-${NPM_VERSION}.tgz`
   const archive = join(tmp, `npm-${NPM_VERSION}.tgz`)
   await download(url, archive)
+  verifyIntegrity(await readFile(archive), NPM_INTEGRITY, `npm-${NPM_VERSION}.tgz`)
   // The tarball extracts to `package/`; relocate it to resources/runtime/npm.
   // Use fs.cpSync rather than shelling out to cp/move so it works the same on
   // every OS and across volumes (the OS tempdir is frequently on a different
@@ -87,11 +123,14 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2))
   log(`target ${opts.platform}-${opts.arch} (npm ${NPM_VERSION})`)
 
-  const npmReady = existsSync(join(RUNTIME_DIR, 'npm', 'bin', 'npm-cli.js'))
-  if (npmReady && !opts.force) {
+  // Only the pinned version counts as present: a runner or checkout that
+  // vendored another one (an older pin) fetches the pinned one over it.
+  const present = vendoredNpmVersion(join(RUNTIME_DIR, 'npm'))
+  if (present === NPM_VERSION && !opts.force) {
     log('runtime already present (use --force to refetch); nothing to do')
     return
   }
+  if (present) log(`replacing vendored npm ${present}`)
 
   mkdirSync(RUNTIME_DIR, { recursive: true })
   const tmp = await mkdtemp(join(tmpdir(), 'sprintengine-runtimes-'))
@@ -103,7 +142,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`[fetch-runtimes] FAILED: ${error?.message ?? error}`)
-  process.exitCode = 1
-})
+// Run as a script; imported (by its test), it only defines.
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  main().catch((error) => {
+    console.error(`[fetch-runtimes] FAILED: ${error?.message ?? error}`)
+    process.exitCode = 1
+  })
+}
