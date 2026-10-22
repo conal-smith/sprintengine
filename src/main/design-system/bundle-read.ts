@@ -1,5 +1,8 @@
-import { readdir, readFile, stat } from 'fs/promises'
-import { extname, join, relative, resolve, sep } from 'path'
+import { readdir, readFile, realpath, stat } from 'fs/promises'
+import { extname, join, resolve } from 'path'
+
+import { isSafeManifestRelativePath } from '../../../packages/module-sdk/src/manifest-validate'
+import { isPathInsideOrEqual } from '../path-containment'
 
 import {
   DESIGN_SYSTEM_MANIFEST_FILENAME,
@@ -102,6 +105,7 @@ class AssetInliner {
   private spent = 0
   exhausted = false
   private readonly cache = new Map<string, string | null>()
+  private realBundleDir: Promise<string | null> | null = null
 
   constructor(private readonly bundleDir: string) {}
 
@@ -120,13 +124,18 @@ class AssetInliner {
 
   private async read(fromDir: string, ref: string): Promise<string | null> {
     const target = resolve(fromDir, ref)
-    const inside = relative(this.bundleDir, target)
-    if (inside.startsWith('..') || inside.startsWith(`..${sep}`)) return null
+    if (!isPathInsideOrEqual(this.bundleDir, target)) return null
     const mime = INLINE_MIME_TYPES[extname(target).toLowerCase()]
     if (!mime) return null
+    // Judged again where it really is: a link inside the bundle that leads
+    // out of it is outside it.
+    this.realBundleDir ??= realpath(this.bundleDir).catch(() => null)
+    const realBundleDir = await this.realBundleDir
+    const real = await realpath(target).catch(() => null)
+    if (!realBundleDir || !real || !isPathInsideOrEqual(realBundleDir, real)) return null
     let bytes: Buffer
     try {
-      bytes = await readFile(target)
+      bytes = await readFile(real)
     } catch {
       return null
     }
@@ -552,6 +561,8 @@ async function readPatterns(
     // bare name or as the manifest's canonical bundle-relative path
     // ("patterns/context-rail.html") — joining the path form onto the patterns
     // dir doubled the prefix and silently dropped every declared pattern.
+    // A name is a path inside the bundle, never one that climbs out of it.
+    if (!isSafeManifestRelativePath(name)) continue
     const relative = name.startsWith('patterns/') ? name.slice('patterns/'.length) : name
     const fileName = relative.endsWith('.html') ? relative : `${relative}.html`
     const raw = await readTextOrNull(join(dir, fileName))
@@ -579,7 +590,9 @@ async function readGlyphs(bundleDir: string, manifest: DesignSystemManifest): Pr
     : []
   const views: DesignSystemGlyphView[] = []
   for (const name of declared) {
-    // Same dual form as patterns: bare name or bundle-relative path.
+    // Same dual form as patterns: bare name or bundle-relative path, and never
+    // one that climbs out of the bundle.
+    if (!isSafeManifestRelativePath(name)) continue
     const relative = name.startsWith('glyphs/') ? name.slice('glyphs/'.length) : name
     const fileName = relative.endsWith('.svg') ? relative : `${relative}.svg`
     const svg = await readTextOrNull(join(dir, fileName))
