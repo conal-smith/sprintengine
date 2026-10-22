@@ -151,6 +151,8 @@ export function createWorktreePoolTools(deps: WorktreePoolToolsDeps): McpToolReg
           baseCommit: leased.baseSha,
           // Offline, or the fetch failed: the base may be behind the remote.
           ...(leased.baseNote ? { baseNote: leased.baseNote } : {}),
+          // Submodules or LFS files the project does not fetch on a lease.
+          ...(leased.setupNote ? { setupNote: leased.setupNote } : {}),
           reused: !leased.created,
           dependencies: dependenciesNote(install),
         })

@@ -513,6 +513,21 @@ export function withDependencyInstall(
 }
 
 /**
+ * Every project's submodules-and-LFS choice with this one's set, under the path
+ * the page names the project by. Off is the default and is not kept.
+ */
+export function withSubmodulesAndLfs(
+  current: Readonly<Record<string, boolean>>,
+  repoRoot: string,
+  enabled: boolean,
+): Record<string, boolean> {
+  const key = comparablePath(repoRoot)
+  const next = Object.fromEntries(Object.entries(current ?? {}).filter(([root]) => comparablePath(root) !== key))
+  if (enabled) next[repoRoot] = true
+  return next
+}
+
+/**
  * The installs running now, by the worktree each runs in: added as one is
  * heard starting or moving on, dropped as it ends.
  */

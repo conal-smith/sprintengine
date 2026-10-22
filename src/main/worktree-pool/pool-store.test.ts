@@ -93,6 +93,21 @@ test('the idle period defaults to two hours and is kept to whole minutes between
   assert.equal(settings.idleReturnMinutes, 30)
 })
 
+test('submodules and LFS are off for a project unless it turned them on, and only that is kept', () => {
+  assert.deepEqual(normalizePoolSettings(null).submodulesAndLfs, {})
+  assert.deepEqual(
+    normalizePoolSettings({
+      submodulesAndLfs: { '/Users/dev/app': true, '/Users/dev/other': false, '': true },
+    } as Parameters<typeof normalizePoolSettings>[0]).submodulesAndLfs,
+    { '/Users/dev/app': true },
+  )
+  assert.deepEqual(
+    normalizePoolSettings({ submodulesAndLfs: 'yes' } as unknown as Parameters<typeof normalizePoolSettings>[0])
+      .submodulesAndLfs,
+    {},
+  )
+})
+
 test('a record keeps a slot parked for its chat and the paths kept for chats; a mark no state can have is dropped', async () => {
   const dir = await container()
   const store = createPoolStore(dir)

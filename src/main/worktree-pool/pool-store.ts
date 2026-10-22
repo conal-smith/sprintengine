@@ -115,6 +115,8 @@ export type SlotRecord = {
   baseRef: string | null
   baseSha: string | null
   error: string | null
+  /** What the last lease left out on purpose (submodules, LFS files), shown with the slot's status. */
+  note: string | null
   lease: SlotLease | null
   held: SlotHeld | null
   lastUsedAt: number | null
@@ -237,6 +239,7 @@ function parseSlot(value: unknown): SlotRecord | null {
     baseRef: str(value.baseRef),
     baseSha: str(value.baseSha),
     error: str(value.error),
+    note: str(value.note),
     lease:
       lease && str(lease.leaseId) && str(lease.branch)
         ? {
@@ -351,7 +354,19 @@ export function normalizePoolSettings(input: Partial<WorktreePoolSettings> | nul
       base.idleReturnMinutes,
     ),
     dependencyInstall: normalizeDependencyInstall(input?.dependencyInstall),
+    submodulesAndLfs: normalizeSubmodulesAndLfs(input?.submodulesAndLfs),
   }
+}
+
+/** The projects that turned submodules and LFS on; off is the default and is not written down. */
+function normalizeSubmodulesAndLfs(value: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  if (!isRecord(value)) return out
+  for (const [repoRoot, enabled] of Object.entries(value)) {
+    if (Object.keys(out).length >= DEPENDENCY_INSTALL_PROJECTS_MAX) break
+    if (repoRoot && enabled === true) out[repoRoot] = true
+  }
+  return out
 }
 
 /** The most projects a settings file keeps an install choice for. */

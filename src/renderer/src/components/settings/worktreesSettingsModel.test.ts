@@ -11,6 +11,7 @@ import {
   inventoryRootsOf,
   planFreeSpace,
   rowMatches,
+  withSubmodulesAndLfs,
   worktreeTotals,
   type WorktreeChatSource,
 } from './worktreesSettingsModel'
@@ -29,6 +30,7 @@ function slot(id: string, patch: Partial<WorktreePoolSlotView>): WorktreePoolSlo
     baseRef: 'origin/main',
     baseSha: 'a41c9e2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     error: null,
+    note: null,
     lease: null,
     held: null,
     lastUsedAt: null,
@@ -276,4 +278,12 @@ test('a slot an agent leased itself is credited to that agent’s chat, not to a
   ]
   const [view] = buildWorktreeProjects(leased, chats, NOW)
   expect(view.poolRows[0].chat?.workspaceId).toBe('w-b')
+})
+
+test('turning submodules and LFS on keeps one entry per project, and off keeps none', () => {
+  expect(withSubmodulesAndLfs({ '/code/app/': true, '/code/other': true }, '/code/app', true)).toEqual({
+    '/code/other': true,
+    '/code/app': true,
+  })
+  expect(withSubmodulesAndLfs({ '/code/app': true }, '/code/app', false)).toEqual({})
 })

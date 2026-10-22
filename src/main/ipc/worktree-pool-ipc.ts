@@ -110,6 +110,9 @@ export function registerWorktreePoolIpc(
       if (patch.dependencyInstall && typeof patch.dependencyInstall === 'object') {
         clean.dependencyInstall = patch.dependencyInstall
       }
+      if (patch.submodulesAndLfs && typeof patch.submodulesAndLfs === 'object') {
+        clean.submodulesAndLfs = patch.submodulesAndLfs
+      }
       return pool.updateSettings(clean)
     },
   )

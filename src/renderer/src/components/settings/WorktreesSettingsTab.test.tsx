@@ -34,6 +34,7 @@ const baseSlot = {
   baseRef: 'origin/main',
   baseSha: 'a41c9e2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   error: null,
+  note: null,
   lease: null,
   held: null,
   uses: 2,

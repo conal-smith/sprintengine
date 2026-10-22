@@ -66,6 +66,14 @@ export type WorktreePoolSettings = {
    * with no entry is off: the install runs the repository's own scripts.
    */
   dependencyInstall: Record<string, WorktreeDependencyInstallSetting>
+  /**
+   * Per project, keyed as `dependencyInstall` is: initialise the submodules
+   * and pull the Git LFS files of a leased worktree. A project with no entry
+   * is off: both fetch from addresses the repository's own files name, so a
+   * person turns it on for a project they trust. Skipped, the worktree's
+   * status says so.
+   */
+  submodulesAndLfs: Record<string, boolean>
 }
 
 export type WorktreeDependencyInstallSetting = {
@@ -98,6 +106,18 @@ export const DEFAULT_WORKTREE_POOL_SETTINGS: WorktreePoolSettings = {
   diskLimitGb: null,
   idleReturnMinutes: 120,
   dependencyInstall: {},
+  submodulesAndLfs: {},
+}
+
+/** Whether a project fetches its submodules and Git LFS files on a lease, however its path is spelled. */
+export function submodulesAndLfsFor(
+  settings: Pick<WorktreePoolSettings, 'submodulesAndLfs'>,
+  repoRoot: string,
+): boolean {
+  const wanted = comparablePath(repoRoot)
+  return Object.entries(settings.submodulesAndLfs ?? {}).some(
+    ([root, enabled]) => enabled === true && comparablePath(root) === wanted,
+  )
 }
 
 /** The entry `settings.dependencyInstall` holds for a project, however its path is spelled. */
@@ -132,6 +152,8 @@ export type WorktreePoolSlotView = {
   baseSha: string | null
   /** The tail of a failed git step. */
   error: string | null
+  /** What the last lease left out of the worktree on purpose (its submodules, its LFS files), or null. */
+  note: string | null
   lease: {
     leaseId: string
     branch: string

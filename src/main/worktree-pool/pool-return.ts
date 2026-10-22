@@ -155,6 +155,7 @@ export async function returnSlot(
       slot.held = null
       slot.op = null
       slot.error = null
+      slot.note = null
       slot.kept = null
       slot.lastUsedAt = ctx.now()
       await ctx.persist(pool)

@@ -657,12 +657,21 @@ async function addSubmoduleToOrigin(): Promise<() => void> {
   return restore
 }
 
+/**
+ * The submodule checked out in a leased worktree as a person would: the lease
+ * itself never clones from a local path.
+ */
+async function checkOutSubmodule(path: string): Promise<void> {
+  await git(path, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive', '-q')
+}
+
 test('removing an idle slot with a checked-out submodule removes it', async () => {
   const restore = await addSubmoduleToOrigin()
   try {
     const harness = makeService()
     const first = await lease(harness, 'first')
-    assert.equal(await exists(join(first.path, 'lib', 'lib.txt')), true, 'the lease checked the submodule out')
+    await checkOutSubmodule(first.path)
+    assert.equal(await exists(join(first.path, 'lib', 'lib.txt')), true, 'the submodule is checked out')
     await returnAll(harness)
     const removed = await harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
     assert.equal(removed.ok, true, removed.message ?? '')
@@ -677,6 +686,7 @@ test('removing an idle slot whose submodule holds a branch no remote has holds i
   try {
     const harness = makeService()
     const first = await lease(harness, 'first')
+    await checkOutSubmodule(first.path)
     await returnAll(harness)
     // Someone commits on a branch in the idle slot's submodule and switches
     // back, so the slot's own status reads clean.
@@ -1433,23 +1443,70 @@ test('after a failed fetch, leases fork from the ref as it stands without trying
   assert.equal(third.baseNote, null)
 })
 
+/** The subcommand of a pool git call, past its `-c` pairs. */
+function subcommandOf(args: readonly string[]): string | undefined {
+  return args.find((arg, index) => !arg.startsWith('-') && args[index - 1] !== '-c')
+}
+
 test('a lease’s submodule update and LFS pull run under a deadline, and failing is a note, not a failed lease', async () => {
   await pushToOrigin('.gitmodules', '')
   await pushToOrigin('.gitattributes', '*.bin filter=lfs diff=lfs merge=lfs -text\n')
   const deadlines = new Map<string, number | null | undefined>()
+  const calls: string[][] = []
   const recording: SlotGitRunner = (cwd, args, options) => {
-    if (args[0] === 'submodule' || args[0] === 'lfs') {
-      deadlines.set(args[0], options?.timeoutMs)
+    const subcommand = subcommandOf(args)
+    if (subcommand === 'submodule' || subcommand === 'lfs') {
+      deadlines.set(subcommand, options?.timeoutMs)
+      calls.push(args)
       // As a run past its deadline answers.
-      return Promise.resolve({ ok: false, stdout: '', stderr: '', message: `${args[0]} did not finish` })
+      return Promise.resolve({ ok: false, stdout: '', stderr: '', message: `${subcommand} did not finish` })
     }
     return defaultSlotGitRunner(cwd, args, options)
   }
   const harness = makeService({ git: recording })
+  await harness.service.updateSettings({ submodulesAndLfs: { [repo]: true } })
   const leased = await lease(harness, 'with-modules')
   assert.ok((deadlines.get('submodule') ?? 0) > 0, 'submodule update has a deadline')
   assert.ok((deadlines.get('lfs') ?? 0) > 0, 'lfs pull has a deadline')
   assert.match((await slotAt(harness, leased.slotId)).error ?? '', /submodules: .*; lfs: /)
+  // Neither may reach a repository through a local path or a helper program.
+  for (const args of calls) {
+    assert.deepEqual(args.slice(0, 4), ['-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never'])
+  }
+  assert.equal(leased.setupNote, null, 'nothing was left out')
+})
+
+test('a project that did not turn them on gets no submodules or LFS files, and the worktree says so', async () => {
+  await pushToOrigin('.gitmodules', '')
+  await pushToOrigin('.gitattributes', '*.bin filter=lfs diff=lfs merge=lfs -text\n')
+  const ran: string[] = []
+  const recording: SlotGitRunner = (cwd, args, options) => {
+    const subcommand = subcommandOf(args)
+    if (subcommand === 'submodule' || subcommand === 'lfs') ran.push(subcommand)
+    return defaultSlotGitRunner(cwd, args, options)
+  }
+  const harness = makeService({ git: recording })
+  assert.deepEqual((await harness.service.getSettings()).submodulesAndLfs, {}, 'off by default')
+  const leased = await lease(harness, 'no-modules')
+  assert.deepEqual(ran, [])
+  assert.match(leased.setupNote ?? '', /Submodules and Git LFS files were not fetched/)
+  const slot = await slotAt(harness, leased.slotId)
+  assert.equal(slot.note, leased.setupNote, 'the worktree’s status carries the note')
+  assert.equal(slot.error, null, 'a skip is not a failure')
+})
+
+test('a submodule from a local path is refused even for a project that turned submodules on', async () => {
+  const restore = await addSubmoduleToOrigin()
+  try {
+    const harness = makeService()
+    await harness.service.updateSettings({ submodulesAndLfs: { [repo]: true } })
+    const leased = await lease(harness, 'local-module')
+    assert.equal(await exists(join(leased.path, 'lib', 'lib.txt')), false, 'the file:// submodule was not cloned')
+    assert.match((await slotAt(harness, leased.slotId)).error ?? '', /submodules: /)
+    assert.equal(leased.setupNote, null)
+  } finally {
+    restore()
+  }
 })
 
 test('a .worktreeinclude copy that fails is logged and the lease goes ahead', async () => {

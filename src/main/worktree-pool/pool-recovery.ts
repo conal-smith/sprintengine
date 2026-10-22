@@ -146,6 +146,7 @@ export async function recoverPool(ctx: PoolContext, pool: PoolRuntime): Promise<
       baseRef: null,
       baseSha: null,
       error: null,
+      note: null,
       lease: leased
         ? {
             leaseId: randomUUID(),

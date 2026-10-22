@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { comparablePath } from '../../shared/host-paths'
+import { submodulesAndLfsFor } from '../../shared/ipc/worktree-pool'
 import { hostIdForFolder, isWslHostId, normalizeExecutionHostId } from '../../shared/execution-host'
 import { pathJoin } from '../../shared/paths'
 import { worktreeBranchName } from '../../shared/worktree-branch'
@@ -97,6 +98,62 @@ function unsupportedHost(repoRoot: string, named: string | null | undefined): st
  */
 function repositoryGitDir(pool: PoolRuntime): string[] {
   return [explicitGitDir(pool.record.commonDir)]
+}
+
+/**
+ * Config for a submodule update or LFS pull a project turned on: neither may
+ * reach a repository through a local path or a program the repository's files
+ * name (`file://`, `ext::`), only over the network transports.
+ */
+export const SUBMODULE_PROTOCOL_CONFIG: readonly string[] = [
+  '-c',
+  'protocol.file.allow=never',
+  '-c',
+  'protocol.ext.allow=never',
+]
+
+/**
+ * A leased worktree's submodules and Git LFS files. Both fetch from addresses
+ * the repository's own files name, so they run only for a project that turned
+ * them on in Settings ▸ Worktrees; skipped, the worktree's status says what
+ * was left out. Both talk to a remote, and the new chat waits on them: each
+ * has the network deadline, and one that runs out is a failure note on the
+ * slot (the agent can run it again), not a failed lease.
+ */
+async function fetchSubmodulesAndLfs(
+  ctx: PoolContext,
+  pool: PoolRuntime,
+  path: string,
+): Promise<{ failures: string[]; note: string | null }> {
+  const modules = await hasFile(path, '.gitmodules')
+  const lfs = await usesLfs(path)
+  if (!modules && !lfs) return { failures: [], note: null }
+  if (!submodulesAndLfsFor(await ctx.getSettings(), pool.record.repoRoot)) {
+    const left =
+      modules && lfs ? 'Submodules and Git LFS files were' : modules ? 'Submodules were' : 'Git LFS files were'
+    return {
+      failures: [],
+      note: `${left} not fetched; turn that on for this project in Settings ▸ Worktrees.`,
+    }
+  }
+  const failures: string[] = []
+  if (modules) {
+    const updated = await ctx.git(
+      path,
+      [...SUBMODULE_PROTOCOL_CONFIG, 'submodule', 'update', '--init', '--recursive'],
+      {
+        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+      },
+    )
+    if (!updated.ok) failures.push(`submodules: ${tail(updated.message)}`)
+  }
+  if (lfs) {
+    const pulled = await ctx.git(path, [...SUBMODULE_PROTOCOL_CONFIG, 'lfs', 'pull'], {
+      timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    })
+    if (!pulled.ok) failures.push(`lfs: ${tail(pulled.message)}`)
+  }
+  return { failures, note: null }
 }
 
 function ensureBase(ctx: PoolContext, pool: PoolRuntime, local: { ref: string; sha: string }): Promise<LeaseBase> {
@@ -383,6 +440,7 @@ async function createSlot(
       baseRef: base.ref,
       baseSha: base.sha,
       error: null,
+      note: null,
       lease: null,
       held: null,
       lastUsedAt: null,
@@ -577,20 +635,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
         if (created) return { ok: false, reason: 'error', message: 'Could not move a new pool worktree.', base }
         continue
       }
-      // Both talk to a remote, and the new chat waits on them: each has the
-      // network deadline, and one that runs out is a note on the slot (the
-      // agent can run it again), not a failed lease.
-      const notes: string[] = []
-      if (await hasFile(slot.path, '.gitmodules')) {
-        const modules = await ctx.git(slot.path, ['submodule', 'update', '--init', '--recursive'], {
-          timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-        })
-        if (!modules.ok) notes.push(`submodules: ${tail(modules.message)}`)
-      }
-      if (await usesLfs(slot.path)) {
-        const lfs = await ctx.git(slot.path, ['lfs', 'pull'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
-        if (!lfs.ok) notes.push(`lfs: ${tail(lfs.message)}`)
-      }
+      const { failures: notes, note } = await fetchSubmodulesAndLfs(ctx, pool, slot.path)
       // `.worktreeinclude` names ignored files (an `.env`) the tree needs; a
       // reused slot still has the last copy, but the checkout's may have
       // changed since.
@@ -630,6 +675,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
         slot!.op = null
         slot!.held = null
         slot!.error = notes.length ? notes.join('; ') : null
+        slot!.note = note
         slot!.baseRef = base.ref
         slot!.baseSha = base.sha
         slot!.lease = {
@@ -657,6 +703,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
         baseRef: base.ref,
         baseSha: base.sha,
         baseNote: base.note,
+        setupNote: note,
         lockReason: locked.ok ? agentWorktreeLockReason(owner) : null,
         created,
         elapsedMs: ctx.now() - started,
@@ -716,10 +763,15 @@ export async function catchUp(ctx: PoolContext, leaseId: string): Promise<CatchU
     if (oid === base.sha) return { kind: 'current', ref: base.ref, sha: base.sha, note: base.note }
     const merged = await ctx.git(slot.path, ['merge', '--ff-only', '--quiet', base.sha])
     if (!merged.ok) return { kind: 'failed', message: merged.message ?? `Could not fast-forward to ${base.ref}.` }
-    if (await hasFile(slot.path, '.gitmodules')) {
-      const modules = await ctx.git(slot.path, ['submodule', 'update', '--init', '--recursive'], {
-        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-      })
+    if (
+      (await hasFile(slot.path, '.gitmodules')) &&
+      submodulesAndLfsFor(await ctx.getSettings(), pool.record.repoRoot)
+    ) {
+      const modules = await ctx.git(
+        slot.path,
+        [...SUBMODULE_PROTOCOL_CONFIG, 'submodule', 'update', '--init', '--recursive'],
+        { timeoutMs: GIT_NETWORK_TIMEOUT_MS },
+      )
       if (!modules.ok) ctx.log(`${slot.path}: submodules after catching up: ${tail(modules.message)}`)
     }
     await ctx.withPool(pool, async () => {
@@ -1001,6 +1053,7 @@ async function recreateAtReservedPath(
         baseRef: null,
         baseSha: null,
         error: null,
+        note: null,
         lease: null,
         held: null,
         lastUsedAt: null,
@@ -1047,17 +1100,7 @@ async function recreateAtReservedPath(
     // Locked BEFORE anything else runs in it, as a lease locks its slot.
     const locked = await lockAgentWorktree(pool.record.repoRoot, made.path, input.owner, ctx.git)
     if (!locked.ok) ctx.log(`${made.path}: could not lock (${tail(locked.message)}); reclaiming anyway`)
-    const notes: string[] = []
-    if (await hasFile(made.path, '.gitmodules')) {
-      const modules = await ctx.git(made.path, ['submodule', 'update', '--init', '--recursive'], {
-        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-      })
-      if (!modules.ok) notes.push(`submodules: ${tail(modules.message)}`)
-    }
-    if (await usesLfs(made.path)) {
-      const lfs = await ctx.git(made.path, ['lfs', 'pull'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
-      if (!lfs.ok) notes.push(`lfs: ${tail(lfs.message)}`)
-    }
+    const { failures: notes, note } = await fetchSubmodulesAndLfs(ctx, pool, made.path)
     if (input.copyIncludedFiles && ctx.deps.seedIncludedFiles) {
       const seeded = await ctx.deps.seedIncludedFiles(pool.record.repoRoot, made.path).then(
         (result) => failureOf(result),
@@ -1070,6 +1113,7 @@ async function recreateAtReservedPath(
       made.state = 'leased'
       made.op = null
       made.error = notes.length ? notes.join('; ') : null
+      made.note = note
       made.baseRef = pool.record.defaultRef
       made.baseSha = head
       made.lease = {

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import {
   DEFAULT_WORKTREE_POOL_SETTINGS,
   dependencyInstallSettingFor,
+  submodulesAndLfsFor,
   WORKTREE_INSTALL_COMMAND_MAX,
   WORKTREE_POOL_DISK_LIMIT_CHOICES_GB,
   WORKTREE_POOL_IDLE_RETURN_CHOICES_MIN,
@@ -61,6 +62,7 @@ import {
   partLabel,
   rowMatches,
   withDependencyInstall,
+  withSubmodulesAndLfs,
   worktreeTotals,
   type WorktreeFilter,
   type WorktreeProjectView,
@@ -307,6 +309,9 @@ export function WorktreesSettingsTab({
 
   const updateInstall = (repoRoot: string, setting: WorktreeDependencyInstallSetting) =>
     void updateSettings({ dependencyInstall: withDependencyInstall(settings.dependencyInstall, repoRoot, setting) })
+
+  const updateSubmodulesAndLfs = (repoRoot: string, enabled: boolean) =>
+    void updateSettings({ submodulesAndLfs: withSubmodulesAndLfs(settings.submodulesAndLfs, repoRoot, enabled) })
 
   const cancelInstall = async (install: WorktreeDependencyInstallView) => {
     const stopped = await window.api.cancelWorktreeInstall(install.id).catch(() => false)
@@ -798,6 +803,8 @@ export function WorktreesSettingsTab({
             poolEnabled={settings.enabled}
             install={dependencyInstallSettingFor(settings, project.repoRoot)}
             onInstallChange={(setting) => updateInstall(project.repoRoot, setting)}
+            submodulesAndLfs={submodulesAndLfsFor(settings, project.repoRoot)}
+            onSubmodulesAndLfsChange={(enabled) => updateSubmodulesAndLfs(project.repoRoot, enabled)}
             installs={installs}
             actions={{
               openChat: onOpenChat,
@@ -886,6 +893,8 @@ function ProjectCard({
   poolEnabled,
   install,
   onInstallChange,
+  submodulesAndLfs,
+  onSubmodulesAndLfsChange,
   installs,
   actions,
 }: {
@@ -902,6 +911,9 @@ function ProjectCard({
   /** The project's install choice; null when it never made one (off). */
   install: WorktreeDependencyInstallSetting | null
   onInstallChange: (setting: WorktreeDependencyInstallSetting) => void
+  /** Whether a lease fetches the project's submodules and Git LFS files. */
+  submodulesAndLfs: boolean
+  onSubmodulesAndLfsChange: (enabled: boolean) => void
   installs: ReadonlyMap<string, WorktreeDependencyInstallView>
   actions: RowActions
 }) {
@@ -965,6 +977,17 @@ function ProjectCard({
           disabled={!poolEnabled || project.heldByOtherInstance}
           onChange={onInstallChange}
         />
+      ) : null}
+      {open ? (
+        <div className="border-b border-[color:var(--border-subtle)]">
+          <SettingToggle
+            label="Fetch submodules and Git LFS files"
+            description="When an agent's pooled worktree is checked out, initialise its submodules and pull its Git LFS files. Both fetch from addresses the repository's own files name, so turn it on only for code you trust. Local paths and helper programs are never used as a submodule's source."
+            enabled={submodulesAndLfs}
+            disabled={!poolEnabled || project.heldByOtherInstance}
+            onChange={onSubmodulesAndLfsChange}
+          />
+        </div>
       ) : null}
       {open ? (
         <Table
@@ -1355,6 +1378,7 @@ function RowDetail({ row, now, actions, busy }: { row: WorktreeRow; now: number;
         : null,
       slot ? { term: 'Leases served', description: String(slot.uses) } : null,
       slot?.lastBranch && row.state === 'ready' ? { term: 'Last branch', description: slot.lastBranch } : null,
+      slot?.note ? { term: 'Note', description: slot.note } : null,
       slot?.error ? { term: 'Last error', description: slot.error } : null,
       row.keptBecause && !slot ? { term: 'Kept', description: row.keptBecause } : null,
       slot?.kept && row.state === 'ready'

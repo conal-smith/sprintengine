@@ -231,6 +231,8 @@ export type WorktreePoolLeaseResult =
       baseSha: string
       /** Set when `baseRef` could not be fetched for this lease: it is where the ref last stood. */
       baseNote: string | null
+      /** What the lease left out of the worktree on purpose (its submodules, its LFS files), or null. */
+      setupNote: string | null
       /** The reason of the agent worktree lock placed on it, or null when locking failed. */
       lockReason: string | null
       /** The slot was made for this lease; nothing was reused. */
@@ -554,6 +556,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
         baseRef: slot.baseRef,
         baseSha: slot.baseSha,
         error: slot.error,
+        note: slot.note,
         lease: slot.lease
           ? {
               leaseId: slot.lease.leaseId,
