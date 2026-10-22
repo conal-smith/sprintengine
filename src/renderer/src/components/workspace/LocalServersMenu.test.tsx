@@ -42,6 +42,7 @@ vi.mock('./pane/browser/openInPane', () => ({
 }))
 
 const { GhostButton } = await import('../ui')
+const { ConfirmDialogProvider } = await import('../ui/ConfirmDialog')
 const { LocalServersMenu, NO_COMMAND_REASON, localServerActions, localServerExitLine } =
   await import('./LocalServersMenu')
 
@@ -152,6 +153,7 @@ beforeEach(() => {
   calls.stop.length = 0
   calls.remove.length = 0
   calls.pane.length = 0
+  window.localStorage.clear()
 })
 
 afterEach(async () => {
@@ -169,16 +171,18 @@ async function openMenu(servers: StudioLocalServer[]): Promise<void> {
   root = createRoot(host)
   await act(async () =>
     root!.render(
-      <LocalServersMenu
-        workspaceId="ws-1"
-        servers={servers}
-        ariaLabel="Local servers"
-        renderTrigger={({ ref, togglePopover, triggerProps }) => (
-          <GhostButton ref={ref} onClick={togglePopover} {...triggerProps} data-test-trigger="">
-            Servers
-          </GhostButton>
-        )}
-      />,
+      <ConfirmDialogProvider>
+        <LocalServersMenu
+          workspaceId="ws-1"
+          servers={servers}
+          ariaLabel="Local servers"
+          renderTrigger={({ ref, togglePopover, triggerProps }) => (
+            <GhostButton ref={ref} onClick={togglePopover} {...triggerProps} data-test-trigger="">
+              Servers
+            </GhostButton>
+          )}
+        />
+      </ConfirmDialogProvider>,
     ),
   )
   await act(async () => {
@@ -222,10 +226,70 @@ test("a reopened menu offers nothing tailnet until this opening's read answers",
   expect(action('share-tailnet')).toBe(null)
 })
 
-test('Run again runs the server for its conversation', async () => {
+/** The dialog's button labelled `label`, once the question is up. */
+function dialogButton(label: string): HTMLButtonElement | null {
+  return (
+    [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+      (button) => button.textContent?.trim() === label,
+    ) ?? null
+  )
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 3; i += 1) await act(async () => await Promise.resolve())
+}
+
+test('Run again runs the server for its conversation, once the person agrees to its command', async () => {
   await openMenu([server({ state: 'stopped' })])
   await act(async () => action('run')!.click())
+  await settle()
+  expect(calls.run).toEqual([])
+  await act(async () => dialogButton('Run')!.click())
+  await settle()
   expect(calls.run).toEqual([[OWNER, 'srv-1']])
+})
+
+test('the first run of a command shows it and its folder, and asks; the same command runs without asking again', async () => {
+  await openMenu([server({ state: 'stopped', command: 'npm run dev -- --port 4000', cwd: '/Users/dev/app/web' })])
+  await act(async () => action('run')!.click())
+  await settle()
+  const question = document.querySelector('[data-local-server-confirm]')?.textContent
+  expect(question).toContain('$ npm run dev -- --port 4000')
+  expect(question).toContain('in /Users/dev/app/web')
+  // Not agreed: nothing runs, and the next click asks again.
+  await act(async () => dialogButton('Cancel')!.click())
+  await settle()
+  expect(calls.run).toEqual([])
+
+  await openMenu([server({ state: 'stopped', command: 'npm run dev -- --port 4000', cwd: '/Users/dev/app/web' })])
+  await act(async () => action('run')!.click())
+  await settle()
+  await act(async () => dialogButton('Run')!.click())
+  await settle()
+  expect(calls.run).toHaveLength(1)
+
+  // Agreed once: the same command in the same folder runs at once.
+  await openMenu([server({ state: 'stopped', command: 'npm run dev -- --port 4000', cwd: '/Users/dev/app/web' })])
+  await act(async () => action('run')!.click())
+  await settle()
+  expect(document.querySelector('[data-local-server-confirm]')).toBe(null)
+  expect(calls.run).toHaveLength(2)
+})
+
+test('a command or folder the agent changed since the person agreed is asked about again', async () => {
+  window.localStorage.setItem(
+    'sprintengine.localServers.confirmedRuns',
+    JSON.stringify({ ['ws-1\0agent-1\0srv-1']: { command: 'npm run dev', cwd: '/Users/dev/app' } }),
+  )
+  for (const changed of [{ command: 'npm run dev && curl example.test' }, { cwd: '/Users/dev' }]) {
+    await openMenu([server({ state: 'stopped', ...changed })])
+    await act(async () => action('run')!.click())
+    await settle()
+    expect(document.querySelector('[data-local-server-confirm]')).not.toBe(null)
+    await act(async () => dialogButton('Cancel')!.click())
+    await settle()
+  }
+  expect(calls.run).toEqual([])
 })
 
 test("each server's actions name the conversation that linked it, which a sidebar row's can differ in", async () => {
