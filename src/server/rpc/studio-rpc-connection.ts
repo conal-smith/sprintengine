@@ -124,6 +124,8 @@ export type StudioRpcConnectionOptions = {
   shell?: boolean
   /** Audit its mutations even when it is Studio's own view (an owner's web tab). */
   audited?: boolean
+  /** Hold the folders it names to the ones Studio knows: a browser on the tailnet. */
+  knownFoldersOnly?: boolean
   /** The client tools registry, when this Studio serves client tools. */
   tools?: ClientToolRegistry
   /** Files under a workspace's roots: the `files.watch` stream. */
@@ -179,6 +181,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
     slot: nextSlot++,
     ownWindow,
     ...(options.audited === undefined ? {} : { audited: options.audited }),
+    ...(options.knownFoldersOnly ? { knownFoldersOnly: true } : {}),
   }
   let state: 'hello' | 'open' | 'closed' = 'hello'
   let clientId: string | null = null

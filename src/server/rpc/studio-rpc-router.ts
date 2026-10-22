@@ -917,8 +917,11 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
         return outcome(await chat.providerModels(params as StudioMethodParams<'providers.models'>))
       case 'providers.secretStatus':
         return outcome(await chat.secretStatus(params as StudioMethodParams<'providers.secretStatus'>))
-      case 'files.search':
-        return outcome(await chat.searchFiles(context.slot, params as StudioMethodParams<'files.search'>))
+      case 'files.search': {
+        const search = params as StudioMethodParams<'files.search'>
+        if (!(await folderAllowed(chat, context, search.rootPath))) return refuse('not_found', UNKNOWN_FOLDER)
+        return outcome(await chat.searchFiles(context.slot, search))
+      }
       case 'files.cancelSearch':
         chat.cancelFileSearch(context.slot, (params as StudioMethodParams<'files.cancelSearch'>).channel)
         return { ok: true, result: {} }
@@ -931,6 +934,7 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
         }
       case 'files.repoRoot': {
         const { folderPath, hostId } = params as StudioMethodParams<'files.repoRoot'>
+        if (!(await folderAllowed(chat, context, folderPath))) return refuse('not_found', UNKNOWN_FOLDER)
         return outcome({ repoRoot: await chat.repoRoot(folderPath, hostId) })
       }
       case 'workspaces.list':
@@ -992,6 +996,14 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
       return answer
     },
   }
+}
+
+const UNKNOWN_FOLDER = 'That folder is not one Studio knows.'
+
+/** Whether a connection may name this folder: any, unless it is held to the folders Studio knows. */
+async function folderAllowed(chat: StudioChatBackend, context: StudioRequestContext, path: string): Promise<boolean> {
+  if (!context.knownFoldersOnly) return true
+  return chat.isKnownFolder ? chat.isKnownFolder(path).catch(() => false) : false
 }
 
 /** Whether parsed params name a conversation by its folder, which only an owner may. */

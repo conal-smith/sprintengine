@@ -163,6 +163,8 @@ export type StudioChatBackend = {
   stat(path: string): Promise<FileSystemStat>
   readImage(path: string): Promise<string>
   repoRoot(folderPath: string, hostId?: string): Promise<string | null>
+  /** Whether a folder is inside one a chat can be about: a workspace's, or Studio's own stores. */
+  isKnownFolder?(path: string): Promise<boolean>
   workspaces(): Array<{ id: string; name: string; folderPath: string | null; hostId?: string }>
 }
 
@@ -184,6 +186,11 @@ export type StudioRequestContext = {
    * server all the same, and is audited (phase 9 spec, 14.8).
    */
   audited?: boolean
+  /**
+   * The connection reached this server over the tailnet: a folder it searches
+   * or asks about must be one Studio already knows.
+   */
+  knownFoldersOnly?: boolean
 }
 
 export type StudioAuthOutcome = { ok: true; grant: StudioGrant; pairingToken?: string } | { ok: false; message: string }
