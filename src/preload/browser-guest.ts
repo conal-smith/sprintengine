@@ -1,4 +1,4 @@
-import { ipcRenderer } from 'electron'
+import { ipcRenderer, webFrame } from 'electron'
 import {
   BROWSER_MAX_OUTER_HTML,
   BROWSER_PICK_CANCELLED_CHANNEL,
@@ -8,12 +8,20 @@ import {
   type BrowserPickTheme,
   type BrowserPickedElement,
 } from '../shared/browser'
+import { asReactContext, READ_REACT_CONTEXT_SCRIPT, type ReactContext } from './browser-guest-react'
 
 // The browser guest's preload (browser-pane epic): the element picker. It
-// runs sandboxed (no Node) in the page's own world so it can read React's
-// fiber off DOM nodes, and it puts NOTHING on `window` — every reference,
-// `ipcRenderer` included, stays in this closure. The host renderer starts and
-// stops it over the webview channel; a pick is reported back the same way.
+// runs sandboxed (no Node) and context-isolated: its own JavaScript world,
+// sharing the page's DOM but none of its objects, so the page can neither
+// reach `ipcRenderer` nor reshape anything this file calls. Nothing is put on
+// `window`. The host renderer starts and stops it over the webview channel; a
+// pick is reported back the same way.
+//
+// The one thing an isolated world cannot see is what the page's own scripts
+// hung on a DOM node, which is where React keeps its fiber. That is read by a
+// short script run in the page's world for the one element picked, found by a
+// one-off attribute this world sets on it (`readReactContext`). What it
+// answers is the page's word, re-typed and capped here and again by the host.
 
 const STYLE_KEYS = [
   'display',
@@ -65,56 +73,34 @@ function selectorFor(element: Element): string {
   return parts.join(' > ')
 }
 
-// `_debugSource` is React 16–18's dev-only source location. React 19 removed
-// it (the info moved to the component stack), so `source` is null on a React
-// 19 dev server — expected, not a bug to chase.
-type Fiber = {
-  type?: unknown
-  return?: Fiber | null
-  _debugSource?: { fileName?: string; lineNumber?: number; columnNumber?: number } | null
-  _debugOwner?: Fiber | null
+const PICK_MARKER_ATTRIBUTE = 'data-sprintengine-pick'
+const REACT_CONTEXT_TIMEOUT_MS = 1000
+
+async function readReactContext(element: Element): Promise<ReactContext> {
+  const marker = crypto.randomUUID()
+  element.setAttribute(PICK_MARKER_ATTRIBUTE, marker)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const answer = await Promise.race([
+      webFrame.executeJavaScript(
+        `${READ_REACT_CONTEXT_SCRIPT}(${JSON.stringify(PICK_MARKER_ATTRIBUTE)}, ${JSON.stringify(marker)})`,
+      ),
+      new Promise<null>((settle) => {
+        timer = setTimeout(() => settle(null), REACT_CONTEXT_TIMEOUT_MS)
+      }),
+    ])
+    return asReactContext(answer)
+  } catch {
+    return { components: [], source: null }
+  } finally {
+    clearTimeout(timer)
+    element.removeAttribute(PICK_MARKER_ATTRIBUTE)
+  }
 }
 
-function fiberOf(element: Element): Fiber | null {
-  for (const key of Object.keys(element)) {
-    if (key.startsWith('__reactFiber$')) return (element as unknown as Record<string, Fiber>)[key] ?? null
-  }
-  return null
-}
-
-function componentName(type: unknown): string | null {
-  if (typeof type === 'function') {
-    const fn = type as { displayName?: string; name?: string }
-    return fn.displayName || fn.name || null
-  }
-  if (type && typeof type === 'object') {
-    const wrapped = type as { displayName?: string; render?: { displayName?: string; name?: string }; type?: unknown }
-    if (wrapped.displayName) return wrapped.displayName
-    if (wrapped.render) return wrapped.render.displayName || wrapped.render.name || null
-    if (wrapped.type) return componentName(wrapped.type)
-  }
-  return null
-}
-
-function reactContext(element: Element): { components: string[]; source: string | null } {
-  const components: string[] = []
-  let source: string | null = null
-  let fiber = fiberOf(element)
-  let hops = 0
-  while (fiber && hops < 40 && components.length < 3) {
-    const name = componentName(fiber.type)
-    if (name) components.push(name)
-    const debug = fiber._debugSource
-    if (!source && debug?.fileName) {
-      source = `${debug.fileName}${debug.lineNumber ? `:${debug.lineNumber}` : ''}${debug.columnNumber ? `:${debug.columnNumber}` : ''}`
-    }
-    fiber = fiber.return ?? null
-    hops += 1
-  }
-  return { components, source }
-}
-
-function serialize(element: Element): BrowserPickedElement {
+// Everything but the React context is read at once, as the click left the
+// page; the context is asked of the page's world after.
+async function serialize(element: Element): Promise<BrowserPickedElement> {
   const rect = element.getBoundingClientRect()
   const computed = getComputedStyle(element)
   const styles: Record<string, string> = {}
@@ -122,8 +108,7 @@ function serialize(element: Element): BrowserPickedElement {
     const value = computed.getPropertyValue(key)
     if (value) styles[key] = value
   }
-  const { components, source } = reactContext(element)
-  return {
+  const picked = {
     url: location.href,
     title: document.title,
     selector: selectorFor(element),
@@ -133,9 +118,9 @@ function serialize(element: Element): BrowserPickedElement {
     rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
     viewport: { width: window.innerWidth, height: window.innerHeight },
     styles,
-    components,
-    source,
   }
+  const { components, source } = await readReactContext(element)
+  return { ...picked, components, source }
 }
 
 function ensureOverlay(): { host: HTMLElement; box: HTMLElement; chip: HTMLElement } {
@@ -203,11 +188,12 @@ function onMove(event: MouseEvent): void {
 function onClick(event: MouseEvent): void {
   event.preventDefault()
   event.stopPropagation()
+  // A click the page's own script made is not the person picking.
+  if (!event.isTrusted) return
   const picked = elementAt(event) ?? target
   if (!picked) return
-  const payload = serialize(picked)
   stop()
-  ipcRenderer.sendToHost(BROWSER_PICKED_CHANNEL, payload)
+  void serialize(picked).then((payload) => ipcRenderer.sendToHost(BROWSER_PICKED_CHANNEL, payload))
 }
 
 function swallow(event: Event): void {
@@ -216,7 +202,7 @@ function swallow(event: Event): void {
 }
 
 function onKey(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
+  if (event.key === 'Escape' && event.isTrusted) {
     event.preventDefault()
     event.stopPropagation()
     stop()

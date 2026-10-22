@@ -7,15 +7,12 @@
 export const BROWSER_PARTITION = 'persist:sprintengine-browser'
 
 // The guest's webpreferences string. Whitespace-free `key=value` pairs — a
-// space in the attribute silently breaks parsing. `sandbox=true` is what keeps
-// the preload's Node access from ever reaching the page; `nodeIntegration`
-// stays off. `contextIsolation=false` because the element picker reads the
-// page's React fiber off DOM nodes, and an isolated world cannot see the main
-// world's expandos — a deliberate trade: the picker is the pane's reason to
-// exist, and `sandbox=true` is what actually contains the guest. The preload keeps
-// everything in closures and puts nothing on `window`. Main re-asserts all
-// three in `will-attach-webview` whatever the renderer wrote.
-export const BROWSER_WEBPREFERENCES = 'contextIsolation=false,sandbox=true,nodeIntegration=false'
+// space in the attribute silently breaks parsing. `sandbox=true` keeps Node
+// out of the preload, `nodeIntegration` stays off, and `contextIsolation=true`
+// keeps the element picker's preload in a world of its own, where the page
+// cannot reach its `ipcRenderer`. Main re-asserts all three in
+// `will-attach-webview` whatever the renderer wrote.
+export const BROWSER_WEBPREFERENCES = 'contextIsolation=true,sandbox=true,nodeIntegration=false'
 
 // Guest preload ↔ host renderer channels (webview `send` / `sendToHost`).
 export const BROWSER_PICK_START_CHANNEL = 'browser:pick:start'

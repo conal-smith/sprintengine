@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
-  BROWSER_PICK_CANCELLED_CHANNEL,
   BROWSER_PICK_START_CHANNEL,
   BROWSER_PICK_STOP_CHANNEL,
-  BROWSER_PICKED_CHANNEL,
   BROWSER_WEBPREFERENCES,
   type BrowserConfig,
   type BrowserHostKey,
@@ -37,7 +35,7 @@ import { BrowserToolbar, type BrowserToolbarHandle } from './BrowserToolbar'
 import { BrowserViewMenu } from './BrowserViewMenu'
 import { BrowserRecordingIndicator } from './BrowserRecordingIndicator'
 import { useTabRecording } from './useTabRecording'
-import { buildBrowserElementBlock, normalizePickedElement, readPickTheme, sendTextToFocusedAgent } from './browserPick'
+import { buildBrowserElementBlock, createPickGate, readPickTheme, sendTextToFocusedAgent } from './browserPick'
 import { usePaneHost } from '../paneHost'
 import { replayGuestFocusAsPress } from './guestPress'
 
@@ -367,7 +365,12 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
     }
   }
 
+  // Whether this tab asked for a pick and has not had its answer: a pick the
+  // guest reports at any other time is not one anybody started, and is dropped.
+  const pickGateRef = useRef(createPickGate())
+
   const stopPicking = useCallback(() => {
+    pickGateRef.current.stop()
     setPicking(false)
     sendToGuest(BROWSER_PICK_STOP_CHANNEL)
   }, [])
@@ -379,6 +382,7 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
       return
     }
     if (!sendToGuest(BROWSER_PICK_START_CHANNEL, readPickTheme())) return
+    pickGateRef.current.start()
     setPicking(true)
     element.focus()
   }, [config?.preloadUrl])
@@ -412,14 +416,12 @@ export function BrowserTab({ workspaceId, tab, active }: BrowserTabProps) {
     if (!element) return
     const onMessage = (event: Event) => {
       const message = event as WebviewIpcMessageEvent
-      if (message.channel === BROWSER_PICKED_CHANNEL) {
-        // The page owns the guest's world; nothing it reports is trusted as-is.
-        const payload = normalizePickedElement(message.args[0])
-        if (payload) void handlePicked(payload)
-        else setPicking(false)
-      } else if (message.channel === BROWSER_PICK_CANCELLED_CHANNEL) {
-        setPicking(false)
-      }
+      // What a pick reports is the page's element, described by the page:
+      // nothing in it is trusted as-is (the gate re-types and caps it).
+      const outcome = pickGateRef.current.hear(message.channel, message.args)
+      if (!outcome) return
+      if (outcome.kind === 'picked') void handlePicked(outcome.element)
+      else setPicking(false)
     }
     element.addEventListener('ipc-message', onMessage)
     return () => element.removeEventListener('ipc-message', onMessage)

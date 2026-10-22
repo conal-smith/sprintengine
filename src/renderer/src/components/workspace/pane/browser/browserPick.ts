@@ -1,5 +1,7 @@
 import {
   BROWSER_MAX_OUTER_HTML,
+  BROWSER_PICK_CANCELLED_CHANNEL,
+  BROWSER_PICKED_CHANNEL,
   type BrowserPickTheme,
   type BrowserPickedElement,
 } from '../../../../../../shared/browser'
@@ -21,11 +23,11 @@ export function buildBrowserElementBlock(picked: BrowserPickedElement, screensho
     picked.source ? `source="${escapeAttribute(picked.source)}"` : null,
   ].filter((part): part is string => part !== null)
   const styles = Object.entries(picked.styles)
-    .map(([key, value]) => `${key}:${value}`)
+    .map(([key, value]) => `${key}:${value.replace(/</g, '&lt;').replace(/>/g, '&gt;')}`)
     .join('; ')
   const lines = [
     `<browser_element ${attributes.join(' ')}>`,
-    `<html>${picked.outerHtml}</html>`,
+    `<html>${withinBlock(picked.outerHtml)}</html>`,
     styles ? `<styles>${styles}</styles>` : null,
     '</browser_element>',
     screenshotPath ? `Screenshot: ${screenshotPath}` : null,
@@ -33,13 +35,22 @@ export function buildBrowserElementBlock(picked: BrowserPickedElement, screensho
   return lines.join('\n')
 }
 
+// The element's HTML is the page's, and the page could write the block's own
+// tags into it: a `</browser_element>` there would end the block early and
+// leave the rest reading as if Studio had written it. Each of the block's tag
+// names is escaped where it opens a tag, which leaves the HTML readable.
+function withinBlock(html: string): string {
+  return html.replace(/<(\/?)(browser_element|html|styles)(?=[\s>/]|$)/gi, '&lt;$1$2')
+}
+
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/\n/g, ' ')
 }
 
-// The page controls what the guest preload reports (context isolation is off
-// for the picker), so the payload is untrusted: every field is re-typed and
-// re-capped here before it reaches an agent's prompt or the clipboard.
+// The page controls what the guest preload reports (the element, its HTML and
+// what its own world says about React), so the payload is untrusted: every
+// field is re-typed and re-capped here before it reaches an agent's prompt or
+// the clipboard.
 const MAX_TEXT = 200
 const MAX_SELECTOR = 1000
 const MAX_URL = 2048
@@ -107,6 +118,35 @@ export function normalizePickedElement(input: unknown): BrowserPickedElement | n
     styles,
     components,
     source: cappedString(raw.source, 500),
+  }
+}
+
+/** What a message from the guest's picker comes to, once a tab has heard it. */
+export type PickOutcome = { kind: 'picked'; element: BrowserPickedElement } | { kind: 'ended' }
+
+/**
+ * A tab's pick, from its start to its answer. The guest's word is heard only
+ * while a pick the person started is waiting: a pick reported at any other
+ * time is dropped, and the first answer ends the pick.
+ */
+export function createPickGate() {
+  let active = false
+  return {
+    start(): void {
+      active = true
+    },
+    stop(): void {
+      active = false
+    },
+    /** The outcome of one message on the guest's channel, or null when it is not a pick's answer. */
+    hear(channel: string, args: readonly unknown[]): PickOutcome | null {
+      if (channel !== BROWSER_PICKED_CHANNEL && channel !== BROWSER_PICK_CANCELLED_CHANNEL) return null
+      if (!active) return null
+      active = false
+      if (channel === BROWSER_PICK_CANCELLED_CHANNEL) return { kind: 'ended' }
+      const element = normalizePickedElement(args[0])
+      return element ? { kind: 'picked', element } : { kind: 'ended' }
+    },
   }
 }
 

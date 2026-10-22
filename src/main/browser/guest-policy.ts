@@ -26,17 +26,17 @@ export function applyGuestWebPreferences(
     return false
   if (typeof params.src === 'string' && params.src && !isLoadableBrowserUrl(params.src)) return false
   // The only preload a guest may carry is the element picker we ship; any
-  // other path is dropped. The picker reads the page's React fiber, which an
-  // isolated world cannot see, so context isolation is off exactly when that
-  // preload is present — and the preload is sandboxed either way.
+  // other path is dropped. Context isolation is on for every guest: the picker
+  // runs in its own world, out of the page's reach, and reads the React fiber
+  // (which lives in the page's world) with a script it runs there for the one
+  // element picked (browser-guest.ts).
   const requested = webPreferences.preload
   if (pickerPreloadPath && requested && resolve(requested) === resolve(pickerPreloadPath)) {
     webPreferences.preload = pickerPreloadPath
-    webPreferences.contextIsolation = false
   } else {
     delete webPreferences.preload
-    webPreferences.contextIsolation = true
   }
+  webPreferences.contextIsolation = true
   webPreferences.sandbox = true
   webPreferences.nodeIntegration = false
   webPreferences.nodeIntegrationInSubFrames = false
