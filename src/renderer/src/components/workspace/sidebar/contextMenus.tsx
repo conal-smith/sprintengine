@@ -28,6 +28,7 @@ import { type ProjectColorSetting, type ProjectColor } from '../../../utils/proj
 import { chatLinkFor } from '../../../../../shared/deep-link'
 import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { clientSupports } from '../../../clientCapabilities'
+import { cliForConversationProvider } from '../../../../../shared/conversation-harness'
 import { chatMenuTooltips as tips, type ChatMenuPlace } from './chatMenuTooltips'
 
 export function sidebarWorkspaceOf(workspace: Workspace): {
@@ -51,6 +52,26 @@ export function workspaceTypeRowActions(
   const type = resolveEnabledWorkspaceType(workspace.mode, moduleOverrides)
   const row = sidebarWorkspaceOf(workspace)
   return (type?.rowActions ?? []).filter((action) => action.isVisible?.(row) !== false)
+}
+
+/**
+ * A chat row's Auto compact switch: on by its own choice, or by the app-wide
+ * default where it left that unset; and whether its chat is Claude's, the one
+ * it works on yet. Null for a row with no chat in it, or a paired machine's.
+ */
+export function autoCompactSwitchOf(
+  workspace: Workspace,
+  enabledByDefault: boolean,
+): { on: boolean; claude: boolean } | null {
+  if (workspace.remoteOrigin) return null
+  const chats = Object.values(workspace.agents ?? {}).filter(
+    (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+  )
+  if (chats.length === 0) return null
+  return {
+    on: workspace.autoCompactEnabled ?? enabledByDefault,
+    claude: chats.some((agent) => cliForConversationProvider(agent.conversation!.providerId) === 'claude-code'),
+  }
 }
 
 /** What the rest-and-marks half of a chat's menu dispatches, on a row here or a paired machine's. */
@@ -89,6 +110,7 @@ export type ContextMenuAction =
   | 'move-to-new-window'
   | 'move-to-main-window'
   | ChatMarkAction
+  | 'toggle-auto-compact'
   | 'toggle-schedule-pause'
   | `type-action:${string}`
 
@@ -114,6 +136,7 @@ function ChatRestAndMarkItems({
   working,
   snooze,
   autoSettle,
+  autoCompact = null,
   between = null,
   onSelect,
   onPickColor,
@@ -133,8 +156,15 @@ function ChatRestAndMarkItems({
   snooze: 'wake' | { disabled: boolean } | null
   /** The Auto-settle switch's state; null leaves it off the menu. */
   autoSettle: boolean | null
+  /**
+   * The Auto compact switch: whether it is on for this chat (its own choice,
+   * or the app-wide default), and whether the chat is Claude's, the only one
+   * it works on yet. Null leaves it off the menu: a paired machine's chat, or
+   * a row with no chat in it.
+   */
+  autoCompact?: { on: boolean; claude: boolean } | null
   between?: ReactNode
-  onSelect: (action: ChatMarkAction) => void
+  onSelect: (action: ChatMarkAction | 'toggle-auto-compact') => void
   onPickColor: (color: HighlightColor) => void
 }) {
   return (
@@ -217,6 +247,22 @@ function ChatRestAndMarkItems({
           Auto-settle
         </ChatMenuItem>
       ) : null}
+      {/* Whether Studio compacts the chat by itself before its prompt cache
+          expires. Beside Auto-settle, as the other standing rule about what
+          happens to an idle chat, and a switch the same way. Off, and said
+          why, for a chat that is not Claude's. */}
+      {autoCompact ? (
+        <ChatMenuItem
+          checked={autoCompact.claude && autoCompact.on}
+          disabled={!autoCompact.claude}
+          hint={autoCompact.claude ? undefined : 'Claude only'}
+          trailing={<SwitchGlyph checked={autoCompact.claude && autoCompact.on} />}
+          tooltip={tips.autoCompact(autoCompact.claude)}
+          onClick={() => onSelect('toggle-auto-compact')}
+        >
+          Auto compact
+        </ChatMenuItem>
+      ) : null}
       <MenuSwatchRow
         label="Highlight color"
         value={color}
@@ -240,6 +286,7 @@ export function WorkspaceContextMenu({
   now,
   working,
   remoteMarks = false,
+  autoCompact = null,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
   schedule = null,
@@ -262,6 +309,11 @@ export function WorkspaceContextMenu({
    * that machine's, and `workspace` carries them as that machine lists them.
    */
   remoteMarks?: boolean
+  /**
+   * The Auto compact switch for a chat here (see `ChatRestAndMarkItems`);
+   * null leaves it off the menu.
+   */
+  autoCompact?: { on: boolean; claude: boolean } | null
   /**
    * An agent here has finished something, the chat is not the one in front,
    * and its row is not already marked: Mark unread has something to mark.
@@ -375,6 +427,7 @@ export function WorkspaceContextMenu({
         working={working}
         snooze={snoozed ? 'wake' : sleeps ? { disabled: !canSnooze } : null}
         autoSettle={remote && !remoteMarks ? null : autoSettle}
+        autoCompact={remote ? null : autoCompact}
         between={
           <>
             {/* A chat whose agent has Studio babysitting its pull request reads as
@@ -544,7 +597,11 @@ export function RemoteConversationContextMenu({
               working={working}
               snooze={snoozed ? 'wake' : { disabled: false }}
               autoSettle={autoSettle}
-              onSelect={onSelect}
+              // Auto compact is this computer's rule for its own chats: a
+              // paired machine's is never offered it.
+              onSelect={(action) => {
+                if (action !== 'toggle-auto-compact') onSelect(action)
+              }}
               onPickColor={onPickColor}
             />
           ) : (

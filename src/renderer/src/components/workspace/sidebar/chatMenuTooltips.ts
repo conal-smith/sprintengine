@@ -100,6 +100,12 @@ export const chatMenuTooltips = {
     (where.kind === 'remote'
       ? `${where.machineName} settles it, by its own Settled chats settings.`
       : 'The pull request rules are in Settings ▸ Settled chats.'),
+  // Studio's own compaction before a cache expires (conversation-auto-compact.ts):
+  // idle, Claude only, at least 100k tokens, a minute or five before expiry.
+  autoCompact: (claude: boolean) =>
+    claude
+      ? 'Compacts this chat by itself while it sits idle, just before its prompt cache expires: 1 minute before on a 5-minute cache, 5 minutes before on a 1-hour cache. Only when it holds at least 100k tokens. Compacting then reads the conversation from the cache cheaply, so coming back later doesn’t re-read all of it at the uncached price. Your visible history stays as it is; a divider marks where it compacted.'
+      : 'Only Claude chats can compact by themselves before their cache expires, for now.',
   highlight: (color: HighlightColor | null, where: ChatMenuPlace = LOCAL) =>
     (color === null
       ? "Remove this chat's highlight color."

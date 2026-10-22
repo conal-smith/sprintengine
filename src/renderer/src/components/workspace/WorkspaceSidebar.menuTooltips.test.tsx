@@ -99,6 +99,8 @@ test('every item of a chat’s menu, here or on a paired machine, has a tooltip'
         { watchedPullRequestNumber: 12, schedule: { paused: false } },
       ),
     ],
+    ['a Claude chat with Auto compact', local({}, { autoCompact: { on: true, claude: true } })],
+    ['a chat that is not Claude’s, Auto compact off', local({}, { autoCompact: { on: false, claude: false } })],
     ['a chat whose agent works', local({}, { working: true, schedule: { paused: true } })],
     ['a settled chat', local({ settledAt: now - 1_000 })],
     ['a snoozed chat', local({ snoozedUntil: now + 3_600_000 })],
