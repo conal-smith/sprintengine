@@ -49,6 +49,7 @@ import {
 import { isWindowsPath, toWslPath, wslToWindowsPath } from '../shared/host-paths'
 import { wslDistroArgs, wslDistroForPath, wslSessionPidFileCommand, wslSessionPidKey } from './hosts/wsl-distro'
 import type { HostLaunchFile, HostLaunchTarget } from './hosts/execution-host'
+import { powerShellSingleQuoted } from '../shared/powershell-quote'
 
 export type ShellLaunchConfig = {
   command: string
@@ -550,12 +551,8 @@ function quotePosixCommand(value: string): string {
   return /^[A-Za-z0-9._/-]+$/.test(value) ? value : quotePosix(value)
 }
 
-function quotePowerShell(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
-}
-
 function powerShellBase64Literal(value: string): string {
-  return `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${quotePowerShell(Buffer.from(value, 'utf8').toString('base64'))}))`
+  return `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${powerShellSingleQuoted(Buffer.from(value, 'utf8').toString('base64'))}))`
 }
 
 // Exported for terminal-launch.test.ts. The tail of the native Windows launch
@@ -1929,8 +1926,8 @@ export function buildNativeAgentLaunchPowerShellScript(
   const args = argv.slice(1)
   return [
     `$ErrorActionPreference = 'Continue'`,
-    `Set-Location -LiteralPath ${quotePowerShell(cwd)}`,
-    `$command = ${quotePowerShell(binary)}`,
+    `Set-Location -LiteralPath ${powerShellSingleQuoted(cwd)}`,
+    `$command = ${powerShellSingleQuoted(binary)}`,
     `$arguments = @(${args.map((arg) => powerShellBase64Literal(arg)).join(', ')})`,
     ...powerShellTypedPromptEnvLines(plan.typedPromptEnv),
     ...buildNativeWindowsInvocation(args),
@@ -1945,7 +1942,7 @@ export function buildNativeAgentLaunchPowerShellScript(
 // the CLI returns: the session the script leaves behind must not run the same
 // CLI by hand with its update check silently off.
 function powerShellTypedPromptEnvLines(env: Record<string, string> | undefined): string[] {
-  return typedPromptEnvEntries(env).map(([name, value]) => `$env:${name} = ${quotePowerShell(value)}`)
+  return typedPromptEnvEntries(env).map(([name, value]) => `$env:${name} = ${powerShellSingleQuoted(value)}`)
 }
 
 function powerShellClearTypedPromptEnvLines(env: Record<string, string> | undefined): string[] {
@@ -2007,8 +2004,8 @@ export function buildCodexLegacyNativeAgentLaunchPowerShellScript(
 
   return [
     `$ErrorActionPreference = 'Continue'`,
-    `Set-Location -LiteralPath ${quotePowerShell(cwd)}`,
-    `$command = ${quotePowerShell(binary)}`,
+    `Set-Location -LiteralPath ${powerShellSingleQuoted(cwd)}`,
+    `$command = ${powerShellSingleQuoted(binary)}`,
     `$arguments = @(${args.map((arg) => powerShellBase64Literal(arg)).join(', ')})`,
     encodeArgs,
     `$resolvedCommand = Get-Command $command -ErrorAction SilentlyContinue | Select-Object -First 1`,

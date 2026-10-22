@@ -19,12 +19,12 @@ import {
   nsisUpdateArgs,
   parseRegQueryValue,
   powerShellArgs,
-  psSingleQuoted,
   resolveWindowsInstallTarget,
   sameWindowsPath,
   windowHandleToDecimal,
 } from './windows-update-install'
 import { windowsPowerShellPath } from './command-on-path'
+import { powerShellSingleQuoted } from '../shared/powershell-quote'
 
 // The three installations an update has to find, as the running app sees them.
 const PER_USER_DEFAULT = 'C:\\Users\\dev\\AppData\\Local\\Programs\\sprintengine-studio'
@@ -236,7 +236,7 @@ test('the script travels as -EncodedCommand, so nothing in it needs quoting', ()
     '-EncodedCommand',
   ])
   assert.equal(argv.at(-1), encoded)
-  assert.equal(psSingleQuoted("it's"), "'it''s'")
+  assert.equal(powerShellSingleQuoted("it's"), "'it''s'")
   assert.equal(
     windowsPowerShellPath({ SystemRoot: 'C:\\Windows' }),
     'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
