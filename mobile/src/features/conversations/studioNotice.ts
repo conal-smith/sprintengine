@@ -1,6 +1,8 @@
 // A message Studio sent a chat itself, rather than the person: news from an
-// agent the chat launched (`agent-notice`), or a resume once a usage limit
-// that stopped the chat has reset (`usage-resume`). The desktop records it as
+// agent the chat launched (`agent-notice`), a resume once a usage limit
+// that stopped the chat has reset (`usage-resume`), or the `/compact` it sent
+// an idle chat just before its prompt cache expired (`auto-compact`), which
+// the chat draws as its compaction's divider and not as a row of its own. The desktop records it as
 // a `user_message` like any other, since the agent is handed it as a turn,
 // and marks it with an `origin` on the payload (the desktop's
 // `readConversationMessageOrigin`, conversation-protocol's events.ts).
@@ -16,12 +18,16 @@
 // that (the desktop's `lastUserMessageAt`, which the list orders by, leaves it
 // out the same way).
 
-export type StudioMessageReason = "agent-notice" | "usage-resume";
+export type StudioMessageReason = "agent-notice" | "usage-resume" | "auto-compact";
 
 /** Who a `user_message` came from when it was not the person. */
 export type MessageOrigin = { kind: "studio"; reason?: StudioMessageReason };
 
-const STUDIO_MESSAGE_REASONS: readonly string[] = ["agent-notice", "usage-resume"] satisfies StudioMessageReason[];
+const STUDIO_MESSAGE_REASONS: readonly string[] = [
+  "agent-notice",
+  "usage-resume",
+  "auto-compact",
+] satisfies StudioMessageReason[];
 
 /** A `user_message` payload's `origin`, or null for the person's own message. */
 export function readMessageOrigin(value: unknown): MessageOrigin | null {

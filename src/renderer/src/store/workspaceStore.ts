@@ -243,6 +243,8 @@ export interface WorkspaceStore
   setWorkspaceChatFolder: (id: WorkspaceId, folderPath: string, worktree: WorkspaceWorktree | null) => void
   /** Take a chat out of auto-settling (idle and merge alike), or put it back. */
   setWorkspaceAutoSettle: (id: WorkspaceId, enabled: boolean) => void
+  /** This chat's Auto compact: on, off, or `null` to follow the app-wide default. */
+  setWorkspaceAutoCompact: (id: WorkspaceId, enabled: boolean | null) => void
   /**
    * Put a chat to sleep until `wakeAt`, or wake it now with `null`. The RECORD
    * only: suspending the chat's terminals is the sidebar's half of the gesture
@@ -282,6 +284,7 @@ export interface WorkspaceStore
   setLastSelectedCli: (cli: AgentCli) => void
   /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
   setWorktreeBranchPrefix: (prefix: string) => void
+  setAutoCompactChats: (enabled: boolean) => void
   recordProjectUse: (folderPath: string) => void
   setLastSelectedConversationModel: (selection: AgentConversationRuntime | null) => void
   setTextGenerationEnabled: (enabled: boolean) => void

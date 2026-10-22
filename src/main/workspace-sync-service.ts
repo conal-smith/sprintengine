@@ -675,6 +675,7 @@ const EDITABLE_FIELDS = [
   'settledAt',
   'settledOverride',
   'autoSettleEnabled',
+  'autoCompactEnabled',
   'snoozedUntil',
   'highlight',
   'worktree',
@@ -694,6 +695,7 @@ const FIELD_VALUE_CHECKS: Partial<Record<(typeof EDITABLE_FIELDS)[number], (valu
   settledAt: (value) => value === null || (typeof value === 'number' && Number.isFinite(value)),
   settledOverride: (value) => value === null || value === 'settled' || value === 'active',
   autoSettleEnabled: (value) => value === null || typeof value === 'boolean',
+  autoCompactEnabled: (value) => value === null || typeof value === 'boolean',
   snoozedUntil: (value) => value === null || (typeof value === 'number' && Number.isFinite(value)),
   // A star and one of the row menu's colours: what a paired device reads back
   // off the chat list (`parseConversationWireHighlight`).

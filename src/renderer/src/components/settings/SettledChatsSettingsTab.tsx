@@ -35,6 +35,8 @@ export function SettledChatsSettingsTab({
   const setSettleOnMerge = useWorkspaceStore((s) => s.setSettleOnPullRequestMerge)
   const keepWithOpenPr = useWorkspaceStore((s) => s.appSettings.keepChatsWithOpenPullRequest)
   const setKeepWithOpenPr = useWorkspaceStore((s) => s.setKeepChatsWithOpenPullRequest)
+  const autoCompact = useWorkspaceStore((s) => s.appSettings.autoCompactChats)
+  const setAutoCompact = useWorkspaceStore((s) => s.setAutoCompactChats)
   // One clock for the visit: "settled 3d ago" does not need to tick while the
   // page is open, and a timer here would re-render the list for nothing.
   const [now] = useState(() => Date.now())
@@ -91,6 +93,12 @@ export function SettledChatsSettingsTab({
           description="For chats with Auto-settle switched on from their menu: a chat whose pull request is still open, waiting on review or still a draft, does not settle after three days without activity. Settling when its pull requests merge is the setting above."
           enabled={keepWithOpenPr}
           onChange={setKeepWithOpenPr}
+        />
+        <SettingToggle
+          label="Auto compact idle chats"
+          description="For Claude chats that leave Auto compact to this default in their menu: a chat holding at least 100k tokens compacts by itself while it sits idle, just before its prompt cache expires, so coming back later doesn't re-read all of it at the uncached price. Your visible history stays as it is; a divider marks where it compacted."
+          enabled={autoCompact}
+          onChange={setAutoCompact}
         />
       </SettingCard>
       {chats.length === 0 ? (

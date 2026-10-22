@@ -9,6 +9,7 @@ import {
   STUDIO_COMMANDS_CAPABILITY,
   STUDIO_CONVERSATION_FILES_CAPABILITY,
   STUDIO_FILES_CAPABILITY,
+  STUDIO_HANDOFF_CAPABILITY,
   STUDIO_PROVIDERS_CAPABILITY,
   STUDIO_SESSIONS_CAPABILITY,
   STUDIO_WORKSPACES_CAPABILITY,
@@ -208,6 +209,11 @@ export type StudioChatMethodMap = {
     result: StudioOutcome
   }
   'conversation.fork': { params: StudioForkParams; result: StudioOutcome }
+  /** Hand a chat off to a fresh session pointed at a file of its messages; answers that file's path. */
+  'conversation.handoff': {
+    params: { commandId: string; key: StudioConversationKey }
+    result: { ok: true; path: string } | { ok: false; message: string }
+  }
   'conversation.attachment': {
     params: { ref: string }
     result: { ok: true; mediaType: string; dataBase64: string } | { ok: false; message: string }
@@ -283,6 +289,7 @@ export const STUDIO_CHAT_METHODS: { readonly [M in StudioChatMethod]: StudioMeth
   'conversation.revert': owned('conversation:operate', STUDIO_CHECKPOINTS_CAPABILITY, true),
   'conversation.rewind': owned('conversation:operate', STUDIO_CHECKPOINTS_CAPABILITY, true),
   'conversation.fork': owned('conversation:create', STUDIO_CHECKPOINTS_CAPABILITY, true),
+  'conversation.handoff': owned('conversation:operate', STUDIO_HANDOFF_CAPABILITY, true),
   'conversation.attachment': owned('conversation:read', STUDIO_CONVERSATION_FILES_CAPABILITY, false),
   // Writes the plan into Studio's data when the agent kept no copy of its
   // own, the same text to the same file however often it is asked.
@@ -591,6 +598,12 @@ export function parseStudioChatParams<M extends StudioChatMethod>(method: M, par
       if (!key) return refuse(KEY)
       if (!(integer(value.turnSeq) && value.turnSeq >= 1)) return refuse('"turnSeq" is the message to go back to.')
       return ok({ commandId: value.commandId, key, turnSeq: value.turnSeq })
+    }
+    case 'conversation.handoff': {
+      if (!id(value.commandId)) return refuse(COMMAND_ID)
+      const key = parseStudioConversationKey(value.key)
+      if (!key) return refuse(KEY)
+      return ok({ commandId: value.commandId, key })
     }
     case 'conversation.fork': {
       if (!id(value.commandId)) return refuse(COMMAND_ID)

@@ -689,6 +689,7 @@ export const defaultAppSettings = (): AppSettings => ({
   cliPermissionModes: {},
   projectUsage: {},
   worktreeBranchPrefix: AGENT_BRANCH_PREFIX,
+  autoCompactChats: false,
   lastSelectedAgentModel: null,
   projectKnowledgeRoots: {},
   // Nothing seen yet. Every project in the map got there by being shown once,
@@ -759,6 +760,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     cliPermissionModes: normalizeCliPermissionModes(settings?.cliPermissionModes),
     projectUsage: normalizeProjectUsageMap(settings?.projectUsage),
     worktreeBranchPrefix: effectiveWorktreeBranchPrefix(settings?.worktreeBranchPrefix),
+    autoCompactChats: settings?.autoCompactChats === true,
     // Every field here is built explicitly and `settings` is never spread, so a
     // key an older build persisted drops on every hydration — the same
     // merge-not-only-migrate enforcement as the opt-in reset below.
@@ -999,6 +1001,8 @@ export interface SettingsSliceActions {
   setLastSelectedCli: (cli: AgentCli) => void
   /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
   setWorktreeBranchPrefix: (prefix: string) => void
+  /** Auto compact for chats that leave it to the default (Settings ▸ Settled chats). */
+  setAutoCompactChats: (enabled: boolean) => void
   /**
    * Count a new chat started in the project at `folderPath`, for the project
    * pickers' order. Main records it and the store follows main's broadcast;
@@ -1459,6 +1463,13 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.worktreeBranchPrefix = worktreeBranchPrefix
       })
       launchSettingsClient.update({ worktreeBranchPrefix })
+    },
+
+    setAutoCompactChats: (enabled) => {
+      set((state) => {
+        state.appSettings.autoCompactChats = enabled
+      })
+      launchSettingsClient.update({ autoCompactChats: enabled })
     },
 
     recordProjectUse: (folderPath) => {

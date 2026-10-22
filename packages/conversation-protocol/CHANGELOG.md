@@ -13,6 +13,20 @@
 
 ### Added
 
+- **A chat can be handed off to a fresh session.** `context_handed_off` joins
+  `CONVERSATION_EVENT_TYPES`, with its payload as
+  `ConversationHandoffPayload` (`path`, `preTokens`, `seedOwed`,
+  `providerSessionId: null`): the chat's messages, without its tool calls,
+  were saved to a file on the machine the agent runs on, the provider session
+  was let go, and the person's next message points the new one at the file.
+  It sits between turns. A client that does not know it skips it, as it skips
+  any event type it does not know, and draws the conversation without the
+  divider. Not a pinned file.
+- **Studio compacts an idle chat before its cache expires.**
+  `ConversationStudioMessageReason` gains `auto-compact`: a `/compact` the
+  desktop sent a chat by itself, while it sat idle with its prompt cache about
+  to go cold. `readConversationMessageOrigin` keeps it; an older reader still
+  reads the message as Studio's, without a reason. Not a pinned file.
 - **A listed chat says how a person marked it.** `highlight` and
   `autoSettle` are optional members of `ConversationThread`. `highlight`
   (`ConversationWireHighlight`, `{ starred, color? }`) is the star and the

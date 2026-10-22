@@ -247,6 +247,7 @@ test('a fresh record carries zeroed stamps unless seeded', () => {
     settledAt: 0,
     settledOverride: 0,
     autoSettleEnabled: 0,
+    autoCompactEnabled: 0,
     snoozedUntil: 0,
   })
   assert.deepEqual(toWorkspaceRegistryRecord(workspace(), 1).fieldEditedAt, emptyWorkspaceRegistryFieldStamps())

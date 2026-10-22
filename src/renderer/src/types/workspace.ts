@@ -350,6 +350,12 @@ export type AppSettings = {
    */
   worktreeBranchPrefix: string
   /**
+   * Auto compact for every chat whose own menu leaves it unset (Settings ▸
+   * Settled chats): off unless switched on. A read model of main's launch
+   * settings, since main runs the compaction with no window open.
+   */
+  autoCompactChats: boolean
+  /**
    * The model (and reasoning-effort level) an agent spawn last ran on, stored
    * with the CLI it was picked for so a later CLI switch cannot leak a stale
    * model across CLIs. Honored only when the spawn's effective CLI matches;
@@ -948,6 +954,12 @@ export type Workspace = {
   // Settle. Absent or null is the default, auto-settle OFF — a chat only ever
   // leaves the list because someone asked it to.
   autoSettleEnabled?: boolean | null
+  // Auto compact, from the chat's menu: Studio compacts the chat by itself
+  // while it sits idle, just before its prompt cache expires. `true` or
+  // `false` is the person's choice for this chat; absent or null follows the
+  // app-wide default (Settings ▸ Settled chats, `autoCompactChats`), which is
+  // off. Read in main (conversation-auto-compact.ts), never by a window.
+  autoCompactEnabled?: boolean | null
   // When set, the chat is asleep until this instant: it renders in its folder's
   // Snoozed shelf rather than in the active list, wearing the countdown to its
   // wake. Set from the row menu's Snooze presets; cleared by opening the chat,

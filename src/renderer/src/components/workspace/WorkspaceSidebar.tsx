@@ -204,6 +204,7 @@ import {
   FolderContextMenu,
   RemoteConversationContextMenu,
   WorkspaceContextMenu,
+  autoCompactSwitchOf,
   chatLinkIdOf,
   isChatMarkChange,
   workspaceTypeRowActions,
@@ -467,6 +468,8 @@ function WorkspaceSidebar({
   const setWorkspaceHighlight = useWorkspaceStore((s) => s.setWorkspaceHighlight)
   const setWorkspaceSettled = useWorkspaceStore((s) => s.setWorkspaceSettled)
   const setWorkspaceAutoSettle = useWorkspaceStore((s) => s.setWorkspaceAutoSettle)
+  const setWorkspaceAutoCompact = useWorkspaceStore((s) => s.setWorkspaceAutoCompact)
+  const autoCompactByDefault = useWorkspaceStore((s) => s.appSettings.autoCompactChats)
   const setWorkspaceSnoozed = useWorkspaceStore((s) => s.setWorkspaceSnoozed)
   const clearWorkspaceHighlight = useWorkspaceStore((s) => s.clearWorkspaceHighlight)
   // The person changing a project's colour from its header menu; the only
@@ -3634,6 +3637,10 @@ function WorkspaceSidebar({
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? remoteMarksTargetOf(workspace) !== null : false
           })()}
+          autoCompact={(() => {
+            const workspace = workspaceById.get(contextMenu.workspaceId)
+            return workspace ? autoCompactSwitchOf(workspace, autoCompactByDefault) : null
+          })()}
           canMarkUnread={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? canMarkWorkspaceUnread(workspace) : false
@@ -3754,6 +3761,13 @@ function WorkspaceSidebar({
             }
             if (action === 'toggle-auto-settle') {
               setWorkspaceAutoSettle(workspace.id, workspace.autoSettleEnabled !== true)
+              return
+            }
+            // The chat's own choice from here on, the other way from what it
+            // reads as now, whether that came from the default or from it.
+            if (action === 'toggle-auto-compact') {
+              const current = autoCompactSwitchOf(workspace, autoCompactByDefault)
+              if (current?.claude) setWorkspaceAutoCompact(workspace.id, !current.on)
               return
             }
             if (action === 'toggle-settle') {

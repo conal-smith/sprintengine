@@ -279,6 +279,7 @@ interface WorkspacesSliceActions {
   setWorkspaceWorktreeReclaimed: (id: WorkspaceId, reclaimedAt: number | null) => void
   setWorkspaceChatFolder: (id: WorkspaceId, folderPath: string, worktree: WorkspaceWorktree | null) => void
   setWorkspaceAutoSettle: (id: WorkspaceId, enabled: boolean) => void
+  setWorkspaceAutoCompact: (id: WorkspaceId, enabled: boolean | null) => void
   /**
    * Put a chat to sleep until `wakeAt`, or wake it now with `null`. The RECORD
    * only: suspending the chat's terminals is the sidebar's half of the gesture
@@ -1037,6 +1038,21 @@ export function createWorkspacesSlice(
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws || (ws.autoSettleEnabled === true) === enabled) return
+        Object.assign(ws, patch)
+        changed = true
+      })
+      if (changed) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, patch)
+    },
+
+    // The row menu's Auto compact switch: `true` or `false` for this chat,
+    // `null` to follow the app-wide default again. Compacts nothing by
+    // itself: main's scheduler reads it the next time it looks.
+    setWorkspaceAutoCompact: (id, enabled) => {
+      const patch: WorkspaceFieldsPatch = { autoCompactEnabled: enabled }
+      let changed = false
+      set((state) => {
+        const ws = state.workspaces.find((w) => w.id === id)
+        if (!ws || (ws.autoCompactEnabled ?? null) === enabled) return
         Object.assign(ws, patch)
         changed = true
       })

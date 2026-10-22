@@ -39,6 +39,7 @@
 
 import React from 'react'
 import { Popover } from './Popover'
+import { Tooltip } from './Tooltip'
 import { MenuItem, roveMenuFocus } from './ContextMenu'
 import { MENU_GROUP_LABEL_CLASS, MENU_LIST_CLASS } from './menuClasses'
 import { FOCUS_RING_INSET_CLASS } from './tokens'
@@ -144,6 +145,12 @@ export type SplitButtonProps = {
    * it could quietly re-bind any of them.
    */
   primaryData?: { name: `data-${string}`; value: string }
+  /**
+   * What the primary half does, in a sentence, on hover and focus: for a
+   * primary whose verb alone does not say what it costs or keeps (Handoff
+   * beside Compact). The chevron half's own name is its menu's.
+   */
+  primaryTooltip?: React.ReactNode
   disabled?: boolean
   className?: string
 }
@@ -204,6 +211,7 @@ export function SplitButton({
   onMenuOpenChange,
   primaryRef,
   primaryData,
+  primaryTooltip,
   quiet = false,
   layer = 'popover',
   disabled = false,
@@ -264,7 +272,7 @@ export function SplitButton({
       : 'h-control-sm rounded-sm border border-[color:var(--border-strong)] bg-transparent',
   ].join(' ')
 
-  const primaryHalf = (
+  const primaryButton = (
     <button
       ref={primaryRef}
       type="button"
@@ -277,6 +285,13 @@ export function SplitButton({
       {glyph}
       {label}
     </button>
+  )
+  const primaryHalf = primaryTooltip ? (
+    <Tooltip content={primaryTooltip} multiline placement="top" layer={layer} wrapperClassName="flex">
+      {primaryButton}
+    </Tooltip>
+  ) : (
+    primaryButton
   )
 
   // One TARGET: the group is its primary half and nothing else. No `Popover` is
