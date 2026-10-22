@@ -1838,6 +1838,7 @@ export function createAppServices(
               linkLaunchedAgent: (link) => agentLaunchNotices.link(link),
               resolveAgentPermissionPreset,
               createWorkspace: (input, actor) => workspaceSyncService.createWorkspace(input, actor),
+              studioDataDirs: () => [app.getPath('userData')],
               getScheduledAgents: () => resolveScheduledAgents(),
               ...launchSettingsGatewayDeps(agentLaunchSettings),
               // module.*/marketplace.*. The registry snapshot is the
