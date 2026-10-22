@@ -54,12 +54,17 @@ export const CLI_EXITED_SENTINEL = `\x1b]${CLI_EXITED_OSC}\x07`
  * progress bar, a CRLF log) reads as a submit to some line editors; other C0
  * controls (^C, ^D) are keys, not text. Tabs, newlines and ESC-led colour codes
  * are kept: inside the block they are text.
+ *
+ * The markers go last and until none is left: removing one marker, or a
+ * control character, can join the text either side of it into another.
  */
 export function sanitizeTypedPrompt(text: string): string {
-  return text
-    .replace(/\x1b\[20[01]~/g, '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]/g, '')
+  let clean = text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]/g, '')
+  for (let previous = ''; previous !== clean;) {
+    previous = clean
+    clean = clean.replace(/\x1b\[20[01]~/g, '')
+  }
+  return clean
 }
 /** How long output must have been quiet, once the CLI is reading, before the paste goes. */
 export const DEFERRED_PROMPT_QUIET_MS = 500
