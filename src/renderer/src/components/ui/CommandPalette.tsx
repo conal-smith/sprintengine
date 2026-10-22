@@ -13,6 +13,7 @@ import {
   clampPaletteSelection,
   commandMatchesQuery,
   composeRestingPage,
+  foldConversationMatches,
   groupInScope,
   orderPaletteCommands,
   PALETTE_SCOPE_ORDER,
@@ -37,10 +38,14 @@ import {
   type ExtensionSkillRow,
   type ExtensionSourceRow,
 } from '../palette/extensionsProvider'
-import { createConversationHistoryProvider } from '../palette/conversationHistoryProvider'
+import { createConversationHistoryProvider, type SearchableChat } from '../palette/conversationHistoryProvider'
+import { paletteBackdropIsConversation } from '../palette/paletteBackdrop'
+import { sortWorkspacesByUserMessage } from '../../utils/workspaceRecency'
 import {
   chatBranch,
-  chatPullRequestBadge,
+  chatMatchReason,
+  chatProjectName,
+  chatPullRequestShown,
   chatSearchKeywords,
   mergeChatPullRequests,
   sameChatPullRequests,
@@ -68,7 +73,10 @@ import {
 import { requestTerminalFocus, type TerminalFocusTarget } from '../../utils/terminalFocusRequest'
 import { acquireTerminalRepaintPause } from '../../utils/terminalRepaintPause'
 import { isLiveTerminal, useTerminalSessions } from '../../hooks/useTerminalSessions'
-import { GeneralSettingsIcon, NewChatIcon, RemoteMachineGlyph, WorkspaceTypeIcon } from '../AppIcons'
+import { ChatGlyph, GeneralSettingsIcon, NewChatIcon, RemoteMachineGlyph, WorkspaceTypeIcon } from '../AppIcons'
+import { cliForConversationProvider } from '../../../../shared/conversation-harness'
+import { ConversationResultRow } from '../palette/ConversationResultRow'
+import { shapeSnippet, snippetSpeaker } from '../palette/conversationSnippet'
 import CliIcon from '../CliIcon'
 import { getExtensionsSurfaceHost } from '../workspace/globalSurface/extensions/extensionsSurfaceHost'
 import { dispatchExtensionsSurfaceTarget } from '../workspace/globalSurface/extensions/extensionsSurfaceTarget'
@@ -140,7 +148,7 @@ const PALETTE_SCOPE_TABS: TabItem<PaletteScope>[] = PALETTE_SCOPE_ORDER.map((sco
 const PALETTE_PLACEHOLDER: Record<PaletteScope, string> = {
   all: 'Search chats, skills, plugins, files, text, actions…',
   skills: 'Filter installed skills…',
-  conversations: 'Search chats and workspaces by title or folder…',
+  conversations: 'Search chats by title, folder or what was said…',
   files: 'Search file names…',
   text: 'Search text in files…',
   actions: 'Search commands and actions…',
@@ -149,7 +157,7 @@ const PALETTE_PLACEHOLDER: Record<PaletteScope, string> = {
 const PALETTE_INPUT_LABEL: Record<PaletteScope, string> = {
   all: 'Search chats, skills, plugins, files, text in files, and actions',
   skills: 'Filter installed skills for this agent CLI',
-  conversations: 'Search chats and workspaces by title or folder',
+  conversations: 'Search chats by title, folder or what was said in them',
   files: 'Search file names',
   text: 'Search text in files',
   actions: 'Search commands and actions',
@@ -380,6 +388,12 @@ export default function CommandPalette({
   // the scrim's. `isAlive` is the self-heal: a hold whose dialog has left the
   // document is reclaimed by the store's watchdog.
   const dialogRef = useRef<HTMLDivElement>(null)
+  // Over a conversation, and only then, the scrim blurs as well as darkens
+  // (owner ruling 2026-10-21): read once, from what is drawn beneath as the
+  // palette opens. A terminal in view keeps the plain tone — the pause above
+  // fails open after two minutes, and a full-window blur over a streaming
+  // pane is the ~10fps measurement (`paletteBackdrop.ts`).
+  const [blurBackdrop] = useState(() => paletteBackdropIsConversation())
   useEffect(
     () =>
       acquireTerminalRepaintPause({
@@ -693,13 +707,19 @@ export default function CommandPalette({
           // in front of every one of them was the verb said eight times.
           // "switch" still finds them, through the keywords.
           label: workspace.name,
-          description: workspace.folderPath ?? (workspace.id === activeWorkspaceId ? 'active workspace' : undefined),
-          // Its pull requests and branch ride the keywords: found by `#482`
-          // or the branch name, never printed under the title.
-          keywords: `switch to ${workspaceSearchKeywords(workspace.mode)} ${chatSearchKeywords(
-            chatPullRequests.get(workspace.id) ?? [],
-            chatBranch(workspace),
-          )}`.trimEnd(),
+          // Its folder, pull requests and branch ride the keywords: found by
+          // a path, `#482` or the branch name. None is printed under the
+          // title as a matter of course — the row names its project beside
+          // the title, and says which of these matched when one did
+          // (`chatMatchReason`).
+          keywords: [
+            'switch to',
+            workspaceSearchKeywords(workspace.mode),
+            workspace.folderPath,
+            chatSearchKeywords(chatPullRequests.get(workspace.id) ?? [], chatBranch(workspace)),
+          ]
+            .filter(Boolean)
+            .join(' '),
           mark: { kind: 'chat', workspaceId: workspace.id, mode: workspace.mode },
           group: 'agents',
           run: () => {
@@ -1192,6 +1212,27 @@ export default function CommandPalette({
     [],
   )
 
+  // What was said in every chat the sidebar lists, not only the open one's:
+  // a person searching for a conversation is rarely sitting in it. Most
+  // recently spoken in first, so the likely answer lands first. Read through a
+  // ref, because the list is a new array on most store writes and a provider
+  // rebuilt for that would restart a search of every transcript.
+  const searchableChats = useMemo(
+    (): SearchableChat[] =>
+      sortWorkspacesByUserMessage(workspaces)
+        .filter((workspace) => !isHiddenFromRail(workspace, moduleEnablement))
+        // A chat on a paired or SSH machine keeps its history over there.
+        .filter((workspace) => workspace.folderPath && !workspace.remoteOrigin && !workspace.environment)
+        .map((workspace) => ({
+          workspaceId: workspace.id,
+          workspaceRoot: workspace.folderPath!,
+          name: workspace.name,
+          mode: workspace.mode,
+        })),
+    [workspaces, moduleEnablement],
+  )
+  const searchableChatsRef = useRef(searchableChats)
+  searchableChatsRef.current = searchableChats
   // Only the providers whose groups the scope admits. A provider whose rows
   // would be filtered out anyway must not RUN: Find-in-Path would otherwise
   // read every source's scan for a list it hides, and the terminal star would
@@ -1202,8 +1243,8 @@ export default function CommandPalette({
   // is how the runner is told to ask again. The provider objects are unchanged,
   // so a warm already done is not repeated.
   const conversationHistoryProvider = useMemo(
-    () => createConversationHistoryProvider(),
-    [activeFolderPath, activeWorkspaceId],
+    () => createConversationHistoryProvider({ getChats: () => searchableChatsRef.current }),
+    [],
   )
   // "Build your own extension", among the Extensions rows: it opens the New
   // chat door in extension mode.
@@ -1237,7 +1278,10 @@ export default function CommandPalette({
     const q = query.trim()
     const inScope = (command: Command) => groupInScope(command.group, scope)
     const matched = q ? commands.filter((command) => commandMatchesQuery(command, q)) : commands
-    const all = [...matched, ...provided.commands].filter(inScope)
+    // One row per chat: a chat found by its title and by what was said in it
+    // is one row, and a message row left from an earlier keystroke that does
+    // not hold this query is not shown under it.
+    const all = foldConversationMatches(matched, provided.commands, q).filter(inScope)
     const ordered = orderPaletteCommands(all, q)
     if (q) return ordered
     const perGroup = new Map<CommandGroup, number>()
@@ -1289,6 +1333,26 @@ export default function CommandPalette({
     }
     return map
   }, [terminalSessions])
+
+  // The chats by id, for the rows that draw one: its project, its pull
+  // request, and why it matched are read off the workspace, not the row.
+  const workspaceById = useMemo(() => new Map(workspaces.map((workspace) => [workspace.id, workspace])), [workspaces])
+  // The agent a chat's mark shows. A chat tab has no terminal session, so the
+  // sessions alone left every agent chat on the workspace type's terminal
+  // glyph — the mark a search for "wave" showed beside two chats, which says
+  // nothing about them. Its agents say which CLI it rides, the way the
+  // sidebar's chat line reads it (`conversationLineMark`); a chat whose
+  // provider is not a CLI keeps the chat glyph.
+  const chatAgentMark = (workspaceId: string): { cli: string | null; chat: boolean } => {
+    const fromSession = cliByWorkspaceId.get(workspaceId)
+    if (fromSession?.alive) return { cli: fromSession.cli, chat: false }
+    const workspace = workspaceById.get(workspaceId as WorkspaceId)
+    const conversation = Object.values(workspace?.agents ?? {}).find(
+      (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+    )
+    if (conversation) return { cli: cliForConversationProvider(conversation.conversation?.providerId), chat: true }
+    return { cli: fromSession?.cli ?? null, chat: false }
+  }
 
   const restingPage = !query.trim() && scope === 'all' && !agentChoice
   const groupedResults = useMemo((): { key: CommandGroup; label: string; items: Command[] }[] => {
@@ -1379,6 +1443,42 @@ export default function CommandPalette({
     }
   }
 
+  const renderChatRow = (command: Command, mark: Extract<PaletteRowMark, { kind: 'chat' }>): React.ReactNode => {
+    const workspace = workspaceById.get(mark.workspaceId as WorkspaceId)
+    const pullRequests = chatPullRequests.get(mark.workspaceId) ?? []
+    // The pull request the query names when it names one, so a search for
+    // `#482` shows which chat holds it; otherwise the one the sidebar shows.
+    const pullRequest = chatPullRequestShown(pullRequests, query)
+    const q = query.trim()
+    const said = command.conversationMatch
+    const shaped = said ? shapeSnippet(said.snippet, q) : null
+    const reason =
+      !shaped && workspace
+        ? chatMatchReason(
+            { name: command.label, folderPath: workspace.folderPath, pullRequests, branch: chatBranch(workspace) },
+            q,
+          )
+        : null
+    return (
+      <ConversationResultRow
+        title={command.label}
+        query={q}
+        project={workspace ? chatProjectName(workspace) : null}
+        pullRequest={pullRequest ? { number: pullRequest.number, state: pullRequest.state } : null}
+        line={
+          shaped && said
+            ? { speaker: snippetSpeaker(said.from), text: shaped, more: said.count - 1 }
+            : reason
+              ? { text: reason.text }
+              : null
+        }
+        // A type mark only where chats share the list with files, skills and
+        // actions; in the Conversations tab every row is a chat.
+        mark={scope === 'conversations' ? null : renderMark(mark)}
+      />
+    )
+  }
+
   const renderMark = (mark: PaletteRowMark): React.ReactNode => {
     switch (mark.kind) {
       case 'new-chat':
@@ -1392,7 +1492,7 @@ export default function CommandPalette({
       case 'remote':
         return <RemoteMachineGlyph className="icon-sm shrink-0" />
       case 'chat': {
-        const cli = cliByWorkspaceId.get(mark.workspaceId)?.cli
+        const agent = chatAgentMark(mark.workspaceId)
         return (
           // The sidebar's provider chip, so a chat is recognised here by the
           // same mark it wears there.
@@ -1400,8 +1500,10 @@ export default function CommandPalette({
             aria-hidden="true"
             className="flex size-icon-sm shrink-0 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)]"
           >
-            {cli ? (
-              <CliIcon cli={cli} className="icon-xs" />
+            {agent.cli ? (
+              <CliIcon cli={agent.cli} className="icon-xs" />
+            ) : agent.chat ? (
+              <ChatGlyph className="icon-xs text-[color:var(--text-muted)]" />
             ) : (
               <WorkspaceTypeIcon mode={mark.mode} className="icon-xs text-[color:var(--text-muted)]" />
             )}
@@ -1423,7 +1525,7 @@ export default function CommandPalette({
 
   return (
     <div
-      className="overlay-scrim fixed inset-0 z-[var(--z-modal)] flex items-start justify-center pt-[15vh]"
+      className={`overlay-scrim ${blurBackdrop ? 'scrim-glass ' : ''}fixed inset-0 z-[var(--z-modal)] flex items-start justify-center pt-[15vh]`}
       // `mousedown`, matching `Modal`: on `click`, a drag that STARTED inside
       // the palette (selecting the query text) and was released over the scrim
       // dismisses it, which reads as the palette closing itself.
@@ -1446,7 +1548,8 @@ export default function CommandPalette({
           // paints itself: `surface-glass`, the kit's frosted material (owner
           // ruling 2026-09-10 — the fourth sanctioned glass shell, and the
           // repaint hold above is what makes it affordable). The scrim behind
-          // stays a plain tone; it never blurs. `overflow-hidden` is the other
+          // stays a plain tone unless it covers a conversation (`blurBackdrop`
+          // above). `overflow-hidden` is the other
           // local addition: the bands' hairlines have to be clipped by the
           // shell's corners.
           className={`${OVERLAY_SHELL_CHROME_CLASS} surface-glass overflow-hidden outline-none`}
@@ -1627,13 +1730,31 @@ export default function CommandPalette({
                           </React.Fragment>
                         )
                       }
-                      // A chat with a pull request wears its number — the one
-                      // the query names when it names one — so a search for
-                      // `#482` shows which chat holds it.
-                      const badge =
-                        command.mark?.kind === 'chat'
-                          ? chatPullRequestBadge(chatPullRequests.get(command.mark.workspaceId) ?? [], query)
-                          : command.badge
+                      // A chat is drawn the way the sidebar draws it — title,
+                      // project, pull request, and the line that says why it
+                      // matched — rather than as a launcher row with its path
+                      // under it.
+                      if (command.mark?.kind === 'chat') {
+                        return (
+                          <div
+                            key={command.id}
+                            ref={isSelected ? selectedRowRef : undefined}
+                            id={`palette-option-${command.id}`}
+                            role="option"
+                            aria-selected={isSelected}
+                            onClick={command.run}
+                            onMouseEnter={() => setSelected(index)}
+                            className={`flex cursor-pointer items-center gap-2.5 px-4 py-2 transition-colors ${
+                              isSelected
+                                ? 'bg-[color:var(--bg-selected)] text-[color:var(--text-strong)]'
+                                : 'text-[color:var(--text-default)] hover:bg-[color:var(--bg-hover)] hover:text-[color:var(--text-strong)]'
+                            }`}
+                          >
+                            {renderChatRow(command, command.mark)}
+                          </div>
+                        )
+                      }
+                      const badge = command.badge
                       return (
                         <div
                           key={command.id}
