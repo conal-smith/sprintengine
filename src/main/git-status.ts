@@ -1,3 +1,4 @@
+import { withNeutralRepoPrograms } from './git-run'
 import { isAbsolute, resolve } from 'path'
 import type { GitFileStatus, GitRepoOperation, GitStatusEntry, GitStatusSnapshot } from './git'
 import { pathExists, runGit, toAbsolutePath } from './git-utils'
@@ -68,7 +69,12 @@ async function resolveOperationMarkerPaths(repoRoot: string): Promise<string[]> 
 }
 
 /** Which merge/rebase/cherry-pick/revert operation is parked in the repo, if any. */
-export async function getGitOperationInProgress(repoRoot: string): Promise<GitRepoOperation | null> {
+export function getGitOperationInProgress(repoRoot: string): Promise<GitRepoOperation | null> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => getGitOperationInProgressUnscoped(repoRoot))
+}
+
+async function getGitOperationInProgressUnscoped(repoRoot: string): Promise<GitRepoOperation | null> {
   try {
     const paths = await resolveOperationMarkerPaths(repoRoot)
     const exists = await Promise.all(paths.map((markerPath) => pathExists(markerPath)))
@@ -99,7 +105,12 @@ export async function getGitOperationInProgress(repoRoot: string): Promise<GitRe
  */
 export type { GitRowSummary } from '../shared/electron-api'
 
-export async function getGitRowSummary(repoRoot: string): Promise<GitRowSummary> {
+export function getGitRowSummary(repoRoot: string): Promise<GitRowSummary> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => getGitRowSummaryUnscoped(repoRoot))
+}
+
+async function getGitRowSummaryUnscoped(repoRoot: string): Promise<GitRowSummary> {
   let branch: string | null = null
   let isRepo = true
   try {
@@ -134,7 +145,12 @@ export async function getGitRowSummary(repoRoot: string): Promise<GitRowSummary>
   }
 }
 
-export async function getGitStatus(repoRoot: string): Promise<GitStatusSnapshot> {
+export function getGitStatus(repoRoot: string): Promise<GitStatusSnapshot> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => getGitStatusUnscoped(repoRoot))
+}
+
+async function getGitStatusUnscoped(repoRoot: string): Promise<GitStatusSnapshot> {
   const [stdout, operation] = await Promise.all([
     runGit(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
     getGitOperationInProgress(repoRoot),

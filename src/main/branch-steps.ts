@@ -1,3 +1,4 @@
+import { withNeutralRepoPrograms } from './git-run'
 import { copyFile, mkdtemp, readFile, rm, stat, utimes } from 'fs/promises'
 import { tmpdir } from 'os'
 import { isAbsolute, join, resolve } from 'path'
@@ -77,7 +78,12 @@ type NameStatusEntry = { path: string; status: BranchStepFile['status']; oldPath
  * against) has no commits it can call its own, so it reports none. That is not
  * an error: the uncommitted step still carries whatever is in the tree.
  */
-export async function listBranchSteps(cwd: string): Promise<BranchStepsSnapshot> {
+export function listBranchSteps(cwd: string): Promise<BranchStepsSnapshot> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => listBranchStepsUnscoped(cwd))
+}
+
+async function listBranchStepsUnscoped(cwd: string): Promise<BranchStepsSnapshot> {
   // Facts, not the whole span: this needs branch/base/worktree and none of the
   // numstat, and reading the span here ran a full `git diff` that was discarded.
   const facts = await readBranchFacts(cwd)
@@ -166,7 +172,12 @@ async function readLog(cwd: string, baseOid: string): Promise<BranchStep[]> {
  * - `uncommitted` — `HEAD → working tree`, plus untracked files, which `diff`
  *   cannot see because git has never tracked their content.
  */
-export async function diffBranchSelection(cwd: string, selection: BranchStepSelection): Promise<BranchStepDiff> {
+export function diffBranchSelection(cwd: string, selection: BranchStepSelection): Promise<BranchStepDiff> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => diffBranchSelectionUnscoped(cwd, selection))
+}
+
+async function diffBranchSelectionUnscoped(cwd: string, selection: BranchStepSelection): Promise<BranchStepDiff> {
   if (selection.kind === 'commit') {
     // The hash reaches argv as a POSITIONAL, which is also where git looks for
     // options — see COMMIT_HASH_PATTERN above. An unusable one is an empty diff,

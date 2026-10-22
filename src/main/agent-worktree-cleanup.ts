@@ -245,7 +245,10 @@ export async function cleanupAgentWorktrees(
   input: AgentWorktreeCleanupInput,
   deps: AgentWorktreeCleanupDeps = {},
 ): Promise<AgentWorktreeCleanupReport> {
-  const runGit = deps.runGit ?? ((cwd: string, args: string[]) => runGitCommand(cwd, args))
+  // The sweep's git is the app's own: an untrusted repository's merge drivers
+  // and filters stay off for its merge-trees and status reads (git-run.ts).
+  const runGit =
+    deps.runGit ?? ((cwd: string, args: string[]) => runGitCommand(cwd, args, undefined, { repoPrograms: 'neutral' }))
   const log = deps.log ?? ((line: string) => console.info(`[worktree-cleanup] ${line}`))
   const exists = deps.exists ?? pathExists
   const dryRun = input.dryRun === true

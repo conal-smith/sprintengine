@@ -1,3 +1,4 @@
+import { withNeutralRepoPrograms } from './git-run'
 import { isAbsolute, resolve } from 'path'
 
 import { pathExists, runGitCommand } from './git-utils'
@@ -304,7 +305,12 @@ export type BranchFacts = {
   diffFrom: string | null
 }
 
-export async function readBranchFacts(cwd: string): Promise<BranchFacts | null> {
+export function readBranchFacts(cwd: string): Promise<BranchFacts | null> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => readBranchFactsUnscoped(cwd))
+}
+
+async function readBranchFactsUnscoped(cwd: string): Promise<BranchFacts | null> {
   if (!(await pathExists(cwd))) return null
   const inRepo = await runGitCommand(cwd, ['rev-parse', '--git-dir'])
   if (!inRepo.ok) return null
@@ -345,7 +351,12 @@ export async function readBranchFacts(cwd: string): Promise<BranchFacts | null> 
  * git repository. Null is "no facts", which a caller renders as nothing; it is
  * never an error.
  */
-export async function readBranchSpan(cwd: string): Promise<BranchSpan | null> {
+export function readBranchSpan(cwd: string): Promise<BranchSpan | null> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => readBranchSpanUnscoped(cwd))
+}
+
+async function readBranchSpanUnscoped(cwd: string): Promise<BranchSpan | null> {
   const facts = await readBranchFacts(cwd)
   if (!facts) return null
   const stat = facts.diffFrom === null ? null : await diffWorkingTreeFrom(cwd, facts.diffFrom)

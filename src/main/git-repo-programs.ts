@@ -84,6 +84,12 @@ export type RepoProgramsRead = {
   hash: string
 }
 
+/**
+ * The reads that decide what the app's own git does are not themselves under
+ * that decision (and would ask for it again, for ever). Neither runs a program.
+ */
+const AS_CONFIGURED: GitRunOptions = { repoPrograms: 'as-configured' }
+
 type Run = (cwd: string, args: string[], env?: NodeJS.ProcessEnv, options?: GitRunOptions) => Promise<GitCommandResult>
 
 /**
@@ -92,21 +98,24 @@ type Run = (cwd: string, args: string[], env?: NodeJS.ProcessEnv, options?: GitR
  * Read under the repository's own settings: reading config runs none of them.
  */
 async function readRepoProgramsOnce(cwd: string, run: Run): Promise<Held | null> {
-  const dirs = await run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--absolute-git-dir'])
+  const dirs = await run(
+    cwd,
+    ['rev-parse', '--path-format=absolute', '--git-common-dir', '--absolute-git-dir'],
+    undefined,
+    AS_CONFIGURED,
+  )
   if (!dirs.ok) return null
   const [commonDir, gitDir] = dirs.stdout.split(/\r?\n/u).map((line) => line.trim())
   if (!commonDir || !gitDir) return null
   const files = [join(commonDir, 'config'), join(gitDir, 'config.worktree')]
   // Taken before the read, so a change made while git reads is seen next time.
   const stamps = await stampsOf(files)
-  const listed = await run(cwd, [
-    'config',
-    '--show-scope',
-    '--null',
-    '--includes',
-    '--get-regexp',
-    REPO_PROGRAM_KEY_PATTERN,
-  ])
+  const listed = await run(
+    cwd,
+    ['config', '--show-scope', '--null', '--includes', '--get-regexp', REPO_PROGRAM_KEY_PATTERN],
+    undefined,
+    AS_CONFIGURED,
+  )
   // Exit status 1 with nothing printed is "no such setting".
   if (!listed.ok && listed.stdout.trim() !== '') return null
   if (!listed.ok && listed.stderr.trim() !== '') return null

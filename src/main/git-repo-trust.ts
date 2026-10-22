@@ -1,3 +1,6 @@
+import { mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+
 import type { GitRepoTrustDecision, GitRepoTrustView } from '../shared/ipc/git-repo-trust'
 import { createRepoProgramsReader, type RepoProgramsRead, type RepoProgramsReader } from './git-repo-programs'
 import { installGitRepoTrust, type GitRepoTrustAnswer } from './git-run'
@@ -68,6 +71,22 @@ export function installGitRepoTrustFor(dataDir: string, log?: (line: string) => 
       store: createGitRepoTrustStore({ resolveUserDataDir: () => dataDir, ...(log ? { log } : {}) }),
     })
   installed.set(dataDir, trust)
-  installGitRepoTrust((cwd) => trust.answerFor(cwd))
+  installGitRepoTrust((cwd) => trust.answerFor(cwd), { emptyHooksDir: emptyHooksDir(dataDir, log) })
   return trust
+}
+
+/**
+ * The folder an untrusted repository's own hooks folder is swapped for: the
+ * app's, under its data folder, and emptied of anything found in it.
+ */
+function emptyHooksDir(dataDir: string, log?: (line: string) => void): string {
+  const dir = join(dataDir, 'git-empty-hooks')
+  try {
+    mkdirSync(dir, { recursive: true })
+    for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true })
+  } catch (error) {
+    // Git finds no hooks in a folder that is not there either.
+    log?.(`could not prepare ${dir}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  return dir
 }

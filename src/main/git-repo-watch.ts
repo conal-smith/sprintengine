@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import { watch as fsWatch, type FSWatcher } from 'fs'
 import { isAbsolute, join, resolve } from 'path'
 import type { GitCheckoutChange, GitCheckoutChangeKind } from '../shared/ipc/git'
-import { runGitCommand } from './git-run'
+import { runGitCommand, withNeutralRepoPrograms } from './git-run'
 
 /**
  * One main-side schedule for every git READ the views make, driven by the
@@ -90,7 +90,12 @@ type GitDirs = { toplevel: string; gitDir: string; commonDir: string }
  * The toplevel and both git directories for a checkout, in one `rev-parse`.
  * Null when the path is not a checkout (the caller simply watches nothing).
  */
-export async function resolveGitDirs(checkoutPath: string): Promise<GitDirs | null> {
+export function resolveGitDirs(checkoutPath: string): Promise<GitDirs | null> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => resolveGitDirsUnscoped(checkoutPath))
+}
+
+async function resolveGitDirsUnscoped(checkoutPath: string): Promise<GitDirs | null> {
   const result = await runGitCommand(checkoutPath, [
     'rev-parse',
     '--path-format=absolute',
@@ -119,7 +124,12 @@ export async function resolveGitDirs(checkoutPath: string): Promise<GitDirs | nu
  * the checkout's own branch and upstream, moved where no watcher sees it, is
  * not in it; that is left to the next view read anything else causes.
  */
-export async function readCheckoutState(checkoutPath: string): Promise<string | null> {
+export function readCheckoutState(checkoutPath: string): Promise<string | null> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => readCheckoutStateUnscoped(checkoutPath))
+}
+
+async function readCheckoutStateUnscoped(checkoutPath: string): Promise<string | null> {
   const result = await runGitCommand(checkoutPath, ['status', '--porcelain=v2', '--branch', '-z'])
   if (!result.ok) return null
   return createHash('sha1').update(result.stdout).digest('hex')

@@ -4,7 +4,7 @@ import type { GitCommandResult } from './git'
 import { withGitExecutable } from './git-executable'
 import { killProcessTree } from './process-tree-kill'
 import type { ExecutionHost } from './hosts/execution-host'
-import { isWslDriveMountPath } from '../shared/host-paths'
+import { isWslDriveMountPath, toWslPath } from '../shared/host-paths'
 
 /**
  * The one place a git process is started for the app's own reads and writes.
@@ -217,6 +217,14 @@ export type GitRunOptions = {
    * and then closed. Left out, stdin is untouched.
    */
   stdin?: string
+  /**
+   * Whether this git runs the programs a repository's own config names
+   * (filters, merge drivers, its hooks folder…) when the person has not
+   * trusted it: `neutral` turns them off, `as-configured` leaves them as git
+   * reads them. Left out, the {@link withNeutralRepoPrograms} scope decides,
+   * and outside one they are as configured.
+   */
+  repoPrograms?: 'neutral' | 'as-configured'
 }
 
 /**
@@ -415,16 +423,202 @@ export type GitRepoTrustAnswer = {
 }
 
 let repoTrustResolver: ((cwd: string) => Promise<GitRepoTrustAnswer | null>) | null = null
+let neutralHooksDir: string | null = null
 
-/** Installed by each process's services once the trust store exists; null uninstalls. */
-export function installGitRepoTrust(resolver: ((cwd: string) => Promise<GitRepoTrustAnswer | null>) | null): void {
+/**
+ * Installed by each process's services once the trust store exists; null
+ * uninstalls. `emptyHooksDir` is an empty folder the app owns, which an
+ * untrusted repository's own hooks folder is swapped for.
+ */
+export function installGitRepoTrust(
+  resolver: ((cwd: string) => Promise<GitRepoTrustAnswer | null>) | null,
+  options: { emptyHooksDir?: string } = {},
+): void {
   repoTrustResolver = resolver
+  if (options.emptyHooksDir !== undefined) neutralHooksDir = options.emptyHooksDir
 }
 
 /** The trust answer for the repository `cwd` is in; null when none is installed or it could not be read. */
 export async function gitRepoTrustFor(cwd: string): Promise<GitRepoTrustAnswer | null> {
   if (!repoTrustResolver) return null
   return repoTrustResolver(cwd).catch(() => null)
+}
+
+const neutralScope = new AsyncLocalStorage<true>()
+
+/**
+ * Runs `work` with every git it starts by the app's own choice (the status
+ * poll, diff stats, checkpoints, the pool's checkouts) under
+ * {@link neutralRepoPrograms} in a repository the person has not trusted. A
+ * call's own `repoPrograms` still wins.
+ */
+export function withNeutralRepoPrograms<T>(work: () => Promise<T>): Promise<T> {
+  return neutralScope.run(true, work)
+}
+
+/** What a git in an untrusted repository is given so that the programs its config names do not run. */
+export type NeutralRepoPrograms = {
+  /** `-c` pairs, ahead of the caller's arguments. */
+  config: string[]
+  /** Variables for git's environment. */
+  env: Record<string, string>
+  /** The repository names a diff converter or external diff: `diff`, `log`, `show` and `blame` are told not to use them. */
+  noDiffPrograms: boolean
+  /** The filters whose commands were emptied (`lfs`, …). */
+  filters: string[]
+}
+
+const FILTER_KEY = /^filter\.(.+)\.(clean|smudge|process)$/u
+const MERGE_DRIVER_KEY = /^merge\.(.+)\.driver$/u
+const DIFF_PROGRAM_KEY = /^diff\..+\.(textconv|command)$/u
+const CREDENTIAL_HELPER_KEY = /^credential(\..+)?\.helper$/u
+const PERSON_SCOPES = new Set(['global', 'system', 'command'])
+
+/**
+ * The overrides that keep git from running the programs an untrusted
+ * repository's config names, one per setting it names, or null when there is
+ * nothing to turn off (no such setting, or the person trusts them). A `-c` on
+ * the command line outranks every config file:
+ *
+ * - a filter's clean, smudge and process commands are emptied and the filter
+ *   is marked not required, so git stores and checks out the bytes as they are
+ *   rather than failing for a filter that did not run;
+ * - a merge driver is emptied: git cannot run it, and the file is a conflict
+ *   rather than taken as merged;
+ * - the hooks folder is an empty folder the app owns;
+ * - an ssh command is the person's own (global) one, or git's own `ssh`: an
+ *   empty one makes git fail to run anything at all;
+ * - a proxy command is emptied through `GIT_PROXY_COMMAND`, because git keeps
+ *   the first `core.gitProxy` it reads and a `-c` is read last;
+ * - an askpass program is emptied (git falls back to `GIT_ASKPASS`, then to no
+ *   prompt at all), a pager emptied, an editor made `:`, git's no-op editor;
+ * - a shell-command credential helper is dropped by resetting the helper list
+ *   and naming again every other helper, in order, with its own key;
+ * - a diff converter or external diff is refused by flag
+ *   ({@link NeutralRepoPrograms.noDiffPrograms}): git has no empty value for
+ *   either that does not fail the diff.
+ */
+export function neutralRepoPrograms(
+  answer: GitRepoTrustAnswer | null,
+  options: { emptyHooksDir: string | null; env?: NodeJS.ProcessEnv } = { emptyHooksDir: neutralHooksDir },
+): NeutralRepoPrograms | null {
+  if (!answer || answer.trusted || answer.settings.length === 0) return null
+  const env = options.env ?? process.env
+  const pairs: Array<[string, string]> = []
+  const extraEnv: Record<string, string> = {}
+  const filters = new Set<string>()
+  let noDiffPrograms = false
+  let credentialsReset = false
+  const named = new Set(answer.settings.map((entry) => entry.key))
+  for (const key of named) {
+    const filter = FILTER_KEY.exec(key)
+    if (filter) {
+      filters.add(filter[1])
+      continue
+    }
+    const driver = MERGE_DRIVER_KEY.exec(key)
+    if (driver) {
+      pairs.push([`merge.${driver[1]}.driver`, ''])
+      continue
+    }
+    if (DIFF_PROGRAM_KEY.test(key)) {
+      noDiffPrograms = true
+      continue
+    }
+    if (CREDENTIAL_HELPER_KEY.test(key)) {
+      credentialsReset = true
+      continue
+    }
+    switch (key) {
+      case 'core.hookspath':
+        // No folder to swap in: one that cannot exist holds no hooks either.
+        pairs.push(['core.hooksPath', options.emptyHooksDir ?? '/dev/null/sprintengine-no-hooks'])
+        break
+      case 'core.sshcommand': {
+        const own = answer.entries.filter((entry) => entry.key === key && PERSON_SCOPES.has(entry.scope)).at(-1)
+        pairs.push(['core.sshCommand', own?.value || 'ssh'])
+        break
+      }
+      case 'core.gitproxy':
+        if (env.GIT_PROXY_COMMAND === undefined) extraEnv.GIT_PROXY_COMMAND = ''
+        break
+      case 'core.askpass':
+        pairs.push(['core.askPass', ''])
+        break
+      case 'core.pager':
+        pairs.push(['core.pager', ''])
+        break
+      case 'core.editor':
+        pairs.push(['core.editor', ':'])
+        break
+    }
+  }
+  for (const name of filters) {
+    pairs.push(
+      [`filter.${name}.clean`, ''],
+      [`filter.${name}.smudge`, ''],
+      [`filter.${name}.process`, ''],
+      [`filter.${name}.required`, 'false'],
+    )
+  }
+  if (credentialsReset) {
+    pairs.push(['credential.helper', ''])
+    const dropped = new Set(answer.settings.filter((entry) => CREDENTIAL_HELPER_KEY.test(entry.key)))
+    for (const entry of answer.entries) {
+      if (CREDENTIAL_HELPER_KEY.test(entry.key) && !dropped.has(entry) && entry.value) {
+        pairs.push([entry.key, entry.value])
+      }
+    }
+  }
+  return {
+    config: pairs.flatMap(([key, value]) => ['-c', `${key}=${value}`]),
+    env: extraEnv,
+    noDiffPrograms,
+    filters: [...filters],
+  }
+}
+
+/** The overrides for a git in `cwd`, when the call asks for them and the repository is untrusted. */
+async function neutralProgramsFor(
+  cwd: string,
+  options: GitRunOptions,
+  linuxGitOnWindows = false,
+): Promise<NeutralRepoPrograms | null> {
+  const wanted = options.repoPrograms ?? (neutralScope.getStore() ? 'neutral' : 'as-configured')
+  if (wanted !== 'neutral' || !repoTrustResolver) return null
+  // A distribution's git reaches the app's empty folder through the drive mount.
+  const emptyHooksDir = linuxGitOnWindows && neutralHooksDir ? toWslPath(neutralHooksDir) : neutralHooksDir
+  return neutralRepoPrograms(await gitRepoTrustFor(cwd), { emptyHooksDir })
+}
+
+/**
+ * The filters whose programs the app's own git turns off in `cwd`: an
+ * untrusted repository's that its config names. Empty when it is trusted.
+ */
+export async function neutralizedGitFilters(cwd: string): Promise<string[]> {
+  return (await neutralProgramsFor(cwd, { repoPrograms: 'neutral' }))?.filters ?? []
+}
+
+const DIFF_PROGRAM_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  diff: ['--no-ext-diff', '--no-textconv'],
+  log: ['--no-ext-diff', '--no-textconv'],
+  show: ['--no-ext-diff', '--no-textconv'],
+  blame: ['--no-textconv'],
+}
+
+/** `args` with the overrides in front and, for a diff that would use them, the flags that refuse diff programs. */
+function withNeutralPrograms(args: string[], programs: NeutralRepoPrograms | null): string[] {
+  if (!programs) return args
+  let out = args
+  if (programs.noDiffPrograms) {
+    const { subcommand, rest } = splitSubcommand(args)
+    const flags = subcommand ? DIFF_PROGRAM_FLAGS[subcommand] : undefined
+    if (flags) {
+      const at = args.length - rest.length
+      out = [...args.slice(0, at), ...flags, ...args.slice(at)]
+    }
+  }
+  return [...programs.config, ...out]
 }
 
 type ExecGitResult = { stdout: string; stderr: string }
@@ -513,18 +707,25 @@ async function execGitOnHost(
  * in its own process group so the deadline ends git and whatever it started (a
  * transport helper, a hook) together; see `killProcessTree`.
  */
-function execGit(
+async function execGit(
   cwd: string,
-  args: string[],
-  envOverrides: NodeJS.ProcessEnv | undefined,
+  callerArgs: string[],
+  callerEnv: NodeJS.ProcessEnv | undefined,
   options: GitRunOptions,
 ): Promise<ExecGitResult> {
-  const kind = options.kind ?? classifyGitCommand(args)
+  const kind = options.kind ?? classifyGitCommand(callerArgs)
   const timeoutMs = options.timeoutMs === undefined ? defaultGitTimeoutMs(kind) : options.timeoutMs
   const grouped = timeoutMs !== null && process.platform !== 'win32'
+  // Read before git starts, so a host scope set by the caller is still the one asked.
+  const host = gitHostScope.getStore() ?? gitHostResolver?.(cwd) ?? null
+
+  // An untrusted repository's own programs, off for the git the app starts by
+  // itself. The caller's own `-c` pairs come after, and win.
+  const programs = await neutralProgramsFor(cwd, options, host?.kind === 'wsl')
+  const args = withNeutralPrograms(callerArgs, programs)
+  const envOverrides = programs && Object.keys(programs.env).length > 0 ? { ...programs.env, ...callerEnv } : callerEnv
   gitSpawnCounter[kind] += 1
 
-  const host = gitHostScope.getStore() ?? gitHostResolver?.(cwd) ?? null
   if (host && host.kind === 'wsl') {
     return execGitOnHost(host, cwd, args, envOverrides, kind, timeoutMs, options.stdin)
   }

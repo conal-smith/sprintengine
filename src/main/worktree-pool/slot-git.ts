@@ -13,7 +13,13 @@ import { branchNamespaceParents, isReservedFirstComponent, remoteShadowedBy } fr
 
 export type SlotGitRunner = (cwd: string, args: string[], options?: GitRunOptions) => Promise<GitCommandResult>
 
-export const defaultSlotGitRunner: SlotGitRunner = (cwd, args, options) => runGitCommand(cwd, args, undefined, options)
+/**
+ * The pool's git is all the app's own: its checkouts, fetches, merge-trees and
+ * status reads run with an untrusted repository's own programs (filters, merge
+ * drivers, its hooks folder…) turned off (git-run.ts).
+ */
+export const defaultSlotGitRunner: SlotGitRunner = (cwd, args, options) =>
+  runGitCommand(cwd, args, undefined, { repoPrograms: 'neutral', ...options })
 
 export type SlotStatus = {
   /** The commit HEAD names; null for a repository with no commits yet. */

@@ -9,7 +9,7 @@ import { poolSlotName, poolSlotNumber, poolSlotStemForContainer } from '../../sh
 import { agentWorktreeLockReason, lockAgentWorktree } from '../agent-worktree-lock'
 import { hiddenEditPaths } from '../agent-worktree-keep-checks'
 import { pathExists } from '../git-utils'
-import { explicitGitDir, GIT_NETWORK_TIMEOUT_MS } from '../git-run'
+import { explicitGitDir, GIT_NETWORK_TIMEOUT_MS, neutralizedGitFilters } from '../git-run'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
@@ -112,6 +112,18 @@ export const SUBMODULE_PROTOCOL_CONFIG: readonly string[] = [
   'protocol.ext.allow=never',
 ]
 
+/** Git LFS's own filter, as `git lfs install` writes it, for a call that names Git LFS itself. */
+const LFS_FILTER_CONFIG: readonly string[] = [
+  '-c',
+  'filter.lfs.clean=git-lfs clean -- %f',
+  '-c',
+  'filter.lfs.smudge=git-lfs smudge -- %f',
+  '-c',
+  'filter.lfs.process=git-lfs filter-process',
+  '-c',
+  'filter.lfs.required=true',
+]
+
 /**
  * A leased worktree's submodules and Git LFS files. Both fetch from addresses
  * the repository's own files name, so they run only for a project that turned
@@ -128,15 +140,24 @@ async function fetchSubmodulesAndLfs(
   const modules = await hasFile(path, '.gitmodules')
   const lfs = await usesLfs(path)
   if (!modules && !lfs) return { failures: [], note: null }
+  const failures: string[] = []
+  // An untrusted repository whose own config sets the `lfs` filter has it
+  // turned off for the pool's checkouts (git-run.ts), so they left pointer
+  // files. Git LFS is called by name instead, with its own filter commands
+  // rather than the repository's: what is already downloaded is checked out.
+  const lfsConfig = lfs && (await neutralizedGitFilters(path)).includes('lfs') ? LFS_FILTER_CONFIG : null
+  if (lfsConfig) {
+    const checkedOut = await ctx.git(path, [...lfsConfig, 'lfs', 'checkout'])
+    if (!checkedOut.ok) failures.push(`lfs: ${tail(checkedOut.message)}`)
+  }
   if (!submodulesAndLfsFor(await ctx.getSettings(), pool.record.repoRoot)) {
     const left =
       modules && lfs ? 'Submodules and Git LFS files were' : modules ? 'Submodules were' : 'Git LFS files were'
     return {
-      failures: [],
+      failures,
       note: `${left} not fetched; turn that on for this project in Settings ▸ Worktrees.`,
     }
   }
-  const failures: string[] = []
   if (modules) {
     const updated = await ctx.git(
       path,
@@ -148,7 +169,7 @@ async function fetchSubmodulesAndLfs(
     if (!updated.ok) failures.push(`submodules: ${tail(updated.message)}`)
   }
   if (lfs) {
-    const pulled = await ctx.git(path, [...SUBMODULE_PROTOCOL_CONFIG, 'lfs', 'pull'], {
+    const pulled = await ctx.git(path, [...SUBMODULE_PROTOCOL_CONFIG, ...(lfsConfig ?? []), 'lfs', 'pull'], {
       timeoutMs: GIT_NETWORK_TIMEOUT_MS,
     })
     if (!pulled.ok) failures.push(`lfs: ${tail(pulled.message)}`)

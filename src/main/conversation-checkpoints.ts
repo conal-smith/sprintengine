@@ -3,7 +3,7 @@ import type { Stats } from 'fs'
 import { copyFile, lstat, mkdtemp, realpath, rm, stat, utimes } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, dirname, join, resolve, relative, isAbsolute, sep } from 'path'
-import { runGitCommand } from './git-utils'
+import { runGitCommand as runSharedGitCommand } from './git-utils'
 import type {
   ConversationKey,
   ConversationCheckpointFile,
@@ -18,6 +18,12 @@ import { errorMessage } from '../shared/errors'
 const CHECKPOINT_FAILED = 'Checkpoint operation failed.'
 
 export type ConversationCheckpointResult = { ok: true; ref: string } | { ok: false; message: string; skipped?: boolean }
+
+// Every git a checkpoint runs is the app's own, started with nobody asking: a
+// repository the person has not trusted has the programs its config names
+// (a filter on every `add`, a merge driver on a remerge) turned off for it.
+const runGitCommand: typeof runSharedGitCommand = (cwd, args, env, options = {}) =>
+  runSharedGitCommand(cwd, args, env, { repoPrograms: 'neutral', ...options })
 
 const PREFIX = 'refs/sprintengine/checkpoints/'
 // Refs removed by one `update-ref --stdin`, and untracked files measured at once.

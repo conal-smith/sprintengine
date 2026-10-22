@@ -1,3 +1,4 @@
+import { withNeutralRepoPrograms } from './git-run'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 
@@ -94,7 +95,12 @@ export function summaryFromSpan(span: BranchSpan | null, untracked: readonly str
  * quiet, unattributed folder number is the honest thing to show there — the same
  * degrade the checkpoint reading made for an unresolvable ref.
  */
-async function readCheckoutSummary(checkoutPath: string): Promise<WorkspaceChangeSummary> {
+function readCheckoutSummary(checkoutPath: string): Promise<WorkspaceChangeSummary> {
+  // The app's own read: an untrusted repository's programs stay off (git-run.ts).
+  return withNeutralRepoPrograms(() => readCheckoutSummaryUnscoped(checkoutPath))
+}
+
+async function readCheckoutSummaryUnscoped(checkoutPath: string): Promise<WorkspaceChangeSummary> {
   const span = await readBranchSpan(checkoutPath)
   // Not a repository at all (or the path is gone): no span, and no git spawned
   // for an uncommitted reading that cannot exist either.
