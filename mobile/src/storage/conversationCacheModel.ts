@@ -25,6 +25,19 @@ export interface CachedConversation {
      * it already (`heldSendLanded`), rather than offering it a second time.
      */
     heldAfter?: number;
+    /**
+     * When the person pressed Send (epoch ms, this phone's clock). A send
+     * that waited longer than `QUEUED_SEND_STALE_MS`, or whose turn ended
+     * while the phone was away, is no longer sent without asking
+     * (`queuedSends.ts`). One cached before this was kept has none, and is
+     * taken for one that waited too long: nothing says when it was written.
+     */
+    queuedAt?: number;
+    /**
+     * The phone stopped offering it: it waits on the person's Send now or
+     * Discard, across a restart, and no stream sends it until then.
+     */
+    stale?: true;
   }>;
 }
 export const MAX_PENDING_SENDS = 20;
@@ -77,7 +90,9 @@ function validCache(value: unknown): value is CachedConversation {
       frame.command.kind !== "send" ||
       ids.has(frame.commandId) ||
       (item.heldAfter !== undefined &&
-        !(Number.isSafeInteger(item.heldAfter) && Number(item.heldAfter) >= 0))
+        !(Number.isSafeInteger(item.heldAfter) && Number(item.heldAfter) >= 0)) ||
+      (item.queuedAt !== undefined && !integer(item.queuedAt)) ||
+      (item.stale !== undefined && item.stale !== true)
     )
       return false;
     ids.add(frame.commandId);

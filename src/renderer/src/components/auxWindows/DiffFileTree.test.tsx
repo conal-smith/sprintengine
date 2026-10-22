@@ -180,3 +180,39 @@ test("an agent's mark shows on the diff tree's row", async () => {
   assert.equal(row('b.ts')?.querySelector('[data-agent-trail]')?.getAttribute('data-agent-trail'), 'reading')
   assert.equal(row('a.ts')?.querySelector('[data-agent-trail]'), null)
 })
+
+test('a diff that turns a file into a folder lists both, and the cursor on one never lights the other', async () => {
+  // `docs` was a file and is now a folder holding `index.md`.
+  const items: DiffFileItem[] = [
+    { path: `${REPO}/docs`, relativePath: 'docs', status: 'deleted', kind: 'unstaged' },
+    { path: `${REPO}/docs/index.md`, relativePath: 'docs/index.md', status: 'new', kind: 'unstaged' },
+  ]
+  const named = (name: string) => rows().filter((item) => item.querySelector('span.truncate')?.textContent === name)
+
+  await act(async () => root.render(<Tree currentIndex={0} items={items} />))
+  await settle()
+  const names = rows().map((item) => item.querySelector('span.truncate')?.textContent)
+  assert.deepEqual(names, ['docs', 'index.md', 'docs'], 'the folder with its file, and the file')
+  const ids = rows().map((item) => item.id)
+  assert.equal(new Set(ids).size, ids.length, 'each row is its own element')
+  const [folder, deletedFile] = named('docs')
+  assert.equal(deletedFile.getAttribute('aria-selected'), 'true', 'the cursor is on the deleted file')
+  assert.equal(folder.getAttribute('aria-selected'), 'false', 'and not on the folder of the same name')
+
+  await act(async () => root.render(<Tree currentIndex={1} items={items} />))
+  await settle()
+  assert.equal(row('index.md')?.getAttribute('aria-selected'), 'true')
+  assert.deepEqual(
+    named('docs').map((item) => item.getAttribute('aria-selected')),
+    ['false', 'false'],
+  )
+
+  // Closing the folder hides its file and leaves the file of the same name.
+  await act(async () => named('docs')[0].click())
+  assert.deepEqual(
+    rows().map((item) => item.querySelector('span.truncate')?.textContent),
+    ['docs', 'docs'],
+  )
+  await act(async () => named('docs')[1].click())
+  assert.deepEqual(selected, [0], 'a click on the file moves the viewer to it')
+})

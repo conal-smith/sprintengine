@@ -11,6 +11,7 @@ import { getPluginManifest } from './plugin-registry-instance'
 import {
   chooseCliUpdateCommand,
   foreignPackageManager,
+  installedByHomebrew,
   installedByWinGet,
   localCliInstallFs,
 } from './cli-version-advisory'
@@ -1178,8 +1179,14 @@ export async function updateCli(
   }
   // A package manager Studio does not drive put it there. Re-running an
   // install method would add a second copy beside it, so say whose it is.
+  // Homebrew is one too when the manifest names no formula or cask to upgrade:
+  // Grok's cask re-installed by its vendor script lands a second Grok in
+  // ~/.grok/bin, and Homebrew's stays where it was.
   const resolvedBefore = detectedBefore.resolvedPath
-  const manager = foreignPackageManager(resolvedBefore, resolvedBefore && fs ? fs.realPath(resolvedBefore) : null)
+  const realBefore = resolvedBefore && fs ? fs.realPath(resolvedBefore) : null
+  const manager =
+    foreignPackageManager(resolvedBefore, realBefore) ??
+    (installedByHomebrew(resolvedBefore, realBefore) ? 'Homebrew' : null)
   if (detectedBefore.installed && manager) {
     return {
       ok: false,

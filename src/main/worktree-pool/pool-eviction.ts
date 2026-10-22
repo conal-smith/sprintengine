@@ -2,7 +2,9 @@ import { createHash } from 'crypto'
 import type { WorktreePoolActionResult } from '../../shared/ipc/worktree-pool'
 import { hiddenEditPaths, ignoredPathsAtRisk, isChatTranscriptPath } from '../agent-worktree-keep-checks'
 import { pathExists } from '../git-utils'
+import { removeWorktreeLeftovers } from '../worktree-leftovers'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
+import { removeWorktreeKeepingSubmoduleWork } from '../worktree-submodule-removal'
 import { MEASURE_CONCURRENCY } from './disk-usage'
 import type { SlotRecord } from './pool-store'
 import { commitIsReachable, readSlotStatus } from './slot-git'
@@ -124,18 +126,33 @@ export async function evictSlot(
       }
       // No --force: git checks cleanliness again at the moment of removal.
       // Only a tree with submodules, which plain `remove` always refuses, is
-      // forced — and only after the status above read it clean.
-      let removed = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
-        ctx.git(pool.record.repoRoot, ['worktree', 'remove', slot.path]),
-      )
-      if (!removed.ok && /submodule/iu.test(removed.message ?? '')) {
-        removed = await withWorktreeRegistryLock(pool.record.repoRoot, () =>
-          ctx.git(pool.record.repoRoot, ['worktree', 'remove', '--force', slot.path]),
-        )
+      // forced — and only once its submodules hold no change, file or commit
+      // that exists nowhere else, and its status reads clean again: the reads
+      // above never look inside a submodule, and --force deletes each one's
+      // repository with the slot (worktree-submodule-removal.ts).
+      const removal = await withWorktreeRegistryLock(pool.record.repoRoot, async () => {
+        const outcome = await removeWorktreeKeepingSubmoduleWork(pool.record.repoRoot, slot.path, ctx.git, {
+          knownWorkspaceIds: ctx.deps.knownWorkspaceIds ?? null,
+        })
+        // Git for Windows reports success with junctions still in place,
+        // and a new slot could not be made at this path again.
+        if (outcome.outcome === 'removed' && !(await removeWorktreeLeftovers(slot.path))) {
+          ctx.log(`${slot.path}: left files written after git removed it`)
+        }
+        return outcome
+      })
+      if (removal.outcome === 'kept') {
+        const unreadable = removal.why.kind === 'unreadable'
+        await hold(ctx, pool, slot, unreadable ? 'error' : 'dirty', `found while evicting: ${removal.why.detail}`, {
+          changedPaths: removal.why.paths ?? null,
+        })
+        return unreadable
+          ? `Its submodules could not be checked, so it is held in the pool now: ${removal.why.detail}`
+          : `Its submodules hold work that exists nowhere else (${removal.why.detail}), and it is held in the pool now.`
       }
-      if (!removed.ok) {
-        await hold(ctx, pool, slot, 'error', `could not remove: ${tail(removed.message)}`)
-        return `Git could not remove it: ${tail(removed.message) ?? 'unknown error'}`
+      if (removal.outcome === 'failed') {
+        await hold(ctx, pool, slot, 'error', `could not remove: ${tail(removal.result.message)}`)
+        return `Git could not remove it: ${tail(removal.result.message) ?? 'unknown error'}`
       }
     } else {
       await forgetRegistration(ctx, pool, slot.path)
