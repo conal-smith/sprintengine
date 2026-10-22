@@ -1,5 +1,4 @@
-import { randomUUID } from 'crypto'
-import { mkdir, writeFile } from 'fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, writeFile } from 'fs/promises'
 import { basename, extname, join } from 'path'
 import { tmpdir } from 'os'
 
@@ -53,6 +52,32 @@ export function safeImageFileName(rawName: unknown, fallbackStem: string, extens
   return `${stem || fallbackStem}.${extension}`
 }
 
+/**
+ * The folder images that exist only as bytes are written under. Linux's temp
+ * folder is shared by every user, so there it is one of this user's own,
+ * named for them; macOS and Windows already give each user a temp folder.
+ */
+export function attachmentImagesRoot(platform: NodeJS.Platform = process.platform): string {
+  const uid = process.getuid?.()
+  return platform === 'linux' && uid !== undefined
+    ? join(tmpdir(), `sprintengine-images-${uid}`)
+    : join(tmpdir(), 'sprintengine-images')
+}
+
+// Only this user may list or write into the folder. One someone else made
+// first, or a link standing in its place, is not used.
+async function privateImagesRoot(): Promise<string> {
+  const root = attachmentImagesRoot()
+  await mkdir(root, { recursive: true, mode: 0o700 })
+  if (process.platform === 'win32') return root
+  const info = await lstat(root)
+  const uid = process.getuid?.()
+  if (!info.isDirectory() || info.isSymbolicLink() || (uid !== undefined && info.uid !== uid))
+    throw new Error('Studio’s folder for images is not this user’s own, so the image was not saved.')
+  if ((info.mode & 0o077) !== 0) await chmod(root, 0o700)
+  return root
+}
+
 // Each write gets its own directory rather than a unique file name, so the file
 // itself can keep the name the person knows it by: two saves in the same
 // instant are two directories, never one silently overwriting the other.
@@ -65,9 +90,10 @@ export async function writeAttachmentImageFile(input: AttachmentImageInput, fall
   if (bytes.length === 0) throw new Error('That image could not be read.')
   if (bytes.length > MAX_ATTACHMENT_IMAGE_BYTES) throw new Error('That image is too large to attach.')
 
-  const directory = join(tmpdir(), 'sprintengine-images', randomUUID().slice(0, 8))
-  await mkdir(directory, { recursive: true })
+  // A fresh folder of this user's own (`mkdtemp` makes it 0700), and the
+  // file readable by this user only.
+  const directory = await mkdtemp(join(await privateImagesRoot(), 'image-'))
   const filePath = join(directory, safeImageFileName(input.name, fallbackStem, extension))
-  await writeFile(filePath, bytes, { flag: 'wx' })
+  await writeFile(filePath, bytes, { flag: 'wx', mode: 0o600 })
   return filePath
 }
