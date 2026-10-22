@@ -113,6 +113,7 @@ export type ContextMenuAction =
   | ChatMarkAction
   | 'toggle-auto-compact'
   | 'toggle-schedule-pause'
+  | 'delete-settled'
   | `type-action:${string}`
 
 /**
@@ -290,6 +291,7 @@ export function WorkspaceContextMenu({
   canMarkUnread = false,
   watchedPullRequestNumber = null,
   schedule = null,
+  canDelete = false,
   onClose,
   onSelect,
   onPickColor,
@@ -326,6 +328,13 @@ export function WorkspaceContextMenu({
    * menu offers to pause it, or resume it. Null for every other chat.
    */
   schedule?: { paused: boolean } | null
+  /**
+   * The window can delete settled chats (a confirm dialog and main's delete
+   * are there). Delete is offered only on a settled chat of this computer:
+   * Settle is how a chat is put away, and deleting is for one already put
+   * away. A paired machine's settled chat has no row here.
+   */
+  canDelete?: boolean
   onClose: () => void
   onSelect: (action: ContextMenuAction) => void
   onPickColor: (color: HighlightColor) => void
@@ -471,6 +480,14 @@ export function WorkspaceContextMenu({
               {action.label}
             </ChatMenuItem>
           ))}
+        </>
+      ) : null}
+      {canDelete && settled && !remote ? (
+        <>
+          <MenuDivider />
+          <ChatMenuItem variant="danger" tooltip={tips.deleteSettled()} onClick={() => onSelect('delete-settled')}>
+            Delete chat…
+          </ChatMenuItem>
         </>
       ) : null}
     </ContextMenu>

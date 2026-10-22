@@ -422,6 +422,7 @@ import type {
   WorktreePoolSettings,
   WorktreePoolSnapshot,
 } from './ipc/worktree-pool'
+import type { SettledChatDeletionOutcome, SettledChatDeletionPlan } from './ipc/settled-chats'
 import type { HostedCardFeedReadInput, HostedCardFeedReadResult, HostedSourcesFeedReadResult } from './ipc/hosted-feeds'
 import type {
   GithubExtensionCheckUpdateInput,
@@ -566,6 +567,7 @@ export type * from './ipc/skills'
 export type * from './ipc/terminal'
 export type * from './ipc/git'
 export type * from './ipc/worktree-pool'
+export type * from './ipc/settled-chats'
 export type * from './ipc/diagnostics'
 export type * from './ipc/window'
 export type * from './ipc/pane-popout'
@@ -1568,6 +1570,18 @@ export type ElectronApi = {
    * kept, with the reason, when something works in it or it may hold work.
    */
   removeOtherWorktree: (input: { repoRoot: string; path: string }) => Promise<WorktreePoolActionResult>
+  /**
+   * What deleting each of these settled chats would do: its worktree's fate,
+   * its changes and unpushed commits, and why a chat cannot go. For the
+   * confirmation; the delete checks it all again.
+   */
+  planSettledChatDeletion: (workspaceIds: string[]) => Promise<SettledChatDeletionPlan[]>
+  /**
+   * Delete settled chats for good: their history, their records, and the
+   * worktree each owns (given back to the pool, or removed), branches kept.
+   * A paired machine's chat loses only this computer's record.
+   */
+  deleteSettledChats: (workspaceIds: string[]) => Promise<SettledChatDeletionOutcome[]>
   getWorktreePoolSettings: () => Promise<WorktreePoolSettings>
   setWorktreePoolSettings: (patch: Partial<WorktreePoolSettings>) => Promise<WorktreePoolSettings>
   /** Every worktree of these projects and of every pool, for Settings ▸ Worktrees. */

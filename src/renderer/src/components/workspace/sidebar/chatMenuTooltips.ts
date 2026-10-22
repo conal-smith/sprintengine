@@ -111,4 +111,7 @@ export const chatMenuTooltips = {
       ? "Remove this chat's highlight color."
       : `Tint this chat's row ${getHighlightSwatch(color).label.toLowerCase()}.`) + markKept(where),
   typeAction: (label: string) => `${label}: an action this chat's workspace type adds.`,
+  // Settings ▸ Settled chats deletes the same way (useDeleteSettledChats).
+  deleteSettled: () =>
+    'Delete this settled chat and its history for good. Its worktree is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.',
 } as const

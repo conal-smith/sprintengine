@@ -16,6 +16,8 @@ export type SettledChatEntry = {
   /** The project the sidebar would have filed it under. */
   project: string
   settledAt: number
+  /** The paired machine it lives on, for a chat opened here from one; deleting it takes this computer's record only. */
+  remoteMachine: string | null
 }
 
 /** One workspace's entry, or null when it is not a settled chat the rail would draw. */
@@ -29,6 +31,7 @@ function settledChatEntry(
     title: remoteConversationTitle(workspace),
     project: remoteGroupOf(workspace) ? remoteGroupDisplayName(workspace) : folderDisplayName(workspace.folderPath),
     settledAt: workspace.settledAt as number,
+    remoteMachine: workspace.remoteOrigin?.machineName ?? null,
   }
 }
 
@@ -54,7 +57,13 @@ export function listSettledChats(
 }
 
 function entriesEqual(a: SettledChatEntry, b: SettledChatEntry): boolean {
-  return a.id === b.id && a.title === b.title && a.project === b.project && a.settledAt === b.settledAt
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.project === b.project &&
+    a.settledAt === b.settledAt &&
+    a.remoteMachine === b.remoteMachine
+  )
 }
 
 /**

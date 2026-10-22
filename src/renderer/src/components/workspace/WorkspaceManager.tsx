@@ -113,6 +113,7 @@ import {
 } from '../../utils/modelRegistry'
 import { agentCliSupportsConversationResume, agentCliUsesStableSessionIdForResume } from '../../utils/agentCliResume'
 import { useConfirmDialog } from '../ui/ConfirmDialog'
+import { useDeleteSettledChats } from '../../hooks/useDeleteSettledChats'
 import {
   type AgentComposerConfirm,
   type AgentComposerConnector,
@@ -436,6 +437,12 @@ function addWorkingChatWorkspaces(
 export default function WorkspaceManager() {
   useAppTheme()
   const dialog = useConfirmDialog()
+  // The row menu's Delete chat… on a settled chat, the same flow Settings ▸ Settled chats runs.
+  const { deleteChats: deleteSettledChats } = useDeleteSettledChats()
+  const sidebarDeleteSettledChat = useCallback(
+    (workspaceId: string) => void deleteSettledChats([workspaceId]),
+    [deleteSettledChats],
+  )
   const workspaceWindowId = useMemo(() => getWorkspaceWindowIdFromLocation(), [])
   // Dock-back from the external editor window: the window owning that workspace's
   // FlexLayout model reopens the file as a tab; windows that do not own the
@@ -5006,6 +5013,7 @@ export default function WorkspaceManager() {
             newChatOpen={newChatPanelState !== null}
             onNewChatInFolder={sidebarNewChatInFolder}
             onRevealFolder={sidebarRevealFolder}
+            onDeleteSettledChat={sidebarDeleteSettledChat}
             onSetSidebarCollapsed={setSidebarCollapsed}
             sidebarWidth={sidebarWidth}
             onSetSidebarWidth={setSidebarWidth}

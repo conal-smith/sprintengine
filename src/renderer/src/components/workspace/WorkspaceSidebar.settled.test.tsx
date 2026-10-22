@@ -310,6 +310,37 @@ test('WorkspaceSidebar.settled', async () => {
         `a resting row's menu offers Un-settle (got ${settledMenu.join(' | ')})`,
       )
       assert.equal(settledMenu.includes('Settle'), false)
+      assert.equal(settledMenu.includes('Delete chat…'), false, 'no Delete where the window cannot delete')
+
+      // Deleting is for a chat already put away: a window that can delete
+      // offers it on the settled row's menu, and on no other.
+      const deletes: string[] = []
+      await render({
+        ...props,
+        activeWorkspaceId: 'w2',
+        onDeleteSettledChat: (id: string) => void deletes.push(id),
+      } as unknown as SidebarProps)
+      assert.ok((await openMenuOn('Bravo')).includes('Delete chat…'), 'a settled row offers Delete chat…')
+      assert.equal((await openMenuOn('Alpha')).includes('Delete chat…'), false, 'an unsettled row does not')
+      const bravoRow = [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find((el) =>
+        el.textContent?.includes('Bravo'),
+      )
+      act(() => {
+        bravoRow!.dispatchEvent(
+          new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
+        )
+      })
+      await settle()
+      const deleteItem = [
+        ...dom.window.document.querySelectorAll<HTMLElement>('[role="menu"] [data-menu-item="true"]'),
+      ].find((el) => el.textContent?.trim() === 'Delete chat…')
+      assert.ok(deleteItem, 'its Delete chat… item (its tooltip is held by WorkspaceSidebar.menuTooltips.test.tsx)')
+      act(() => {
+        deleteItem!.click()
+      })
+      await settle()
+      assert.deepEqual(deletes, ['w2'], 'choosing it asks to delete that chat')
+      assert.equal(dom.window.document.querySelector('[role="menu"]'), null, 'and closes the menu')
 
       // A row born on a paired machine whose machine keeps no rest settles
       // here alone (`settleOpenedRemote`), so it wears the tick like any other
