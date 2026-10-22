@@ -3,6 +3,7 @@ import { afterEach, test, vi } from 'vitest'
 
 import { STUDIO_MAX_UPLOAD_BYTES, STUDIO_MAX_UPLOADS_PER_SEND } from '../../../packages/studio-protocol/src/public'
 import { createStudioUploads, type StudioUploads } from './studio-uploads'
+import { pngHeader } from '../../../tests/image-headers'
 
 // The pictures a client stages ahead of a send: its own, counted against the
 // connection that staged them, given back on discard, and let go of on a
@@ -102,4 +103,18 @@ test('a file’s bytes are spent only by a file write, and a picture only by a s
   const picture = finished(uploads)
   const asFile = uploads.spend('owner', [picture], 'write-2', 'file')
   assert.equal(!asFile.ok && asFile.code, 'invalid_params')
+})
+
+test('a picture whose header declares more than 100 megapixels is not sent', () => {
+  const uploads = staged()
+  const stage = (bytes: Uint8Array): string => {
+    const begun = uploads.begin(one, png(bytes.byteLength))
+    assert.ok(begun.ok)
+    const dataBase64 = Buffer.from(bytes).toString('base64')
+    assert.ok(uploads.append(one, { uploadId: begun.uploadId, offset: 0, dataBase64 }).ok)
+    return begun.uploadId
+  }
+  const refused = uploads.spend('owner', [stage(pngHeader(100_000, 100_000))], 'owner:c1')
+  assert.equal(!refused.ok && refused.code, 'invalid_params')
+  assert.ok(uploads.spend('owner', [stage(pngHeader(4032, 3024))], 'owner:c2').ok)
 })

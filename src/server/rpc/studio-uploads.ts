@@ -5,6 +5,7 @@ import {
   STUDIO_MAX_UPLOADS_PER_SEND,
   STUDIO_UPLOAD_CHUNK_BYTES,
 } from '../../../packages/studio-protocol/src/public'
+import { imageWithinDecodeLimits } from '../../shared/image-dimensions'
 
 // Pictures a client sends ahead of the `session.send` that carries them. A
 // frame holds about a megabyte and a picture may be five, so the bytes come in
@@ -54,6 +55,14 @@ type Upload = {
 }
 
 export type StudioUploadPurpose = 'picture' | 'file'
+
+const PICTURE_TOO_LARGE = 'A picture in this send is too large to open: over 16384 pixels a side, or 100 megapixels.'
+
+/** An upload's bytes as one buffer, joined once. */
+function bytesOf(upload: Upload): Buffer {
+  if (upload.chunks.length > 1) upload.chunks = [Buffer.concat(upload.chunks)]
+  return upload.chunks[0] ?? Buffer.alloc(0)
+}
 
 /** Who is asking: the client an upload belongs to, and the connection whose budget it is counted in. */
 export type StudioUploadHolder = { client: string; connection: string }
@@ -221,6 +230,9 @@ export function createStudioUploads(options: { now?: () => number; sweepEveryMs?
           }
         if (upload.received !== upload.byteLength || (upload.spentBy && upload.chunks.length === 0))
           return { ok: false, code: 'invalid_params', message: 'A picture in this send has not finished uploading.' }
+        // Measured before anything decodes it: a small file can declare a vast picture.
+        if (purpose === 'picture' && upload.chunks.length > 0 && !imageWithinDecodeLimits(bytesOf(upload)))
+          return { ok: false, code: 'invalid_params', message: PICTURE_TOO_LARGE }
         found.push(upload)
       }
       const at = now()
@@ -231,7 +243,7 @@ export function createStudioUploads(options: { now?: () => number; sweepEveryMs?
           uploadId: upload.id,
           mediaType: upload.mediaType,
           ...(upload.name === undefined ? {} : { name: upload.name }),
-          bytes: upload.chunks.length === 1 ? upload.chunks[0] : Buffer.concat(upload.chunks),
+          bytes: bytesOf(upload),
         })),
       }
     },

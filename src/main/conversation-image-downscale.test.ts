@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 
 import { MAX_ATTACHMENT_BYTES } from '../shared/conversation-attachments'
 import { downscaleConversationImage, type DecodedImage, type ImageCodec } from './conversation-image-downscale'
+import { pngHeader } from '../../tests/image-headers'
 
 // A paired device's picture, sized for the model by the composer's rules.
 
@@ -89,4 +90,17 @@ test('a picture the codec cannot read, or fails to encode, goes on as it came', 
   const empty = standIn({ size: { width: 4000, height: 3000 }, jpegBytes: 0 })
   const kept = downscaleConversationImage(empty.codec, original, 'image/jpeg')
   expect(kept).toEqual({ bytes: original, mediaType: 'image/jpeg' })
+})
+
+test('a picture whose header declares more than a decoder should allocate is not decoded', () => {
+  let decoded = 0
+  const codec: ImageCodec = {
+    decode: () => {
+      decoded++
+      return null
+    },
+  }
+  const vast = pngHeader(100_000, 100_000)
+  expect(downscaleConversationImage(codec, vast, 'image/png')).toEqual({ bytes: vast, mediaType: 'image/png' })
+  expect(decoded).toBe(0)
 })

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { icnsFile, pngOfWidth } from '../../tests/icns'
+import { pngHeader } from '../../tests/image-headers'
 import {
   PROJECT_LOGO_ICNS_MAX_BYTES,
   PROJECT_LOGO_MAX_BYTES,
@@ -321,4 +322,14 @@ test('a PNG too big to serve is not taken out of an app icon', async () => {
   const huge = Buffer.concat([pngOfWidth(1024), Buffer.alloc(PROJECT_LOGO_MAX_BYTES)])
   const { io } = createIo({ '/repo/build/icon.icns': { bytes: icnsFile(['ic10', huge]) } })
   expect(await detectProjectLogo('/repo', io)).toBeNull()
+})
+
+test('a logo whose header declares a vast picture is passed over, not decoded', async () => {
+  let downscaled = 0
+  const { io } = createIo(
+    { '/repo/logo.png': { bytes: Buffer.from(pngHeader(100_000, 100_000)) } },
+    { onDownscale: () => downscaled++ },
+  )
+  expect(await detectProjectLogo('/repo', io)).toBeNull()
+  expect(downscaled).toBe(0)
 })

@@ -53,6 +53,7 @@ import {
   MAX_DOWNSCALED_UPLOAD_BYTES,
 } from '../../../shared/conversation-attachments'
 import type { ConversationImageDownscaler } from '../../conversation-image-downscale'
+import { imageWithinDecodeLimits } from '../../../shared/image-dimensions'
 import { MAX_TAILNET_FILE_BYTES, type TailnetFileUploads } from './tailnet-file-uploads'
 import {
   createResyncBackoff,
@@ -551,6 +552,18 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       }
       const uploadPath = join(await conversationUploadDirectory, randomUUID())
       const written = await streamUploadToDisk(request, uploadPath, uploadCeiling)
+      // Measured before anything decodes it: a small file can declare a picture
+      // of billions of pixels, and every view of the chat would decode it.
+      if (!imageWithinDecodeLimits(await readFile(uploadPath))) {
+        await rm(uploadPath, { force: true }).catch(() => {})
+        writeJson(response, 413, {
+          error: {
+            code: 'image_too_large',
+            message: 'That picture is too large to open: over 16384 pixels a side, or 100 megapixels.',
+          },
+        })
+        return
+      }
       // Sized for the model here, on receipt, as the composer sizes what it
       // stages: a phone's photo is several thousand pixels a side, and Claude
       // refuses one over 2000 once a thread holds more than 20 images.
