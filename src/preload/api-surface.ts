@@ -58,6 +58,7 @@ import { workspaceSkillsApi } from './api/workspace-skills'
 import { workspaceSyncApi } from './api/workspace-sync'
 import { extensionScaffoldApi } from './api/extension-scaffold'
 import { previewsApi } from './api/previews'
+import { htmlPreviewApi } from './api/html-preview'
 import { webDevicesApi } from './api/web-devices'
 import { worktreePoolApi } from './api/worktree-pool'
 import { settledChatsApi } from './api/settled-chats'
@@ -137,6 +138,7 @@ export const apiModules = {
   ...workspaceSyncApi,
   ...extensionScaffoldApi,
   ...previewsApi,
+  ...htmlPreviewApi,
   ...webDevicesApi,
   ...worktreePoolApi,
   ...settledChatsApi,

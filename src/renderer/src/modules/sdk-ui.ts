@@ -20,7 +20,7 @@
 // be a reason to widen a component's own exports.
 //
 // This module is loaded LAZILY (a dynamic import inside
-// installSharedRuntimeImportMap): only a third-party module's first load reads
+// installSharedRuntime): only a third-party module's first load reads
 // it, so nothing eager imports it.
 
 import type * as React from 'react'

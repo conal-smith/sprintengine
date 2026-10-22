@@ -3,11 +3,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 // The headers the web listener answers with, and the cookies it reads (phase 9
 // spec, 6.3 and 6.4; decision R20).
 //
-// The app page carries a Content-Security-Policy. The desktop renderer has
-// none (owner ruling 2026-09-27), and that stands: a `file://` window is not
-// one origin away from every site the person visits, and a web tab is.
-// Transcripts are agent-written; the policy is the second line behind
-// `react-markdown` rendering no raw HTML.
+// The app page carries a Content-Security-Policy. So does the desktop app
+// window, since the security hardening of 2026-10 (it had none after the
+// owner's ruling of 2026-09-27): its policy is a `<meta>` in the document,
+// built by src/shared/desktop-csp.ts, as a `file://` page has no response
+// headers to carry one. The two differ where the clients do: the desktop's
+// highlighter compiles WebAssembly, it frames scripted HTML previews from a
+// scheme of its own, and it shows images from the web. Transcripts are
+// agent-written; either policy is the second line behind `react-markdown`
+// rendering no raw HTML.
 
 export type CspInput = {
   /** The origin the page was served from, for `connect-src` (explicit for older WebKit). */

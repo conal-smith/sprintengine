@@ -1,5 +1,7 @@
 import { app, protocol, session, shell } from 'electron'
 import { ipcMain } from './ipc/app-ipc'
+import { htmlPreviews } from './html-preview'
+import { HTML_PREVIEW_SCHEME } from '../shared/desktop-csp'
 import { buildStamp as mainBuildStamp } from 'virtual:sprintengine-build-stamp'
 import { MODULE_EVENTS_CHANNEL } from '../shared/modules/events'
 import { MODULE_NOTIFICATIONS_CHANNEL } from '../shared/modules/notifications'
@@ -327,6 +329,7 @@ void app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest({ urls: [`${MODULE_ASSET_SCHEME}://*/*`] }, (details, callback) => {
     callback({ cancel: !isAllowedModuleAssetRequest(details, shellUrl) })
   })
+  protocol.handle(HTML_PREVIEW_SCHEME, (request) => htmlPreviews.respond(request.url))
   protocol.handle(
     MODULE_ASSET_SCHEME,
     createModuleAssetHandler({

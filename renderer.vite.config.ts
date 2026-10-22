@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import type { Plugin, UserConfig } from 'vite'
 import type { BuildStamp } from './src/shared/build-stamp'
+import { withDesktopContentSecurityPolicy } from './src/shared/desktop-csp'
 import { readStudioEnv } from './src/shared/studio-env'
 
 // The renderer's Vite config, shared by the desktop build (electron.vite.config.ts)
@@ -95,6 +96,24 @@ function buildIdMetaPlugin(): Plugin {
           injectTo: 'head-prepend',
         },
       ]
+    },
+  }
+}
+
+// The desktop app window's Content-Security-Policy, in its document right after
+// the charset, so it governs everything the document loads, and the charset is
+// still in the first 1024 bytes where it has to be (src/shared/desktop-csp.ts
+// says what the policy allows and why). The web client's page has its own,
+// sent by the server that serves it.
+function desktopCspMetaPlugin(): Plugin {
+  return {
+    name: 'sprintengine-desktop-csp-meta',
+    transformIndexHtml(html, context) {
+      if (!context.filename.endsWith('index.html')) return undefined
+      const devServerOrigin = context.server
+        ? (context.server.resolvedUrls?.local[0] ?? `http://localhost:${context.server.config.server.port}`)
+        : null
+      return withDesktopContentSecurityPolicy(html, devServerOrigin)
     },
   }
 }
@@ -286,7 +305,7 @@ export function rendererViteConfig(options: { client: StudioClient; devBuild: bo
       react(),
       tailwindcss(),
       buildStampPlugin(options.devBuild),
-      ...(options.client === 'desktop' ? [buildIdMetaPlugin()] : []),
+      ...(options.client === 'desktop' ? [buildIdMetaPlugin(), desktopCspMetaPlugin()] : []),
       canvasSceneFontsPlugin({ cjk: options.client === 'web' }),
     ],
   }

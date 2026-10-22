@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Notification, protocol, safeStorage } from 'electron'
 import { ipcMain } from './ipc/app-ipc'
 import { MODULE_ASSET_SCHEME } from '../shared/modules/assets'
+import { HTML_PREVIEW_SCHEME } from '../shared/desktop-csp'
 import { installStudioPlatform } from '../server/platform/platform'
 import { claimAppInstance, configureDevUserData } from './app-instance'
 import { createElectronPlatform } from './platform/electron-platform'
@@ -65,6 +66,8 @@ if (!claimAppInstance(app)) {
       scheme: MODULE_ASSET_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
     },
+    // An HTML artifact with its scripts on, framed as a document of its own (html-preview.ts).
+    { scheme: HTML_PREVIEW_SCHEME, privileges: { standard: true, secure: true } },
   ])
   // Before the app is imported, so its chunks are compiled from the cache this
   // build left on disk (compile-cache.ts). The cache is written out a minute

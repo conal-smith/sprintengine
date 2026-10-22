@@ -186,6 +186,38 @@ export function HtmlArtifactFrame({
     setFrameLoaded(false)
   }, [absolutePath, allowScripts, reloadNonce])
 
+  // With scripts on, the page is framed by URL as a document of its own: a
+  // `srcdoc` runs under the app window's policy, which runs no inline script
+  // (main/html-preview.ts). Null while the URL is on its way; 'srcdoc' where
+  // the host has no such documents, which falls back to the `srcdoc`.
+  const scriptedContent = allowScripts && frameState.kind === 'ready' ? stripHtmlFrontmatter(frameState.content) : null
+  const [scriptedSrc, setScriptedSrc] = useState<string | 'srcdoc' | null>(null)
+  useEffect(() => {
+    setScriptedSrc(null)
+    if (scriptedContent === null) return
+    const open = window.api.htmlPreviewOpen
+    if (typeof open !== 'function') {
+      setScriptedSrc('srcdoc')
+      return
+    }
+    let cancelled = false
+    let opened: string | null = null
+    open(scriptedContent).then(
+      (url) => {
+        opened = url
+        if (cancelled) void window.api.htmlPreviewClose?.(url).catch(() => {})
+        else setScriptedSrc(url)
+      },
+      () => {
+        if (!cancelled) setScriptedSrc('srcdoc')
+      },
+    )
+    return () => {
+      cancelled = true
+      if (opened) void window.api.htmlPreviewClose?.(opened).catch(() => {})
+    }
+  }, [scriptedContent, reloadNonce])
+
   useEffect(() => {
     let cancelled = false
     let stopWatch: (() => Promise<void>) | null = null
@@ -413,24 +445,28 @@ export function HtmlArtifactFrame({
               }
               style={viewport === 'fit' ? undefined : { width: viewport * zoom }}
             >
-              <iframe
-                key={`${absolutePath}::${allowScripts ? 'scripts' : 'no-scripts'}::${reloadNonce}`}
-                title={`Preview · ${pageTitle}`}
-                srcDoc={
-                  allowScripts
-                    ? stripHtmlFrontmatter(frameState.content)
-                    : inertHtml(stripHtmlFrontmatter(frameState.content))
-                }
-                sandbox={htmlFrameSandbox(allowScripts)}
-                onLoad={() => setFrameLoaded(true)}
-                className={`border-0 bg-white transition-opacity duration-150 ${frameLoaded ? 'opacity-100' : 'opacity-0'}`}
-                style={{
-                  width: viewport === 'fit' ? `${100 / zoom}%` : viewport,
-                  height: `${100 / zoom}%`,
-                  transform: zoom === 1 ? undefined : `scale(${zoom})`,
-                  transformOrigin: 'top left',
-                }}
-              />
+              {allowScripts && scriptedSrc === null ? null : (
+                <iframe
+                  key={`${absolutePath}::${allowScripts ? `scripts:${scriptedSrc}` : 'no-scripts'}::${reloadNonce}`}
+                  title={`Preview · ${pageTitle}`}
+                  {...(allowScripts && scriptedSrc !== 'srcdoc' && scriptedSrc !== null
+                    ? { src: scriptedSrc }
+                    : {
+                        srcDoc: allowScripts
+                          ? stripHtmlFrontmatter(frameState.content)
+                          : inertHtml(stripHtmlFrontmatter(frameState.content)),
+                      })}
+                  sandbox={htmlFrameSandbox(allowScripts)}
+                  onLoad={() => setFrameLoaded(true)}
+                  className={`border-0 bg-white transition-opacity duration-150 ${frameLoaded ? 'opacity-100' : 'opacity-0'}`}
+                  style={{
+                    width: viewport === 'fit' ? `${100 / zoom}%` : viewport,
+                    height: `${100 / zoom}%`,
+                    transform: zoom === 1 ? undefined : `scale(${zoom})`,
+                    transformOrigin: 'top left',
+                  }}
+                />
+              )}
             </div>
           </div>
         ) : frameState.kind === 'generating' ? (

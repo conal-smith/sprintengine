@@ -26,6 +26,8 @@ import { registerTextGenerationIpc } from './ipc/text-generation-ipc'
 import { registerPullRequestCreateIpc } from './ipc/pull-request-create-ipc'
 import { registerCommitMessageIpc } from './ipc/commit-message-ipc'
 import { registerClipboardIpc } from './ipc/clipboard-ipc'
+import { registerHtmlPreviewIpc } from './ipc/html-preview-ipc'
+import { htmlPreviews } from './html-preview'
 import { registerChatExportIpc } from './ipc/chat-export-ipc'
 import { getPluginRegistry } from './plugin-registry-instance'
 import type { ConversationTranscriptInput } from '../shared/conversation-runtime'
@@ -168,6 +170,7 @@ export function registerCoreIpc(
   else if (services.studioRpcService) registerStudioConnectionIpc(ipcMain, services.studioRpcService)
   registerAppMenuIpc(ipcMain)
   registerClipboardIpc(ipcMain)
+  registerHtmlPreviewIpc(ipcMain, htmlPreviews)
   // Export chat (a chat tab's menu): the chat read where the chats run, written
   // or copied here, where the window and its dialogs are.
   registerChatExportIpc(ipcMain, {

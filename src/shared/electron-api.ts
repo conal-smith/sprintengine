@@ -1522,6 +1522,14 @@ export type ElectronApi = {
    */
   clipboardWriteRich?: (payload: { text: string; html: string }) => Promise<void>
   /**
+   * An HTML artifact with its scripts on, as a document of its own that the
+   * preview frames by URL (main/html-preview.ts); a `srcdoc` would run under
+   * the window's own policy, which allows no inline script. Absent, or failing,
+   * where the host has no such scheme: the preview stays a `srcdoc`.
+   */
+  htmlPreviewOpen?: (html: string) => Promise<string>
+  htmlPreviewClose?: (url: string) => Promise<void>
+  /**
    * Export chat: a chat tab's whole conversation saved as a PDF, Word or
    * Markdown file where the save dialog says, or copied to the clipboard.
    * Main reads the chat; the window names it and the format.

@@ -11,6 +11,7 @@ import {
 } from '../../../shared/modules/manifest'
 import { sanitizeEntryMessage } from '../../../shared/modules/entry-messages'
 import type { RendererKernel } from './renderer-host'
+import { bindSharedSpecifiers } from './shared-specifiers'
 
 // Renderer-side loader for trusted third-party modules' `entry.renderer`
 // bundles — the consuming half of the main-side server in
@@ -68,11 +69,10 @@ export function getThirdPartyRendererLoadState(moduleId: string): ThirdPartyRend
 // the bundle still contains bare `import … from 'react'` statements. Module
 // contributions render inside the app's React tree, so they MUST resolve to
 // the app's own React instance (a second copy breaks hooks/context). We bridge
-// the bare specifiers with an import map whose targets are generated blob
-// modules re-exporting the app's instances. Electron 41's Chromium supports
-// appending import maps after module loading has started (multiple import
-// maps, Chromium ≥ 133), and a map only affects modules resolved after it is
-// inserted — i.e. exactly the blob-URL entry bundles imported below.
+// the bare specifiers to generated blob modules re-exporting the app's
+// instances, by rewriting each such import in the bundle to its shim's URL
+// before the bundle is imported (shared-specifiers.ts). An import map would be
+// an inline script, which the window's Content-Security-Policy does not run.
 
 // React is eager because the app is already holding it, and so is the Monaco
 // wrapper: Monaco is loaded as the renderer boots (utils/monacoRuntime.ts), so
@@ -117,13 +117,12 @@ function sharedModuleShimSource(specifier: string, namespace: object): string {
   ].join('\n')
 }
 
-let sharedRuntimeInstall: Promise<void> | null = null
+let sharedRuntimeInstall: Promise<Record<string, string>> | null = null
 
-// Async because the bridged kit is loaded on demand. The blob shims are only
-// written once every namespace is in hand: an import map takes effect for
-// modules resolved *after* it is inserted, so a half-populated map would be a
-// map that permanently lies about a specifier.
-async function installSharedRuntimeImportMap(): Promise<void> {
+// Async because the bridged kit is loaded on demand. The shims are made once,
+// when every namespace is in hand, and live as long as the window: a bundle
+// imported later points at the same ones.
+async function installSharedRuntime(): Promise<Record<string, string>> {
   sharedRuntimeInstall ??= (async () => {
     const namespaces: Record<string, object> = { ...EAGER_SHARED_MODULE_SPECIFIERS }
     const lazy = Object.entries(LAZY_SHARED_MODULE_LOADERS)
@@ -132,16 +131,13 @@ async function installSharedRuntimeImportMap(): Promise<void> {
       namespaces[specifier] = loaded[index]!
     })
     ;(globalThis as Record<string, unknown>)[SHARED_RUNTIME_GLOBAL] = namespaces
-    const imports: Record<string, string> = {}
+    const urls: Record<string, string> = {}
     for (const [specifier, namespace] of Object.entries(namespaces)) {
-      imports[specifier] = URL.createObjectURL(
+      urls[specifier] = URL.createObjectURL(
         new Blob([sharedModuleShimSource(specifier, namespace)], { type: 'text/javascript' }),
       )
     }
-    const script = document.createElement('script')
-    script.type = 'importmap'
-    script.textContent = JSON.stringify({ imports })
-    document.head.appendChild(script)
+    return urls
   })()
   return sharedRuntimeInstall
 }
@@ -153,8 +149,8 @@ export type ThirdPartyEntryImporter = (code: string) => Promise<unknown>
 // Bundle content arrives over IPC and is evaluated via dynamic import of a
 // blob URL — no file:// or custom-protocol exposure of the module root.
 const importEntryBundle: ThirdPartyEntryImporter = async (code) => {
-  await installSharedRuntimeImportMap()
-  const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))
+  const bound = bindSharedSpecifiers(code, await installSharedRuntime())
+  const url = URL.createObjectURL(new Blob([bound], { type: 'text/javascript' }))
   try {
     return await import(/* @vite-ignore */ url)
   } finally {
