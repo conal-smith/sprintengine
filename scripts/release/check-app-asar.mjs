@@ -11,12 +11,18 @@
 // renderer packages green and only costs every download, so it has to fail
 // somewhere, and this is the step that sees the packaged archive.
 //
-// Two checks, over every app.asar under the directory given:
+// Three checks, over every app.asar under the directory given:
 //
 // - Each top-level package in the archive's node_modules is on the allowlist
 //   below: the packages main and preload load, and what those depend on.
 // - The archive is within a size budget, with headroom over what it is now,
 //   so a large file reaching it some other way is caught too.
+// - Nothing ships twice. What asarUnpack (and electron-builder's own unpacking
+//   of native modules) puts in app.asar.unpacked is meant to be a header entry
+//   flagged `unpacked`, with no bytes in the archive: node-pty and ripgrep's
+//   binary are, today. A file flagged unpacked that also has an offset into the
+//   archive, a file in app.asar.unpacked that the header has packed, or archive
+//   bytes beyond what its packed files account for, each fails.
 //
 // When main really does start loading a new package, add it and its
 // dependencies to ALLOWED_PACKAGES in the same change. When only the renderer
@@ -25,7 +31,7 @@
 //   node scripts/release/check-app-asar.mjs [dist]
 
 import { readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getRawHeader } from '@electron/asar'
 
@@ -137,6 +143,83 @@ export function checkAsar({ packages, size }, { allowed = ALLOWED_PACKAGES, budg
   return problems
 }
 
+/**
+ * Every file in an archive header, with its path inside the archive (`/`-separated) and size. `packed` is whether
+ * it has an offset into the archive, that is bytes in it; `unpacked` is the header's flag. Links are left out.
+ */
+export function fileEntries(header) {
+  const entries = []
+  const walk = (node, prefix) => {
+    for (const [name, entry] of Object.entries(node?.files ?? {})) {
+      const path = prefix ? `${prefix}/${name}` : name
+      if (entry.files) walk(entry, path)
+      else if (!('link' in entry)) {
+        entries.push({ path, size: entry.size ?? 0, unpacked: entry.unpacked === true, packed: 'offset' in entry })
+      }
+    }
+  }
+  walk(header, '')
+  return entries
+}
+
+/**
+ * What ships twice in one archive, as sentences; empty when nothing does. `dataBytes` is the archive's size less
+ * its header; `unpackedOnDisk` the files under its app.asar.unpacked, as paths relative to it.
+ */
+export function checkUnpacked({ entries, dataBytes, unpackedOnDisk }) {
+  const problems = []
+  const both = entries.filter((entry) => entry.unpacked && entry.packed)
+  if (both.length > 0) {
+    problems.push(
+      `${both.length} file(s) flagged unpacked also have bytes in app.asar (${mebibytes(sum(both))}): ${listed(both.map((entry) => entry.path))}.`,
+    )
+  }
+  const packed = new Map(entries.filter((entry) => !entry.unpacked).map((entry) => [entry.path, entry]))
+  const twice = unpackedOnDisk.filter((path) => packed.has(path))
+  if (twice.length > 0) {
+    const bytes = sum(twice.map((path) => packed.get(path)))
+    problems.push(
+      `${twice.length} file(s) in app.asar.unpacked are packed in app.asar as well (${mebibytes(bytes)}): ${listed(twice)}.`,
+    )
+  }
+  const packedBytes = sum(entries.filter((entry) => entry.packed))
+  if (dataBytes !== packedBytes) {
+    problems.push(
+      `app.asar holds ${dataBytes} bytes of file data, but its packed files account for ${packedBytes}: ` +
+        'the archive carries bytes no entry points to, or is cut short.',
+    )
+  }
+  return problems
+}
+
+/** The files under a folder, as `/`-separated paths relative to it; empty when it is not there. */
+export function filesUnder(dir) {
+  const found = []
+  const walk = (current) => {
+    let entries
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const path = join(current, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else found.push(relative(dir, path).split(sep).join('/'))
+    }
+  }
+  walk(dir)
+  return found.sort()
+}
+
+function sum(entries) {
+  return entries.reduce((total, entry) => total + entry.size, 0)
+}
+
+function listed(paths) {
+  return paths.length > 10 ? `${paths.slice(0, 10).join(', ')} and ${paths.length - 10} more` : paths.join(', ')
+}
+
 /** Every app.asar under a directory: dist/mac-arm64/<App>.app/…, dist/win-unpacked/…, dist/linux-unpacked/…. */
 export function findAsars(dir) {
   const found = []
@@ -172,13 +255,24 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   let failed = false
   for (const archive of archives) {
-    const packages = topLevelPackages(getRawHeader(archive).header)
+    const { header, headerSize } = getRawHeader(archive)
+    const packages = topLevelPackages(header)
     const size = statSync(archive).size
-    const problems = checkAsar({ packages, size })
+    // The archive is an 8-byte size field, the header, then the packed files' bytes.
+    const entries = fileEntries(header)
+    const unpackedOnDisk = filesUnder(`${archive}.unpacked`)
+    const problems = [
+      ...checkAsar({ packages, size }),
+      ...checkUnpacked({ entries, dataBytes: size - 8 - headerSize, unpackedOnDisk }),
+    ]
     const fromHere = relative(process.cwd(), archive)
     const name = fromHere && !fromHere.startsWith('..') ? fromHere : archive
     if (problems.length === 0) {
-      process.stdout.write(`${name}: ${mebibytes(size)}, ${packages.length} packages in node_modules, all expected.\n`)
+      const unpacked = entries.filter((entry) => entry.unpacked).length
+      process.stdout.write(
+        `${name}: ${mebibytes(size)}, ${packages.length} packages in node_modules, all expected; ` +
+          `${unpacked} files unpacked, none of them also in the archive.\n`,
+      )
     } else {
       failed = true
       for (const problem of problems) process.stderr.write(`${name}: ${problem}\n`)

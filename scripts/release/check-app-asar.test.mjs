@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { createPackage, getRawHeader } from '@electron/asar'
+import { createPackage, createPackageWithOptions, getRawHeader } from '@electron/asar'
 
 import {
   ALLOWED_PACKAGES,
   ASAR_BUDGET_BYTES,
   checkAsar,
+  checkUnpacked,
+  fileEntries,
+  filesUnder,
   findAsars,
   isAllowedPackage,
   topLevelPackages,
@@ -105,6 +108,100 @@ test('a packaged archive is found and read end to end', async () => {
     const packages = topLevelPackages(getRawHeader(archives[0]).header)
     assert.deepEqual(packages, ['@xterm/headless', 'ignore', 'monaco-editor'])
     assert.match(checkAsar({ packages, size: 1 })[0], /monaco-editor/)
+  } finally {
+    rmSync(source, { recursive: true, force: true })
+    rmSync(dist, { recursive: true, force: true })
+  }
+})
+
+function entry(path, { size = 10, unpacked = false, packed = !unpacked } = {}) {
+  return { path, size, unpacked, packed }
+}
+
+test('files flagged unpacked are read from the header with no bytes in the archive', () => {
+  const header = {
+    files: {
+      'package.json': { size: 2, offset: '0' },
+      'node_modules': {
+        files: {
+          'node-pty': {
+            unpacked: true,
+            files: { build: { unpacked: true, files: { 'pty.node': { size: 40, unpacked: true } } } },
+          },
+          link: { link: 'node_modules/node-pty' },
+        },
+      },
+    },
+  }
+  assert.deepEqual(fileEntries(header), [
+    { path: 'package.json', size: 2, unpacked: false, packed: true },
+    { path: 'node_modules/node-pty/build/pty.node', size: 40, unpacked: true, packed: false },
+  ])
+})
+
+test('an archive whose unpacked files are only unpacked passes', () => {
+  const entries = [entry('out/main/index.js', { size: 30 }), entry('node_modules/node-pty/pty.node', { size: 40, unpacked: true })]
+  assert.deepEqual(checkUnpacked({ entries, dataBytes: 30, unpackedOnDisk: ['node_modules/node-pty/pty.node'] }), [])
+})
+
+test('a file flagged unpacked that also has bytes in the archive fails', () => {
+  const entries = [entry('out/main/index.js', { size: 30 }), entry('node_modules/node-pty/pty.node', { size: 40, unpacked: true, packed: true })]
+  const problems = checkUnpacked({ entries, dataBytes: 70, unpackedOnDisk: ['node_modules/node-pty/pty.node'] })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /^1 file\(s\) flagged unpacked also have bytes in app\.asar .*node-pty\/pty\.node\.$/u)
+})
+
+test('a file in app.asar.unpacked that the archive also packs fails', () => {
+  const entries = [entry('node_modules/@vscode/ripgrep-darwin-arm64/bin/rg', { size: 4_000_000 })]
+  const problems = checkUnpacked({ entries, dataBytes: 4_000_000, unpackedOnDisk: ['node_modules/@vscode/ripgrep-darwin-arm64/bin/rg'] })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /^1 file\(s\) in app\.asar\.unpacked are packed in app\.asar as well \(3\.8 MiB\): .*bin\/rg\.$/u)
+})
+
+test('archive bytes no entry points to, or too few, fail', () => {
+  const entries = [entry('out/main/index.js', { size: 30 }), entry('node_modules/node-pty/pty.node', { size: 40, unpacked: true })]
+  assert.match(checkUnpacked({ entries, dataBytes: 70, unpackedOnDisk: [] })[0], /holds 70 bytes of file data, but its packed files account for 30/u)
+  assert.match(checkUnpacked({ entries, dataBytes: 20, unpackedOnDisk: [] })[0], /cut short/u)
+})
+
+test('a long list of duplicates is cut to ten names', () => {
+  const entries = Array.from({ length: 12 }, (_, i) => entry(`f${i}`, { size: 1, unpacked: true, packed: true }))
+  const [problem] = checkUnpacked({ entries, dataBytes: 12, unpackedOnDisk: [] })
+  assert.match(problem, /f9 and 2 more\.$/u)
+})
+
+test('an archive packed with unpacked files is checked end to end', async () => {
+  const source = tree({
+    'package.json': '{}',
+    'out/main/index.js': 'console.log(1)',
+    'node_modules/node-pty/build/Release/pty.node': 'binary',
+    'node_modules/node-pty/lib/index.js': 'module.exports = {}',
+  })
+  const dist = mkdtempSync(join(tmpdir(), 'check-app-asar-dist-'))
+  try {
+    const archive = join(dist, 'linux-unpacked', 'resources', 'app.asar')
+    mkdirSync(dirname(archive), { recursive: true })
+    await createPackageWithOptions(source, archive, { unpack: '*.node' })
+    const read = () => {
+      const { header, headerSize } = getRawHeader(archive)
+      return checkUnpacked({
+        entries: fileEntries(header),
+        dataBytes: statSync(archive).size - 8 - headerSize,
+        unpackedOnDisk: filesUnder(`${archive}.unpacked`),
+      })
+    }
+    assert.deepEqual(filesUnder(`${archive}.unpacked`), ['node_modules/node-pty/build/Release/pty.node'])
+    assert.deepEqual(read(), [])
+
+    // A copy of a packed file left in app.asar.unpacked, and bytes appended to the archive.
+    mkdirSync(join(`${archive}.unpacked`, 'node_modules', 'node-pty', 'lib'))
+    writeFileSync(join(`${archive}.unpacked`, 'node_modules', 'node-pty', 'lib', 'index.js'), 'module.exports = {}')
+    appendFileSync(archive, 'binary')
+    const problems = read()
+    assert.equal(problems.length, 2)
+    assert.match(problems[0], /app\.asar\.unpacked are packed in app\.asar as well .*lib\/index\.js\./u)
+    assert.match(problems[1], /bytes no entry points to/u)
+    assert.deepEqual(filesUnder(join(dist, 'missing')), [])
   } finally {
     rmSync(source, { recursive: true, force: true })
     rmSync(dist, { recursive: true, force: true })
