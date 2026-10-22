@@ -182,8 +182,13 @@ export function createCanvasWorkerTransport(deps: CanvasWorkerWindowDeps): Canva
       // never measures the text it is asked to lay out.
       paintWhenInitiallyHidden: true,
       webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        sandbox: false,
+        // Its own preload, with the worker protocol and nothing else on it, in
+        // a sandboxed renderer: the window hosts a third-party editor package,
+        // and none of the app's surface is its business.
+        preload: join(__dirname, '../preload/canvas-worker.js'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
         // Geometry and image export are the whole job; a throttled timer here
         // turns a two-second export into a two-minute one whenever the app is
         // in the background, which is most of when an agent is drawing.

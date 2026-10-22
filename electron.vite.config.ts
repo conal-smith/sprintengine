@@ -81,6 +81,10 @@ export default defineConfig({
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
+      // Each preload is one file. A sandboxed preload (the picker's, the launch
+      // plate's, the canvas worker's) cannot require a chunk beside it, and a
+      // constant two preloads share would otherwise be split into one.
+      isolatedEntries: true,
       rollupOptions: {
         // Two preloads: the app's, and the browser guest's element picker
         // (browser-pane epic), which main hands to the <webview> as a file
@@ -91,6 +95,9 @@ export default defineConfig({
           index: resolve('src/preload/index.ts'),
           'browser-guest': resolve('src/preload/browser-guest.ts'),
           splash: resolve('src/preload/splash.ts'),
+          // A fourth: the hidden canvas worker's, sandboxed, with only the
+          // worker protocol on it.
+          'canvas-worker': resolve('src/preload/canvas-worker.ts'),
         },
       },
     },
