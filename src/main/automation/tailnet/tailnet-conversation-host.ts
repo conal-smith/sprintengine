@@ -32,10 +32,12 @@ import { latestTurnEnd } from '../conversation-lifecycle'
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_AGENT_SPAWN_PERMISSION_PRESET } from '../../../shared/launch-settings'
 import { parseCliPermissionModeId } from '../../../shared/cli-permission-mode'
-import { basename, dirname, isAbsolute, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, resolve, win32 } from 'node:path'
 import { stat } from 'node:fs/promises'
 import type { ConversationAttachedFile } from '../../../shared/conversation/attachedFiles'
 import { openConfinedExistingFile } from '../../conversation-file-access'
+import { confineToRoots } from '../../studio-rpc/studio-file-confinement'
+import { distroOfUncPath } from '../../../shared/host-paths'
 import {
   conversationImageFileOf,
   conversationImagePathOf,
@@ -466,6 +468,12 @@ export type ConversationRegistryLink = {
    * ordinary one, refused `busy` while a turn runs, as before the member.
    */
   heldMessages?: ConversationHeldMessages
+  /**
+   * Studio's own folders of pictures (what chats sent, the pictures their steps
+   * returned, pasted images). A step's picture is served from the chat's
+   * folder, its session's, or one of these, and from nowhere else.
+   */
+  imageRoots?: () => readonly string[]
 }
 
 type ChatOf = { workspaceId: string; agentId: string }
@@ -526,6 +534,25 @@ function watchHeld(
   const stop = held.onChanged(tell)
   tell()
   return stop
+}
+
+/**
+ * A step's picture as the path to serve, when it is really inside one of
+ * `roots`; null otherwise. A WSL distribution's files are named by its share
+ * (`\\wsl.localhost\Ubuntu\…`), a spelling the general check refuses, so on
+ * Windows such a path is held by its spelling to a root on that same share.
+ */
+async function confineImagePath(path: string, roots: readonly string[]): Promise<string | null> {
+  const checked = await confineToRoots(path, roots)
+  if (checked.ok) return checked.path
+  if (process.platform !== 'win32' || !distroOfUncPath(path)) return null
+  const named = win32.normalize(path).toLowerCase()
+  for (const root of roots) {
+    if (!distroOfUncPath(root)) continue
+    const relative = win32.relative(win32.normalize(root).toLowerCase(), named)
+    if (relative === '' || (!relative.startsWith('..') && !win32.isAbsolute(relative))) return path
+  }
+  return null
 }
 
 export function createConversationGatewayHost(
@@ -936,7 +963,13 @@ export function createConversationGatewayHost(
           live && typeof runtime.sessionWorkspaceRoot === 'function'
             ? runtime.sessionWorkspaceRoot(live.sessionId)
             : null
-        return { ok: true, path: isAbsolute(path) ? path : resolve(sessionRoot || key.workspaceRoot, path) }
+        const named = isAbsolute(path) ? path : resolve(sessionRoot || key.workspaceRoot, path)
+        const confined = await confineImagePath(named, [
+          key.workspaceRoot,
+          ...(sessionRoot ? [sessionRoot] : []),
+          ...(registry.imageRoots?.() ?? []),
+        ])
+        return confined ? { ok: true, path: confined } : { ok: false, code: 'unknown_image' }
       })()
       // Shared while it is being found, so a burst of asks is one scan; kept
       // afterwards only when it named a picture of a step that has ended.
