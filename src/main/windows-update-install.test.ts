@@ -23,8 +23,8 @@ import {
   resolveWindowsInstallTarget,
   sameWindowsPath,
   windowHandleToDecimal,
-  windowsPowerShellPath,
 } from './windows-update-install'
+import { windowsPowerShellPath } from './command-on-path'
 
 // The three installations an update has to find, as the running app sees them.
 const PER_USER_DEFAULT = 'C:\\Users\\dev\\AppData\\Local\\Programs\\sprintengine-studio'

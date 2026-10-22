@@ -28,6 +28,7 @@ import { execFile, spawn } from 'child_process'
 import { randomBytes } from 'crypto'
 import { open, unlink } from 'fs/promises'
 import path from 'path'
+import { windowsPowerShellPath } from './command-on-path'
 
 /**
  * electron-builder's registry id for this app: the installer writes
@@ -237,11 +238,6 @@ export function elevatedLaunchScript(options: {
 /** `-EncodedCommand` takes base64 of the script's UTF-16LE bytes, so nothing in it needs quoting. */
 export function encodePowerShellCommand(script: string): string {
   return Buffer.from(script, 'utf16le').toString('base64')
-}
-
-export function windowsPowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
-  const systemRoot = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? 'C:\\Windows'
-  return win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 }
 
 export function powerShellArgs(script: string): string[] {

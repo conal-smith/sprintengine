@@ -30,6 +30,7 @@ import { execFile } from 'node:child_process'
 
 import { runSpawnDescriptor, type RunOutcome } from './process-run'
 import { killProcessTree } from './process-tree-kill'
+import { windowsPowerShellPath } from './command-on-path'
 
 // A subtree process above this CPU share counts as "doing work" → keep alive.
 // High enough to ignore idle MCP/helper jitter, low enough to catch a build.
@@ -273,7 +274,7 @@ export type HostProbeDeps = {
 function defaultRunPowerShell(script: string, options: { timeoutMs: number }): Promise<RunOutcome> {
   return runSpawnDescriptor(
     {
-      file: 'powershell.exe',
+      file: windowsPowerShellPath(),
       args: [
         '-NoProfile',
         '-NonInteractive',

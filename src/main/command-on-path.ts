@@ -65,7 +65,6 @@ export async function resolveWindowsProgramOnPath(
   name: string,
   environment: { pathValue?: string; exists?: (path: string) => Promise<boolean> } = {},
 ): Promise<string | null> {
-  const pathValue = environment.pathValue ?? process.env.PATH ?? process.env.Path ?? ''
   const exists =
     environment.exists ??
     (async (path: string) => {
@@ -76,13 +75,38 @@ export async function resolveWindowsProgramOnPath(
         return false
       }
     })
-  for (const dir of pathValue.split(';')) {
-    const trimmed = dir.trim().replace(/^"(.*)"$/u, '$1')
-    if (!win32.isAbsolute(trimmed)) continue
-    for (const extension of ['.exe', '.com']) {
-      const candidate = win32.join(trimmed, `${name}${extension}`)
-      if (await exists(candidate)) return candidate
-    }
+  for (const candidate of windowsProgramCandidates(name, environment.pathValue)) {
+    if (await exists(candidate)) return candidate
   }
   return null
+}
+
+/** {@link resolveWindowsProgramOnPath} for a caller that has to answer at once. */
+export function resolveWindowsProgramOnPathSync(
+  name: string,
+  environment: { pathValue?: string; exists?: (path: string) => boolean } = {},
+): string | null {
+  const exists = environment.exists ?? existsSync
+  for (const candidate of windowsProgramCandidates(name, environment.pathValue)) {
+    if (exists(candidate)) return candidate
+  }
+  return null
+}
+
+function* windowsProgramCandidates(name: string, pathValue?: string): Generator<string> {
+  for (const dir of (pathValue ?? process.env.PATH ?? process.env.Path ?? '').split(';')) {
+    const trimmed = dir.trim().replace(/^"(.*)"$/u, '$1')
+    if (!win32.isAbsolute(trimmed)) continue
+    for (const extension of ['.exe', '.com']) yield win32.join(trimmed, `${name}${extension}`)
+  }
+}
+
+/**
+ * Windows PowerShell by its full path under the system folder, for the same
+ * reason as {@link resolveWindowsProgramOnPath}: a bare `powershell.exe` is
+ * looked for in the child's working directory first.
+ */
+export function windowsPowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  const systemRoot = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? 'C:\\Windows'
+  return win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 }
