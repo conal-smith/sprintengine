@@ -215,6 +215,12 @@ test('automation', async () => {
     return found
   }
 
+  // The agent whose chat launched the sessions the terminal-list tests hold:
+  // the terminal tools show a caller only the terminals it or its chat started.
+  const LISTING_AGENT: McpConnectionContext = {
+    metadata: { kind: 'studio-agent', workspaceId: 'ws-caller', agentId: 'agent-caller' },
+  }
+
   // The connection context a Studio-launched agent's bridge presents; backlog
   // tools default their target project from this advisory identity.
   function agentContext(workspaceId: string): McpConnectionContext {
@@ -328,6 +334,7 @@ test('automation', async () => {
     const sessions = [
       {
         sessionId: 'session-live',
+        agentRecord: { launchedBy: { workspaceId: 'ws-caller' } },
         processAlive: true,
         suspended: false,
         kind: 'agent',
@@ -346,6 +353,7 @@ test('automation', async () => {
       },
       {
         sessionId: 'session-paused',
+        agentRecord: { launchedBy: { workspaceId: 'ws-caller' } },
         processAlive: false,
         suspended: true,
         kind: 'agent',
@@ -360,6 +368,7 @@ test('automation', async () => {
       },
       {
         sessionId: 'session-shell',
+        agentRecord: { launchedBy: { workspaceId: 'ws-caller' } },
         processAlive: true,
         suspended: false,
         kind: 'terminal',
@@ -386,7 +395,7 @@ test('automation', async () => {
       },
     })
 
-    const all = await tool(tools, 'terminal.list').handler({})
+    const all = await tool(tools, 'terminal.list').handler({}, LISTING_AGENT)
     assert.equal(all.isError, undefined, JSON.stringify(all.structuredContent))
     const listed = (
       all.structuredContent as {
@@ -418,7 +427,7 @@ test('automation', async () => {
     // A plain shell has no agent phase to report, and says so rather than guessing.
     assert.equal(listed[2].agentState, null)
 
-    const filtered = await tool(tools, 'terminal.list').handler({ workspaceId: 'ws-1', kind: 'agent' })
+    const filtered = await tool(tools, 'terminal.list').handler({ workspaceId: 'ws-1', kind: 'agent' }, LISTING_AGENT)
     assert.deepEqual(
       (filtered.structuredContent as { terminals: Array<{ sessionId: string }> }).terminals.map(
         (entry) => entry.sessionId,
@@ -426,7 +435,7 @@ test('automation', async () => {
       ['session-live'],
     )
 
-    const refused = await tool(tools, 'terminal.list').handler({ kind: 'sideways' })
+    const refused = await tool(tools, 'terminal.list').handler({ kind: 'sideways' }, LISTING_AGENT)
     assert.equal(refused.isError, true)
     assert.equal((refused.structuredContent as { error: { code: string } }).error.code, 'invalid_kind')
   }
@@ -441,6 +450,7 @@ test('automation', async () => {
     const sessions = [
       {
         sessionId: 'session-live',
+        agentRecord: { launchedBy: { workspaceId: 'ws-caller' } },
         processAlive: true,
         suspended: false,
         kind: 'agent',
@@ -471,6 +481,7 @@ test('automation', async () => {
       },
       {
         sessionId: 'session-bare',
+        agentRecord: { launchedBy: { workspaceId: 'ws-caller' } },
         processAlive: true,
         suspended: false,
         kind: 'terminal',
@@ -504,7 +515,7 @@ test('automation', async () => {
     )
 
     const listed = (
-      (await tool(tools, 'terminal.list').handler({})).structuredContent as {
+      (await tool(tools, 'terminal.list').handler({}, LISTING_AGENT)).structuredContent as {
         terminals: Array<Record<string, unknown>>
       }
     ).terminals

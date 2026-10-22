@@ -250,11 +250,11 @@
     },
     {
       "name": "terminal.list",
-      "sha256": "15b401938a4e2b18ce26197dc9f5a3ce2a0b513e2a7550f5b4179e0403cfae43"
+      "sha256": "73e4b47ac5846201f85c6a78e919ffb39ebbee616a91c7873da058399fb9301e"
     },
     {
       "name": "terminal.read",
-      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
+      "sha256": "19ed821f846a6c7be6f1413a23daf32049d68b5940098a714753856f241982a2"
     },
     {
       "name": "terminal.create",
@@ -640,11 +640,11 @@
     },
     {
       "name": "terminal.list",
-      "sha256": "15b401938a4e2b18ce26197dc9f5a3ce2a0b513e2a7550f5b4179e0403cfae43"
+      "sha256": "73e4b47ac5846201f85c6a78e919ffb39ebbee616a91c7873da058399fb9301e"
     },
     {
       "name": "terminal.read",
-      "sha256": "560f4c0c695dc53f638e27a859ff025723fd7ec1104f11a5cb883517503c7896"
+      "sha256": "19ed821f846a6c7be6f1413a23daf32049d68b5940098a714753856f241982a2"
     },
     {
       "name": "terminal.create",

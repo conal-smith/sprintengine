@@ -81,7 +81,16 @@ export type AgentLaunchRequest = {
    * startup prompt. Refused for a CLI whose manifest declares no resume.
    */
   resumeCliSessionId?: string
+  /**
+   * The agent of this app whose tool call asked for the launch, and its chat.
+   * Recorded on the session so the terminal tools show an agent the terminals
+   * it or its chat started, and no others. Absent for a launch the person made.
+   */
+  launchedBy?: AgentLaunchCaller
 }
+
+/** An agent of this app that asked for a launch: its chat (workspace) and, when it declared one, its own id. */
+export type AgentLaunchCaller = { workspaceId: string; agentId?: string }
 
 export type AgentDisposeRequest = {
   workspaceId: string
@@ -115,6 +124,8 @@ export type AgentLaunchRecord = {
   worktreePath?: string
   /** The machine main launched on, so the agent resumes on the same one. */
   hostId?: ExecutionHostId
+  /** The agent that asked for this launch through a tool, as the request named it. */
+  launchedBy?: AgentLaunchCaller
 }
 
 export type AgentLaunchResult =
