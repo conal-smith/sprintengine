@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
+import { beforeAll, test } from 'vitest'
 
 import { classifyPrompt, createAskpassBroker, marksRemotePrompts, type AskpassRequest } from './askpass'
-import { DOCKER_TESTS, startSshd } from './__fixtures__/docker-sshd'
+import { DOCKER_TESTS, prepareSshdImage, SSHD_IMAGE_BUILD_MS, startSshd } from './__fixtures__/docker-sshd'
 import { buildSshArgs, parseDestination, sshEnvironment } from './ssh-command'
 
 /** The shim run as ssh runs it. Never synchronously: the broker answers on this process's own loop. */
@@ -111,7 +111,15 @@ test('a question nobody answers is given up after the deadline', async () => {
 })
 
 // The real thing: ssh asks through the shim on first connect (the host key)
-// and for the key's passphrase, against a container's sshd.
+// and for the key's passphrase, against a container's sshd. The image is
+// built here, not in the test: a first build is minutes of apt-get.
+beforeAll(async () => {
+  if (DOCKER_TESTS) await prepareSshdImage()
+}, SSHD_IMAGE_BUILD_MS)
+
+/** One ssh session's deadline: a connect to a local container takes a second or two, so one past this is stuck. */
+const SESSION_MS = 30_000
+
 test.skipIf(!DOCKER_TESTS)(
   'ssh asks the host key and the passphrase through the shim, and a refusal is clean',
   async () => {
@@ -129,8 +137,9 @@ test.skipIf(!DOCKER_TESTS)(
     })
     const destination = parseDestination('build-box')
     assert.ok(destination.ok)
+    const live = new Set<ChildProcess>()
     const session = () =>
-      new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
         const issued = broker.issue('build-box')
         const child = spawn(
           'ssh',
@@ -140,11 +149,23 @@ test.skipIf(!DOCKER_TESTS)(
             stdio: ['pipe', 'pipe', 'pipe'],
           },
         )
+        live.add(child)
         let stdout = ''
         let stderr = ''
         child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
         child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')))
+        // Stuck is said with what ssh had asked and printed, not as the whole test's timeout.
+        const stuck = setTimeout(() => {
+          child.kill('SIGKILL')
+          reject(
+            new Error(
+              `ssh was still running after ${SESSION_MS} ms; asked so far: [${asked.map((r) => r.kind).join(', ')}]\nstderr:\n${stderr}`,
+            ),
+          )
+        }, SESSION_MS)
         child.on('close', (code) => {
+          clearTimeout(stuck)
+          live.delete(child)
           issued.revoke()
           resolve({ code, stdout, stderr })
         })
@@ -175,6 +196,7 @@ test.skipIf(!DOCKER_TESTS)(
       )
       assert.ok(readFileSync(sshd.knownHosts, 'utf8').includes('[127.0.0.1]'), 'ssh wrote the trusted key itself')
     } finally {
+      for (const child of live) child.kill('SIGKILL')
       broker.close()
       sshd.stop()
     }

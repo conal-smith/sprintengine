@@ -21,7 +21,13 @@ import type { ConversationEvent } from '../../../shared/conversation-runtime'
 import { DEFAULT_SSH_ENVIRONMENT_SETTINGS } from '../../../shared/ssh-environments'
 import { BACKEND_WIRE_VERSION } from '../../../server/wsl/backend-wire'
 import { createAskpassBroker, type AskpassRequest } from './askpass'
-import { DOCKER_TESTS, startSshd, type SshdFixture } from './__fixtures__/docker-sshd'
+import {
+  DOCKER_TESTS,
+  prepareSshdImage,
+  SSHD_IMAGE_BUILD_MS,
+  startSshd,
+  type SshdFixture,
+} from './__fixtures__/docker-sshd'
 import { parseDestination, spawnSshSession } from './ssh-command'
 import { SshEnvironment } from './ssh-environment'
 import { ensureNodeBinary, serverTreeDigest } from './ssh-install'
@@ -36,8 +42,9 @@ let tree = ''
 let digest = ''
 let sshd: SshdFixture | null = null
 
-beforeAll(() => {
+beforeAll(async () => {
   if (!DOCKER_TESTS) return
+  await prepareSshdImage()
   scratch = mkdtempSync(join(tmpdir(), 'se-sshd-env-'))
   tree = join(scratch, 'tree')
   execFileSync(process.execPath, [join(ROOT, 'scripts', 'build-server.mjs'), '--wsl', '--out-dir', tree], {
@@ -50,7 +57,7 @@ beforeAll(() => {
     // The relay needs none of these.
     sshdOptions: ['AllowTcpForwarding no', 'AllowStreamLocalForwarding no', 'X11Forwarding no'],
   })
-})
+}, SSHD_IMAGE_BUILD_MS)
 afterAll(() => {
   sshd?.stop()
   if (scratch) rmSync(scratch, { recursive: true, force: true })

@@ -223,6 +223,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The suites' sshd image, built before them: a first build pulls Ubuntu
+      # and runs apt-get, which a slow mirror stretches to minutes. Built inside
+      # a test, that read as a 120 s timeout; here it is a step of its own, with
+      # its own log, tried again if a fetch fails. The tag is the one
+      # src/main/environments/ssh/__fixtures__/docker-sshd.ts looks for.
+      - name: Build the test sshd image
+        timeout-minutes: 12
+        run: |
+          for attempt in 1 2 3; do
+            docker build -t sprintengine-test-sshd:1 \
+              -f src/main/environments/ssh/__fixtures__/sshd.Dockerfile \
+              src/main/environments/ssh/__fixtures__ && exit 0
+            echo "::warning::sshd image build failed (attempt $attempt)"
+          done
+          exit 1
+
       - name: SSH machine suites
         env:
           STUDIO_TEST_DOCKER: '1'

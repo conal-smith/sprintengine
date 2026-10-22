@@ -4,8 +4,8 @@
 # every exchange has noise before its first marker. python3 serves the dev
 # page the pane suites load through the relay.
 FROM ubuntu:24.04
-RUN apt-get update \
- && apt-get install -y --no-install-recommends openssh-server python3 procps \
+RUN apt-get -o Acquire::Retries=3 update \
+ && apt-get -o Acquire::Retries=3 install -y --no-install-recommends openssh-server python3 procps \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash dev \
  && echo 'dev:devpass' | chpasswd \
