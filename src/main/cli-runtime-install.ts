@@ -25,6 +25,7 @@ import { findExecutable, searchDirectories, sharedLoginShellPath } from './login
 import { forgetSharedGhLocation } from './github/gh'
 import { access, constants as fsConstants } from 'node:fs/promises'
 import { cliProbeEnv } from './cli-probe-env'
+import { windowsPowerShellPath } from './command-on-path'
 
 // Exit code our probe scripts use to signal "binary not found on PATH" so we
 // can distinguish a missing CLI from a CLI that exists but whose --version
@@ -87,7 +88,7 @@ function shellDescriptorForScript(
 ): SpawnDescriptor {
   if (target === 'win32') {
     return {
-      file: 'powershell.exe',
+      file: windowsPowerShellPath(),
       args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
     }
   }
@@ -485,7 +486,7 @@ export function buildBatchProbeDescriptor(input: {
 }): SpawnDescriptor {
   const script = powerShellBatchProbeScript(input.requests, input.perCliTimeoutMs ?? BATCH_PER_CLI_TIMEOUT_MS)
   return {
-    file: 'powershell.exe',
+    file: windowsPowerShellPath(),
     args: [
       '-NoProfile',
       '-NonInteractive',

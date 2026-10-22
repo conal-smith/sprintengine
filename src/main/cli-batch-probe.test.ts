@@ -97,7 +97,7 @@ test('the native batch is one encoded PowerShell command', () => {
       { binary: "it's", versionArgs: [] },
     ],
   })
-  assert.equal(desc.file, 'powershell.exe')
+  assert.match(desc.file, /\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u)
   const script = Buffer.from(desc.args.at(-1) ?? '', 'base64').toString('utf16le')
   assert.match(script, /@\{ b = 'claude'; a = @\('--version'\) \}/u)
   assert.match(script, /@\{ b = 'it''s'; a = @\(\) \}/u, 'single quotes are doubled for PowerShell')
@@ -131,7 +131,7 @@ test('detectCliBatch starts one process per machine, whatever the CLI count', as
     },
   )
   assert.equal(runs.length, 1, 'one PowerShell for the native CLI')
-  assert.equal(runs[0].file, 'powershell.exe')
+  assert.match(runs[0].file, /\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u)
   assert.deepEqual(
     asked.sort((a, b) => a.hostId.localeCompare(b.hostId)),
     [
