@@ -6,6 +6,7 @@ import { hostname } from 'os'
 import { backoffDelayMs } from '../../../shared/exponentialBackoff'
 import {
   normalizeTailnetScopes,
+  tailnetScopeGrantsAccess,
   type TailnetDevice,
   type TailnetReverseGrant,
   type TailnetScope,
@@ -377,6 +378,18 @@ export type TailnetMeshService = {
     cli?: unknown
   }): Promise<MeshWorkspaceExtensionsResult>
   /**
+   * One machine's usage over a window, for this desktop's usage dashboard
+   * (`usage-report`, on `workspace:read`). The handshake comes first, so a
+   * machine that is away, revoked, or on a Studio without the tool is told
+   * apart before anything is asked; the arguments go as they are, and the
+   * answer comes back unread (usage-mesh.ts reads it).
+   */
+  readUsage(input: {
+    connectionId: unknown
+    args: Record<string, unknown>
+    timeoutMs?: number
+  }): Promise<MeshUsageResult>
+  /**
    * A remote chat's Create PR (`chat-create-pull-request`): whether its
    * checkout is ready, the drafted text, the push and the creation, each
    * asked of the machine the chat runs on, which finds the chat's checkout in
@@ -407,6 +420,14 @@ export type TailnetMeshService = {
   conversationToolImage(input: { key: unknown; toolUseId: unknown }): Promise<MeshConversationImageResult>
   shutdown(): void
 }
+
+/** What one machine answered `usage.report`, or why it did not: away, on an older Studio, refused, or failing. */
+export type MeshUsageResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; status: 'offline' | 'unsupported' | 'unauthorized' | 'error'; message: string }
+
+/** How long a usage read gives a machine to say who it is: a sleeping laptop should not hold the dashboard's ask. */
+const USAGE_IDENTITY_TIMEOUT_MS = 5_000
 
 export type TailnetMeshServiceOptions = {
   resolveUserDataDir: () => string
@@ -1554,6 +1575,57 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, extensions: readWorkspaceExtensions(answer.value) }
   }
 
+  async function readUsage(input: {
+    connectionId: unknown
+    args: Record<string, unknown>
+    timeoutMs?: number
+  }): Promise<MeshUsageResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, status: 'error', message: 'That machine is not paired here.' }
+    const identity = await readRemoteIdentity({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      timeoutMs: USAGE_IDENTITY_TIMEOUT_MS,
+    })
+    if (!identity.ok) {
+      const unauthorized = identity.code === 'unauthorized'
+      recordReachability(connection, { reachable: false, unauthorized, detail: identity.message })
+      if (unauthorized) return { ok: false, status: 'unauthorized', message: identity.message }
+      // A machine on a wire this build does not speak is one to update, not one that is away.
+      if (identity.code === 'unsupported_transport_version')
+        return { ok: false, status: 'unsupported', message: identity.message }
+      return { ok: false, status: 'offline', message: identity.message }
+    }
+    store.updateScopes(connection.id, identity.value.scopes)
+    store.markConnected(connection.id)
+    rememberCapabilities(connection.id, identity.value.capabilities)
+    recordReachability(connection, { reachable: true, unauthorized: false, detail: null })
+    if (!tailnetPeerSupports(identity.value.capabilities, 'usage-report'))
+      return {
+        ok: false,
+        status: 'unsupported',
+        message: `Update Studio on ${connection.machineName} to include its usage.`,
+      }
+    if (!tailnetScopeGrantsAccess(new Set(identity.value.scopes), 'workspace:read'))
+      return {
+        ok: false,
+        status: 'unauthorized',
+        message: `This pairing may not read ${connection.machineName}'s workspaces, and so not its usage.`,
+      }
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'usage.report',
+      args: input.args,
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    })
+    if (answer.ok) return answer
+    if (answer.code === 'unauthorized' || answer.code === 'tailnet_scope_required')
+      return { ok: false, status: 'unauthorized', message: answer.message }
+    if (answer.code === 'unreachable') return { ok: false, status: 'offline', message: answer.message }
+    return { ok: false, status: 'error', message: answer.message }
+  }
+
   // ── A remote chat's Create PR ───────────────────────────────────────────
   //
   // Every step is the chat's machine's: the call names the chat, and that
@@ -2361,6 +2433,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     changeConversation,
     workspaceCheckout,
     workspaceExtensions,
+    readUsage,
     conversationPullRequestState,
     conversationPullRequestDraft,
     conversationPullRequestDraftCancel,

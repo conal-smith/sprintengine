@@ -163,6 +163,22 @@ vocabulary: every `conversation-` capability this machine advertises must be
 one `@sprintengine/conversation-protocol` names
 (`conversation-protocol.test.ts`).
 
+`usage-report` (2026-10-21) names a gateway tool of its own: `usage.report`
+answers a window of this machine's token usage for a paired desktop's Usage
+dashboard, on `workspace:read`, and is listed only to paired devices. Its
+structured answer carries a `version` of its own (1), which moves only for a
+change an older reader would misread, beside rows of
+`[hour, agent, sessionIndex, model, input, output, cacheRead, cacheWrite,
+requests, reportedCostUsd, speed?]` and the hashed session ids they point
+into; a member added later is optional, and a reader skips a row it cannot
+read rather than the answer. A window too large for one answer ends on an
+hour and names `nextFrom`, where the next call starts, so no answer runs into
+the client's 4 MB. A desktop that does not see the capability asks nothing
+and says that machine's Studio needs updating; one that sees an answer of
+another `version` counts nothing from it and says the same. The desktop
+asking prices the rows itself, so two machines on different price lists
+still agree.
+
 Bump the version instead when the change is not additive: a field that changes
 meaning or type, a field that is removed, a response whose shape a peer is
 already parsing. Nothing a capability flag can describe should bump the version,

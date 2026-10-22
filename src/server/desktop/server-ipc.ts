@@ -1,3 +1,4 @@
+import { hostname } from 'node:os'
 import { join } from 'node:path'
 
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
@@ -112,10 +113,14 @@ export function registerServerDomainIpc(registry: IpcRegistryLike, deps: ServerD
   registerUsageLimitsIpc(ipc, { userDataDir: dataDir() })
   // The chats a usage limit stopped, and the resume each can have when it resets.
   registerUsageLimitResumeIpc(ipc, core.usageLimitResumes)
-  // Every agent's token use on this machine, priced, for the usage dashboard.
+  // Every agent's token use on this machine and on the machines paired with
+  // it over the tailnet, priced, for the usage dashboard.
   registerUsageIpc(ipc, {
     dataDir,
     getWorkspaces: () => core.workspaceSyncService.getSnapshot().state.workspaces,
+    mesh: () => deps.gateway.mesh(),
+    hostName: () => hostname(),
+    machineMarks: () => core.agentLaunchSettings.get().machineMarks,
   })
   // The messages a person scheduled into a chat, sent when their time comes.
   registerScheduledMessagesIpc(ipc, core.scheduledMessages)

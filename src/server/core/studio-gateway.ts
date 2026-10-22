@@ -17,6 +17,9 @@ import {
   movesWorkspaceList,
 } from '../../main/automation/conversation-lifecycle'
 import { launchPermissionCeiling } from '../../main/automation/launch-permission-cap'
+import { gatewayToolsForCaller } from '../../main/automation/tailnet/tailnet-scopes'
+import { createUsageTools } from '../../main/usage/usage-tools'
+import { appUsageService } from '../../main/usage/usage-service'
 import { createStudioGatewayTools } from '../../main/automation/studio-gateway-tools'
 import { writeDiagnosticLog } from '../../main/diagnostics-service'
 import { toolSuccess, toolError } from '../../shared/modules/mcp-tools'
@@ -147,6 +150,14 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
       },
     }),
     ...createLocalServerTools({ link: (key, input) => core.localServers.linkForAgent(key, input) }),
+    // A paired desktop's usage dashboard counts what this machine spent.
+    ...createUsageTools({
+      usage: () =>
+        appUsageService({
+          dataDir: () => platform.paths.dataDir(),
+          getWorkspaces: () => workspaceSyncService.getSnapshot().state.workspaces,
+        }),
+    }),
   ]
 
   // The gateway's own tools: what no client may offer under the same family.
@@ -217,10 +228,14 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
   })
   // The order agents have always listed: the shell's toolsets in the slots
   // the browser and canvas tools held, Studio's own tools, then any app's.
+  // A tool only a paired device has a use for is left out for everyone else.
   const hideTool = options.hideTool
   const resolveTools = (context?: McpConnectionContext) => [
     ...clientGateway.builtIns(context),
-    ...(hideTool ? resolveGatewayTools().filter((tool) => !hideTool(tool.name)) : resolveGatewayTools()),
+    ...gatewayToolsForCaller(
+      hideTool ? resolveGatewayTools().filter((tool) => !hideTool(tool.name)) : resolveGatewayTools(),
+      context,
+    ),
     ...clientGateway.apps(context),
   ]
 
@@ -296,9 +311,9 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
     /**
      * Studio's own tools, core and module, without any a client offers: what
      * a WSL server's agents are offered of this side beside the shell's
-     * toolsets (phase 7, 3.7).
+     * toolsets (phase 7, 3.7). Not those served to paired devices alone.
      */
-    ownTools: (): McpToolRegistration[] => resolveGatewayTools(),
+    ownTools: (): McpToolRegistration[] => gatewayToolsForCaller(resolveGatewayTools(), undefined),
     /**
      * The names of the core's own tools, without any a module contributes:
      * what the module host refuses a module tool name against.
