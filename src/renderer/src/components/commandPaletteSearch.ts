@@ -330,6 +330,86 @@ export function orderPaletteCommands<T extends PaletteRankable>(commands: readon
     .map((entry) => entry.command)
 }
 
+// ── One row per chat ─────────────────────────────────────────────────────────
+//
+// A chat can answer a query twice: its switch row, by its name, folder, pull
+// requests or branch, and the transcript search, by what was said in it. Two
+// rows for one chat was the duplicate the search used to show, so the two are
+// folded into the one the person can read the reason off.
+
+/** What the fold needs of a row: its identity, the chat it is, and the match it carries. */
+type FoldableRow = CommandSearchFields & {
+  id: string
+  mark?: { kind: string; workspaceId?: string }
+  conversationMatch?: { snippet: string }
+  run: () => void
+}
+
+/** True when the query is in the row's visible name — the one match a row needs no second line to explain. */
+export function matchesVisibleName(
+  command: Pick<CommandSearchFields, 'label' | 'searchLabel'>,
+  query: string,
+): boolean {
+  return (
+    scoreCommandMatch({ label: command.label, searchLabel: command.searchLabel }, query) >= PALETTE_SCORE.labelSubstring
+  )
+}
+
+/**
+ * The in-memory rows that matched, with the transcript search's rows folded
+ * in: one row per chat.
+ *
+ * - A transcript row whose message no longer contains the query is dropped.
+ *   The runner keeps a provider's rows from the last keystroke up while the
+ *   next search is in flight, and every message has a "w" in it: a search for
+ *   "wave" used to show the rows "w" found, under "wave", until it finished.
+ * - A chat whose name matched keeps its switch row as it is: the title says
+ *   why it is there, and Enter switches to it rather than scrolling it back.
+ * - A chat that matched only on a hidden field (a pull request, its branch,
+ *   its folder) and by what was said in it shows the message, which is the
+ *   likelier thing to have been searched for, and opens at it.
+ * - A chat found only by what was said in it is the transcript row alone.
+ */
+export function foldConversationMatches<T extends FoldableRow>(
+  matched: readonly T[],
+  provided: readonly T[],
+  query: string,
+): T[] {
+  const needle = query.trim().toLowerCase()
+  const byChat = new Map<string, T>()
+  for (const row of provided) {
+    const workspaceId = row.mark?.kind === 'chat' ? row.mark.workspaceId : undefined
+    if (!row.conversationMatch || !workspaceId) continue
+    if (!row.conversationMatch.snippet.toLowerCase().includes(needle)) continue
+    byChat.set(workspaceId, row)
+  }
+  const rows: T[] = []
+  for (const row of matched) {
+    const workspaceId = row.mark?.kind === 'chat' ? row.mark.workspaceId : undefined
+    const said = workspaceId ? byChat.get(workspaceId) : undefined
+    if (!workspaceId || !said) {
+      rows.push(row)
+      continue
+    }
+    byChat.delete(workspaceId)
+    if (matchesVisibleName(row, query)) rows.push(row)
+    else
+      rows.push({
+        ...row,
+        keywords: [row.keywords, said.keywords].filter(Boolean).join(' '),
+        conversationMatch: said.conversationMatch,
+        run: said.run,
+      })
+  }
+  for (const row of provided) {
+    const workspaceId = row.mark?.kind === 'chat' ? row.mark.workspaceId : undefined
+    if (row.conversationMatch) {
+      if (workspaceId && byChat.get(workspaceId) === row) rows.push(row)
+    } else rows.push(row)
+  }
+  return rows
+}
+
 /** A workspace type's label + curated search terms joined into one match
  *  string. Pure over the definition so it is directly testable; an
  *  unregistered/shell mode falls back to the raw mode id. */
