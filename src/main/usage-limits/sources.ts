@@ -260,7 +260,8 @@ const CODEX_DEFAULT_LIMIT_ID = 'codex'
  * Windows from an `account/rateLimits/read` answer (`GetAccountRateLimitsResponse`)
  * or the `rateLimits` of an `account/rateLimits/updated` push (a sparse
  * `RateLimitSnapshot`). Each bucket has a primary (the short window) and a
- * secondary (the weekly one); `usedPercent` is 0..100 and `resetsAt` epoch
+ * secondary (the weekly one), or for an Enterprise usage-based plan an
+ * `individualLimit` instead; `usedPercent` is 0..100 and `resetsAt` epoch
  * seconds. A window the push leaves null is left as it was.
  */
 export function codexRateLimitUpdates(raw: unknown): UsageWindowUpdate[] {
@@ -303,6 +304,27 @@ function codexBucketUpdates(bucket: Record<string, unknown>): UsageWindowUpdate[
       // Codex says which bucket refused, not which window: the full one did.
       status: usedPercent >= 100 ? 'rejected' : 'allowed',
     })
+  }
+  // An Enterprise usage-based plan has neither window: its allowance is a
+  // monthly credit limit, sent as what is left of it. Read only for the
+  // default bucket and only when it has no window of its own, so a plan that
+  // meters by session and week is shown and held back exactly as before.
+  const individual = bucket.individualLimit
+  if (limitId === CODEX_DEFAULT_LIMIT_ID && updates.length === 0 && isRecord(individual)) {
+    const remaining = usagePercent(individual.remainingPercent)
+    if (remaining !== null) {
+      const usedPercent = 100 - remaining
+      const resetsAt = usageEpochMs(individual.resetsAt)
+      updates.push({
+        id: `${limitId}:individual`,
+        label: 'Monthly credit limit',
+        usedPercent,
+        ...(resetsAt !== null ? { resetsAt } : {}),
+        // As the windows above: spent, it is what refuses every turn until
+        // it resets, and a reading with some left again lifts that.
+        status: usedPercent >= 100 ? 'rejected' : 'allowed',
+      })
+    }
   }
   return updates
 }

@@ -61,6 +61,7 @@ export type ConversationBackendMember =
   | 'revokeApprovalRule'
   | 'revertToTurn'
   | 'rewindToTurn'
+  | 'handoffConversation'
   | 'forkAtTurn'
 
 export type ConversationBackend = Pick<ConversationRuntime, ConversationBackendMember>

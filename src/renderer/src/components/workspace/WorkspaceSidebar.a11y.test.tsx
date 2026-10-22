@@ -94,7 +94,6 @@ test('WorkspaceSidebar.a11y', async () => {
       onSelectWorkspace: (id: string) => selected.push(id),
       onMoveWorkspaceToNewWindow: noop,
       onMoveWorkspaceToMainWindow: noop,
-      onCloseWorkspace: noop,
       onForgetFolder: noop,
       onNewChat: noop,
       onNewChatInFolder: noop,

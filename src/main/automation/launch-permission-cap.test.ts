@@ -141,6 +141,9 @@ function harness(
         settle: () => assert.fail('no chat is settled here'),
         visit: () => assert.fail('no chat is visited here'),
         markUnread: () => assert.fail('no chat is marked unread here'),
+        snooze: () => assert.fail('nothing is snoozed here'),
+        highlight: () => assert.fail('nothing is starred here'),
+        setAutoSettle: () => assert.fail('no Auto-settle is switched here'),
       },
       launch: async (request) => {
         h.chats.push(request)

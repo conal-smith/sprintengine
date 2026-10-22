@@ -50,6 +50,11 @@ export const CONVERSATION_EVENT_TYPES = [
   // own when the window filled (payload: `turnId`). Says what the turn is doing
   // until `context_compacted`, or the next thing the turn says, supersedes it.
   'context_compacting',
+  // The conversation was handed off to a fresh provider session instead of
+  // being compacted: its messages (no tool calls) were saved to a file, and
+  // the next message the person sends points the new session at it. Between
+  // turns, never inside one (payload: `ConversationHandoffPayload`).
+  'context_handed_off',
   // What a command the CLI ran without the model printed (`/context`,
   // `/usage`; payload: `output`, `command` without its slash). `adapterNote:
   // true` marks a line the adapter wrote about the command instead, such as a
@@ -104,10 +109,12 @@ export type ConversationEvent = {
 /**
  * Why the desktop sent a chat a message of its own: an agent the chat started
  * finished or stopped (`agent-notice`), a usage limit that stopped the chat
- * has reset (`usage-resume`), or a pull request the chat's agent asked the
- * desktop to watch needs a look (`pull-request-watch`).
+ * has reset (`usage-resume`), a pull request the chat's agent asked the
+ * desktop to watch needs a look (`pull-request-watch`), or the chat sat idle
+ * with its prompt cache about to expire and was compacted while it was still
+ * warm (`auto-compact`, the message being `/compact` itself).
  */
-export type ConversationStudioMessageReason = 'agent-notice' | 'usage-resume' | 'pull-request-watch'
+export type ConversationStudioMessageReason = 'agent-notice' | 'usage-resume' | 'pull-request-watch' | 'auto-compact'
 
 /**
  * Who a `user_message` came from when it was not the person: the payload's
@@ -123,6 +130,7 @@ const STUDIO_MESSAGE_REASONS: readonly string[] = [
   'agent-notice',
   'usage-resume',
   'pull-request-watch',
+  'auto-compact',
 ] satisfies ConversationStudioMessageReason[]
 
 /**
@@ -154,6 +162,22 @@ export type ConversationTurnRetryingPayload = {
   retryInMs: number
   error?: string
   status?: number
+}
+
+/**
+ * Payload carried on `context_handed_off`. `path` is the file the
+ * conversation's messages were saved to, on the machine the agent runs on;
+ * `preTokens` the context the old session held, where it was known.
+ * `seedOwed` says the next message still has to point the new session at the
+ * file; the desktop records the delivery as a `session_updated` carrying
+ * `historySeeded: true`. `providerSessionId` is null: the next message starts
+ * the provider afresh, which is also the chat's resume cursor.
+ */
+export type ConversationHandoffPayload = {
+  path: string
+  preTokens?: number
+  seedOwed: true
+  providerSessionId: null
 }
 
 /**

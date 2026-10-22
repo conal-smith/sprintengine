@@ -1,5 +1,5 @@
 import type { AgentPhaseEvent } from '../shared/agent-runtime'
-import type { ConversationEvent } from '../shared/conversation-runtime'
+import { readConversationMessageOrigin, type ConversationEvent } from '../shared/conversation-runtime'
 import type { AgentAttention } from './agent-attention'
 import { isTurnlessSubagentStep } from '../shared/conversation/subagents'
 
@@ -17,7 +17,23 @@ import { isTurnlessSubagentStep } from '../shared/conversation/subagents'
  */
 export function createConversationAttentionListener(attention: Pick<AgentAttention, 'onAgentPhase'>) {
   const sessions = new Map<string, { phase: AgentPhaseEvent['phase']; pending: Set<string> }>()
+  // The turn Studio opened in each session with its own `/compact`, just
+  // before the cache expired: the chat sat idle and still does, so the turn
+  // neither badges nor notifies. Remembered only until it ends.
+  const quietTurns = new Map<string, string>()
   const listener = (event: ConversationEvent): void => {
+    const turnId = typeof event.payload?.turnId === 'string' ? event.payload.turnId : undefined
+    if (
+      event.type === 'user_message' &&
+      turnId &&
+      readConversationMessageOrigin(event.payload?.origin)?.reason === 'auto-compact'
+    )
+      quietTurns.set(event.sessionId, turnId)
+    const quiet = quietTurns.get(event.sessionId)
+    if (quiet !== undefined && quiet === turnId) {
+      if (event.type === 'turn_completed' || event.type === 'turn_failed') quietTurns.delete(event.sessionId)
+      return
+    }
     const state = sessions.get(event.sessionId) ?? { phase: 'idle', pending: new Set<string>() }
     let phase: AgentPhaseEvent['phase']
     let turnEnd = false

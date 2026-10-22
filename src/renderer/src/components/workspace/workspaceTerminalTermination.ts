@@ -24,7 +24,7 @@ type LayoutSessionNode = {
  * rendered, and the sidebar renders from a projection that does not move for a
  * layout or agent change alone, so the passed copy can miss a tab opened since.
  * A tab missed here is a pty left running. The passed copy stands in once the
- * workspace has left the store (Close removes it before its kills settle).
+ * workspace has left the store (its folder forgotten before its kills settle).
  */
 export function workspaceTerminalSessionIds(passed: Workspace): string[] {
   const workspace = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === passed.id) ?? passed
@@ -72,11 +72,12 @@ export function workspaceTerminalSessionIds(passed: Workspace): string[] {
  * writers are done" as the renderer can get. Kill failures are absorbed: a
  * session that died first must not hold up the caller.
  *
- * Three callers, and they are the whole list of ways a workspace stops running
- * for good: Close (the chat is removed), Delete (its state is trashed, and the
- * kill has to land BEFORE the folder goes so a surviving writer cannot recreate
- * it), and Settle (2026-09-07) — a chat that has come to rest holds no ptys,
- * whether a person settled it by hand or the sweep did after three idle days.
+ * Two callers, and they are the whole list of ways a workspace stops running
+ * for good: Forget folder (its chats leave the record with it), and Settle
+ * (2026-09-07) — a chat that has come to rest holds no ptys, whether a person
+ * settled it by hand or the sweep did after three idle days. Settle is also
+ * the one way a person puts a single chat away: Close, which removed the chat
+ * and killed unconditionally, is gone (2026-10-21).
  *
  * It lives here rather than in WorkspaceManager, where it grew up, because
  * settling is driven from the sidebar.
@@ -101,8 +102,12 @@ export async function terminateWorkspaceTerminals(workspace: Workspace): Promise
  * the rest sweep wakes a settled chat whose agent is working on its next pass,
  * which here is the moment that activity reaches the window.
  *
- * Close keeps the unconditional kill: a chat being removed must not leave a
- * writer behind.
+ * Only an agent's work spares the chat (`workspaceIsWorking`): a plain shell
+ * printing is not work Settle would be cutting short, and it ends with the
+ * rest, so a chat holding only a terminal is put away like any other.
+ *
+ * Forget folder keeps the unconditional kill: a chat leaving the record must
+ * not leave a writer behind.
  */
 export async function terminateSettledWorkspaceTerminals(
   workspace: Workspace,
@@ -145,7 +150,7 @@ async function workspaceWorkingNow(workspace: Workspace): Promise<boolean> {
  * one chat and suspended every other chat's agent with it, ending the
  * background agents they were running.
  *
- * Suspended, not stopped, for Settle and Close alike: a stopped session refuses
+ * Suspended, not stopped, for Settle and Forget folder alike: a stopped session refuses
  * every later turn, and a settled chat can be un-settled and typed into. The
  * session keeps its resume cursor, so the next message respawns the agent on
  * the same conversation. A running turn is interrupted: the person put the

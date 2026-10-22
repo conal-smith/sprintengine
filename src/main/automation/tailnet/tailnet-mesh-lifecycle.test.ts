@@ -180,3 +180,98 @@ test('a browse reads when each workspace was settled, and null for one in the li
     await machine.close()
   }
 })
+
+// The row menu on a paired machine's chat: Star, Highlight color, Snooze and
+// Auto-settle (`chat-row-menu` there), and Mark unread (`chat-mark-unread`).
+
+test('each row menu change is the gateway tool that machine’s own menu writes through', async () => {
+  const machine = await pairedMachine(
+    ['conversations', 'conversation-lifecycle', 'chat-row-menu', 'chat-mark-unread'],
+    (call) => success({ ok: true, workspaceId: call.arguments.workspaceId }),
+  )
+  try {
+    const changes = [
+      { kind: 'highlight', starred: true },
+      { kind: 'highlight', color: 'green' },
+      { kind: 'highlight', color: null },
+      { kind: 'snooze', until: 9_000_000 },
+      { kind: 'snooze', until: null },
+      { kind: 'auto-settle', enabled: true },
+      { kind: 'mark-unread' },
+    ]
+    for (const change of changes) {
+      const answer = await machine.mesh.changeConversation({
+        connectionId: machine.connectionId,
+        workspaceId: 'ws-1',
+        change,
+      })
+      assert.deepEqual(answer, { ok: true, workspaceId: 'ws-1' }, JSON.stringify(change))
+    }
+    assert.deepEqual(machine.toolCalls, [
+      { name: 'conversation.highlight', arguments: { workspaceId: 'ws-1', starred: true } },
+      { name: 'conversation.highlight', arguments: { workspaceId: 'ws-1', color: 'green' } },
+      { name: 'conversation.highlight', arguments: { workspaceId: 'ws-1', color: null } },
+      { name: 'conversation.snooze', arguments: { workspaceId: 'ws-1', until: 9_000_000 } },
+      { name: 'conversation.snooze', arguments: { workspaceId: 'ws-1', until: null } },
+      { name: 'conversation.auto_settle', arguments: { workspaceId: 'ws-1', enabled: true } },
+      { name: 'conversation.mark_unread', arguments: { workspaceId: 'ws-1' } },
+    ])
+  } finally {
+    await machine.close()
+  }
+})
+
+test('a row menu change is not asked of a machine that does not take it, and one it cannot read is refused here', async () => {
+  const machine = await pairedMachine(['conversations', 'conversation-lifecycle'], () =>
+    assert.fail('nothing is asked over there'),
+  )
+  try {
+    const starred = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'highlight', starred: true },
+    })
+    assert.equal(!starred.ok && starred.code, 'row_menu_unsupported')
+    assert.match(!starred.ok ? starred.message : '', /cannot star its chats from here yet/)
+    const marked = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'mark-unread' },
+    })
+    assert.equal(!marked.ok && marked.code, 'row_menu_unsupported')
+    for (const change of [
+      { kind: 'highlight' },
+      { kind: 'highlight', color: 'teal' },
+      { kind: 'snooze', until: 'soon' },
+      { kind: 'auto-settle' },
+      { kind: 'rename', name: 'x' },
+      null,
+    ]) {
+      const refused = await machine.mesh.changeConversation({
+        connectionId: machine.connectionId,
+        workspaceId: 'ws-1',
+        change,
+      })
+      assert.equal(!refused.ok && refused.code, 'invalid_arguments', JSON.stringify(change))
+    }
+    assert.deepEqual(machine.toolCalls, [])
+  } finally {
+    await machine.close()
+  }
+})
+
+test('a machine from before the row menu tools answers "Unknown tool", read as unsupported', async () => {
+  const machine = await pairedMachine(undefined, (call) => ({
+    error: { code: -32602, message: `Unknown tool: ${call.name}` },
+  }))
+  try {
+    const snoozed = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'snooze', until: 9_000_000 },
+    })
+    assert.equal(!snoozed.ok && snoozed.code, 'row_menu_unsupported')
+  } finally {
+    await machine.close()
+  }
+})

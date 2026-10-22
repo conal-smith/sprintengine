@@ -209,6 +209,7 @@ export type TranscriptEntry =
       answers?: Record<string, string>
     }
   | CompactionEntry
+  | HandoffEntry
   | CommandOutputEntry
 
 // What a command the CLI ran by itself printed (`/context`, `/usage`), in the
@@ -233,8 +234,25 @@ type CompactionEntry = {
   id: string
   turnId?: string
   trigger?: 'manual' | 'auto'
+  // Studio compacted the chat by itself while it sat idle, just before its
+  // prompt cache expired: the turn's message was its own `/compact`
+  // (`origin.reason` 'auto-compact').
+  beforeCacheExpiry?: true
   preTokens?: number
   postTokens?: number
+  createdAt: number
+}
+
+// The conversation was handed off to a fresh provider session, pointed at a
+// file of its messages, instead of being compacted. Always between turns:
+// after the turn it followed.
+export type HandoffEntry = {
+  kind: 'handoff'
+  id: string
+  // The file the messages were saved to, on the machine the agent runs on.
+  path: string
+  // The context the old session held, left behind.
+  preTokens?: number
   createdAt: number
 }
 
@@ -656,8 +674,9 @@ export function projectConversation(
   let highestSeq = 0
   // Compactions by the turn they happened in, and those between turns by the
   // turn they followed ('' before the first).
+  // A handoff is between turns too, and goes in the same place.
   const compactionsInTurn = new Map<string, CompactionEntry[]>()
-  const compactionsAfterTurn = new Map<string, CompactionEntry[]>()
+  const compactionsAfterTurn = new Map<string, Array<CompactionEntry | HandoffEntry>>()
   // Command output by the turn that printed it; one with no turn follows the
   // last turn, as a compaction between turns does.
   const commandOutputsInTurn = new Map<string, CommandOutputEntry[]>()
@@ -1033,6 +1052,9 @@ export function projectConversation(
           createdAt: event.createdAt,
           ...(turnId ? { turnId } : {}),
           ...(trigger === 'manual' || trigger === 'auto' ? { trigger } : {}),
+          ...(turnId && eventUserTurns.get(turnId)?.origin?.reason === 'auto-compact'
+            ? { beforeCacheExpiry: true as const }
+            : {}),
           ...(readNumber(event.payload, 'preTokens') !== undefined
             ? { preTokens: readNumber(event.payload, 'preTokens') }
             : {}),
@@ -1063,6 +1085,31 @@ export function projectConversation(
           const after = turnOrder.at(-1) ?? ''
           compactionsAfterTurn.set(after, [...(compactionsAfterTurn.get(after) ?? []), compaction])
         }
+        break
+      }
+      case 'context_handed_off': {
+        const path = readString(event.payload, 'path')
+        if (!path) break
+        const preTokens = readNumber(event.payload, 'preTokens')
+        const handoff: HandoffEntry = {
+          kind: 'handoff',
+          id: event.id,
+          path,
+          ...(preTokens !== undefined ? { preTokens } : {}),
+          createdAt: event.createdAt,
+        }
+        // The new session holds nothing yet: the window keeps its size, and
+        // what fills it is the next request's to say.
+        const held = usage as ConversationUsage | null
+        if (held && held.contextUsed !== undefined) {
+          usage = {
+            inputTokens: held.inputTokens,
+            outputTokens: held.outputTokens,
+            ...(held.contextWindow !== undefined ? { contextWindow: held.contextWindow } : {}),
+          }
+        }
+        const after = turnOrder.at(-1) ?? ''
+        compactionsAfterTurn.set(after, [...(compactionsAfterTurn.get(after) ?? []), handoff])
         break
       }
       case 'command_output': {

@@ -3168,6 +3168,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // Offered where the provider can drop turns from its own context and this
   // view can operate the conversation.
   const rewindEnabled = operate && capabilities?.rewind === true && typeof transport.rewind === 'function'
+  // Handoff, where the provider can start a fresh session pointed at a file
+  // of the chat's messages and this view can operate the conversation.
+  const handoffEnabled = operate && capabilities?.handoff === true && typeof transport.handoff === 'function'
+  const handingOffRef = useRef(false)
+  const handoff = async () => {
+    if (handingOffRef.current || !transport.handoff) return
+    handingOffRef.current = true
+    try {
+      const root = binding.sessionRoot ?? workspaceRoot
+      if (!root) throw new Error('This chat has no folder to hand off from.')
+      const handed = await transport.handoff({ key: { workspaceRoot: root, workspaceId, agentId } })
+      if (!handed.ok) throw new Error(handed.message)
+    } catch (error) {
+      showToast({
+        tone: 'error',
+        title: 'The chat was not handed off',
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      handingOffRef.current = false
+    }
+  }
   // "Fork from here", where the provider can be forked and this machine can
   // open the fork in a tab. A provider that branches only the session it is
   // running (an ACP agent's `session/fork`, `forkFromLiveSession`) has this
@@ -3907,6 +3929,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                       reading={projection.promptCache}
                       busy={composerBusy}
                       onCompact={() => void sendTurn('/compact')}
+                      onHandoff={handoffEnabled ? () => void handoff() : undefined}
                     />
                   ) : null}
                   {contextReading ? (

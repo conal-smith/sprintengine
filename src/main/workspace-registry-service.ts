@@ -318,6 +318,9 @@ export function createWorkspaceRegistryService(options: WorkspaceRegistryService
         if (event.payload.patch.autoSettleEnabled !== undefined) {
           stamp(event.payload.workspaceId, 'autoSettleEnabled', event.payload.editedAt)
         }
+        if (event.payload.patch.autoCompactEnabled !== undefined) {
+          stamp(event.payload.workspaceId, 'autoCompactEnabled', event.payload.editedAt)
+        }
         break
       default:
         break
@@ -793,6 +796,9 @@ function stampedFieldsForCommand(command: WorkspaceSyncCommand): [WorkspaceRegis
       }
       if (command.payload.patch.autoSettleEnabled !== undefined) {
         fields.push(['autoSettleEnabled', command.payload.editedAt])
+      }
+      if (command.payload.patch.autoCompactEnabled !== undefined) {
+        fields.push(['autoCompactEnabled', command.payload.editedAt])
       }
       if (command.payload.patch.snoozedUntil !== undefined) fields.push(['snoozedUntil', command.payload.editedAt])
       return fields

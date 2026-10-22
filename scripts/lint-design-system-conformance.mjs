@@ -48,10 +48,13 @@
 //                          affordable because the palette holds the terminal
 //                          repaint pause for its lifetime, so the backdrop is
 //                          blurred once and sits still; the SCRIM behind it
-//                          stays a plain tone). Any other blur, and any other
-//                          consumer of the utility — a product file included
-//                          — is flagged: a surface that wants glass asks the
-//                          shell for it.
+//                          stays a plain tone). One scrim blurs, through the
+//                          `scrim-glass` utility: the palette's own, while it
+//                          covers a conversation and no terminal (owner ruling
+//                          2026-10-21). Any other blur, and any other consumer
+//                          of either utility — a product file included — is
+//                          flagged: a surface that wants glass asks the shell
+//                          for it.
 //   shadow-in-flow         a Tailwind `shadow-{sm,md,lg,xl,2xl}` utility
 //                          ("Hairlines carry the structure": elevation is a
 //                          three-step overlay ramp taken from the shadow
@@ -718,6 +721,13 @@ const GLASS_CONSUMER_FILES = new Set([
   'src/renderer/src/components/ui/Popover.tsx',
   'src/renderer/src/components/ui/CommandPalette.tsx',
 ])
+// The scrim's glass: the command palette's scrim alone, and only over a
+// conversation (owner ruling 2026-10-21). The ~10fps measurement was a blur
+// over streaming terminals, so the palette asks `paletteBackdropIsConversation`
+// and keeps the plain tone whenever a terminal is in view.
+const SCRIM_GLASS_UTILITY = 'scrim-glass'
+const SCRIM_GLASS_UTILITY_PATTERN = /(?<![\w-])scrim-glass(?![\w-])/g
+const SCRIM_GLASS_CONSUMER_FILES = new Set(['src/renderer/src/components/ui/CommandPalette.tsx'])
 
 const TAILWIND_SHADOW = /(?<![\w-])shadow-(?:sm|md|lg|xl|2xl)(?![\w-])/g
 
@@ -1122,6 +1132,13 @@ function scanSourceFile(file, push) {
     forEachMatch(GLASS_UTILITY_PATTERN, source, (match) => {
       if (!inCode(match.index)) return
       push('backdrop-filter', file, match.index, `${match[0]} (glass belongs to the kit's sanctioned shells)`)
+    })
+  }
+
+  if (!SCRIM_GLASS_CONSUMER_FILES.has(file.path)) {
+    forEachMatch(SCRIM_GLASS_UTILITY_PATTERN, source, (match) => {
+      if (!inCode(match.index)) return
+      push('backdrop-filter', file, match.index, `${match[0]} (the one blurred scrim is the command palette's)`)
     })
   }
 
@@ -1593,8 +1610,8 @@ const FIX_HINT = {
   'selection-accent-bar': 'selection is a neutral --bg-selected fill with no left bar',
   'backdrop-filter':
     'separation comes from the scrim tone plus the shell shadow; glass is the toast card, ' +
-    'Popover / PointerPopover material="glass" and the command palette shell (surface-glass in the kit) ' +
-    'and nothing else blurs or borrows it',
+    'Popover / PointerPopover material="glass" and the command palette shell (surface-glass in the kit), ' +
+    "the palette's scrim over a conversation (scrim-glass), and nothing else blurs or borrows them",
   'shadow-in-flow':
     'overlays take --shadow-popover / --shadow-modal; the primary action takes .control-raised and a ' +
     'segmented thumb .control-thumb; all other in-flow chrome, controls included, takes a hairline',
@@ -1730,31 +1747,29 @@ const appCssStarts = lineStarts(appCss)
 const appCssLines = appCss.split('\n')
 markerLinesByPath.set(APP_CSS_PATH, collectMarkerLines(APP_CSS_PATH, appCssLines))
 
-// The app CSS may blur in exactly one place: the `surface-glass` utility.
+// The app CSS may blur in exactly two places: the `surface-glass` utility and
+// the palette scrim's `scrim-glass`.
 {
   // Comment text (the prose that explains the ban) is skipped by kind.
   const masked = appCss
-  let glassStart = -1
-  let glassEnd = -1
-  const utilityAt = masked.indexOf(`@utility ${GLASS_UTILITY} {`)
-  if (utilityAt !== -1) {
-    glassStart = utilityAt
+  const blockOf = (utility) => {
+    const utilityAt = masked.indexOf(`@utility ${utility} {`)
+    if (utilityAt === -1) return null
     let depth = 0
     for (let i = masked.indexOf('{', utilityAt); i < masked.length; i += 1) {
       if (masked[i] === '{') depth += 1
       if (masked[i] === '}') {
         depth -= 1
-        if (depth === 0) {
-          glassEnd = i
-          break
-        }
+        if (depth === 0) return { start: utilityAt, end: i }
       }
     }
+    return null
   }
+  const blocks = [blockOf(GLASS_UTILITY), blockOf(SCRIM_GLASS_UTILITY)].filter(Boolean)
   const cssBackdrop = /backdrop-filter\s*:/g
   forEachMatch(cssBackdrop, masked, (match) => {
     if (appCssKinds[match.index] === KIND_COMMENT) return
-    const inside = glassStart !== -1 && match.index > glassStart && match.index < glassEnd
+    const inside = blocks.some((block) => match.index > block.start && match.index < block.end)
     if (inside) return
     pushAt('backdrop-filter', APP_CSS_PATH, lineOf(appCssStarts, match.index), match[0])
   })

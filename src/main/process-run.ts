@@ -39,6 +39,14 @@ export type RunOptions = {
   // this process's, which is fine for every Windows-side executable; a WSL
   // probe sets the Linux side's own with `--cd` instead.
   cwd?: string
+  // POSIX only: start the process as the leader of a new session, away from
+  // the terminal this app was launched from. An interactive shell (`-i`) that
+  // finds a controlling terminal turns on job control and contends for it, so
+  // with the app started from a terminal the shell is stopped, or takes the
+  // foreground, and never answers. A timeout then ends the whole group, so what
+  // the shell started does not outlive it. Never set on Windows, where
+  // `detached` gives the process a console window of its own.
+  detached?: boolean
 }
 
 // How long after the process exits its pipes may stay open before the outcome
@@ -49,13 +57,14 @@ export type RunOptions = {
 const PIPE_DRAIN_GRACE_MS = 2_000
 
 export function runSpawnDescriptor(desc: SpawnDescriptor, options: RunOptions = {}): Promise<RunOutcome> {
-  const { onData, env = process.env, timeoutMs, timedOutCode = 1, decodeStdout, decodeStderr, cwd } = options
+  const { onData, env = process.env, timeoutMs, timedOutCode = 1, decodeStdout, decodeStderr, cwd, detached } = options
   return new Promise((resolve) => {
     const child = spawn(desc.file, desc.args, {
       env,
       windowsHide: true,
       stdio: [desc.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       ...(cwd ? { cwd } : {}),
+      ...(detached ? { detached: true } : {}),
     })
     const stdoutChunks: Buffer[] = []
     const stderrChunks: Buffer[] = []
@@ -66,8 +75,9 @@ export function runSpawnDescriptor(desc: SpawnDescriptor, options: RunOptions = 
       ? setTimeout(() => {
           timedOut = true
           // The whole tree: on Windows the wrapper is `powershell.exe` or
-          // `wsl.exe`, and what hangs is what it launched.
-          killProcessTree(child)
+          // `wsl.exe`, and what hangs is what it launched. A detached process
+          // leads its own group, and the group goes with it.
+          killProcessTree(child, { processGroup: detached })
         }, timeoutMs)
       : null
     const stdoutText = (): string => {

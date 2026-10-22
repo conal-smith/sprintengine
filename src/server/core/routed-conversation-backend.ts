@@ -112,6 +112,7 @@ const RESULT_MEMBERS: ReadonlySet<string> = new Set([
   'revokeApprovalRule',
   'revertToTurn',
   'rewindToTurn',
+  'handoffConversation',
   'forkAtTurn',
 ])
 
@@ -499,6 +500,7 @@ export function createRoutedConversationBackend(deps: RoutedConversationBackendD
     },
     revertToTurn: byWorkspace('revertToTurn'),
     rewindToTurn: byWorkspace('rewindToTurn'),
+    handoffConversation: byWorkspace('handoffConversation'),
     forkAtTurn: byWorkspace('forkAtTurn'),
   }
   return backend as unknown as RoutedConversationBackend

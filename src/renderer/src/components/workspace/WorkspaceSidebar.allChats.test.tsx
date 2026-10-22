@@ -158,7 +158,6 @@ test('WorkspaceSidebar.allChats', async () => {
       onSelectWorkspace: noop,
       onMoveWorkspaceToNewWindow: noop,
       onMoveWorkspaceToMainWindow: noop,
-      onCloseWorkspace: noop,
       onForgetFolder: noop,
       onNewChat: noop,
       onNewChatInFolder: noop,

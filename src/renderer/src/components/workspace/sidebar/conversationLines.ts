@@ -169,14 +169,23 @@ export function conversationPhaseActivity(phase: ConversationPhase): Activity {
  * launched in the background counts whatever its parent's phase says: it goes
  * on working while the parent waits on the person, or after the parent's turn
  * failed.
+ *
+ * Only an agent's work counts. A plain shell reads as working whenever it has
+ * printed in the last few seconds, which is terminal UX and not work Settle
+ * would be cutting short: a chat holding only a shell, or a shell beside an
+ * idle agent, settles like any other, and its shell ends with it. Main's own
+ * Settle (`conversation.settle`) reads agent terminals alone for the same
+ * reason. The row's combined activity carries a shell's working too, so it is
+ * believed only while no shell is the one printing.
  */
 export function workspaceIsWorking(
   activity: Activity,
   conversations: readonly ConversationSessionSummary[],
   terminals: readonly TerminalSessionSnapshot[] = [],
 ): boolean {
-  if (activity === 'working') return true
-  if (terminals.some(isSessionWorking)) return true
+  const shellPrinting = terminals.some((session) => session.kind !== 'agent' && isSessionWorking(session))
+  if (activity === 'working' && !shellPrinting) return true
+  if (terminals.some((session) => session.kind === 'agent' && isSessionWorking(session))) return true
   return conversations.some(
     (summary) =>
       (summary.backgroundAgents ?? 0) > 0 || conversationPhaseActivity(conversationSummaryPhase(summary)) === 'working',

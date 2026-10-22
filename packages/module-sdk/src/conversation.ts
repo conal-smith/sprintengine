@@ -25,6 +25,10 @@ export type ModuleConversationEventType =
   | 'usage_updated'
   | 'context_compacted'
   | 'context_compacting'
+  // The conversation was handed off to a fresh provider session, pointed at a
+  // file of its messages, instead of being compacted (payload: `path`,
+  // `preTokens`, `seedOwed`).
+  | 'context_handed_off'
   | 'command_output'
   // The turn ended. Its payload carries `ModuleConversationTurnCompletedPayload`:
   // `text` (the agent's last message) and `usage` (what the turn spent) where

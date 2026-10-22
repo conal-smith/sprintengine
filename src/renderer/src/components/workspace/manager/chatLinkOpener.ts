@@ -5,9 +5,10 @@ import type { ChatLink } from '../../../../../shared/deep-link'
 // named agent's tab forward when the chat has that agent. Nothing else — no
 // agent starts, nothing is typed or sent.
 //
-// A chat this window's store does not have was closed, or lives on another
-// machine, and the person is told so rather than left wondering whether the
-// click reached the app. A workspace the rail hides (a module's background
+// A chat this window's store does not have may run on a paired machine, linked
+// by its id there, and is opened as its sidebar row opens it. Otherwise it was
+// closed, or lives on a machine this one does not follow, and the person is
+// told so rather than left wondering whether the click reached the app. A workspace the rail hides (a module's background
 // host) is not a chat anyone links to, and is answered the same way: opening
 // one would leave the person somewhere the rail cannot take them back from.
 //
@@ -28,6 +29,11 @@ export type ChatLinkOpenerDeps = {
   /** What a click on the chat's sidebar row does. */
   select: (chatId: string) => void
   revealAgent: (chatId: string, agentId: string, name: string) => void
+  /**
+   * A chat a paired machine runs, linked by its id there: opened here as
+   * its sidebar row opens it. True when one was.
+   */
+  openRemote?: (chatId: string) => boolean
   notOnThisMachine: () => void
 }
 
@@ -35,6 +41,7 @@ export type ChatLinkOpenerDeps = {
 export function openChatLink(link: ChatLink, deps: ChatLinkOpenerDeps): boolean {
   const chat = deps.getChat(link.chatId)
   if (!chat) {
+    if (deps.openRemote?.(link.chatId)) return true
     deps.notOnThisMachine()
     return false
   }

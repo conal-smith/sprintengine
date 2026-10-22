@@ -36,8 +36,10 @@ import type { SignIns, SignInDone, SignInStarted } from '../machine/machine-sign
  * 4: `sendTurn` takes `files`, a message's files attached by path.
  * 5: `sendTurn` takes `composedAt` and `confirmedStale`, and may answer
  *    `stale`: a paired device's message written long before it arrived.
+ * 6: `handoffConversation`, a chat handed off to a fresh session, and
+ *    `sendTurn`'s `origin` may give the reason `auto-compact`.
  */
-export const BACKEND_WIRE_VERSION = 5
+export const BACKEND_WIRE_VERSION = 6
 
 /** Members answered over the wire. The synchronous ones are the router's to answer (from the mirror, or locally). */
 export const REMOTE_BACKEND_MEMBERS = [
@@ -76,6 +78,7 @@ export const REMOTE_BACKEND_MEMBERS = [
   'revokeApprovalRule',
   'revertToTurn',
   'rewindToTurn',
+  'handoffConversation',
   'forkAtTurn',
 ] as const satisfies readonly ConversationBackendMember[]
 

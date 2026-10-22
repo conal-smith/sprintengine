@@ -65,6 +65,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -147,6 +149,7 @@ export type ConversationIpcHandlers = {
   getTurnDiff?(input: ConversationTurnDiffInput): Promise<ConversationTurnDiffResult>
   revertToTurn?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   rewindToTurn?(input: ConversationRewindInput): Promise<ConversationRewindResult>
+  handoffConversation?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   forkAtTurn?(input: ConversationForkInput): Promise<ConversationForkResult>
   listApprovalRules?(): Promise<ConversationApprovalRulesResult>
   revokeApprovalRule?(ruleId: string): Promise<ConversationApprovalRuleRevokeResult>
@@ -177,6 +180,7 @@ const BROADCAST_EVENT_TYPES: ReadonlySet<ConversationEventType> = new Set<Conver
   'usage_updated',
   'context_compacted',
   'context_compacting',
+  'context_handed_off',
   'command_output',
   'turn_completed',
   'turn_failed',
@@ -438,6 +442,9 @@ export function createConversationIpcHandlers(
     rewindToTurn(input) {
       return sessions.rewindToTurn(input)
     },
+    handoffConversation(input) {
+      return sessions.handoffConversation(input)
+    },
     forkAtTurn(input) {
       return sessions.forkAtTurn(input)
     },
@@ -591,6 +598,17 @@ export function registerConversationIpc(
       handlers.rewindToTurn?.({ key: key.input, turnSeq: Number(input.turnSeq) }) ?? {
         ok: false,
         message: 'Editing an earlier message is unavailable.',
+      }
+    )
+  })
+  ipcMain.handle('conversation:handoff', async (_, input: unknown): Promise<ConversationHandoffResult> => {
+    if (!isRecord(input)) return { ok: false, message: 'The chat to hand off is required.' }
+    const key = parseTranscriptInput(input.key)
+    if (!key.ok) return key
+    return (
+      handlers.handoffConversation?.({ key: key.input }) ?? {
+        ok: false,
+        message: 'Handing a chat off is unavailable.',
       }
     )
   })

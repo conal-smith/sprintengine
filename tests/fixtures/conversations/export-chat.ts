@@ -171,3 +171,46 @@ export function exportChatEvents(): ConversationEvent[] {
     event('turn_failed', 75, { turnId: 't2', reason: 'interrupted' }),
   ]
 }
+
+/**
+ * The same chat with what a handoff's file leaves out on top: a permission the
+ * person gave for a step, a command the CLI ran by itself (`/context`) and
+ * what it printed, and a plan the person approved, which the file keeps.
+ */
+export function exportChatEventsWithDecisions(): ConversationEvent[] {
+  const events = exportChatEvents()
+  const more = [
+    event('user_message', 80, { turnId: 't3', text: 'Run the build' }),
+    event('turn_started', 81, { turnId: 't3' }),
+    event('approval_requested', 82, {
+      turnId: 't3',
+      requestId: 'permission-1',
+      kind: 'tool',
+      summary: 'Run PERMISSION-STEP npm run build',
+    }),
+    event('approval_resolved', 83, { turnId: 't3', requestId: 'permission-1', approved: true }),
+    event('tool_started', 84, {
+      turnId: 't3',
+      toolUseId: 'bash-2',
+      name: 'Bash',
+      kind: 'command',
+      input: { command: 'npm run build' },
+    }),
+    event('tool_output', 85, { turnId: 't3', toolUseId: 'bash-2', output: 'FULL-TOOL-OUTPUT built', status: 'ok' }),
+    event('approval_requested', 86, {
+      turnId: 't3',
+      requestId: 'plan-1',
+      kind: 'plan',
+      summary: 'Plan',
+      plan: '1. PLAN-STEP tag the release',
+    }),
+    event('approval_resolved', 87, { turnId: 't3', requestId: 'plan-1', approved: true }),
+    event('content_delta', 88, { turnId: 't3', text: 'The build is green.' }),
+    event('turn_completed', 89, { turnId: 't3' }),
+    event('user_message', 90, { turnId: 't4', text: '/context' }),
+    event('turn_started', 91, { turnId: 't4' }),
+    event('command_output', 92, { turnId: 't4', command: 'context', output: 'COMMAND-OUTPUT 41k of 200k' }),
+    event('turn_completed', 93, { turnId: 't4' }),
+  ]
+  return [...events, ...more]
+}

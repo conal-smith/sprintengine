@@ -90,6 +90,22 @@ export function fitViewportScale(
   return Math.min(1, available.width / viewport.width, available.height / viewport.height)
 }
 
+/**
+ * The size, in the app window's CSS px, that lays a guest out at `size` CSS
+ * px of its own. A `<webview>` guest is laid out in the screen pixels its
+ * element covers, and the window's zoom (View ▸ Zoom) makes each of the
+ * window's CSS px cover more of them: at zoom 1.2 an element 390 wide gives
+ * the page 468, past a phone's breakpoints. Dividing by the zoom puts the
+ * page back at the size asked for; at zoom 1 the size is unchanged.
+ */
+export function guestLayoutSize(
+  size: { width: number; height: number },
+  windowZoom: number,
+): { width: number; height: number } {
+  const zoom = Number.isFinite(windowZoom) && windowZoom > 0 ? windowZoom : 1
+  return { width: size.width / zoom, height: size.height / zoom }
+}
+
 // Zoom ladder, Chromium's own steps.
 export const BROWSER_ZOOM_LEVELS: readonly number[] = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,

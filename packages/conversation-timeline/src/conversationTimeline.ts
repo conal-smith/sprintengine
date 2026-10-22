@@ -85,6 +85,7 @@ export type ConversationTimelineRow =
   // Requests that never named a turn; they surface on their own.
   | { kind: 'approval'; id: string; decisions: ConversationDecisionRow[] }
   | { kind: 'compaction'; id: string; entry: Extract<TranscriptEntry, { kind: 'compaction' }> }
+  | { kind: 'handoff'; id: string; entry: Extract<TranscriptEntry, { kind: 'handoff' }> }
   | { kind: 'commandOutput'; id: string; entry: Extract<TranscriptEntry, { kind: 'commandOutput' }> }
   | {
       kind: 'working'
@@ -289,11 +290,17 @@ export function deriveConversationTimelineRows(
     const entry = entries[index]
     if (!entry) continue
     if (entry.kind === 'user') {
-      rows.push({ kind: 'user', id: `user:${entry.id}`, entry })
+      // Studio's own `/compact` before a cache expired is said by the
+      // compaction's divider, not by a message nobody wrote.
+      if (entry.origin?.reason !== 'auto-compact') rows.push({ kind: 'user', id: `user:${entry.id}`, entry })
       continue
     }
     if (entry.kind === 'compaction') {
       rows.push({ kind: 'compaction', id: `compaction:${entry.id}`, entry })
+      continue
+    }
+    if (entry.kind === 'handoff') {
+      rows.push({ kind: 'handoff', id: `handoff:${entry.id}`, entry })
       continue
     }
     if (entry.kind === 'commandOutput') {
@@ -431,6 +438,7 @@ export function deriveConversationTimelineRows(
       }
     }
     if (row.kind === 'compaction' && previous.kind === 'compaction' && row.entry === previous.entry) return previous
+    if (row.kind === 'handoff' && previous.kind === 'handoff' && row.entry === previous.entry) return previous
     if (row.kind === 'commandOutput' && previous.kind === 'commandOutput' && row.entry === previous.entry)
       return previous
     if (row.kind === 'approval' && previous.kind === 'approval' && sameDecisions(row.decisions, previous.decisions))

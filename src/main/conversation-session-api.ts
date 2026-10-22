@@ -12,6 +12,7 @@ import type {
   ConversationTurnDiffInput,
   ConversationRevertInput,
   ConversationRewindInput,
+  ConversationHandoffInput,
   ConversationForkInput,
   ConversationListSessionsInput,
   ConversationToolDetailInput,
@@ -48,6 +49,9 @@ export class ConversationSessionApi {
   }
   rewindToTurn(input: ConversationRewindInput) {
     return this.runtime.rewindToTurn(input)
+  }
+  handoffConversation(input: ConversationHandoffInput) {
+    return this.runtime.handoffConversation(input)
   }
   forkAtTurn(input: ConversationForkInput) {
     return this.runtime.forkAtTurn(input)
