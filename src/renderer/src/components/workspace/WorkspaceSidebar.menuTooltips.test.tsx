@@ -103,6 +103,7 @@ test('every item of a chat’s menu, here or on a paired machine, has a tooltip'
     ['a chat that is not Claude’s, Auto compact off', local({}, { autoCompact: { on: false, claude: false } })],
     ['a chat whose agent works', local({}, { working: true, schedule: { paused: true } })],
     ['a settled chat', local({ settledAt: now - 1_000 })],
+    ['a settled chat the window can delete', local({ settledAt: now - 1_000 }, { canDelete: true })],
     ['a snoozed chat', local({ snoozedUntil: now + 3_600_000 })],
     ['a chat whose folder is gone', local({ folderMissing: true })],
     ['a chat in a window of its own', local({}, { isDetachedWindow: true })],

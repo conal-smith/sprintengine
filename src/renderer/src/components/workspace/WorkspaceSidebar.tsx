@@ -319,6 +319,11 @@ type WorkspaceSidebarProps = {
   // The panel owns the agent/engine choice — the sidebar only opens it.
   onNewChatInFolder: (folderPath: string) => void
   onRevealFolder: (folderPath: string) => void
+  /**
+   * Delete a settled chat for good, after asking (`useDeleteSettledChats`).
+   * Absent, the row menu offers no Delete.
+   */
+  onDeleteSettledChat?: (workspaceId: string) => void
   onSetSidebarCollapsed: (collapsed: boolean) => void
   // Persisted expanded width (px) and its setter, for drag-to-resize.
   sidebarWidth: number
@@ -408,6 +413,7 @@ function WorkspaceSidebar({
   newChatOpen = false,
   onNewChatInFolder,
   onRevealFolder,
+  onDeleteSettledChat,
   onSetSidebarCollapsed,
   sidebarWidth,
   onSetSidebarWidth,
@@ -3653,12 +3659,18 @@ function WorkspaceSidebar({
             const agent = scheduledAgentId ? scheduledAgents.find((entry) => entry.id === scheduledAgentId) : null
             return agent ? { paused: agent.pausedAt !== undefined } : null
           })()}
+          canDelete={onDeleteSettledChat !== undefined}
           onClose={() => setContextMenu(null)}
           onSelect={(action) => {
             const workspace =
               railWorkspaceById.get(contextMenu.workspaceId) ?? workspaceById.get(contextMenu.workspaceId)
             if (!workspace) {
               setContextMenu(null)
+              return
+            }
+            if (action === 'delete-settled') {
+              setContextMenu(null)
+              onDeleteSettledChat?.(workspace.id)
               return
             }
             // A paired machine's chat that keeps its marks there: they are
