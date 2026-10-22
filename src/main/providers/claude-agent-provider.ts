@@ -1069,6 +1069,8 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     const inputQueue = new PushStream<SDKUserMessage>()
     const abort = new AbortController()
     const permissionMode = nativePermissionMode(state, state.mode)
+    const handoffRule = handoffReadRule(state)
+    const allowedTools = [...(state.allowedTools ?? []), ...(handoffRule ? [handoffRule] : [])]
     const queryOptions: Options = {
       cwd: state.workspaceRoot,
       pathToClaudeCodeExecutable: executablePath,
@@ -1087,9 +1089,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // also lets a `defaultMode` of bypassPermissions in the user's own
       // settings stand under `none`, which is that CLI's own default.
       allowDangerouslySkipPermissions: true,
-      ...(state.allowedTools?.length || state.handoff
-        ? { allowedTools: [...(state.allowedTools ?? []), ...(state.handoff ? [handoffReadRule(state)] : [])] }
-        : {}),
+      ...(allowedTools.length ? { allowedTools } : {}),
       systemPrompt: { type: 'preset', preset: 'claude_code', ...(systemAppend ? { append: systemAppend } : {}) },
       // Never the repository's own settings. `.claude/settings.json` and
       // `settings.local.json` can carry allow rules, which would answer tool
@@ -3920,9 +3920,16 @@ function handoffSeedText(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): 
  * not stop on a permission card for a file Studio handed it: Claude Code's
  * `Read(//…)` names a path from the root of the filesystem, a Windows one as
  * `//c/…`.
+ *
+ * The rule is a pattern, not a path: `*`, `?`, `[`, `{` and `!` match other
+ * files, and a parenthesis ends the rule early. A path holding any of them
+ * (a home folder or a store location with one in its name) gets no rule, and
+ * the read asks like any other.
  */
-function handoffReadRule(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string {
+function handoffReadRule(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string | null {
+  if (!state.handoff) return null
   const path = handoffAgentPath(state).replace(/\\/gu, '/')
+  if (!path || /[*?[\]{}()!]/u.test(path)) return null
   const posix = /^[A-Za-z]:\//u.test(path) ? `/${path[0]!.toLowerCase()}${path.slice(2)}` : path
   return `Read(/${posix.startsWith('/') ? posix : `/${posix}`})`
 }
