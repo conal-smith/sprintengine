@@ -192,6 +192,7 @@ export class ConversationCheckpoints {
         const patch = await this.git(root, [
           'diff',
           '--no-ext-diff',
+          '--no-textconv',
           '--no-renames',
           '--ignore-submodules=all',
           before,
@@ -207,6 +208,7 @@ export class ConversationCheckpoints {
           : await this.git(root, [
               'diff',
               '--no-ext-diff',
+              '--no-textconv',
               '--no-renames',
               '--ignore-submodules=all',
               before,
@@ -382,7 +384,9 @@ export class ConversationCheckpoints {
       const [start, end] = records
       if (!start?.head || !end?.head || start.head === end.head || !/^\d+$/u.test(start.capturedAt)) return null
       const list = async (args: string[]) =>
-        (await this.git(root, [...args, '--name-only', '-z', '--no-renames', '--no-ext-diff'])).split('\0')
+        (await this.git(root, [...args, '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv'])).split(
+          '\0',
+        )
       const remerge = ['log', '--format=', '--diff-merges=remerge']
       const lists = await Promise.all([
         list(['diff', start.head, before]),
@@ -670,7 +674,7 @@ export class ConversationCheckpoints {
     after: string,
     pathspecs: string[],
   ): Promise<ConversationCheckpointFile[]> {
-    const base = ['diff', '--no-ext-diff', '--no-renames', '--ignore-submodules=all']
+    const base = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--ignore-submodules=all']
     const limit = pathspecs.length ? ['--', ...pathspecs] : []
     const stats = (await this.git(root, [...base, '--numstat', '-z', before, after, ...limit]))
       .split('\0')

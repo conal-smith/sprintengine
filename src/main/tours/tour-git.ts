@@ -87,7 +87,7 @@ export async function listTourFiles(
   repoRoot: string,
   revisions: TourRevisions,
 ): Promise<{ ok: true; files: TourChangedFile[] } | { ok: false; message: string }> {
-  const base = ['diff', '--no-color', '--no-ext-diff', '--name-status', '-z', '-M']
+  const base = ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--name-status', '-z', '-M']
   if (revisions.head !== 'worktree') {
     const result = await runGitCommand(repoRoot, [...base, revisions.base, revisions.head, '--'])
     if (!result.ok) return { ok: false, message: result.message ?? 'git diff failed.' }
@@ -146,7 +146,7 @@ async function readHunks(
   file: TourChangedFile,
 ): Promise<{ hunks: DiffHunk[]; binary: boolean } | null> {
   const paths = file.oldPath ? [file.oldPath, file.path] : [file.path]
-  const args = ['diff', '--no-color', '--no-ext-diff', '-U0', '-M', revisions.base]
+  const args = ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-U0', '-M', revisions.base]
   if (revisions.head !== 'worktree') args.push(revisions.head)
   const result = await runGitCommand(repoRoot, [...args, '--', ...paths])
   if (!result.ok) return null
