@@ -212,6 +212,19 @@ test('text that would break the paste frame or read as keys is typed as text', (
   assert.equal(writes[0]?.split('\x1b[201~').length, 2, 'exactly one end marker: the frame itself')
 })
 
+test('a paste marker hidden inside another, or split by a control character, is removed too', () => {
+  for (const nested of [
+    'a\x1b[20\x1b[201~1~b',
+    'a\x1b[2\x1b[200~\x1b[201~01~b',
+    'a\x1b[20\x031~b',
+    'a\x1b\x7f[201~b',
+  ]) {
+    const clean = sanitizeTypedPrompt(nested)
+    assert.equal(clean, 'ab', JSON.stringify(nested))
+    assert.equal(clean.includes('\x1b[20'), false)
+  }
+})
+
 test('a paste written while the message is pending goes after its Enter, never into it', () => {
   const { timers, writes, delivery, text } = harness()
   const prefill = '\x1b[200~/review \x1b[201~'
