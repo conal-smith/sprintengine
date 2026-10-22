@@ -1,6 +1,7 @@
 import { nativeImage, type NativeImage } from 'electron'
 
 import type { DecodedImage, ImageCodec } from './conversation-image-downscale'
+import { imageWithinDecodeLimits } from '../shared/image-dimensions'
 
 // The image codec main has: Electron's `nativeImage`. It decodes PNG and JPEG,
 // which is what a phone's camera and screenshots send; a WebP or a GIF comes
@@ -23,6 +24,8 @@ function decoded(image: NativeImage): DecodedImage {
 
 export const electronImageCodec: ImageCodec = {
   decode(bytes) {
+    // Measured before it is decoded: a small file can declare a vast picture.
+    if (!imageWithinDecodeLimits(bytes)) return null
     const image = nativeImage.createFromBuffer(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
     return image.isEmpty() ? null : decoded(image)
   },

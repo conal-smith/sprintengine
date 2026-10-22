@@ -12,6 +12,7 @@ import { createTailnetDeviceStore } from './tailnet-devices'
 import { createTailnetGatewayServer, type TailnetGatewayServer } from './tailnet-gateway-server'
 import { createTailnetPeerResolver } from './tailnet-peer-identity'
 import { TAILNET_HEALTH_PATH, TAILNET_IDENTITY_PATH, TAILNET_PAIR_PATH, TAILNET_UPLOAD_PATH } from './tailnet-routes'
+import { pngHeader } from '../../../../tests/image-headers'
 
 // A picture a phone uploads for a chat, on a real gateway on loopback: shrunk
 // for the model on receipt where this machine can (`conversation-image-downscale`),
@@ -217,4 +218,15 @@ test('where nothing shrinks a picture, the old 5MB still holds and nothing is re
   assert.equal(small.status, 200)
   assert.equal(plain.registered.at(-1)!.bytes, 200_000)
   assert.deepEqual(shrinkCalls, [])
+})
+
+test('a picture whose header declares more than 100 megapixels is refused before anything decodes it', async () => {
+  for (const target of [shrinking, plain]) {
+    const before = { shrunk: shrinkCalls.length, kept: target.registered.length }
+    const answer = await upload(target, Buffer.from(pngHeader(100_000, 100_000)), 'image/png')
+    assert.equal(answer.status, 413)
+    assert.equal((JSON.parse(answer.body) as { error: { code: string } }).error.code, 'image_too_large')
+    assert.equal(shrinkCalls.length, before.shrunk, 'nothing was handed to the downscaler')
+    assert.equal(target.registered.length, before.kept, 'nothing was kept')
+  }
 })

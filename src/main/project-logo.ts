@@ -1,6 +1,7 @@
 import type { ProjectLogo } from '../shared/electron-api'
 import { imageMimeType } from './filesystem-image'
 import { extractIcnsPng } from './project-logo-icns'
+import { imageWithinDecodeLimits } from '../shared/image-dimensions'
 
 // A project's own logo, read off the top level of its repo (or a macOS app's
 // icon from where such a repo keeps it) so a row of projects reads like a row
@@ -201,6 +202,8 @@ export async function detectProjectLogo(folderPath: string, io: ProjectLogoIo): 
     // Nothing downstream decodes an `.icns`; the PNG inside it is the logo.
     const raster = mimeType === ICNS_MIME_TYPE ? extractIcnsPng(raw, PROJECT_LOGO_RASTER_MAX_PX) : raw
     if (!raster || raster.byteLength > PROJECT_LOGO_MAX_BYTES) continue
+    // A file that declares a vast picture is not a logo: the window would decode it.
+    if (!imageWithinDecodeLimits(raster)) continue
     const downscaled = await downscaleCandidate(raster, mimeType === ICNS_MIME_TYPE ? PNG_MIME_TYPE : mimeType, io)
     return {
       path: filePath,
