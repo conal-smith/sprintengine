@@ -124,6 +124,7 @@ export {
   MenuDivider,
   MenuFlyoutItem,
   MenuItem,
+  DescribedMenuItem,
   MenuSwatchRow,
   ProjectColorSwatchRow,
   roveMenuFocus,

@@ -260,13 +260,16 @@ type MenuItemProps = Omit<
   /** The row opens a sub-surface and states so. A drill-in row shows the value
    *  in force beside the chevron; put both in `trailing`. */
   expanded?: boolean
-  /**
-   * What the item does, in a sentence or two, shown beside the row on hover
-   * and on keyboard focus (`MenuTooltip`). A disabled row says why here too,
-   * on hover; its `hint` says it to the keyboard, which skips the row.
-   */
-  tooltip?: React.ReactNode
 }
+
+/**
+ * A `MenuItem` that says what it does: `tooltip` is a sentence or two shown
+ * beside the row on hover and on keyboard focus (`MenuTooltip`). A disabled
+ * row says why there too, on hover; its `hint` says it to the keyboard, which
+ * skips the row. Its own component, not a `MenuItem` prop, because
+ * `MenuItem`'s props are the module SDK's published ones (`sdk-drift-guard`).
+ */
+export type DescribedMenuItemProps = MenuItemProps & { tooltip: React.ReactNode }
 
 /**
  * A menu row's description beside it, on the menu's own layer so it paints
@@ -304,7 +307,15 @@ function MenuTooltip({
 // labels, and a description for every row passed over would flicker beside it.
 const MENU_TOOLTIP_DELAY_MS = 500
 
-export function MenuItem({
+export function MenuItem(props: MenuItemProps) {
+  return <MenuItemRow {...props} />
+}
+
+export function DescribedMenuItem(props: DescribedMenuItemProps) {
+  return <MenuItemRow {...props} />
+}
+
+function MenuItemRow({
   children,
   onClick,
   onContextMenu,
@@ -321,7 +332,7 @@ export function MenuItem({
   tooltip,
   className,
   ...rest
-}: MenuItemProps) {
+}: MenuItemProps & { tooltip?: React.ReactNode }) {
   const checkableRole = selection === 'one-of' ? 'menuitemradio' : 'menuitemcheckbox'
   const row = (
     <button

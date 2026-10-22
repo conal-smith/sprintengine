@@ -1,7 +1,7 @@
 // The sidebar's right-click menus for a workspace row, a paired machine's chat
 // row, and a folder header.
 
-import type { ComponentProps, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { type Workspace, type HighlightColor } from '../../../types/workspace'
 import { resolveEnabledWorkspaceType } from '../../AppIcons'
 import type { WorkspaceTypeRowAction } from '../../../modules/renderer-host'
@@ -17,6 +17,7 @@ import { isSettledWorkspace } from '../../../utils/workspaceSettle'
 import {
   ContextMenu,
   MenuItem,
+  DescribedMenuItem,
   MenuDivider,
   StarGlyph,
   MenuFlyoutItem,
@@ -93,12 +94,11 @@ export type ContextMenuAction =
   | `type-action:${string}`
 
 /**
- * A chat menu's row: `MenuItem` with its `tooltip` required, so no item of a
- * chat's menu can be added without saying what it does (`chatMenuTooltips`).
+ * A chat menu's row: `DescribedMenuItem`, whose `tooltip` is required, so no
+ * item of a chat's menu can be added without saying what it does
+ * (`chatMenuTooltips`).
  */
-function ChatMenuItem(props: ComponentProps<typeof MenuItem> & { tooltip: ReactNode }) {
-  return <MenuItem {...props} />
-}
+const ChatMenuItem = DescribedMenuItem
 
 /**
  * A chat's rest and its marks, the half of its menu below the divider: Star,

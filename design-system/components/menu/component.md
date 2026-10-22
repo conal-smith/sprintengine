@@ -213,7 +213,7 @@ menu. A menu that needs to be denser is a menu with too many items in it.
 
 ## Row descriptions
 
-A row may carry a description of what it does (`MenuItem`'s and
+A row may carry a description of what it does (`DescribedMenuItem`, and
 `MenuFlyoutItem`'s `tooltip`): one or two plain sentences in a
 [tooltip](../tooltip/component.md) to the row's right, on the menu's own layer,
 opened by hover after a longer delay than a toolbar's (a person runs the
