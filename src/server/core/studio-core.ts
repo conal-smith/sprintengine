@@ -25,7 +25,12 @@ import {
   type ConversationMachineContext,
 } from '../../main/automation/tailnet/tailnet-conversation-machine'
 import { ConversationApprovalRuleStore } from '../../main/conversation-approval-rules'
-import { ConversationAttachmentStore } from '../../main/conversation-attachment-store'
+import {
+  ConversationAttachmentStore,
+  CONVERSATION_ATTACHMENTS_DIRECTORY,
+  CONVERSATION_TOOL_IMAGES_DIRECTORY,
+} from '../../main/conversation-attachment-store'
+import { attachmentImagesRoot } from '../../main/attachment-image-file'
 import { createConversationLaunchService } from '../../main/conversation-launch-service'
 import { createConversationImportService } from '../../main/conversation-import/conversation-import-service'
 import { createConversationModelCatalog } from '../../main/conversation-model-catalog'
@@ -670,6 +675,12 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       listMarks,
       {
         workspaceOf: (workspaceId) => workspaceRegistry.getRecord(workspaceId),
+        // What chats sent, the pictures their steps returned, and pasted images.
+        imageRoots: () => [
+          join(dataDir, CONVERSATION_ATTACHMENTS_DIRECTORY),
+          join(dataDir, CONVERSATION_TOOL_IMAGES_DIRECTORY),
+          attachmentImagesRoot(),
+        ],
         ...(hostOptions.lifecycleList ? { lifecycleList: true } : {}),
         ...(hostOptions.origin
           ? { sendOrigin: hostOptions.origin }
