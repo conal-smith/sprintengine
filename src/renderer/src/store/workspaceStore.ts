@@ -86,7 +86,8 @@ import {
 } from './slices/normalizers'
 import { keepLaterWorkspaceClocks } from '../utils/workspaceRecency'
 import { isSettledWorkspace } from '../utils/workspaceSettle'
-import { noteWorkspaceSettledElsewhere } from '../utils/settledElsewhere'
+import { isSnoozeUnexpired } from '../utils/workspaceSnooze'
+import { noteWorkspaceSettledElsewhere, noteWorkspaceSnoozedElsewhere } from '../utils/settledElsewhere'
 import { isPlaceholderAgentName } from '../utils/agentNames'
 import { applyWorkspaceFieldsPatch } from '../../../shared/workspace-sync'
 import { isRetiredWorkspaceMode } from '../../../shared/workspace-mode'
@@ -242,6 +243,8 @@ export interface WorkspaceStore
   setWorkspaceChatFolder: (id: WorkspaceId, folderPath: string, worktree: WorkspaceWorktree | null) => void
   /** Take a chat out of auto-settling (idle and merge alike), or put it back. */
   setWorkspaceAutoSettle: (id: WorkspaceId, enabled: boolean) => void
+  /** This chat's Auto compact: on, off, or `null` to follow the app-wide default. */
+  setWorkspaceAutoCompact: (id: WorkspaceId, enabled: boolean | null) => void
   /**
    * Put a chat to sleep until `wakeAt`, or wake it now with `null`. The RECORD
    * only: suspending the chat's terminals is the sidebar's half of the gesture
@@ -281,6 +284,7 @@ export interface WorkspaceStore
   setLastSelectedCli: (cli: AgentCli) => void
   /** The prefix new worktree branches start with (Settings ▸ Worktrees); sanitized, `''` for none. */
   setWorktreeBranchPrefix: (prefix: string) => void
+  setAutoCompactChats: (enabled: boolean) => void
   recordProjectUse: (folderPath: string) => void
   setLastSelectedConversationModel: (selection: AgentConversationRuntime | null) => void
   setTextGenerationEnabled: (enabled: boolean) => void
@@ -1805,17 +1809,23 @@ function initWorkspaceSyncClient(): void {
     applyWorkspaceFieldsUpdated: (apply) =>
       applyImportedSyncEvent(() => {
         let settled = false
+        let snoozed = false
         patchWorkspace(apply.workspaceId, (workspace) => {
           // The shared patch contract: absent = no opinion, null = cleared, a
           // clock only advances (`applyWorkspaceFieldsPatch`).
           const next = { ...workspace } as Record<string, unknown>
           applyWorkspaceFieldsPatch(next, apply.patch)
           settled = !isSettledWorkspace(workspace) && isSettledWorkspace(next as Workspace)
+          const now = Date.now()
+          snoozed = !isSnoozeUnexpired(workspace, now) && isSnoozeUnexpired(next as Workspace, now)
           return next as Workspace
         })
         // Settled somewhere else: the sidebar ends its processes and moves
         // the person on, as a Settle made here does.
         if (settled) noteWorkspaceSettledElsewhere(apply.workspaceId)
+        // Snoozed somewhere else (a paired desktop's row menu): the sidebar
+        // pauses its processes, as a Snooze made here does.
+        else if (snoozed) noteWorkspaceSnoozedElsewhere(apply.workspaceId)
       }),
     applyWorkspaceAgentUpdated: (apply) =>
       applyImportedSyncEvent(() =>

@@ -118,6 +118,12 @@ export function applyPromptCacheEvent(
   if (event.type === 'context_compacted' && previous) {
     return { ttl: previous.ttl, expiresAt: null, recacheTokens: null }
   }
+  // A handoff lets the session go: the next message starts a new one, which
+  // caches nothing of the old, and its size is the new session's first
+  // request's to say.
+  if (event.type === 'context_handed_off' && previous) {
+    return { ttl: previous.ttl, expiresAt: null, recacheTokens: null }
+  }
   // A `/compact` the CLI turned down for having nothing to compact says the
   // session it holds is empty, whatever the last reading said it would cost
   // to send: offering Compact again would only be turned down again.

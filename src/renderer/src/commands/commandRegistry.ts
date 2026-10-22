@@ -403,19 +403,6 @@ export const COMMAND_REGISTRY = [
     handlerPath: { kind: 'panel-event', eventId: 'chat.sideQuestion' },
   }),
   command({
-    id: 'workspace.close',
-    title: 'Close workspace',
-    category: 'workspace',
-    scopes: ['workspace'],
-    defaultKeybindings: ['Primary+Shift+W'],
-    availability: ['activeWorkspace'],
-    handlerPath: {
-      kind: 'context-bound',
-      owner: 'WorkspaceManager',
-      action: 'closeWorkspaceById(windowActiveWorkspaceId)',
-    },
-  }),
-  command({
     id: 'workspace.switch.next',
     title: 'Switch workspace forward',
     category: 'workspace',

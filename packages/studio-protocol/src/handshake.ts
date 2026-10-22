@@ -87,6 +87,13 @@ export const STUDIO_LOCAL_SERVERS_CAPABILITY = 'local-servers' as const
 export const STUDIO_SESSION_FILES_CAPABILITY = 'session-files' as const
 
 /**
+ * `conversation.handoff`: hand a chat off to a fresh session of its CLI,
+ * pointed at a file of the chat's messages, instead of compacting it. Owners
+ * only.
+ */
+export const STUDIO_HANDOFF_CAPABILITY = 'conversation-handoff' as const
+
+/**
  * Every Studio capability this version of the package knows, in the order
  * they shipped. A Studio advertises the ones it serves; a client reads a name
  * it does not know as a feature it does not use.
@@ -111,6 +118,7 @@ export const STUDIO_CAPABILITIES = [
   STUDIO_LOCAL_SERVERS_CAPABILITY,
   STUDIO_SESSION_FILES_CAPABILITY,
   STUDIO_PULL_REQUEST_WATCH_CAPABILITY,
+  STUDIO_HANDOFF_CAPABILITY,
 ] as const
 
 /**
@@ -128,6 +136,7 @@ export const STUDIO_CHAT_CAPABILITIES = [
   STUDIO_FILES_CAPABILITY,
   STUDIO_WORKSPACES_CAPABILITY,
   STUDIO_SESSION_FILES_CAPABILITY,
+  STUDIO_HANDOFF_CAPABILITY,
 ] as const
 
 export type StudioCapability = (typeof STUDIO_CAPABILITIES)[number]

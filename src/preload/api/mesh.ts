@@ -6,6 +6,7 @@ import {
   MESH_CREATE_CONVERSATION_CHANNEL,
   MESH_SETTLE_CONVERSATION_CHANNEL,
   MESH_VISIT_CONVERSATION_CHANNEL,
+  MESH_CHANGE_CONVERSATION_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -21,6 +22,8 @@ import {
   type MeshCreateConversationResult,
   type MeshNewChatWorktree,
   type MeshSettleConversationResult,
+  type MeshChangeConversationResult,
+  type MeshConversationChange,
   type MeshVisitConversationResult,
   type MeshWorkspaceCheckoutResult,
   type MeshWorkspaceExtensionsResult,
@@ -125,6 +128,12 @@ export const meshApi = {
     ipcRenderer.invoke(MESH_SETTLE_CONVERSATION_CHANNEL, input) as Promise<MeshSettleConversationResult>,
   meshVisitConversation: (input: { connectionId: string; workspaceId: string }): Promise<MeshVisitConversationResult> =>
     ipcRenderer.invoke(MESH_VISIT_CONVERSATION_CHANNEL, input) as Promise<MeshVisitConversationResult>,
+  meshChangeConversation: (input: {
+    connectionId: string
+    workspaceId: string
+    change: MeshConversationChange
+  }): Promise<MeshChangeConversationResult> =>
+    ipcRenderer.invoke(MESH_CHANGE_CONVERSATION_CHANNEL, input) as Promise<MeshChangeConversationResult>,
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string): Promise<MeshWorkspaceCheckoutResult> =>
     ipcRenderer.invoke(MESH_WORKSPACE_CHECKOUT_CHANNEL, {
       connectionId,
@@ -272,6 +281,7 @@ export const meshApi = {
   | 'meshCreateConversation'
   | 'meshSettleConversation'
   | 'meshVisitConversation'
+  | 'meshChangeConversation'
   | 'meshWorkspaceCheckout'
   | 'meshWorkspaceExtensions'
   | 'meshGetLiveState'

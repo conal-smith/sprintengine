@@ -10,6 +10,9 @@
 // transcript, the todo strip and every other reader of a todo row read it
 // without knowing these tools exist.
 
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+
 import { asRecord } from '../../shared/records'
 
 /** The tools that read or change the list. TaskStop is not one: it stops a shell or an agent. */
@@ -100,6 +103,71 @@ export function applyClaudeTaskTool(
   }
   if (sameTask(known, updated)) return tasks
   return new Map(tasks).set(id, updated)
+}
+
+/**
+ * What an agent's TaskCreate or TaskUpdate returned, read off the text of its
+ * result: an agent's results reach the stream as text alone, with no
+ * structured result beside them. Only a create or an update that went through
+ * reads as one; anything else (an update a hook blocked, a task not found)
+ * reads as a failed update, and a create that cannot be read as nothing.
+ */
+export function claudeTaskResultFromText(toolName: string, output: string): unknown {
+  const said = output.trim()
+  if (toolName === 'TaskCreate') {
+    const created = /^Task #(\S+) created successfully: (.+)$/s.exec(said)
+    return created ? { task: { id: created[1], subject: created[2]!.trim() } } : undefined
+  }
+  if (toolName === 'TaskUpdate') {
+    const updated = /^Updated task #(\S+)/.exec(said)
+    return updated ? { success: true, taskId: updated[1] } : { success: false }
+  }
+  return undefined
+}
+
+// Read from disk at most this many tasks, each no larger than this.
+const STORED_TASKS_MAX = 500
+const STORED_TASK_BYTES = 64 * 1024
+
+/**
+ * The task list Claude Code keeps on disk for `listId` (its session's id, or
+ * `CLAUDE_CODE_TASK_LIST_ID`): `<config dir>/tasks/<list id>/<id>.json`, one
+ * file per task, the id and the folder made safe as the CLI makes them. The
+ * list lives in the app's memory only, so a chat resumed after a restart
+ * starts from what the CLI left here. In id order, as its TaskList lists
+ * them; a file that is not a task, or is one the CLI keeps for itself, is
+ * left out. Null when the folder cannot be read: the list then starts empty,
+ * as it did before it was read here.
+ */
+export async function readStoredClaudeTasks(configDir: string, listId: string): Promise<ClaudeTaskList | null> {
+  const dir = join(configDir, 'tasks', listId.replace(/[^a-zA-Z0-9_-]/g, '-'))
+  try {
+    const ids = (await readdir(dir))
+      .map((name) => /^([1-9]\d*)\.json$/.exec(name)?.[1])
+      .filter((id): id is string => id !== undefined)
+      .sort((a, b) => Number(a) - Number(b))
+      .slice(0, STORED_TASKS_MAX)
+    const tasks = new Map<string, ClaudeTask>()
+    for (const id of ids) {
+      const path = join(dir, `${id}.json`)
+      const info = await stat(path).catch(() => null)
+      if (!info?.isFile() || info.size > STORED_TASK_BYTES) continue
+      let stored: Record<string, unknown> | null
+      try {
+        stored = asRecord(JSON.parse(await readFile(path, 'utf8')))
+      } catch {
+        continue
+      }
+      const subject = text(stored?.subject)
+      const status = taskStatus(stored?.status)
+      if (stored?.id !== id || !subject || !status || asRecord(stored.metadata)?._internal) continue
+      const activeForm = text(stored.activeForm)
+      tasks.set(id, { subject, status, ...(activeForm ? { activeForm } : {}) })
+    }
+    return tasks
+  } catch {
+    return null
+  }
 }
 
 /** The list as a todo write's `todos`. */

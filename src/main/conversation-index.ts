@@ -41,6 +41,9 @@ type Index = { version: typeof INDEX_VERSION; threads: ConversationThread[]; fil
 type ThreadFold = {
   thread: ConversationThread | null
   turns: Set<string>
+  // Turns Studio opened with its own `/compact` before the cache expired:
+  // their end is not news for the person (`lastTurnEndedAt`).
+  quietTurns: Set<string>
   costs: Map<string, number>
   offset: number
   head: Buffer
@@ -442,11 +445,12 @@ async function readThread(root: string, path: string, maxBytes: number, previous
       ? {
           thread: previous.thread && { ...previous.thread },
           turns: new Set(previous.turns),
+          quietTurns: new Set(previous.quietTurns),
           costs: new Map(previous.costs),
           offset: previous.offset,
           head: previous.head,
         }
-      : { thread: null, turns: new Set(), costs: new Map(), offset: 0, head: Buffer.alloc(0) }
+      : { thread: null, turns: new Set(), quietTurns: new Set(), costs: new Map(), offset: 0, head: Buffer.alloc(0) }
     const ranges = appended ? [{ start: previous.offset, end: size }] : wholeFileRanges(size, maxBytes)
     for (const range of ranges)
       for await (const line of readLines(file, range.start, range.end)) {
@@ -491,8 +495,19 @@ function foldEvent(fold: ThreadFold, event: ConversationEvent): void {
     fold.costs.clear()
   // When the agent last finished a turn, as the runtime's session reads it
   // (`lastTurnEndedAt`): a steered turn's end is not one, the work went on.
-  if ((event.type === 'turn_completed' && event.payload?.steered !== true) || event.type === 'turn_failed')
+  // Nor is the end of Studio's own compaction before a cache expired: nothing
+  // happened in the chat the person has to come and read.
+  if (
+    ((event.type === 'turn_completed' && event.payload?.steered !== true) || event.type === 'turn_failed') &&
+    !fold.quietTurns.has(text(event.payload?.turnId))
+  )
     thread.lastTurnEndedAt = Math.max(thread.lastTurnEndedAt ?? 0, event.createdAt)
+  if (
+    event.type === 'user_message' &&
+    text(event.payload?.turnId) &&
+    readConversationMessageOrigin(event.payload?.origin)?.reason === 'auto-compact'
+  )
+    fold.quietTurns.add(text(event.payload?.turnId))
   if (event.type === 'turn_completed') {
     const cost = event.payload?.costUsd
     if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0)

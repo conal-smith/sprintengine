@@ -115,6 +115,9 @@ function chatOver(api: Api) {
           ? (input: unknown) => call(api, 'conversationRewindToTurn', input)
           : undefined
       },
+      get handoffConversation() {
+        return has(api, 'conversationHandoff') ? (input: unknown) => call(api, 'conversationHandoff', input) : undefined
+      },
       get forkAtTurn() {
         return has(api, 'conversationForkAtTurn')
           ? (input: unknown) => call(api, 'conversationForkAtTurn', input)

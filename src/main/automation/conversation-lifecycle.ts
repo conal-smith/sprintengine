@@ -1,6 +1,13 @@
 import type { WorkspaceRegistryActor, WorkspaceRegistryRecord } from '../../shared/workspace-registry'
 import type { WorkspaceFieldsPatch, WorkspaceSyncCommandResult, WorkspaceSyncEvent } from '../../shared/workspace-sync'
-import { isSettledWorkspace, settleWorkspacePatch, wakeWorkspacePatch } from '../../shared/workspace-lifecycle'
+import {
+  highlightWorkspacePatch,
+  isSettledWorkspace,
+  settleWorkspacePatch,
+  wakeSnoozedWorkspacePatch,
+  wakeWorkspacePatch,
+} from '../../shared/workspace-lifecycle'
+import type { HighlightColor } from '../../renderer/src/types/workspace'
 import type { ConversationEvent, ConversationSessionSummary } from '../../shared/conversation-runtime'
 import { conversationSessionWorking, conversationTurnInProgress } from '../../shared/conversation/phase'
 import { backgroundTasksWakeAgent } from '../../shared/conversation/backgroundTasks'
@@ -64,7 +71,7 @@ export type ConversationLifecycleDeps = {
 
 export type ConversationLifecycleFailure = {
   ok: false
-  code: 'unknown_workspace' | 'working' | 'write_failed' | 'nothing_finished'
+  code: 'unknown_workspace' | 'working' | 'write_failed' | 'nothing_finished' | 'settled' | 'invalid_arguments'
   message: string
 }
 
@@ -76,6 +83,13 @@ export type ConversationVisitResult =
   { ok: true; workspaceId: string; lastVisitedAt: number } | ConversationLifecycleFailure
 export type ConversationMarkUnreadResult =
   { ok: true; workspaceId: string; lastVisitedAt: number } | ConversationLifecycleFailure
+
+export type ConversationSnoozeResult =
+  { ok: true; workspaceId: string; snoozedUntil: number | null } | ConversationLifecycleFailure
+export type ConversationHighlightResult =
+  { ok: true; workspaceId: string; starred: boolean; color: HighlightColor | null } | ConversationLifecycleFailure
+export type ConversationAutoSettleResult =
+  { ok: true; workspaceId: string; autoSettle: boolean } | ConversationLifecycleFailure
 
 export type ConversationLifecycle = ReturnType<typeof createConversationLifecycle>
 
@@ -249,6 +263,71 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
   }
 
   /**
+   * Snooze, from any device: the row menu's Snooze and Wake now. A chat
+   * sleeps until `until`, and `null` wakes it. As the menu does, it refuses
+   * while an agent there is working (this desktop's windows end the chat's
+   * processes for a snooze, and the work with them), and for a resting chat,
+   * which has nowhere to sleep. Waking one that is awake writes nothing.
+   */
+  function snooze(workspaceId: string, until: number | null, actor: WorkspaceRegistryActor): ConversationSnoozeResult {
+    const record = deps.getRecord(workspaceId)
+    if (!record) return unknown(workspaceId)
+    const asleep = typeof record.snoozedUntil === 'number' && record.snoozedUntil > now()
+    if (until === null) {
+      if (record.snoozedUntil == null) return { ok: true, workspaceId, snoozedUntil: null }
+      const failed = write(workspaceId, wakeSnoozedWorkspacePatch(), actor)
+      return failed ?? { ok: true, workspaceId, snoozedUntil: null }
+    }
+    if (!Number.isFinite(until) || until <= now())
+      return { ok: false, code: 'invalid_arguments', message: 'A chat sleeps until a time that is still ahead.' }
+    if (isSettledWorkspace(record))
+      return { ok: false, code: 'settled', message: 'This chat is settled. Bring it back before snoozing it.' }
+    if (!asleep && deps.isWorking(workspaceId))
+      return {
+        ok: false,
+        code: 'working',
+        message: 'An agent in this chat is still working. Snooze it once it has finished.',
+      }
+    const at = Math.trunc(until)
+    const failed = write(workspaceId, { snoozedUntil: at }, actor)
+    return failed ?? { ok: true, workspaceId, snoozedUntil: at }
+  }
+
+  /**
+   * The row menu's Star and Highlight color, from any device. A member left
+   * out keeps what the chat has; a chat left with neither has its highlight
+   * cleared.
+   */
+  function highlight(
+    workspaceId: string,
+    change: { starred?: boolean; color?: HighlightColor | null },
+    actor: WorkspaceRegistryActor,
+  ): ConversationHighlightResult {
+    const record = deps.getRecord(workspaceId)
+    if (!record) return unknown(workspaceId)
+    const patch = highlightWorkspacePatch(record, change)
+    const next = patch.highlight ?? null
+    const failed = write(workspaceId, patch, actor)
+    return failed ?? { ok: true, workspaceId, starred: next?.starred === true, color: next?.color ?? null }
+  }
+
+  /**
+   * The row menu's Auto-settle switch, from any device. Settles nothing by
+   * itself: the rest sweep reads it on its next tick.
+   */
+  function setAutoSettle(
+    workspaceId: string,
+    enabled: boolean,
+    actor: WorkspaceRegistryActor,
+  ): ConversationAutoSettleResult {
+    const record = deps.getRecord(workspaceId)
+    if (!record) return unknown(workspaceId)
+    if ((record.autoSettleEnabled === true) === enabled) return { ok: true, workspaceId, autoSettle: enabled }
+    const failed = write(workspaceId, { autoSettleEnabled: enabled ? true : null }, actor)
+    return failed ?? { ok: true, workspaceId, autoSettle: enabled }
+  }
+
+  /**
    * A person sent one of the workspace's chats a message from a paired
    * device. The same as a message typed here (`recordWorkspaceUserMessage`):
    * the clock moves forward, and a resting chat wakes, with any hand decision
@@ -312,6 +391,9 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     settle,
     visit,
     markUnread,
+    snooze,
+    highlight,
+    setAutoSettle,
     noteUserMessage,
     onConversationEvent,
     /** Whether a settle waits on an agent's turn in the workspace. Exposed for tests. */
@@ -358,7 +440,13 @@ export function createConversationListChangeFilter(deps: {
 }
 
 /** The record fields a listed chat reads, beside the visit clock. */
-const LIST_FIELDS = ['settledAt', 'lastUserMessageAt'] as const satisfies ReadonlyArray<keyof WorkspaceFieldsPatch>
+const LIST_FIELDS = [
+  'settledAt',
+  'lastUserMessageAt',
+  'snoozedUntil',
+  'highlight',
+  'autoSettleEnabled',
+] as const satisfies ReadonlyArray<keyof WorkspaceFieldsPatch>
 
 /**
  * Whether a registry change moves what `workspace.list` says, so the change

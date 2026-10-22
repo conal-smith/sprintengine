@@ -2394,7 +2394,15 @@ export function createAppServices(
     // In process, the core's resumes after a usage limit and the messages a
     // person scheduled stop before the chats; out of process the server stops
     // them in its own legs.
-    usageLimitResumes: server ? null : { dispose: () => core.stopUsageLimitResumes() },
+    // Auto compact's timers stop with them: it is Studio's own send too.
+    usageLimitResumes: server
+      ? null
+      : {
+          dispose: () => {
+            core.stopAutoCompact()
+            return core.stopUsageLimitResumes()
+          },
+        },
     scheduledMessages: server ? null : { dispose: () => core.stopScheduledMessages() },
     broadcastGitChangelistsChanged,
     updateService,
