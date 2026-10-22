@@ -166,16 +166,11 @@ export type TailnetPairRequest = {
   peerNode: string | null
   /** The tailnet address the request arrived from. */
   peerAddress: string
-  /**
-   * Six digits, shown on BOTH machines so the person approving can see they are
-   * answering the request that was actually made.
-   *
-   * It carries no authority and is not a secret: authority is the human
-   * pressing Allow. That is the whole reason it can be six digits — as a
-   * carried credential it would be a million-value space against an endpoint
-   * with no rate limit, which is seconds of brute force.
-   */
-  comparisonCode: string
+  // The six digits the person types to allow the request are deliberately not
+  // here: they are shown on the ASKING machine only, and read off that screen.
+  // This record is what a status, an event and the tools carry, and a code
+  // anything on this machine could read would be one nobody had to look at
+  // the other screen for. The store keeps it (`TailnetPairRequestWithCode`).
   createdAt: string
   expiresAt: string
   /**

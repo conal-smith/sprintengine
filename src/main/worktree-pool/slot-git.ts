@@ -347,7 +347,17 @@ export async function ignoredFilesInTheWay(
   fromSha: string,
   toSha: string,
 ): Promise<string[] | null> {
-  const added = await run(slotPath, ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=A', fromSha, toSha])
+  const added = await run(slotPath, [
+    'diff',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--name-only',
+    '-z',
+    '--no-renames',
+    '--diff-filter=A',
+    fromSha,
+    toSha,
+  ])
   if (!added.ok) return null
   const addedPaths = added.stdout.split('\0').filter(Boolean)
   // An ignored FILE where the new tree needs a directory (`cache` when the
@@ -422,7 +432,16 @@ export async function pathsBetween(
   fromSha: string,
   toSha: string,
 ): Promise<Set<string> | null> {
-  const result = await run(cwd, ['diff', '--name-only', '-z', '--no-renames', fromSha, toSha])
+  const result = await run(cwd, [
+    'diff',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--name-only',
+    '-z',
+    '--no-renames',
+    fromSha,
+    toSha,
+  ])
   if (!result.ok) return null
   return new Set(result.stdout.split('\0').filter(Boolean))
 }

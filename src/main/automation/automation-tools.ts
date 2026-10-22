@@ -1,3 +1,4 @@
+import { homedir } from 'os'
 import { isAbsolute } from 'path'
 import { isSettledWorkspace } from '../../shared/workspace-lifecycle'
 import type { RepositoryIdentity } from '../../shared/repository-identity'
@@ -11,7 +12,8 @@ import { declaredPermissionModes, declaredPermissionPresets, pluginHostedVia } f
 import { mergeCliModelCatalog, type DiscoveredCliModelCatalog } from '../../shared/cli-model-catalog'
 import { cliPickerModels } from '../../shared/cli-model-families'
 import { conversationProviderForCli } from '../../shared/conversation-harness'
-import type { AgentLaunchRequest, AgentLaunchResult } from '../../shared/agent-launch'
+import type { AgentLaunchCaller, AgentLaunchRequest, AgentLaunchResult } from '../../shared/agent-launch'
+import { LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE, launchPromptReadsAsOption } from '../../shared/agent-launch'
 import {
   launchingAgentOf,
   NOT_TOLD_NOT_AN_AGENT,
@@ -20,6 +22,8 @@ import {
   type LaunchLinkResult,
 } from '../agent-launch-notices'
 import { mobileSnapshotCollections, retiredMobileSnapshotCollections } from '../mobile/control/protocol'
+import { workspaceStoresRoot } from '../workspace-store'
+import { refuseWorkspaceFolder } from './workspace-folder-guard'
 import type { Workspace } from '../../renderer/src/types/workspace'
 import type {
   BacklogAddOrUpdateLinkInput,
@@ -248,6 +252,12 @@ export type AutomationBackends = {
    */
   readWorkspaceExtensions?(workspaceRoot: string, cli: string | null): Promise<WorkspaceExtensions>
   /**
+   * Studio's own data folders in this process (its user data folder), which
+   * `workspace.create` will not open, nor anything above or inside them. The
+   * workspace stores are added to them wherever this is served.
+   */
+  studioDataDirs?(): readonly string[]
+  /**
    * Loaded CLI plugin manifests (`getPluginRegistry().loaded()`). backlog.work
    * composes the target CLI's native skill invocation from the matching
    * plugin's `skillIntegration.invocation.fileDropTemplate`; injected as a
@@ -361,6 +371,8 @@ type LaunchPlan = {
   host?: ExecutionHostId
   /** A bundled skill the prompt invokes; the launch carries it (see `launchSkills`). */
   spawnSkillId?: string
+  /** The agent whose tool call this is (`launchCallerOf`), recorded on the session it starts. */
+  launchedBy?: AgentLaunchCaller
 }
 
 type LaunchWorktree = { path: string; branch: string }
@@ -462,6 +474,14 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     )
   }
 
+  // A launch prompt the CLI would parse as an option (`launchPromptReadsAsOption`)
+  // is refused at each launching tool, before a worktree or schedule is made
+  // for it; the launch service and the render refuse it again behind this.
+  function refuseOptionLikePrompt(prompt: unknown): McpToolResult | null {
+    if (typeof prompt !== 'string' || !launchPromptReadsAsOption(prompt)) return null
+    return failure('prompt_reads_as_option', LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE)
+  }
+
   // Link a launched agent to the agent that asked for it, so the caller hears
   // back (agent-launch-notices.ts). Not linked, the caller is told why.
   function linkToCaller(
@@ -477,6 +497,27 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
   function connectionWorkspace(context: McpConnectionContext | undefined): Workspace | null {
     const workspaceId = context?.metadata.workspaceId
     return workspaceId ? findWorkspace(workspaceId) : null
+  }
+
+  // The agent of this app a call came from, and its chat: what a launch
+  // records as `launchedBy`, and what the terminal tools hold a session to.
+  // Anything else on the socket, and a paired device, is no such agent.
+  function launchCallerOf(context: McpConnectionContext | undefined): AgentLaunchCaller | undefined {
+    const caller = context?.metadata
+    if (caller?.kind !== 'studio-agent' || !caller.workspaceId) return undefined
+    return { workspaceId: caller.workspaceId, ...(caller.agentId ? { agentId: caller.agentId } : {}) }
+  }
+
+  // Whether a terminal is one the calling agent may see: its own session, or
+  // one it or another agent of its chat started through a launching tool. The
+  // person's own terminals, and other chats' agents, are not.
+  function terminalStartedByCaller(session: TerminalSessionSnapshot, caller: AgentLaunchCaller): boolean {
+    const own =
+      session.kind === 'agent' &&
+      caller.agentId !== undefined &&
+      session.agentId === caller.agentId &&
+      (session.launchWorkspaceId ?? session.workspaceId) === caller.workspaceId
+    return own || session.agentRecord?.launchedBy?.workspaceId === caller.workspaceId
   }
 
   // backlog.assign and backlog.work additionally need the live app workspace
@@ -735,6 +776,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       ...(plan.agentId ? { agentId: plan.agentId } : {}),
       ...(plan.host ? { host: plan.host } : {}),
       ...(plan.spawnSkillId ? { spawnSkillId: plan.spawnSkillId } : {}),
+      ...(plan.launchedBy ? { launchedBy: plan.launchedBy } : {}),
     })
     if (!launched.ok) return failure(launched.code, launched.message)
     const { agentId, sessionId } = launched
@@ -1057,9 +1099,22 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       },
       additionalProperties: false,
     },
-    handler: async (args) => {
+    handler: async (args, context) => {
       const invalid = firstInvalidOptionalString(args, ['name', 'folderPath', 'templateId'])
       if (invalid) return invalid
+      // A paired machine names a folder the person picked in its folder
+      // browser; anything on this machine's socket is held to project folders.
+      const folderPath = optionalString(args.folderPath)
+      if (folderPath && context?.metadata.kind !== 'remote-tailnet') {
+        const refused = await refuseWorkspaceFolder(folderPath, {
+          platform: process.platform,
+          homeDir: homedir(),
+          dataDirs: [workspaceStoresRoot(), ...(backends.studioDataDirs?.() ?? [])],
+        })
+        if (refused) {
+          return failure('folder_refused', `${refused} Open the project's own folder instead.`)
+        }
+      }
       // Synchronous authority: the id comes back from the same call that
       // committed it, which is what retired the delegate-to-renderer round trip
       // and its 7s bus-confirmation poll.
@@ -1169,6 +1224,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       if (typeof workspaceId !== 'string') return workspaceId
       const invalid = firstInvalidOptionalString(args, ['cli', 'name', 'prompt', 'cliModel', 'connectorId', 'host'])
       if (invalid) return invalid
+      const dashed = refuseOptionLikePrompt(args.prompt)
+      if (dashed) return dashed
       if (args.notifyParent !== undefined && typeof args.notifyParent !== 'boolean') {
         return failure('invalid_arguments', '"notifyParent" must be a boolean when provided.')
       }
@@ -1208,6 +1265,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           worktreeRequested: options.worktreeRequested,
           worktreeName: options.worktreeName,
           worktreeBaseRef: options.worktreeBaseRef,
+          launchedBy: launchCallerOf(context),
         },
         { afterStart: link },
       )
@@ -1407,10 +1465,11 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
   const terminalList: McpToolRegistration = {
     name: 'terminal.list',
     description:
-      'List the terminal sessions open in this app: session id, agent name, CLI, working directory, ' +
-      'workspace, whether the process is live or the session is paused, and the agent phase when the CLI ' +
-      'reports one. Reads the terminal runtime; never writes. Served on this machine only, never to a ' +
-      'paired device.',
+      'List the terminal sessions in this app that the calling agent or its chat started (its own terminal, ' +
+      'and the agents it launched with agent.launch, terminal.create or backlog.work): session id, agent name, ' +
+      'CLI, working directory, workspace, whether the process is live or the session is paused, and the agent ' +
+      "phase when the CLI reports one. The person's own terminals and other chats' agents are not listed. " +
+      'Reads the terminal runtime; never writes. Served on this machine only, never to a paired device.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1424,7 +1483,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       required: [],
       additionalProperties: false,
     },
-    handler: async (args) => {
+    handler: async (args, context) => {
       const invalid = firstInvalidOptionalString(args, ['workspaceId', 'kind'])
       if (invalid) return invalid
       const kind = optionalString(args.kind)
@@ -1457,9 +1516,13 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         projectHues.set(workspace.id, hue)
         return hue
       }
+      // A caller that is not an agent of this app sees no terminals at all.
+      const caller = launchCallerOf(context)
+      if (!caller) return success({ terminals: [] })
       const sessions = await Promise.all(
         backends
           .listTerminalSessions()
+          .filter((session) => terminalStartedByCaller(session, caller))
           .filter((session) => !workspaceId || session.workspaceId === workspaceId)
           .filter((session) => !kind || session.kind === kind)
           .map(async (session) => ({
@@ -1488,11 +1551,11 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     },
   }
 
-  // What a terminal printed, for an agent following a dev server's errors, a
-  // watcher's rebuilds or a test run's failures in a terminal it did not start.
-  // It reads only a session `terminal.list` lists: the id is looked up in that
-  // same list, never in the runtime directly, so the two tools cannot disagree
-  // about which terminals a caller may see. Like the rest of the family it is
+  // What a terminal printed, for an agent following the agents it launched, or
+  // its own output. It reads only a session `terminal.list` would list for the
+  // same caller (`terminalStartedByCaller`), so the two tools cannot disagree
+  // about which terminals a caller may see: the person's own shells, and other
+  // chats' agents, are refused. Like the rest of the family it is
   // served on the local socket only (`localOnlyGatewayToolReason`), and it is a
   // read — not audited as a mutation, and on `workspace:read` were it ever
   // offered to a paired device.
@@ -1508,7 +1571,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       'exited session ' +
       'still reads the output it left, and "state" and "exitCode" say how it ended. A full-screen program (an ' +
       'agent CLI, an editor) reads as the stream that drew it, so its redraws can repeat lines. Session ids come from ' +
-      'terminal.list or terminal.create. Reads the terminal runtime; never types into the terminal. Served on ' +
+      "terminal.list or terminal.create; only a terminal the calling agent or its chat started is read, and the person's " +
+      'own terminals are refused. Reads the terminal runtime; never types into the terminal. Served on ' +
       'this machine only, never to a paired device.',
     inputSchema: {
       type: 'object',
@@ -1530,7 +1594,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       required: ['sessionId'],
       additionalProperties: false,
     },
-    handler: async (args) => {
+    handler: async (args, context) => {
       const sessionId = requireString(args, 'sessionId')
       if (typeof sessionId !== 'string') return sessionId
       const lines = optionalBoundedInteger(args, 'lines', 1, TERMINAL_READ_MAX_LINES)
@@ -1550,6 +1614,20 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           'unknown_terminal',
           `No terminal session "${sessionId}" is open in this app; a closed terminal's output is not kept. ` +
             'Call terminal.list for the sessions it holds.',
+        )
+      }
+      const caller = launchCallerOf(context)
+      if (!caller) {
+        return failure(
+          'terminal_not_yours',
+          'Terminal output is read only by an agent of this app, from the terminals it or its chat started.',
+        )
+      }
+      if (!terminalStartedByCaller(session, caller)) {
+        return failure(
+          'terminal_not_yours',
+          `Terminal "${sessionId}" was not started by this agent or its chat, so its output is not read here. ` +
+            'Ask the person to paste what it printed.',
         )
       }
       const read = backends.readTerminalOutputTail(sessionId, {
@@ -1697,6 +1775,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         'cliModel',
       ])
       if (invalid) return invalid
+      const dashed = refuseOptionLikePrompt(args.prompt)
+      if (dashed) return dashed
 
       const resolved = resolveTerminalWorkspace(args)
       if (!('workspace' in resolved)) return resolved
@@ -1716,6 +1796,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         cliModel: optionalString(args.cliModel),
         ...(requestedPreset ? { permissionPreset: requestedPreset } : {}),
         worktreeRequested: false,
+        launchedBy: launchCallerOf(context),
       })
       if (!('agentId' in launched)) return launched
       return success({
@@ -2293,6 +2374,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       const instructions = optionalString(args.instructions)
       const invocation = renderBacklogSkillInvocation(cli, read.item.relativePath)
       const prompt = instructions ? `${invocation}\n\n${instructions}` : invocation
+      const dashed = refuseOptionLikePrompt(prompt)
+      if (dashed) return dashed
 
       // Install the Backlog skill into the CLI's native dir before launch so the
       // invocation resolves. Non-fatal: a false result rides `skillEnsured` and
@@ -2332,6 +2415,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           // The launch carries the skill its `/backlog` invocation names; the
           // ensure above wrote nothing for a launch that does.
           spawnSkillId: BACKLOG_SKILL_ID,
+          launchedBy: launchCallerOf(context),
         },
         {
           // Assigned once the agent exists, after its worktree's install.
@@ -2479,6 +2563,10 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     handler: async (args, context) => {
       const refused = refuseScheduledRunCaller(context, 'create')
       if (refused) return refused
+      // Each run is launched later with nobody watching, so the prompt is held
+      // to the launch rule now rather than failing at every run.
+      const dashed = refuseOptionLikePrompt(args.prompt)
+      if (dashed) return dashed
       const workspaceId = requireString(args, 'workspaceId')
       if (typeof workspaceId !== 'string') return workspaceId
       const workspace = findWorkspace(workspaceId)

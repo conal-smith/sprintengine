@@ -6,8 +6,10 @@ import type { TailnetShareStatus } from '../../../../shared/tailnet-share'
 import { clientSupports } from '../../clientCapabilities'
 import { showToast } from '../../store/toastStore'
 import { MenuDivider, MenuFlyoutItem, MenuItem, Popover, Tooltip, roveMenuFocus, type PopoverProps } from '../ui'
+import { useOptionalConfirmDialog, type ConfirmDialogOptions } from '../ui/ConfirmDialog'
 import { MENU_LIST_CLASS } from '../ui/menuClasses'
 import { openUrlInPane } from './pane/browser/openInPane'
+import { isLocalServerRunConfirmed, rememberLocalServerRun, type LocalServerRun } from './localServerRunConfirmations'
 import { removeLocalServer, runLocalServer, stopLocalServer, type LocalServerActionResult } from './useLocalServers'
 
 // The one menu for the local servers a conversation's agents started, opened
@@ -25,7 +27,10 @@ import { removeLocalServer, runLocalServer, stopLocalServer, type LocalServerAct
 //                      a loopback URL only, and only while Tailscale is up
 //                      here: `tailscale serve` publishes the port and hands
 //                      back an https URL a phone on the tailnet can open
-//   Run again          stopped, with the command the agent gave
+//   Run again          stopped, with the command the agent gave; the
+//                      first run of a command, and any run after the agent
+//                      changed it, asks the person first, showing the
+//                      command and its folder
 //   Stop               only a run the Studio started, while its process
 //                      lives; an agent's own server
 //                      belongs to the agent's process
@@ -153,11 +158,55 @@ async function openExternal(url: string): Promise<void> {
   }
 }
 
+/** What the person is shown before an agent's command runs as them: the command, and the folder. */
+export function localServerRunQuestion(server: StudioLocalServer): ConfirmDialogOptions {
+  return {
+    title: `Run ${server.title}?`,
+    body: (
+      <div className="flex flex-col gap-2">
+        <span>An agent gave Studio this command to start it. Studio runs it as you, in this folder.</span>
+        <span className="break-all font-mono text-meta text-[color:var(--text-strong)]" data-local-server-confirm="">
+          $ {server.command}
+          <span className="block break-all text-[color:var(--text-subtle)]">
+            in {server.cwd ?? 'the conversation’s folder'}
+          </span>
+        </span>
+        <span className="text-[color:var(--text-subtle)]">You are asked again if the agent changes it.</span>
+      </div>
+    ),
+    confirmLabel: 'Run',
+  }
+}
+
+/**
+ * Whether to go on with "Run again": at once for the command and folder the
+ * person already agreed to run for this server, else once they agree now.
+ */
+async function confirmRun(
+  server: StudioLocalServer,
+  workspaceId: string,
+  ask: (options: ConfirmDialogOptions) => Promise<boolean>,
+): Promise<boolean> {
+  if (!server.command) return false
+  const run: LocalServerRun = {
+    workspaceId,
+    agentId: server.agentId,
+    serverId: server.id,
+    command: server.command,
+    cwd: server.cwd ?? null,
+  }
+  if (isLocalServerRunConfirmed(run)) return true
+  if (!(await ask(localServerRunQuestion(server)))) return false
+  rememberLocalServerRun(run)
+  return true
+}
+
 async function runAction(
   action: LocalServerActionId,
   server: StudioLocalServer,
   workspaceId: string,
   tailnet: TailnetShareStatus | null,
+  ask: (options: ConfirmDialogOptions) => Promise<boolean>,
 ): Promise<void> {
   // Run, stop and remove name the conversation that linked the server, which
   // the server itself says: a sidebar row's servers can be several agents'.
@@ -204,6 +253,7 @@ async function runAction(
       return
     }
     case 'run':
+      if (!(await confirmRun(server, workspaceId, ask))) return
       sayFailure(`${server.title} did not start`, await runLocalServer(owner, server.id))
       return
     case 'stop':
@@ -251,6 +301,20 @@ export function LocalServersMenu({
   const [tailnet, setTailnet] = useState<TailnetShareStatus | null>(null)
   const surfaceRef = useRef<HTMLElement | null>(null)
   const canOpenInPane = clientSupports('browser-pane')
+  const dialog = useOptionalConfirmDialog()
+  // Nowhere to ask, nothing an agent wrote runs: the click says so instead.
+  const ask = useCallback(
+    async (options: ConfirmDialogOptions): Promise<boolean> => {
+      if (dialog) return dialog.confirm(options)
+      showToast({
+        tone: 'error',
+        title: 'Could not ask before running it',
+        description: 'Run it again from the Studio window.',
+      })
+      return false
+    },
+    [dialog],
+  )
 
   /** Which opening the tailnet read in flight is for: a read from an earlier one is not drawn. */
   const openingRef = useRef(0)
@@ -283,7 +347,7 @@ export function LocalServersMenu({
 
   const choose = (action: LocalServerActionId, server: StudioLocalServer) => {
     setOpen(false)
-    void runAction(action, server, workspaceId, tailnet)
+    void runAction(action, server, workspaceId, tailnet, ask)
   }
 
   const context = { tailnet, canOpenInPane }

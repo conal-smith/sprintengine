@@ -23,6 +23,7 @@ import type {
 } from '../../shared/text-generation/contract'
 import type { TextGenerationWritingStyle } from '../../shared/text-generation/writing-style'
 import type { WorkspaceRegistryRecord } from '../../shared/workspace-registry'
+import { gatewayConversation } from '../../server/tools/client-tool-gateway'
 import { createDraftRuns } from '../ipc/text-generation-draft'
 import type { DraftInputOutcome } from '../pull-request-create'
 
@@ -148,16 +149,43 @@ function idArg(args: Record<string, unknown>, key: string): string | McpToolResu
   return value
 }
 
-/** The chat a call names, and the folder it works in here. */
-function resolveChat(
-  deps: ConversationPullRequestToolsDeps,
-  args: Record<string, unknown>,
-): { key: ChatKey; root: string } | McpToolResult {
+/** The chat a call names, held to the caller (`refuseAnotherChat`). */
+function chatArg(args: Record<string, unknown>, context: McpConnectionContext | undefined): ChatKey | McpToolResult {
   const workspaceId = idArg(args, 'workspaceId')
   if (typeof workspaceId !== 'string') return workspaceId
   const agentId = idArg(args, 'agentId')
   if (typeof agentId !== 'string') return agentId
   const key = { workspaceId, agentId }
+  return refuseAnotherChat(context, key) ?? key
+}
+
+/**
+ * A paired device names a chat on this machine, and its grant is what
+ * authorises it (`conversation:operate`, tailnet-scopes.ts). Anything on the
+ * local socket acts on its own chat only: the conversation its launch token
+ * proved, as `pull_request.link` records under. Without that proof there is no
+ * chat it may push or open a pull request for.
+ */
+function refuseAnotherChat(context: McpConnectionContext | undefined, key: ChatKey): McpToolResult | null {
+  if (context?.metadata.kind === 'remote-tailnet') return null
+  const own = gatewayConversation(context)
+  if (own && own.workspaceId === key.workspaceId && own.agentId === key.agentId) return null
+  return toolError(
+    'forbidden',
+    own
+      ? "An agent works on its own chat's pull request only, and this names another chat."
+      : 'Only an agent SprintEngine Studio started works on a pull request here, and only on its own chat.',
+  )
+}
+
+/** The chat a call names, and the folder it works in here. */
+function resolveChat(
+  deps: ConversationPullRequestToolsDeps,
+  args: Record<string, unknown>,
+  context: McpConnectionContext | undefined,
+): { key: ChatKey; root: string } | McpToolResult {
+  const key = chatArg(args, context)
+  if (isResult(key)) return key
   const checkout = deps.checkoutOf(key)
   if (!checkout.ok) return toolError(checkout.code, checkout.message)
   return { key, root: checkout.root }
@@ -197,8 +225,8 @@ export function createConversationPullRequestTools(deps: ConversationPullRequest
       required: ['workspaceId', 'agentId'],
       additionalProperties: false,
     },
-    handler: async (args) => {
-      const chat = resolveChat(deps, args)
+    handler: async (args, context) => {
+      const chat = resolveChat(deps, args, context)
       if (isResult(chat)) return chat
       const read = await deps.creator.state(chat.root).catch(() => null)
       // No path on this machine in the answer.
@@ -222,7 +250,7 @@ export function createConversationPullRequestTools(deps: ConversationPullRequest
       additionalProperties: false,
     },
     handler: async (args, context) => {
-      const chat = resolveChat(deps, args)
+      const chat = resolveChat(deps, args, context)
       if (isResult(chat)) return chat
       if (
         args.draftId !== undefined &&
@@ -264,13 +292,11 @@ export function createConversationPullRequestTools(deps: ConversationPullRequest
       additionalProperties: false,
     },
     handler: async (args, context) => {
-      const workspaceId = idArg(args, 'workspaceId')
-      if (typeof workspaceId !== 'string') return workspaceId
-      const agentId = idArg(args, 'agentId')
-      if (typeof agentId !== 'string') return agentId
+      const key = chatArg(args, context)
+      if (isResult(key)) return key
       const draftId = idArg(args, 'draftId')
       if (typeof draftId !== 'string') return draftId
-      drafts.cancel(draftKey(context, { workspaceId, agentId }, draftId))
+      drafts.cancel(draftKey(context, key, draftId))
       return toolSuccess({ ok: true })
     },
   }
@@ -286,8 +312,8 @@ export function createConversationPullRequestTools(deps: ConversationPullRequest
       required: ['workspaceId', 'agentId'],
       additionalProperties: false,
     },
-    handler: async (args) => {
-      const chat = resolveChat(deps, args)
+    handler: async (args, context) => {
+      const chat = resolveChat(deps, args, context)
       if (isResult(chat)) return chat
       const pinned = pinArg(args)
       if (isResult(pinned)) return pinned
@@ -317,8 +343,8 @@ export function createConversationPullRequestTools(deps: ConversationPullRequest
       required: ['workspaceId', 'agentId', 'title', 'body'],
       additionalProperties: false,
     },
-    handler: async (args) => {
-      const chat = resolveChat(deps, args)
+    handler: async (args, context) => {
+      const chat = resolveChat(deps, args, context)
       if (isResult(chat)) return chat
       if (typeof args.title !== 'string' || !args.title.trim() || typeof args.body !== 'string')
         return toolError('invalid_arguments', '"title" and "body" are the pull request\'s text.')

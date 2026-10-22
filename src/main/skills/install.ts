@@ -11,7 +11,7 @@
 // reads it to decide what it may overwrite; without it, two sources shipping a
 // directory of the same name are indistinguishable on disk.
 
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
@@ -25,6 +25,7 @@ import {
 } from '../../shared/skills'
 import { listLocalTree } from './local-source'
 import { isPathStrictlyInside } from '../path-containment'
+import { skillDirStaysInRoot } from './skill-dir-containment'
 
 /** Reads one file's bytes from whichever source the skill came from. */
 type SkillFileReader = (file: SkillFileRef) => Promise<Buffer>
@@ -196,6 +197,31 @@ export async function installSkill(options: InstallSkillOptions): Promise<SkillI
   const { plan } = planned
   const maxTotalBytes = options.maxTotalBytes ?? DEFAULT_SKILL_INSTALL_MAX_TOTAL_BYTES
 
+  for (const target of plan.targets) {
+    if (!(await skillDirStaysInRoot(options.workspaceRoot, target.path))) {
+      return {
+        ok: false,
+        message: `Skill "${options.skill.id}" was not installed: ${target.path} is reached through a linked folder.`,
+      }
+    }
+    // A folder another source installed is that source's, and is not
+    // replaced by this one. (A folder with no marker at all is claimed by an
+    // install the person asks for, the way out of a copy from before markers.)
+    const standing = await lstat(target.path).catch(() => null)
+    if (!standing) continue
+    const owner = await readSkillProvenance(target.path)
+    if (
+      owner &&
+      (owner.sourceId !== options.provenance.sourceId ||
+        (owner.skillId !== '' && owner.skillId !== options.provenance.skillId))
+    ) {
+      return {
+        ok: false,
+        message: `${target.path} was installed from another source, so "${options.skill.id}" was not installed. Remove that folder first.`,
+      }
+    }
+  }
+
   const stagingRoot = options.stagingRoot ?? join(tmpdir(), 'sprintengine-skill-install')
   let stage: string | null = null
   try {
@@ -338,7 +364,7 @@ export async function uninstallSkill(options: {
   const removedPaths: string[] = []
   for (const harness of options.harnesses) {
     const path = resolve(root, SKILL_HARNESS_DIR[harness], 'skills', dirName)
-    if (!isPathStrictlyInside(root, path)) continue
+    if (!isPathStrictlyInside(root, path) || !(await skillDirStaysInRoot(root, path))) continue
     try {
       // Not `force`: a harness that never held this skill must not be reported
       // as one this call cleaned up.

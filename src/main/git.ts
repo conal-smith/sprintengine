@@ -1,8 +1,9 @@
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { lstat, mkdir, readFile, realpath, writeFile } from 'fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { agentWorktreeLockOwner, lockAgentWorktree, relockWorktree, unlockWorktree } from './agent-worktree-lock'
 import { excludeFromWorktree } from './integrations/worktree-exclude'
 import { cloneTree } from './clone-tree'
+import { isPathInsideOrEqual } from './path-containment'
 import {
   getRelativeGitPath,
   isInsideRepo,
@@ -337,6 +338,36 @@ async function explainBranchConflict(
 }
 
 /**
+ * Whether a folder on the way from `root` to `segments`' last entry is a link.
+ * Folders that do not exist yet are not links; the entry itself is not asked
+ * about.
+ */
+async function hasLinkedParent(root: string, segments: readonly string[]): Promise<boolean> {
+  let at = root
+  for (const segment of segments.slice(0, -1)) {
+    at = join(at, segment)
+    const info = await lstat(toFilesystemPath(at)).catch(() => null)
+    if (!info) return false
+    if (info.isSymbolicLink()) return true
+  }
+  return false
+}
+
+/** Whether `child`'s nearest existing folder is really inside `root`'s real folder. */
+async function realFolderInside(root: string, child: string): Promise<boolean> {
+  const realRoot = await realpath(toFilesystemPath(root)).catch(() => null)
+  if (!realRoot) return false
+  let folder = dirname(child)
+  for (;;) {
+    const real = await realpath(toFilesystemPath(folder)).catch(() => null)
+    if (real) return isPathInsideOrEqual(realRoot, real)
+    const parent = dirname(folder)
+    if (parent === folder) return false
+    folder = parent
+  }
+}
+
+/**
  * Copy the repository's `.worktreeinclude` set into a worktree this module has
  * just created. `repoRoot` is already git's resolved root.
  */
@@ -396,6 +427,22 @@ export async function seedWorktreeIncludedFiles(
       !normalizeComparablePath(destinationPath).startsWith(`${normalizeComparablePath(worktreePath)}/`)
     ) {
       result.skipped.push({ path: entry, reason: 'Include path must stay inside the repository and target worktree.' })
+      continue
+    }
+
+    // Both sides are judged by where they really are: an entry under a linked
+    // folder, in the repository or in the new worktree, is not copied, so the
+    // copy neither reads from nor writes to anywhere outside the two trees.
+    const segments = entry.split(/[\\/]+/)
+    const destinationEntry = await lstat(toFilesystemPath(destinationPath)).catch(() => null)
+    if (
+      (await hasLinkedParent(repoRoot, segments)) ||
+      (await hasLinkedParent(worktreePath, segments)) ||
+      destinationEntry?.isSymbolicLink() ||
+      !(await realFolderInside(repoRoot, sourcePath)) ||
+      !(await realFolderInside(worktreePath, destinationPath))
+    ) {
+      result.skipped.push({ path: entry, reason: 'Include path must not pass through a linked folder.' })
       continue
     }
 

@@ -20,6 +20,7 @@ import { join } from 'path'
  * of links must stay links, and following one out of the tree would copy
  * whatever it points at. Anything that is neither a regular file, a directory
  * nor a symlink (a FIFO, a socket a dev server left behind) is not copied.
+ * Nor is anything whose place in the destination is already taken by a link.
  */
 export async function cloneTree(
   source: string,
@@ -57,6 +58,10 @@ export async function cloneTree(
 
   const walk = async (from: string, to: string): Promise<void> => {
     const info = await lstat(from)
+    // A link already standing where a copy would go is left alone, never
+    // written or descended through: the copy stays inside the destination.
+    const existing = await lstat(to).catch(() => null)
+    if (existing?.isSymbolicLink()) return
     if (info.isSymbolicLink()) {
       await symlink(await readlink(from), to).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'EEXIST') throw error

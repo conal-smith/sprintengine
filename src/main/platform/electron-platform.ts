@@ -1,6 +1,7 @@
 import type { App, BrowserWindow, Notification, NotificationConstructorOptions, SafeStorage } from 'electron'
 
 import type { StudioPlatform } from '../../server/platform/platform'
+import { safeStorageProtects } from './safe-storage-protects'
 
 // The platform while the server's code still runs inside Electron main. Each
 // member does exactly what the code it replaced did, read at call time: the
@@ -15,7 +16,10 @@ import type { StudioPlatform } from '../../server/platform/platform'
 
 export type ElectronPlatformDeps = {
   app: Pick<App, 'getPath' | 'getAppPath' | 'getVersion' | 'isPackaged'>
-  safeStorage: Pick<SafeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'>
+  safeStorage: Pick<SafeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'> &
+    Partial<Pick<SafeStorage, 'getSelectedStorageBackend'>>
+  /** The OS the backend is judged for; this process's own unless a test says otherwise. */
+  platform?: NodeJS.Platform
   BrowserWindow: { getAllWindows(): Array<Pick<BrowserWindow, 'isDestroyed' | 'webContents'>> }
   Notification: {
     isSupported(): boolean
@@ -40,7 +44,7 @@ export function createElectronPlatform(deps: ElectronPlatformDeps): StudioPlatfo
       appRoot: () => deps.app.getAppPath(),
     },
     secrets: {
-      available: () => deps.safeStorage.isEncryptionAvailable(),
+      available: () => safeStorageProtects(deps.safeStorage, deps.platform),
       seal: (plaintext) => deps.safeStorage.encryptString(plaintext),
       open: (sealed) => deps.safeStorage.decryptString(sealed),
     },

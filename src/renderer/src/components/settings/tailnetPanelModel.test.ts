@@ -134,7 +134,6 @@ test('tailnetPanelModel', async () => {
       deviceName: 'Sam’s MacBook Air',
       peerNode: 'macbook.example.ts.net',
       peerAddress: '100.64.0.9',
-      comparisonCode: '419306',
       createdAt: '2026-09-02T21:00:00.000Z',
       expiresAt: '2026-09-02T21:05:00.000Z',
     }
@@ -152,7 +151,6 @@ test('tailnetPanelModel', async () => {
       deviceName: 'Laptop',
       peerNode: null,
       peerAddress: '100.64.0.9',
-      comparisonCode: '419306',
       createdAt: '2026-09-02T21:00:00.000Z',
       expiresAt: '2026-09-02T21:05:00.000Z',
     }

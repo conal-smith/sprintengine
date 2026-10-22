@@ -4,6 +4,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   scaledImageDimensions,
 } from '../shared/conversation-attachments'
+import { imageWithinDecodeLimits } from '../shared/image-dimensions'
 
 /**
  * A picture a paired device uploaded, sized for the model before it reaches it.
@@ -48,6 +49,9 @@ export type ConversationImageDownscaler = (bytes: Uint8Array, mediaType: string)
 
 export function downscaleConversationImage(codec: ImageCodec, bytes: Uint8Array, mediaType: string): DownscaledImage {
   const original = { bytes, mediaType }
+  // A picture whose header declares more than a decoder should allocate is
+  // not decoded here, whichever codec was handed in.
+  if (!imageWithinDecodeLimits(bytes)) return original
   let image: DecodedImage | null
   try {
     image = codec.decode(bytes)

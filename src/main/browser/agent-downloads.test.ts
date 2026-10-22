@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 
-import { createAgentDownloads, safeDownloadName, type AgentDownloadItem } from './agent-downloads'
+import { createAgentDownloads, reportedDownloadUrl, safeDownloadName, type AgentDownloadItem } from './agent-downloads'
 
 const DIRECTORY = '/Users/dev/app/.sprintengine/browser/downloads'
 
@@ -64,4 +64,11 @@ test('a finished download gives its name back to the next one when no file took 
   downloads.save(first, DIRECTORY)
   first.finish()
   expect(downloads.save(item('report.csv'), DIRECTORY)).toBe(join(DIRECTORY, 'report.csv'))
+})
+
+test('a data: URL is reported by its media type alone', () => {
+  expect(reportedDownloadUrl('data:image/png;base64,iVBORw0KGgo=')).toBe('data:image/png,…')
+  expect(reportedDownloadUrl('DATA:,hello')).toBe('data:,…')
+  expect(reportedDownloadUrl('data:text/html<script>,x')).toBe('data:text/htmlscript,…')
+  expect(reportedDownloadUrl('https://example.com/a.csv')).toBe('https://example.com/a.csv')
 })

@@ -214,7 +214,8 @@ test('security', async () => {
 
     // The destination already exists and is a symlink out of the workspace — the
     // state a previously-compromised install (or a hostile local tool) would
-    // leave behind. Installing must replace the link, never write through it.
+    // leave behind. Installing must never write through it; a link is not a
+    // folder this app made, so the install stops and leaves it standing.
     const skillsDir = join(workspace, '.claude', 'skills')
     await mkdir(skillsDir, { recursive: true })
     await symlink(victim, join(skillsDir, 'writer'))
@@ -226,11 +227,10 @@ test('security', async () => {
       readFile: async () => Buffer.from('# writer\n', 'utf8'),
       provenance: provenanceOf(HOSTILE_SOURCE, 'skills/writer'),
     })
-    assert.equal(result.ok, true)
+    assert.equal(result.ok, false)
     assert.equal(await readFile(join(victim, 'keep.txt'), 'utf8'), 'victim data', 'the symlink target is untouched')
     assert.equal(existsSync(join(victim, 'SKILL.md')), false, 'nothing was written through the link')
-    assert.equal(await readFile(join(skillsDir, 'writer', 'SKILL.md'), 'utf8'), '# writer\n')
-    console.log('  symlinks (destination): a pre-existing symlinked destination is replaced, not written through')
+    console.log('  symlinks (destination): a pre-existing symlinked destination is refused, not written through')
   }
 
   // ---------------------------------------------------------------------------

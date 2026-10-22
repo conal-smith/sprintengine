@@ -11,7 +11,7 @@ import { createWebListener, type WebListener } from './web-listener'
 import { createPairRequests, type PairRequests } from './web-pair-requests'
 import { createWebSessionStore, type WebSessionStore } from './web-sessions'
 import { openWebStaticRoot } from './web-static'
-import { createWebUploads } from './web-uploads'
+import { createWebUploads, uploadOwnerDir } from './web-uploads'
 
 // The web listener's controls, each a test that fails if the control is
 // removed (phase 9 spec, 8.6).
@@ -371,7 +371,7 @@ test('an owner browser uploads a dropped file and is answered its path; nobody e
   const saved = await upload({ Cookie: owner.cookie, Origin: own(), 'Content-Type': 'application/octet-stream' })
   expect(saved.status).toBe(200)
   const { path } = JSON.parse(saved.body) as { path: string }
-  expect(path.startsWith(join(dir, 'web-uploads', owner.sessionId))).toBe(true)
+  expect(path.startsWith(join(dir, 'web-uploads', uploadOwnerDir(owner.sessionId)))).toBe(true)
   expect(readFileSync(path, 'utf8')).toBe('quarterly numbers')
   // Another page on this machine: its origin is not this listener's.
   expect((await upload({ Cookie: owner.cookie, Origin: 'http://127.0.0.1:3000' })).status).toBe(403)

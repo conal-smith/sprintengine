@@ -2,6 +2,7 @@ import { mkdir, readFile, rmdir, stat, unlink } from 'fs/promises'
 import { homedir } from 'os'
 import { dirname, join, resolve as resolvePath } from 'path'
 
+import { codexMcpEnv, codexMcpServerFields, tomlInlineTable } from './codex-mcp-overrides'
 import { withConfigFileLock, writeFileAtomically } from './config-file-write'
 import { isLauncherMcpServer } from './integrations/launcher'
 import { hostIdForPath, recordIntegrationWrite } from './integrations/ledger'
@@ -988,46 +989,34 @@ export function opencodeMcpEntries(servers: readonly McpServerConfig[]): {
 /**
  * Servers as Codex `-c mcp_servers.<id>=<table>` overrides: one inline TOML
  * table each, with the fields `renderCodexServer` writes into a config file.
+ * Their env values and header values are not in the tables but in `env`, for
+ * the launch's environment, and the tables name the variables
+ * (codex-mcp-overrides.ts). `base` is the environment the launch starts from.
  * Codex reads an override's key as a dotted path, so an id with a dot in it
  * cannot be named; it is left out and returned in `skipped`.
  */
-export function codexMcpOverrideArgs(servers: readonly McpServerConfig[]): {
+export function codexMcpOverrideArgs(
+  servers: readonly McpServerConfig[],
+  base: Readonly<Record<string, string | undefined>> = process.env,
+): {
   args: string[]
+  env: Record<string, string>
   skipped: McpServerConfig[]
 } {
   const args: string[] = []
   const skipped: McpServerConfig[] = []
+  const carrier = codexMcpEnv(base)
   for (const server of servers) {
     if (!/^[A-Za-z0-9_-]+$/.test(server.id)) {
       skipped.push(server)
       continue
     }
-    const fields: Array<[string, string]> = []
-    const list = (values: readonly string[]) => `[${values.map(tomlString).join(', ')}]`
-    const table = (entries: ReadonlyArray<[string, string]>) =>
-      `{ ${entries.map(([key, value]) => `${tomlString(key)} = ${value}`).join(', ')} }`
-    if (server.transport === 'stdio') {
-      fields.push(['command', tomlString(server.command ?? '')])
-      if (server.args?.length) fields.push(['args', list(server.args)])
-      if (server.envVarNames?.length) fields.push(['env_vars', list(server.envVarNames)])
-      if (server.env && Object.keys(server.env).length > 0) {
-        fields.push(['env', table(Object.entries(server.env).map(([key, value]) => [key, tomlString(value)]))])
-      }
-    } else {
-      fields.push(['url', tomlString(server.url ?? '')])
-      if (server.envVarNames?.length) fields.push(['bearer_token_env_var', tomlString(server.envVarNames[0])])
-      const headers = Object.entries(server.headers ?? {}).filter(
-        ([key]) => !server.envVarNames?.length || key.toLowerCase() !== 'authorization',
-      )
-      if (headers.length > 0) {
-        fields.push(['http_headers', table(headers.map(([key, value]) => [key, tomlString(value)]))])
-      }
-    }
+    const fields = codexMcpServerFields(server, carrier)
     fields.push(['enabled', server.enabled ? 'true' : 'false'])
     if (server.required) fields.push(['required', 'true'])
-    args.push('-c', `mcp_servers.${server.id}=${table(fields)}`)
+    args.push('-c', `mcp_servers.${server.id}=${tomlInlineTable(fields)}`)
   }
-  return { args, skipped }
+  return { args, env: carrier.env, skipped }
 }
 
 // ── The gateway a launch carries itself ─────────────────────────────────────

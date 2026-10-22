@@ -55,3 +55,9 @@ export const AGENT_IDENTITY_ENV_KEYS = [
 // channel with it. Codex hands an MCP server only the variables its entry
 // names, so the gateway entry names this one (`env_vars`).
 export const MCP_CHANNEL_TOKEN_ENV = 'SPRINTENGINE_MCP_CHANNEL_TOKEN'
+
+// The prefix of the variables a chat's CLI child is started with to carry its
+// MCP servers' env values and header values, which the server entries on its
+// command line name instead of holding (codex-mcp-overrides.ts and
+// `claudeMcpLaunch`). A WSL child reads every one from stdin (`cliHostSpawn`).
+export const MCP_SECRET_ENV_PREFIX = 'SPRINTENGINE_MCP_SECRET_'

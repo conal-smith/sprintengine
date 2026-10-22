@@ -57,14 +57,17 @@ for, which `cli_runtime_list` names, each with the name the CLI gives its mode
 the preset that list puts it at. The answer reports the preset the launch
 resolved. Follow the agent with `agent_status` or `terminal_list`.
 
-`terminal_list` lists open sessions — session id, agent name, CLI, working
-directory, workspace, whether the process is live or the session is paused, and
-the agent phase when the CLI reports one. It reads the terminal runtime and
-never writes.
+`terminal_list` lists the sessions you or your chat started — your own
+terminal and the agents launched with `agent_launch`, `terminal_create` or
+`backlog_work` — with session id, agent name, CLI, working directory,
+workspace, whether the process is live or the session is paused, and the agent
+phase when the CLI reports one. The person's own terminals and other chats'
+agents are not listed. It reads the terminal runtime and never writes.
 
-`terminal_read` with `{sessionId}` reads what a terminal printed — a dev
-server's error, a watcher's rebuild, a test run's failure — as plain text with
-the escapes stripped: the newest 200 lines by default (`lines`, at most 2000),
+`terminal_read` with `{sessionId}` reads what a terminal you or your chat
+started printed — a launched agent's progress, its test run's failure — as
+plain text with the escapes stripped: the newest 200 lines by default (`lines`,
+at most 2000),
 with `truncated: true` when older output was left out. Every answer carries a
 `cursor`, an opaque string; pass it back as `since`, unchanged, and the next
 read returns only what the terminal printed after it, so follow a running

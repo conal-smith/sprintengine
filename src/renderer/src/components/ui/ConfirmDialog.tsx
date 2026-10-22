@@ -173,6 +173,15 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
   )
 }
 
+/**
+ * The dialog when this tree has one, else null: for a surface that is drawn in
+ * places without a provider and asks only on a click, so its render never
+ * throws and the click says it could not ask.
+ */
+export function useOptionalConfirmDialog(): ConfirmDialogApi | null {
+  return useContext(ConfirmDialogContext)
+}
+
 export function useConfirmDialog(): ConfirmDialogApi {
   const context = useContext(ConfirmDialogContext)
   if (!context) {

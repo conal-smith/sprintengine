@@ -24,9 +24,26 @@ export function webTunnelAudited(channel: string): boolean {
 
 export type WebTunnelAudit = (entry: { channel: string; ok: boolean; durationMs: number; workspaceId?: string }) => void
 
+/** The folder a `workspace.created` dispatch names, when the frame is one. */
+function createdWorkspaceFolder(channel: string, args: unknown): string | null {
+  if (channel !== 'workspace-sync:dispatch' || !Array.isArray(args)) return null
+  const command = args[0] as { type?: unknown; payload?: { insert?: { folderPath?: unknown } } } | null
+  if (command?.type !== 'workspace.created') return null
+  const folderPath = command.payload?.insert?.folderPath
+  return typeof folderPath === 'string' && folderPath.trim() !== '' ? folderPath : null
+}
+
 export function guardWebTunnelPort(
   port: TunnelPort,
-  options: { audit: WebTunnelAudit; log?: (message: string) => void },
+  options: {
+    audit: WebTunnelAudit
+    log?: (message: string) => void
+    /**
+     * Set for a browser on the tailnet: a workspace it creates must be on a
+     * folder Studio already has a workspace for.
+     */
+    knownFolder?: (folderPath: string) => boolean
+  },
 ): TunnelPort {
   // Audited calls in flight, by request id: when they started and what they named.
   const audited = new Map<unknown, { channel: string; started: number; workspaceId?: string }>()
@@ -62,6 +79,19 @@ export function guardWebTunnelPort(
               ok: false,
               error: { name: WEB_TUNNEL_REFUSED, message: `${channel} is available in the desktop app only.` },
             })
+          return
+        }
+        const created = frame?.t === 'ipc.invoke' ? createdWorkspaceFolder(channel, frame.args) : null
+        if (created !== null && options.knownFolder && !options.knownFolder(created)) {
+          port.postMessage({
+            t: 'ipc.result',
+            id: frame!.id,
+            ok: false,
+            error: {
+              name: 'UnknownFolder',
+              message: 'A browser on the tailnet opens only folders Studio already has a workspace for.',
+            },
+          })
           return
         }
         if (frame?.t === 'ipc.invoke' && webTunnelAudited(channel)) {

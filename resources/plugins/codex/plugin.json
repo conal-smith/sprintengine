@@ -79,6 +79,7 @@
       { "spreadIf": "contextArgs" },
       { "spreadIf": "integrationArgs" },
       { "spreadIf": "promptOverflowArgs" },
+      { "valueIf": "prompt", "value": "--" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
   },
@@ -94,6 +95,7 @@
     ]
   },
   "promptInjection": {
+    "$comment": "The first message goes after `--`, so one that starts with a dash is never read as an option. Checked 2026-10-22 against Codex CLI 0.161.0: `codex --bogus` failed with \"to pass '--bogus' as a value, use '-- --bogus'\", and `codex -- exec` opened the TUI with `exec` as its prompt rather than running the subcommand.",
     "mode": "positional-arg",
     "overflow": {
       "$comment": "codex 0.155.1 and 0.156.1 document no prompt-file option and no stdin prompt for the interactive TUI (`codex exec` is the non-interactive path), so a first message too long for the platform's command line is typed in: launched without it, then pasted (bracketed) and submitted once the TUI is reading. `check_for_update_on_startup=false` rides only that launch: Codex's startup update prompt turns on bracketed paste just as the composer does, and the typed Enter would accept its default, which installs the update (observed 2026-09-24 against 0.155.1). The key is a declared ConfigToml field of the installed binary; with it set, the paste and its Enter landed in the composer and were answered once.",

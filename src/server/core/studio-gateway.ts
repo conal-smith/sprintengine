@@ -9,6 +9,8 @@ import {
 import { knownCliAvailability } from '../../main/cli-availability'
 import { listPluginRegistryEntries } from '../../main/plugin-registry-instance'
 import { createPullRequestCreator } from '../../main/pull-request-create'
+import { sharedGhRunner } from '../../main/github/gh'
+import { createGhHostTokenResolver } from '../../main/github/host-token'
 import { generatePullRequestText } from '../../main/text-generation/text-generation-service'
 import { resolveTextGenerationEngine } from '../../shared/text-generation/contract'
 import {
@@ -104,6 +106,9 @@ export type ClientToolLinks = {
 
 export function createStudioGateway(core: StudioCore, options: StudioGatewayOptions = {}) {
   const { platform, workspaceSyncService, conversations } = core
+  // The GitHub CLI's own sign-in for a host, which is what lets a pull request
+  // there be read (`pull_request.link`).
+  const gitHubHostToken = createGhHostTokenResolver(sharedGhRunner())
   const coreTools = [
     ...createConversationTools({
       launch: (request) => core.conversationLaunchService.launch(request),
@@ -148,6 +153,7 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
         const listed = conversations.listSessions({ workspaceId: key.workspaceId, agentId: key.agentId })
         return listed.ok && listed.sessions.length > 0
       },
+      isSignedInGitHubHost: async (host) => Boolean(await gitHubHostToken(host)),
     }),
     ...createLocalServerTools({ link: (key, input) => core.localServers.linkForAgent(key, input) }),
     // A paired desktop's usage dashboard counts what this machine spent.

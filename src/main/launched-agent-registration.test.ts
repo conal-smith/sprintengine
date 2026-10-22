@@ -126,12 +126,14 @@ function host() {
   const launchService = withLaunchedAgentRegistration(composed, registration)
 
   // The gateway tools an MCP client calls, over the same main-owned services.
-  // Only what `agent.launch`, `terminal.create` and `workspace.list` read.
+  // Only what `agent.launch`, `terminal.create`, `terminal.list` and `workspace.list` read.
   const backends: Partial<AutomationBackends> = {
     getWorkspaceSyncSnapshot: () => workspaceSync.getSnapshot(),
     listTerminalSessions: () => sessions,
     launchAgent: (request) => launchService.launch(request),
     readRepositoryIdentity: async () => null,
+    // A calling agent launches no looser than its own preset; this one has none on record.
+    resolveAgentPermissionPreset: () => null,
     sleep: async () => {},
   }
   const tools = createAutomationTools(backends as AutomationBackends)
@@ -183,10 +185,12 @@ test('an agent launched through the gateway is in the host registry, and announc
   assert.deepEqual(workspaces.find((workspace) => workspace.id === h.workspaceId)?.agentIds.sort(), agentIdsOf(h))
 })
 
-test('an agent a local MCP client opens with terminal.create is in the host registry, and announced', async () => {
+test('an agent another agent opens with terminal.create is in the host registry, and announced', async () => {
   const h = host()
   const before = h.announced.length
-  const created = await tool(h.tools, 'terminal.create').handler({ workspaceId: h.workspaceId })
+  // The workspace's own agent asks: the terminal tools show it what it started.
+  const caller = { metadata: { kind: 'studio-agent' as const, workspaceId: h.workspaceId, agentId: 'agent-1' } }
+  const created = await tool(h.tools, 'terminal.create').handler({ workspaceId: h.workspaceId }, caller)
   assert.equal(created.isError, undefined, JSON.stringify(created.structuredContent))
   const { agentId, sessionId, terminal } = created.structuredContent as {
     agentId: string
@@ -206,8 +210,8 @@ test('an agent a local MCP client opens with terminal.create is in the host regi
     'every window is told at once',
   )
 
-  // terminal.list reads the same session back, as an agent.
-  const listed = await tool(h.tools, 'terminal.list').handler({ workspaceId: h.workspaceId, kind: 'agent' })
+  // terminal.list reads the same session back, as an agent, to the agent that started it.
+  const listed = await tool(h.tools, 'terminal.list').handler({ workspaceId: h.workspaceId, kind: 'agent' }, caller)
   const terminals = (listed.structuredContent as { terminals: Array<{ sessionId: string; agentId: string | null }> })
     .terminals
   assert.ok(terminals.some((row) => row.sessionId === sessionId && row.agentId === agentId))

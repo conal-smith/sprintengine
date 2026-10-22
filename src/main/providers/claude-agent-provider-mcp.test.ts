@@ -313,7 +313,48 @@ test('a server that names a reference the CLI expands stays on the command line,
   const launch = claudeMcpLaunch(GATEWAY, [linear, STRIPE])
   assert.deepEqual(Object.keys(launch.commandLine), ['sprintengine-studio', 'linear'])
   assert.deepEqual(Object.keys(launch.control), ['stripe'])
-  assert.deepEqual(claudeMcpLaunch(null, []), { commandLine: {}, control: {} })
+  assert.deepEqual(claudeMcpLaunch(null, []), { commandLine: {}, control: {}, env: {} })
+})
+
+test('a server on the command line names its literal values by reference, never carrying them', () => {
+  const secret = 'sk-test-0123456789abcdef'
+  const launch = claudeMcpLaunch(null, [
+    {
+      id: 'acme',
+      name: 'Acme',
+      transport: 'http',
+      url: 'https://mcp.example.com/mcp',
+      headers: { 'X-Api-Key': secret },
+      envVarNames: ['ACME_TOKEN'],
+    },
+    {
+      id: 'tool',
+      name: 'Tool',
+      transport: 'stdio',
+      command: 'tool',
+      args: ['--key', secret, '--profile=${TOOL_PROFILE}'],
+      env: { TOOL_SECRET: secret },
+    },
+  ])
+  assert.deepEqual(Object.keys(launch.commandLine), ['acme', 'tool'])
+  assert.equal(JSON.stringify(launch.commandLine).includes(secret), false)
+  assert.deepEqual(launch.commandLine.acme, {
+    type: 'http',
+    url: 'https://mcp.example.com/mcp',
+    headers: { 'X-Api-Key': '${SPRINTENGINE_MCP_SECRET_1}', Authorization: 'Bearer ${ACME_TOKEN}' },
+  })
+  assert.deepEqual(launch.commandLine.tool, {
+    type: 'stdio',
+    command: 'tool',
+    args: ['${SPRINTENGINE_MCP_SECRET_2}', '${SPRINTENGINE_MCP_SECRET_3}', '--profile=${TOOL_PROFILE}'],
+    env: { TOOL_SECRET: '${SPRINTENGINE_MCP_SECRET_4}' },
+  })
+  assert.deepEqual(launch.env, {
+    SPRINTENGINE_MCP_SECRET_1: secret,
+    SPRINTENGINE_MCP_SECRET_2: '--key',
+    SPRINTENGINE_MCP_SECRET_3: secret,
+    SPRINTENGINE_MCP_SECRET_4: secret,
+  })
 })
 
 test('a server action asked while the child registers its servers waits for them', async () => {

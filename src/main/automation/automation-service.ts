@@ -1,7 +1,7 @@
 import { createHash } from 'crypto'
 import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
 import { join } from 'path'
+import { privateSocketDirectory } from '../private-socket-dir'
 import type { AutomationServerStatus } from '../../shared/automation'
 import type { McpConnectionContext, McpToolRegistration } from '../../shared/modules/mcp-tools'
 import { STUDIO_MCP_SERVER_ID, STUDIO_MCP_SERVER_NAME } from '../../shared/product-identity'
@@ -367,17 +367,22 @@ export function createAutomationService(options: AutomationServiceOptions) {
   }
 }
 
+/**
+ * The gateway's socket: in the data directory, or, when that path is too long
+ * for a socket, in a folder only this user can enter (`privateSocketDirectory`,
+ * under `temporaryDir` when one is given).
+ */
 export function resolveSocketPath(
   userDataDir: string,
   platform: NodeJS.Platform = process.platform,
-  temporaryDir: string = tmpdir(),
+  temporaryDir?: string,
 ): string {
   if (platform === 'win32') {
     return `\\\\.\\pipe\\sprintengine-automation-${profileHash(userDataDir)}`
   }
   const direct = join(userDataDir, 'automation.sock')
   if (direct.length <= MAX_POSIX_SOCKET_PATH) return direct
-  return join(temporaryDir, `sprintengine-automation-${profileHash(userDataDir)}.sock`)
+  return join(privateSocketDirectory(temporaryDir), `automation-${profileHash(userDataDir)}.sock`)
 }
 
 function profileHash(userDataDir: string): string {

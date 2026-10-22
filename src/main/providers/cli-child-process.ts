@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { win32 } from 'node:path'
+import { resolveWindowsProgramOnPathSync, windowsPowerShellPath } from '../command-on-path'
 import { killProcessTree } from '../process-tree-kill'
 
 type CliSpawnTarget = { file: string; args: string[]; windowsVerbatimArguments?: boolean }
@@ -45,8 +46,12 @@ export function cliSpawnTarget(
 ): CliSpawnTarget {
   if ((deps.platform ?? process.platform) !== 'win32') return { file: command, args }
   const lower = command.toLowerCase()
+  const env = deps.env ?? process.env
   if ((lower.endsWith('.cmd') || lower.endsWith('.bat')) && deps.cwd && /^[\\/]{2}[^\\/]/u.test(deps.cwd)) {
-    const target = npmShimTarget(command, deps.exists ?? existsSync, deps.readText ?? readTextOrNull)
+    const exists = deps.exists ?? existsSync
+    const target = npmShimTarget(command, exists, deps.readText ?? readTextOrNull, () =>
+      resolveWindowsProgramOnPathSync('node', { pathValue: env.PATH ?? env.Path ?? '', exists }),
+    )
     if (target) return { file: target.file, args: [...target.args, ...args] }
     throw new Error(
       `${command} is a batch file, and Windows cannot start one in ${deps.cwd}: it would run in the Windows folder instead. ` +
@@ -67,7 +72,7 @@ export function cliSpawnTarget(
       windowsVerbatimArguments: true,
     }
   }
-  if (lower.endsWith('.ps1')) return powerShellTarget(command, args)
+  if (lower.endsWith('.ps1')) return powerShellTarget(command, args, env)
   return { file: command, args }
 }
 
@@ -75,13 +80,16 @@ export function cliSpawnTarget(
  * What an npm batch shim (`codex.cmd`, written by npm's `cmd-shim`) runs, as
  * a program and the arguments before the caller's: Node with the package's
  * script, or the package's own executable. Node is the one beside the shim
- * when there is one, else the first on PATH, as the shim itself chooses.
- * Null for any batch file that is not such a shim, or whose target is gone.
+ * when there is one, else the first on PATH, as the shim itself chooses, by
+ * its full path: a bare `node` would be looked for in the child's working
+ * folder first, which is the workspace. Null for any batch file that is not
+ * such a shim, whose target is gone, or that needs a Node there is none of.
  */
 export function npmShimTarget(
   shim: string,
   exists: (path: string) => boolean,
   readText: (path: string) => string | null,
+  nodeOnPath: () => string | null = () => resolveWindowsProgramOnPathSync('node', { exists }),
 ): { file: string; args: string[] } | null {
   const text = readText(shim)
   // A shim that sets variables for its program (a shebang's `env NAME=…`,
@@ -98,8 +106,9 @@ export function npmShimTarget(
   if (script) {
     const path = local(script[1])
     if (!exists(path)) return null
-    const node = local('node.exe')
-    return { file: exists(node) ? node : 'node', args: [path] }
+    const beside = local('node.exe')
+    const node = exists(beside) ? beside : nodeOnPath()
+    return node ? { file: node, args: [path] } : null
   }
   const executable = /^\s*"%dp0%\\([^"\r\n%]+\.exe)"\s+%\*\s*$/imu.exec(text)
   if (executable && exists(local(executable[1]))) return { file: local(executable[1]), args: [] }
@@ -114,9 +123,9 @@ function readTextOrNull(path: string): string | null {
   }
 }
 
-function powerShellTarget(script: string, args: string[]): CliSpawnTarget {
+function powerShellTarget(script: string, args: string[], env: NodeJS.ProcessEnv): CliSpawnTarget {
   return {
-    file: 'powershell.exe',
+    file: windowsPowerShellPath(env),
     args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, ...args],
   }
 }

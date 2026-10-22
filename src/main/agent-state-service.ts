@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
 import { chmodSync, existsSync, unlinkSync } from 'fs'
 import { createServer, type Server, type Socket } from 'net'
-import { tmpdir } from 'os'
 import { join } from 'path'
+import { privateSocketDirectory, withOwnerOnlyUmask } from './private-socket-dir'
 import type { PluginAgentStateSpec } from '../shared/plugin-manifest'
 import type { TerminalPathStyle } from '../shared/electron-api'
 import type { AgentStateFrame } from './agent-state'
@@ -146,7 +146,9 @@ export function createAgentStateService(options: AgentStateServiceOptions) {
         }
         next.once('error', onError)
         next.once('listening', onListening)
-        next.listen(path)
+        // Created owner-only, not narrowed after the fact.
+        if (process.platform === 'win32') next.listen(path)
+        else withOwnerOnlyUmask(() => next.listen(path))
       })
     } catch (error) {
       warn('Agent-state socket failed to start', message(error))
@@ -420,7 +422,8 @@ export function resolveAgentStateSocketPath(userDataDir: string): string {
   }
   const direct = join(userDataDir, 'agent-state.sock')
   if (direct.length <= MAX_POSIX_SOCKET_PATH) return direct
-  return join(tmpdir(), `sprintengine-agent-state-${profileHash(userDataDir)}.sock`)
+  // Too long for a socket: a folder only this user can enter, not the shared temp folder.
+  return join(privateSocketDirectory(), `agent-state-${profileHash(userDataDir)}.sock`)
 }
 
 function profileHash(userDataDir: string): string {

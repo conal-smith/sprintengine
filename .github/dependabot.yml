@@ -16,6 +16,30 @@ updates:
       # The xterm addons are pinned to one beta build together; they move as a
       # set, by hand, when the terminal is re-tested.
       - dependency-name: '@xterm/*'
+  # The phone companion has its own package.json and lockfile. Expo pins its
+  # React Native and expo-* versions to one SDK release, so their minor and
+  # major versions move with an SDK upgrade, by hand; patches still come here.
+  - package-ecosystem: npm
+    commit-message:
+      prefix: "build"
+    directory: /mobile
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      mobile-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: 'expo'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'expo-*'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: '@expo/*'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'react-native'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'react'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
   - package-ecosystem: github-actions
     commit-message:
       prefix: "ci"

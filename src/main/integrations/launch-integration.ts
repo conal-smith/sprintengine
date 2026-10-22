@@ -220,7 +220,9 @@ export function buildCodexLaunchIntegration(input: CodexLaunchInput): LaunchInte
   const hookArgs = input.agentState ? codexAgentStateHookArgs(input.agentState.spec, input.agentState.command) : []
   return {
     args: [...mcp.args, ...hookArgs],
-    env: {},
+    // The servers' env values and header values, which the overrides name
+    // rather than carry: the terminal's environment, not its command line.
+    env: mcp.env,
     carries: { mcp: true, agentState: hookArgs.length > 0, skills: [] },
     skippedServers: mcp.skipped.map((server) => server.id),
   }

@@ -1,5 +1,6 @@
 import type { BranchPullRequest } from '../../shared/git/pull-request'
-import { toolError, toolSuccess, type McpToolRegistration } from '../../shared/modules/mcp-tools'
+import { classifyPullRequestUrl, parsePullRequestUrl } from '../../shared/git/pr-url'
+import { toolError, toolSuccess, type McpToolRegistration, type McpToolResult } from '../../shared/modules/mcp-tools'
 import { gatewayConversation } from '../tools/client-tool-gateway'
 import type { NoteOpenedOutcome, PullRequestConversationKey, WatchOutcome } from './pull-request-record'
 
@@ -33,6 +34,33 @@ export type PullRequestToolsDeps = {
    * not type a watch's news into one.
    */
   isChat(key: PullRequestConversationKey): boolean
+  /**
+   * Whether `gh` may be pointed at a GitHub host other than github.com: one it
+   * is signed in to on this machine (`gh auth login --hostname`). `host` is the
+   * hostname, with `:port` when the address named one.
+   */
+  isSignedInGitHubHost(host: string): Promise<boolean>
+}
+
+/**
+ * A GitHub-shaped address is read with `gh pr view`, against whatever host it
+ * names. That is github.com, or a GitHub Enterprise host `gh` is signed in to
+ * here; any other host is refused before `gh` is run. An address on another
+ * forge (GitLab, Gitea, Bitbucket, Azure DevOps) is recorded as opened and
+ * never read with `gh`, so it is left alone.
+ */
+async function refuseUnknownGitHubHost(deps: PullRequestToolsDeps, url: string): Promise<McpToolResult | null> {
+  if (classifyPullRequestUrl(url)?.forge !== 'github') return null
+  const parsed = parsePullRequestUrl(url)
+  if (!parsed || 'unsupported' in parsed || parsed.host === 'github.com') return null
+  const host = parsed.port ? `${parsed.host}:${parsed.port}` : parsed.host
+  if (await deps.isSignedInGitHubHost(host).catch(() => false)) return null
+  return toolError(
+    'unknown_github_host',
+    `${host} is not github.com, and the GitHub CLI is not signed in to it on this machine, so Studio does not ` +
+      `read pull requests there. If it is your company's GitHub, sign in with \`gh auth login --hostname ${host}\` ` +
+      'and link it again.',
+  )
 }
 
 const PULL_REQUEST_ARGUMENT = {
@@ -96,7 +124,9 @@ export function createPullRequestTools(deps: PullRequestToolsDeps): McpToolRegis
         'shows it on the conversation and follows it until it merges. Call this right after you create one, on any ' +
         'forge (GitHub, GitLab, Gitea, Forgejo, Codeberg, Bitbucket, Azure DevOps, self-hosted or not), with the URL ' +
         'the forge gave you. Link only what you opened: one another conversation linked first stays with it. ' +
-        'Studio notices `gh pr create` and `glab mr create` on its own, and linking after those is harmless.',
+        'Studio notices `gh pr create` and `glab mr create` on its own, and linking after those is harmless. ' +
+        'A GitHub address on a host other than github.com is read with the GitHub CLI, so it is accepted only ' +
+        'where `gh` is signed in to that host on this machine.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -131,6 +161,8 @@ export function createPullRequestTools(deps: PullRequestToolsDeps): McpToolRegis
         if (args.title !== undefined && typeof args.title !== 'string') {
           return toolError('invalid_arguments', '"title" must be a string when provided.')
         }
+        const unknownHost = await refuseUnknownGitHubHost(deps, args.url.trim())
+        if (unknownHost) return unknownHost
         const outcome = await deps.link(
           { workspaceId: conversation.workspaceId, agentId: conversation.agentId },
           { url: args.url.trim(), ...(typeof args.title === 'string' ? { title: args.title } : {}) },
@@ -192,6 +224,8 @@ export function createPullRequestTools(deps: PullRequestToolsDeps): McpToolRegis
         }
         const target = resolveTarget(args.pullRequest, deps.pullRequestsOf(key))
         if (!target.ok) return toolError(target.code, target.message)
+        const unknownHost = await refuseUnknownGitHubHost(deps, target.url)
+        if (unknownHost) return unknownHost
         const outcome = await deps.watch(key, { url: target.url })
         if (!outcome.ok) return toolError(outcome.code, outcome.message)
         const { pullRequest } = outcome

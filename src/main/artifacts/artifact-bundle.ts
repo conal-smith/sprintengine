@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, stat } from 'node:fs/promises'
+import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 // What one published version of an artifact is made of: the page and every
@@ -42,6 +42,12 @@ export type ArtifactBundleInput = {
   entry?: string
   /** Local stylesheets to add to the page's head, such as the project's web fonts, with what they reference. */
   stylesheets?: string[]
+  /**
+   * The folders the page, its stylesheets and every file they reference must
+   * be inside, judged on the real path (links in the parent folders resolved),
+   * so neither a `../` nor a linked folder reaches past them. Absent, any.
+   */
+  roots?: readonly string[]
 }
 
 export const ARTIFACT_BUNDLE_LIMITS = {
@@ -94,6 +100,31 @@ function isHiddenFrom(from: string, path: string): boolean {
   return relative(from, path)
     .split(sep)
     .some((segment) => segment.startsWith('.') && segment !== '..' && segment !== '.')
+}
+
+/** The folders a bundle may take files from, as real paths. Unreadable ones are dropped. */
+async function realRoots(roots: readonly string[]): Promise<string[]> {
+  const real = await Promise.all(roots.map((root) => realpath(resolve(root)).catch(() => null)))
+  return real.filter((root): root is string => root !== null)
+}
+
+/** Whether a file, once its links are resolved, is inside one of `roots`. */
+async function isInsideRoots(path: string, roots: readonly string[]): Promise<boolean> {
+  const real = await realpath(path).catch(() => null)
+  if (!real) return false
+  return roots.some((root) => real === root || real.startsWith(root.endsWith(sep) ? root : `${root}${sep}`))
+}
+
+/** Whether a file the caller names (a thumbnail) is inside one of the folders it may publish from. */
+export async function isInsideArtifactRoots(path: string, roots: readonly string[]): Promise<boolean> {
+  return isInsideRoots(path, await realRoots(roots))
+}
+
+function outsideRoots(path: string): Failure {
+  return {
+    ok: false,
+    message: `${path} is outside the folders this chat may publish from (its project, its worktree), so nothing was published.`,
+  }
 }
 
 /** The deepest folder holding `start` and every path. */
@@ -305,6 +336,8 @@ export async function collectArtifactBundle(
   const target = resolve(input.path)
   const info = await stat(target).catch(() => null)
   if (!info) return { ok: false, message: `Nothing is at ${target}.` }
+  const roots = input.roots ? await realRoots(input.roots) : null
+  if (roots && !(await isInsideRoots(target, roots))) return outsideRoots(target)
 
   let folder: string | null = null
   let entry: string
@@ -329,6 +362,7 @@ export async function collectArtifactBundle(
     if (!isAbsolute(sheet) || !(await isFile(sheet)) || extname(sheet).toLowerCase() !== '.css') {
       return { ok: false, message: `"${sheet}" is not a stylesheet (an absolute path to a .css file).` }
     }
+    if (roots && !(await isInsideRoots(sheet, roots))) return outsideRoots(resolve(sheet))
     stylesheets.push(resolve(sheet))
   }
 
@@ -411,6 +445,7 @@ export async function collectArtifactBundle(
           )
           continue
         }
+        if (roots && !(await isInsideRoots(resolved, roots))) return outsideRoots(resolved)
         included.add(resolved)
         queue.push(resolved)
         if (included.size > ARTIFACT_BUNDLE_LIMITS.files) {

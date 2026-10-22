@@ -1642,6 +1642,8 @@ export function createAppServices(
   // files, and publishing signs in with this machine's credentials.
   const { artifactsSettingsStore, artifactsTools, setUpArtifacts, artifactsSetupConsent } = createArtifactsServices({
     githubTokenStore,
+    findWorkspace: (workspaceId) =>
+      workspaceSyncService.getSnapshot().state.workspaces.find((workspace) => workspace.id === workspaceId) ?? null,
   })
 
   const canvasSubscribers = createCanvasSubscriberRegistry()
@@ -1836,6 +1838,7 @@ export function createAppServices(
               linkLaunchedAgent: (link) => agentLaunchNotices.link(link),
               resolveAgentPermissionPreset,
               createWorkspace: (input, actor) => workspaceSyncService.createWorkspace(input, actor),
+              studioDataDirs: () => [app.getPath('userData')],
               getScheduledAgents: () => resolveScheduledAgents(),
               ...launchSettingsGatewayDeps(agentLaunchSettings),
               // module.*/marketplace.*. The registry snapshot is the

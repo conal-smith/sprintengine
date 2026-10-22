@@ -39,6 +39,8 @@ const WATCH_STUBS: Omit<PullRequestToolsDeps, 'link'> = {
   unwatch: () => false,
   pullRequestsOf: () => [],
   isChat: () => true,
+  // The GitHub CLI is signed in to the company's GitHub, and to nothing else.
+  isSignedInGitHubHost: async (host) => host === 'github.acme.example',
 }
 
 const linked = (url: string, recorded = true): NoteOpenedOutcome => ({
@@ -146,6 +148,7 @@ function watchTools(mine: BranchPullRequest[], deps: Partial<PullRequestToolsDep
     },
     pullRequestsOf: () => mine,
     isChat: () => true,
+    isSignedInGitHubHost: async () => false,
     ...deps,
   })
   const byName = (name: string) => tools.find((tool) => tool.name === name)!
@@ -215,4 +218,31 @@ test('pull_request.unwatch stops one watch, or every watch the chat has', async 
   assert.deepEqual(one.unwatched, ['https://github.com/acme/app/pull/3'])
   const refused = await one.unwatch.handler({}, undefined)
   assert.equal((refused.structuredContent?.error as { code: string }).code, 'not_a_conversation')
+})
+
+test('pull_request.link reads a GitHub address only on github.com or a host gh is signed in to here', async () => {
+  const { tool, calls } = toolOver((_key, url) => linked(url))
+  for (const url of [
+    'https://github.com/acme/app/pull/4',
+    'https://github.acme.example/acme/app/pull/4',
+    // Other forges are recorded as opened and never read with gh.
+    'https://gitlab.example/acme/app/-/merge_requests/4',
+    'https://codeberg.org/acme/app/pulls/4',
+  ]) {
+    const result = await tool.handler({ url }, AGENT)
+    assert.equal(result.isError, undefined, url)
+  }
+  for (const url of ['https://intranet.example/acme/app/pull/4', 'https://10.0.0.5:8443/acme/app/pull/4']) {
+    const refused = await tool.handler({ url }, AGENT)
+    assert.equal(refused.isError, true, url)
+    assert.equal((refused.structuredContent as { error: { code: string } }).error.code, 'unknown_github_host')
+  }
+  assert.equal(calls.length, 4, 'nothing on an unknown host was recorded')
+})
+
+test('pull_request.watch refuses a GitHub address on a host gh is not signed in to', async () => {
+  const { watch, watched } = watchTools([])
+  const refused = await watch.handler({ pullRequest: 'https://intranet.example/acme/app/pull/4' }, AGENT)
+  assert.equal((refused.structuredContent as { error: { code: string } }).error.code, 'unknown_github_host')
+  assert.deepEqual(watched, [])
 })
