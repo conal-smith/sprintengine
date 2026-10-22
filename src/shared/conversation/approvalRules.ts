@@ -628,6 +628,23 @@ export function isAgentLaunchingGatewayTool(server: string, tool: string): boole
   return server.includes(STUDIO_MCP_SERVER_ID) && AGENT_LAUNCHING_GATEWAY_TOOLS.has(tool.replace('_', '.'))
 }
 
+// The gateway tools that start nothing but are asked for every time all the
+// same, in Auto as in Manual, and that no remembered grant covers: each puts
+// this machine's files somewhere anyone with the address can read them, or
+// changes where they go. Matched as the launching tools are.
+const ALWAYS_ASK_GATEWAY_TOOLS = new Set(['artifacts.publish', 'artifacts.update', 'artifacts.setup'])
+
+/**
+ * Whether a call is one Auto never approves on its own and no rule may
+ * remember: the launching tools above, and {@link ALWAYS_ASK_GATEWAY_TOOLS}.
+ */
+export function isAlwaysAskGatewayTool(server: string, tool: string): boolean {
+  return (
+    isAgentLaunchingGatewayTool(server, tool) ||
+    (server.includes(STUDIO_MCP_SERVER_ID) && ALWAYS_ASK_GATEWAY_TOOLS.has(tool.replace('_', '.')))
+  )
+}
+
 /** The server and tool an `mcp__<server>__<tool>` call names, or null for any other name. */
 export function mcpCallOf(action: string): { server: string; tool: string } | null {
   const match = /^mcp__(?<server>[\w.-]+)__(?<tool>[\w.-]+)$/u.exec(action)
@@ -661,7 +678,7 @@ export function approvalRuleCandidate(
   }
   if (kind === 'mcp') {
     const call = mcpCallOf(request.action)
-    if (!call || isAgentLaunchingGatewayTool(call.server, call.tool)) return null
+    if (!call || isAlwaysAskGatewayTool(call.server, call.tool)) return null
     return {
       ...base,
       matcher: { type: 'mcp', server: call.server, tool: call.tool },

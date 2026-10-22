@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 
+import { createArtifactPublishRoots, type ArtifactPublishRootsDeps } from './artifacts/artifact-publish-roots'
 import { createElectronThumbnailer } from './artifacts/artifact-thumbnail-electron'
 import { readArtifactsSiteTemplate, type ArtifactsSiteTemplate } from './artifacts/artifact-site'
 import { settingsWithSiteUrl, type ArtifactsHostDeps } from './artifacts/artifacts-hosts'
@@ -20,6 +21,7 @@ import { sharedGhRunner } from './github/gh'
 import { createGhHostTokenResolver } from './github/host-token'
 import type { GitHubTokenStore } from './github-token-store'
 import { broadcastToWorkspaceWindows, listWorkspaceWindows } from './window-factory'
+import { activeWorktreePool } from './worktree-pool/active-pool'
 
 /**
  * The site's files as they ship: an extraResource in a packaged build
@@ -61,8 +63,11 @@ const ghApi: GhApi = async (host, path, request) => {
 /** What app-services.ts wires Settings ▸ Artifacts and the `artifacts.*` tools from. */
 export function createArtifactsServices({
   githubTokenStore,
+  findWorkspace,
 }: {
   githubTokenStore: Pick<GitHubTokenStore, 'resolveToken'>
+  /** The chat a publishing agent belongs to, for the folders it may publish from. */
+  findWorkspace: ArtifactPublishRootsDeps['findWorkspace']
 }) {
   const settingsStore = createArtifactsSettingsStore({ resolveUserDataDir: () => app.getPath('userData') })
   const ghHostToken = createGhHostTokenResolver(sharedGhRunner())
@@ -115,6 +120,14 @@ export function createArtifactsServices({
   })
   const artifactsTools = createArtifactsTools({
     service,
+    publishRoots: createArtifactPublishRoots({
+      findWorkspace,
+      poolWorktrees: async () => {
+        const pool = activeWorktreePool()
+        return pool ? (await pool.snapshots()).flatMap((snapshot) => snapshot.slots) : []
+      },
+      appDirs: [hostDeps.dataDir],
+    }),
     setup: {
       cloudflareAccount: async (token, accountId) => {
         const use = token || (await settingsStore.cloudflareToken())

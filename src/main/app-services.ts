@@ -1642,6 +1642,8 @@ export function createAppServices(
   // files, and publishing signs in with this machine's credentials.
   const { artifactsSettingsStore, artifactsTools, setUpArtifacts, artifactsSetupConsent } = createArtifactsServices({
     githubTokenStore,
+    findWorkspace: (workspaceId) =>
+      workspaceSyncService.getSnapshot().state.workspaces.find((workspace) => workspace.id === workspaceId) ?? null,
   })
 
   const canvasSubscribers = createCanvasSubscriberRegistry()

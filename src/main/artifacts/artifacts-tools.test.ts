@@ -25,8 +25,12 @@ function recordingService() {
   return { service, calls }
 }
 
+/** The folders the calling agent's chat may publish from, in these tests. */
+const ROOTS = ['/Users/dev']
+const publishRoots = async () => ROOTS
+
 function tool(name: string, service: ArtifactsService) {
-  const found = createArtifactsTools({ service }).find((registration) => registration.name === name)
+  const found = createArtifactsTools({ service, publishRoots }).find((registration) => registration.name === name)
   assert.ok(found, name)
   return found
 }
@@ -38,7 +42,7 @@ function errorOf(result: Awaited<ReturnType<ReturnType<typeof tool>['handler']>>
 
 test('the family is publish, list, search, get, update and delete, and only the writes mutate', () => {
   const { service } = recordingService()
-  const tools = createArtifactsTools({ service })
+  const tools = createArtifactsTools({ service, publishRoots })
   assert.deepEqual(
     tools.map((registration) => [registration.name, registration.mutates === true]),
     [
@@ -91,8 +95,40 @@ test('a publish needs an absolute path and a title, and checks every field it is
       repo: undefined,
       branch: undefined,
       thumbnail: undefined,
+      roots: ROOTS,
     },
   ])
+})
+
+test('a page is published only from the folders the caller may publish from', async () => {
+  const { service, calls } = recordingService()
+  const seen: unknown[] = []
+  const tools = createArtifactsTools({
+    service,
+    publishRoots: async (context) => {
+      seen.push(context?.metadata.kind)
+      return context?.metadata.kind === 'studio-agent' ? ['/Users/dev/app'] : null
+    },
+  })
+  const publish = tools.find((registration) => registration.name === 'artifacts.publish')!
+  const update = tools.find((registration) => registration.name === 'artifacts.update')!
+  const agent = { metadata: { kind: 'studio-agent' as const, workspaceId: 'ws-1', agentId: 'agent-1' } }
+  const page = { path: '/Users/dev/app/page.html', title: 'Stars' }
+
+  // No agent of this app: nothing is published, and the service is never asked.
+  assert.equal(errorOf(await publish.handler(page, { metadata: { kind: 'external-local' } })), 'forbidden')
+  assert.equal(errorOf(await publish.handler(page)), 'forbidden')
+  assert.equal(errorOf(await update.handler({ slug: 'stars', path: page.path })), 'forbidden')
+  assert.equal(calls.length, 0)
+
+  assert.equal(errorOf(await publish.handler(page, agent)), null)
+  assert.equal(errorOf(await update.handler({ slug: 'stars', path: page.path }, agent)), null)
+  // A retitle reads no file, so it needs no folders.
+  assert.equal(errorOf(await update.handler({ slug: 'stars', title: 'Moons' })), null)
+  assert.deepEqual(
+    calls.map(([, input]) => (input as { roots?: unknown }).roots),
+    [['/Users/dev/app'], ['/Users/dev/app'], undefined],
+  )
 })
 
 test('search needs words; list and search take a limit from 1 to 200', async () => {
@@ -182,7 +218,9 @@ function setupDeps(answer: boolean, accounts = [{ id: 'a'.repeat(32), name: 'Acm
 
 function setupTool(deps: ArtifactsSetupToolDeps) {
   const { service } = recordingService()
-  return createArtifactsTools({ service, setup: deps }).find((registration) => registration.name === 'artifacts.setup')!
+  return createArtifactsTools({ service, setup: deps, publishRoots }).find(
+    (registration) => registration.name === 'artifacts.setup',
+  )!
 }
 
 const agent = {

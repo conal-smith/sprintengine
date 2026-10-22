@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { afterEach, test } from 'vitest'
 
 import { collectArtifactBundle } from './artifact-bundle'
@@ -210,4 +210,48 @@ test('a url() inside a data URI is part of that string, not a file to find', asy
     bundle.files.map((file) => file.path),
     ['i.png', 'j.png', 'p.html', 't.css'],
   )
+})
+
+test('with roots, a page publishes only what is inside them: ../, other folders and linked folders refuse it', async () => {
+  const outside = await project({ 'secret.txt': 'not for the site', 'notes.css': '.n {}', 'page.html': '<p>x</p>' })
+  const root = await project({
+    'app/site/page.html': '<link rel="stylesheet" href="./local.css"><img src="../shared/logo.png">',
+    'app/site/local.css': '.a {}',
+    'app/shared/logo.png': 'png',
+  })
+  const workspace = join(root, 'app')
+  const refusedWith = async (input: Parameters<typeof collectArtifactBundle>[0]) => {
+    const collected = await collectArtifactBundle(input)
+    assert.equal(collected.ok, false, JSON.stringify(input))
+    assert.match(collected.ok ? '' : collected.message, /outside the folders this chat may publish from/u)
+  }
+
+  // Inside: everything goes, `../` within the project included.
+  const inside = await bundleOf({ path: join(workspace, 'site/page.html'), roots: [workspace] })
+  assert.deepEqual(inside.files.map((file) => file.path).sort(), [
+    'shared/logo.png',
+    'site/local.css',
+    'site/page.html',
+  ])
+
+  // A reference that climbs out of the project, however many `../` it takes.
+  await writeFile(
+    join(workspace, 'site/climbs.html'),
+    `<img src="${relative(join(workspace, 'site'), join(outside, 'secret.txt'))}">`,
+  )
+  await refusedWith({ path: join(workspace, 'site/climbs.html'), roots: [workspace] })
+  // A stylesheet, or the page itself, outside the project.
+  await refusedWith({
+    path: join(workspace, 'site/page.html'),
+    stylesheets: [join(outside, 'notes.css')],
+    roots: [workspace],
+  })
+  await refusedWith({ path: join(outside, 'page.html'), roots: [workspace] })
+  // A folder inside the project that is a link to another one.
+  await symlink(outside, join(workspace, 'site/linked'))
+  await writeFile(join(workspace, 'site/linking.html'), '<img src="./linked/secret.txt">')
+  await refusedWith({ path: join(workspace, 'site/linking.html'), roots: [workspace] })
+
+  // Without roots, a page publishes what it references, as it always did.
+  assert.equal((await collectArtifactBundle({ path: join(workspace, 'site/climbs.html') })).ok, true)
 })
