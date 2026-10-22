@@ -6,6 +6,7 @@ import { hostname } from 'os'
 import { backoffDelayMs } from '../../../shared/exponentialBackoff'
 import {
   normalizeTailnetScopes,
+  tailnetScopeGrantsAccess,
   type TailnetDevice,
   type TailnetReverseGrant,
   type TailnetScope,
@@ -20,6 +21,7 @@ import {
   type MeshCreateConversationResult,
   type MeshSettleConversationResult,
   type MeshVisitConversationResult,
+  type MeshChangeConversationResult,
   type MeshGap,
   type MeshPairResult,
   type MeshWorkspace,
@@ -45,6 +47,7 @@ import type {
   ConversationTurnDiffResult,
 } from '../../../shared/conversation-runtime'
 import { parseImageAttachments } from '../../conversation-ipc-inputs'
+import { isConversationHighlightColor } from '../../../../packages/conversation-protocol/src/public'
 import type { WorkspaceExtensions } from '../../../shared/workspace-extensions'
 import {
   PULL_REQUEST_BODY_MAX_CHARS,
@@ -297,6 +300,16 @@ export type TailnetMeshService = {
    */
   visitConversation(input: { connectionId: unknown; workspaceId?: unknown }): Promise<MeshVisitConversationResult>
   /**
+   * A row menu change to a chat on a paired machine (`MeshConversationChange`):
+   * Star, Highlight color, Snooze, Auto-settle or Mark unread, written by that
+   * machine to its own record of the chat (`conversation:operate`).
+   */
+  changeConversation(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+    change?: unknown
+  }): Promise<MeshChangeConversationResult>
+  /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
    * may not read them gets the refusal as its answer, never an empty list
@@ -365,6 +378,18 @@ export type TailnetMeshService = {
     cli?: unknown
   }): Promise<MeshWorkspaceExtensionsResult>
   /**
+   * One machine's usage over a window, for this desktop's usage dashboard
+   * (`usage-report`, on `workspace:read`). The handshake comes first, so a
+   * machine that is away, revoked, or on a Studio without the tool is told
+   * apart before anything is asked; the arguments go as they are, and the
+   * answer comes back unread (usage-mesh.ts reads it).
+   */
+  readUsage(input: {
+    connectionId: unknown
+    args: Record<string, unknown>
+    timeoutMs?: number
+  }): Promise<MeshUsageResult>
+  /**
    * A remote chat's Create PR (`chat-create-pull-request`): whether its
    * checkout is ready, the drafted text, the push and the creation, each
    * asked of the machine the chat runs on, which finds the chat's checkout in
@@ -395,6 +420,14 @@ export type TailnetMeshService = {
   conversationToolImage(input: { key: unknown; toolUseId: unknown }): Promise<MeshConversationImageResult>
   shutdown(): void
 }
+
+/** What one machine answered `usage.report`, or why it did not: away, on an older Studio, refused, or failing. */
+export type MeshUsageResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; status: 'offline' | 'unsupported' | 'unauthorized' | 'error'; message: string }
+
+/** How long a usage read gives a machine to say who it is: a sleeping laptop should not hold the dashboard's ask. */
+const USAGE_IDENTITY_TIMEOUT_MS = 5_000
 
 export type TailnetMeshServiceOptions = {
   resolveUserDataDir: () => string
@@ -1542,6 +1575,57 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, extensions: readWorkspaceExtensions(answer.value) }
   }
 
+  async function readUsage(input: {
+    connectionId: unknown
+    args: Record<string, unknown>
+    timeoutMs?: number
+  }): Promise<MeshUsageResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, status: 'error', message: 'That machine is not paired here.' }
+    const identity = await readRemoteIdentity({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      timeoutMs: USAGE_IDENTITY_TIMEOUT_MS,
+    })
+    if (!identity.ok) {
+      const unauthorized = identity.code === 'unauthorized'
+      recordReachability(connection, { reachable: false, unauthorized, detail: identity.message })
+      if (unauthorized) return { ok: false, status: 'unauthorized', message: identity.message }
+      // A machine on a wire this build does not speak is one to update, not one that is away.
+      if (identity.code === 'unsupported_transport_version')
+        return { ok: false, status: 'unsupported', message: identity.message }
+      return { ok: false, status: 'offline', message: identity.message }
+    }
+    store.updateScopes(connection.id, identity.value.scopes)
+    store.markConnected(connection.id)
+    rememberCapabilities(connection.id, identity.value.capabilities)
+    recordReachability(connection, { reachable: true, unauthorized: false, detail: null })
+    if (!tailnetPeerSupports(identity.value.capabilities, 'usage-report'))
+      return {
+        ok: false,
+        status: 'unsupported',
+        message: `Update Studio on ${connection.machineName} to include its usage.`,
+      }
+    if (!tailnetScopeGrantsAccess(new Set(identity.value.scopes), 'workspace:read'))
+      return {
+        ok: false,
+        status: 'unauthorized',
+        message: `This pairing may not read ${connection.machineName}'s workspaces, and so not its usage.`,
+      }
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'usage.report',
+      args: input.args,
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    })
+    if (answer.ok) return answer
+    if (answer.code === 'unauthorized' || answer.code === 'tailnet_scope_required')
+      return { ok: false, status: 'unauthorized', message: answer.message }
+    if (answer.code === 'unreachable') return { ok: false, status: 'offline', message: answer.message }
+    return { ok: false, status: 'error', message: answer.message }
+  }
+
   // ── A remote chat's Create PR ───────────────────────────────────────────
   //
   // Every step is the chat's machine's: the call names the chat, and that
@@ -2045,6 +2129,46 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     }
   }
 
+  // ── A remote chat's row menu ───────────────────────────────────────────
+  //
+  // Star, Highlight color, Snooze and Auto-settle are that machine's record
+  // of the chat (`chat-row-menu`), and Mark unread its read state
+  // (`chat-mark-unread`). Asked as the rest and visit clock are: a machine
+  // that has said it lacks the tool is not, and one from before it answers
+  // "Unknown tool", which reads the same.
+  async function changeConversation(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+    change?: unknown
+  }): Promise<MeshChangeConversationResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const workspaceId = input.workspaceId
+    if (typeof workspaceId !== 'string' || !workspaceId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the remote chat.' }
+    }
+    const call = rowMenuCallOf(input.change)
+    if (!call) return { ok: false, code: 'invalid_arguments', message: 'That is not a change a chat takes.' }
+    const unsupported = {
+      ok: false as const,
+      code: 'row_menu_unsupported',
+      message: `${connection.machineName} cannot ${call.ask} from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, call.capability)) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: call.tool,
+      args: { workspaceId, ...call.args },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return { ok: true, workspaceId }
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2092,6 +2216,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
+          rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
+          markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
         }
       : listed
   }
@@ -2304,8 +2430,10 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     createConversation,
     settleConversation,
     visitConversation,
+    changeConversation,
     workspaceCheckout,
     workspaceExtensions,
+    readUsage,
     conversationPullRequestState,
     conversationPullRequestDraft,
     conversationPullRequestDraftCancel,
@@ -2740,5 +2868,58 @@ function readCreatePullRequestOutcome(value: Record<string, unknown>): MeshPullR
       return { ok: true, kind: 'list', url, place, reason: reason ?? 'Its address is not known.' }
     default:
       return unreadable
+  }
+}
+
+/**
+ * The gateway tool a row menu change is, with its arguments and the
+ * capability that names it there; null for anything that is not one.
+ */
+export function rowMenuCallOf(change: unknown): {
+  tool: string
+  args: Record<string, unknown>
+  capability: 'chat-row-menu' | 'chat-mark-unread'
+  /** What is asked, for a machine that cannot be: "snooze its chats". */
+  ask: string
+} | null {
+  if (!change || typeof change !== 'object') return null
+  const value = change as Record<string, unknown>
+  switch (value.kind) {
+    case 'snooze':
+      if (value.until !== null && !(typeof value.until === 'number' && Number.isFinite(value.until))) return null
+      return {
+        tool: 'conversation.snooze',
+        args: { until: value.until },
+        capability: 'chat-row-menu',
+        ask: value.until === null ? 'wake its chats' : 'snooze its chats',
+      }
+    case 'highlight': {
+      const starred = typeof value.starred === 'boolean' ? value.starred : undefined
+      const color = value.color === null || isConversationHighlightColor(value.color) ? value.color : undefined
+      if (starred === undefined && color === undefined) return null
+      return {
+        tool: 'conversation.highlight',
+        args: { ...(starred !== undefined ? { starred } : {}), ...(color !== undefined ? { color } : {}) },
+        capability: 'chat-row-menu',
+        ask: starred !== undefined && color === undefined ? 'star its chats' : 'highlight its chats',
+      }
+    }
+    case 'auto-settle':
+      if (typeof value.enabled !== 'boolean') return null
+      return {
+        tool: 'conversation.auto_settle',
+        args: { enabled: value.enabled },
+        capability: 'chat-row-menu',
+        ask: 'switch Auto-settle on its chats',
+      }
+    case 'mark-unread':
+      return {
+        tool: 'conversation.mark_unread',
+        args: {},
+        capability: 'chat-mark-unread',
+        ask: 'mark its chats unread',
+      }
+    default:
+      return null
   }
 }

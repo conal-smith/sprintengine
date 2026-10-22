@@ -208,3 +208,25 @@ test('Studio transcripts are read from the project’s store, which a chat in a 
     ],
   )
 })
+
+test('a paired desktop is answered at once while the first read runs, and waits for it only when it asks to', async () => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const usage = service(async (_roots, _previous, onEntry) => {
+    await gate
+    onEntry(entry('s1', 5))
+    return { sources: [], groups: 1, changed: 1, removed: [] }
+  })
+  const cold = await usage.peerRows({ from: H0, to: H0 + HOUR })
+  assert.equal(cold.scanning, true)
+  assert.deepEqual(cold.rows, [], 'nothing read yet, and nothing waited for')
+  const waiting = usage.peerRows({ from: H0, to: H0 + HOUR, wait: true })
+  release()
+  const settled = await waiting
+  assert.equal(settled.scanning, false)
+  assert.equal(settled.rows[0]?.tokens.input, 5)
+  assert.equal(settled.rows[0]?.day, String(H0), 'by the hour, as the dashboard prices them')
+  await usage.dispose()
+})

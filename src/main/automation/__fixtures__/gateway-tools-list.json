@@ -161,6 +161,18 @@
       "sha256": "3c2161f38ef3a4b106ece523aa149731ae2cac491aa53faef5480375f2f26784"
     },
     {
+      "name": "conversation.snooze",
+      "sha256": "606269d06ef59b5175d509da704d12722661dc24e5fec7b451e8856df09c0032"
+    },
+    {
+      "name": "conversation.highlight",
+      "sha256": "ff31fc7b7c06cdbf9e1240af61f83670939b833cbcd22666f0a2551f0641fdf4"
+    },
+    {
+      "name": "conversation.auto_settle",
+      "sha256": "5d7bc7c9c9ef0ac355a93a2f7e2492b3c67cb7fcad10d43ad96655e800e4981a"
+    },
+    {
       "name": "conversation.pull_request_state",
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },
@@ -539,6 +551,18 @@
       "sha256": "3c2161f38ef3a4b106ece523aa149731ae2cac491aa53faef5480375f2f26784"
     },
     {
+      "name": "conversation.snooze",
+      "sha256": "606269d06ef59b5175d509da704d12722661dc24e5fec7b451e8856df09c0032"
+    },
+    {
+      "name": "conversation.highlight",
+      "sha256": "ff31fc7b7c06cdbf9e1240af61f83670939b833cbcd22666f0a2551f0641fdf4"
+    },
+    {
+      "name": "conversation.auto_settle",
+      "sha256": "5d7bc7c9c9ef0ac355a93a2f7e2492b3c67cb7fcad10d43ad96655e800e4981a"
+    },
+    {
       "name": "conversation.pull_request_state",
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },
@@ -811,6 +835,10 @@
     {
       "name": "conversation.pull_request_state",
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
+    },
+    {
+      "name": "usage.report",
+      "sha256": "d305a31b01c9e1ab4b1bc0090bff07ffb11e033b8410bd7a017e8cc6c1a015a4"
     },
     {
       "name": "workspace.checkout",

@@ -11,6 +11,7 @@ import {
 } from '../../../packages/studio-protocol/src/public'
 import { connectionContextOf, gatewayToolTimeoutMs } from '../../main/automation/offer-gateway-tools'
 import { isStudioGatewayMutation } from '../../main/automation/studio-gateway-tools'
+import { servedOnlyToPairedDevices } from '../../main/automation/tailnet/tailnet-scopes'
 import { backoffDelayMs } from '../../shared/exponentialBackoff'
 import { wslToWindowsPath } from '../../shared/host-paths'
 import { toolError, type McpToolRegistration } from '../../shared/modules/mcp-tools'
@@ -309,6 +310,8 @@ export function relayShellToolsets(input: {
     }
     const offeredByClients = new Set(sets.keys())
     for (const registration of input.gatewayTools?.() ?? []) {
+      // A tool served to paired devices alone is no agent's, here or there.
+      if (servedOnlyToPairedDevices(registration.name)) continue
       const named = relayedToolName(registration.name)
       if (!named || offeredByClients.has(named.toolset)) continue
       const taken =

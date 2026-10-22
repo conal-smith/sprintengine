@@ -46,6 +46,12 @@ export type FolderGroup = {
    * workspace, so they cannot be `Workspace`s until they are opened.
    */
   remoteRows: RemoteConversation[]
+  /**
+   * …and the ones of them asleep on their machine, which this project's
+   * Snoozed shelf holds beside its own, until each wakes. Absent where no
+   * paired machine's chat sleeps.
+   */
+  remoteSleepingRows?: RemoteConversation[]
 }
 
 export const NULL_FOLDER_KEY = '__no_folder__'

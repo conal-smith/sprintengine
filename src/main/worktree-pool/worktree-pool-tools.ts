@@ -123,6 +123,19 @@ export function createWorktreePoolTools(deps: WorktreePoolToolsDeps): McpToolReg
               : leased.reason === 'not-a-repo' || leased.reason === 'no-base'
                 ? 'no_repository'
                 : 'unavailable'
+          // A full pool is where agents used to clone the repository or run
+          // `git worktree add` themselves: a checkout nobody cleans up, with
+          // nothing installed. The refusal names every slot and what holds
+          // it; this says what to do with that instead.
+          if (leased.reason === 'full') {
+            const retry = leased.retryInMs
+              ? `call worktree.lease again in ${Math.round(leased.retryInMs / 60_000)} minute${leased.retryInMs > 60_000 ? 's' : ''}, or `
+              : ''
+            return toolError(
+              code,
+              `${leased.message} Do not clone the repository or run \`git worktree add\` instead: ${retry}tell the person which of these worktrees holds you up, so they can free one or raise the limit.`,
+            )
+          }
           return toolError(code, leased.message)
         }
         // An install that cannot even start is the agent's to run, as with no install at all.

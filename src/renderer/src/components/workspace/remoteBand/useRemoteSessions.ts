@@ -124,10 +124,15 @@ export function useRemoteSessions({ enabled: wanted }: { enabled: boolean }): Re
             // may do with them, as its newest list said.
             const lifecycle = listed?.ok ? listed.lifecycle === true : entry.lifecycle
             const access = listed?.ok ? listed.access : entry.access
+            // …and whether it takes its chats' row menu and Mark unread from here.
+            const rowMenu = listed?.ok ? listed.rowMenu === true : entry.rowMenu
+            const markUnread = listed?.ok ? listed.markUnread === true : entry.markUnread
             const listedParts = {
               ...(conversations ? { conversations } : {}),
               ...(lifecycle !== undefined ? { lifecycle } : {}),
               ...(access !== undefined ? { access } : {}),
+              ...(rowMenu !== undefined ? { rowMenu } : {}),
+              ...(markUnread !== undefined ? { markUnread } : {}),
             }
             if (!result) return { ...entry, at: Date.now(), ...listedParts }
             return {

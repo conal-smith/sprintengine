@@ -2,13 +2,15 @@ import {
   usageTokenTotal,
   type UsageAgentId,
   type UsageReport,
+  type UsageReportMachine,
   type UsageReportTokens,
 } from '../../../../shared/usage-report'
 
 // The usage dashboard's arithmetic, apart from its drawing so it can be tested
 // as plain functions: the window a range covers, the periods the chart and the
 // day table are cut into (this machine's local hours or days), the series per
-// agent, a readable axis, and the curve through the points.
+// agent, a readable axis, the curve through the points, and what each
+// machine's row says about where its figures came from.
 
 export type UsageView = 'cost' | 'tokens' | 'limits'
 export type UsageRange = '24h' | '7d' | '30d' | '90d'
@@ -196,4 +198,58 @@ export function usageTotalsRow(tokens: UsageReportTokens): Array<{ label: string
     { label: 'Cache writes', value: tokens.cacheWrite },
     { label: 'Output', value: tokens.output },
   ]
+}
+
+export type UsageMachineLine = {
+  text: string
+  /** `muted` for a machine counted as it should be, `warn` for one counted from an old answer or not at all. */
+  tone: 'muted' | 'warn'
+  /** Still being asked, or still reading its logs. */
+  pending: boolean
+}
+
+/**
+ * The line under a machine's name in the breakdown: where its figures came
+ * from, and why a machine is not counted. `asking` is the dashboard asking
+ * the paired machines now; `formatAt` names a time.
+ */
+export function usageMachineLine(
+  machine: UsageReportMachine,
+  asking: boolean,
+  formatAt: (at: number) => string,
+): UsageMachineLine {
+  const from = (at: number | null): string => (at === null ? '' : `, figures from ${formatAt(at)}`)
+  switch (machine.status) {
+    case 'local':
+      return { text: 'This machine', tone: 'muted', pending: false }
+    case 'ok':
+      if (machine.scanning) return { text: 'Reading its logs…', tone: 'muted', pending: true }
+      return {
+        text: machine.scannedAt === null ? 'Up to date' : `Logs read ${formatAt(machine.scannedAt)}`,
+        tone: 'muted',
+        pending: false,
+      }
+    case 'cached':
+      if (asking)
+        return {
+          text: machine.fetchedAt === null ? 'Asking…' : `Asking… (figures from ${formatAt(machine.fetchedAt)})`,
+          tone: 'muted',
+          pending: true,
+        }
+      return { text: `Offline${from(machine.fetchedAt)}`, tone: 'warn', pending: false }
+    case 'offline':
+      if (asking) return { text: 'Asking…', tone: 'muted', pending: true }
+      return { text: 'Offline, never counted here yet', tone: 'warn', pending: false }
+    case 'unsupported':
+      return { text: `Update Studio on ${machine.label} to include its usage`, tone: 'warn', pending: false }
+    case 'unauthorized':
+      return { text: 'This pairing may not read its usage', tone: 'warn', pending: false }
+    case 'error':
+      return { text: 'Its usage could not be read', tone: 'warn', pending: false }
+  }
+}
+
+/** Whether the report counts what other machines spent, so the dashboard shows its machines. */
+export function usageHasPeers(report: UsageReport): boolean {
+  return report.machines.some((machine) => machine.status !== 'local')
 }

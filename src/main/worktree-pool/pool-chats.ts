@@ -1,5 +1,7 @@
 import type { Workspace, WorkspaceId } from '../../renderer/src/types/workspace'
+import { comparablePath } from '../../shared/host-paths'
 import { isSettledWorkspace } from '../../shared/workspace-lifecycle'
+import type { WorkspaceSyncService } from '../workspace-sync-service'
 import type { PoolChat } from './pool-idle'
 
 type ChatRecord = Pick<
@@ -13,7 +15,7 @@ type ChatRecord = Pick<
   | 'lastTurnEndedAt'
   | 'lastTerminalActivityAt'
   | 'lastVisitedAt'
-> & { worktreeState?: Workspace['worktreeState'] }
+> & { worktreeState?: Workspace['worktreeState']; name?: string | null }
 
 /**
  * The chats the pool weighs a slot's use against (pool-idle.ts), read off the
@@ -72,7 +74,37 @@ export function poolChatsOf(state: {
       otherPaths: [...paths].filter(Boolean),
       open: onScreen,
       lastActiveAt: times.length > 0 ? Math.max(...times) : null,
+      name: workspace.name ?? null,
     })
   }
   return chats
+}
+
+/**
+ * Mark every chat whose own worktree is at `path` as given back
+ * (`worktree.reclaimedAt`), as the renderer marks the ones a sweep's report
+ * names: the chat then brings its worktree back when it is opened
+ * (chatWorktreeRestore.ts), not when its folder is found missing.
+ *
+ * The slot was kept on `branch`. When its agent had moved there from the
+ * lease's own branch (`leaseBranch`, which the chat records), the chat's
+ * record moves too: bringing the worktree back checks out the branch the
+ * chat records, and that is where its work is now. A chat on any other
+ * branch (an older chat in the same folder) is left as it is.
+ */
+export function markChatsReclaimed(
+  workspaceSyncService: Pick<WorkspaceSyncService, 'getSnapshot' | 'updateWorkspaceFields'>,
+  slot: { path: string; branch: string; leaseBranch: string },
+): void {
+  const reclaimedAt = Date.now()
+  for (const workspace of workspaceSyncService.getSnapshot().state.workspaces) {
+    const worktree = workspace.worktree
+    if (!worktree?.branch || !workspace.folderPath) continue
+    if (comparablePath(workspace.folderPath) !== comparablePath(slot.path)) continue
+    const moved = slot.branch !== slot.leaseBranch && worktree.branch === slot.leaseBranch
+    if (!moved && worktree.reclaimedAt !== undefined) continue
+    const next = { ...worktree, ...(moved ? { branch: slot.branch } : {}) }
+    if (next.reclaimedAt === undefined) next.reclaimedAt = reclaimedAt
+    workspaceSyncService.updateWorkspaceFields(workspace.id, { worktree: next }, 'system')
+  }
 }

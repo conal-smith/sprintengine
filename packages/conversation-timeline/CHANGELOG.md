@@ -12,6 +12,18 @@
 
 ### Added
 
+- The projection carries a `handoff` entry, and the timeline a `handoff` row,
+  for a `context_handed_off` event: the chat was handed off to a fresh session
+  pointed at a file of its messages (`path`), leaving `preTokens` of context
+  behind. It sits after the turn it followed, as a compaction between turns
+  does, and resets the prompt-cache reading and the context's size, as a
+  compaction does.
+
+- A compaction entry says `beforeCacheExpiry` when its turn's message was
+  Studio's own `/compact` before the chat's prompt cache expired (`origin`
+  reason `auto-compact`), and the timeline draws no row for that message: the
+  compaction's divider says it.
+
 - The projection carries `goal`: the goal the session's agent keeps working
   toward by itself (`objective`, `status`), as the latest `session_updated`
   that named one said it, null once one says `goal: null`, and emptied when a

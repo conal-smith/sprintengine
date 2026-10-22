@@ -21,6 +21,7 @@ vi.mock('../../store/workspaceStore', () => ({
 }))
 
 const { SettledChatsSettingsTab } = await import('./SettledChatsSettingsTab')
+const { ConfirmDialogProvider } = await import('../ui/ConfirmDialog')
 
 let root: Root
 let host: HTMLDivElement
@@ -63,7 +64,13 @@ afterEach(async () => {
 })
 
 async function render(): Promise<void> {
-  await act(async () => root.render(<SettledChatsSettingsTab onOpenChat={(id) => opened.push(id)} />))
+  await act(async () =>
+    root.render(
+      <ConfirmDialogProvider>
+        <SettledChatsSettingsTab onOpenChat={(id) => opened.push(id)} />
+      </ConfirmDialogProvider>,
+    ),
+  )
 }
 
 const rows = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('ul[aria-label="Settled chats"] > li')]

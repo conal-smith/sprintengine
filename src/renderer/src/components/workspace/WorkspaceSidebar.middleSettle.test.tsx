@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
 import { test } from 'vitest'
 
-// A middle press on a chat row closes the chat. Chromium on Linux pastes the
-// primary selection into the focused field on a middle release nobody
-// cancelled, and the press keeps focus in the composer, so closing a chat this
-// way typed the last highlighted text into the next one.
+// A middle press on a chat row settles the chat, as the row's tick does: it was
+// Close until Settle became the one way a row is put away. Chromium on Linux
+// pastes the primary selection into the focused field on a middle release
+// nobody cancelled, and the press keeps focus in the composer, so putting a
+// chat away this way typed the last highlighted text into the next one.
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   url: 'http://localhost',
@@ -58,7 +59,15 @@ async function mount() {
   const { createRoot } = await import('react-dom/client')
   const { default: WorkspaceSidebar } = await import('./WorkspaceSidebar')
   const { useWorkspaceStore } = await import('../../store/workspaceStore')
-  useWorkspaceStore.setState({ chatListView: 'projects' })
+  // The record's half of a Settle is the store's; heard here rather than
+  // written, so the rows stay the props'.
+  const settled: string[] = []
+  useWorkspaceStore.setState({
+    chatListView: 'projects',
+    setWorkspaceSettled: (id: string, value: boolean) => {
+      if (value) settled.push(id)
+    },
+  })
   type SidebarProps = Parameters<typeof WorkspaceSidebar>[0]
   type Workspace = SidebarProps['workspaces'][number]
 
@@ -71,7 +80,6 @@ async function mount() {
     workspace('w7', 'Golf', { folderPath: '/Users/dev/other' }),
   ]
   const noop = () => {}
-  const closed: string[] = []
   const props = {
     workspaces,
     workspaceWindowId: 'win1',
@@ -80,12 +88,11 @@ async function mount() {
     chromeSlot: null,
     residentWorkspaceIds: new Set<string>(),
     activeWorkspaceId: 'w7',
-    activityByWorkspaceId: { w1: 'idle', w2: 'idle', w7: 'idle' },
+    activityByWorkspaceId: { w1: 'idle', w2: 'working', w7: 'idle' },
     terminalRecencyByWorkspaceId: {},
     onSelectWorkspace: noop,
     onMoveWorkspaceToNewWindow: noop,
     onMoveWorkspaceToMainWindow: noop,
-    onCloseWorkspace: (id: string) => closed.push(id),
     onForgetFolder: noop,
     onNewChat: noop,
     onNewChatInFolder: noop,
@@ -126,14 +133,14 @@ async function mount() {
     })
     return event
   }
-  return { closed, row, mouse, settle, unmount: () => act(() => root.unmount()) }
+  return { settled, row, mouse, settle, unmount: () => act(() => root.unmount()) }
 }
 
-test('the middle release after a middle press closes a chat is cancelled, wherever it lands', async () => {
+test('the middle release after a middle press settles a chat is cancelled, wherever it lands', async () => {
   const sidebar = await mount()
   try {
     sidebar.mouse(sidebar.row('w1')!, 'mousedown', 1)
-    assert.deepEqual(sidebar.closed, ['w1'])
+    assert.deepEqual(sidebar.settled, ['w1'])
     await sidebar.settle()
     // The row may be gone by now; the release lands on whatever is under the pointer.
     const release = sidebar.mouse(sidebar.row('w2')!, 'mouseup', 1)
@@ -148,7 +155,18 @@ test('a left press on a chat row leaves its release alone', async () => {
   try {
     sidebar.mouse(sidebar.row('w1')!, 'mousedown', 0)
     assert.equal(sidebar.mouse(sidebar.row('w1')!, 'mouseup', 0).defaultPrevented, false)
-    assert.deepEqual(sidebar.closed, [])
+    assert.deepEqual(sidebar.settled, [])
+  } finally {
+    sidebar.unmount()
+  }
+})
+
+test('a middle press on a chat whose agent is working settles nothing, as its tick does', async () => {
+  const sidebar = await mount()
+  try {
+    const press = sidebar.mouse(sidebar.row('w2')!, 'mousedown', 1)
+    assert.equal(press.defaultPrevented, true, 'the press is still taken, so nothing pastes')
+    assert.deepEqual(sidebar.settled, [])
   } finally {
     sidebar.unmount()
   }

@@ -234,6 +234,21 @@ export const TAILNET_CAPABILITIES = [
   // They name the chat, never a folder. A client that does not see it draws
   // no Create PR under this machine's chats, as before.
   'chat-create-pull-request',
+  // A paired desktop's row menu on a chat here (2026-10-21): Star, Highlight
+  // color, Snooze and Wake now, and Auto-settle, written to this machine's
+  // record of the chat by `conversation.highlight`, `conversation.snooze` and
+  // `conversation.auto_settle`, so every device that lists the chat draws the
+  // same marks. The list names each chat's `highlight` and `autoSettle` beside
+  // the `snoozedUntil` it already carried. A client that does not see it
+  // offers none of the four for this machine's chats; an older machine
+  // answers the tools "Unknown tool".
+  'chat-row-menu',
+  // A paired desktop's Usage counts what this machine spent (2026-10-21):
+  // `usage.report` answers a window with rows of one hour of one model in one
+  // session, each session by a hash of its id, on `workspace:read`. The
+  // desktop asking prices them itself. A client that does not see it says
+  // the machine's Studio needs updating rather than asking.
+  'usage-report',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
-const { projectConversation, keepUnchangedRows, mergeConversationEvents, parseConversationLink, parseChatLink, parseAppLink, conversationEnabled, conversationCanOperate, modelControl, modelLabel, compactionLabel, turnMetaParts, planTitle, planBody, describeToolGroup, toolStep, cliModelLabel, permissionLabel, permissionChoices, retryLabel, turnChangesLabel, turnFoldLabel, composerActionKind, SEND_SETTLE_MS, reasoningPreview, rowStreaming } = require("../../../.mobile-test-build/src/features/conversations/conversationLogic.js");
+const { projectConversation, keepUnchangedRows, mergeConversationEvents, parseConversationLink, parseChatLink, parseAppLink, conversationEnabled, conversationCanOperate, modelControl, modelLabel, compactionLabel, handoffLabel, turnMetaParts, planTitle, planBody, describeToolGroup, toolStep, cliModelLabel, permissionLabel, permissionChoices, retryLabel, turnChangesLabel, turnFoldLabel, composerActionKind, SEND_SETTLE_MS, reasoningPreview, rowStreaming } = require("../../../.mobile-test-build/src/features/conversations/conversationLogic.js");
 
 // A turn's steps rest inside its fold; these tests read the groups as the fold
 // holds them, in place, as the fold draws them when it is opened.
@@ -801,4 +801,24 @@ test("a closed thought previews its first line as plain words", () => {
   assert.equal(reasoningPreview("   "), "");
   const long = reasoningPreview("word ".repeat(2_000));
   assert.ok(long.length <= 160 && long.endsWith("…"), "a long first line is cut to what fits");
+});
+
+test("a handoff is the desktop's divider, and Studio's own compaction says it came before the cache expired", () => {
+  const value = projectConversation([
+    event(1, "user_message", { text: "fix it", turnId: "t1" }),
+    event(2, "turn_started", { turnId: "t1" }),
+    event(3, "turn_completed", { turnId: "t1" }),
+    event(4, "user_message", { text: "/compact", turnId: "t2", origin: { kind: "studio", reason: "auto-compact" } }),
+    event(5, "turn_started", { turnId: "t2" }),
+    event(6, "context_compacted", { turnId: "t2", trigger: "manual", preTokens: 221000, postTokens: 30000 }),
+    event(7, "turn_completed", { turnId: "t2" }),
+    event(8, "context_handed_off", { path: "/Users/dev/handoff.md", preTokens: 30000, seedOwed: true, providerSessionId: null }),
+  ]);
+  // No row for Studio's own `/compact`: the divider says it.
+  assert.equal(value.rows.filter((row) => row.kind === "studio").length, 0);
+  assert.equal(value.rows.filter((row) => row.kind === "message" && row.role === "user").length, 1);
+  const compaction = value.rows.find((row) => row.kind === "compaction");
+  assert.equal(compactionLabel(compaction), "Context compacted · automatically, before the cache expired · 221k → 30k");
+  const handoff = value.rows.find((row) => row.kind === "handoff");
+  assert.equal(handoffLabel(handoff), "Handed off to a new session · 30k tokens left behind");
 });

@@ -1,4 +1,4 @@
-import React, { useId, useMemo, useState, type JSX } from 'react'
+import React, { useEffect, useId, useMemo, useState, type JSX } from 'react'
 
 import {
   formatUsageShare,
@@ -8,17 +8,31 @@ import {
   usageAgentLabel,
   usageTokenTotal,
   type UsageReport,
+  type UsageReportMachine,
   type UsageReportModel,
 } from '../../../../shared/usage-report'
 import { GlobalSurfaceShell } from '../workspace/globalSurface/GlobalSurfaceShell'
-import { EmptyState, IconButton, InlineNotice, OutlineButton, RefreshIcon, SegmentedControl, Tooltip } from '../ui'
+import {
+  EmptyState,
+  IconButton,
+  InlineNotice,
+  MachineGlyph,
+  OutlineButton,
+  RefreshIcon,
+  SegmentedControl,
+  Select,
+  Spinner,
+  Tooltip,
+} from '../ui'
 import { Table } from '../ui/Table'
 import { formatTimeOfDay } from '../../utils/clockFormat'
 import { UsageChart } from './UsageChart'
 import { UsageAgentKey } from './usageAgents'
 import {
   USAGE_RANGES,
+  usageHasPeers,
   usageHeadline,
+  usageMachineLine,
   usagePeriodRows,
   usageSeries,
   usageTotalsRow,
@@ -32,7 +46,9 @@ import { useUsageReport } from './useUsageReport'
 
 // The usage dashboard (owner ruling 2026-10-10): what every agent CLI on this
 // machine has spent, in money and in tokens, and the subscription limits the
-// agents report. Opened from the chart glyph at the foot of the app rail, as a
+// agents report. Machines paired over the tailnet add what they spent
+// (2026-10-21), with a row each and a filter to one; the limits stay this
+// machine's, since a subscription's limits are read where its agent runs. Opened from the chart glyph at the foot of the app rail, as a
 // modal over the workspace like Settings: a look at the numbers and back to
 // work, with nothing behind it torn down.
 //
@@ -50,6 +66,9 @@ const VIEWS: Array<{ value: UsageView; label: string }> = [
 // the window: reopening it shows what was last looked at.
 let lastView: UsageView = 'cost'
 let lastRange: UsageRange = '30d'
+let lastMachine: string | null = null
+
+const ALL_MACHINES = 'all'
 
 const MONTH_DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
 const WEEKDAY_MONTH_DAY = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
@@ -65,8 +84,17 @@ function formatValue(metric: UsageMetric): (value: number) => string {
 export default function UsageDashboard(): JSX.Element {
   const [view, setView] = useState<UsageView>(lastView)
   const [range, setRange] = useState<UsageRange>(lastRange)
-  const state = useUsageReport(range)
+  const [machine, setMachine] = useState<string | null>(lastMachine)
+  const state = useUsageReport(range, machine)
   const metric: UsageMetric = view === 'tokens' ? 'tokens' : 'cost'
+  const report = state.answer?.report ?? null
+  // A machine since forgotten is not a filter any more.
+  useEffect(() => {
+    if (machine && report && !report.machines.some((entry) => entry.id === machine)) {
+      lastMachine = null
+      setMachine(null)
+    }
+  }, [machine, report])
 
   const actions = (
     <>
@@ -79,6 +107,27 @@ export default function UsageDashboard(): JSX.Element {
           setView(next)
         }}
       />
+      {/* Only with another machine to count; Limits are this machine's. */}
+      {report && usageHasPeers(report) ? (
+        <Select
+          ariaLabel="Machine"
+          size="md"
+          items={[
+            { value: ALL_MACHINES, label: 'All machines' },
+            ...report.machines.map((entry) => ({
+              value: entry.id,
+              label: entry.status === 'local' ? `${entry.label} (this machine)` : entry.label,
+            })),
+          ]}
+          disabled={view === 'limits'}
+          value={machine ?? ALL_MACHINES}
+          onChange={(next) => {
+            const chosen = next === ALL_MACHINES ? null : next
+            lastMachine = chosen
+            setMachine(chosen)
+          }}
+        />
+      ) : null}
       {/* Kept in place on Limits, so switching views never moves the bar. */}
       <SegmentedControl
         ariaLabel="Period"
@@ -108,6 +157,8 @@ export default function UsageDashboard(): JSX.Element {
               metric={metric}
               answer={state.answer}
               loading={state.loading}
+              asking={state.asking}
+              filtered={machine !== null}
               error={state.error}
               onRetry={state.refresh}
             />
@@ -122,12 +173,16 @@ function UsageSpend({
   metric,
   answer,
   loading,
+  asking,
+  filtered,
   error,
   onRetry,
 }: {
   metric: UsageMetric
   answer: { report: UsageReport; window: UsageWindow } | null
   loading: boolean
+  asking: boolean
+  filtered: boolean
   error: string | null
   onRetry: () => void
 }): JSX.Element {
@@ -143,8 +198,11 @@ function UsageSpend({
     return notice ?? <EmptyState title="Reading your agents' session logs…" />
   }
   const { report, window } = answer
+  const machines = usageHasPeers(report) ? (
+    <UsageMachines report={report} metric={metric} asking={asking} muted={loading} />
+  ) : null
   if (usageTokenTotal(report.totals.tokens) === 0 && report.totals.costUsd === 0) {
-    const anyLogs = report.sources.some((source) => source.found > 0)
+    const anyLogs = filtered || machines !== null || report.sources.some((source) => source.found > 0)
     return (
       <>
         {notice}
@@ -156,6 +214,7 @@ function UsageSpend({
               : 'Usage appears once Claude Code, Codex, OpenCode, Gemini or Grok has run here, in a chat or a terminal.'
           }
         />
+        {machines}
       </>
     )
   }
@@ -163,6 +222,7 @@ function UsageSpend({
     <>
       {notice}
       <UsageOverview report={report} window={window} metric={metric} muted={loading} />
+      {machines}
       <UsageTotals report={report} />
       <UsageBreakdown report={report} window={window} metric={metric} />
     </>
@@ -215,6 +275,7 @@ function UsageOverview({
               </>
             ) : null}
           </div>
+          {report.sharedSessions > 0 ? <SharedSessionsNote count={report.sharedSessions} /> : null}
         </div>
         <ul className="m-0 flex list-none flex-col gap-4 p-0" aria-label="By agent">
           {agents.map((agent) => {
@@ -289,6 +350,128 @@ function EstimateNote({ report }: { report: UsageReport }): JSX.Element {
         API estimate
       </span>
     </Tooltip>
+  )
+}
+
+/** "3 sessions counted once across machines", with why on hover or focus. */
+function SharedSessionsNote({ count }: { count: number }): JSX.Element {
+  return (
+    <Tooltip
+      content="Found on more than one machine: a home folder synced between them, a restored backup, or a folder Windows and WSL share. Each is counted once, on this machine when it has it."
+      multiline
+      placement="bottom"
+    >
+      <span
+        tabIndex={0}
+        className="self-start rounded-sm text-meta tabular-nums text-[color:var(--text-muted)] underline decoration-dotted underline-offset-2 focus-visible:focus-ring"
+      >
+        {count.toLocaleString()} {count === 1 ? 'session' : 'sessions'} counted once across machines
+      </span>
+    </Tooltip>
+  )
+}
+
+const machineIdentity = (machine: UsageReportMachine) => ({
+  id: machine.id,
+  kind: machine.kind,
+  colour: machine.color,
+  overridden: false,
+})
+
+function formatAt(at: number): string {
+  return `${MONTH_DAY.format(at)}, ${formatTimeOfDay(at)}`
+}
+
+/**
+ * Each machine's part, and where its figures came from. Every machine is
+ * listed whatever the filter, so the filter never hides one that is away.
+ */
+function UsageMachines({
+  report,
+  metric,
+  asking,
+  muted,
+}: {
+  report: UsageReport
+  metric: UsageMetric
+  asking: boolean
+  muted: boolean
+}): JSX.Element {
+  const headingId = useId()
+  const counted = report.machines.reduce(
+    (sum, machine) => sum + (metric === 'cost' ? machine.costUsd : machine.tokens),
+    0,
+  )
+  return (
+    <section aria-labelledby={headingId} className={`flex flex-col gap-3 ${muted ? 'opacity-50' : ''}`}>
+      <div className="flex items-center gap-2">
+        <h3 id={headingId} className="m-0 text-heading font-medium text-[color:var(--text-strong)]">
+          Machines
+        </h3>
+        {asking ? <Spinner size={14} label="Asking your other machines" /> : null}
+      </div>
+      <Table ariaLabel="Usage by machine">
+        <thead>
+          <Table.Row>
+            <Table.Head sticky={false}>Machine</Table.Head>
+            <Table.Head sticky={false} numeric>
+              Cost
+            </Table.Head>
+            <Table.Head sticky={false} numeric>
+              Share
+            </Table.Head>
+            <Table.Head sticky={false} numeric>
+              Tokens
+            </Table.Head>
+            <Table.Head sticky={false} numeric>
+              Sessions
+            </Table.Head>
+          </Table.Row>
+        </thead>
+        <tbody>
+          {report.machines.map((machine) => {
+            const line = usageMachineLine(machine, asking, formatAt)
+            const lineText = (
+              <span
+                className={`text-meta ${line.tone === 'warn' ? 'text-[color:var(--tone-warn)]' : 'text-[color:var(--text-muted)]'}`}
+              >
+                {line.text}
+              </span>
+            )
+            const shown = machine.status === 'local' || machine.status === 'ok' || machine.status === 'cached'
+            return (
+              <Table.Row key={machine.id}>
+                <Table.Cell>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <MachineGlyph identity={machineIdentity(machine)} className="icon-sm shrink-0" />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate text-[color:var(--text-strong)]">{machine.label}</span>
+                      {machine.detail && line.tone === 'warn' ? (
+                        <Tooltip content={machine.detail} multiline placement="bottom">
+                          <span tabIndex={0} className="self-start rounded-sm focus-visible:focus-ring">
+                            {lineText}
+                          </span>
+                        </Tooltip>
+                      ) : (
+                        lineText
+                      )}
+                    </span>
+                  </span>
+                </Table.Cell>
+                <Table.Cell numeric>{shown ? formatUsageUsd(machine.costUsd) : '—'}</Table.Cell>
+                <Table.Cell numeric>
+                  <span className="text-[color:var(--text-muted)]">
+                    {shown ? formatUsageShare(metric === 'cost' ? machine.costUsd : machine.tokens, counted) : '—'}
+                  </span>
+                </Table.Cell>
+                <Table.Cell numeric>{shown ? formatUsageTokens(machine.tokens) : '—'}</Table.Cell>
+                <Table.Cell numeric>{shown ? machine.sessions.toLocaleString() : '—'}</Table.Cell>
+              </Table.Row>
+            )
+          })}
+        </tbody>
+      </Table>
+    </section>
   )
 }
 

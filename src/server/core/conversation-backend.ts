@@ -36,6 +36,7 @@ export type ConversationBackendMember =
   | 'stopSubagent'
   | 'askSideQuestion'
   | 'cancelSideQuestion'
+  | 'readContextBreakdown'
   | 'stopSession'
   | 'suspendSession'
   | 'terminalHandoffTarget'
@@ -60,6 +61,7 @@ export type ConversationBackendMember =
   | 'revokeApprovalRule'
   | 'revertToTurn'
   | 'rewindToTurn'
+  | 'handoffConversation'
   | 'forkAtTurn'
 
 export type ConversationBackend = Pick<ConversationRuntime, ConversationBackendMember>

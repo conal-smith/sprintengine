@@ -185,9 +185,12 @@ export type WorktreePoolServiceDeps = {
   /**
    * A slot was given back while its chat or agent still exists (pool-idle.ts):
    * the chat whose folder it is is marked, so opening it brings its worktree
-   * back (`worktree.reclaimedAt`). Never throws into the pool.
+   * back (`worktree.reclaimedAt`). `branch` is the one it is kept on, which
+   * its agent may have moved to from the lease's own (`leaseBranch`): a chat
+   * that records the lease's branch is moved to it, so it comes back on the
+   * branch its work is on. Never throws into the pool.
    */
-  onGivenBack?: (slot: { repoRoot: string; path: string; branch: string }) => void
+  onGivenBack?: (slot: { repoRoot: string; path: string; branch: string; leaseBranch: string }) => void
 }
 
 export type WorktreePoolLeaseInput = {
@@ -252,6 +255,11 @@ export type WorktreePoolLeaseResult =
         | 'branch-exists'
         | 'error'
       message: string
+      /**
+       * `full` only: when the first slot held only by the idle period may come
+       * free, rounded up to a whole minute. Unset when no slot is waiting on time.
+       */
+      retryInMs?: number
       /**
        * The base the pool had already resolved (and fetched) when it gave up:
        * the caller's fresh worktree forks from it instead of fetching again.

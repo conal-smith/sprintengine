@@ -41,6 +41,9 @@ type Index = { version: typeof INDEX_VERSION; threads: ConversationThread[]; fil
 type ThreadFold = {
   thread: ConversationThread | null
   turns: Set<string>
+  // Turns Studio opened with its own `/compact` before the cache expired:
+  // their end is not news for the person (`lastTurnEndedAt`).
+  quietTurns: Set<string>
   costs: Map<string, number>
   offset: number
   head: Buffer
@@ -164,7 +167,13 @@ export class ConversationIndex {
         turnSeq = new Map<string, number>()
       let ordinal = 0
       // One unreadable transcript costs its own hits, not the whole search.
-      const events = guarded(readEvents(input.workspaceRoot, path, this.maxBytes, options.signal), options.signal)
+      // Only the two kinds of event a search reads are parsed: a transcript is
+      // mostly tool output, and the palette searches every chat the sidebar
+      // lists on each pause in typing, so parsing every line was most of it.
+      const events = guarded(
+        readEvents(input.workspaceRoot, path, this.maxBytes, options.signal, mightBeSearched),
+        options.signal,
+      )
       for await (const event of events) {
         ordinal = event.seq ?? ordinal + 1
         const turnId = text(event.payload?.turnId)
@@ -178,11 +187,17 @@ export class ConversationIndex {
         if (offset < 0) continue
         seen.add(key)
         const snippet = `${offset > 80 ? '…' : ''}${value.slice(Math.max(0, offset - 80), offset + query.length + 100)}${value.length > offset + query.length + 100 ? '…' : ''}`
-        const hit = {
+        const hit: ConversationSearchHit = {
           agentId: event.agentId,
           seq: turnSeq.get(turnId) ?? ordinal,
           ...(turnId ? { turnId } : {}),
           snippet,
+          from:
+            event.type === 'content_delta'
+              ? 'agent'
+              : readConversationMessageOrigin(event.payload?.origin)
+                ? 'studio'
+                : 'person',
         }
         hits.push(hit)
         pending.push(hit)
@@ -322,11 +337,18 @@ async function fingerprint(path: string, file: string): Promise<Fingerprint | nu
 /** Where to read an oversized transcript: its opening and its end. */
 const HEAD_BYTES = 1024 * 1024
 const CHUNK_BYTES = 64 * 1024
+/**
+ * Whether a transcript line can be an event search reads. A cheap test on the
+ * raw text, before the parse: an event's type is written in it, so a line
+ * that names neither type is neither, whatever its payload holds.
+ */
+const mightBeSearched = (line: string) => line.includes('user_message') || line.includes('content_delta')
 async function* readEvents(
   root: string,
   path: string,
   maxBytes: number,
   signal?: AbortSignal,
+  keep?: (line: string) => boolean,
 ): AsyncIterable<ConversationEvent> {
   const info = await fingerprint(path, '')
   if (!info) return
@@ -336,6 +358,7 @@ async function* readEvents(
     for (const range of wholeFileRanges(size, maxBytes))
       for await (const line of readLines(file, range.start, range.end, signal)) {
         signal?.throwIfAborted()
+        if (keep && !keep(line.text)) continue
         const event = parseEvent(line.text)
         if (event) yield event
       }
@@ -422,11 +445,12 @@ async function readThread(root: string, path: string, maxBytes: number, previous
       ? {
           thread: previous.thread && { ...previous.thread },
           turns: new Set(previous.turns),
+          quietTurns: new Set(previous.quietTurns),
           costs: new Map(previous.costs),
           offset: previous.offset,
           head: previous.head,
         }
-      : { thread: null, turns: new Set(), costs: new Map(), offset: 0, head: Buffer.alloc(0) }
+      : { thread: null, turns: new Set(), quietTurns: new Set(), costs: new Map(), offset: 0, head: Buffer.alloc(0) }
     const ranges = appended ? [{ start: previous.offset, end: size }] : wholeFileRanges(size, maxBytes)
     for (const range of ranges)
       for await (const line of readLines(file, range.start, range.end)) {
@@ -471,8 +495,19 @@ function foldEvent(fold: ThreadFold, event: ConversationEvent): void {
     fold.costs.clear()
   // When the agent last finished a turn, as the runtime's session reads it
   // (`lastTurnEndedAt`): a steered turn's end is not one, the work went on.
-  if ((event.type === 'turn_completed' && event.payload?.steered !== true) || event.type === 'turn_failed')
+  // Nor is the end of Studio's own compaction before a cache expired: nothing
+  // happened in the chat the person has to come and read.
+  if (
+    ((event.type === 'turn_completed' && event.payload?.steered !== true) || event.type === 'turn_failed') &&
+    !fold.quietTurns.has(text(event.payload?.turnId))
+  )
     thread.lastTurnEndedAt = Math.max(thread.lastTurnEndedAt ?? 0, event.createdAt)
+  if (
+    event.type === 'user_message' &&
+    text(event.payload?.turnId) &&
+    readConversationMessageOrigin(event.payload?.origin)?.reason === 'auto-compact'
+  )
+    fold.quietTurns.add(text(event.payload?.turnId))
   if (event.type === 'turn_completed') {
     const cost = event.payload?.costUsd
     if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0)

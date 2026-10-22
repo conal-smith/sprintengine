@@ -66,6 +66,15 @@ test('WorkspaceSidebar.settled', async () => {
         cli: 'claude-code',
         activity: { kind: alphaActivityAtKill, since: 1 },
       },
+      // Hotel holds nothing but a shell, printing as a shell does: a plain
+      // terminal reads as working for a few seconds after any output.
+      {
+        sessionId: 'terminal-hotel-shell',
+        workspaceId: 'w8',
+        processAlive: true,
+        kind: 'terminal',
+        activity: { kind: 'working', since: 1 },
+      },
     ],
     onTerminalSessionsDelta: () => () => {},
     getWorkspaceChangeSummary: async () => null,
@@ -141,7 +150,6 @@ test('WorkspaceSidebar.settled', async () => {
       onSelectWorkspace: noop,
       onMoveWorkspaceToNewWindow: noop,
       onMoveWorkspaceToMainWindow: noop,
-      onCloseWorkspace: noop,
       onForgetFolder: noop,
       onNewChat: noop,
       onNewChatInFolder: noop,
@@ -231,13 +239,12 @@ test('WorkspaceSidebar.settled', async () => {
         `and its Auto-settle choice (got ${activeMenu.join(' | ')})`,
       )
 
-      // The one-click seat is rest, not removal. The ✕ that used to sit here
-      // terminates the row's terminals and removes the chat; it keeps its entry
-      // in the row menu (asserted below) and gives up the cheap seat to Settle,
-      // which the next click can undo.
+      // The one-click seat is rest, not removal, and Settle is the one way a
+      // row is put away (2026-10-21): the ✕ that terminated the row's
+      // terminals and removed the chat is gone from the seat and the menu.
       assert.ok(actionLabel('Settle Alpha'), 'an active row offers Settle in its hover seat')
-      assert.equal(actionLabel('Close Alpha'), null, 'and no longer offers Close there')
-      assert.ok(activeMenu.includes('Close workspace'), 'Close keeps its place in the row menu')
+      assert.equal(actionLabel('Close Alpha'), null, 'and no Close there')
+      assert.equal(activeMenu.includes('Close workspace'), false, 'nor in the row menu')
 
       // Rest means rest (owner ruling 2026-09-07): a chat that has come to rest
       // holds no terminals, so settling takes its ptys with it. Nothing is
@@ -303,10 +310,41 @@ test('WorkspaceSidebar.settled', async () => {
         `a resting row's menu offers Un-settle (got ${settledMenu.join(' | ')})`,
       )
       assert.equal(settledMenu.includes('Settle'), false)
+      assert.equal(settledMenu.includes('Delete chat…'), false, 'no Delete where the window cannot delete')
 
-      // A row born on a paired machine keeps the ✕: rest is a state a chat
-      // enters on this disk, so there is nothing for a tick to put it into —
-      // the same rule the menu's Settle entry already follows.
+      // Deleting is for a chat already put away: a window that can delete
+      // offers it on the settled row's menu, and on no other.
+      const deletes: string[] = []
+      await render({
+        ...props,
+        activeWorkspaceId: 'w2',
+        onDeleteSettledChat: (id: string) => void deletes.push(id),
+      } as unknown as SidebarProps)
+      assert.ok((await openMenuOn('Bravo')).includes('Delete chat…'), 'a settled row offers Delete chat…')
+      assert.equal((await openMenuOn('Alpha')).includes('Delete chat…'), false, 'an unsettled row does not')
+      const bravoRow = [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find((el) =>
+        el.textContent?.includes('Bravo'),
+      )
+      act(() => {
+        bravoRow!.dispatchEvent(
+          new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
+        )
+      })
+      await settle()
+      const deleteItem = [
+        ...dom.window.document.querySelectorAll<HTMLElement>('[role="menu"] [data-menu-item="true"]'),
+      ].find((el) => el.textContent?.trim() === 'Delete chat…')
+      assert.ok(deleteItem, 'its Delete chat… item (its tooltip is held by WorkspaceSidebar.menuTooltips.test.tsx)')
+      act(() => {
+        deleteItem!.click()
+      })
+      await settle()
+      assert.deepEqual(deletes, ['w2'], 'choosing it asks to delete that chat')
+      assert.equal(dom.window.document.querySelector('[role="menu"]'), null, 'and closes the menu')
+
+      // A row born on a paired machine whose machine keeps no rest settles
+      // here alone (`settleOpenedRemote`), so it wears the tick like any other
+      // row rather than the ✕ it kept before Close went.
       await render({
         ...props,
         workspaces: [
@@ -324,8 +362,11 @@ test('WorkspaceSidebar.settled', async () => {
         ],
         activityByWorkspaceId: { w1: 'idle', w4: 'idle' },
       } as unknown as SidebarProps)
-      assert.ok(actionLabel('Close Delta'), 'a remote-band row keeps Close in its seat')
-      assert.equal(actionLabel('Settle Delta'), null, 'and is never offered Settle')
+      assert.ok(actionLabel('Settle Delta'), 'a remote-band row offers Settle in its seat')
+      assert.equal(actionLabel('Close Delta'), null, 'and no Close')
+      const remoteMenu = await openMenuOn('Delta')
+      assert.ok(remoteMenu.includes('Settle'), `and in its menu (got ${remoteMenu.join(' | ')})`)
+      assert.equal(remoteMenu.includes('Close workspace'), false)
 
       // A chat-agent row has no pty, and settling it still ends its agent's
       // process: the live chat is suspended, the stopped one left alone, and
@@ -344,6 +385,38 @@ test('WorkspaceSidebar.settled', async () => {
       await settle()
       assert.deepEqual(chatsSuspended, ['echo-chat'], "settling a chat ends its chat agent's process")
       assert.deepEqual(killed, ['alpha-pty'], 'and kills no terminal for it')
+
+      // A chat holding only a terminal settles like any other, and its shell
+      // goes with it. A shell's working is output, not an agent's work, so it
+      // holds neither the tick nor the kill: before, the tick refused it while
+      // the shell had printed in the last few seconds, and Close was the only
+      // way to put the row away.
+      await render({
+        ...props,
+        workspaces: [
+          workspace('w1', 'Alpha'),
+          workspace('w8', 'Hotel', {
+            paneState: {
+              open: true,
+              activeTabId: 'tab-1',
+              tabs: [{ id: 'tab-1', kind: 'terminal', terminalId: 'hotel-shell' }],
+            },
+          }),
+        ],
+        // What the window reads for a row whose shell has just printed.
+        activityByWorkspaceId: { w1: 'idle', w8: 'working' },
+      } as unknown as SidebarProps)
+      const settleHotel = actionLabel('Settle Hotel')
+      assert.ok(settleHotel, 'a terminal-only row offers Settle in its seat')
+      assert.equal(settleHotel.getAttribute('aria-disabled'), null, 'and it is not held by the shell printing')
+      const hotelMenu = await openMenuOn('Hotel')
+      assert.ok(hotelMenu.includes('Settle'), `its menu offers Settle (got ${hotelMenu.join(' | ')})`)
+      assert.equal(hotelMenu.includes('Close workspace'), false, 'and no Close')
+      act(() => {
+        settleHotel.click()
+      })
+      await settle()
+      assert.deepEqual(killed, ['alpha-pty', 'terminal-hotel-shell'], "settling it ends the row's shell")
 
       // Settling ends a chat's agents and their work with them, so a chat with
       // an agent still working cannot be settled: not while a turn runs, and

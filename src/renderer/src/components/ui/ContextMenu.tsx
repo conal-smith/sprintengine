@@ -262,7 +262,60 @@ type MenuItemProps = Omit<
   expanded?: boolean
 }
 
-export function MenuItem({
+/**
+ * A `MenuItem` that says what it does: `tooltip` is a sentence or two shown
+ * beside the row on hover and on keyboard focus (`MenuTooltip`). A disabled
+ * row says why there too, on hover; its `hint` says it to the keyboard, which
+ * skips the row. Its own component, not a `MenuItem` prop, because
+ * `MenuItem`'s props are the module SDK's published ones (`sdk-drift-guard`).
+ */
+export type DescribedMenuItemProps = MenuItemProps & { tooltip: React.ReactNode }
+
+/**
+ * A menu row's description beside it, on the menu's own layer so it paints
+ * above the surface, to the right so it covers no other row. The row carries
+ * `data-menu-tooltip` whenever it has one, which is what a menu's test reads
+ * to hold every row of it to having one. `suppressed` shuts it while the
+ * row's flyout stands where it would.
+ */
+function MenuTooltip({
+  content,
+  suppressed,
+  children,
+}: {
+  content: React.ReactNode
+  suppressed?: boolean
+  children: React.ReactElement<import('./Tooltip').TooltipChildProps>
+}) {
+  return (
+    <Tooltip
+      content={content}
+      placement="right"
+      layer="menu"
+      multiline
+      openDelayMs={MENU_TOOLTIP_DELAY_MS}
+      suppressed={suppressed}
+      wrapperClassName="flex w-full"
+      wrapperRole="none"
+    >
+      {children}
+    </Tooltip>
+  )
+}
+
+// Longer than a toolbar's: a person runs the pointer down a menu reading its
+// labels, and a description for every row passed over would flicker beside it.
+const MENU_TOOLTIP_DELAY_MS = 500
+
+export function MenuItem(props: MenuItemProps) {
+  return <MenuItemRow {...props} />
+}
+
+export function DescribedMenuItem(props: DescribedMenuItemProps) {
+  return <MenuItemRow {...props} />
+}
+
+function MenuItemRow({
   children,
   onClick,
   onContextMenu,
@@ -276,11 +329,12 @@ export function MenuItem({
   trailing,
   onKeyDown,
   expanded,
+  tooltip,
   className,
   ...rest
-}: MenuItemProps) {
+}: MenuItemProps & { tooltip?: React.ReactNode }) {
   const checkableRole = selection === 'one-of' ? 'menuitemradio' : 'menuitemcheckbox'
-  return (
+  const row = (
     <button
       type="button"
       role={checked !== undefined ? checkableRole : 'menuitem'}
@@ -294,6 +348,7 @@ export function MenuItem({
       // on: a row that swallowed them is why nine of these stayed raw elements.
       tabIndex={-1}
       disabled={disabled}
+      data-menu-tooltip={tooltip ? 'true' : undefined}
       {...rest}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -318,6 +373,7 @@ export function MenuItem({
       {trailing}
     </button>
   )
+  return tooltip ? <MenuTooltip content={tooltip}>{row}</MenuTooltip> : row
 }
 
 export function MenuDivider() {
@@ -335,6 +391,11 @@ type MenuSwatchRowProps = {
    *  with its own roving-focus nav (e.g. OverflowMenu) can drive arrow keys
    *  through the swatches. ContextMenu omits it and keeps its own handling. */
   onItemKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void
+  /**
+   * What picking a swatch does (null: the clear control), in place of the
+   * colour's bare name; each swatch then carries `data-menu-tooltip`.
+   */
+  swatchTooltip?: (color: HighlightColor | null) => React.ReactNode
 }
 
 // One-tap color choice row: a clear control followed by the seven canonical
@@ -355,12 +416,35 @@ const SWATCH_TARGET_CLASS =
 // the same repair WorkspaceLayout's tab chip took on 2026-09-06.
 const SWATCH_DOT_SIZE_CLASS = 'h-5 w-5'
 
-export function MenuSwatchRow({ label, value, onPick, onClear, onItemKeyDown }: MenuSwatchRowProps) {
+// A described swatch takes the menu's tooltip (on its layer, beside the
+// menu); a bare one keeps naming its colour above itself.
+function SwatchTooltip({
+  describe,
+  color,
+  name,
+  children,
+}: {
+  describe: MenuSwatchRowProps['swatchTooltip']
+  color: HighlightColor | null
+  name: string
+  children: React.ReactElement<import('./Tooltip').TooltipChildProps>
+}) {
+  return describe ? (
+    <Tooltip content={describe(color)} layer="menu" multiline openDelayMs={MENU_TOOLTIP_DELAY_MS}>
+      {children}
+    </Tooltip>
+  ) : (
+    <Tooltip content={name}>{children}</Tooltip>
+  )
+}
+
+export function MenuSwatchRow({ label, value, onPick, onClear, onItemKeyDown, swatchTooltip }: MenuSwatchRowProps) {
+  const described = swatchTooltip ? 'true' : undefined
   return (
     <>
       {label ? <div className={`${MENU_GROUP_LABEL_CLASS} pb-1 pt-1.5`}>{label}</div> : null}
       <div className="flex items-center gap-1 px-2 pb-1.5">
-        <Tooltip content="Clear color">
+        <SwatchTooltip describe={swatchTooltip} color={null} name="Clear color">
           <button
             type="button"
             // The strip is a HORIZONTAL radio group of 20px circles. `menuitemradio` is what ARIA
@@ -370,6 +454,7 @@ export function MenuSwatchRow({ label, value, onPick, onClear, onItemKeyDown }: 
             role="menuitemradio"
             aria-checked={value === null}
             data-menu-item="true"
+            data-menu-tooltip={described}
             tabIndex={-1}
             onClick={onClear}
             onKeyDown={onItemKeyDown}
@@ -391,12 +476,12 @@ export function MenuSwatchRow({ label, value, onPick, onClear, onItemKeyDown }: 
               </svg>
             </span>
           </button>
-        </Tooltip>
+        </SwatchTooltip>
         {HIGHLIGHT_COLORS.map((color) => {
           const swatch = getHighlightSwatch(color)
           const selected = value === color
           return (
-            <Tooltip key={color} content={swatch.label}>
+            <SwatchTooltip key={color} describe={swatchTooltip} color={color} name={swatch.label}>
               <button
                 type="button"
                 // design-tokens-allow: 2026-08-05 — a swatch, not a menu row; see the
@@ -404,6 +489,7 @@ export function MenuSwatchRow({ label, value, onPick, onClear, onItemKeyDown }: 
                 role="menuitemradio"
                 aria-checked={selected}
                 data-menu-item="true"
+                data-menu-tooltip={described}
                 tabIndex={-1}
                 onClick={() => onPick(color)}
                 onKeyDown={onItemKeyDown}
@@ -424,7 +510,7 @@ export function MenuSwatchRow({ label, value, onPick, onClear, onItemKeyDown }: 
                   }}
                 />
               </button>
-            </Tooltip>
+            </SwatchTooltip>
           )
         })}
       </div>
@@ -578,6 +664,8 @@ type MenuFlyoutItemProps = {
   onOpenChange?: (open: boolean) => void
   /** Flyout content: MenuItem / MenuDivider / MenuSwatchRow children. */
   children: React.ReactNode
+  /** What the flyout is for, as `MenuItem`'s `tooltip`; shut while the flyout is open, which stands in its place. */
+  tooltip?: React.ReactNode
 }
 
 // Close-intent grace period when the pointer crosses the gap between the
@@ -653,6 +741,7 @@ export function MenuFlyoutItem({
   onItemKeyDown,
   onOpenChange,
   children,
+  tooltip,
 }: MenuFlyoutItemProps) {
   const itemRef = useRef<HTMLButtonElement>(null)
   const closeTimerRef = useRef<number | null>(null)
@@ -695,58 +784,62 @@ export function MenuFlyoutItem({
 
   useEffect(() => cancelScheduledClose, [cancelScheduledClose])
 
+  const trigger = (
+    <button
+      ref={itemRef}
+      type="button"
+      role="menuitem"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      data-menu-item="true"
+      data-menu-tooltip={tooltip ? 'true' : undefined}
+      tabIndex={-1}
+      disabled={disabled}
+      onMouseEnter={() => {
+        if (!disabled) openFlyout()
+      }}
+      onClick={() => {
+        if (disabled) return
+        if (open) closeFlyout()
+        else openFlyout()
+      }}
+      onKeyDown={(event) => {
+        if (disabled) return
+        // Let a host menu drive its roving focus first (Up/Down/Home/End); the
+        // trigger still owns ArrowRight/Enter/Space to open the flyout.
+        onItemKeyDown?.(event)
+        if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          event.stopPropagation()
+          openFlyout()
+        }
+      }}
+      className={`${MENU_ITEM_CLASS} text-[color:var(--text-default)] hover:text-[color:var(--text-strong)] ${
+        open ? 'bg-[color:var(--bg-hover)] text-[color:var(--text-strong)]' : ''
+      }`}
+    >
+      {icon ?? null}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {hint ? <span className="text-micro text-[color:var(--text-disabled)] font-mono">{hint}</span> : null}
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        className="icon-xs shrink-0 text-[color:var(--text-disabled)]"
+        aria-hidden="true"
+      >
+        <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  )
   return (
     <div role="none" onMouseEnter={cancelScheduledClose} onMouseLeave={scheduleClose}>
-      <button
-        ref={itemRef}
-        type="button"
-        role="menuitem"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        data-menu-item="true"
-        tabIndex={-1}
-        disabled={disabled}
-        onMouseEnter={() => {
-          if (!disabled) openFlyout()
-        }}
-        onClick={() => {
-          if (disabled) return
-          if (open) closeFlyout()
-          else openFlyout()
-        }}
-        onKeyDown={(event) => {
-          if (disabled) return
-          // Let a host menu drive its roving focus first (Up/Down/Home/End); the
-          // trigger still owns ArrowRight/Enter/Space to open the flyout.
-          onItemKeyDown?.(event)
-          if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            event.stopPropagation()
-            openFlyout()
-          }
-        }}
-        className={`${MENU_ITEM_CLASS} text-[color:var(--text-default)] hover:text-[color:var(--text-strong)] ${
-          open ? 'bg-[color:var(--bg-hover)] text-[color:var(--text-strong)]' : ''
-        }`}
-      >
-        {icon ?? null}
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {hint ? <span className="text-micro text-[color:var(--text-disabled)] font-mono">{hint}</span> : null}
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          className="icon-xs shrink-0 text-[color:var(--text-disabled)]"
-          aria-hidden="true"
-        >
-          <path
-            d="M6 4L10 8L6 12"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
+      {tooltip ? (
+        <MenuTooltip content={tooltip} suppressed={open}>
+          {trigger}
+        </MenuTooltip>
+      ) : (
+        trigger
+      )}
       {anchor ? (
         <MenuFlyoutSurface
           anchor={anchor}

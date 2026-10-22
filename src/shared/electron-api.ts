@@ -157,6 +157,8 @@ import type {
   MeshCreateConversationResult,
   MeshNewChatWorktree,
   MeshSettleConversationResult,
+  MeshChangeConversationResult,
+  MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
   MeshWorkspaceExtensionsResult,
@@ -207,6 +209,8 @@ import type {
   ConversationMcpServerActionInput,
   ConversationStopSubagentInput,
   ConversationCancelSideQuestionInput,
+  ConversationContextBreakdownInput,
+  ConversationContextBreakdownResult,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
@@ -239,6 +243,8 @@ import type {
   ConversationRevertResult,
   ConversationRewindInput,
   ConversationRewindResult,
+  ConversationHandoffInput,
+  ConversationHandoffResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -416,6 +422,7 @@ import type {
   WorktreePoolSettings,
   WorktreePoolSnapshot,
 } from './ipc/worktree-pool'
+import type { SettledChatDeletionOutcome, SettledChatDeletionPlan } from './ipc/settled-chats'
 import type { HostedCardFeedReadInput, HostedCardFeedReadResult, HostedSourcesFeedReadResult } from './ipc/hosted-feeds'
 import type {
   GithubExtensionCheckUpdateInput,
@@ -560,6 +567,7 @@ export type * from './ipc/skills'
 export type * from './ipc/terminal'
 export type * from './ipc/git'
 export type * from './ipc/worktree-pool'
+export type * from './ipc/settled-chats'
 export type * from './ipc/diagnostics'
 export type * from './ipc/window'
 export type * from './ipc/pane-popout'
@@ -1004,6 +1012,16 @@ export type ElectronApi = {
   }) => Promise<MeshSettleConversationResult>
   /** Say a chat on a paired machine is on screen here (`conversation.visit` there). */
   meshVisitConversation: (input: { connectionId: string; workspaceId: string }) => Promise<MeshVisitConversationResult>
+  /**
+   * A row menu change to a chat on a paired machine: Star, Highlight color,
+   * Snooze, Auto-settle (`chat-row-menu` there) or Mark unread
+   * (`chat-mark-unread` there), written to that machine's record of it.
+   */
+  meshChangeConversation: (input: {
+    connectionId: string
+    workspaceId: string
+    change: MeshConversationChange
+  }) => Promise<MeshChangeConversationResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */
@@ -1311,6 +1329,10 @@ export type ElectronApi = {
   conversationSessionCancelSideQuestion: (
     input: ConversationCancelSideQuestionInput,
   ) => Promise<{ ok: true } | { ok: false; message: string }>
+  /** What fills a live chat's context window, as its agent measures it; read when the ring's breakdown opens. */
+  conversationSessionContextBreakdown: (
+    input: ConversationContextBreakdownInput,
+  ) => Promise<ConversationContextBreakdownResult>
   conversationSessionStop: (input: ConversationStopSessionInput) => Promise<ConversationSessionActionResult>
   // Settle and Snooze: end the chat's child process, keeping the session so the
   // next message respawns it.
@@ -1336,6 +1358,9 @@ export type ElectronApi = {
   // Take the conversation back to before one of its user messages ("Edit from
   // here"); gated on the provider's `rewind` capability.
   conversationRewindToTurn: (input: ConversationRewindInput) => Promise<ConversationRewindResult>
+  // Hand the chat off to a fresh session pointed at a file of its messages,
+  // instead of compacting it; gated on the provider's `handoff` capability.
+  conversationHandoff: (input: ConversationHandoffInput) => Promise<ConversationHandoffResult>
   // Start a new chat holding this one up to an earlier message ("Fork from
   // here"); gated on the provider's `fork` capability.
   conversationForkAtTurn: (input: ConversationForkInput) => Promise<ConversationForkResult>
@@ -1545,6 +1570,18 @@ export type ElectronApi = {
    * kept, with the reason, when something works in it or it may hold work.
    */
   removeOtherWorktree: (input: { repoRoot: string; path: string }) => Promise<WorktreePoolActionResult>
+  /**
+   * What deleting each of these settled chats would do: its worktree's fate,
+   * its changes and unpushed commits, and why a chat cannot go. For the
+   * confirmation; the delete checks it all again.
+   */
+  planSettledChatDeletion: (workspaceIds: string[]) => Promise<SettledChatDeletionPlan[]>
+  /**
+   * Delete settled chats for good: their history, their records, and the
+   * worktree each owns (given back to the pool, or removed), branches kept.
+   * A paired machine's chat loses only this computer's record.
+   */
+  deleteSettledChats: (workspaceIds: string[]) => Promise<SettledChatDeletionOutcome[]>
   getWorktreePoolSettings: () => Promise<WorktreePoolSettings>
   setWorktreePoolSettings: (patch: Partial<WorktreePoolSettings>) => Promise<WorktreePoolSettings>
   /** Every worktree of these projects and of every pool, for Settings ▸ Worktrees. */

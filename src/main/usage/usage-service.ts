@@ -17,8 +17,8 @@ import { resolveClaudeConfigDir } from '../claude-config-dir'
 import { codexHomeDir } from '../conversation-import/codex-sessions'
 import { conversationStorageSegment } from '../conversation-index'
 import { workspaceStorePath } from '../workspace-store'
-import { aggregateUsage } from './usage-aggregate'
-import { createPricingStore, type PricingStore } from './usage-pricing'
+import { aggregateUsage, type UsageSpeedRow } from './usage-aggregate'
+import { createPricingStore, type PricingStore, type UsagePricing } from './usage-pricing'
 import { buildUsageReport } from './usage-report'
 import {
   runUsageScan,
@@ -73,10 +73,36 @@ export type UsageServiceDeps = {
   pollMs?: number
 }
 
+/** This machine's rows for a window, grouped as the dashboard prices them (`aggregateUsage` by hour, provider, model, session and speed). */
+export type UsageLocalRows = {
+  rows: UsageSpeedRow[]
+  scannedAt: number | null
+  sources: UsageSource[]
+}
+
 export type UsageService = {
   registry: ModuleUsageRegistry
   /** The dashboard's priced report over a window; `refresh` scans now and fetches prices again. */
   report(request: UsageReportRequest): Promise<UsageReportResult>
+  /** This machine's rows over a window and the price list, for a report that adds other machines' rows to them. */
+  localRows(request: {
+    from: number
+    to: number
+    refresh?: boolean
+  }): Promise<UsageLocalRows & { pricing: UsagePricing }>
+  /**
+   * This machine's rows for a paired desktop's dashboard (`usage.report`).
+   * Never waits for a read of the logs unless `wait` says to, and then for
+   * `waitMs` at most: a machine that has not read its logs this run answers
+   * from its cache with `scanning`, starting the read, and the desktop asks
+   * again with `wait`. `refresh` starts a read now.
+   */
+  peerRows(request: {
+    from: number
+    to: number
+    refresh?: boolean
+    wait?: boolean
+  }): Promise<UsageLocalRows & { scanning: boolean }>
   /** Scan now (or join the scan running) and resolve when it is done. */
   refresh(): Promise<void>
   dispose(): Promise<void>
@@ -84,6 +110,8 @@ export type UsageService = {
 
 // 2: buckets carry the speed a premium tier billed at, so every log is read again.
 const CACHE_VERSION = 2
+/** How long a paired desktop's `wait` holds its answer for a read of the logs, at most. */
+const PEER_WAIT_MS = 45_000
 const GROUP_BY: ReadonlySet<UsageGroupBy> = new Set(['day', 'model', 'workspace', 'session', 'provider'])
 
 type CacheFile = { version: number; scannedAt: number | null; entries: UsageCacheEntry[] }
@@ -256,27 +284,67 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
   const workspaceRefs = () =>
     deps.getWorkspaces().map((workspace) => ({ id: workspace.id, folderPath: workspace.folderPath ?? null }))
 
-  async function report(request: UsageReportRequest): Promise<UsageReportResult> {
-    const from = request?.from
-    const to = request?.to
-    if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !(to > from)) {
-      return { ok: false, message: 'A usage report needs a window: "from" before "to", in epoch ms.' }
-    }
-    if (disposed) return { ok: false, message: 'The app is shutting down.' }
-    const refresh = request.refresh === true
-    // The price list is fetched while the logs are read, not after.
-    const [prices] = await Promise.all([pricing.get({ force: refresh }), ready(refresh)])
-    // Grouped by the hour (as the day key) so the window buckets into its own
-    // days, and by speed so a premium tier is priced at its own rate.
-    const rows = aggregateUsage(
+  // Grouped by the hour (as the day key) so the window buckets into its own
+  // days, and by speed so a premium tier is priced at its own rate.
+  const pricedRows = (from: number, to: number): UsageLocalRows => ({
+    rows: aggregateUsage(
       entries.values(),
       { from, to, groupBy: ['day', 'provider', 'model', 'session'] },
       { workspaces: workspaceRefs(), chatTitle, dayOf: String, bySpeed: true },
-    )
+    ),
+    scannedAt,
+    sources: sources.map((source) => ({ ...source })),
+  })
+
+  async function localRows(request: {
+    from: number
+    to: number
+    refresh?: boolean
+  }): Promise<UsageLocalRows & { pricing: UsagePricing }> {
+    const refresh = request.refresh === true
+    // The price list is fetched while the logs are read, not after.
+    const [prices] = await Promise.all([pricing.get({ force: refresh }), ready(refresh)])
+    return { ...pricedRows(request.from, request.to), pricing: prices }
+  }
+
+  async function report(request: UsageReportRequest): Promise<UsageReportResult> {
+    const invalid = invalidWindow(request)
+    if (invalid) return { ok: false, message: invalid }
+    if (disposed) return { ok: false, message: 'The app is shutting down.' }
+    const { rows, pricing: prices } = await localRows(request)
+    const { from, to } = request
     return {
       ok: true,
       report: buildUsageReport({ rows, from, to, scannedAt, sources, pricing: prices }),
     }
+  }
+
+  async function peerRows(request: {
+    from: number
+    to: number
+    refresh?: boolean
+    wait?: boolean
+  }): Promise<UsageLocalRows & { scanning: boolean }> {
+    await load()
+    let pending: Promise<void> | null = null
+    if (request.refresh) pending = scan()
+    else if (!scannedThisRun) pending = running ?? scan()
+    else if (!running && (scannedAt === null || now() - scannedAt > staleMs)) void scan()
+    if (pending && request.wait) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        pending,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, PEER_WAIT_MS)
+          timer.unref?.()
+        }),
+      ])
+      clearTimeout(timer)
+    }
+    // Still reading: the first read of this run has not finished, or the one
+    // `refresh` asked for has not.
+    const scanning = !scannedThisRun || (request.refresh === true && running !== null)
+    return { ...pricedRows(request.from, request.to), scanning }
   }
 
   function onChanged(moduleId: string, listener: () => void): () => void {
@@ -303,6 +371,8 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
   return {
     registry: { query, onChanged },
     report,
+    localRows,
+    peerRows,
     refresh: scan,
     async dispose() {
       disposed = true
@@ -356,6 +426,31 @@ export function sharedUsageService(deps: UsageServiceDeps): UsageService {
   }
   shared.set(key, entry)
   return entry.service
+}
+
+/**
+ * The app's own usage service, for the dashboard's IPC and for the gateway's
+ * `usage.report`, whichever asks first: the worker is built beside main's
+ * entry (electron.vite.config.ts), and where it is not there (the server
+ * built on its own), the scan runs inline. It grants no module anything.
+ */
+export function appUsageService(deps: Pick<UsageServiceDeps, 'dataDir' | 'getWorkspaces'>): UsageService {
+  return sharedUsageService({
+    dataDir: deps.dataDir,
+    getWorkspaces: deps.getWorkspaces,
+    getModulePermissions: () => undefined,
+    workerPath: join(__dirname, 'usage-scan-worker.js'),
+  })
+}
+
+/** Why a report's window cannot be read, or null when it can. */
+export function invalidWindow(request: { from?: unknown; to?: unknown } | null | undefined): string | null {
+  const from = request?.from
+  const to = request?.to
+  if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !(to > from)) {
+    return 'A usage report needs a window: "from" before "to", in epoch ms.'
+  }
+  return null
 }
 
 /** OpenCode's data folder: under `$XDG_DATA_HOME` when set, as OpenCode itself resolves it on every platform. */

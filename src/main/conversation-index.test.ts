@@ -107,7 +107,7 @@ test('search joins split assistant deltas and returns a jumpable user-turn seque
         { ...key, query: 'ALPHA BETA' },
         { onBatch: (batch) => batches.push(batch) },
       ),
-    ).toEqual([{ agentId: 'agent', seq: 1, turnId: 'turn', snippet: 'The alpha beta answer.' }])
+    ).toEqual([{ agentId: 'agent', seq: 1, turnId: 'turn', snippet: 'The alpha beta answer.', from: 'agent' }])
     expect(batches).toHaveLength(1)
   }))
 
@@ -428,4 +428,23 @@ test('a cache written before rows kept the turn end is read again, so older turn
     for (const thread of written.threads) delete thread.lastTurnEndedAt
     await writeFile(cache, JSON.stringify({ ...written, version: 2 }))
     expect((await new ConversationIndex().list(key))[0]?.lastTurnEndedAt).toBe(2000)
+  }))
+
+test('search says who wrote each match, and reads past tool output it never parses', async () =>
+  fixture(async (key, path) => {
+    await writeFile(
+      path,
+      lines([
+        event(1, 'user_message', { turnId: 'one', text: 'Is the wave model wired up?' }),
+        event(2, 'tool_output', { turnId: 'one', text: 'wave '.repeat(50) }),
+        event(3, 'content_delta', { turnId: 'one', text: 'The wave model is wired up.' }),
+        event(4, 'user_message', { turnId: 'two', text: 'Wave check', origin: { kind: 'studio' } }),
+      ]),
+    )
+    const hits = await new ConversationIndex().search({ ...key, query: 'wave' })
+    expect(hits.map((hit) => [hit.seq, hit.from])).toEqual([
+      [1, 'person'],
+      [1, 'agent'],
+      [4, 'studio'],
+    ])
   }))

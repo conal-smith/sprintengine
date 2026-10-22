@@ -93,6 +93,7 @@ const RESULT_MEMBERS: ReadonlySet<string> = new Set([
   'stopSubagent',
   'askSideQuestion',
   'cancelSideQuestion',
+  'readContextBreakdown',
   'stopSession',
   'suspendSession',
   'terminalHandoffTarget',
@@ -111,6 +112,7 @@ const RESULT_MEMBERS: ReadonlySet<string> = new Set([
   'revokeApprovalRule',
   'revertToTurn',
   'rewindToTurn',
+  'handoffConversation',
   'forkAtTurn',
 ])
 
@@ -423,6 +425,7 @@ export function createRoutedConversationBackend(deps: RoutedConversationBackendD
     stopSubagent: bySession('stopSubagent'),
     askSideQuestion: bySession('askSideQuestion'),
     cancelSideQuestion: bySession('cancelSideQuestion'),
+    readContextBreakdown: bySession('readContextBreakdown'),
     stopSession: bySession('stopSession'),
     suspendSession: bySession('suspendSession'),
     terminalHandoffTarget: bySession('terminalHandoffTarget'),
@@ -497,6 +500,7 @@ export function createRoutedConversationBackend(deps: RoutedConversationBackendD
     },
     revertToTurn: byWorkspace('revertToTurn'),
     rewindToTurn: byWorkspace('rewindToTurn'),
+    handoffConversation: byWorkspace('handoffConversation'),
     forkAtTurn: byWorkspace('forkAtTurn'),
   }
   return backend as unknown as RoutedConversationBackend
