@@ -1,3 +1,4 @@
+import { homedir } from 'os'
 import { isAbsolute } from 'path'
 import { isSettledWorkspace } from '../../shared/workspace-lifecycle'
 import type { RepositoryIdentity } from '../../shared/repository-identity'
@@ -21,6 +22,8 @@ import {
   type LaunchLinkResult,
 } from '../agent-launch-notices'
 import { mobileSnapshotCollections, retiredMobileSnapshotCollections } from '../mobile/control/protocol'
+import { workspaceStoresRoot } from '../workspace-store'
+import { refuseWorkspaceFolder } from './workspace-folder-guard'
 import type { Workspace } from '../../renderer/src/types/workspace'
 import type {
   BacklogAddOrUpdateLinkInput,
@@ -248,6 +251,12 @@ export type AutomationBackends = {
    * `workspace.extensions` is not served.
    */
   readWorkspaceExtensions?(workspaceRoot: string, cli: string | null): Promise<WorkspaceExtensions>
+  /**
+   * Studio's own data folders in this process (its user data folder), which
+   * `workspace.create` will not open, nor anything above or inside them. The
+   * workspace stores are added to them wherever this is served.
+   */
+  studioDataDirs?(): readonly string[]
   /**
    * Loaded CLI plugin manifests (`getPluginRegistry().loaded()`). backlog.work
    * composes the target CLI's native skill invocation from the matching
@@ -1090,9 +1099,22 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       },
       additionalProperties: false,
     },
-    handler: async (args) => {
+    handler: async (args, context) => {
       const invalid = firstInvalidOptionalString(args, ['name', 'folderPath', 'templateId'])
       if (invalid) return invalid
+      // A paired machine names a folder the person picked in its folder
+      // browser; anything on this machine's socket is held to project folders.
+      const folderPath = optionalString(args.folderPath)
+      if (folderPath && context?.metadata.kind !== 'remote-tailnet') {
+        const refused = await refuseWorkspaceFolder(folderPath, {
+          platform: process.platform,
+          homeDir: homedir(),
+          dataDirs: [workspaceStoresRoot(), ...(backends.studioDataDirs?.() ?? [])],
+        })
+        if (refused) {
+          return failure('folder_refused', `${refused} Open the project's own folder instead.`)
+        }
+      }
       // Synchronous authority: the id comes back from the same call that
       // committed it, which is what retired the delegate-to-renderer round trip
       // and its 7s bus-confirmation poll.
