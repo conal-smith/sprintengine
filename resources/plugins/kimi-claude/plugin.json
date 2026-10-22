@@ -57,6 +57,7 @@
       { "spreadIf": "integrationArgs" },
       "--session-id",
       "{{sessionId}}",
+      { "valueIf": "prompt", "value": "--" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ],
     "env": {
@@ -79,6 +80,7 @@
       { "spreadIf": "integrationArgs" },
       "--resume",
       "{{sessionId}}",
+      { "valueIf": "prompt", "value": "--" },
       { "valueIf": "prompt", "value": "{{prompt}}" }
     ]
   },
@@ -91,6 +93,7 @@
     "args": ["--plugin-dir", "{{pluginDir}}"]
   },
   "promptInjection": {
+    "$comment": "The first message goes after `--`, so one that starts with a dash is never read as an option. Checked 2026-10-22 against Claude Code 2.1.296: `claude --help` prints `Usage: claude [options] [command] [prompt]`, `claude --bogus` failed with `unknown option`, and `claude -- --bogus` took `--bogus` as the prompt.",
     "mode": "positional-arg",
     "overflow": {
       "$comment": "Runs the same `claude` binary as the claude-code runtime, so a first message too long for the command line is typed in the same way; see that manifest for the 2026-09-24 verification against CLI 2.1.282.",

@@ -1,6 +1,7 @@
 import type { AgentCli, CliRuntimeSettings, ColorScheme } from '../shared/electron-api'
 import type { CliPermissionSetting } from '../shared/cli-permission-mode'
 import type { LoadedPlugin, PluginRenderContext } from '../shared/plugin-manifest'
+import { LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE, launchPromptReadsAsOption } from '../shared/agent-launch'
 
 import { getPluginById } from './plugin-registry-instance'
 import { launchArgvExceedsBudget, measureLaunchArgv, type LaunchArgBudget } from './launch-arg-budget'
@@ -223,6 +224,15 @@ function renderWithPlugin(
       `Plugin "${pluginId}" does not declare a resume command. ` +
         `Set resume.supported = true and resume.argv in its plugin.json.`,
     )
+  }
+  // The last line of defence for every launch door: a first message that
+  // starts with `-` and lands on the command line with no `--` in front of it
+  // would be parsed by the CLI as an option.
+  if (prompt !== undefined && launchPromptReadsAsOption(prompt)) {
+    const at = rendered.argv.lastIndexOf(prompt)
+    if (at !== -1 && rendered.argv[at - 1] !== '--') {
+      throw new AgentLaunchRenderError(LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE)
+    }
   }
 
   return { argv: rendered.argv, binary, plugin, env: rendered.env }

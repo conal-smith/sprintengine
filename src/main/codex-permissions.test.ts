@@ -37,7 +37,7 @@ test('a retired Codex spelling renders the preset that kept its promise', () => 
       cliPermissionPreset: retired as unknown as CliPermissionPreset,
       initialPrompt: 'fix the parser',
     })
-    assert.deepEqual(rendered.argv, ['codex', ...permissionArgs[preset], 'fix the parser'], retired)
+    assert.deepEqual(rendered.argv, ['codex', ...permissionArgs[preset], '--', 'fix the parser'], retired)
   }
 })
 
@@ -62,7 +62,7 @@ for (const preset of Object.keys(permissionArgs) as CliPermissionPreset[]) {
       assert.deepEqual(rendered.argv, [
         'codex',
         ...permissionArgs[preset],
-        ...(resume ? ['resume', 'session-example'] : ['fix the parser']),
+        ...(resume ? ['resume', 'session-example'] : ['--', 'fix the parser']),
       ])
       const windows = buildCodexLegacyNativeAgentLaunchPowerShellScript(
         input.sessionId,
