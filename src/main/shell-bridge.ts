@@ -2,6 +2,7 @@ import type { SafeStorage } from 'electron'
 
 import type { AgentLaunchRequest, AgentLaunchResult } from '../shared/agent-launch'
 import type { Notifier } from '../server/platform/notifier'
+import { safeStorageProtects } from './platform/safe-storage-protects'
 import { downscaleConversationImage, type ImageCodec } from './conversation-image-downscale'
 import {
   utf8Bytes,
@@ -21,7 +22,8 @@ import {
 // contract suite runs the same cases against this and the remote one.
 
 export type InProcessShellBridgeDeps = {
-  safeStorage: Pick<SafeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'>
+  safeStorage: Pick<SafeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'> &
+    Partial<Pick<SafeStorage, 'getSelectedStorageBackend'>>
   /**
    * The shell's composed agent launch, bound once the terminal runtime exists.
    * Until then, and in a shell that has none, a launch answers that it cannot.
@@ -41,7 +43,7 @@ export type InProcessShellBridgeDeps = {
 export function createInProcessShellBridge(deps: InProcessShellBridgeDeps): ShellBridge {
   return {
     cipher: {
-      available: async () => deps.safeStorage.isEncryptionAvailable(),
+      available: async () => safeStorageProtects(deps.safeStorage),
       seal: async (plain) => new Uint8Array(deps.safeStorage.encryptString(utf8Text(plain))),
       open: async (sealed) => utf8Bytes(deps.safeStorage.decryptString(Buffer.from(sealed))),
     },
