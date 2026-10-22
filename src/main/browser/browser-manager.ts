@@ -655,7 +655,9 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
       const [first] = favicons
       if (!first) return
       const at = wc.getURL()
-      void fetchFaviconDataUrl(ensureSession(), first).then((dataUrl) => {
+      // On the tab's own session, whichever partition it is in: the icon is
+      // fetched as the page itself would fetch it.
+      void fetchFaviconDataUrl(wc.session, first).then((dataUrl) => {
         // Only if the page has not moved on meanwhile.
         if (!wc.isDestroyed() && tabs.get(tab.tabId) === tab && wc.getURL() === at) {
           patch(tab, { faviconUrl: dataUrl })
