@@ -232,15 +232,40 @@ test('desktop-identity', async () => {
       tokenEndpoint: 'https://clerk.example/oauth/token',
       scopes: ['openid', 'offline_access'],
     }
-    assert.deepEqual(parseClerkIdentityConfig(good), good)
+    const pinned = { SPRINTENGINE_CLERK_ISSUER: 'https://clerk.example' }
+    assert.deepEqual(parseClerkIdentityConfig(good, pinned), good)
+    // Only an issuer Studio knows, or the one the operator pinned: a marker
+    // naming any other is ignored, so no refresh token is sent there.
+    assert.equal(parseClerkIdentityConfig(good, {}), null)
+    const studio = {
+      ...good,
+      issuer: 'https://clerk.sprintengine.ai',
+      authorizationEndpoint: 'https://clerk.sprintengine.ai/oauth/authorize',
+      tokenEndpoint: 'https://clerk.sprintengine.ai/oauth/token',
+    }
+    assert.deepEqual(parseClerkIdentityConfig(studio, {}), studio)
+    const lookalike = {
+      ...good,
+      issuer: 'https://clerk.sprintengine.ai.attacker.example',
+      authorizationEndpoint: 'https://clerk.sprintengine.ai.attacker.example/oauth/authorize',
+      tokenEndpoint: 'https://clerk.sprintengine.ai.attacker.example/oauth/token',
+    }
+    assert.equal(parseClerkIdentityConfig(lookalike, {}), null)
+    assert.equal(parseClerkIdentityConfig({ ...studio, issuer: 'https://clerk.sprintengine.ai:8443' }, {}), null)
     // The token endpoint must sit on the issuer's origin: a tampered marker
     // must not be able to name where the refresh token is POSTed.
-    assert.equal(parseClerkIdentityConfig({ ...good, tokenEndpoint: 'https://attacker.example/oauth/token' }), null)
-    assert.equal(parseClerkIdentityConfig({ ...good, tokenEndpoint: 'http://clerk.example/oauth/token' }), null)
-    assert.equal(parseClerkIdentityConfig({ ...good, authorizationEndpoint: 'https://attacker.example/a' }), null)
-    assert.equal(parseClerkIdentityConfig({ ...good, clientId: '' }), null)
-    assert.equal(parseClerkIdentityConfig({ ...good, scopes: 'openid' }), null)
-    assert.equal(parseClerkIdentityConfig({ provider: 'multiauth' }), null)
+    assert.equal(
+      parseClerkIdentityConfig({ ...good, tokenEndpoint: 'https://attacker.example/oauth/token' }, pinned),
+      null,
+    )
+    assert.equal(parseClerkIdentityConfig({ ...good, tokenEndpoint: 'http://clerk.example/oauth/token' }, pinned), null)
+    assert.equal(
+      parseClerkIdentityConfig({ ...good, authorizationEndpoint: 'https://attacker.example/a' }, pinned),
+      null,
+    )
+    assert.equal(parseClerkIdentityConfig({ ...good, clientId: '' }, pinned), null)
+    assert.equal(parseClerkIdentityConfig({ ...good, scopes: 'openid' }, pinned), null)
+    assert.equal(parseClerkIdentityConfig({ provider: 'multiauth' }, pinned), null)
     assert.equal(parseClerkIdentityConfig(null), null)
   }
 

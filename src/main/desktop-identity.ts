@@ -146,13 +146,49 @@ export function parseIdentityDiscovery(payload: unknown, clientName: string): Id
   }
 }
 
+// The Clerk issuers Studio's own account service signs in against. A stored
+// marker naming any other is not trusted (`parseClerkIdentityConfig`).
+const STUDIO_CLERK_ISSUER_ORIGINS: ReadonlySet<string> = new Set([
+  'https://clerk.sprintengine.ai',
+  'https://famous-anteater-45.clerk.accounts.dev',
+])
+
+/**
+ * Whether a stored marker may name `issuer`: one of Studio's own, or the one
+ * the operator pinned with `SPRINTENGINE_CLERK_ISSUER` (a self-hosted account
+ * service). Any other is ignored, and a session that had one resumes through
+ * the account service's discovery document, which says where to refresh.
+ */
+function isTrustedClerkIssuer(issuer: string, env: IdentityEnvironment = process.env): boolean {
+  let origin: string
+  try {
+    const url = new URL(issuer)
+    if (url.protocol !== 'https:') return false
+    origin = url.origin
+  } catch {
+    return false
+  }
+  if (STUDIO_CLERK_ISSUER_ORIGINS.has(origin)) return true
+  const pinned = readStudioEnv('SPRINTENGINE_CLERK_ISSUER', env)?.trim()
+  if (!pinned) return false
+  try {
+    return new URL(pinned).origin === origin
+  } catch {
+    return false
+  }
+}
+
 // `process.env` or any subset of it; only the three SPRINTENGINE_* keys are read.
 // A stored Clerk config (the `desktop-identity.json` marker) re-validated
 // before it is trusted. The marker is plain JSON beside a safeStorage-protected
-// refresh token, so it must not be the weakest link: every endpoint is https,
-// and the token endpoint sits on the issuer's own origin — otherwise a
-// tampered file could name where the refresh token gets POSTed next launch.
-export function parseClerkIdentityConfig(value: unknown): ClerkIdentityConfig | null {
+// refresh token, so it must not be the weakest link: the issuer is one Studio
+// knows (`isTrustedClerkIssuer`), every endpoint is https, and the token
+// endpoint sits on the issuer's own origin — otherwise a tampered file could
+// name where the refresh token gets POSTed next launch.
+export function parseClerkIdentityConfig(
+  value: unknown,
+  env: IdentityEnvironment = process.env,
+): ClerkIdentityConfig | null {
   if (!isRecord(value) || value['provider'] !== CLERK_IDENTITY_PROVIDER) return null
 
   try {
@@ -162,6 +198,7 @@ export function parseClerkIdentityConfig(value: unknown): ClerkIdentityConfig | 
     const clientId = value['clientId']
     const scopes = value['scopes']
 
+    if (!isTrustedClerkIssuer(issuer, env)) return null
     if (typeof clientId !== 'string' || !clientId.trim()) return null
     if (!Array.isArray(scopes) || !scopes.every((scope) => typeof scope === 'string')) return null
     if (new URL(tokenEndpoint).origin !== new URL(issuer).origin) return null
