@@ -495,7 +495,10 @@ export type CloneProgress = {
   stage: CloneProgressStage
   /** Through the stage, 0–100; null while git has not said. */
   percent: number | null
-  /** git's transfer detail beside the count, e.g. `12.30 MiB | 5.00 MiB/s`. */
+  /**
+   * git's transfer detail beside the count, e.g. `12.30 MiB | 5.00 MiB/s`; once
+   * git has gone quiet, `12.30 MiB | Stalled` (or `Stalled` alone) until it speaks.
+   */
   detail: string | null
 }
 

@@ -7,11 +7,12 @@
 // fetches the ticket from Apple's CloudKit service, and on 2026-10-20 three
 // release runs in a row failed there (`Failed to staple your application with
 // code: 68`, NSURLErrorDomain -1005 "The network connection was lost") after
-// notarization had passed. @electron/notarize asks promise-retry to retry the
-// staple, but never calls its retry callback, so the first failure ends the
-// build and the next run has to upload and wait for notarization all over
-// again. Here a staple that fails on the network is retried after 30s, 60s and
-// 120s, and notarization is never repeated.
+// notarization had passed. Since 3.1.2, @electron/notarize retries the staple
+// itself, but only three times, about 1s, 2s and 4s apart, which is too short
+// for an outage like that one; when its last try fails, the build ends and the
+// next run has to upload and wait for notarization all over again. Here a
+// staple that still fails on the network is retried after 30s, 60s and 120s,
+// and notarization is never repeated.
 //
 // The hook runs between signing and the targets, so the DMG and the updater
 // ZIP are both made from the stapled app. The DMG itself is neither notarized
@@ -106,9 +107,10 @@ export async function runStapler(
 
 /**
  * Notarizes once, then staples and validates with retries. `notarize` is
- * @electron/notarize's: it uploads, waits for Apple's verdict, and staples
- * once. A staple that fails there on the network counts as the first attempt,
- * and the rest are made here without submitting the app again.
+ * @electron/notarize's: it uploads, waits for Apple's verdict, and staples,
+ * trying the staple up to four times in a few seconds. If its staples fail on
+ * the network, they count together as this hook's first attempt, and the rest
+ * are made here without submitting the app again.
  */
 export async function notarizeAndStaple(appPath, credentials, { notarize, log = console.log, ...stapler } = {}) {
   try {
@@ -116,7 +118,10 @@ export async function notarizeAndStaple(appPath, credentials, { notarize, log = 
   } catch (error) {
     const failed = STAPLE_FAILURE.exec(error instanceof Error ? error.message : String(error))
     if (!failed || !isNetworkFailure({ code: Number(failed[1]), output: failed[2] })) throw error
-    log(`Notarized, but stapling lost its connection to Apple (code ${failed[1]}); retrying the staple alone.`)
+    log(
+      `Notarized, but @electron/notarize's own staple attempts lost their connection to Apple (code ${failed[1]}); ` +
+        'retrying the staple alone. That counts as attempt 1 below.',
+    )
     await runStapler('staple', appPath, { log, ...stapler, attempted: 1 })
   }
   await runStapler('validate', appPath, { log, ...stapler })

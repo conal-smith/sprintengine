@@ -159,3 +159,36 @@ test('mid-token replacement consumes the entire token and rejects invalid carets
   expect(detectComposerTrigger('@file', 8)).toBeNull()
   expect(detectComposerTrigger('@file', 1.5)).toBeNull()
 })
+
+// A `$` before an amount is a price: picking a skill there would rewrite it,
+// and Enter would pick one rather than send.
+const amountCases: Array<[string, string | null]> = [
+  ['It costs $5|', null],
+  ['budget $9.99|', null],
+  ['only $.99|', null],
+  ['raise $10k|', null],
+  ['raise $10k.|', null],
+  ['$1,000.|', null],
+  ['$2e6|', null],
+  ['is it $5?|', null],
+  ['(about $9.99)|', null],
+  ['($5)|', null],
+  ['$1_000|', null],
+  // The whole token is read, so the caret moved back into a price opens nothing.
+  ['$|5', null],
+  ['pay $9|.99 now', null],
+  // A skill's name may start with a digit; a letter past the amount says it is one.
+  ['$|', ''],
+  ['$deploy|', 'deploy'],
+  ['$1password|', '1password'],
+  ['$2fa|', '2fa'],
+  ['$1|password', '1'],
+  ['$5x|', '5x'],
+]
+test.each(amountCases)('skill trigger at %j', (marked, query) => {
+  const caret = marked.indexOf('|'),
+    text = marked.replace('|', '')
+  const result = detectComposerTrigger(text, caret)
+  if (query === null) expect(result).toBeNull()
+  else expect(result).toMatchObject({ kind: 'skill', query })
+})

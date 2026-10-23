@@ -54,7 +54,7 @@ single class. It has its own entry.
 | Closed | — | Not in the document |
 | Entering | `entering` | Panel offscreen (`translate3d(100%,0,0)`), scrim transparent; one frame later flips to open so the transition runs |
 | Open | `open` | Panel at rest, scrim at full opacity — both over `motion.duration.deliberate` / `motion.ease.standard`, the drawer's sanctioned pace |
-| Closing | `closing` | The same transition reversed; the node leaves the document when the slide ends, with a timeout fallback so a missed event can never wedge the lifecycle |
+| Closing | `closing` | The same transition reversed; the node leaves the document when the slide ends, with a timeout fallback so a missed event can never wedge the lifecycle. The panel keeps the content of its last open render meanwhile, so a consumer that clears its state in the update that closes the drawer does not flash the cleared state on the way out |
 
 Under `prefers-reduced-motion: reduce` the slide and fade are dropped — the
 drawer appears and disappears in place, and closing skips straight to closed.

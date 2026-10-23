@@ -1,6 +1,8 @@
 import { expect, test } from 'vitest'
+import type { ShellNotice } from '../server/shell-bridge/shell-bridge'
 import type { ConversationEvent, ConversationEventType } from '../shared/conversation-runtime'
 import { createAgentAttention } from './agent-attention'
+import { createAgentNotifier } from './agent-notifications'
 import { createConversationAttentionListener } from './conversation-attention'
 
 function harness(platform = 'darwin', focused = false) {
@@ -26,7 +28,19 @@ function harness(platform = 'darwin', focused = false) {
       badges.push(count)
     },
   })
-  const listener = createConversationAttentionListener(attention)
+  const notices: ShellNotice[] = []
+  const notifier = createAgentNotifier({
+    mode: () => 'banner',
+    isAnyWindowFocused: () => focused,
+    chatLabel: () => ({ title: 'Chat' }),
+    show: (notice) => notices.push(notice),
+  })
+  const listener = createConversationAttentionListener({
+    onAgentPhase: (event) => {
+      attention.onAgentPhase(event)
+      notifier.onAgentPhase(event)
+    },
+  })
   let seq = 0
   function send(type: ConversationEventType, payload?: Record<string, unknown>, agentId = 'agent') {
     listener({
@@ -42,7 +56,7 @@ function harness(platform = 'darwin', focused = false) {
       createdAt: seq,
     } satisfies ConversationEvent)
   }
-  return { attention, listener, send, bounces, badges, flashes, raised }
+  return { attention, listener, send, bounces, badges, flashes, raised, notices }
 }
 
 test('background conversation completion uses passive OS attention without raising a window', () => {
@@ -160,12 +174,12 @@ test('a conversation is remembered only while an approval it raised is outstandi
   h.send('turn_failed', { reason: 'interrupted' }, 'settled')
   h.send('turn_completed')
   expect(h.listener.trackedSessions()).toBe(0)
-  expect(h.bounces).toEqual([1, 1, 1])
+  expect(h.bounces).toEqual([1, 1])
   // A card raised again after that is news again.
   h.send('approval_requested', { requestId: 'b' }, 'settled')
-  expect(h.bounces).toEqual([1, 1, 1, 1])
+  expect(h.bounces).toEqual([1, 1, 1])
   h.send('approval_requested', { requestId: 'c' }, 'settled')
-  expect(h.bounces).toEqual([1, 1, 1, 1])
+  expect(h.bounces).toEqual([1, 1, 1])
 })
 
 test("a background agent's step after its turn ended neither clears the turn's notice nor reads as working", () => {
@@ -179,4 +193,32 @@ test("a background agent's step after its turn ended neither clears the turn's n
   // The model's own work after that is new work, and clears it.
   h.send('turn_started', { turnId: 'turn-2' })
   expect(h.attention.pendingCount()).toBe(0)
+})
+
+test('a turn the person stopped goes idle without a bounce or a banner', () => {
+  // Claude and the runtime fail it with the reason, an ACP agent with the bare
+  // word as its message, and Codex completes it marked interrupted.
+  for (const [type, payload] of [
+    ['turn_failed', { reason: 'interrupted' }],
+    ['turn_failed', { message: 'interrupted' }],
+    ['turn_completed', { interrupted: true }],
+  ] as const) {
+    const h = harness()
+    h.send('user_message')
+    h.send('turn_started')
+    h.send(type, payload)
+    expect(h.bounces).toEqual([])
+    expect(h.badges).toEqual([])
+    expect(h.notices).toEqual([])
+  }
+})
+
+test('a turn that finished or failed on its own still bounces and says which', () => {
+  const h = harness()
+  h.send('turn_completed', { interrupted: false })
+  expect(h.bounces).toEqual([1])
+  expect(h.notices.map((notice) => notice.body)).toEqual(['Finished.'])
+  h.send('turn_failed', { reason: 'provider_error', message: 'Rate limited' }, 'another-agent')
+  expect(h.bounces).toEqual([1, 1])
+  expect(h.notices.map((notice) => notice.body)).toEqual(['Finished.', 'Stopped with an error.'])
 })
