@@ -4649,13 +4649,13 @@ body:has([data-selection-pane]:focus-within)
   font-variant-numeric: tabular-nums;
 }
 
-/* A block quote's rule is the line's own left edge, so it runs unbroken down
- * the quote whether its markers are hidden or shown. `.cm-line` is in the
- * selector to outrank the editor theme's line padding, which the editor
- * injects after this sheet. */
+/* A block quote's rule is the line's own starting edge — the right one in a
+ * right-to-left quote — so it runs unbroken down the quote whether its markers
+ * are hidden or shown. `.cm-line` is in the selector to outrank the editor
+ * theme's line padding, which the editor injects after this sheet. */
 .composer-markdown .cm-line.cm-md-quote {
-  border-left: 2px solid var(--border-default);
-  padding-left: 0.75em;
+  border-inline-start: 2px solid var(--border-default);
+  padding-inline-start: 0.75em;
   color: var(--text-muted);
 }
 

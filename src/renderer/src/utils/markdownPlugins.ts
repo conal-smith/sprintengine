@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { remarkHeadingIds } from './markdownHeadingIds'
 import { remarkMathDelimiters } from './markdownMath'
+import { remarkTextDirection } from './markdownTextDirection'
 import { remarkUserText } from './markdownUserText'
 import { showCodexFollowupLabels } from './markdownCodexFollowups'
 import { repairMarkdownFileLinks } from './markdownFileLinks'
@@ -57,15 +58,20 @@ function markAlert(quote: MarkdownSyntaxNode): void {
   quote.data = { ...quote.data, hProperties: { ...quote.data?.hProperties, dataAlert: match[1].toLowerCase() } }
 }
 
-export const MARKDOWN_PLUGINS = [remarkGfm, remarkGithubAlerts, remarkHeadingIds, remarkWindowsPaths]
-export const USER_TEXT_PLUGINS = [...MARKDOWN_PLUGINS, remarkUserText]
+const SYNTAX_PLUGINS = [remarkGfm, remarkGithubAlerts, remarkHeadingIds, remarkWindowsPaths]
+// Each list ends on the direction pass (`markdownTextDirection.ts`), which
+// reads the words as the passes before it left them: HTML a person typed is
+// text by then, and a formula is a formula.
+export const MARKDOWN_PLUGINS = [...SYNTAX_PLUGINS, remarkTextDirection]
+export const USER_TEXT_PLUGINS = [...SYNTAX_PLUGINS, remarkUserText, remarkTextDirection]
 // remark-math builds the formulas' nodes; which delimiters open one is ours
 // (`markdownMath.tsx`), and a single dollar never does: in a reply it is a
 // price or a shell variable far more often than a formula.
 export const MATH_PLUGINS: NonNullable<Options['remarkPlugins']> = [
-  ...MARKDOWN_PLUGINS,
+  ...SYNTAX_PLUGINS,
   remarkMath,
   remarkMathDelimiters,
+  remarkTextDirection,
 ]
 
 /**

@@ -8,6 +8,7 @@ import {
 } from '@codemirror/lang-markdown'
 import { Annotation, Compartment, EditorSelection, EditorState, Prec, Transaction } from '@codemirror/state'
 import { EditorView, keymap, placeholder as placeholderExtension } from '@codemirror/view'
+import { composerTextDirection } from './composerTextDirection'
 import { markdownLivePreview } from './markdownLivePreview'
 
 /**
@@ -269,6 +270,7 @@ export const ComposerField = forwardRef<ComposerFieldHandle, Props>(function Com
           markdown({ base: markdownLanguage, addKeymap: false, completeHTMLTags: false }),
           EditorView.lineWrapping,
           markdownLivePreview,
+          composerTextDirection,
           composerTheme,
           EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on' }),
           placeholder.of(placeholderExtension(initial.placeholder ?? '')),

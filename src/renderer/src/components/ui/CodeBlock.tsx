@@ -195,7 +195,9 @@ export function CodeBlock(props: CodeBlockProps) {
   const onPaste = props.onPasteInTerminal
 
   return (
+    // Code reads left to right, in a right-to-left list item too.
     <section
+      dir="ltr"
       className={`ds-code-block${wrap ? ' ds-code-block--wrap' : ''}`}
       aria-label={title.filename ? `${title.languageName} code, ${title.filename}` : `${title.languageName} code`}
       data-code-block=""

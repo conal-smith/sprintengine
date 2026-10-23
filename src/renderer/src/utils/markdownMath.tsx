@@ -50,19 +50,28 @@ function mathError(message: string): string {
  * Inline math. The source shows as inline code while the typesetter loads,
  * and stays that way, with the reason on hover, when the formula does not
  * parse. The TeX rides on the element so a copied selection gets it back.
+ * `dir` isolates it left to right inside a right-to-left line.
  */
-export function InlineMath({ tex: written, codeClassName }: { tex: string; codeClassName: string }): ReactNode {
+export function InlineMath({
+  tex: written,
+  codeClassName,
+  dir,
+}: {
+  tex: string
+  codeClassName: string
+  dir?: string
+}): ReactNode {
   const tex = written.trim()
   const engine = useTypesetter(true)
   const result = engine ? typesetMath(engine, tex, false) : null
   if (!result || 'error' in result) {
     return (
-      <code className={codeClassName} title={result ? mathError(result.error) : undefined}>
+      <code dir={dir} className={codeClassName} title={result ? mathError(result.error) : undefined}>
         {tex}
       </code>
     )
   }
-  return <span data-math="inline" data-tex={tex} dangerouslySetInnerHTML={{ __html: result.html }} />
+  return <span data-math="inline" data-tex={tex} dir={dir} dangerouslySetInnerHTML={{ __html: result.html }} />
 }
 
 /**
@@ -88,8 +97,15 @@ export function DisplayMath({
   if (streaming || !engine) return fallback()
   const result = typesetMath(engine, tex, true)
   if ('error' in result) return fallback(mathError(result.error))
+  // A formula is laid out left to right, in a right-to-left list item too.
   return (
-    <div data-math="display" data-tex={tex} className={className} dangerouslySetInnerHTML={{ __html: result.html }} />
+    <div
+      data-math="display"
+      data-tex={tex}
+      dir="ltr"
+      className={className}
+      dangerouslySetInnerHTML={{ __html: result.html }}
+    />
   )
 }
 

@@ -154,8 +154,8 @@ type MarkdownScale = {
 // strongest line in it. The header is a label row — it holds its line rather
 // than wrapping a column title under itself.
 const TABLE_HEAD_CLASS =
-  'whitespace-nowrap border-b border-[color:var(--border-default)] text-left align-bottom font-semibold'
-const TABLE_CELL_CLASS = 'border-b border-[color:var(--border-subtle)] text-left align-top'
+  'whitespace-nowrap border-b border-[color:var(--border-default)] text-start align-bottom font-semibold'
+const TABLE_CELL_CLASS = 'border-b border-[color:var(--border-subtle)] text-start align-top'
 
 // The conversation scales' ink: two custom properties set on the markdown root
 // (index.css, `.markdown-rendered`), so a muted block and a blockquote move all
@@ -205,7 +205,7 @@ function chatScale(steps: {
     p: `${body} ${block}`,
     // Markers hang in the gutter, so wrapped lines align with the text and not
     // under the bullet; item rhythm and nested lists are index.css's.
-    list: `${body} ${block} pl-5`,
+    list: `${body} ${block} ps-5`,
     pre: `${block} overflow-x-auto rounded-md border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] p-3 text-meta leading-[1.6] text-[color:var(--text-default)]`,
     // A neutral pill in strong ink: an identifier is one of the things a reader
     // scans a reply for, so it stands out by contrast, not by a status hue. The
@@ -216,7 +216,7 @@ function chatScale(steps: {
     em: 'italic',
     // A quote is someone else's words, so it steps its whole ink down —
     // `strong` inside it included — and the rule, not an indent, marks it.
-    blockquote: `${block} border-l-2 border-[color:var(--border-default)] pl-3 [--markdown-ink:var(--text-muted)] [--markdown-ink-strong:var(--text-default)] ${CHAT_INK}`,
+    blockquote: `${block} border-s-2 border-[color:var(--border-default)] ps-3 [--markdown-ink:var(--text-muted)] [--markdown-ink-strong:var(--text-default)] ${CHAT_INK}`,
     alert: `${block} ${steps.text}`,
     hr: `my-4 border-0 border-t border-[color:var(--border-subtle)] first:mt-0 last:mb-0`,
     tableBlock: `${steps.gap} last:mb-0`,
@@ -226,11 +226,11 @@ function chatScale(steps: {
     // cell wraps only past a cap — a readable line, and never most of the pane,
     // so a two-column table of prose still fits a narrow pane beside its label
     // column — and a table wider than that scrolls (see MarkdownTable).
-    table: `w-max min-w-full border-collapse text-left ${steps.table} tabular-nums leading-normal ${CHAT_INK}`,
+    table: `w-max min-w-full border-collapse text-start ${steps.table} tabular-nums leading-normal ${CHAT_INK}`,
     // The outer columns sit flush with the prose around the table, so its text
     // starts on the same edge as the paragraph above it.
-    th: `${TABLE_HEAD_CLASS} ${steps.cell} first:pl-0 last:pr-0 ${CHAT_INK_STRONG}`,
-    td: `${TABLE_CELL_CLASS} ${steps.cell} first:pl-0 last:pr-0 max-w-[min(20rem,66cqw)]`,
+    th: `${TABLE_HEAD_CLASS} ${steps.cell} first:ps-0 last:pe-0 ${CHAT_INK_STRONG}`,
+    td: `${TABLE_CELL_CLASS} ${steps.cell} first:ps-0 last:pe-0 max-w-[min(20rem,66cqw)]`,
   }
 }
 
@@ -243,7 +243,7 @@ const MARKDOWN_SCALE: Record<MarkdownDensity, MarkdownScale> = {
     h5: 'mt-5 first:mt-0 mb-2 text-base font-semibold leading-snug text-[color:var(--text-strong)]',
     h6: 'mt-5 first:mt-0 mb-2 text-sm font-semibold leading-snug tracking-tight text-[color:var(--text-strong)]',
     p: `${baseTextClass} mb-4`,
-    list: `mb-4 ml-6 space-y-2 ${baseTextClass}`,
+    list: `mb-4 ms-6 space-y-2 ${baseTextClass}`,
     pre: 'my-4 overflow-x-auto rounded-lg border border-[color:var(--border-default)] bg-[color:var(--terminal-bg)] p-4 text-body leading-6 text-[color:var(--terminal-fg)]',
     // A long path wraps instead of pushing the line box wider than the column;
     // `break-words` keeps a short token whole and moves it down instead. Each
@@ -252,12 +252,12 @@ const MARKDOWN_SCALE: Record<MarkdownDensity, MarkdownScale> = {
     code: 'rounded-xs border border-[color:var(--border-default)] bg-[color:var(--bg-surface-raised)] px-1.5 py-0.5 text-[color:var(--tone-warn)] break-words box-decoration-clone',
     strong: 'font-semibold text-[color:var(--text-strong)]',
     em: 'italic',
-    blockquote: 'my-4 border-l-2 border-[color:var(--border-strong)] py-0.5 pl-4 text-[color:var(--text-muted)]',
+    blockquote: 'my-4 border-s-2 border-[color:var(--border-strong)] py-0.5 ps-4 text-[color:var(--text-muted)]',
     alert: 'my-4 text-heading',
     hr: 'my-6 border-0 border-t border-[color:var(--border-default)]',
     tableBlock: 'my-4',
     math: `my-4 ${MATH_BLOCK_CLASS}`,
-    table: 'w-full border-collapse text-left text-body tabular-nums text-[color:var(--text-default)]',
+    table: 'w-full border-collapse text-start text-body tabular-nums text-[color:var(--text-default)]',
     th: `${TABLE_HEAD_CLASS} px-3 py-2 text-[color:var(--text-strong)]`,
     td: `${TABLE_CELL_CLASS} px-3 py-2`,
   },
@@ -272,19 +272,19 @@ const MARKDOWN_SCALE: Record<MarkdownDensity, MarkdownScale> = {
     // from ink, not from a transform.
     h6: 'mt-5 first:mt-0 mb-1.5 text-micro font-semibold leading-snug tracking-normal text-[color:var(--text-muted)]',
     p: `${compactTextClass} mb-3`,
-    list: `mb-3 ml-[18px] space-y-1.5 ${compactTextClass}`,
+    list: `mb-3 ms-[18px] space-y-1.5 ${compactTextClass}`,
     pre: 'my-4 overflow-x-auto rounded-md border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] p-3 text-micro leading-[1.7] text-[color:var(--text-default)]',
     // Inline code sits inside running text, so it matches that text's size;
     // inside a fence it takes the fence's, which is already set on the <pre>.
     code: 'rounded-[3px] bg-[color:var(--bg-active)] px-[0.34em] py-[0.1em] text-[0.92em] text-[color:var(--text-default)] break-words box-decoration-clone [pre_&]:text-[1em]',
     strong: 'font-semibold text-[color:var(--text-strong)]',
     em: 'italic',
-    blockquote: 'my-3 border-l border-[color:var(--border-strong)] py-0.5 pl-4 text-[color:var(--text-muted)]',
+    blockquote: 'my-3 border-s border-[color:var(--border-strong)] py-0.5 ps-4 text-[color:var(--text-muted)]',
     alert: 'my-3 text-meta',
     hr: 'my-[22px] border-0 border-t border-[color:var(--border-subtle)]',
     tableBlock: 'my-3',
     math: `my-3 ${MATH_BLOCK_CLASS}`,
-    table: 'w-full border-collapse text-left text-micro tabular-nums text-[color:var(--text-default)]',
+    table: 'w-full border-collapse text-start text-micro tabular-nums text-[color:var(--text-default)]',
     th: `${TABLE_HEAD_CLASS} px-2 py-1.5 text-[color:var(--text-strong)]`,
     td: `${TABLE_CELL_CLASS} px-2 py-1`,
   },
@@ -482,11 +482,14 @@ function useOverflowEdges(ref: React.RefObject<HTMLDivElement | null>): void {
  */
 function MarkdownTable({
   node,
+  dir,
   blockClassName,
   tableClassName,
   children,
 }: {
   node: Element | undefined
+  /** The table's own reading direction: a right-to-left table runs its columns from the right. */
+  dir: string | undefined
   blockClassName: string
   tableClassName: string
   children: React.ReactNode
@@ -496,7 +499,9 @@ function MarkdownTable({
   return (
     <div className={blockClassName}>
       <div ref={scroller} className="markdown-table-scroll @container overflow-x-auto">
-        <table className={tableClassName}>{children}</table>
+        <table dir={dir} className={tableClassName}>
+          {children}
+        </table>
       </div>
       {node ? (
         <div data-copy-exclude="" className="mt-0.5 flex items-center justify-end gap-0.5">
@@ -596,38 +601,64 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
   }
 
   const components: Components = {
-    h1: ({ node, children, className, id }: MarkdownComponentProps<'h1'>) => (
-      <h1 id={documentId(id)} className={joinClasses(className, scale.h1, changedBlockClass(node, lineChanges))}>
+    h1: ({ node, children, className, id, dir }: MarkdownComponentProps<'h1'>) => (
+      <h1
+        id={documentId(id)}
+        dir={dir}
+        className={joinClasses(className, scale.h1, changedBlockClass(node, lineChanges))}
+      >
         {children}
       </h1>
     ),
-    h2: ({ node, children, className, id }: MarkdownComponentProps<'h2'>) => (
-      <h2 id={documentId(id)} className={joinClasses(className, scale.h2, changedBlockClass(node, lineChanges))}>
+    h2: ({ node, children, className, id, dir }: MarkdownComponentProps<'h2'>) => (
+      <h2
+        id={documentId(id)}
+        dir={dir}
+        className={joinClasses(className, scale.h2, changedBlockClass(node, lineChanges))}
+      >
         {children}
       </h2>
     ),
-    h3: ({ node, children, className, id }: MarkdownComponentProps<'h3'>) => (
-      <h3 id={documentId(id)} className={joinClasses(className, scale.h3, changedBlockClass(node, lineChanges))}>
+    h3: ({ node, children, className, id, dir }: MarkdownComponentProps<'h3'>) => (
+      <h3
+        id={documentId(id)}
+        dir={dir}
+        className={joinClasses(className, scale.h3, changedBlockClass(node, lineChanges))}
+      >
         {children}
       </h3>
     ),
-    h4: ({ node, children, className, id }: MarkdownComponentProps<'h4'>) => (
-      <h4 id={documentId(id)} className={joinClasses(className, scale.h4, changedBlockClass(node, lineChanges))}>
+    h4: ({ node, children, className, id, dir }: MarkdownComponentProps<'h4'>) => (
+      <h4
+        id={documentId(id)}
+        dir={dir}
+        className={joinClasses(className, scale.h4, changedBlockClass(node, lineChanges))}
+      >
         {children}
       </h4>
     ),
-    h5: ({ node, children, className, id }: MarkdownComponentProps<'h5'>) => (
-      <h5 id={documentId(id)} className={joinClasses(className, scale.h5, changedBlockClass(node, lineChanges))}>
+    h5: ({ node, children, className, id, dir }: MarkdownComponentProps<'h5'>) => (
+      <h5
+        id={documentId(id)}
+        dir={dir}
+        className={joinClasses(className, scale.h5, changedBlockClass(node, lineChanges))}
+      >
         {children}
       </h5>
     ),
-    h6: ({ node, children, className, id }: MarkdownComponentProps<'h6'>) => (
-      <h6 id={documentId(id)} className={joinClasses(className, scale.h6, changedBlockClass(node, lineChanges))}>
+    h6: ({ node, children, className, id, dir }: MarkdownComponentProps<'h6'>) => (
+      <h6
+        id={documentId(id)}
+        dir={dir}
+        className={joinClasses(className, scale.h6, changedBlockClass(node, lineChanges))}
+      >
         {children}
       </h6>
     ),
-    p: ({ node, children, className }: MarkdownComponentProps<'p'>) => (
-      <p className={joinClasses(className, scale.p, changedBlockClass(node, lineChanges))}>{prose(children)}</p>
+    p: ({ node, children, className, dir }: MarkdownComponentProps<'p'>) => (
+      <p dir={dir} className={joinClasses(className, scale.p, changedBlockClass(node, lineChanges))}>
+        {prose(children)}
+      </p>
     ),
     a: ({ children: label, href, className, id }: MarkdownComponentProps<'a'>) => {
       const children = <LinkLabelContext.Provider value>{label}</LinkLabelContext.Provider>
@@ -704,19 +735,27 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
     em: ({ children, className }: MarkdownComponentProps<'em'>) => (
       <em className={joinClasses(className, scale.em)}>{prose(children)}</em>
     ),
-    code: ({ children, className }: MarkdownComponentProps<'code'>) =>
+    // `dir` is set on inline code and math only inside a right-to-left block
+    // (`markdownTextDirection.ts`), where it isolates them left to right.
+    code: ({ children, className, dir }: MarkdownComponentProps<'code'>) =>
       options.math && typeof children === 'string' && className?.split(' ').includes('math-inline') ? (
-        <InlineMath tex={children} codeClassName={scale.code} />
+        <InlineMath tex={children} codeClassName={scale.code} dir={dir} />
       ) : (
-        <code className={joinClasses(className, scale.code, chat && isShortToken(children) && 'whitespace-nowrap')}>
+        <code
+          dir={dir}
+          className={joinClasses(className, scale.code, chat && isShortToken(children) && 'whitespace-nowrap')}
+        >
           <InlineCode>{children}</InlineCode>
         </code>
       ),
     pre: ({ node, children, className }: MarkdownComponentProps<'pre'>) => {
       const Code = options.codeBlock
       const codeNode = node?.children.find((child) => child.type === 'element' && child.tagName === 'code')
+      // Code reads left to right, in a right-to-left list item too.
       const plain = (
-        <pre className={joinClasses(className, scale.pre, changedBlockClass(node, lineChanges))}>{children}</pre>
+        <pre dir="ltr" className={joinClasses(className, scale.pre, changedBlockClass(node, lineChanges))}>
+          {children}
+        </pre>
       )
       if (codeNode?.type !== 'element' || (!Code && !options.math)) return plain
       const text = codeNode.children.map((child) => (child.type === 'text' ? child.value : '')).join('')
@@ -752,11 +791,14 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
       }
       return Code ? block() : plain
     },
-    blockquote: ({ node, children, className }: MarkdownComponentProps<'blockquote'>) => {
+    blockquote: ({ node, children, className, dir }: MarkdownComponentProps<'blockquote'>) => {
       const kind = alertKind(node)
       if (!kind) {
         return (
-          <blockquote className={joinClasses(className, scale.blockquote, changedBlockClass(node, lineChanges))}>
+          <blockquote
+            dir={dir}
+            className={joinClasses(className, scale.blockquote, changedBlockClass(node, lineChanges))}
+          >
             {children}
           </blockquote>
         )
@@ -769,6 +811,7 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
         <div
           role="note"
           data-alert={kind}
+          dir={dir}
           className={joinClasses(
             className,
             scale.alert,
@@ -785,16 +828,17 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
         </div>
       )
     },
-    ul: ({ node, children, className }: MarkdownComponentProps<'ul'>) => (
-      <ul className={joinClasses(className, scale.list, 'list-disc', changedBlockClass(node, lineChanges))}>
+    ul: ({ node, children, className, dir }: MarkdownComponentProps<'ul'>) => (
+      <ul dir={dir} className={joinClasses(className, scale.list, 'list-disc', changedBlockClass(node, lineChanges))}>
         {children}
       </ul>
     ),
-    ol: ({ node, children, className, start, reversed, type }: MarkdownComponentProps<'ol'>) => (
+    ol: ({ node, children, className, start, reversed, type, dir }: MarkdownComponentProps<'ol'>) => (
       <ol
         start={start}
         reversed={reversed}
         type={type}
+        dir={dir}
         style={chat ? orderedGutter(node, start) : undefined}
         className={joinClasses(className, scale.list, 'list-decimal', changedBlockClass(node, lineChanges))}
       >
@@ -812,14 +856,15 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
     // which would read as "unavailable" for a box that is neither.
     input: ({ className, checked, type }: MarkdownComponentProps<'input'>) =>
       type === 'checkbox' ? (
-        <Checkbox readOnly checked={checked === true} className={joinClasses(className, 'mr-2')} />
+        <Checkbox readOnly checked={checked === true} className={joinClasses(className, 'me-2')} />
       ) : null,
     img: ({ src, alt, className }: MarkdownComponentProps<'img'>) => (
       <MarkdownImage src={typeof src === 'string' ? src : ''} alt={alt ?? ''} className={className} />
     ),
-    table: ({ node, children, className }: MarkdownComponentProps<'table'>) => (
+    table: ({ node, children, className, dir }: MarkdownComponentProps<'table'>) => (
       <MarkdownTable
         node={node}
+        dir={dir}
         blockClassName={joinClasses(scale.tableBlock, changedBlockClass(node, lineChanges))}
         tableClassName={joinClasses(className, scale.table)}
       >
