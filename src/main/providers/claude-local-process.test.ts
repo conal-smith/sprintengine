@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,10 @@ import { spawnClaudeLocalProcess } from './claude-local-process'
 
 let scratch: string | null = null
 const groups: number[] = []
+const servers: ChildProcess[] = []
 afterEach(async () => {
+  // A stand-in server left running would hold the test run open.
+  for (const server of servers.splice(0)) server.kill('SIGKILL')
   for (const group of groups.splice(0)) {
     try {
       process.kill(-group, 'SIGKILL')
@@ -47,11 +50,12 @@ const env = { PATH: process.env.PATH ?? '/usr/bin:/bin' }
 
 // A stand-in CLI whose MCP server wrapper started a server of its own, which
 // the CLI's own shutdown would not reach. It writes its own pid, that
-// server's, and whether a descriptor beyond stderr reached it.
+// server's, and whether a descriptor beyond stderr reached it. `true`, not
+// `:`: a redirection that fails on a special builtin ends dash, Linux's sh.
 function standInCli(dir: string): string[] {
   const script = [
     `echo $$ > '${join(dir, 'cli.pid')}'`,
-    `if { : >&3; } 2>/dev/null; then echo open; else echo closed; fi > '${join(dir, 'fd3')}'`,
+    `if { true >&3; } 2>/dev/null; then echo open; else echo closed; fi > '${join(dir, 'fd3')}'`,
     `sleep 300 & echo $! > '${join(dir, 'grandchild.pid')}'`,
     'exec sleep 300',
   ].join('\n')
@@ -104,6 +108,7 @@ test.skipIf(process.platform === 'win32')(
       logLevel: 'silent',
     })
     const parent = spawn(process.execPath, [server], { stdio: ['ignore', 'pipe', 'inherit'] })
+    servers.push(parent)
     const cliPid = await new Promise<number>((resolve) => parent.stdout.once('data', (data) => resolve(Number(data))))
     groups.push(cliPid)
     const grandchild = await readNumber(join(scratch, 'grandchild.pid'))
