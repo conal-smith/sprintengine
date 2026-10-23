@@ -380,6 +380,11 @@ export function withGitHost<T>(host: GitHost | null, work: () => Promise<T>): Pr
   return host ? gitHostScope.run(host, work) : work()
 }
 
+/** Whether git for `cwd` runs inside a WSL distribution rather than on this machine. */
+export function gitRunsInWsl(cwd: string): boolean {
+  return (gitHostScope.getStore() ?? gitHostResolver?.(cwd) ?? null)?.kind === 'wsl'
+}
+
 /**
  * The variables `gitEnv` adds for git's own sake, plus the caller's, without
  * this process's whole environment: a git in WSL gets its environment from

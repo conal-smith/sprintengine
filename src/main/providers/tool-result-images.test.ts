@@ -8,6 +8,7 @@ import {
   MAX_TOOL_RESULT_IMAGES,
   saveToolResultImagesUnder,
   toolImageFolder,
+  toolImagesNotShown,
   toolResultImages,
 } from './tool-result-images'
 import { ConversationAttachmentStore } from '../conversation-attachment-store'
@@ -46,6 +47,29 @@ test('a step keeps at most eight pictures, and no more bytes than the bound, in 
   const big = 'A'.repeat(Math.ceil(((MAX_TOOL_RESULT_IMAGE_BYTES / 3) * 4) / 3) + 8)
   const large = Array.from({ length: 4 }, () => ({ type: 'image', data: big, mimeType: 'image/webp' }))
   expect(toolResultImages(large)).toHaveLength(2)
+})
+
+test("a step's output says how many of its pictures are past the eight kept", () => {
+  const shots = (count: number) =>
+    Array.from({ length: count }, () => ({ type: 'image', data: PNG, mimeType: 'image/png' }))
+  const note = (content: unknown[]) => toolImagesNotShown(content, toolResultImages(content).length)
+  expect(toolResultImages(shots(10))).toHaveLength(8)
+  expect(note(shots(10))).toBe('[2 more images not shown]')
+  expect(note(shots(9))).toBe('[1 more image not shown]')
+  expect(note(shots(8))).toBe('')
+  expect(note([{ type: 'text', text: 'Captured.' }, ...shots(1)])).toBe('')
+})
+
+test('a picture past the byte bound or in a format not kept is counted, and a step that keeps none says nothing', () => {
+  const big = 'A'.repeat(Math.ceil(((MAX_TOOL_RESULT_IMAGE_BYTES / 3) * 4) / 3) + 8)
+  const content = [
+    { type: 'image', data: PNG, mimeType: 'image/svg+xml' },
+    ...Array.from({ length: 3 }, () => ({ type: 'image', data: big, mimeType: 'image/webp' })),
+  ]
+  expect(toolResultImages(content)).toHaveLength(2)
+  expect(toolImagesNotShown(content, 2)).toBe('[2 more images not shown]')
+  expect(toolImagesNotShown([{ type: 'image', data: PNG, mimeType: 'image/svg+xml' }], 0)).toBe('')
+  expect(toolImagesNotShown('text', 0)).toBe('')
 })
 
 const dirs: string[] = []
