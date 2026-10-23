@@ -147,3 +147,28 @@ test("OpenCode's todowrite list, priorities and all, is read like any other, and
     total: 3,
   })
 })
+
+test('a cancelled step is not work left to do, so a list whose other steps are done finishes', () => {
+  const todos = [
+    { content: 'Write the fix', status: 'completed' },
+    { content: 'Try another approach', status: 'cancelled' },
+    { content: 'Add a test', status: 'completed' },
+  ]
+  expect(readTodoSteps({ todos })).toEqual([
+    { label: 'Write the fix', status: 'completed' },
+    { label: 'Add a test', status: 'completed' },
+  ])
+  expect(deriveTodoProgress([user('u1'), assistant('t1', 'complete'), todoWrite('a', 't1', todos)], false)).toBeNull()
+  expect(deriveTodoProgress([user('u1'), assistant('t1'), todoWrite('a', 't1', todos)], true)).toMatchObject({
+    completed: 2,
+    total: 2,
+    current: 'Add a test',
+  })
+  // Either spelling, and a list the agent cancelled outright has nothing to show.
+  const dropped = [
+    { content: 'One', status: 'Canceled' },
+    { content: 'Two', status: 'cancelled' },
+  ]
+  expect(readTodoSteps({ todos: dropped })).toEqual([])
+  expect(deriveTodoProgress([user('u1'), assistant('t1', 'complete'), todoWrite('a', 't1', dropped)], false)).toBeNull()
+})
