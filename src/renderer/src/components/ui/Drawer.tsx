@@ -47,6 +47,14 @@ function DrawerRoot({ open, onClose, title, ariaLabel, closeLabel, width = 360, 
   const exitTimerRef = useRef<number | null>(null)
   const enterFrameRef = useRef<number | null>(null)
   const titleId = useId()
+  // What the drawer shows while it slides shut: the children of its last open
+  // render. A consumer clears what it shows in the same update that closes it
+  // (the side question drops its entries with the drawer), and drawing that
+  // live would flash the empty state across the exit. Keyed off `open`, which
+  // changes a render before the lifecycle turns `closing`, and let go once the
+  // exit lands.
+  const [retained, setRetained] = useState<React.ReactNode>(null)
+  if (open && retained !== children) setRetained(children)
 
   useEffect(() => {
     if (open) {
@@ -89,6 +97,7 @@ function DrawerRoot({ open, onClose, title, ariaLabel, closeLabel, width = 360, 
     const reduced = prefersReducedMotion()
     const finish = () => {
       setLifecycle('closed')
+      setRetained(null)
       exitTimerRef.current = null
       const target = restoreFocusRef.current
       restoreFocusRef.current = null
@@ -210,7 +219,7 @@ function DrawerRoot({ open, onClose, title, ariaLabel, closeLabel, width = 360, 
             <CloseIconButton aria-label={closeLabel ?? `Close ${title}`} onClick={onClose} />
           </header>
 
-          {children}
+          {open ? children : retained}
         </div>
       </FocusTrap>
     </div>

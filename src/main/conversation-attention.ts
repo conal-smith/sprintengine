@@ -74,7 +74,10 @@ export function createConversationAttentionListener(attention: Pick<AgentAttenti
         if (event.payload?.steered === true) return
         state.pending.clear()
         phase = 'idle'
-        turnEnd = true
+        // A turn stopped by Stop or Settle ended because the person, or an
+        // agent acting for them, asked it to: nothing to come back for, and
+        // not an error. It still goes idle, so keeping awake lets go.
+        turnEnd = !isInterruptedTurnEnd(event)
         break
       case 'session_closed':
         // A deliberate close clears any stale badge through the existing
@@ -102,4 +105,12 @@ export function createConversationAttentionListener(attention: Pick<AgentAttenti
   }
   /** How many sessions are remembered. Exposed for tests. */
   return Object.assign(listener, { trackedSessions: () => sessions.size })
+}
+
+// How each runtime says a turn was stopped: Codex completes it marked
+// `interrupted`; the others fail it with that reason or, an ACP agent
+// cancelled mid-prompt, the bare word as its message.
+function isInterruptedTurnEnd(event: ConversationEvent): boolean {
+  if (event.type === 'turn_completed') return event.payload?.interrupted === true
+  return event.payload?.reason === 'interrupted' || event.payload?.message === 'interrupted'
 }

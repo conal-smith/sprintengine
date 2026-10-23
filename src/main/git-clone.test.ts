@@ -3,9 +3,16 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, test } from 'vitest'
+import { afterEach, test, vi } from 'vitest'
 
-import { cloneRepository, describeCloneFailure, parseCloneProgressLine, sameRepository } from './git-clone'
+import {
+  cloneRepository,
+  describeCloneFailure,
+  parseCloneProgressLine,
+  sameRepository,
+  stallAwareProgress,
+  stalledCloneDetail,
+} from './git-clone'
 import { validateCloneUrl } from '../shared/git-clone-url'
 
 const scratches: string[] = []
@@ -44,6 +51,41 @@ test('progress lines become a stage, a percent and git’s transfer detail', () 
   assert.equal(parseCloneProgressLine('Updating files:  80% (8/10)')?.stage, 'checkout')
   assert.equal(parseCloneProgressLine("Cloning into 'widget'..."), null)
   assert.equal(parseCloneProgressLine('fatal: repository not found'), null)
+})
+
+test('a clone git has gone quiet on says Stalled in place of its last speed, until git speaks again', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const reports: Array<{ stage: string; percent: number | null; detail: string | null }> = []
+    const progress = stallAwareProgress((step) => reports.push(step), 20_000)
+    progress.report({ stage: 'receiving', percent: 24, detail: '168.80 MiB | 20.69 MiB/s' })
+    vi.advanceTimersByTime(19_000)
+    progress.heard()
+    vi.advanceTimersByTime(19_000)
+    assert.equal(reports.length, 1, 'any output from git keeps the clone from counting as stalled')
+
+    vi.advanceTimersByTime(1_000)
+    assert.deepEqual(reports.at(-1), { stage: 'receiving', percent: 24, detail: '168.80 MiB | Stalled' })
+    vi.advanceTimersByTime(60_000)
+    assert.equal(reports.length, 2, 'a stall is said once')
+
+    progress.report({ stage: 'receiving', percent: 25, detail: '170.00 MiB | 1.00 MiB/s' })
+    assert.deepEqual(reports.at(-1), { stage: 'receiving', percent: 25, detail: '170.00 MiB | 1.00 MiB/s' })
+    vi.advanceTimersByTime(20_000)
+    assert.equal(reports.at(-1)?.detail, '170.00 MiB | Stalled', 'and said again when the next silence lasts')
+
+    progress.report({ stage: 'resolving', percent: 10, detail: null })
+    progress.stop()
+    vi.advanceTimersByTime(60_000)
+    assert.equal(reports.at(-1)?.detail, null, 'nothing is reported once git has exited')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('a stalled detail keeps the amount git had received and drops the speed', () => {
+  assert.equal(stalledCloneDetail('168.80 MiB | 20.69 MiB/s'), '168.80 MiB | Stalled')
+  assert.equal(stalledCloneDetail(null), 'Stalled')
 })
 
 test('a failure says what to do about it, on the host it happened on', () => {

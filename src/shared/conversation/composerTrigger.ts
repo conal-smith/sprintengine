@@ -25,7 +25,8 @@ export type ComposerToken = {
  * a command or a skill. That holds for the whole token, not only what is
  * before the caret: with the caret moved back into `/et|c/hosts` the path is
  * still a path, and a pick would replace all of it. `https://` never gets this
- * far, its `/` following a colon.
+ * far, its `/` following a colon. A `$` before an amount is money in the same
+ * way, read over the whole token too (`isCurrencyAmount`).
  */
 export function composerTokenAt(text: string, caret: number, markers: string): ComposerToken | null {
   if (!markers || !Number.isInteger(caret) || caret < 0 || caret > text.length) return null
@@ -38,7 +39,19 @@ export function composerTokenAt(text: string, caret: number, markers: string): C
   const suffix = text.slice(caret).search(/\s/u)
   const end = suffix < 0 ? text.length : caret + suffix
   if (marker === '/' && text.slice(start + 1, end).includes('/')) return null
+  if (marker === '$' && isCurrencyAmount(text.slice(start + 1, end))) return null
   return { marker, query, range: { start, end } }
+}
+
+/**
+ * `$5`, `$9.99`, `$.99`, `$10k`, `$1,000` and `$2e6` are prices, not skills:
+ * digits and their separators, at most one magnitude suffix, and the
+ * punctuation prose puts after an amount (`$10k.`, `(about $5)`). A skill's
+ * name may start with a digit, so `$1password` and `$2fa` still open the picker
+ * once a letter other than a suffix follows, and a bare `$` is no amount.
+ */
+function isCurrencyAmount(word: string): boolean {
+  return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/u.test(word)
 }
 
 /**

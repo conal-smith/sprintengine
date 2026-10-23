@@ -20,8 +20,12 @@ export type TodoProgress = {
   live: boolean
 }
 
-function readStatus(value: unknown): TodoStepStatus {
+// Null for a step the agent dropped. OpenCode marks one `cancelled` and keeps it
+// in the list; it is not work left to do, so it is left out rather than read as
+// pending, which would keep a list whose other steps are done from finishing.
+function readStatus(value: unknown): TodoStepStatus | null {
   const status = typeof value === 'string' ? value.toLowerCase().replace(/[\s-]/gu, '_') : ''
+  if (status === 'cancelled' || status === 'canceled') return null
   if (status === 'completed' || status === 'done') return 'completed'
   if (status === 'in_progress' || status === 'inprogress' || status === 'active') return 'in_progress'
   return 'pending'
@@ -35,8 +39,9 @@ function readText(record: Record<string, unknown>, ...keys: string[]): string {
   return ''
 }
 
-// The list a todo write carries. A provider that reports its plan as free text
-// rather than as items has no steps to count, so it yields none.
+// The list a todo write carries, less the steps the agent cancelled. A provider
+// that reports its plan as free text rather than as items has no steps to
+// count, so it yields none.
 export function readTodoSteps(input: unknown): (TodoStep & { activeLabel?: string })[] {
   const todos =
     input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>).todos : undefined
@@ -45,9 +50,10 @@ export function readTodoSteps(input: unknown): (TodoStep & { activeLabel?: strin
     if (!value || typeof value !== 'object' || Array.isArray(value)) return []
     const record = value as Record<string, unknown>
     const label = readText(record, 'content', 'description', 'step', 'title')
-    if (!label) return []
+    const status = readStatus(record.status)
+    if (!label || !status) return []
     const activeLabel = readText(record, 'activeForm')
-    return [{ label, status: readStatus(record.status), ...(activeLabel ? { activeLabel } : {}) }]
+    return [{ label, status, ...(activeLabel ? { activeLabel } : {}) }]
   })
 }
 
