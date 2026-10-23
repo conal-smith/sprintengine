@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { hiddenEditPaths, ignoredPathsAtRisk, type IgnoredFilesOptions } from './agent-worktree-keep-checks'
 import type { GitCommandResult } from './git'
 import { toFilesystemPath } from './git-utils'
+import { removeLinkedWorktree, SUBMODULE_REFUSAL } from './worktree-removal'
 
 /**
  * Removing a worktree whose submodules are checked out.
@@ -33,9 +34,6 @@ import { toFilesystemPath } from './git-utils'
  */
 
 type RunGit = (cwd: string, args: string[]) => Promise<GitCommandResult>
-
-/** Git's refusal (its messages are pinned to English, git-run.ts). */
-const SUBMODULE_REFUSAL = 'working trees containing submodules cannot be moved or removed'
 
 /** How many folders of stored submodule repositories are walked before giving up and keeping. */
 const MAX_WALKED_DIRS = 10_000
@@ -68,7 +66,7 @@ export async function removeWorktreeKeepingSubmoduleWork(
   runGit: RunGit,
   options: IgnoredFilesOptions = {},
 ): Promise<WorktreeRemoval> {
-  const plain = await runGit(repoRoot, ['worktree', 'remove', worktreePath])
+  const plain = await removeLinkedWorktree(repoRoot, worktreePath, runGit)
   if (plain.ok) return { outcome: 'removed', forced: false }
   if (!refusedForSubmodules(plain)) return { outcome: 'failed', result: plain }
   const atRisk = await submoduleWorkAtRisk(repoRoot, worktreePath, runGit, options)
@@ -87,7 +85,7 @@ export async function removeWorktreeKeepingSubmoduleWork(
   if (changed > 0) {
     return { outcome: 'kept', why: { kind: 'uncommitted', detail: `${changed} changed path(s)`, paths: changed } }
   }
-  const forced = await runGit(repoRoot, ['worktree', 'remove', '--force', worktreePath])
+  const forced = await removeLinkedWorktree(repoRoot, worktreePath, runGit, { force: true })
   return forced.ok ? { outcome: 'removed', forced: true } : { outcome: 'failed', result: forced }
 }
 
