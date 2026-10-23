@@ -20,6 +20,11 @@
 //   turns up already passed: a job created and finished between two reads is
 //   never seen running. A second run of a check still going is not passed
 //   (the read folds runs that way).
+// - NO CHECK has reported on the head a while after it was first read (a
+//   workflow whose path filters skip a docs-only change, or a repository
+//   with no CI). Told once per head, never as a pass. A head just pushed has
+//   a grace period for its checks to register, and an empty read after
+//   checks were seen on the head is GitHub's read failing, not "none".
 // - The branch fell BEHIND its base, or CONFLICTS with it. Told when it
 //   starts; a clean answer clears it, so it is told again if it comes back.
 //   GitHub answers "unknown" while it recomputes after a push, which changes
@@ -47,6 +52,8 @@ import { STUDIO_NOTICE_PREFIX } from '../../shared/studio-notice'
 export const WATCH_COMMENT_WAKE_LIMIT = 10
 /** Reads in a row that failed (a rate limit aside) before the watch stops. */
 export const WATCH_FAILED_READ_LIMIT = 8
+/** How long a head may be read without any check before the agent is told none reported. */
+export const WATCH_NO_CHECKS_AFTER_MS = 15 * 60_000
 /** Comments and reviews remembered per watch; the oldest are forgotten first. */
 const MAX_REMEMBERED_REMARKS = 400
 /** Items one bullet lists before "and N more". */
@@ -82,6 +89,7 @@ export type PullRequestWatchState = {
 export type PullRequestWatchNews =
   | { kind: 'checks-failed'; checks: Array<{ name: string; outcome: string; url: string | null }> }
   | { kind: 'checks-passed'; count: number; required: boolean }
+  | { kind: 'no-checks'; minutes: number }
   | { kind: 'behind' }
   | { kind: 'conflicting' }
   | {
@@ -105,6 +113,13 @@ export type PullRequestWatchOutcome = {
   stop: PullRequestWatchStop | null
   /** Every check that gates it passed on this read's head. */
   checksGreen: boolean
+  /**
+   * When the head was first read without any check, while the watch waits for
+   * one; null once one showed up, once the agent was told none did, or when no
+   * wait is running. Not part of `state`: the record holds it for this run
+   * only, so the stored watch stays as older builds wrote it.
+   */
+  checksAwaitedSince: number | null
 }
 
 /** A watch just begun. */
@@ -142,14 +157,22 @@ export function resumePullRequestWatch(ended: PullRequestWatchState, now: number
   }
 }
 
-/** One read, against what the agent was last told. */
-export function evaluatePullRequestWatch(previous: PullRequestWatchState, read: SettledRead): PullRequestWatchOutcome {
+/**
+ * One read, against what the agent was last told. `checksAwaitedSince` is the
+ * previous outcome's, or null when none is known (see the outcome's field).
+ */
+export function evaluatePullRequestWatch(
+  previous: PullRequestWatchState,
+  read: SettledRead,
+  checksAwaitedSince: number | null = null,
+): PullRequestWatchOutcome {
   if (read.state === 'merged' || read.state === 'closed') {
     return {
       state: { ...previous, failedReads: 0, primed: true },
       news: [{ kind: read.state }],
       stop: read.state,
       checksGreen: false,
+      checksAwaitedSince: null,
     }
   }
   const news: PullRequestWatchNews[] = []
@@ -183,6 +206,18 @@ export function evaluatePullRequestWatch(previous: PullRequestWatchState, read: 
     if (passedNow && (passedChecks === null || grew))
       news.push({ kind: 'checks-passed', count: gate.checks.length, required: gate.required })
     passedChecks = passedNow ? gateKeys : null
+  }
+
+  // ── No checks at all ──
+  // Only a head never read with a check waits for one, from when it was first
+  // read: a new head, or the first read of a watch that knew none. A wait not
+  // known (a watch read back after a restart) starts only at the next push,
+  // since that head may already have shown checks, or been told it had none.
+  let awaitedSince = headMoved || (!previous.primed && previous.headSha === null) ? read.stateAt : checksAwaitedSince
+  if (read.checks.length > 0) awaitedSince = null
+  else if (awaitedSince !== null && read.stateAt - awaitedSince >= WATCH_NO_CHECKS_AFTER_MS) {
+    news.push({ kind: 'no-checks', minutes: Math.round((read.stateAt - awaitedSince) / 60_000) })
+    awaitedSince = null
   }
 
   // ── The branch against its base ──
@@ -242,6 +277,7 @@ export function evaluatePullRequestWatch(previous: PullRequestWatchState, read: 
     news,
     stop: onlyTalk && commentWakes >= WATCH_COMMENT_WAKE_LIMIT ? 'comment-limit' : null,
     checksGreen: gateOf(read).checks.length > 0 && gateOf(read).checks.every((check) => check.status === 'passed'),
+    checksAwaitedSince: awaitedSince,
   }
 }
 
@@ -456,6 +492,13 @@ function wakeLines(wake: PullRequestWake): WakeLine[] {
         if (ready) break
         lines.push({
           clause: `All ${item.count} ${item.required ? 'required ' : ''}${item.count === 1 ? 'check' : 'checks'} passed${on}.`,
+        })
+        break
+      case 'no-checks':
+        // Said as what was seen, never as a pass: the agent decides what an
+        // unchecked change needs.
+        lines.push({
+          clause: `No checks have reported${on} after ${item.minutes} minutes, so none may be set up to run on this change. That is not a pass: if checks should run, find out why they did not.`,
         })
         break
       case 'behind':

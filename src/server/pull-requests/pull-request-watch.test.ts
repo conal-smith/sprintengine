@@ -12,6 +12,7 @@ import {
   startPullRequestWatch,
   WATCH_COMMENT_WAKE_LIMIT,
   WATCH_FAILED_READ_LIMIT,
+  WATCH_NO_CHECKS_AFTER_MS,
   type PullRequestWake,
   type PullRequestWatchState,
 } from './pull-request-watch'
@@ -217,6 +218,71 @@ test('a fresh watch still learns its head on the first read, and tells what is t
   assert.deepEqual(kinds(first), ['checks-failed'])
 })
 
+/**
+ * Reads the watch every two minutes for an hour, as the poller does, feeding
+ * each outcome's wait into the next read. `at(minute)` is what that read sees.
+ */
+function anHourOfReads(
+  first: PullRequestWatchState,
+  at: (minute: number) => Partial<Read>,
+  awaited: number | null = null,
+): { kinds: string[][]; state: PullRequestWatchState; awaited: number | null } {
+  const seen: string[][] = []
+  let state = first
+  for (let minute = 0; minute <= 60; minute += 2) {
+    const outcome = evaluatePullRequestWatch(
+      state,
+      read({ stateAt: STARTED + minute * 60_000, ...at(minute) }),
+      awaited,
+    )
+    seen.push(kinds(outcome))
+    state = outcome.state
+    awaited = outcome.checksAwaitedSince
+  }
+  return { kinds: seen, state, awaited }
+}
+
+// regression: a head no check runs on never woke the watch
+test('a head no check reports on is told once, after the grace period, and never as a pass', () => {
+  const quiet = anHourOfReads(startPullRequestWatch(STARTED), () => ({ checks: [] }))
+  const told = quiet.kinds.flatMap((news, index) => news.map((kind) => ({ kind, minute: index * 2 })))
+  assert.deepEqual(told, [{ kind: 'no-checks', minute: WATCH_NO_CHECKS_AFTER_MS / 60_000 + 1 }])
+  assert.equal(quiet.awaited, null, 'told, so nothing is waited on any more')
+  // A push starts the wait over: the new head is told about on its own.
+  const pushed = anHourOfReads(quiet.state, () => ({ headSha: NEW_HEAD, checks: [] }))
+  assert.deepEqual(pushed.kinds.flat(), ['no-checks'])
+})
+
+test('a head whose checks register late, or were seen once, is not told it has none', () => {
+  // Pushed, and its checks show up ten minutes later: inside the grace period.
+  const late = anHourOfReads(startPullRequestWatch(STARTED), (minute) =>
+    minute < 10 ? { checks: [] } : { checks: [check('Build', minute < 20 ? 'pending' : 'passed')] },
+  )
+  assert.deepEqual(late.kinds.flat(), ['checks-passed'])
+  // Checks seen pending, then an empty rollup: GitHub's read failing, not "none".
+  const vanished = anHourOfReads(startPullRequestWatch(STARTED), (minute) =>
+    minute === 0 ? { checks: [check('Build', 'pending')] } : { checks: [] },
+  )
+  assert.deepEqual(vanished.kinds.flat(), [])
+})
+
+test('checks that report after the no-checks notice are still told', () => {
+  const quiet = anHourOfReads(startPullRequestWatch(STARTED), () => ({ checks: [] }))
+  const late = anHourOfReads(
+    quiet.state,
+    (minute) => ({ checks: [check('Build', minute < 10 ? 'pending' : 'failed')] }),
+    quiet.awaited,
+  )
+  assert.deepEqual(late.kinds.flat(), ['checks-failed'])
+})
+
+test('a watch whose wait is not known (read back after a restart) stays quiet on its head until a push', () => {
+  const stored = primed({ checks: [] })
+  assert.deepEqual(anHourOfReads(stored, () => ({ checks: [] })).kinds.flat(), [])
+  const pushed = anHourOfReads(stored, () => ({ headSha: NEW_HEAD, checks: [] }))
+  assert.deepEqual(pushed.kinds.flat(), ['no-checks'])
+})
+
 test('behind and conflicting are told when they start, kept through "unknown", and told again if they come back', () => {
   const behind = evaluatePullRequestWatch(primed(), read({ mergeState: 'behind' }))
   assert.deepEqual(kinds(behind), ['behind'])
@@ -406,6 +472,10 @@ test('one piece of news is one plain sentence, saying what to do next', () => {
   assert.equal(
     composePullRequestWake([wake({ news: [{ kind: 'merged' }], stop: 'merged' })]),
     '[SprintEngine Studio] Pull request #234 merged into main. The watch has stopped: tell the person it landed.',
+  )
+  assert.match(
+    composePullRequestWake([wake({ news: [{ kind: 'no-checks', minutes: 16 }] })]),
+    /^\[SprintEngine Studio\] Pull request #234: No checks have reported on a1b2c3d after 16 minutes, so none may be set up to run on this change\. That is not a pass: if checks should run, find out why they did not\./,
   )
 })
 

@@ -272,6 +272,12 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   // request again does not tell it the same checks or conflict a second time.
   // Held for this run only: after a restart a new watch starts from nothing.
   const endedWatches = new Map<string, PullRequestWatchState>()
+  // URL → when its watch first read the head without any check, while it
+  // waits for one (`checksAwaitedSince`). Kept through an ended watch, so one
+  // begun again carries on the wait. Held for this run only, so the stored
+  // watch is unchanged: after a restart the wait starts at the next push, and
+  // a head already told it had no checks is never told again.
+  const checksAwaited = new Map<string, number>()
   /** Conversation → the URLs it opened. */
   const byConversation = new Map<string, Set<string>>()
   /** Workspace → every URL opened in it, by any conversation, and by a capture that named no agent. */
@@ -651,7 +657,9 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     const owner = entry ? ownerOf(entry) : null
     // Unwatched while the read was out: what it found is nobody's news.
     if (!previous || !entry || !owner) return
-    const outcome = evaluatePullRequestWatch(previous, read)
+    const outcome = evaluatePullRequestWatch(previous, read, checksAwaited.get(url) ?? null)
+    if (outcome.checksAwaitedSince === null) checksAwaited.delete(url)
+    else checksAwaited.set(url, outcome.checksAwaitedSince)
     if (outcome.stop) endWatch(url, outcome.state)
     else watches.set(url, outcome.state)
     if (outcome.stop || JSON.stringify(outcome.state) !== JSON.stringify(previous)) persist()

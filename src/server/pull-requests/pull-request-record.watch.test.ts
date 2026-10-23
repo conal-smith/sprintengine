@@ -302,3 +302,62 @@ test('watching a pull request again does not repeat what the ended watch already
   )
   record.dispose()
 })
+
+// regression: a head no check runs on never woke the watch
+test('a head no check reports on is told once, and neither watching again nor a restart tells it again', async () => {
+  // Every read is taken at the record's own clock, as the real read is.
+  let watchReads = 0
+  const reads: PullRequestRecordOptions['reads'] = {
+    readPullRequestState: async () => opened(),
+    readPullRequestWatch: async (_url, deps) => {
+      watchReads += 1
+      return watchRead({ checks: [], stateAt: deps?.now?.() ?? NOW })
+    },
+  }
+  const first = await setUp({ reads })
+  const told = () => first.news.flatMap((event) => event.wake.news.map((item) => item.kind))
+  const anHour = async (flush: () => Promise<void>) => {
+    for (let probes = 0; probes < 30; probes += 1) {
+      first.clock.advance(first.clock.dueIn())
+      first.clock.fireDue()
+      await flush()
+    }
+  }
+  await first.record.watch(CHAT, { url: PR })
+  await first.record.flush()
+  await anHour(() => first.record.flush())
+  assert.deepEqual(told(), ['no-checks'])
+
+  // Watching it again carries on from what the ended watch told.
+  assert.equal(first.record.unwatch(CHAT, PR), true)
+  await first.record.watch(CHAT, { url: PR })
+  await first.record.flush()
+  await anHour(() => first.record.flush())
+  assert.deepEqual(told(), ['no-checks'])
+
+  // The wait is not stored: the watch on file is as an older build wrote it.
+  first.record.dispose()
+  const stored = JSON.parse(await readFile(pullRequestStorePath(first.userDataDir), 'utf8')) as {
+    pullRequests: Array<{ watch?: Record<string, unknown> }>
+  }
+  assert.deepEqual(Object.keys(stored.pullRequests[0].watch ?? {}).sort(), [
+    'behind',
+    'commentWakes',
+    'conflicting',
+    'failedChecks',
+    'failedReads',
+    'headSha',
+    'passedChecks',
+    'primed',
+    'remarks',
+    'startedAt',
+    'view',
+  ])
+  const reopened = createPullRequestRecord({ ...first.options, loadStoredOnStart: true })
+  await reopened.whenLoaded()
+  const readsBefore = watchReads
+  await anHour(() => reopened.flush())
+  assert.ok(watchReads - readsBefore >= 25, `read ${watchReads - readsBefore} times after the restart`)
+  assert.deepEqual(told(), ['no-checks'], 'a restart does not tell the same head again')
+  reopened.dispose()
+})
