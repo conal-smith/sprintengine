@@ -20,6 +20,12 @@ const execFileAsync = promisify(execFile)
 // wedged connection, not a slow one.
 const CLONE_IDLE_TIMEOUT_MS = 5 * 60 * 1000
 
+// Long before that kill, the silence is worth saying: git prints nothing while
+// a transfer waits on a dead connection, and the kernel can take many minutes
+// to give up on one. Without this the progress line keeps showing the last
+// transfer speed as if data were still arriving.
+const CLONE_STALL_MS = 20 * 1000
+
 // The lines of git's output kept for the failure message; progress is
 // redrawn with \r hundreds of times and is never one of them.
 const STDERR_TAIL_LINES = 40
@@ -129,6 +135,47 @@ export function parseCloneProgressLine(line: string): Omit<CloneProgress, 'clone
   const match = text.match(/:\s+(\d+)%\s+\(\d+\/\d+\)(?:,\s*([^,]*?))?(?:,\s*done\.?)?\.?$/)
   const detail = match?.[2]?.trim().replace(/\s*done$/, '') || null
   return { stage, percent: match ? Number(match[1]) : null, detail }
+}
+
+/** git's transfer detail once the transfer has gone quiet: the amount stays, the speed becomes `Stalled`. */
+export function stalledCloneDetail(detail: string | null): string {
+  const amount = detail?.includes('|') ? detail.split('|')[0].trim() : ''
+  return amount ? `${amount} | Stalled` : 'Stalled'
+}
+
+/**
+ * A clone's progress reports, with a stall said out loud: once git has been
+ * silent for `stallMs`, the last report goes out again with its detail made
+ * `stalledCloneDetail`, and the next progress line puts the live one back.
+ * `heard` is called on every chunk git writes, progress or not; `stop` once it
+ * has exited.
+ */
+export function stallAwareProgress(
+  onProgress: CloneDeps['onProgress'],
+  stallMs = CLONE_STALL_MS,
+): { report: (progress: Omit<CloneProgress, 'cloneId'>) => void; heard: () => void; stop: () => void } {
+  let last: Omit<CloneProgress, 'cloneId'> | null = null
+  let stalled = false
+  let timer: NodeJS.Timeout | undefined
+  const arm = () => {
+    clearTimeout(timer)
+    if (!onProgress) return
+    timer = setTimeout(() => {
+      if (!last || stalled) return
+      stalled = true
+      onProgress({ ...last, detail: stalledCloneDetail(last.detail) })
+    }, stallMs)
+  }
+  return {
+    report: (progress) => {
+      last = progress
+      stalled = false
+      onProgress?.(progress)
+      arm()
+    },
+    heard: arm,
+    stop: () => clearTimeout(timer),
+  }
 }
 
 function isProgressLine(line: string): boolean {
@@ -259,7 +306,13 @@ function runGitClone(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  options: { signal?: AbortSignal; onLine: (line: string) => void; target: string; existed: boolean },
+  options: {
+    signal?: AbortSignal
+    onOutput?: () => void
+    onLine: (line: string) => void
+    target: string
+    existed: boolean
+  },
 ): Promise<RunOutcome> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
@@ -289,6 +342,7 @@ function runGitClone(
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       armIdle()
+      options.onOutput?.()
       const pieces = (partial + chunk).split(/[\r\n]/)
       partial = pieces.pop() ?? ''
       for (const line of pieces) {
@@ -398,7 +452,8 @@ export async function cloneRepository(
   if (branch) args.push('--branch', branch)
   args.push('--', source.url, target)
 
-  deps.onProgress?.({ stage: 'connecting', percent: null, detail: null })
+  const progress = stallAwareProgress(deps.onProgress)
+  progress.report({ stage: 'connecting', percent: null, detail: null })
   let outcome: RunOutcome
   try {
     outcome = await withGitExecutable(env, (file) =>
@@ -406,9 +461,10 @@ export async function cloneRepository(
         signal: deps.signal,
         target,
         existed: state === 'empty',
+        onOutput: progress.heard,
         onLine: (line) => {
-          const progress = parseCloneProgressLine(line)
-          if (progress) deps.onProgress?.(progress)
+          const step = parseCloneProgressLine(line)
+          if (step) progress.report(step)
         },
       }),
     )
@@ -419,6 +475,8 @@ export async function cloneRepository(
       reason: 'failed',
       message: code === 'ENOENT' ? 'Git is not installed on this machine.' : String((error as Error)?.message ?? error),
     }
+  } finally {
+    progress.stop()
   }
 
   if (outcome.stopped) {
