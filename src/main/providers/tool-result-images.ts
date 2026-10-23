@@ -15,8 +15,9 @@ import { CONVERSATION_TOOL_IMAGES_DIRECTORY, ConversationAttachmentStore } from 
 //
 // What is kept is bounded the way an attachment is: four formats every
 // preview can draw, a few per step, and a total a step may write. A step past
-// either keeps the first that fit and says nothing of the rest; the model
-// still saw them all, and the output text still says what the tool said.
+// either keeps the first that fit, and its output text ends with a line
+// saying how many more there were (`toolImagesNotShown`); the model still saw
+// them all, and the output text still says what the tool said.
 
 /** The formats a step's picture is kept in, by the media type the tool names. */
 const EXTENSION_OF: Readonly<Record<string, string>> = {
@@ -67,6 +68,19 @@ export function toolResultImages(content: unknown): ToolResultImage[] {
     images.push({ mediaType, base64: data })
   }
   return images
+}
+
+/**
+ * The line a step's output ends with when it returned pictures that are not
+ * shown: past the eight kept, past the byte bound, or in a format that is not
+ * kept. `content` is what `toolResultImages` read, `kept` how many it kept.
+ * Empty when every picture is shown, and when none is: a step then draws no
+ * pictures at all, and its output is what it always was.
+ */
+export function toolImagesNotShown(content: unknown, kept: number): string {
+  if (!Array.isArray(content) || kept === 0) return ''
+  const hidden = content.filter((entry) => record(entry)?.type === 'image').length - kept
+  return hidden > 0 ? `[${hidden} more ${hidden === 1 ? 'image' : 'images'} not shown]` : ''
 }
 
 /**

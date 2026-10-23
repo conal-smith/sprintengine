@@ -12,7 +12,12 @@
 // moves fast, so version churn must not leak past this adapter. The package
 // is ESM-only and the main bundle is CJS, so the SDK is loaded via dynamic
 // import on first use.
-import { saveToolResultImages, toolResultImages, type SaveToolResultImages } from './tool-result-images'
+import {
+  saveToolResultImages,
+  toolImagesNotShown,
+  toolResultImages,
+  type SaveToolResultImages,
+} from './tool-result-images'
 import {
   applyClaudeTaskTool,
   claudeTaskResultFromText,
@@ -3360,14 +3365,18 @@ export function mapSdkMessage(
           images = write.paths
           ;(state.toolImageWrites ??= []).push(write.written)
         }
+        // The words shown under the step: the tool's, and a line for any
+        // picture past those kept. A result whose pictures are kept is not a
+        // binary to be summed up by its size, so its words are not blanked.
+        const notShown = toolImagesNotShown(block.content, pictures.length)
         const payload: ConversationToolOutputPayload = {
           turnId,
           toolCallId: toolUseId,
           toolUseId,
-          output,
+          output: notShown ? [output, notShown].filter(Boolean).join('\n') : output,
           status: declined ? 'declined' : command.stopped ? 'stopped' : block.is_error === true ? 'error' : 'ok',
           ...(command.exitCode !== undefined && !declined ? { exitCode: command.exitCode } : {}),
-          ...(typeof source?.media_type === 'string'
+          ...(typeof source?.media_type === 'string' && !pictures.length
             ? {
                 mime: source.media_type,
                 totalBytes: typeof source.data === 'string' ? Buffer.byteLength(source.data, 'base64') : 0,

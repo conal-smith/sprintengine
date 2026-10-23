@@ -66,6 +66,7 @@ import type {
 import { cliStderrSummary } from '../../shared/conversation/permissionModes'
 import {
   saveToolResultImages,
+  toolImagesNotShown,
   toolResultImages,
   type SaveToolResultImages,
   type ToolResultImage,
@@ -422,6 +423,11 @@ function acpAttachments(rawOutput: unknown): Array<Record<string, unknown>> {
  * (OpenCode sends a screenshot both ways).
  */
 export function acpToolResultImages(content: readonly unknown[], rawOutput: unknown): ToolResultImage[] {
+  return toolResultImages(acpImageBlocks(content, rawOutput))
+}
+
+/** A tool call's pictures as image blocks, once each, before any is kept or left out. */
+function acpImageBlocks(content: readonly unknown[], rawOutput: unknown) {
   const blocks: Array<{ type: 'image'; mimeType: unknown; data: unknown }> = []
   for (const entry of content) {
     const block = entry && typeof entry === 'object' ? (entry as { type?: unknown; content?: unknown }) : null
@@ -433,7 +439,7 @@ export function acpToolResultImages(content: readonly unknown[], rawOutput: unkn
     if (match) blocks.push({ type: 'image', mimeType: match[1], data: match[2] })
   }
   const seen = new Set<unknown>()
-  return toolResultImages(blocks.filter((block) => !seen.has(block.data) && seen.add(block.data)))
+  return blocks.filter((block) => !seen.has(block.data) && seen.add(block.data))
 }
 
 /**
@@ -1055,8 +1061,11 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
               )
               .filter(Boolean)
       // A step's pictures (a browser screenshot), kept to show under it rather
-      // than as base64 in its output; on disk before the step says where.
-      const pictures = state.input.workspaceRoot ? acpToolResultImages(content, value.rawOutput) : []
+      // than as base64 in its output; on disk before the step says where. Its
+      // words end with a line for any picture past those kept.
+      const blocks = acpImageBlocks(content, value.rawOutput)
+      const pictures = state.input.workspaceRoot ? toolResultImages(blocks) : []
+      const notShown = toolImagesNotShown(blocks, pictures.length)
       const write = pictures.length
         ? (options.saveToolImages ?? saveToolResultImages)({
             key: {
@@ -1077,7 +1086,13 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         const payload: Record<string, unknown> = {
           toolUseId: value.toolCallId,
           toolCallId: value.toolCallId,
-          output,
+          output: !notShown
+            ? output
+            : typeof output === 'string'
+              ? [output, notShown].filter(Boolean).join('\n')
+              : Array.isArray(output)
+                ? [...output, notShown]
+                : output,
           status: value.status === 'failed' ? 'error' : value.status === 'completed' ? 'success' : 'running',
           isError: value.status === 'failed',
           partial: value.status !== 'completed' && value.status !== 'failed',

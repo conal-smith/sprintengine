@@ -70,3 +70,16 @@ test('an MCP step with only a picture has no output words, and one without pictu
   const wordsOnly = { content: [{ type: 'text', text: '3 rows' }], structuredContent: null, _meta: null }
   assert.deepEqual(codexToolResult(mcpCall(wordsOnly)), { output: wordsOnly, status: 'ok' })
 })
+
+test('an MCP step with more pictures than are kept says how many more in its words', () => {
+  const shot = { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }
+  const result = codexToolResult(
+    mcpCall({
+      content: [{ type: 'text', text: 'Captured 10 pages.' }, ...Array.from({ length: 10 }, () => ({ ...shot }))],
+      structuredContent: null,
+      _meta: null,
+    }),
+  )
+  assert.equal(result.images?.length, 8)
+  assert.equal(result.output, 'Captured 10 pages.\n[2 more images not shown]')
+})

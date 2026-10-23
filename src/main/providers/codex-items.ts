@@ -1,5 +1,5 @@
 import type { ConversationToolKind } from '../../shared/conversation-runtime'
-import { toolResultImages, type ToolResultImage } from './tool-result-images'
+import { toolImagesNotShown, toolResultImages, type ToolResultImage } from './tool-result-images'
 import type { ThreadItem, TurnPlanUpdatedNotification } from './codex-protocol'
 
 type RecordValue = Record<string, unknown>
@@ -102,15 +102,18 @@ export function codexToolResult(item: ThreadItem): CodexToolResult {
       if (item.error) return { output: item.error.message, status: 'error' }
       // A result with pictures (a screenshot) has them taken out to be shown,
       // never left in as base64 for the transcript to print, and its words
-      // are the output. Any other result is handed on whole, as it always was.
+      // are the output, with a line for any picture past those kept. Any other
+      // result is handed on whole, as it always was.
       const content = item.result?.content ?? []
       const images = toolResultImages(content)
       if (images.length === 0) return { output: item.result ?? '', status: base }
-      const words = content
-        .map((entry) => {
+      const words = [
+        ...content.map((entry) => {
           const block = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : null
           return block?.type === 'text' && typeof block.text === 'string' ? block.text : ''
-        })
+        }),
+        toolImagesNotShown(content, images.length),
+      ]
         .filter(Boolean)
         .join('\n')
       return { output: words, status: base, images }

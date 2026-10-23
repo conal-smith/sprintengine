@@ -89,6 +89,8 @@ createInterface({input:process.stdin}).on('line',async line=>{
  // output's 'output' beside metadata, a read's wrapped in an envelope and its plain text in the content
  // block. 'read bare' has no plain text, as an empty file's read has none, so the block is the envelope.
  if(text.startsWith('read ')||text==='bash'){const read=text!=='bash',envelope='<path>/Users/dev/app/notes.txt</path>\\n<type>file</type>\\n<content>\\n1: hello\\n2: </content> literal\\n\\n(End of file - total 2 lines)\\n</content>\\n<system-reminder>\\nProject instructions\\n</system-reminder>',plain=text==='read file'?'hello\\n</content> literal':envelope;update({sessionUpdate:'tool_call',toolCallId:'call_run',title:read?'read':'bash',kind:read?'read':'execute',status:'pending',locations:[],rawInput:read?{filePath:'/Users/dev/app/notes.txt'}:{command:'echo ok'}});update({sessionUpdate:'tool_call_update',toolCallId:'call_run',status:'completed',title:read?'notes.txt':'Print ok',content:[{type:'content',content:{type:'text',text:read?plain:'ok\\n'}}],rawOutput:read?{output:envelope,metadata:{preview:'hello',truncated:false,loaded:[],...(text==='read file'?{display:{type:'file',path:'/Users/dev/app/notes.txt',text:plain}}:{})}}:{output:'ok\\n',metadata:{output:'ok\\n',exit:0,description:'Print ok'}}});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Done'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
+ // 'screenshots ten': ten different pictures in one call's content, two more than a step keeps.
+ if(text==='screenshots ten'){update({sessionUpdate:'tool_call',toolCallId:'call_shot',kind:'other',title:'screenshot',rawInput:{},status:'pending'});update({sessionUpdate:'tool_call_update',toolCallId:'call_shot',status:'completed',content:[{type:'content',content:{type:'text',text:'Captured 10 pages'}},...Array.from({length:10},(_,i)=>({type:'content',content:{type:'image',mimeType:'image/png',data:Buffer.from('page '+i).toString('base64')}}))]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Looks right'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
  // As OpenCode returns a screenshot: the picture as an image block beside the text, and again as a
  // data URL among its raw output's attachments. 'screenshot blocks' sends the content alone.
  if(text.startsWith('screenshot')){const data=Buffer.from('not really a png').toString('base64');update({sessionUpdate:'tool_call',toolCallId:'call_shot',kind:'other',title:'screenshot',rawInput:{url:'http://localhost:5173'},status:'pending'});update({sessionUpdate:'tool_call_update',toolCallId:'call_shot',status:'completed',...(text==='screenshot'?{rawOutput:{output:'Captured screenshot',attachments:[{type:'file',mime:'image/png',filename:'screenshot.png',url:'data:image/png;base64,'+data}]}}:{}),content:[{type:'content',content:{type:'text',text:'Captured screenshot'}},{type:'content',content:{type:'image',mimeType:'image/png',data}}]});update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Looks right'}});result(m.id,{stopReason:'end_turn'});prompt=null;return}
@@ -798,6 +800,11 @@ test('an ACP picture sent only as a content block is kept beside the text the st
   expect(output[0]?.payload?.output).toEqual(['Captured screenshot'])
   expect(images).toHaveLength(1)
   expect(files).toEqual(['not really a png'])
+})
+test('an ACP step with more pictures than are kept says how many more after its text', async () => {
+  const { output, images } = await screenshotTurn('screenshots ten')
+  expect(output[0]?.payload?.output).toEqual(['Captured 10 pages', '[2 more images not shown]'])
+  expect(images).toHaveLength(8)
 })
 test('an ACP raw output with a picture attachment and no text of its own keeps everything but the bytes', () => {
   const raw = {
