@@ -34,7 +34,8 @@ export const verifySession: MobileSession = {
   // message queued behind a turn is held by the desktop with
   // `conversation-queued-sends`, and one steered into it with
   // `conversation-steer-sends`. The "+" offers a file beside photos with
-  // `conversation-message-files`.
+  // `conversation-message-files`, and a running agent its own Stop with
+  // `conversation-stop-subagent`.
   tailnetCapabilities: [
     "conversations",
     "conversation-models",
@@ -49,6 +50,7 @@ export const verifySession: MobileSession = {
     "conversation-queued-sends",
     "conversation-steer-sends",
     "conversation-message-files",
+    "conversation-stop-subagent",
   ],
   // How the desktop draws itself, from its identity: New's strip and "Run on" wear it.
   machineMark: { kind: "laptop", color: "blue" },

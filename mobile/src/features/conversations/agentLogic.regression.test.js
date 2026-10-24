@@ -14,6 +14,7 @@ const {
   formatElapsed,
   reportPreview,
   agentTypeDescription,
+  agentStopOffer,
 } = require("../../../.mobile-test-build/src/features/conversations/agentLogic.js");
 
 const lane = (overrides = {}) => ({
@@ -104,4 +105,14 @@ test("durations and clocks read the way the desktop reads them", () => {
   assert.equal(agentTypeDescription("Explore", {}), "A read-only helper that searches the code and reports back.");
   assert.equal(agentTypeDescription("Custom", { Custom: "Checks things. Then more." }), "Checks things.");
   assert.equal(agentTypeDescription(undefined, {}), undefined);
+});
+
+test("an agent's own Stop is offered only for one running, where the desktop and the chat's CLI can stop it", () => {
+  const can = { stopsAgents: true, chatCanStop: true, live: true, stopping: false };
+  assert.deepEqual(agentStopOffer(lane(), can), { label: "Stop this agent", disabled: false });
+  assert.equal(agentStopOffer(lane({ status: "done" }), can), null, "an ended agent has nothing to stop");
+  assert.equal(agentStopOffer(lane(), { ...can, stopsAgents: false }), null, "an older desktop, or a pairing that only follows");
+  assert.equal(agentStopOffer(lane(), { ...can, chatCanStop: false }), null, "a CLI that cannot stop one agent");
+  assert.deepEqual(agentStopOffer(lane(), { ...can, live: false }), { label: "Stop this agent", disabled: true });
+  assert.deepEqual(agentStopOffer(lane(), { ...can, stopping: true }), { label: "Stopping…", disabled: true });
 });

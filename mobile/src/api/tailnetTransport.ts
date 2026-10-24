@@ -186,6 +186,16 @@ export function declaresSteerSends(session: { tailnetCapabilities?: string[] }):
 }
 
 /**
+ * Whether the desktop stops one agent of a chat by itself
+ * (`conversation-stop-subagent`). Absence is a NO: an older desktop refuses
+ * the command, so the phone offers no agent a Stop of its own there. Such a
+ * desktop's turn Stop still ends the agents with the turn.
+ */
+export function declaresStopSubagent(session: { tailnetCapabilities?: string[] }): boolean {
+  return session.tailnetCapabilities?.includes("conversation-stop-subagent") ?? false;
+}
+
+/**
  * Whether the desktop said its chat list carries each chat's title and
  * clocks, leaves settled chats out, and takes `conversation.settle` and
  * `conversation.visit` (`conversation-lifecycle`). Absence is a NO: an older

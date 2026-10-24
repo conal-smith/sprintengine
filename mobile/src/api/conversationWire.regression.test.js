@@ -304,6 +304,13 @@ test("a listed chat says whether its CLI can be steered only as a boolean; anyth
   assert.equal("steer" in steerOf({ images: true, steer: "yes" }), false, "a wrong shape reads as unknown, which offers no Steer");
   assert.equal("steer" in steerOf({ images: true }), false, "an older desktop names no steer: unknown, not no");
 });
+test("a listed chat says whether one of its agents can be stopped only as a boolean; anything else is unknown", () => {
+  const flagsOf = (capabilities) => parse({ type: "sessions", requestId: "list", sessions: [listed({ capabilities })] }).sessions[0].capabilities;
+  assert.equal(flagsOf({ images: true, stopSubagent: true }).stopSubagent, true);
+  assert.equal(flagsOf({ images: true, stopSubagent: false }).stopSubagent, false);
+  assert.equal("stopSubagent" in flagsOf({ images: true, stopSubagent: "yes" }), false, "a wrong shape reads as unknown, which offers no Stop");
+  assert.equal("stopSubagent" in flagsOf({ images: true }), false, "an older desktop names nothing: unknown, not no");
+});
 test("a steer carries its words alone, and is refused before the outbox otherwise", () => {
   assert.equal(conversationSendProblem("c1", { kind: "send", message: "and add tests", steer: true }), null);
   assert.match(conversationSendProblem("c2", { kind: "send", message: "x", steer: true, queue: true }), /words alone/);

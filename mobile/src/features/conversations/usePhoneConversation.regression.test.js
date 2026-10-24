@@ -176,6 +176,7 @@ function fixture(options = {}) {
     baseUrl: "https://example.ts.net",
     deviceToken: "test-token",
     ...(options.capabilities ? { tailnetCapabilities: options.capabilities } : {}),
+    ...(options.scopes ? { tailnetScopes: options.scopes } : {}),
   };
   const render = (next = selected) => {
     selected = next;
@@ -765,6 +766,72 @@ test("taking a held message back sends cancelQueued and says the desktop's reaso
   assert.deepEqual(plain(await refused), { ok: false, message: "That message is already on its way into the chat." });
   assert.equal(h.render().notice, "", "said where the person asked, not as the chat's notice");
   h.unmount();
+});
+/** A desktop that stops one agent by itself, paired with the given scopes. */
+const stoppingAgents = (scopes = ["conversation:read", "conversation:operate"]) =>
+  fixture({ capabilities: ["conversations", "conversation-stop-subagent"], scopes });
+/** An agent the turn sent off, running, as the desktop's events show it. */
+async function runAgent(h, frames) {
+  frames.onFrame({
+    type: "event",
+    event: event(3, "tool_started", { turnId: "t1", toolUseId: "toolu_agent", name: "Agent", subagentLane: true, input: { description: "Restyle the boxes" } }),
+  });
+  await settle();
+}
+test("an agent's Stop sends stopSubagent by its lane, and says Stopping until the agent reports its end", async () => {
+  const h = stoppingAgents();
+  h.render();
+  await settle();
+  assert.equal(h.render().stopsAgents, true);
+  const frames = await runTurn(h);
+  await runAgent(h, frames);
+  const asked = h.render().stopAgent("toolu_agent");
+  const sent = h.commands.at(-1);
+  assert.deepEqual(plain(sent.command), { kind: "stopSubagent", toolUseId: "toolu_agent" });
+  assert.deepEqual([...h.render().stoppingAgentIds], ["toolu_agent"]);
+  frames.onFrame({ type: "commandResult", commandId: sent.id, ok: true });
+  assert.deepEqual(plain(await asked), { ok: true });
+  assert.deepEqual([...h.render().stoppingAgentIds], ["toolu_agent"], "still stopping until the agent says it ended");
+  assert.equal(h.commands.filter((item) => item.command.kind === "interrupt").length, 0, "the turn is not stopped");
+  frames.onFrame({
+    type: "event",
+    event: event(4, "subagent_status", { toolUseId: "toolu_agent", taskId: "task_1", status: "stopped" }),
+  });
+  await settle();
+  h.render();
+  assert.deepEqual([...h.render().stoppingAgentIds], [], "ended, it is stopping no more");
+  h.unmount();
+});
+test("a Stop the desktop refuses says why and offers the agent's Stop again", async () => {
+  const h = stoppingAgents();
+  h.render();
+  await settle();
+  const frames = await runTurn(h);
+  await runAgent(h, frames);
+  const asked = h.render().stopAgent("toolu_agent");
+  const sent = h.commands.at(-1);
+  frames.onFrame({ type: "commandResult", commandId: sent.id, ok: false, message: "That agent is not running any more." });
+  assert.deepEqual(plain(await asked), { ok: false, message: "That agent is not running any more." });
+  assert.deepEqual([...h.render().stoppingAgentIds], []);
+  h.unmount();
+});
+test("a Stop still unanswered when the chat closes settles, and leaves nothing stopping", async () => {
+  const h = stoppingAgents();
+  h.render();
+  await settle();
+  const frames = await runTurn(h);
+  await runAgent(h, frames);
+  const asked = h.render().stopAgent("toolu_agent");
+  h.unmount();
+  assert.deepEqual(plain(await asked), { ok: false, message: "Conversation closed." });
+});
+test("no agent's Stop from a desktop without the capability, or a pairing that may only follow", async () => {
+  const older = fixture({ capabilities: ["conversations"], scopes: ["conversation:read", "conversation:operate"] });
+  assert.equal(older.render().stopsAgents, false);
+  older.unmount();
+  const follower = stoppingAgents(["conversation:read"]);
+  assert.equal(follower.render().stopsAgents, false);
+  follower.unmount();
 });
 test("a hand-over the desktop refuses shows as not sent, with its reason", async () => {
   const h = holding();

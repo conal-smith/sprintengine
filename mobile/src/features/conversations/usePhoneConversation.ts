@@ -19,9 +19,15 @@ import {
   type ConversationQueuedMessage,
   type ConversationThread,
 } from "../../api/conversationWire";
-import { declaresConversationHello, declaresQueuedSends, declaresSteerSends } from "../../api/tailnetTransport";
+import {
+  declaresConversationHello,
+  declaresQueuedSends,
+  declaresSteerSends,
+  declaresStopSubagent,
+} from "../../api/tailnetTransport";
 import type { MobileSession } from "../../api/types";
 import {
+  conversationCanOperate,
   isStreamedEvent,
   keepUnchangedRows,
   mergeConversationEvents,
@@ -144,6 +150,8 @@ function abandonThreadChanges(
 }
 /** How taking back a message the desktop holds ended: given back, or refused with why. */
 export type CancelHeldResult = { ok: true } | { ok: false; message: string };
+/** How an agent's Stop ended: the desktop took it (the agent then reports its end), or refused it with why. */
+export type StopAgentResult = { ok: true } | { ok: false; message: string };
 /** How a model switch or preset change ended: accepted (with the desktop's caveat, if any) or refused with why. */
 export type ModelSwitchResult =
   | { ok: true; notice?: string }
@@ -238,10 +246,20 @@ export function usePhoneConversation(
   const threadChanges = useRef(new Map<string, PendingThreadChange>());
   // Held messages being taken back (`cancelQueued`), by command id.
   const cancellations = useRef(new Map<string, (result: CancelHeldResult) => void>());
+  // Agents being stopped by their own Stop (`stopSubagent`), by command id.
+  const agentStops = useRef(new Map<string, { laneId: string; settle: (result: StopAgentResult) => void }>());
+  // The lanes whose Stop is on its way or taken, until the agent reports its
+  // end (its lane stops running) or the desktop refuses: the Stop says
+  // "Stopping" meanwhile, and is not sent twice.
+  const [stoppingAgentIds, setStoppingAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   // Whether the desktop holds queued messages; re-read on every foreground, so
   // a desktop that updates starts holding them without a re-pair.
   const holdsQueued = !!session && declaresQueuedSends(session);
   const takesSteer = !!session && declaresSteerSends(session);
+  // Whether an agent of this chat can be stopped by itself from here: the
+  // desktop takes the command and this pairing may drive its chats. Whether
+  // the chat's own CLI can is its listed `capabilities.stopSubagent`.
+  const stopsAgents = !!session && declaresStopSubagent(session) && conversationCanOperate(session);
   // Whether the socket's probe can be the cheap `hello` rather than a `list`.
   const answersHello = !!session && declaresConversationHello(session);
   // Read by a send as it is made: a turn running, and messages the phone holds.
@@ -514,6 +532,13 @@ export function usePhoneConversation(
     // same one the handlers below fill.
     const switches = threadChanges.current;
     const takingBack = cancellations.current;
+    const stopping = agentStops.current;
+    // An agent's Stop that will not be answered now: its lane offers Stop again.
+    const abandonAgentStops = (message: string) => {
+      for (const { settle } of stopping.values()) settle({ ok: false, message });
+      stopping.clear();
+      setStoppingAgentIds(new Set());
+    };
     let current: ConversationStream | null = null;
     let subscription: ReturnType<typeof AppState.addEventListener> | null =
       null;
@@ -654,6 +679,9 @@ export function usePhoneConversation(
                 for (const settle of takingBack.values())
                   settle({ ok: false, message: "The desktop disconnected before answering. Check the queue once it reconnects." });
                 takingBack.clear();
+                // A Stop sent before the drop may still have landed; the
+                // agent's lane says so once the transcript catches up.
+                abandonAgentStops("The desktop disconnected before answering. If the agent is still working, stop it again.");
               }
             }
           },
@@ -918,6 +946,24 @@ export function usePhoneConversation(
               const settle = takingBack.get(frame.commandId)!;
               takingBack.delete(frame.commandId);
               settle(frame.ok ? { ok: true } : { ok: false, message: cancelRefusal(frame.message) });
+            } else if (frame.type === "commandResult" && stopping.has(frame.commandId)) {
+              const { laneId, settle } = stopping.get(frame.commandId)!;
+              stopping.delete(frame.commandId);
+              if (frame.ok) settle({ ok: true });
+              else {
+                // Refused: the agent works on, and its lane offers Stop again.
+                setStoppingAgentIds((previous) => {
+                  const next = new Set(previous);
+                  next.delete(laneId);
+                  return next;
+                });
+                settle({
+                  ok: false,
+                  message: conversationSessionWasLost(frame)
+                    ? "The server running this chat restarted, and its agents ended with it."
+                    : (frame.message ?? refusalText(frame.code, "The desktop could not stop this agent.")),
+                });
+              }
             } else if (
               frame.type === "commandResult" &&
               switches.has(frame.commandId)
@@ -1043,6 +1089,7 @@ export function usePhoneConversation(
       abandonThreadChanges(switches, "Conversation closed.");
       for (const settle of takingBack.values()) settle({ ok: false, message: "Conversation closed." });
       takingBack.clear();
+      abandonAgentStops("Conversation closed.");
       for (const request of requestsRef.values()) {
         clearTimeout(request.timer);
         request.reject(new Error("Conversation closed."));
@@ -1252,6 +1299,42 @@ export function usePhoneConversation(
       }),
     [],
   );
+  // An agent that has ended is stopping no more: dropped, so one resumed
+  // later in the same lane (SendMessage) offers its Stop again.
+  useEffect(() => {
+    setStoppingAgentIds((previous) => {
+      if (!previous.size) return previous;
+      const next = new Set(
+        [...previous].filter((id) => projection.lanes.some((lane) => lane.id === id && lane.status === "running")),
+      );
+      return next.size === previous.size ? previous : next;
+    });
+  }, [projection.lanes]);
+  // Stop one agent the chat spawned, by its lane (the call that spawned it),
+  // leaving the chat and its turn running. Settles when the desktop answers;
+  // the agent then reports its own end, which stops its lane running.
+  const stopAgent = useCallback(
+    (laneId: string): Promise<StopAgentResult> =>
+      new Promise<StopAgentResult>((resolve) => {
+        if (!stream.current) {
+          resolve({ ok: false, message: "Conversation is not connected yet." });
+          return;
+        }
+        let commandId: string;
+        try {
+          commandId = stream.current.command({ kind: "stopSubagent", toolUseId: laneId });
+        } catch (error) {
+          resolve({
+            ok: false,
+            message: error instanceof Error ? error.message : "Reconnect before using this action.",
+          });
+          return;
+        }
+        agentStops.current.set(commandId, { laneId, settle: resolve });
+        setStoppingAgentIds((previous) => new Set(previous).add(laneId));
+      }),
+    [],
+  );
   const cancelQueued = useCallback(
     (commandId: string): Promise<void> => {
       const owner = lifecycle.current;
@@ -1408,6 +1491,10 @@ export function usePhoneConversation(
     sendNow,
     holdsQueued,
     takesSteer,
+    stopsAgents,
+    stopAgent,
+    /** Lanes whose Stop is on its way or taken, while the agent still runs. */
+    stoppingAgentIds,
     desktopHeld,
     handing,
     cancelHeld,

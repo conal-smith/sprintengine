@@ -296,3 +296,21 @@ export function agentTypeDescription(
   const sentence = /^[\s\S]*?[.!?](?=\s|$)/u.exec(text.trim())?.[0] ?? text.trim();
   return sentence.length > 180 ? `${sentence.slice(0, 179).trimEnd()}…` : sentence;
 }
+
+/**
+ * What the agent's own Stop offers, or null where it offers none: an agent
+ * that has ended, a desktop that cannot stop one by itself
+ * (`conversation-stop-subagent`) or a pairing that may only follow, and a
+ * chat whose CLI cannot (its listed `capabilities.stopSubagent`). The
+ * desktop's turn Stop spares a chat's agents where this one is offered, so it
+ * is the only way to stop one from the phone. Taken, it says "Stopping" until
+ * the agent reports its end; with the chat offline it waits for the link.
+ */
+export function agentStopOffer(
+  lane: Pick<AgentLane, "status">,
+  chat: { stopsAgents: boolean; chatCanStop: boolean; live: boolean; stopping: boolean },
+): { label: string; disabled: boolean } | null {
+  if (lane.status !== "running" || !chat.stopsAgents || !chat.chatCanStop) return null;
+  if (chat.stopping) return { label: "Stopping…", disabled: true };
+  return { label: "Stop this agent", disabled: !chat.live };
+}
