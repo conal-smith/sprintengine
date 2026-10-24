@@ -30,8 +30,14 @@ export function joinTreePath(parent: string, name: string): string {
   return `${parent}${parent.endsWith(separator) ? '' : separator}${name}`
 }
 
+// One collator for every comparison: `localeCompare` builds one per call, which
+// dominates sorting a large folder. Same default locale and options, same order.
+let nameCollator: Intl.Collator | undefined
+
 export function compareTreeEntries(a: FileTreeEntry, b: FileTreeEntry): number {
-  return a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)
+  if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+  nameCollator ??= new Intl.Collator()
+  return nameCollator.compare(a.name, b.name)
 }
 
 /** A raw listing as tree entries: folders first, then by name; `node_modules` never shown. */

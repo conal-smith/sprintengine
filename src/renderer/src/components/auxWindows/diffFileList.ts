@@ -40,8 +40,10 @@ export function buildDiffFileList(
   const entries = Object.values(status.files)
     .filter((entry) => entry.status !== 'conflicted')
     .filter((entry) => !owned || owned.has(normalizeChangelistPath(entry.relativePath)))
+  // One collator for both lists; `localeCompare` would build one per comparison.
+  const collator = new Intl.Collator()
   const byPath = (a: { relativePath: string }, b: { relativePath: string }): number =>
-    a.relativePath.localeCompare(b.relativePath)
+    collator.compare(a.relativePath, b.relativePath)
 
   const staged: DiffFileItem[] = entries
     .filter((entry) => entry.staged)
