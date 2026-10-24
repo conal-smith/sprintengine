@@ -160,6 +160,14 @@ type StudioConversationMethodMap = {
    * socket names no held message to anyone else.
    */
   'conversation.cancelQueued': { params: Addressed<{ queuedId: string }>; result: StudioCommandAnswer }
+  /**
+   * Stops one agent the chat spawned, by the call that spawned it (its lane's
+   * `toolUseId`; the conversation lane's `stopSubagent`), and leaves the chat,
+   * its turn and its other agents running. Refused for an agent that is not
+   * running, and for a chat whose provider cannot stop one by itself. An
+   * owner's only for now: no SDK call names it yet.
+   */
+  'conversation.stopSubagent': { params: Addressed<{ toolUseId: string }>; result: StudioCommandAnswer }
   /** Ends the chat's live session. Idempotent by nature: stopping a stopped chat answers ok. */
   'conversation.stop': { params: Addressed<object>; result: StudioCommandAnswer }
   'conversation.loadEarlier': {
@@ -208,6 +216,7 @@ export const STUDIO_METHODS: { readonly [M in StudioMethod]: StudioMethodSpec } 
   'conversation.setPermissionPreset': operate,
   'conversation.setModel': operate,
   'conversation.cancelQueued': { ...operate, owner: true },
+  'conversation.stopSubagent': { ...operate, owner: true },
   'conversation.stop': operate,
   'conversation.loadEarlier': read(),
   'conversation.toolDetail': read(),
@@ -270,6 +279,7 @@ export const STUDIO_COMMAND_METHODS = {
   'conversation.setPermissionPreset': 'setPermissionPreset',
   'conversation.setModel': 'setModel',
   'conversation.cancelQueued': 'cancelQueued',
+  'conversation.stopSubagent': 'stopSubagent',
 } as const satisfies Partial<Record<StudioMethod, ConversationCommand['kind']>>
 
 export type StudioCommandMethod = keyof typeof STUDIO_COMMAND_METHODS

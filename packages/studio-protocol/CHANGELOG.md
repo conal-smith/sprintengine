@@ -4,6 +4,14 @@
 
 ### Added
 
+- **One agent stopped by itself** (`conversation-stop-subagent`, in
+  `welcome.conversation`, owners): `conversation.stopSubagent` stops one agent a
+  conversation spawned, named by the call that spawned it (`toolUseId`), and
+  leaves the conversation, its turn and its other agents running. Its params
+  are read by the conversation lane's own validator, and it reaches the same
+  host. A Studio built before it does not advertise it and refuses the method
+  as unknown.
+
 - **Handoff** (`conversation-handoff`, owners): `conversation.handoff` hands a
   chat off to a fresh session of its CLI instead of compacting it. The chat's
   messages, without its tool calls, are saved to a file on the machine its

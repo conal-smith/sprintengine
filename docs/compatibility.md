@@ -441,8 +441,9 @@ runs, so a client that offers no agent's Stop leaves a runaway agent no way to
 be stopped short of settling the chat. All of it is additive: a desktop
 without the capability refuses the kind as `unsupported_command`, and a client
 sends it only where it is advertised (a desktop following another machine's
-chat refuses it there in words first). The Studio RPC does not advertise it,
-having no method for it.
+chat refuses it there in words first). The Studio RPC advertises it too: its
+`conversation.stopSubagent` method, an owner's for now, reads the lane's own
+validator and reaches the same host.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the
