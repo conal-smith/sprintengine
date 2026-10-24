@@ -3,7 +3,16 @@ import type { ConversationToolDetail, ConversationJsonValue } from '../../../../
 import { presentToolItem, type ToolPresentation } from '../../../../../../shared/conversation/presentation'
 import { labelCommand } from '../../../../../../shared/conversation/commandLabel'
 import { parseAnsi, type AnsiLine } from '../../../../../../shared/conversation/ansi'
-import { Checkbox, CopyGlyphButton, GhostButton, InlineNotice, MediaButton, RowButton, Spinner } from '../../../ui'
+import {
+  Checkbox,
+  CopyGlyphButton,
+  GhostButton,
+  InlineNotice,
+  MediaButton,
+  RowButton,
+  Spinner,
+  Tooltip,
+} from '../../../ui'
 import { CodeBlock } from '../../../ui/CodeBlock'
 import {
   cachedCodeLines,
@@ -20,7 +29,7 @@ import { deriveEditHunks } from '../../../../../../shared/conversation/editHunks
 import { InlineDiff } from '../../../ui/InlineDiff'
 import { openCheckpointDiffWindow } from '../../../auxWindows/openCheckpointDiffWindow'
 import { useLiveRowMotion } from '../liveVisibility'
-import { formatMessageTime, LiveElapsed } from '../liveElapsed'
+import { formatMessageDateTime, formatMessageTime, LiveElapsed } from '../liveElapsed'
 import { useClockFormat } from '../../../../utils/clockFormat'
 import { formatStepDuration } from '../stepDuration'
 import { useConversationTransport } from '../conversationTransport'
@@ -652,12 +661,23 @@ export function toolHasBody(tool: TranscriptToolEntry, kind: ToolPresentation['i
   return !isEmptyValue(tool.input) || !isEmptyValue(tool.output)
 }
 
-// When a settled step happened, on the app's clock. Its own memoized
+// When a step happened, on the app's clock: when it ended, or, while it runs,
+// when it started, so a step that has gone quiet says how long it has waited.
+// The tooltip is the full local date and time, as a message's is, and a screen
+// reader is read that reading in place of the short one. Its own memoized
 // component so a streamed token does not re-format it, while a change to the
 // Clock setting (which it reads) does.
-const SettledClock = memo(function SettledClock({ at }: { at: number }) {
+const StepClock = memo(function StepClock({ at, started = false }: { at: number; started?: boolean }) {
   useClockFormat()
-  return <>{formatMessageTime(at)}</>
+  const full = `${started ? 'Started' : 'Finished'} ${formatMessageDateTime(at)}`
+  return (
+    <Tooltip content={full}>
+      <time dateTime={new Date(at).toISOString()}>
+        <span aria-hidden="true">{started ? `from ${formatMessageTime(at)}` : formatMessageTime(at)}</span>
+        <span className="sr-only">{full}</span>
+      </time>
+    </Tooltip>
+  )
 })
 
 // Memoized: a turn's steps sit under the reply streaming into it, and a step's
@@ -783,15 +803,18 @@ export const ToolRow = memo(function ToolRow({ tool }: { tool: TranscriptToolEnt
         ) : null}
         <span className="min-w-2 flex-1" />
         {running && tool.startedAt !== undefined ? (
-          <span className="shrink-0 text-micro tabular-nums text-[color:var(--text-subtle)]">
+          <span className="flex shrink-0 items-baseline gap-2 whitespace-nowrap text-micro tabular-nums text-[color:var(--text-subtle)]">
+            <span className="opacity-0 group-hover/tool-row:opacity-100 group-focus-within/tool-row:opacity-100 pointer-coarse:opacity-100">
+              <StepClock at={tool.startedAt} started />
+            </span>
             <LiveElapsed startedAt={tool.startedAt} />
           </span>
         ) : settledAt !== undefined ? (
           <span className="flex shrink-0 items-baseline gap-2 whitespace-nowrap text-micro tabular-nums text-[color:var(--text-subtle)]">
             {/* When it happened is there for the asking; how long it took is
                 what a column of steps is scanned for, so it stays. */}
-            <span className="opacity-0 group-hover/tool-row:opacity-100">
-              <SettledClock at={settledAt} />
+            <span className="opacity-0 group-hover/tool-row:opacity-100 group-focus-within/tool-row:opacity-100 pointer-coarse:opacity-100">
+              <StepClock at={settledAt} />
             </span>
             {durationMs !== undefined ? <span data-step-duration="">{formatStepDuration(durationMs)}</span> : null}
           </span>

@@ -247,16 +247,38 @@ test('an agent’s words sit before the step they lead into, and its report is n
   }
   expect(placeAgentMessages(lane)).toEqual({
     beforeSteps: [
-      { text: 'Searching for the router.', beforeToolUseId: 'grep' },
-      { text: 'Found a candidate; reading it.', beforeToolUseId: 'read' },
+      { text: 'Searching for the router.', beforeToolUseId: 'grep', at: 10 },
+      { text: 'Found a candidate; reading it.', beforeToolUseId: 'read', at: 30 },
     ],
-    afterSteps: ['One more note.'],
+    afterSteps: [{ text: 'One more note.', at: 50 }],
   })
   // While it works, nothing it said is its report yet.
   expect(placeAgentMessages({ ...lane, status: 'running' }).afterSteps).toEqual([
-    'One more note.',
-    'The router lives in src/router.ts.',
+    { text: 'One more note.', at: 50 },
+    { text: 'The router lives in src/router.ts.', at: 60 },
   ])
+})
+
+test('an agent’s thread says when it said each thing and when each step ran, as the chat does on hover', async () => {
+  const tab = await mountAgentsTab()
+  try {
+    const said = event('subagent_message', { parentToolUseId: 'lane-find', text: 'The router is in src/router.ts.' })
+    await tab.deliver([...transcript, said])
+    await showList(tab)
+    await tab.act(async () => tab.button('Find the router')!.click())
+    const { formatMessageDateTime } = await import('../../../panels/agentChat/liveElapsed')
+    const times = Array.from(tab.host.querySelectorAll('time'))
+    const message = times.find((time) => time.dateTime === new Date(said.createdAt).toISOString())
+    expect(message, 'the message carries its time').toBeDefined()
+    expect(message!.querySelector('.sr-only')?.textContent).toBe(formatMessageDateTime(said.createdAt))
+    expect(message!.closest('.group\\/conversation')?.textContent).toContain('The router is in src/router.ts.')
+    // The step it is still running says when it started.
+    const grep = transcript.find((item) => item.type === 'tool_started' && item.payload?.toolCallId === 'grep-1')!
+    const step = times.find((time) => time.dateTime === new Date(grep.createdAt).toISOString())
+    expect(step?.querySelector('.sr-only')?.textContent).toBe(`Started ${formatMessageDateTime(grep.createdAt)}`)
+  } finally {
+    await tab.unmount()
+  }
 })
 
 const anotherLane = () => [

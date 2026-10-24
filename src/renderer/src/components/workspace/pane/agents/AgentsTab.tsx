@@ -2,7 +2,7 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import { useWorkspaceStore } from '../../../../store/workspaceStore'
 import { EmptyState, GhostButton, InlineNotice, PanelHeader, RowButton, Spinner } from '../../../ui'
 import { useLocalChatBinding, type ChatBinding } from '../../../panels/agentChat/chatBinding'
-import { ConversationLinkProvider, ConversationMarkdown } from '../../../panels/agentChat/conversationLinks'
+import { ConversationLinkProvider } from '../../../panels/agentChat/conversationLinks'
 import {
   projectConversation,
   type TranscriptEntry,
@@ -20,7 +20,7 @@ import {
   SubagentTypesProvider,
   useSubagentTypeDescription,
 } from '../../../panels/agentChat/subagentStatus'
-import { WorkTimeline } from '../../../panels/agentChat/timelineRows'
+import { TimedProse, WorkTimeline } from '../../../panels/agentChat/timelineRows'
 import { useChatViewActive } from '../../../panels/agentChat/chatViewActivity'
 import { useConversationSession } from '../../../panels/agentChat/useConversationSession'
 import { ConversationTransportProvider } from '../../../panels/agentChat/conversationTransport'
@@ -48,22 +48,23 @@ export function collectAgentLanes(entries: TranscriptEntry[]): TranscriptToolEnt
  * Where an agent's own words go in its thread: each before the first step it
  * started after, as a turn's prose sits before the tools it explains, and the
  * rest after the last step. The last thing a finished agent says is its report,
- * which the thread shows as the report, so it is not said twice.
+ * which the thread shows as the report, so it is not said twice. Each keeps
+ * when it was said, which the thread shows on hover.
  */
 export function placeAgentMessages(lane: TranscriptToolEntry): {
-  beforeSteps: { text: string; beforeToolUseId: string }[]
-  afterSteps: string[]
+  beforeSteps: { text: string; beforeToolUseId: string; at: number }[]
+  afterSteps: { text: string; at: number }[]
 } {
   const steps = lane.children ?? []
-  const beforeSteps: { text: string; beforeToolUseId: string }[] = []
-  const afterSteps: string[] = []
+  const beforeSteps: { text: string; beforeToolUseId: string; at: number }[] = []
+  const afterSteps: { text: string; at: number }[] = []
   for (const message of lane.messages ?? []) {
     const next = steps.find((step) => step.startedAt !== undefined && step.startedAt > message.at)
-    if (next) beforeSteps.push({ text: message.text, beforeToolUseId: next.id })
-    else afterSteps.push(message.text)
+    if (next) beforeSteps.push({ text: message.text, beforeToolUseId: next.id, at: message.at })
+    else afterSteps.push({ text: message.text, at: message.at })
   }
   const report = lane.output?.trim()
-  const last = afterSteps.at(-1)?.trim()
+  const last = afterSteps.at(-1)?.text.trim()
   if (lane.status !== 'running' && report && last && report.startsWith(last.slice(0, 200))) afterSteps.pop()
   return { beforeSteps, afterSteps }
 }
@@ -394,10 +395,8 @@ const AgentThread = React.memo(function AgentThread({
           {running ? 'No steps yet — it is still getting started.' : 'It took no steps of its own.'}
         </p>
       ) : null}
-      {afterSteps.map((text, index) => (
-        <div key={index} className="mb-2 min-w-0 px-2 text-body">
-          <ConversationMarkdown text={text} />
-        </div>
+      {afterSteps.map((message, index) => (
+        <TimedProse key={index} text={message.text} at={message.at} className="mb-2 min-w-0 px-2 text-body" />
       ))}
       {!running ? (
         <>
