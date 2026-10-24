@@ -3,12 +3,14 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { AgentGlyph } from "../../components/glyphs/AgentGlyph";
 import { MarkdownDocument } from "../../components/document/MarkdownDocument";
+import { PrimaryButton } from "../../components/PrimaryButton";
 import { Screen } from "../../components/Screen";
 import { WorkingMark } from "../../components/WorkingMark";
 import { useNow, useSecondsClock } from "../../components/useNow";
 import { useThemedStyles } from "../../theme/ThemeProvider";
 import { fontWeight, radius, space, typography, type Theme } from "../../theme/tokens";
 import {
+  agentStopOffer,
   agentTypeDescription,
   formatDuration,
   formatElapsed,
@@ -78,6 +80,18 @@ export function ConversationAgentScreen({
   const took =
     !running && lane.completedAt !== undefined ? formatDuration(lane.completedAt - lane.startedAt) : "";
   const { beforeSteps, afterSteps } = placeAgentMessages(lane);
+  // The agent's own Stop: the chat, its turn and its other agents go on.
+  const stop = agentStopOffer(lane, {
+    stopsAgents: live.stopsAgents,
+    chatCanStop: live.effectiveThread.capabilities?.stopSubagent === true,
+    live: live.state === "live",
+    stopping: live.stoppingAgentIds.has(lane.id),
+  });
+  const stopAgent = () => {
+    void live.stopAgent(lane.id).then((result) => {
+      if (!result.ok) live.setNotice(result.message);
+    });
+  };
   const said = (text: string, key: string | number) => (
     <View key={key} style={styles.said}>
       <MarkdownDocument body={text} variant="chat" reply streaming={running} onLinkBlocked={onLinkBlocked} />
@@ -114,6 +128,14 @@ export function ConversationAgentScreen({
             </Text>
           ) : null}
         </View>
+      ) : null}
+      {stop ? (
+        <PrimaryButton
+          variant="danger"
+          label={stop.label}
+          disabled={stop.disabled}
+          onPress={stopAgent}
+        />
       ) : null}
       {description ? <Text style={styles.meta}>{description}</Text> : null}
       {running && current ? (

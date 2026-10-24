@@ -71,6 +71,14 @@ export const CONVERSATION_QUEUED_SENDS_CAPABILITY = "conversation-queued-sends";
  * the flag and refuses a send mid-turn as busy.
  */
 export const CONVERSATION_STEER_SENDS_CAPABILITY = "conversation-steer-sends";
+/**
+ * The capability a desktop declares when it takes `stopSubagent`: one agent
+ * a chat spawned is stopped by itself, named by the call that spawned it (its
+ * lane), and the chat, its turn and its other agents go on. A listed chat then
+ * says whether its CLI can (`capabilities.stopSubagent`). Such a desktop's
+ * turn Stop spares the agents, so this is the only way to stop one from here.
+ */
+export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = "conversation-stop-subagent";
 /** The most messages a desktop holds for one chat; it lists no more in a `queued` frame. */
 export const CONVERSATION_MAX_QUEUED_MESSAGES = 20;
 /** The longest refusal a held message carries; a longer one is dropped, the message kept. */
@@ -137,6 +145,12 @@ export interface ConversationThread extends ConversationKey {
      * and the phone offers no Steer.
      */
     steer?: boolean;
+    /**
+     * Whether one agent the chat spawned can be stopped by itself, from a
+     * desktop that declares `conversation-stop-subagent`. Absent means
+     * unknown, and the phone offers no agent a Stop.
+     */
+    stopSubagent?: boolean;
     /**
      * The presets the chat's provider can run, from a desktop that declares
      * `conversation-permission-modes`. Absent means unknown.
@@ -283,6 +297,8 @@ export type ConversationCommand =
     }
   /** Needs `conversation-queued-sends`: takes back a held message, refused once it is on its way. */
   | { kind: "cancelQueued"; queuedId: string }
+  /** Needs `conversation-stop-subagent`: stops one agent by the call that spawned it, the chat going on. */
+  | { kind: "stopSubagent"; toolUseId: string }
   | { kind: "interrupt" }
   | {
       kind: "resolveApproval";
@@ -446,7 +462,7 @@ function threadWithCatalog(value: ConversationThread): ConversationThread {
   const prs = parseConversationPullRequests(pullRequests);
   const catalog = models === undefined ? null : parseConversationWireModels(models);
   const flags = record(capabilities) ? capabilities : null;
-  const { permissionPresets: listed, steer, ...known } = flags ?? {};
+  const { permissionPresets: listed, steer, stopSubagent, ...known } = flags ?? {};
   const presets = Array.isArray(listed) ? listed.filter(isConversationWirePermissionPreset) : null;
   return {
     ...rest,
@@ -455,11 +471,16 @@ function threadWithCatalog(value: ConversationThread): ConversationThread {
     ...(flags
       ? {
           capabilities: {
-            ...(known as Omit<NonNullable<ConversationThread["capabilities"]>, "permissionPresets" | "steer">),
+            ...(known as Omit<
+              NonNullable<ConversationThread["capabilities"]>,
+              "permissionPresets" | "steer" | "stopSubagent"
+            >),
             ...(presets ? { permissionPresets: presets } : {}),
             // Kept only as a boolean: anything else reads as unknown, and
             // unknown offers no Steer.
             ...(typeof steer === "boolean" ? { steer } : {}),
+            // The same: unknown offers no agent a Stop.
+            ...(typeof stopSubagent === "boolean" ? { stopSubagent } : {}),
           },
         }
       : {}),
