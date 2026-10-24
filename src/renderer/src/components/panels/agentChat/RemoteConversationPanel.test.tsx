@@ -476,6 +476,102 @@ test('a message queued for a machine that holds its own queue is handed to it at
   }
 })
 
+/** Mounts a chat whose turn runs on (its card answered), with a message the machine holds for its end. */
+async function holdingMessage(options: { steerSends: boolean }) {
+  const chat = await mountRemote({
+    access: 'operate',
+    queuedSends: true,
+    steerSends: options.steerSends,
+    capabilities: { ...thread.capabilities!, steer: options.steerSends },
+  })
+  await chat.act(async () =>
+    chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) }),
+  )
+  await chat.act(async () => chat.type('Keep the print styles square'))
+  await chat.act(async () => chat.enter())
+  expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+    key,
+    message: 'Keep the print styles square',
+    queue: true,
+  })
+  await chat.act(async () =>
+    chat.emit({
+      type: 'queued',
+      messages: [{ id: 'sm-1', text: 'Keep the print styles square', createdAt: 1_700_000_000_000 }],
+    }),
+  )
+  return chat
+}
+
+test('Send now on a message the machine holds takes it back and steers it in, and the turn is not stopped', async () => {
+  const chat = await holdingMessage({ steerSends: true })
+  try {
+    await chat.act(async () => chat.button('Send now')!.click())
+    expect(chat.api.meshConversationCancelQueued).toHaveBeenCalledExactlyOnceWith({ key, queuedId: 'sm-1' })
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Keep the print styles square',
+      steer: true,
+    })
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('Primary+Enter with nothing typed steers in the message the machine holds', async () => {
+  const chat = await holdingMessage({ steerSends: true })
+  try {
+    await chat.act(async () =>
+      chat.composer().dispatchEvent(
+        new chat.document.defaultView!.KeyboardEvent('keydown', {
+          key: 'Enter',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    )
+    expect(chat.api.meshConversationCancelQueued).toHaveBeenCalledExactlyOnceWith({ key, queuedId: 'sm-1' })
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Keep the print styles square',
+      steer: true,
+    })
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a held message that could not be taken back is left to that machine, and the turn is not stopped', async () => {
+  const chat = await holdingMessage({ steerSends: true })
+  chat.api.meshConversationCancelQueued.mockImplementationOnce(async () => ({
+    ok: false,
+    message: 'That message is already on its way into the chat.',
+  }))
+  try {
+    await chat.act(async () => chat.button('Send now')!.click())
+    expect(chat.api.meshConversationSend).toHaveBeenCalledTimes(1)
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+    expect(chat.host.textContent).toContain('That message is already on its way into the chat.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that takes no steer offers Stop and send for the message it holds, which stops the turn', async () => {
+  const chat = await holdingMessage({ steerSends: false })
+  try {
+    expect(chat.button('Send now')).toBeUndefined()
+    await chat.act(async () => chat.button('Stop and send')!.click())
+    expect(chat.api.meshConversationInterrupt).toHaveBeenCalledOnce()
+    expect(chat.api.meshConversationCancelQueued).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
 /** Settles the turn the mounted chat is waiting on, so a send goes at once rather than queueing. */
 async function settleTurn(chat: Awaited<ReturnType<typeof mountRemote>>) {
   await chat.act(async () => {
