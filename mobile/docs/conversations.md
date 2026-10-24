@@ -689,8 +689,9 @@ an agent's news and a usage-limit resume, between the person's, and opens on
 "New" above the agent's news; `sprintengine://verify/chat/ws-files` holds a
 message with a PDF, a DOCX on a Windows drive, a spreadsheet on a
 Windows share and a file of no kind the phone names, each a card under the
-bubble. Both rest under Earlier too. Do not distribute the
-fixture build as the normal app.
+bubble. Both rest under Earlier too. In the conversation fixture
+(`EXPO_PUBLIC_VERIFY_CONVERSATION=1`), a running agent's screen offers "Stop
+this agent", and the agent then reports itself stopped. Do not distribute the fixture build as the normal app.
 
 On a paired desktop, separately verify cold conversation resume, permissions,
 a model switch (idle and mid-reply), image upload, a generated picture and a read screenshot, interruption, background/foreground reconnect and an offline send
@@ -719,3 +720,23 @@ queued send, answers with a notice saying so, and its `queued` frame draws it
 in the bubble; with no turn left it is an ordinary send. A steer is never lost.
 An older desktop does not advertise the capability, and the phone sends it
 nothing new.
+
+### Stopping one agent
+
+A running agent's own screen (Agents ▸ the agent) offers "Stop this agent"
+(2026-10-24). It sends `stopSubagent`, naming the agent by the call that
+spawned it (its lane's id), and the chat, its turn and its other agents go
+on. The button says "Stopping…" until the agent reports its end, which closes
+its lane like any agent's end. A refusal says why and offers Stop again, and
+one left unanswered by a dropped link offers it again too. The chat's Stop is
+the turn's alone: a desktop with this capability spares the agents it runs,
+so this is the only way to stop one from the phone.
+
+It is offered only where it can land (`agentStopOffer`): a desktop that
+advertises `conversation-stop-subagent`, a pairing that may operate its
+chats, a chat whose listed `capabilities.stopSubagent` is `true` (absent is
+unknown, and offers nothing), and an agent still running. While the link is
+down it is shown but waits for the link. The rows on the Agents list carry no
+Stop of their own: a row opens its agent, and a second target on it would
+take taps meant for the row. An older desktop does not advertise the
+capability, and its turn Stop still ends the agents with the turn.
