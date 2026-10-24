@@ -103,6 +103,15 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
         ? { type: 'command', commandId: value.commandId, command: { kind: 'cancelQueued', queuedId: command.queuedId } }
         : null
     }
+    if (command.kind === 'stopSubagent') {
+      return id(value.commandId) && id(command.toolUseId)
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: { kind: 'stopSubagent', toolUseId: command.toolUseId },
+          }
+        : null
+    }
     // A steer is read as the send it rides on, and is never one held for
     // later: the two ask for opposite things.
     if (command.kind === 'send' && command.steer !== undefined) {
@@ -189,7 +198,9 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
   // A malformed command of a kind this contract added is a bad frame, not one
   // the desktop does not know.
   return rejection.code === 'unsupported_command' &&
-    (rejection.commandKind === 'resolvePlan' || rejection.commandKind === 'cancelQueued')
+    (rejection.commandKind === 'resolvePlan' ||
+      rejection.commandKind === 'cancelQueued' ||
+      rejection.commandKind === 'stopSubagent')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

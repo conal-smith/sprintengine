@@ -54,6 +54,12 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * `conversation-steer-sends`. Absent means unknown.
      */
     steer?: boolean
+    /**
+     * The chat's provider stops one agent it spawned by itself (a
+     * `stopSubagent` command), from a desktop that advertises
+     * `conversation-stop-subagent`. Absent means unknown.
+     */
+    stopSubagent?: boolean
   }
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
@@ -589,6 +595,7 @@ function thread(value: unknown): ConversationThread | null {
               ? { permissionModes: flags.permissionModes.filter(isConversationPermissionModeId) }
               : {}),
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
+            ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
           },
         }
       : {}),

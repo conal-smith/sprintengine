@@ -2215,6 +2215,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'conversation-send-skills') &&
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
+          stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2279,6 +2280,16 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       const connection = connectionFor(key.connectionId)
       const refused = connection ? permissionModeRefusal(connection, command.preset) : null
       if (refused) return refused
+    }
+    // Said here in words: a machine from before it answers an unknown kind.
+    if (command?.kind === 'stopSubagent') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-stop-subagent'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot stop one agent from here yet. Update SprintEngine Studio there.`,
+        }
     }
     const result = await remoteConversations.command(key, input.command)
     // A command carried out (a model switched, a preset changed) changes

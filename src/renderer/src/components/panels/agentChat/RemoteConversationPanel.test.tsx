@@ -105,6 +105,7 @@ async function mountRemote({
   permissionModes = false,
   queuedSends = false,
   steerSends = false,
+  stopSubagents = false,
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -116,6 +117,8 @@ async function mountRemote({
   permissionModes?: boolean
   queuedSends?: boolean
   steerSends?: boolean
+  /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
+  stopSubagents?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
@@ -165,6 +168,7 @@ async function mountRemote({
       permissionModes,
       queuedSends,
       steerSends,
+      stopSubagents,
       createPullRequest,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
@@ -238,6 +242,9 @@ async function mountRemote({
     })),
     meshConversationResolveApproval: vi.fn(async () => ({ ok: true })),
     meshConversationInterrupt: vi.fn(async () => ({ ok: true })),
+    meshConversationStopSubagent: vi.fn(async (_input: { key: MeshConversationKey; toolUseId: string }) => ({
+      ok: true,
+    })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
       listedModel = input.modelId
@@ -471,6 +478,169 @@ test('a message queued for a machine that holds its own queue is handed to it at
     expect(chat.draft()).toBe('Try it with --runInBand')
     await chat.act(async () => chat.emit({ type: 'queued', messages: [] }))
     expect(chat.host.querySelector('[aria-label="Queued message"]')).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+/** Mounts a chat whose turn runs on (its card answered), with a message the machine holds for its end. */
+async function holdingMessage(options: { steerSends: boolean }) {
+  const chat = await mountRemote({
+    access: 'operate',
+    queuedSends: true,
+    steerSends: options.steerSends,
+    capabilities: { ...thread.capabilities!, steer: options.steerSends },
+  })
+  await chat.act(async () =>
+    chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) }),
+  )
+  await chat.act(async () => chat.type('Keep the print styles square'))
+  await chat.act(async () => chat.enter())
+  expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+    key,
+    message: 'Keep the print styles square',
+    queue: true,
+  })
+  await chat.act(async () =>
+    chat.emit({
+      type: 'queued',
+      messages: [{ id: 'sm-1', text: 'Keep the print styles square', createdAt: 1_700_000_000_000 }],
+    }),
+  )
+  return chat
+}
+
+test('Send now on a message the machine holds takes it back and steers it in, and the turn is not stopped', async () => {
+  const chat = await holdingMessage({ steerSends: true })
+  try {
+    await chat.act(async () => chat.button('Send now')!.click())
+    expect(chat.api.meshConversationCancelQueued).toHaveBeenCalledExactlyOnceWith({ key, queuedId: 'sm-1' })
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Keep the print styles square',
+      steer: true,
+    })
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('Primary+Enter with nothing typed steers in the message the machine holds', async () => {
+  const chat = await holdingMessage({ steerSends: true })
+  try {
+    await chat.act(async () =>
+      chat.composer().dispatchEvent(
+        new chat.document.defaultView!.KeyboardEvent('keydown', {
+          key: 'Enter',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    )
+    expect(chat.api.meshConversationCancelQueued).toHaveBeenCalledExactlyOnceWith({ key, queuedId: 'sm-1' })
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Keep the print styles square',
+      steer: true,
+    })
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a held message that could not be taken back is left to that machine, and the turn is not stopped', async () => {
+  const chat = await holdingMessage({ steerSends: true })
+  chat.api.meshConversationCancelQueued.mockImplementationOnce(async () => ({
+    ok: false,
+    message: 'That message is already on its way into the chat.',
+  }))
+  try {
+    await chat.act(async () => chat.button('Send now')!.click())
+    expect(chat.api.meshConversationSend).toHaveBeenCalledTimes(1)
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+    expect(chat.host.textContent).toContain('That message is already on its way into the chat.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that takes no steer offers Stop and send for the message it holds, which stops the turn', async () => {
+  const chat = await holdingMessage({ steerSends: false })
+  try {
+    expect(chat.button('Send now')).toBeUndefined()
+    await chat.act(async () => chat.button('Stop and send')!.click())
+    expect(chat.api.meshConversationInterrupt).toHaveBeenCalledOnce()
+    expect(chat.api.meshConversationCancelQueued).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+/** Starts an agent in the turn the mounted chat is running, as that machine's events say. */
+async function startAgent(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  await chat.act(async () =>
+    chat.emit({
+      type: 'event',
+      event: event('tool_started', {
+        turnId: 'a',
+        toolUseId: 'toolu_agent',
+        name: 'Agent',
+        subagentLane: true,
+        subagentType: 'general',
+        input: { description: 'Restyle the boxes' },
+      }),
+    }),
+  )
+}
+const agentStops = (chat: Awaited<ReturnType<typeof mountRemote>>) =>
+  chat.host.querySelectorAll<HTMLButtonElement>('button[aria-label="Stop this agent"]')
+
+test('an agent in a chat over there has a Stop of its own, which stops that agent and not the turn', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    stopSubagents: true,
+    capabilities: { ...thread.capabilities!, stopSubagent: true },
+  })
+  try {
+    await startAgent(chat)
+    expect(agentStops(chat)).toHaveLength(1)
+    await chat.act(async () => agentStops(chat)[0]!.click())
+    expect(chat.api.meshConversationStopSubagent).toHaveBeenCalledExactlyOnceWith({ key, toolUseId: 'toolu_agent' })
+    expect(chat.api.meshConversationInterrupt).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Stop on an agent where the machine cannot stop one by itself, or lists its chat as unable', async () => {
+  for (const options of [
+    { stopSubagents: false, capabilities: { ...thread.capabilities!, stopSubagent: true } },
+    { stopSubagents: true, capabilities: { ...thread.capabilities!, stopSubagent: false } },
+    { stopSubagents: true, capabilities: thread.capabilities },
+  ]) {
+    const chat = await mountRemote({ access: 'operate', ...options })
+    try {
+      await startAgent(chat)
+      expect(chat.host.textContent).toContain('Restyle the boxes')
+      expect(agentStops(chat)).toHaveLength(0)
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+test('a pairing that may only follow sees no Stop on an agent', async () => {
+  const chat = await mountRemote({
+    access: 'read',
+    stopSubagents: true,
+    capabilities: { ...thread.capabilities!, stopSubagent: true },
+  })
+  try {
+    await startAgent(chat)
+    expect(agentStops(chat)).toHaveLength(0)
   } finally {
     await chat.unmount()
   }

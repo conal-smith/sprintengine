@@ -2221,12 +2221,39 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     void interrupt()
   }
 
-  // "Stop and send" for a message the machine running the chat holds: it
-  // sends what it holds once the turn ends, so stopping the turn is all that
-  // is asked of it from here.
+  // "Stop and send" for a message the machine running the chat holds, where
+  // that machine takes no steer: it sends what it holds once the turn ends,
+  // so stopping the turn is all that is asked of it from here.
   const stopForHostQueue = () => {
     if (queuedSendNow.disabled || !operate) return
     void interrupt()
+  }
+  // "Send now" for a message that machine holds. Where it takes a steer the
+  // message is taken back from what it holds and steered into the turn, which
+  // goes on, its agents with it; a steer the turn cannot take is held there
+  // again, as any is. The row says "Send now" then, so it must not stop the
+  // turn (owner report 2026-10-24: a held message sent now ended the turn and
+  // the helper it was running). Elsewhere it is Stop and send.
+  const sendHostQueuedNow = (message: MeshQueuedMessage | undefined) => {
+    if (!message || queuedSendNow.disabled || !operate) return
+    if (queuedSendNow.kind === 'steer' && transport.cancelQueued) void steerHostQueued(message)
+    else stopForHostQueue()
+  }
+  const steerHostQueued = async (message: MeshQueuedMessage) => {
+    if (!transport.cancelQueued || takingBackRef.current.has(message.id)) return
+    takingBackRef.current.add(message.id)
+    try {
+      const result = await transport.cancelQueued({ queuedId: message.id })
+      if (!result.ok) {
+        setActionError(result.message)
+        return
+      }
+      await steerTurn({ text: message.text, attachments: [], metadata: { skillIds: [], mentions: [], files: [] } })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'The message could not be sent now.')
+    } finally {
+      takingBackRef.current.delete(message.id)
+    }
   }
   // Edit on a message that machine holds: taken back there first, so it cannot
   // go as well as come back here. One already on its way stays where it is,
@@ -2284,9 +2311,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     }
     if (!hasDraft) {
       if (queuedTurn) sendQueuedNow(queuedTurn)
-      // What the machine running the chat holds goes when the turn ends there,
-      // so sending it now is stopping that turn.
-      else if (hostQueue?.messages.some((message) => message.failure === undefined)) stopForHostQueue()
+      // What the machine running the chat holds goes now as its row's Send
+      // now sends it: steered in, or the turn stopped where it takes no steer.
+      else sendHostQueuedNow(hostQueue?.messages.find((message) => message.failure === undefined))
       return
     }
     // Held by the machine running the chat, then let go by stopping its turn.
@@ -4011,7 +4038,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                         : { ...queuedSendNow, disabled: true }
                   }
                   shortcutLabel={sendNowShortcutLabel}
-                  onSendNow={stopForHostQueue}
+                  onSendNow={() => sendHostQueuedNow(message)}
                   {...(operate && transport.cancelQueued ? { onEdit: () => void takeBackHostQueued(message) } : {})}
                   failed={message.failure !== undefined}
                   status={message.failure !== undefined ? `Couldn't send: ${message.failure}` : 'Queued'}

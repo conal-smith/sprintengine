@@ -13,6 +13,18 @@
 
 ### Added
 
+- **One agent a chat spawned can be stopped by itself.**
+  `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
+  names a desktop that takes the `stopSubagent` command (`toolUseId`: the
+  call that spawned the agent, its lane's id) and stops that agent alone,
+  leaving the chat, its turn and its other agents running. A listed
+  `ConversationThread` says which chats can, as `capabilities.stopSubagent`.
+  `parseConversationClientMessage` keeps a `stopSubagent` that names an agent
+  and refuses one that does not as `invalid_frame`;
+  `parseConversationServerFrame` keeps `capabilities.stopSubagent` when it is
+  a boolean. A desktop without the capability refuses the kind as
+  `unsupported_command`. The pinned files are unchanged.
+
 - **A chat can be handed off to a fresh session.** `context_handed_off` joins
   `CONVERSATION_EVENT_TYPES`, with its payload as
   `ConversationHandoffPayload` (`path`, `preTokens`, `seedOwed`,

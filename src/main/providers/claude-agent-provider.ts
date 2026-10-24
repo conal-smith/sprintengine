@@ -393,6 +393,9 @@ type SessionState = {
   worktreeLeaseRedirected?: boolean
   // Agents the child has running, by spawning tool call.
   subagents: Map<string, TrackedSubagent>
+  // The turn's foreground agents on their way to the background ahead of a
+  // Stop or a steer (moveWaitedOnAgentsToBackground); null when none are.
+  agentsMoving: Promise<void> | null
   // The tool call that first spawned each agent this chat has seen, by task.
   // Kept across children: an agent resumed later (SendMessage, after the
   // child that ran it ended) reports under the resuming call, and its lane is
@@ -629,17 +632,68 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
   // through although its typed signature does not declare it yet. An older
   // CLI ignores it, and the message it still runs arrives as a continuation
   // turn rather than being lost.
+  //
+  // The agents the turn is waiting on go to the background first, and the
+  // interrupt follows once they are there: an agent is stopped by its own
+  // Stop and by nothing else (owner ruling 2026-10-24, after a Stop sent to
+  // carry a follow-up in ended a helper half an hour into its work). The
+  // child spares background agents on an interrupt because the session
+  // declares `perTaskStopAffordance`.
   function interruptChild(state: SessionState): Promise<boolean> {
     for (const uuid of state.pendingSendUuids) state.interruptedSendUuids.add(uuid)
     state.pendingSendUuids.clear()
     state.textSeam = false
-    const interrupt = state.query?.interrupt as ((options?: { cancelQueued?: boolean }) => Promise<unknown>) | undefined
+    const query = state.query
+    const interrupt = query?.interrupt as ((options?: { cancelQueued?: boolean }) => Promise<unknown>) | undefined
     if (!interrupt) return Promise.resolve(true)
-    // A refusal is still an answer: the child is alive to give it.
-    return answeredWithin(
-      interrupt.call(state.query, { cancelQueued: true }).catch(() => undefined),
-      childAnswerTimeoutMs,
+    return moveWaitedOnAgentsToBackground(state).then(() =>
+      // A child ended meanwhile has nothing left to stop.
+      state.query !== query
+        ? true
+        : // A refusal is still an answer: the child is alive to give it.
+          answeredWithin(
+            interrupt.call(query, { cancelQueued: true }).catch(() => undefined),
+            childAnswerTimeoutMs,
+          ),
     )
+  }
+
+  // The agents the running turn waits on — spawned in the foreground, their
+  // call still open — moved to the background, as Ctrl+B does in a terminal.
+  // Each one's call returns at once and the agent works on, reporting its end
+  // as a background agent does. Done ahead of a Stop, which would otherwise
+  // end them with the turn, and of a steer, which the child reads only at its
+  // next tool round and so not until they finish. An agent is marked as moved
+  // here, and its lane told, rather than when the child's own update arrives:
+  // the turn's end must find it in the background, or its row closes with the
+  // turn. Bounded per agent, as every request to the child is; a child that
+  // refuses (background tasks turned off) or never answers leaves it where it
+  // was. Both a Stop's paths ask for the move; they share one.
+  function moveWaitedOnAgentsToBackground(state: SessionState): Promise<void> {
+    if (state.agentsMoving) return state.agentsMoving
+    const query = state.query
+    if (!query || typeof query.backgroundTasks !== 'function') return Promise.resolve()
+    const waitedOn = Array.from(state.subagents.values()).filter(
+      (agent) => !agent.background && state.openToolUseIds.has(agent.toolUseId),
+    )
+    if (waitedOn.length === 0) return Promise.resolve()
+    const moveOne = async (agent: TrackedSubagent): Promise<void> => {
+      let moved = false
+      const asked = Promise.resolve()
+        .then(() => query.backgroundTasks(agent.toolUseId))
+        .then((answer) => {
+          moved = answer === true
+        })
+      if (!(await answeredWithin(asked, childAnswerTimeoutMs, { rejectAsUnanswered: true })) || !moved) return
+      if (state.query !== query || state.subagents.get(agent.toolUseId) !== agent || agent.background) return
+      agent.background = true
+      deliver(state, [eventFor(state, 'subagent_status', subagentStatusFields(agent, 'running'))])
+    }
+    const moving = Promise.all(waitedOn.map(moveOne)).then(() => {
+      if (state.agentsMoving === moving) state.agentsMoving = null
+    })
+    state.agentsMoving = moving
+    return moving
   }
 
   // Stop, on a child that never acknowledges it, ends the child. A process
@@ -1087,6 +1141,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       // A one-line "what it is doing now" for each running agent, forked from
       // the agent's own context about every 30s; shown on its lane and card.
       agentProgressSummaries: true,
+      // Each running agent has a Stop of its own (stopSubagent, on its card
+      // and its lane), so the turn's Stop need not end them: declared, an
+      // interrupt spares the background agents and workflows and aborts the
+      // turn alone. Without it the child kills them all, since it cannot know
+      // they could be stopped one at a time, and an agent it killed so is
+      // marked stopped by the person, which its own resume then refuses. A
+      // Claude Code older than the option ignores it and kills them as before.
+      perTaskStopAffordance: true,
       permissionMode,
       // Every child may be switched into bypass while it runs: the CLI takes
       // `setPermissionMode('bypassPermissions')` only from a child started with
@@ -1622,6 +1684,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         textSeam: false,
         declinedToolUseIds: new Set(),
         subagents: new Map(),
+        agentsMoving: null,
         agentLanes: new Map(input.knownSubagentLanes),
         tasks: new Map(),
         monitorCalls: new Map(),
@@ -1786,13 +1849,23 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // result has answered this message too (pendingSendUuids). Nothing that
     // would respawn the child — a mode, effort, skills or preset change — is
     // applied here, since a respawn would drop the work the message is meant
-    // to redirect; the next ordinary send applies it.
+    // to redirect; the next ordinary send applies it. An agent the turn is
+    // waiting on goes to the background first, so the next tool round is now
+    // rather than when the agent finishes, and the agent works on.
     async steer(input: MockAdapterSteerInput): Promise<ConversationProviderSteerResult> {
       const state = sessions.get(input.sessionId)
       if (!state) return { ok: false, message: 'Conversation session is not registered with the Claude provider.' }
-      const turn = openTurn(state)
-      if (!turn || turn.turnId !== input.turnId || !state.query || !state.inputQueue)
-        return { ok: false, message: 'The agent is not working on that turn any more.' }
+      const steerable = () => {
+        const turn = openTurn(state)
+        return Boolean(turn && turn.turnId === input.turnId && state.query && state.inputQueue)
+      }
+      if (!steerable()) return { ok: false, message: 'The agent is not working on that turn any more.' }
+      await moveWaitedOnAgentsToBackground(state)
+      // The turn can end while the agents move: steered into then, the message
+      // would start a turn of its own that nobody asked for, so it is refused,
+      // and waits in the composer's queue for the next turn as any refused
+      // steer does.
+      if (!steerable()) return { ok: false, message: 'The agent is not working on that turn any more.' }
       // Where the session stands as the message goes in: what "Edit from
       // here" on it goes back to.
       const sessionId = state.providerSessionId
@@ -1996,13 +2069,16 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
       return { ok: true, ...(notice ? { notice } : {}) }
     },
 
-    interrupt(input: MockAdapterSessionInput) {
+    // The turn ends once the agents it waited on are in the background, so
+    // its end finds them still running and leaves their lanes open.
+    async interrupt(input: MockAdapterSessionInput) {
       const state = sessions.get(input.sessionId)
       if (!state) return []
       const turnId = state.turn?.turnId
       endUnresponsiveChildAfterStop(state, interruptChild(state))
       resolveAllPendingPermissions(state, { approved: false })
       endTurn(state)
+      await (state.agentsMoving ?? Promise.resolve())
       return [
         eventFor(state, 'turn_failed', {
           ...(turnId ? { turnId } : {}),
@@ -2104,7 +2180,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
 
     // Each listed task is stopped by name, and reports `stopped` the way it
     // would have reported its end: that is what takes it off the list. Agents
-    // are not among them; their lanes are stopped with the turn. Bounded, as
+    // are not among them; each is stopped by its own Stop. Bounded, as
     // every request to the child is: one that never answers holds nothing.
     async stopBackgroundTasks(sessionId: string): Promise<boolean> {
       const state = sessions.get(sessionId)

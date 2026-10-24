@@ -770,8 +770,11 @@ in the app's own process.
   `conversation-queued-sends`: that machine holds it among its scheduled
   messages, shows it in the chat's own tray, and sends it when the turn ends,
   whether or not this machine is still awake. The pane draws the rows from
-  what that machine says it holds (`watchQueued`, `queued` frames); Stop and
-  send stops the turn, which lets it go, and Edit takes it back from there.
+  what that machine says it holds (`watchQueued`, `queued` frames); Edit takes
+  it back from there. Where that machine takes a steer, the row's Send now
+  (and Primary+Enter with nothing typed) takes the message back and steers it
+  into the running turn (2026-10-24); elsewhere it is Stop and send, which
+  stops the turn and lets the message go.
   Several queued in one turn go as one message, as the composer's own queue
   sends them. A machine without the capability, or one that refuses to hold a
   message, leaves it queued in this pane, which sends it when the turn ends
@@ -785,6 +788,12 @@ in the app's own process.
   hold it as a queued message, and the pane shows it among the held rows. A
   machine without the capability is never sent a steer: the composer offers
   only Queue, and Primary+Enter stops the turn and sends after, as before.
+- **An agent over there has its own Stop** (2026-10-24). Where the machine
+  advertises `conversation-stop-subagent` and lists the chat's provider as
+  able (`capabilities.stopSubagent`), each running agent's card and lane
+  offers "Stop this agent", as a local chat's do, and it stops that agent
+  alone over there. The machine's turn Stop spares a Claude chat's agents, so
+  this is how one is stopped from here.
 
 ### Terminals stay on the machine
 

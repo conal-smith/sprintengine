@@ -78,6 +78,7 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   setPermissionPreset: true,
   setModel: true,
   cancelQueued: true,
+  stopSubagent: true,
 }
 
 /**

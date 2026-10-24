@@ -1086,6 +1086,12 @@ export type ElectronApi = {
     queuedId: string
   }) => Promise<MeshConversationCommandResult>
   meshConversationInterrupt: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
+  // Stop one agent a chat over there spawned, by the call that spawned it,
+  // leaving the chat and its turn running. Needs `conversation-stop-subagent` there.
+  meshConversationStopSubagent: (input: {
+    key: MeshConversationKey
+    toolUseId: string
+  }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string

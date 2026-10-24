@@ -90,6 +90,7 @@ function remoteConversationSession(
   thread: MeshConversation | null,
   key: MeshConversationKey,
   modelSwitch: boolean,
+  stopSubagents: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -130,6 +131,11 @@ function remoteConversationSession(
       // Whether its provider takes a message mid-turn, where the list says;
       // the transport offers it only for a machine that takes a steer.
       steer: capabilities?.steer === true,
+      // Whether one agent the chat spawned can be stopped by itself: the
+      // machine takes the command and lists the chat's provider as able.
+      // The machine's turn Stop spares such a chat's agents, so this is the
+      // only Stop an agent has from here.
+      stopSubagent: stopSubagents && capabilities?.stopSubagent === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
     },
@@ -164,6 +170,8 @@ export default function RemoteConversationPanel({
   const [hostPullRequests, setHostPullRequests] = useState(false)
   // The machine takes a message into a turn one of its chats is running.
   const [steerSends, setSteerSends] = useState(false)
+  // The machine stops one agent of one of its chats by itself.
+  const [stopSubagents, setStopSubagents] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -268,6 +276,7 @@ export default function RemoteConversationPanel({
         setSendSkills(result.sendSkills === true)
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
+        setStopSubagents(result.stopSubagents === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -305,7 +314,10 @@ export default function RemoteConversationPanel({
     }
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
-  const session = useMemo(() => remoteConversationSession(thread, key, modelSwitch), [thread, key, modelSwitch])
+  const session = useMemo(
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
+    [thread, key, modelSwitch, stopSubagents],
+  )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])
   const binding = useMemo<ChatBinding>(
