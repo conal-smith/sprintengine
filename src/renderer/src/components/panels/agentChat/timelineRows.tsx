@@ -672,7 +672,9 @@ export const WorkTimeline = memo(function WorkTimeline({
 }: {
   tools: TranscriptToolEntry[]
   live: boolean
-  intermediateText?: { text: string; beforeToolUseId: string }[]
+  // `at`, where the words carry when they were said (an agent's own, in its
+  // thread), is shown on hover as a message's time is.
+  intermediateText?: { text: string; beforeToolUseId: string; at?: number }[]
   reasoning?: ReasoningSegment[]
   // Scopes each reasoning block's open state to its turn.
   turnId?: string
@@ -685,6 +687,13 @@ export const WorkTimeline = memo(function WorkTimeline({
     () => partitionWorkTimeline(tools, intermediateText, reasoning),
     [tools, intermediateText, reasoning],
   )
+  // A part's words are the ones said before its first step, in order.
+  const timesBefore = useMemo(() => {
+    const times = new Map<string, (number | undefined)[]>()
+    for (const part of intermediateText ?? [])
+      times.set(part.beforeToolUseId, [...(times.get(part.beforeToolUseId) ?? []), part.at])
+    return times
+  }, [intermediateText])
   return (
     <div className="mb-2" aria-busy={live}>
       {parts.map((part) => (
@@ -698,9 +707,7 @@ export const WorkTimeline = memo(function WorkTimeline({
             />
           ))}
           {part.text.map((text, index) => (
-            <div key={index} className="mb-2 min-w-0">
-              <ConversationMarkdown text={text} />
-            </div>
+            <TimedProse key={index} text={text} at={timesBefore.get(part.tools[0].id)?.[index]} />
           ))}
           <WorkTimelineGroup tools={foldedOnly ? turnFoldedSteps(part.tools) : part.tools} />
         </React.Fragment>
@@ -1345,6 +1352,34 @@ export function WorkingTimelineRow({
           {detailsOpen ? details : null}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+// Words drawn among steps: a turn's prose between its tools, or what an agent
+// said between its own. Where they carry when they were said, the time rests
+// under them and shows on hover or focus, as a message's does.
+export function TimedProse({
+  text,
+  at,
+  className = 'mb-2 min-w-0',
+}: {
+  text: string
+  at?: number
+  className?: string
+}) {
+  if (at === undefined)
+    return (
+      <div className={className}>
+        <ConversationMarkdown text={text} />
+      </div>
+    )
+  return (
+    <div className={`group/conversation ${className}`}>
+      <ConversationMarkdown text={text} />
+      <div className="mt-0.5 flex">
+        <MessageTimestamp at={at} />
+      </div>
     </div>
   )
 }

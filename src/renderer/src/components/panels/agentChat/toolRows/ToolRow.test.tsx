@@ -328,6 +328,23 @@ test('a running tool shows how long it has been running, a finished one how long
   expect(quick).toContain('>0.2s<')
 })
 
+test('a step says when it ran: a finished one when it finished, a running one when it started', async () => {
+  const { formatMessageDateTime } = await import('../liveElapsed')
+  const startedAt = Date.now() - 5_000
+  const reading = (row: TranscriptToolEntry) => {
+    const time = new JSDOM(renderToStaticMarkup(<ToolRow tool={row} />)).window.document.querySelector('time')
+    return { dateTime: time?.getAttribute('datetime'), full: time?.querySelector('.sr-only')?.textContent }
+  }
+  expect(reading(tool({ startedAt, completedAt: startedAt + 1_000 }))).toEqual({
+    dateTime: new Date(startedAt + 1_000).toISOString(),
+    full: `Finished ${formatMessageDateTime(startedAt + 1_000)}`,
+  })
+  expect(reading(tool({ status: 'running', startedAt, input: { command: 'npm test' } }))).toEqual({
+    dateTime: new Date(startedAt).toISOString(),
+    full: `Started ${formatMessageDateTime(startedAt)}`,
+  })
+})
+
 async function withToolDetailDom(
   detail: (toolUseId: string) => { output: string },
   run: (harness: {
