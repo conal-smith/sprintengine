@@ -200,8 +200,10 @@ export function changeTree(files: ConversationCheckpointFile[]): ChangeNode[] {
     }
     return { ...merged, children: merged.children.map(compact) }
   }
+  // One collator for the whole tree; `localeCompare` would build one per comparison.
+  const collator = new Intl.Collator()
   const sort = (nodes: ChangeNode[]) => {
-    nodes.sort((a, b) => Number(Boolean(a.file)) - Number(Boolean(b.file)) || a.name.localeCompare(b.name))
+    nodes.sort((a, b) => Number(Boolean(a.file)) - Number(Boolean(b.file)) || collator.compare(a.name, b.name))
     for (const node of nodes) sort(node.children)
   }
   const compacted = roots.map(compact)
