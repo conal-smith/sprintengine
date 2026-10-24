@@ -62,6 +62,14 @@ export type ConversationQuestionAnswers = Record<string, string>
  * - `cancelQueued` takes back a message the desktop holds (`queued` frames
  *   name each by `id`), refused once it is on its way into the chat. Needs
  *   `conversation-queued-sends` too.
+ * - `stopSubagent` stops one agent the chat spawned, named by the call that
+ *   spawned it (the `toolUseId` its `subagent_status` events carry), and
+ *   leaves the chat, its turn and its other agents running; between turns
+ *   too, where a background agent works on. The agent reports its own end,
+ *   which closes its lane. Refused for an agent that is not running, and for
+ *   a chat whose provider cannot stop one by itself (the listed chat's
+ *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
+ *   desktop without it refuses the kind as `unsupported_command`.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -88,6 +96,7 @@ export type ConversationCommand =
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
+  | { kind: 'stopSubagent'; toolUseId: string }
 
 export type ConversationCommandKind = ConversationCommand['kind']
 
@@ -127,6 +136,7 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'setPermissionPreset',
   'setModel',
   'cancelQueued',
+  'stopSubagent',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────

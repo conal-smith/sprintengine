@@ -430,6 +430,19 @@ additive: a desktop without the capability drops `steer`, so the send is
 refused `busy` mid-turn as before, and a client sends it only where it is
 advertised. The Studio RPC advertises it too: its `conversation.send` reads
 the lane's own validator and reaches the same host.
+One agent stopped by itself is the `conversation-stop-subagent` capability
+(2026-10-24): a `stopSubagent` command names an agent a chat spawned by the
+call that spawned it (`toolUseId`, as its `subagent_status` events carry it),
+and stops that agent alone, leaving the chat, its turn and its other agents
+running, between turns too. Each listed chat says whether its provider can as
+`capabilities.stopSubagent`, an optional boolean. It matters more than its
+size: the same release has a chat's turn Stop spare the agents a Claude chat
+runs, so a client that offers no agent's Stop leaves a runaway agent no way to
+be stopped short of settling the chat. All of it is additive: a desktop
+without the capability refuses the kind as `unsupported_command`, and a client
+sends it only where it is advertised (a desktop following another machine's
+chat refuses it there in words first). The Studio RPC does not advertise it,
+having no method for it.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

@@ -67,6 +67,16 @@ export const CONVERSATION_SEND_SKILLS_CAPABILITY = 'conversation-send-skills' as
  */
 export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as const
 /**
+ * One agent a chat spawned may be stopped by itself, as its card's and its
+ * lane's Stop does on the desktop: `stopSubagent` names the agent by the call
+ * that spawned it (its lane's `toolUseId`), and the chat, its turn and its
+ * other agents go on. A listed chat says whether its provider can
+ * (`capabilities.stopSubagent`). A desktop's turn Stop spares the agents a
+ * chat runs where it can stop them one at a time, so a client that offers no
+ * agent's Stop leaves the person no way to stop one.
+ */
+export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -110,6 +120,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_MESSAGE_IMAGES_CAPABILITY,
   CONVERSATION_MESSAGE_FILES_CAPABILITY,
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
+  CONVERSATION_STOP_SUBAGENT_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

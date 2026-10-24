@@ -203,9 +203,11 @@ export type ConversationTransport = {
   revert?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   /**
    * Stop one running agent the chat spawned, by its lane, leaving the chat and
-   * its turn running. Absent where the transport cannot: a paired machine's
-   * chat, and a window on the Studio protocol, which has no method for it yet.
-   * Offered only where the provider declares `stopSubagent` as well.
+   * its turn running. Absent where the transport cannot: a window on the
+   * Studio protocol, which has no method for it yet. A paired machine's chat
+   * has it, and its session declares `stopSubagent` only where that machine
+   * takes the command (`conversation-stop-subagent`). Offered only where the
+   * session declares `stopSubagent` as well.
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
   /**
@@ -469,6 +471,10 @@ export function createRemoteConversationTransport(input: {
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
+    // Offered only where the machine takes it and lists the chat's provider
+    // as able (the pane's session says `stopSubagent`).
+    stopSubagent: async (input) =>
+      commandResult(await window.api.meshConversationStopSubagent({ key, toolUseId: input.toolUseId })),
     respond: async (response) => {
       if (response.answers && response.approved)
         return commandResult(

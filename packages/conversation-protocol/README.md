@@ -141,6 +141,11 @@ and adds, each behind its capability:
   `notice`; one with `uploadIds` or `skills`, which cannot be held, is refused
   `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
   a send made while a turn runs is refused `busy` as before.
+- `conversation-stop-subagent`: `stopSubagent` stops one agent a chat spawned,
+  named by the call that spawned it (`toolUseId`), where the chat's provider
+  can (a listed thread's `capabilities.stopSubagent`), and leaves the chat,
+  its turn and its other agents running. A desktop without it refuses the
+  kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

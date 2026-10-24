@@ -187,6 +187,13 @@ export const TAILNET_CAPABILITIES = [
   // that does not see it keeps its own 5MB check. A server with no image
   // codec does not advertise it. CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY.
   'conversation-image-downscale',
+  // One agent a chat spawned may be stopped by itself (2026-10-24):
+  // `stopSubagent` names it by the call that spawned it, and a listed chat
+  // says whether its provider can (`capabilities.stopSubagent`). This
+  // machine's turn Stop spares a chat's agents where they can be stopped one
+  // at a time, so a paired machine needs its own Stop for each.
+  // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
+  'conversation-stop-subagent',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

@@ -51,9 +51,10 @@ import type {
  * picture on receipt (this socket's own uploads are kept as they came), and a
  * `hello` frame on it, which here is the connection's own handshake —
  * `conversation-lifecycle`, whose
- * settle and visit are gateway tools this socket has no method for, and
+ * settle and visit are gateway tools this socket has no method for,
  * `conversation-queued-sends`, whose `queued` frames its conversation topic
- * does not carry.
+ * does not carry, and `conversation-stop-subagent`, whose one agent's stop
+ * this socket has no method for either.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -63,7 +64,8 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-image-downscale' &&
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
-    capability !== 'conversation-queued-sends',
+    capability !== 'conversation-queued-sends' &&
+    capability !== 'conversation-stop-subagent',
 )
 
 export type StudioRpcServerOptions = {

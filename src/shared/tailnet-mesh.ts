@@ -476,6 +476,11 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * takes one (its listed `capabilities.steer`). False for a machine that does
  * not, where a message sent mid-turn waits for the turn to end.
  *
+ * `stopSubagents`: the machine advertises `conversation-stop-subagent` — one
+ * agent a chat of its own spawned may be stopped by itself from here, where
+ * that chat's provider can (its listed `capabilities.stopSubagent`). False for
+ * a machine that does not, where an agent's lane offers no Stop.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -496,6 +501,7 @@ export type MeshConversationListResult =
       queuedSends?: boolean
       sendSkills?: boolean
       steerSends?: boolean
+      stopSubagents?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -514,7 +520,10 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
  * A queued send and taking one back need `conversation-queued-sends` there.
  */
 export type MeshConversationCommand =
-  ConversationWireCommand | { kind: 'send'; message: string; queue: true } | { kind: 'cancelQueued'; queuedId: string }
+  | ConversationWireCommand
+  | { kind: 'send'; message: string; queue: true }
+  | { kind: 'cancelQueued'; queuedId: string }
+  | { kind: 'stopSubagent'; toolUseId: string }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }

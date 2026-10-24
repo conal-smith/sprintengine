@@ -79,6 +79,10 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // Whether a `send` that says `steer` can go into the turn now running
         // (`conversation-steer-sends`); a client offers Steer only where it can.
         steer: capabilities.steer === true,
+        // Whether one agent the chat spawned can be stopped by itself
+        // (`conversation-stop-subagent`); a client offers an agent's Stop only
+        // where it can.
+        stopSubagent: capabilities.stopSubagent === true,
       }
     : undefined
 
@@ -1244,6 +1248,11 @@ export function createConversationGatewayHost(
           }
           case 'interrupt':
             return api.interrupt({ sessionId: session.sessionId, commandId, ...stamp })
+          // One agent, as its Stop on this machine stops it: never a resume,
+          // since an agent runs only in a live session. Sent twice, the second
+          // finds it ended and is refused in words, which changes nothing.
+          case 'stopSubagent':
+            return runtime.stopSubagent({ sessionId: session.sessionId, toolUseId: command.toolUseId })
           case 'resolveApproval':
             return api.resolveApproval({
               sessionId: session.sessionId,
