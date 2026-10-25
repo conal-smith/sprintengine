@@ -91,6 +91,7 @@ function remoteConversationSession(
   key: MeshConversationKey,
   modelSwitch: boolean,
   stopSubagents: boolean,
+  cliPermissionModes: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -106,6 +107,11 @@ function remoteConversationSession(
     // shows the same switcher a local chat does; without it (a desktop built
     // before the list named it) the switcher stays hidden.
     ...(thread?.permissionPreset ? { permissionPreset: thread.permissionPreset } : {}),
+    // And the CLI's own mode at it (Claude Code's Accept edits), from a
+    // machine that runs them; elsewhere the preset runs its own.
+    ...(cliPermissionModes && thread?.permissionPreset && thread.permissionMode
+      ? { permissionMode: thread.permissionMode }
+      : {}),
     createdAt: thread?.createdAt ?? 0,
     updatedAt: thread?.updatedAt ?? 0,
     capabilities: {
@@ -138,6 +144,9 @@ function remoteConversationSession(
       stopSubagent: stopSubagents && capabilities?.stopSubagent === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
+      // The CLI's own modes it runs beside them, offered in the same picker a
+      // local chat's are, where the machine takes a switch to one.
+      ...(cliPermissionModes && capabilities?.permissionModes ? { permissionModes: capabilities.permissionModes } : {}),
     },
   }
 }
@@ -161,6 +170,8 @@ export default function RemoteConversationPanel({
   const [listedModelSwitch, setListedModelSwitch] = useState(false)
   // The machine runs chats on Manual and Auto as well as Bypass and No flag.
   const [permissionModes, setPermissionModes] = useState(false)
+  // The machine runs chats on their CLI's own modes beside the presets.
+  const [cliPermissionModes, setCliPermissionModes] = useState(false)
   // The machine holds a message queued here mid-turn and sends it when the
   // turn ends, so this machine may sleep or close meanwhile; and what it
   // holds for this chat, as it last said.
@@ -272,6 +283,7 @@ export default function RemoteConversationPanel({
         setListedAccess(result.access)
         setListedModelSwitch(result.modelSwitch === true)
         setPermissionModes(result.permissionModes === true)
+        setCliPermissionModes(result.cliPermissionModes === true)
         setQueuedSends(result.queuedSends === true)
         setSendSkills(result.sendSkills === true)
         setHostPullRequests(result.createPullRequest === true)
@@ -315,8 +327,8 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
-    [thread, key, modelSwitch, stopSubagents],
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, cliPermissionModes),
+    [thread, key, modelSwitch, stopSubagents, cliPermissionModes],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

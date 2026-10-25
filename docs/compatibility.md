@@ -273,7 +273,12 @@ cannot describe. `0.2.0` added three capabilities and no version:
 `conversation-cli-permission-modes` (a `permissionMode` beside the preset).
 Each degrades on a desktop without it to something that desktop already does:
 `hello` and `resolvePlan` are refused under their ids, and an unknown
-`permissionMode` member is dropped, so the preset's own mode runs.
+`permissionMode` member is dropped, so the preset's own mode runs. A desktop
+following another machine's chat reads the listed `permissionMode` and
+`capabilities.permissionModes`, and sends a `permissionMode`, only where that
+machine advertises the capability (2026-10-25); it refuses one in words for a
+machine that does not, rather than let it be dropped there and the person be
+told one mode while the agent ran on another.
 
 An `answerQuestion`'s answers are keyed by each question's whole text, which
 is how the CLI reads them back. The first version capped a key at 200

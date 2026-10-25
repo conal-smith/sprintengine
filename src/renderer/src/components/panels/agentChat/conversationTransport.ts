@@ -491,8 +491,16 @@ export function createRemoteConversationTransport(input: {
         await window.api.meshConversationResolveApproval({ key, requestId: response.requestId, decision }),
       )
     },
+    // The CLI's own mode rides beside its preset where the chat's session
+    // lists any, which the pane does only for a machine that runs them.
     setPermissionPreset: async (change) =>
-      commandResult(await window.api.meshConversationSetPermissionPreset({ key, preset: change.permissionPreset })),
+      commandResult(
+        await window.api.meshConversationSetPermissionPreset({
+          key,
+          preset: change.permissionPreset,
+          ...(change.permissionMode ? { permissionMode: change.permissionMode } : {}),
+        }),
+      ),
     // Offered only while the machine advertises model switching; the pane turns
     // `modelSwitch` on from its list, and the chip stays locked without it.
     setModel: async (change) =>

@@ -103,6 +103,7 @@ async function mountRemote({
   models,
   modelSwitch = false,
   permissionModes = false,
+  cliPermissionModes = false,
   queuedSends = false,
   steerSends = false,
   stopSubagents = false,
@@ -115,6 +116,8 @@ async function mountRemote({
   models?: MeshConversation['models']
   modelSwitch?: boolean
   permissionModes?: boolean
+  /** The machine runs chats on their CLI's own modes (`conversation-cli-permission-modes`). */
+  cliPermissionModes?: boolean
   queuedSends?: boolean
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
@@ -122,7 +125,7 @@ async function mountRemote({
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
-  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
+  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree' | 'permissionMode'>>
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
 }) {
@@ -166,6 +169,7 @@ async function mountRemote({
       access,
       modelSwitch,
       permissionModes,
+      cliPermissionModes,
       queuedSends,
       steerSends,
       stopSubagents,
@@ -880,6 +884,88 @@ test('a refused allow leaves the chat on the mode it was on', async () => {
     await chat.unmount()
   }
 })
+
+// Claude Code's own modes, as its manifest names them to the picker.
+const claudeModes = [
+  { id: 'manual', label: 'Manual', level: 'manual' },
+  { id: 'acceptEdits', label: 'Accept edits', level: 'auto' },
+  { id: 'auto', label: 'Auto', level: 'auto' },
+  { id: 'bypass', label: 'Bypass permissions', level: 'bypass' },
+  { id: 'none', label: 'No flag', level: 'none' },
+]
+
+async function withClaudeModes(run: () => Promise<void>) {
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  const before = useWorkspaceStore.getState().pluginCatalogEntries
+  useWorkspaceStore.setState({ pluginCatalogEntries: [{ id: 'claude-code', permissionModes: claudeModes }] as never })
+  try {
+    await run()
+  } finally {
+    useWorkspaceStore.setState({ pluginCatalogEntries: before })
+  }
+}
+
+test("a chat on a machine that runs its CLI's own modes offers them, and Accept edits goes over the mesh", () =>
+  withClaudeModes(async () => {
+    const chat = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'none',
+      permissionModes: true,
+      cliPermissionModes: true,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+    })
+    try {
+      const chip = await permissionsChip(chat)
+      await chat.act(async () => chip!.click())
+      const row = Array.from(chat.document.querySelectorAll<HTMLButtonElement>('[data-preset-option="true"]')).find(
+        (item) => item.textContent?.includes('Accept edits'),
+      )
+      expect(row).toBeDefined()
+      await chat.act(async () => row!.click())
+      expect(chat.api.meshConversationSetPermissionPreset).toHaveBeenCalledExactlyOnceWith({
+        key,
+        preset: 'auto',
+        permissionMode: 'acceptEdits',
+      })
+      expect((await permissionsChip(chat))?.getAttribute('aria-label')).toBe('Permissions: Accept edits')
+    } finally {
+      await chat.unmount()
+    }
+  }))
+
+test('a chat listed on a mode of its CLI shows that mode, and a machine that runs none of them offers none', () =>
+  withClaudeModes(async () => {
+    const on = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'auto',
+      permissionModes: true,
+      cliPermissionModes: true,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+      listed: { permissionMode: 'acceptEdits' },
+    })
+    try {
+      expect((await permissionsChip(on))?.getAttribute('aria-label')).toBe('Permissions: Accept edits')
+    } finally {
+      await on.unmount()
+    }
+    const older = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'auto',
+      permissionModes: true,
+      cliPermissionModes: false,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+      listed: { permissionMode: 'acceptEdits' },
+    })
+    try {
+      const chip = await permissionsChip(older)
+      expect(chip?.getAttribute('aria-label')).toBe('Permissions: Auto')
+      await older.act(async () => chip!.click())
+      const rows = Array.from(older.document.querySelectorAll<HTMLButtonElement>('[data-preset-option="true"]'))
+      expect(rows.some((item) => item.textContent?.includes('Accept edits'))).toBe(false)
+    } finally {
+      await older.unmount()
+    }
+  }))
 
 // The catalog the machine lists for the chat's CLI. This machine's own catalog
 // for that CLI is empty here, so every model row the picker shows is the

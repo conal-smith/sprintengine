@@ -1,4 +1,7 @@
-import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
+import type {
+  ConversationWireCommand,
+  ConversationWirePermissionPreset,
+} from '../../packages/conversation-protocol/src'
 import type {
   ConversationHighlightColor,
   ConversationQueuedMessage,
@@ -456,6 +459,12 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * its chats run on `manual` and `auto` too. False for a machine that reads
  * those as `none`, where only `none` and `bypass` are offered.
  *
+ * `cliPermissionModes`: the machine advertises
+ * `conversation-cli-permission-modes` — its list names the CLI's own mode a
+ * chat runs at its preset (Claude Code's Accept edits) and the modes its
+ * provider runs, and a preset switch may name one. False for a machine that
+ * does not, where each preset runs its own mode.
+ *
  * `lifecycle`: the machine advertises `conversation-lifecycle` — its list
  * leaves out settled chats and names their titles and clocks, and it takes
  * `conversation.settle` and `conversation.visit`. False for a machine that
@@ -497,6 +506,7 @@ export type MeshConversationListResult =
       access: MeshConversationAccess
       modelSwitch: boolean
       permissionModes?: boolean
+      cliPermissionModes?: boolean
       lifecycle?: boolean
       queuedSends?: boolean
       sendSkills?: boolean
@@ -517,10 +527,12 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
 
 /**
  * The commands a remote device may send. A permanent rule is not among them.
- * A queued send and taking one back need `conversation-queued-sends` there.
+ * A queued send and taking one back need `conversation-queued-sends` there; a
+ * preset switch naming the CLI's own mode, `conversation-cli-permission-modes`.
  */
 export type MeshConversationCommand =
   | ConversationWireCommand
+  | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }

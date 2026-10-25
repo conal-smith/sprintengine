@@ -3339,8 +3339,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     machineName: transport.machineName,
   })
   // The CLI's modes under its own names. A mode of its own is offered where
-  // this chat's runtime maps it, and only a local chat says which it maps; a
-  // remote one is told presets, so it lists each preset's own mode.
+  // this chat's runtime maps it: a local chat says which it maps, and a remote
+  // one says so where its machine lists them (`conversation-cli-permission-modes`);
+  // one from a machine that does not lists each preset's own mode.
   const permissionOptions = usePermissionModeOptions(chatCli, 'chat', capabilities?.permissionModes ?? NO_MODES)
   // A mode of the CLI's own at a preset this chat cannot run is dimmed with
   // that preset's reason.

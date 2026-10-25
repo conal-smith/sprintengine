@@ -2209,6 +2209,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ...listed,
           modelSwitch: tailnetPeerSupports(identity.value.capabilities, 'conversation-models'),
           permissionModes: tailnetPeerSupports(identity.value.capabilities, 'conversation-permission-modes'),
+          cliPermissionModes: tailnetPeerSupports(identity.value.capabilities, 'conversation-cli-permission-modes'),
           lifecycle: tailnetPeerSupports(identity.value.capabilities, 'conversation-lifecycle'),
           queuedSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-queued-sends'),
           sendSkills:
@@ -2280,6 +2281,19 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       const connection = connectionFor(key.connectionId)
       const refused = connection ? permissionModeRefusal(connection, command.preset) : null
       if (refused) return refused
+      // A CLI's own mode is dropped by a machine from before it, which then
+      // runs the preset's own: the person would be told Accept edits while
+      // the agent asked before every edit, or ran without asking.
+      if (
+        connection &&
+        command.permissionMode !== undefined &&
+        !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-cli-permission-modes')
+      )
+        return {
+          ok: false,
+          code: 'unsupported_permission_preset',
+          message: `${connection.machineName} cannot run a chat on its CLI's own modes from here yet. Update SprintEngine Studio there.`,
+        }
     }
     // Said here in words: a machine from before it answers an unknown kind.
     if (command?.kind === 'stopSubagent') {

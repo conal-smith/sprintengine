@@ -794,6 +794,11 @@ in the app's own process.
   offers "Stop this agent", as a local chat's do, and it stops that agent
   alone over there. The machine's turn Stop spares a Claude chat's agents, so
   this is how one is stopped from here.
+- **The CLI's own modes, as here** (2026-10-25). Where the machine advertises
+  `conversation-cli-permission-modes`, the permissions picker lists the modes
+  the chat's CLI runs beside the presets (Claude Code's Accept edits), shows
+  the one the machine lists the chat on, and a pick switches it over there. A
+  machine without the capability is offered each preset's own mode only.
 
 ### Terminals stay on the machine
 

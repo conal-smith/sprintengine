@@ -1102,10 +1102,12 @@ export type ElectronApi = {
     requestId: string
     answers: Record<string, string>
   }) => Promise<MeshConversationCommandResult>
-  // `manual` and `auto` need `conversation-permission-modes` there.
+  // `manual` and `auto` need `conversation-permission-modes` there; the CLI's
+  // own mode at the preset (Accept edits), `conversation-cli-permission-modes`.
   meshConversationSetPermissionPreset: (input: {
     key: MeshConversationKey
     preset: CliPermissionPreset
+    permissionMode?: string
   }) => Promise<MeshConversationCommandResult>
   // Switch a paired machine's chat to another model of its CLI, from the
   // catalog that machine's list names. Needs `conversation-models` there.

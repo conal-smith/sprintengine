@@ -224,8 +224,16 @@ export const meshApi = {
     requestId: string
     answers: Record<string, string>
   }) => command(input.key, { kind: 'answerQuestion', requestId: input.requestId, answers: input.answers }),
-  meshConversationSetPermissionPreset: (input: { key: MeshConversationKey; preset: CliPermissionPreset }) =>
-    command(input.key, { kind: 'setPermissionPreset', preset: input.preset }),
+  meshConversationSetPermissionPreset: (input: {
+    key: MeshConversationKey
+    preset: CliPermissionPreset
+    permissionMode?: string
+  }) =>
+    command(input.key, {
+      kind: 'setPermissionPreset',
+      preset: input.preset,
+      ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+    }),
   meshConversationSetModel: (input: { key: MeshConversationKey; modelId: string }) =>
     command(input.key, { kind: 'setModel', modelId: input.modelId }),
   meshConversationToolDetail: (input: {
