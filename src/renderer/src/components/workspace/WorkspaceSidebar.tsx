@@ -1740,6 +1740,14 @@ function WorkspaceSidebar({
     })
   }
 
+  // Auto compact on a paired machine's chat is that machine's rule for its
+  // own chat (`chat-auto-compact`): switched there, drawn at once, and held
+  // until its list says it, as a mark is.
+  const toggleRemoteAutoCompact = (
+    target: { connectionId: string; workspaceId: string; title: string },
+    current: { on: boolean },
+  ) => changeRemoteChat(target, { kind: 'auto-compact', enabled: !current.on }, { autoCompact: !current.on })
+
   // A row opened from a paired machine's chat is settled by that machine,
   // which owns the chat; Settle from its menu asks it first, and only once it
   // has said yes does the row here go the way a local Settle takes a row: the
@@ -3733,6 +3741,9 @@ function WorkspaceSidebar({
           remoteManage={remoteConversationByWorkspace.get(contextMenu.workspaceId)?.manage}
           autoCompact={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
+            // A paired machine's chat wears that machine's switch, where it takes it from here.
+            const remote = remoteConversationByWorkspace.get(contextMenu.workspaceId)
+            if (workspace?.remoteOrigin) return remote?.manage.autoCompact ? remote.autoCompact : null
             return workspace ? autoCompactSwitchOf(workspace, autoCompactByDefault) : null
           })()}
           canMarkUnread={(() => {
@@ -3864,7 +3875,22 @@ function WorkspaceSidebar({
               return
             }
             // The chat's own choice from here on, the other way from what it
-            // reads as now, whether that came from the default or from it.
+            // reads as now, whether that came from the default or from it. A
+            // paired machine's chat is switched there, by the machine that
+            // compacts it.
+            if (action === 'toggle-auto-compact' && workspace.remoteOrigin) {
+              const conversation = remoteConversationByWorkspace.get(workspace.id)
+              if (conversation?.manage.autoCompact && conversation.autoCompact?.claude)
+                toggleRemoteAutoCompact(
+                  {
+                    connectionId: workspace.remoteOrigin.connectionId,
+                    workspaceId: remoteOriginChatWorkspaceId(workspace.remoteOrigin),
+                    title: workspace.name,
+                  },
+                  conversation.autoCompact,
+                )
+              return
+            }
             if (action === 'toggle-auto-compact') {
               const current = autoCompactSwitchOf(workspace, autoCompactByDefault)
               if (current?.claude) setWorkspaceAutoCompact(workspace.id, !current.on)
@@ -3936,6 +3962,7 @@ function WorkspaceSidebar({
                 canSettle={conversation.agents[0]?.lifecycle === true}
                 marks={conversation.rowMenu}
                 manage={conversation.manage}
+                autoCompact={conversation.autoCompact}
                 canMarkUnread={canMarkRemoteConversationUnread(conversation, now)}
                 isDetachedWindow={isDetachedWindow}
                 workspaceId={conversation.workspaceId}
@@ -3951,6 +3978,10 @@ function WorkspaceSidebar({
                   // show the change, as on a local row; the rest close it.
                   if (action === 'toggle-star' || action === 'toggle-auto-settle' || action === 'clear-color') {
                     changeRemoteChatMarks(target, conversation, action)
+                    return
+                  }
+                  if (action === 'toggle-auto-compact') {
+                    if (conversation.autoCompact?.claude) toggleRemoteAutoCompact(target, conversation.autoCompact)
                     return
                   }
                   setRemoteMenu(null)
@@ -5251,5 +5282,7 @@ function remoteChangeRefusedTitle(change: MeshConversationChange, title: string)
       return 'Not marked unread'
     case 'rename':
       return `${title} was not renamed`
+    case 'auto-compact':
+      return `Auto compact was not changed for ${title}`
   }
 }

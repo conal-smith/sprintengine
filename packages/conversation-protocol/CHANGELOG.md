@@ -13,6 +13,12 @@
 
 ### Added
 
+- **A listed chat says whether it compacts by itself.** `autoCompact` is an
+  optional boolean member of `ConversationThread`: whether the desktop
+  compacts the chat while it sits idle, just before its prompt cache expires,
+  by the chat's own switch or the desktop's default. Absent from a desktop
+  built before it was listed. `parseConversationServerFrame` keeps it when it
+  is a boolean. The pinned files are unchanged.
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the

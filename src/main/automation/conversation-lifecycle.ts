@@ -97,6 +97,8 @@ export type ConversationHighlightResult =
 export type ConversationAutoSettleResult =
   { ok: true; workspaceId: string; autoSettle: boolean } | ConversationLifecycleFailure
 export type ConversationRenameResult = { ok: true; workspaceId: string; name: string } | ConversationLifecycleFailure
+export type ConversationAutoCompactResult =
+  { ok: true; workspaceId: string; autoCompact: boolean } | ConversationLifecycleFailure
 
 /** The longest name a chat takes from a paired device: the sidebar shows far less. */
 export const MAX_CHAT_NAME_LENGTH = 500
@@ -361,6 +363,23 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
   }
 
   /**
+   * The row menu's Auto compact switch, from any device: the chat's own
+   * choice from here on, whatever this machine's default says. Compacts
+   * nothing at once: the sweep reads it when the chat next sits idle.
+   */
+  function setAutoCompact(
+    workspaceId: string,
+    enabled: boolean,
+    actor: WorkspaceRegistryActor,
+  ): ConversationAutoCompactResult {
+    const record = deps.getRecord(workspaceId)
+    if (!record) return unknown(workspaceId)
+    if (record.autoCompactEnabled === enabled) return { ok: true, workspaceId, autoCompact: enabled }
+    const failed = write(workspaceId, { autoCompactEnabled: enabled }, actor)
+    return failed ?? { ok: true, workspaceId, autoCompact: enabled }
+  }
+
+  /**
    * A person sent one of the workspace's chats a message from a paired
    * device. The same as a message typed here (`recordWorkspaceUserMessage`):
    * the clock moves forward, and a resting chat wakes, with any hand decision
@@ -428,6 +447,7 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     highlight,
     setAutoSettle,
     rename,
+    setAutoCompact,
     noteUserMessage,
     onConversationEvent,
     /** Whether a settle waits on an agent's turn in the workspace. Exposed for tests. */
@@ -480,6 +500,8 @@ const LIST_FIELDS = [
   'snoozedUntil',
   'highlight',
   'autoSettleEnabled',
+  // What a paired desktop's chat management reads (`ConversationThread.autoCompact`).
+  'autoCompactEnabled',
 ] as const satisfies ReadonlyArray<keyof WorkspaceFieldsPatch>
 
 /**

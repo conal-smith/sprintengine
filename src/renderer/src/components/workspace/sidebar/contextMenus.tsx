@@ -59,7 +59,8 @@ export function workspaceTypeRowActions(
 /**
  * A chat row's Auto compact switch: on by its own choice, or by the app-wide
  * default where it left that unset; and whether its chat is Claude's, the one
- * it works on yet. Null for a row with no chat in it, or a paired machine's.
+ * it works on yet. Null for a row with no chat in it, or a paired machine's,
+ * whose switch is that machine's (`RemoteConversation.autoCompact`).
  */
 export function autoCompactSwitchOf(
   workspace: Workspace,
@@ -161,8 +162,9 @@ function ChatRestAndMarkItems({
   /**
    * The Auto compact switch: whether it is on for this chat (its own choice,
    * or the app-wide default), and whether the chat is Claude's, the only one
-   * it works on yet. Null leaves it off the menu: a paired machine's chat, or
-   * a row with no chat in it.
+   * it works on yet. Null leaves it off the menu: a row with no chat in it,
+   * or a paired machine's chat where that machine does not take the switch
+   * from here.
    */
   autoCompact?: { on: boolean; claude: boolean } | null
   between?: ReactNode
@@ -259,7 +261,7 @@ function ChatRestAndMarkItems({
           disabled={!autoCompact.claude}
           hint={autoCompact.claude ? undefined : 'Claude only'}
           trailing={<SwitchGlyph checked={autoCompact.claude && autoCompact.on} />}
-          tooltip={tips.autoCompact(autoCompact.claude)}
+          tooltip={tips.autoCompact(autoCompact.claude, where)}
           onClick={() => onSelect('toggle-auto-compact')}
         >
           Auto compact
@@ -445,7 +447,7 @@ export function WorkspaceContextMenu({
         working={working}
         snooze={snoozed ? 'wake' : sleeps ? { disabled: !canSnooze } : null}
         autoSettle={remote && !remoteMarks ? null : autoSettle}
-        autoCompact={remote ? null : autoCompact}
+        autoCompact={remote && !remoteManage?.autoCompact ? null : autoCompact}
         between={
           <>
             {/* A chat whose agent has Studio babysitting its pull request reads as
@@ -512,6 +514,7 @@ export type RemoteConversationMenuAction =
   | ChatMarkAction
   // ── A paired desktop's chat management ──
   | 'rename'
+  | 'toggle-auto-compact'
 
 /**
  * The link to a chat: by its id on the machine it runs on, so the same link
@@ -539,6 +542,7 @@ export function RemoteConversationContextMenu({
   canSettle,
   marks,
   manage,
+  autoCompact = null,
   canMarkUnread,
   isDetachedWindow,
   workspaceId,
@@ -562,6 +566,8 @@ export function RemoteConversationContextMenu({
   marks: boolean
   /** What of the chat's management the machine takes from here; none when absent. */
   manage?: MeshConversationManage
+  /** The chat's Auto compact switch as its machine reads it; offered where the machine takes it from here. */
+  autoCompact?: { on: boolean; claude: boolean } | null
   /** Its agent finished something nobody has been marked as missing, and the machine takes Mark unread. */
   canMarkUnread: boolean
   isDetachedWindow: boolean
@@ -639,11 +645,10 @@ export function RemoteConversationContextMenu({
               working={working}
               snooze={snoozed ? 'wake' : { disabled: false }}
               autoSettle={autoSettle}
-              // Auto compact is this computer's rule for its own chats: a
-              // paired machine's is never offered it.
-              onSelect={(action) => {
-                if (action !== 'toggle-auto-compact') onSelect(action)
-              }}
+              // Auto compact is the rule of the machine that runs the chat,
+              // switched there where that machine takes it from here.
+              autoCompact={manage?.autoCompact ? autoCompact : null}
+              onSelect={onSelect}
               onPickColor={onPickColor}
             />
           ) : (

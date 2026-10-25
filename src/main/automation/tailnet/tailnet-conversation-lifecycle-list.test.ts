@@ -395,3 +395,30 @@ test('a send through a host for Studio’s own messages is recorded as Studio’
   assert.equal(result.ok, true)
   assert.deepEqual(sent[0]?.origin, { kind: 'studio', reason: 'usage-resume' })
 })
+
+test('each chat says whether it compacts by itself, as this machine reads it', async () => {
+  const runtime = {
+    listSessions: () => ({ ok: true, sessions: [] }),
+    listThreads: async () => ({ ok: true, threads: [indexed('agent-1')] }),
+    getProviderCapabilities: () => undefined,
+  } as unknown as ConversationBackend
+  const asked: Array<Array<{ workspaceId: string; agentId: string }>> = []
+  const host = createConversationGatewayHost(
+    runtime,
+    () => '/Users/dev/app',
+    () => [{ workspaceId: 'chat', workspaceRoot: '/Users/dev/app' }],
+    () => 'bypass',
+    () => null,
+    async () => null,
+    {
+      manageOf: (keys) => {
+        asked.push(keys)
+        return new Map([['chat:agent-1', { autoCompact: true }]])
+      },
+    },
+    { workspaceOf: () => ({ name: 'Chat', createdAt: 1 }), lifecycleList: true },
+  )
+  const [thread] = await host.list()
+  assert.equal(thread?.autoCompact, true)
+  assert.deepEqual(asked, [[{ workspaceId: 'chat', agentId: 'agent-1' }]])
+})

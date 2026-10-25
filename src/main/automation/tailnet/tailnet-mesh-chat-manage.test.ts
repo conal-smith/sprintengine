@@ -97,6 +97,39 @@ test('Rename is the machine’s own conversation.rename', async () => {
   }
 })
 
+test('Auto compact is the machine’s own conversation.auto_compact, and refused in words where it lacks it', async () => {
+  const machine = await pairedMachine(['conversations', 'chat-auto-compact'], (call) =>
+    success({ ok: true, workspaceId: call.arguments.workspaceId, autoCompact: call.arguments.enabled }),
+  )
+  const older = await pairedMachine(['conversations', 'chat-rename'], () => assert.fail('nothing is asked'))
+  try {
+    const answer = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'auto-compact', enabled: true },
+    })
+    assert.deepEqual(answer, { ok: true, workspaceId: 'ws-1' })
+    assert.deepEqual(machine.toolCalls, [
+      { name: 'conversation.auto_compact', arguments: { workspaceId: 'ws-1', enabled: true } },
+    ])
+    const refused = await older.mesh.changeConversation({
+      connectionId: older.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'auto-compact', enabled: true },
+    })
+    assert.match(!refused.ok ? refused.message : '', /cannot switch Auto compact on its chats from here yet/)
+    const unreadable = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'auto-compact' },
+    })
+    assert.equal(!unreadable.ok && unreadable.code, 'invalid_arguments')
+  } finally {
+    await machine.close()
+    await older.close()
+  }
+})
+
 test('a machine without chat-rename is not asked, and says so in words', async () => {
   const machine = await pairedMachine(['conversations', 'chat-row-menu'], () => assert.fail('nothing is asked'))
   try {
@@ -133,7 +166,8 @@ test('a machine from before conversation.rename answers "Unknown tool", read as 
 })
 
 test('the list says which of the management a machine takes, by its capabilities', () => {
-  assert.deepEqual(chatManageOf(undefined), { rename: false })
-  assert.deepEqual(chatManageOf(['conversations']), { rename: false })
-  assert.deepEqual(chatManageOf(['conversations', 'chat-rename']), { rename: true })
+  assert.deepEqual(chatManageOf(undefined), { rename: false, autoCompact: false })
+  assert.deepEqual(chatManageOf(['conversations']), { rename: false, autoCompact: false })
+  assert.deepEqual(chatManageOf(['conversations', 'chat-rename']), { rename: true, autoCompact: false })
+  assert.deepEqual(chatManageOf(['chat-auto-compact']), { rename: false, autoCompact: true })
 })

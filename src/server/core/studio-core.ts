@@ -537,6 +537,18 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     ...(sshServers?.machineOf ? { sshMachineOf: (id: string) => sshServers.machineOf?.(id) ?? null } : {}),
   })
   const listMarks = {
+    // What a paired desktop's management of each chat reads: whether it
+    // compacts by itself, by its own Auto compact switch or by this
+    // machine's default where it left that unset.
+    manageOf: (keys: Array<{ workspaceId: string; agentId: string }>) => {
+      const byDefault = effectiveAgentLaunchSettings(agentLaunchSettings.get()).autoCompactChats === true
+      return new Map(
+        keys.map((key) => {
+          const own = workspaceRegistry.getRecord(key.workspaceId)?.autoCompactEnabled
+          return [`${key.workspaceId}:${key.agentId}`, { autoCompact: typeof own === 'boolean' ? own : byDefault }]
+        }),
+      )
+    },
     machineReader: () => {
       const context = machineContext()
       return (workspaceId: string) => conversationHostOf(workspaceRegistry.getRecord(workspaceId) ?? null, context)

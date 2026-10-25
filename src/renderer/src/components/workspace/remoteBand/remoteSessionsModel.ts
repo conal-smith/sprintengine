@@ -68,7 +68,7 @@ export type RemoteBrowseEntry = {
 }
 
 /** No chat management from here: a machine before it, or a pairing that may only follow. */
-export const NO_CHAT_MANAGE: MeshConversationManage = { rename: false }
+export const NO_CHAT_MANAGE: MeshConversationManage = { rename: false, autoCompact: false }
 
 /** What of a machine's chats' management this pairing may ask for: what it takes, where the pairing may drive. */
 export function remoteManageWritable(entry: RemoteBrowseEntry | undefined): MeshConversationManage {
@@ -192,6 +192,14 @@ export type RemoteSessionRow = {
   markUnread: boolean
   /** What of the chat's management its machine takes from here (`remoteManageWritable`). */
   manage: MeshConversationManage
+  /**
+   * Whether its machine compacts the chat by itself before its cache
+   * expires, by its own switch or that machine's default; null from a
+   * machine that does not say.
+   */
+  autoCompact: boolean | null
+  /** The chat is Claude's, the only one Auto compact works on yet. */
+  claude: boolean
 }
 
 /** One paired machine's sub-group in the band. */
@@ -255,6 +263,11 @@ export type RemoteConversation = {
   markUnread: boolean
   /** What of the chat's management its machine takes from here (`RemoteSessionRow.manage`). */
   manage: MeshConversationManage
+  /**
+   * The Auto compact switch as its machine reads it, as a local chat's menu
+   * draws it (`autoCompactSwitchOf`); null from a machine that does not say.
+   */
+  autoCompact: { on: boolean; claude: boolean } | null
 }
 
 /**
@@ -456,6 +469,8 @@ function remoteChatRowOf(
     rowMenu: writes.rowMenu,
     markUnread: writes.markUnread,
     manage: writes.manage,
+    autoCompact: typeof conversation.autoCompact === 'boolean' ? conversation.autoCompact : null,
+    claude: cliForConversationProvider(conversation.providerId) === 'claude-code',
   }
 }
 
@@ -648,6 +663,10 @@ export function conversationsOf(group: RemoteMachineGroup): RemoteConversation[]
       rowMenu: lead.rowMenu,
       markUnread: lead.markUnread,
       manage: lead.manage,
+      // The switch is the chat's, kept on its record there; it works on a
+      // chat any of whose agents is Claude's, as a local chat's does.
+      autoCompact:
+        lead.autoCompact === null ? null : { on: lead.autoCompact, claude: agents.some((row) => row.claude) },
     }
   })
 }
@@ -999,7 +1018,7 @@ export function followedRemoteRestsToKeep(
 export type RemoteChatMarks = Pick<RemoteSessionRow, 'highlight' | 'snoozedUntil' | 'autoSettle'>
 
 /** What a change asked of a paired machine draws at once: its marks, or its name (`chat-rename`). */
-export type RemoteChatPending = Partial<RemoteChatMarks & Pick<RemoteSessionRow, 'chatTitle'>>
+export type RemoteChatPending = Partial<RemoteChatMarks & Pick<RemoteSessionRow, 'chatTitle' | 'autoCompact'>>
 
 /** A change asked of a paired machine and not yet read back off its list. */
 export type PendingRemoteMarks = {

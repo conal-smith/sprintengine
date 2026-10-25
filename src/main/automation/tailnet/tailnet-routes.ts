@@ -265,6 +265,11 @@ export const TAILNET_CAPABILITIES = [
   // Rename: `conversation.rename` names the chat on this machine, so every
   // device lists it by the new name (the list's `chatTitle`).
   'chat-rename',
+  // Auto compact: `conversation.auto_compact` switches it for a chat here,
+  // and a listed chat says whether it compacts by itself (`autoCompact`, by
+  // its own switch or this machine's default), so a paired desktop's menu
+  // shows this machine's rule for its own chat.
+  'chat-auto-compact',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

@@ -299,7 +299,18 @@ export type ConversationListMarks = {
   checkoutsOf?: (
     keys: Array<{ workspaceId: string; agentId: string; live: boolean }>,
   ) => Promise<Map<string, Pick<ConversationThread, 'changes' | 'worktree'>>>
+  /**
+   * What a paired desktop's management of each chat reads, keyed
+   * `workspaceId:agentId`: whether it compacts by itself (`autoCompact`). A
+   * chat left out lists without it.
+   */
+  manageOf?: (
+    keys: Array<{ workspaceId: string; agentId: string }>,
+  ) => Promise<Map<string, ConversationListManage>> | Map<string, ConversationListManage>
 }
+
+/** The members a paired desktop's management of a listed chat reads (`ConversationListMarks.manageOf`). */
+export type ConversationListManage = Pick<ConversationThread, 'autoCompact'>
 
 const restingRecord = (record: ConversationListWorkspace | null): boolean =>
   record !== null && isSettledWorkspace(record)
@@ -729,7 +740,14 @@ export function createConversationGatewayHost(
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
   const withMarks = async (listed: ConversationThread[]): Promise<ConversationThread[]> => {
-    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf && !marks.checkoutsOf)
+    if (
+      !marks.machineOf &&
+      !marks.machineReader &&
+      !marks.pullRequestsOf &&
+      !marks.branchesOf &&
+      !marks.checkoutsOf &&
+      !marks.manageOf
+    )
       return listed
     const machines = new Map<string, ConversationWireHost | null>()
     let read: ((workspaceId: string) => ConversationWireHost | null) | undefined
@@ -773,11 +791,19 @@ export function createConversationGatewayHost(
         )
         .catch(() => null)
     }
+    let manage: Map<string, ConversationListManage> | null = null
+    if (marks.manageOf && listed.length > 0) {
+      manage = await Promise.resolve(
+        marks.manageOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId }))),
+      ).catch(() => null)
+    }
     return listed.map((thread) => {
       const host = machineOf(thread.workspaceId)
       const branch = branches?.get(thread.workspaceId)
       const checkout = checkouts?.get(`${thread.workspaceId}:${thread.agentId}`)
+      const managed = manage?.get(`${thread.workspaceId}:${thread.agentId}`)
       return {
+        ...managed,
         ...thread,
         ...(host ? { host } : {}),
         ...(branch ? { branch } : {}),

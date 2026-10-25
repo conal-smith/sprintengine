@@ -90,6 +90,7 @@ const PAIRED_DEVICE_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'usage.report',
   // ── A paired desktop's chat management ──
   'conversation.rename',
+  'conversation.auto_compact',
 ])
 
 export function servedOnlyToPairedDevices(toolName: string): boolean {

@@ -50,7 +50,7 @@ export const CONVERSATION_MUTATION_TOOL_NAMES: readonly string[] = [
  * marks: each writes this machine's record of the chat, so each needs
  * `conversation:operate` and is audited with the device that asked.
  */
-export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = ['conversation.rename']
+export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = ['conversation.rename', 'conversation.auto_compact']
 
 const EFFORT_ID = /^[a-z0-9_-]{1,40}$/i
 // A skill's directory name, as the chat runtime accepts one (conversation-skills.ts).
@@ -64,7 +64,7 @@ export type ConversationToolsDeps = {
   /** A chat's rest and visit clock, written to the desktop's own record (conversation-lifecycle.ts). */
   lifecycle: Pick<ConversationLifecycle, 'settle' | 'visit' | 'markUnread' | 'snooze' | 'highlight' | 'setAutoSettle'> &
     // A paired desktop's chat management; absent where nothing can carry it out.
-    Partial<Pick<ConversationLifecycle, 'rename'>>
+    Partial<Pick<ConversationLifecycle, 'rename' | 'setAutoCompact'>>
   /**
    * Remember that the calling agent started this chat, so the caller is told
    * when its turn ends or it waits on someone (agent-launch-notices.ts).
@@ -552,6 +552,34 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         const renamed = deps.lifecycle.rename(args.workspaceId.trim(), args.name, lifecycleActor(context))
         if (!renamed.ok) return toolError(renamed.code, renamed.message)
         return toolSuccess(renamed)
+      },
+    },
+    {
+      name: 'conversation.auto_compact',
+      description:
+        "Switch Auto compact on or off for a chat on this machine, as its row menu's Auto compact does: with it " +
+        'on, Studio compacts the chat by itself while it sits idle, just before its prompt cache expires (a ' +
+        "Claude chat holding at least 100k tokens). The chat keeps the choice whatever this machine's default " +
+        'says. Compacts nothing at once.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId, from the conversation list." },
+          enabled: { type: 'boolean', description: 'true switches it on, false off.' },
+        },
+        required: ['workspaceId', 'enabled'],
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        if (typeof args.enabled !== 'boolean') return toolError('invalid_arguments', '"enabled" must be a boolean.')
+        if (!deps.lifecycle.setAutoCompact)
+          return toolError('unavailable', 'This machine cannot switch Auto compact from here.')
+        const set = deps.lifecycle.setAutoCompact(args.workspaceId.trim(), args.enabled, lifecycleActor(context))
+        if (!set.ok) return toolError(set.code, set.message)
+        return toolSuccess(set)
       },
     },
   ]

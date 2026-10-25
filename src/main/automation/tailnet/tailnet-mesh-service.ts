@@ -2942,12 +2942,13 @@ export function rowMenuCallOf(change: unknown): {
 // The changes a chat's menus ask of the machine it runs on beyond its marks,
 // each over a gateway tool of its own capability, asked as the row menu's are.
 
-type ChatManageCapability = 'chat-rename'
+type ChatManageCapability = 'chat-rename' | 'chat-auto-compact'
 
 /** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
 export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
   return {
     rename: tailnetPeerSupports(capabilities, 'chat-rename'),
+    autoCompact: tailnetPeerSupports(capabilities, 'chat-auto-compact'),
   }
 }
 
@@ -2960,6 +2961,14 @@ function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof row
         args: { name: value.name.trim() },
         capability: 'chat-rename',
         ask: 'rename its chats',
+      }
+    case 'auto-compact':
+      if (typeof value.enabled !== 'boolean') return null
+      return {
+        tool: 'conversation.auto_compact',
+        args: { enabled: value.enabled },
+        capability: 'chat-auto-compact',
+        ask: 'switch Auto compact on its chats',
       }
     default:
       return null

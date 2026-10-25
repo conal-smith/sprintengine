@@ -8,7 +8,8 @@ import { meshConversationSessionId } from '../../../../shared/tailnet-mesh'
 test('WorkspaceSidebar.remoteManage', async () => {
   // A paired machine's chat is managed from here as a local one is, where its
   // machine takes each part (`MeshConversationManage`), open here or not:
-  // Rename renames it there, so every device lists it by the new name.
+  // Rename renames it there, so every device lists it by the new name; Auto
+  // compact is switched there, by the machine that compacts it.
 
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url: 'http://localhost',
@@ -70,8 +71,13 @@ test('WorkspaceSidebar.remoteManage', async () => {
     ...fields,
   })
   let listed = [
-    chat({ workspaceId: 'rw1', chatTitle: 'Review the parser', lastTurnEndedAt: Date.now() - 3 * hour }),
-    chat({ workspaceId: 'rw4', chatTitle: 'Another chat' }),
+    chat({
+      workspaceId: 'rw1',
+      chatTitle: 'Review the parser',
+      lastTurnEndedAt: Date.now() - 3 * hour,
+      autoCompact: false,
+    }),
+    chat({ workspaceId: 'rw4', chatTitle: 'Another chat', autoCompact: true }),
   ]
   const changes: Array<{ connectionId: string; workspaceId: string; change: Record<string, unknown> }> = []
 
@@ -119,7 +125,7 @@ test('WorkspaceSidebar.remoteManage', async () => {
       lifecycle: true,
       rowMenu: true,
       markUnread: true,
-      manage: { rename: true },
+      manage: { rename: true, autoCompact: true },
     }),
     meshChangeConversation: async (input: (typeof changes)[number]) => {
       changes.push(input)
@@ -289,6 +295,30 @@ test('WorkspaceSidebar.remoteManage', async () => {
       ),
       'the opened row reads the name its machine lists',
     )
+
+    // ── Auto compact ──
+    const escape = async () =>
+      act(async () => {
+        dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+    await escape()
+    const compactMenu = await openMenuOn(remoteRowOf('Parser, reviewed'))
+    await click(compactMenu, 'Auto compact')
+    assert.deepEqual(changes.at(-1), {
+      connectionId: 'c1',
+      workspaceId: 'rw1',
+      change: { kind: 'auto-compact', enabled: true },
+    })
+    assert.ok(menu(), 'the switch leaves the menu open to show it flip, as on a local row')
+    await escape()
+    const followedCompact = await openMenuOn(followedRow())
+    await click(followedCompact, 'Auto compact')
+    assert.deepEqual(changes.at(-1), {
+      connectionId: 'c1',
+      workspaceId: 'rw4',
+      change: { kind: 'auto-compact', enabled: false },
+    })
+    await escape()
   } finally {
     act(() => {
       root.unmount()

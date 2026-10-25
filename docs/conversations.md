@@ -715,6 +715,14 @@ an older machine answers the tool "Unknown tool":
   changes nothing. Offered on a chat no window there has open as well as on
   one it does; without the capability a row opened there is renamed on that
   computer alone.
+- **`conversation.auto_compact`** `{ workspaceId, enabled }`
+  (`chat-auto-compact`) is the chat's Auto compact switch, as the desktop's
+  own menu sets it: the chat's choice from then on, whatever the desktop's
+  default says. The desktop compacts its own chats, so the rule is the one of
+  the machine the chat runs on, and each listed chat says how it stands as
+  `autoCompact` (its own switch, or the desktop's default where it left that
+  unset), read beside its `providerId`: only a Claude chat compacts by itself
+  yet. A switch moves the list. It compacts nothing at once.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:

@@ -231,17 +231,20 @@ export type MeshConversationChange =
 /**
  * A chat's management from a paired desktop, beyond its marks, each where
  * the machine advertises its capability (`MeshConversationManage`): Rename
- * (`chat-rename`).
+ * (`chat-rename`) and Auto compact (`chat-auto-compact`).
  */
-export type MeshConversationManageChange = { kind: 'rename'; name: string }
+export type MeshConversationManageChange = { kind: 'rename'; name: string } | { kind: 'auto-compact'; enabled: boolean }
 
 /**
  * Which of a chat's management a paired machine takes from here, by the
  * capability each needs there. `rename`: `chat-rename`, the chat renamed
- * there, so every device lists it by the new name.
+ * there, so every device lists it by the new name. `autoCompact`:
+ * `chat-auto-compact`, the chat's Auto compact switched there, the machine
+ * that runs it compacting it by itself.
  */
 export type MeshConversationManage = {
   rename: boolean
+  autoCompact: boolean
 }
 
 /** That machine took the change, or why not. `row_menu_unsupported` is a machine without the tool. */

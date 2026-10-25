@@ -217,6 +217,15 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * Absent when it does not, and from a desktop built before it was listed.
    */
   worktree?: boolean
+  // ── A paired desktop's chat management ──
+  /**
+   * Whether the desktop compacts the chat by itself while it sits idle, just
+   * before its prompt cache expires: the chat's own Auto compact switch, or
+   * the desktop's default where the chat left it unset. Only a Claude chat
+   * compacts by itself yet, so a client reads it beside `providerId`. Absent
+   * from a desktop built before it was listed.
+   */
+  autoCompact?: boolean
 }
 
 /** A listed chat's background work (`ConversationThread.backgroundWork`). At least one count is above zero. */
@@ -579,6 +588,7 @@ function thread(value: unknown): ConversationThread | null {
     ...(backgroundWork ? { backgroundWork } : {}),
     ...(changes ? { changes } : {}),
     ...(value.worktree === true ? { worktree: true } : {}),
+    ...(typeof value.autoCompact === 'boolean' ? { autoCompact: value.autoCompact } : {}),
     ...(flags
       ? {
           capabilities: {

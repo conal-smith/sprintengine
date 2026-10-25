@@ -3,7 +3,12 @@ import { test } from 'vitest'
 
 import type { WorkspaceRegistryActor, WorkspaceRegistryRecord } from '../../shared/workspace-registry'
 import type { McpConnectionContext } from '../../shared/modules/mcp-tools'
-import { createConversationLifecycle, MAX_CHAT_NAME_LENGTH } from './conversation-lifecycle'
+import { applyWorkspaceFieldsPatch, type WorkspaceFieldsPatch } from '../../shared/workspace-sync'
+import {
+  createConversationLifecycle,
+  createConversationListChangeFilter,
+  MAX_CHAT_NAME_LENGTH,
+} from './conversation-lifecycle'
 import { CHAT_MANAGE_MUTATION_TOOL_NAMES, createConversationTools } from './conversation-tools'
 import { isStudioGatewayMutation } from './studio-gateway-tools'
 import { gatewayToolsForCaller, requiredScopeForTool } from './tailnet/tailnet-scopes'
@@ -17,9 +22,14 @@ const LOCAL: McpConnectionContext = { metadata: { kind: 'external-local' } }
 function fixture(record: Partial<WorkspaceRegistryRecord> = {}) {
   const stored = { id: 'ws-1', name: 'Chat 12', createdAt: 10, ...record } as WorkspaceRegistryRecord
   const renames: Array<{ workspaceId: string; name: string; actor: WorkspaceRegistryActor }> = []
+  const writes: Array<{ workspaceId: string; patch: WorkspaceFieldsPatch; actor: WorkspaceRegistryActor }> = []
   const lifecycle = createConversationLifecycle({
     getRecord: (workspaceId) => (workspaceId === stored.id ? stored : null),
-    updateWorkspaceFields: () => assert.fail('a rename is not a field patch'),
+    updateWorkspaceFields: (workspaceId, patch, actor) => {
+      writes.push({ workspaceId, patch, actor })
+      applyWorkspaceFieldsPatch(stored as unknown as Record<string, unknown>, patch)
+      return { ok: true, event: {} as never }
+    },
     rewindVisit: () => assert.fail('nothing here moves the visit clock'),
     isWorking: () => false,
     renameWorkspace: (workspaceId, name, actor) => {
@@ -34,7 +44,7 @@ function fixture(record: Partial<WorkspaceRegistryRecord> = {}) {
     resolveAgentPermissionPreset: () => 'bypass',
     lifecycle,
   })
-  return { stored, renames, tools, tool: (name: string) => tools.find((candidate) => candidate.name === name)! }
+  return { stored, renames, writes, tools, tool: (name: string) => tools.find((candidate) => candidate.name === name)! }
 }
 
 const errorCode = (result: { structuredContent?: unknown }) =>
@@ -72,9 +82,35 @@ test('the management tools are a paired device’s, and not listed to an agent h
 })
 
 test('each is an audited mutation needing conversation:operate', () => {
-  assert.ok(CHAT_MANAGE_MUTATION_TOOL_NAMES.includes('conversation.rename'))
+  for (const name of ['conversation.rename', 'conversation.auto_compact'])
+    assert.ok(CHAT_MANAGE_MUTATION_TOOL_NAMES.includes(name), name)
   for (const name of CHAT_MANAGE_MUTATION_TOOL_NAMES) {
     assert.equal(isStudioGatewayMutation(name), true, name)
     assert.equal(requiredScopeForTool(name, true), 'conversation:operate', name)
   }
+})
+
+test('Auto compact is the chat’s own choice from then on, written as its menu writes it, and once', async () => {
+  const f = fixture()
+  const on = await f.tool('conversation.auto_compact').handler({ workspaceId: 'ws-1', enabled: true }, TAILNET)
+  assert.deepEqual(on.structuredContent, { ok: true, workspaceId: 'ws-1', autoCompact: true })
+  assert.deepEqual(f.writes, [{ workspaceId: 'ws-1', patch: { autoCompactEnabled: true }, actor: 'mobile' }])
+  await f.tool('conversation.auto_compact').handler({ workspaceId: 'ws-1', enabled: true }, TAILNET)
+  assert.equal(f.writes.length, 1, 'switching it to what it is writes nothing')
+  // Off is a choice too: the chat stays off whatever this machine's default says.
+  await f.tool('conversation.auto_compact').handler({ workspaceId: 'ws-1', enabled: false }, TAILNET)
+  assert.deepEqual(f.writes[1]?.patch, { autoCompactEnabled: false })
+  const refused = await f.tool('conversation.auto_compact').handler({ workspaceId: 'ws-1', enabled: 'on' }, TAILNET)
+  assert.equal(errorCode(refused), 'invalid_arguments')
+})
+
+test('a switch of Auto compact moves the list a paired device reads', () => {
+  const moves = createConversationListChangeFilter({ turnEndOf: () => undefined })
+  assert.equal(
+    moves({
+      type: 'workspace.fields_updated',
+      payload: { workspaceId: 'ws-1', patch: { autoCompactEnabled: true } },
+    } as never),
+    true,
+  )
 })
