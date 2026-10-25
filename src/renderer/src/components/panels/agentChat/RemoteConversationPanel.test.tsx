@@ -108,6 +108,8 @@ async function mountRemote({
   steerSends = false,
   stopSubagents = false,
   reasoningEffort = false,
+  sendSkills = false,
+  extensions = { skills: [], servers: [] },
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -125,6 +127,10 @@ async function mountRemote({
   stopSubagents?: boolean
   /** The machine lists its chats' effort and takes a change of it (`conversation-reasoning-effort`). */
   reasoningEffort?: boolean
+  /** The machine takes its skills with a message (`conversation-send-skills`, `workspace-extensions`). */
+  sendSkills?: boolean
+  /** The skills and MCP servers the machine lists for the chat's project there. */
+  extensions?: { skills: unknown[]; servers: unknown[] }
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
@@ -179,8 +185,10 @@ async function mountRemote({
       steerSends,
       stopSubagents,
       reasoningEffort,
+      sendSkills,
       createPullRequest,
     })),
+    meshWorkspaceExtensions: vi.fn(async () => ({ ok: true, extensions })),
     // Create PR on the machine the chat runs on: each step answers as that
     // machine would, and a creation records the pull request there.
     meshConversationPullRequestState: vi.fn(async (_input: { key: MeshConversationKey }) => ({
@@ -890,6 +898,52 @@ test('a refused allow leaves the chat on the mode it was on', async () => {
     expect(chat.api.meshConversationSetPermissionPreset).not.toHaveBeenCalled()
     expect(chat.host.textContent).toContain('This request has already been answered.')
     expect((await permissionsChip(chat))?.getAttribute('aria-label')).toBe('Permissions: No flag')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+/** Opens the "+" menu's skills and MCP servers picker, on its MCP servers where `mcp`. */
+async function openExtensions(chat: Awaited<ReturnType<typeof mountRemote>>, mcp = false) {
+  const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+  if (!plus) return false
+  await chat.act(async () => plus.click())
+  const row = Array.from(chat.document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+    item.textContent?.includes('Skills, plugins'),
+  )
+  if (!row) return false
+  await chat.act(async () => row.click())
+  if (mcp) {
+    const tab = Array.from(chat.document.querySelectorAll<HTMLElement>('button, [role="tab"], [role="radio"]')).find(
+      (item) => item.textContent?.trim() === 'MCP servers',
+    )
+    await chat.act(async () => tab?.click())
+  }
+  return true
+}
+
+test('a chat over there that takes that machine\'s skills lists them in the "+" menu', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    sendSkills: true,
+    extensions: {
+      skills: [
+        {
+          id: 'review',
+          name: 'review',
+          description: 'Review a change',
+          source: 'custom',
+          harnesses: [],
+          installState: 'installed',
+        },
+      ],
+      servers: [],
+    },
+  })
+  try {
+    expect(await openExtensions(chat)).toBe(true)
+    expect(chat.api.meshWorkspaceExtensions).toHaveBeenCalled()
+    expect(chat.document.body.textContent).toContain('Review a change')
   } finally {
     await chat.unmount()
   }

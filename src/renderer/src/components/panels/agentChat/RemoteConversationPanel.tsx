@@ -94,6 +94,7 @@ function remoteConversationSession(
   cliPermissionModes: boolean,
   sendMode: boolean,
   reasoningEffort: boolean,
+  sendSkills: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -127,7 +128,11 @@ function remoteConversationSession(
       // taking them: main puts each in that machine's upload store, as the
       // phone does, and the send names them.
       images: capabilities?.images === true,
-      skills: 'none',
+      // That machine's skills, where it takes them with a message: its runtime
+      // resolves each against its own folder and delivers it, which is what
+      // `context` stands for here. The "+" lists them, and that machine's MCP
+      // servers beside them.
+      skills: sendSkills ? 'context' : 'none',
       // The levels its provider runs, where the machine takes a change of
       // them: the effort control and `/effort` are offered as a local chat's
       // are, and a change is that machine's to keep.
@@ -364,8 +369,17 @@ export default function RemoteConversationPanel({
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
     () =>
-      remoteConversationSession(thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode, reasoningEffort),
-    [thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode, reasoningEffort],
+      remoteConversationSession(
+        thread,
+        key,
+        modelSwitch,
+        stopSubagents,
+        cliPermissionModes,
+        sendMode,
+        reasoningEffort,
+        sendSkills,
+      ),
+    [thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode, reasoningEffort, sendSkills],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])
