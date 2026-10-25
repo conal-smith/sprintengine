@@ -2553,6 +2553,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // the module-level responder above; this view only registers itself.
   const changeReasoningEffort = (effort: string | undefined) => {
     if (effort && !capabilities?.reasoningEfforts?.includes(effort)) return
+    // A chat on another machine keeps its effort over there, and each turn
+    // runs at it: the record here moves once that machine has taken it, and
+    // its word on when it applies is shown.
+    const setRemotely = transport.setReasoningEffort
+    if (setRemotely && sessionId) {
+      if (effort === reasoningEffort) return
+      setActionError(null)
+      setPermissionNotice(null)
+      void setRemotely({ sessionId, ...(effort ? { effort } : {}) })
+        .then((result) => {
+          if (!result.ok) {
+            setActionError(result.message)
+            return
+          }
+          updateBinding({ conversationReasoningEffort: effort })
+          setPermissionNotice(result.notice ?? null)
+        })
+        .catch((error: unknown) =>
+          setActionError(error instanceof Error ? error.message : 'Could not change the reasoning effort.'),
+        )
+      return
+    }
     updateBinding({ conversationReasoningEffort: effort })
     if (sessionId) setPermissionNotice('Reasoning effort applies from the next turn.')
   }

@@ -806,6 +806,11 @@ in the app's own process.
   machine without the capability is sent no mode, and a message in one other
   than the default is refused here in words rather than run as a default
   turn there.
+- **Its effort is set from here** (2026-10-25). Where the machine advertises
+  `conversation-reasoning-effort`, the engine picker's effort control and
+  `/effort` are offered as a local chat's are, reading the level the machine
+  lists the chat at; a change is written to the chat's record over there,
+  which every turn after runs at, whichever device sends it.
 
 ### Terminals stay on the machine
 

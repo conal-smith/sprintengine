@@ -84,6 +84,14 @@ export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent
  */
 export const CONVERSATION_SEND_MODE_CAPABILITY = 'conversation-send-mode' as const
 /**
+ * A chat's reasoning effort may be read and set, as its effort control does
+ * on the desktop: a listed chat names the levels its provider runs
+ * (`capabilities.reasoningEfforts`) and the one it runs at
+ * (`reasoningEffort`), and `setReasoningEffort` changes it from the next
+ * turn. A desktop without it still runs each chat at the effort kept for it.
+ */
+export const CONVERSATION_REASONING_EFFORT_CAPABILITY = 'conversation-reasoning-effort' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -129,6 +137,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
   CONVERSATION_SEND_MODE_CAPABILITY,
+  CONVERSATION_REASONING_EFFORT_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

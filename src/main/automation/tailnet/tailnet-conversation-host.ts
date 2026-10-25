@@ -83,6 +83,10 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // (`conversation-stop-subagent`); a client offers an agent's Stop only
         // where it can.
         stopSubagent: capabilities.stopSubagent === true,
+        // The effort levels the chat's provider runs, none for one that runs
+        // none (`conversation-reasoning-effort`); a client offers its effort
+        // control only where there are some.
+        reasoningEfforts: [...(capabilities.reasoningEfforts ?? [])],
       }
     : undefined
 
@@ -514,6 +518,8 @@ export type AgentChoicePatch = {
   /** Written with the preset, or cleared with it: a mode left from an earlier preset is not this one's. */
   cliPermissionMode?: string | undefined
   conversation?: { providerId: string; modelId: string }
+  /** Cleared with `undefined`: the chat then runs at its provider's own default. */
+  conversationReasoningEffort?: string | undefined
 }
 
 /**
@@ -725,6 +731,37 @@ export function createConversationGatewayHost(
     registry.writeAgentChoice?.(key, { conversation: { providerId: session.providerId, modelId } })
     return { ok: true, ...(switched.notice ? { notice: switched.notice } : {}) }
   }
+  // The effort a chat runs at, as its record keeps it and a send applies it:
+  // only a level its provider runs, as the chat view reads it.
+  const effortOf = (
+    key: { workspaceId: string; agentId: string },
+    capabilities: ConversationSessionSummary['capabilities'] | undefined,
+  ): Pick<ConversationThread, 'reasoningEffort'> => {
+    const effort = registry.reasoningEffortOf?.(key) ?? undefined
+    return effort && capabilities?.reasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}
+  }
+  // The chat's effort, as its own effort control sets it: written to its
+  // record, which every turn sent to it reads, whichever device sends it. A
+  // level its provider does not run is refused, as the control offers none.
+  // No session is resumed for it: the record is what the next turn reads.
+  // Sent twice, the second writes the same level again.
+  const setReasoningEffort = async (
+    key: ConversationKey,
+    effort: string | undefined,
+  ): Promise<ConversationGatewayCommandResult> => {
+    if (!registry.writeAgentChoice || !registry.reasoningEffortOf)
+      return { ok: false, message: 'This desktop keeps no reasoning effort for its chats.' }
+    const session = sessionFor(key)
+    const providerId = session?.providerId ?? (await threadFor(key))?.providerId
+    if (!providerId) return { ok: false, message: 'Conversation is unavailable.' }
+    const levels = (session?.capabilities ?? runtime.getProviderCapabilities(providerId))?.reasoningEfforts ?? []
+    if (levels.length === 0) return { ok: false, message: "This chat's agent has no reasoning effort to set." }
+    if (effort !== undefined && !levels.includes(effort))
+      return { ok: false, message: `This chat's agent does not run at ${effort} effort.` }
+    registry.writeAgentChoice(key, { conversationReasoningEffort: effort })
+    // As the chat view says it: the turn running, if any, keeps its own.
+    return { ok: true, ...(session ? { notice: 'Reasoning effort applies from the next turn.' } : {}) }
+  }
   // The machine once per workspace, and the pull requests in one read of the
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
@@ -860,6 +897,7 @@ export function createConversationGatewayHost(
             // client read it as taking no pictures, and a screenshot dropped
             // into it went over as the path of a file on the other machine.
             ...capabilitiesOf(summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
+            ...effortOf(key, summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
             ...turnStartOf(summary),
             ...workingSinceOf(summary),
             ...backgroundWorkOf(summary),
@@ -889,6 +927,7 @@ export function createConversationGatewayHost(
           ...(models ? { models } : {}),
           sessionId: summary.sessionId,
           ...capabilitiesOf(summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
+          ...effortOf(summary, summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
           ...turnStartOf(summary),
           ...workingSinceOf(summary),
           ...backgroundWorkOf(summary),
@@ -1028,6 +1067,7 @@ export function createConversationGatewayHost(
       : {}),
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
+      if (command.kind === 'setReasoningEffort') return setReasoningEffort(key, command.effort)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
       if (command.kind === 'cancelQueued')

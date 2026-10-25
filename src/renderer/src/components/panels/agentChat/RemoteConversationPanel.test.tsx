@@ -107,6 +107,7 @@ async function mountRemote({
   queuedSends = false,
   steerSends = false,
   stopSubagents = false,
+  reasoningEffort = false,
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -122,10 +123,14 @@ async function mountRemote({
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
   stopSubagents?: boolean
+  /** The machine lists its chats' effort and takes a change of it (`conversation-reasoning-effort`). */
+  reasoningEffort?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
-  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree' | 'permissionMode'>>
+  listed?: Partial<
+    Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree' | 'permissionMode' | 'reasoningEffort'>
+  >
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
 }) {
@@ -173,6 +178,7 @@ async function mountRemote({
       queuedSends,
       steerSends,
       stopSubagents,
+      reasoningEffort,
       createPullRequest,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
@@ -250,6 +256,10 @@ async function mountRemote({
       ok: true,
     })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
+    meshConversationSetReasoningEffort: vi.fn(async (_input: { key: MeshConversationKey; effort?: string }) => ({
+      ok: true,
+      notice: 'Reasoning effort applies from the next turn.',
+    })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
       listedModel = input.modelId
       return { ok: true, notice: 'The new model starts with your next message.' }
@@ -966,6 +976,58 @@ test('a chat listed on a mode of its CLI shows that mode, and a machine that run
       await older.unmount()
     }
   }))
+
+test('a chat over there runs at the effort it lists, and /effort sets another over the mesh, not as a message', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: true,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+    listed: { reasoningEffort: 'low' },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort high'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).toHaveBeenCalledExactlyOnceWith({ key, effort: 'high' })
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.host.textContent).toContain('Reasoning effort applies from the next turn.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('/effort alone steps on from the effort the machine lists the chat at', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: true,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+    listed: { reasoningEffort: 'low' },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).toHaveBeenCalledExactlyOnceWith({ key, effort: 'high' })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that keeps no effort a change can reach is never asked to change one', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: false,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort high'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
 
 // The catalog the machine lists for the chat's CLI. This machine's own catalog
 // for that CLI is empty here, so every model row the picker shows is the

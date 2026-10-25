@@ -2221,6 +2221,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
           sendMode: tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mode'),
+          reasoningEffort: tailnetPeerSupports(identity.value.capabilities, 'conversation-reasoning-effort'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2307,6 +2308,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_command',
           message: `${connection.machineName} cannot stop one agent from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'setReasoningEffort') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-reasoning-effort'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot change a chat's reasoning effort from here yet. Update SprintEngine Studio there.`,
         }
     }
     const result = await remoteConversations.command(key, input.command)

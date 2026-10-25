@@ -495,6 +495,12 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * that chat's provider plans (its listed `capabilities.planMode`). False for a
  * machine that does not, where every turn runs in the default mode.
  *
+ * `reasoningEffort`: the machine advertises `conversation-reasoning-effort` —
+ * its list names the effort levels each chat's provider runs and the one the
+ * chat runs at, and it takes `setReasoningEffort`. False for a machine that
+ * does not, whose chats run at the effort kept for them there, unchangeable
+ * from here.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -518,6 +524,7 @@ export type MeshConversationListResult =
       steerSends?: boolean
       stopSubagents?: boolean
       sendMode?: boolean
+      reasoningEffort?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -542,6 +549,7 @@ export type MeshConversationCommand =
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'setReasoningEffort'; effort?: string }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }

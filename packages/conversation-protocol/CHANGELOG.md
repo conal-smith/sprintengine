@@ -13,6 +13,18 @@
 
 ### Added
 
+- **A chat's reasoning effort can be read and set.**
+  `CONVERSATION_REASONING_EFFORT_CAPABILITY` (`conversation-reasoning-effort`)
+  names a desktop that lists each chat's provider levels as
+  `capabilities.reasoningEfforts` and the one the chat runs at as
+  `reasoningEffort`, and takes `setReasoningEffort` (`effort`, absent for the
+  provider's default), kept on the chat for its next turns.
+  `isConversationReasoningEffortId` says whether a value can be a level.
+  `parseConversationClientMessage` refuses a level that cannot be one as
+  `invalid_frame`; `parseConversationServerFrame` keeps the levels it can read
+  and a `reasoningEffort` that is one. A desktop without the capability
+  refuses the kind as `unsupported_command`. The pinned files are unchanged.
+
 - **A message can say the mode its turn runs in.**
   `CONVERSATION_SEND_MODE_CAPABILITY` (`conversation-send-mode`) names a
   desktop whose `send` takes `mode` (`ConversationSendMode`: `plan` or `ask`)

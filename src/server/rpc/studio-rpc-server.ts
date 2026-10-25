@@ -53,7 +53,8 @@ import type {
  * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
  * `conversation-queued-sends`, whose `queued` frames its conversation topic
- * does not carry.
+ * does not carry, and those a chat followed from another desktop added as
+ * commands this socket has no method for: `conversation-reasoning-effort`.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -63,7 +64,8 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-image-downscale' &&
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
-    capability !== 'conversation-queued-sends',
+    capability !== 'conversation-queued-sends' &&
+    capability !== 'conversation-reasoning-effort',
 )
 
 export type StudioRpcServerOptions = {

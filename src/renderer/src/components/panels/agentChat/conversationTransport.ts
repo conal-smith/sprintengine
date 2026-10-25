@@ -158,6 +158,15 @@ export type ConversationTransport = {
   /** Switch a running session's model; absent where the transport cannot. */
   setModel?(input: ConversationSetModelInput): Promise<ConversationTransportResult>
   /**
+   * Set the reasoning effort the chat runs at from its next turn, on the
+   * machine that keeps it; none is its provider's own default. Absent for a
+   * chat here, whose record is the one the view writes and the runtime reads.
+   * A paired machine's chat has it, offered where its session lists efforts,
+   * which it does only where that machine takes the command
+   * (`conversation-reasoning-effort`).
+   */
+  setReasoningEffort?(input: { sessionId: string; effort?: string }): Promise<ConversationTransportResult>
+  /**
    * Hand a message to the machine the chat runs on, to hold until the turn
    * ends and send then; answered once it holds it. Used where
    * `capabilities.hostQueue` is.
@@ -509,6 +518,15 @@ export function createRemoteConversationTransport(input: {
     // `modelSwitch` on from its list, and the chip stays locked without it.
     setModel: async (change) =>
       commandResult(await window.api.meshConversationSetModel({ key, modelId: change.modelId })),
+    // That machine keeps the chat's effort and sends each turn at it, so the
+    // send leaves it out.
+    setReasoningEffort: async (change) =>
+      commandResult(
+        await window.api.meshConversationSetReasoningEffort({
+          key,
+          ...(change.effort ? { effort: change.effort } : {}),
+        }),
+      ),
     toolImage: async (image) => {
       const result = await window.api.meshConversationToolImage({ key, toolUseId: image.toolUseId })
       return result.ok

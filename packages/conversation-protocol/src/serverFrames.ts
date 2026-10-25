@@ -11,6 +11,7 @@ import {
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
   isConversationPermissionModeId,
+  isConversationReasoningEffortId,
   type ConversationQueuedFrame,
   type ConversationQueuedMessage,
 } from './commands.js'
@@ -60,7 +61,20 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * `conversation-stop-subagent`. Absent means unknown.
      */
     stopSubagent?: boolean
+    /**
+     * The reasoning effort levels the chat's provider runs, from a desktop
+     * that advertises `conversation-reasoning-effort`; empty for a provider
+     * that runs none. Absent means unknown.
+     */
+    reasoningEfforts?: string[]
   }
+  /**
+   * The reasoning effort the chat runs at, one of its provider's
+   * `capabilities.reasoningEfforts`, from a desktop that advertises
+   * `conversation-reasoning-effort`. Absent for the provider's own default,
+   * and from a desktop built before it was listed.
+   */
+  reasoningEffort?: string
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
    * listed, and for a chat whose machine the desktop cannot name yet.
@@ -555,6 +569,7 @@ function thread(value: unknown): ConversationThread | null {
     isConversationPermissionModeId(value.permissionMode)
       ? { permissionMode: value.permissionMode }
       : {}),
+    ...(isConversationReasoningEffortId(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {}),
     ...(models ? { models } : {}),
     // A machine or a pull request this client cannot read is left out: the
     // row shows no mark rather than a wrong one.
@@ -596,6 +611,9 @@ function thread(value: unknown): ConversationThread | null {
               : {}),
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
             ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
+            ...(Array.isArray(flags.reasoningEfforts)
+              ? { reasoningEfforts: flags.reasoningEfforts.filter(isConversationReasoningEffortId) }
+              : {}),
           },
         }
       : {}),

@@ -199,6 +199,11 @@ export const TAILNET_CAPABILITIES = [
   // (`capabilities.planMode`), as this machine's own chat sends one.
   // CONVERSATION_SEND_MODE_CAPABILITY.
   'conversation-send-mode',
+  // A chat's reasoning effort from a paired machine (2026-10-25): a listed
+  // chat names the levels its provider runs and the one it runs at, and
+  // `setReasoningEffort` changes it on the chat's record, as this machine's
+  // effort control does. CONVERSATION_REASONING_EFFORT_CAPABILITY.
+  'conversation-reasoning-effort',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

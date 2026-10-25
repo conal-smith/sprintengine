@@ -9,6 +9,7 @@ import {
   CONVERSATION_MAX_SEND_SKILLS,
   CONVERSATION_SEND_MODES,
   isConversationPermissionModeId,
+  isConversationReasoningEffortId,
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
 } from './commands.js'
@@ -98,6 +99,18 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
           ...(confirmedStale === true ? { confirmedStale: true as const } : {}),
         },
       }
+    }
+    if (command.kind === 'setReasoningEffort') {
+      return id(value.commandId) && (command.effort === undefined || isConversationReasoningEffortId(command.effort))
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: {
+              kind: 'setReasoningEffort',
+              ...(command.effort === undefined ? {} : { effort: command.effort as string }),
+            },
+          }
+        : null
     }
     // The mode a turn runs in rides beside whatever else the send says, and
     // never beside a message held for later, which goes in the default one.
@@ -211,7 +224,8 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
   return rejection.code === 'unsupported_command' &&
     (rejection.commandKind === 'resolvePlan' ||
       rejection.commandKind === 'cancelQueued' ||
-      rejection.commandKind === 'stopSubagent')
+      rejection.commandKind === 'stopSubagent' ||
+      rejection.commandKind === 'setReasoningEffort')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

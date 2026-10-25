@@ -97,3 +97,19 @@ test('a machine that does not take the mode a turn runs in is not sent one, and 
     await machine.close()
   }
 })
+
+test("a machine that does not take a chat's effort is not asked to change it", async () => {
+  const machine = await pairedMachine(['conversations', 'conversation-steer-sends'])
+  try {
+    const before = machine.asked()
+    const set = await machine.mesh.conversationCommand({
+      key: machine.key,
+      command: { kind: 'setReasoningEffort', effort: 'high' },
+    })
+    assert.ok(!set.ok && set.code === 'unsupported_command')
+    assert.ok(!set.ok && set.message.includes('Update SprintEngine Studio there'))
+    assert.equal(machine.asked(), before, 'nothing was sent over there')
+  } finally {
+    await machine.close()
+  }
+})

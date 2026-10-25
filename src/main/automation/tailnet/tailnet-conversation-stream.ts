@@ -79,6 +79,7 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   setModel: true,
   cancelQueued: true,
   stopSubagent: true,
+  setReasoningEffort: true,
 }
 
 /**

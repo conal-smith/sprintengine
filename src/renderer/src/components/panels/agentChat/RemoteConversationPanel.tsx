@@ -93,6 +93,7 @@ function remoteConversationSession(
   stopSubagents: boolean,
   cliPermissionModes: boolean,
   sendMode: boolean,
+  reasoningEffort: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -127,7 +128,11 @@ function remoteConversationSession(
       // phone does, and the send names them.
       images: capabilities?.images === true,
       skills: 'none',
-      reasoningEfforts: null,
+      // The levels its provider runs, where the machine takes a change of
+      // them: the effort control and `/effort` are offered as a local chat's
+      // are, and a change is that machine's to keep.
+      reasoningEfforts:
+        reasoningEffort && capabilities?.reasoningEfforts?.length ? capabilities.reasoningEfforts : null,
       interrupt: capabilities?.interrupt ?? true,
       resume: false,
       subagents: true,
@@ -188,6 +193,8 @@ export default function RemoteConversationPanel({
   const [stopSubagents, setStopSubagents] = useState(false)
   // The machine runs a turn in the mode its message says.
   const [sendMode, setSendMode] = useState(false)
+  // The machine lists its chats' reasoning effort and takes a change of it.
+  const [reasoningEffort, setReasoningEffort] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -230,6 +237,7 @@ export default function RemoteConversationPanel({
     })
     const capabilities = base.capabilities
     const setModel = base.setModel
+    const setEffort = base.setReasoningEffort
     const send = base.send
     return {
       ...base,
@@ -258,6 +266,17 @@ export default function RemoteConversationPanel({
         ? {
             setModel: async (change: Parameters<typeof setModel>[0]) => {
               const result = await setModel(change)
+              if (result.ok) setListVersion((version) => version + 1)
+              return result
+            },
+          }
+        : {}),
+      // Read again once accepted, as a model switch is, so the control names
+      // the level the machine says the chat now runs at.
+      ...(setEffort
+        ? {
+            setReasoningEffort: async (change: Parameters<typeof setEffort>[0]) => {
+              const result = await setEffort(change)
               if (result.ok) setListVersion((version) => version + 1)
               return result
             },
@@ -295,6 +314,7 @@ export default function RemoteConversationPanel({
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
         setSendMode(result.sendMode === true)
+        setReasoningEffort(result.reasoningEffort === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -309,13 +329,23 @@ export default function RemoteConversationPanel({
 
   const [fields, setFields] = useState<Omit<ChatAgentFields, 'conversation' | 'name'>>({})
   const update = useCallback((patch: Partial<ChatAgentFields>) => {
-    const { conversation, name: _name, ...rest } = patch
+    const { conversation, name: _name, conversationReasoningEffort: _effort, ...rest } = patch
     setFields((current) => ({ ...current, ...rest }))
     // The chat view records a model only once the machine accepted the
     // switch; the chip moves now, and the list read that follows confirms it.
     // The CLI is the machine's to say, never this pane's.
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
+    // The effort likewise: the machine keeps it, and the control reads it off
+    // the list, moved now to the level it accepted.
+    if ('conversationReasoningEffort' in patch)
+      setThread((current) => {
+        if (!current) return current
+        const { reasoningEffort: _was, ...rest } = current
+        return patch.conversationReasoningEffort
+          ? { ...rest, reasoningEffort: patch.conversationReasoningEffort }
+          : rest
+      })
   }, [])
   // The branch, changed files and pull requests the strip under the composer draws, from
   // the newest list either this pane or the sidebar read: the sidebar reads
@@ -333,8 +363,9 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode),
-    [thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode],
+    () =>
+      remoteConversationSession(thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode, reasoningEffort),
+    [thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode, reasoningEffort],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])
@@ -344,6 +375,8 @@ export default function RemoteConversationPanel({
         ...fields,
         name: displayTitle,
         conversation: { providerId: thread?.providerId ?? '', modelId: thread?.modelId ?? '' },
+        // The effort the machine says the chat runs at, which each turn there runs at.
+        ...(thread?.reasoningEffort ? { conversationReasoningEffort: thread.reasoningEffort } : {}),
       },
       update,
       workspace: null,

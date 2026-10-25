@@ -70,6 +70,15 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   a chat whose provider cannot stop one by itself (the listed chat's
  *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
  *   desktop without it refuses the kind as `unsupported_command`.
+ * - `setReasoningEffort` sets the reasoning effort the chat's turns run at,
+ *   as its own effort control does on the desktop: kept on the chat, and
+ *   applied from its next turn, whichever device sends it. `effort` is one of
+ *   the levels the listed chat's provider runs (`capabilities.reasoningEfforts`);
+ *   absent, the provider's own default. Refused for a level the provider does
+ *   not run, and for a chat whose provider runs none. Answered with a `notice`
+ *   while a session is live, since the turn running keeps its own. Needs
+ *   `conversation-reasoning-effort`; a desktop without it refuses the kind as
+ *   `unsupported_command`.
  * - `send` may say the `mode` the turn runs in, as the desktop's own chat
  *   sends one: `ask` answers without changing anything, `plan` has the agent
  *   plan and wait for the plan to be approved, where the chat's provider
@@ -108,6 +117,7 @@ export type ConversationCommand =
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'setReasoningEffort'; effort?: string }
 
 export type ConversationCommandKind = ConversationCommand['kind']
 
@@ -154,6 +164,7 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'setModel',
   'cancelQueued',
   'stopSubagent',
+  'setReasoningEffort',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────
@@ -246,6 +257,15 @@ function toolName(value: unknown): value is string {
     if (code < 0x20 || code === 0x7f) return false
   }
   return true
+}
+
+// What a provider may call one of its reasoning effort levels: as short and
+// as plain as a mode id.
+const REASONING_EFFORT = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
+
+/** Whether a value can be a reasoning effort level. A desktop checks it against the chat's provider as well. */
+export function isConversationReasoningEffortId(value: unknown): value is string {
+  return typeof value === 'string' && REASONING_EFFORT.test(value)
 }
 
 /** Whether a value can be a CLI's own permission mode id. A desktop checks it against the chat's CLI as well. */

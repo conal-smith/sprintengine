@@ -238,6 +238,8 @@ export const meshApi = {
     }),
   meshConversationSetModel: (input: { key: MeshConversationKey; modelId: string }) =>
     command(input.key, { kind: 'setModel', modelId: input.modelId }),
+  meshConversationSetReasoningEffort: (input: { key: MeshConversationKey; effort?: string }) =>
+    command(input.key, { kind: 'setReasoningEffort', ...(input.effort ? { effort: input.effort } : {}) }),
   meshConversationToolDetail: (input: {
     key: MeshConversationKey
     toolUseId: string
@@ -309,6 +311,7 @@ export const meshApi = {
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'
   | 'meshConversationSetModel'
+  | 'meshConversationSetReasoningEffort'
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'

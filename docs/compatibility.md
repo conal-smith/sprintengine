@@ -462,6 +462,19 @@ following another machine's chat refuses one there in words first, and lists
 `planMode` from that machine only where it is). The Studio RPC advertises it
 too: its `conversation.send` reads the lane's own validator and reaches the
 same host.
+A chat's reasoning effort is the `conversation-reasoning-effort` capability
+(2026-10-25): each listed chat names the levels its provider runs as
+`capabilities.reasoningEfforts` (an optional string array, empty for a
+provider that runs none) and the level its record keeps as `reasoningEffort`
+(absent for the provider's own default), and a `setReasoningEffort` command
+(`effort`, or none for the default) writes the chat's record, as the
+desktop's own effort control does, for every turn after to run at whichever
+device sends it. It is answered with a `notice` while a session is live, and
+needs none. All of it is additive: a desktop without the capability refuses
+the kind as `unsupported_command` and lists neither member, and a client
+sends it only where it is advertised (a desktop following another machine's
+chat refuses it there in words first, and offers no effort control). The
+Studio RPC does not advertise it, having no method for it.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

@@ -1111,6 +1111,13 @@ export type ElectronApi = {
     preset: CliPermissionPreset
     permissionMode?: string
   }) => Promise<MeshConversationCommandResult>
+  // Set the reasoning effort a chat over there runs at from its next turn, one
+  // of the levels its list names; none, its provider's own default. Needs
+  // `conversation-reasoning-effort` there.
+  meshConversationSetReasoningEffort: (input: {
+    key: MeshConversationKey
+    effort?: string
+  }) => Promise<MeshConversationCommandResult>
   // Switch a paired machine's chat to another model of its CLI, from the
   // catalog that machine's list names. Needs `conversation-models` there.
   meshConversationSetModel: (input: {

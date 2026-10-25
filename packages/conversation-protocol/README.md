@@ -153,6 +153,12 @@ and adds, each behind its capability:
   mode that the running turn cannot take is refused `busy` rather than held. A
   desktop without it drops `mode` and runs the turn in the default mode, so a
   client sends one only where it is advertised.
+- `conversation-reasoning-effort`: a listed thread names the effort levels its
+  provider runs (`capabilities.reasoningEfforts`, empty for none) and the one
+  the chat runs at (`reasoningEffort`, absent for the provider's default), and
+  `setReasoningEffort` with an `effort` (or none, for the default) changes it
+  from the next turn, kept on the chat as the desktop's own effort control
+  keeps it. A desktop without it refuses the kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the
