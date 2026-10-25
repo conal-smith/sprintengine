@@ -197,7 +197,7 @@ import { loadWholeConversation } from './agentChat/conversationReplay'
 import { ConversationReplayView, type ConversationReplaySource } from './agentChat/conversationReplayView'
 import { onChatReplayRequest, takeChatReplayRequest } from './agentChat/chatReplayRequests'
 import { chatExportSupported, exportChatOrToast } from './agentChat/chatExport'
-import type { ChatExportAction } from '../../../../shared/chat-export'
+import type { ChatExportAction, ChatExportRemoteSource } from '../../../../shared/chat-export'
 import { useConversationScrollRestore } from './agentChat/conversationScrollRestore'
 import { useComposerSkillReader } from './agentChat/composerSkillReader'
 import { nextConversationEffort } from './agentChat/conversationEffort'
@@ -2773,7 +2773,30 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // nothing to export. Earlier pages not read in yet are messages too.
   const hasMessagesRef = useRef(false)
   hasMessagesRef.current = hasMore || timelineRows.some((row) => row.kind === 'user' || row.kind === 'assistant')
-  const exportable = transport.kind === 'local' && chatExportSupported()
+  // A chat followed from a paired machine is exported from its transcript
+  // there, read back to its first page as Replay reads it, with what that
+  // machine lists about it; its pictures stay there and are named.
+  const remoteOrigin = useWorkspaceStore(
+    (s) => s.workspaces.find((candidate) => candidate.id === workspaceId)?.remoteOrigin ?? null,
+  )
+  const remoteExportSourceRef = useRef<() => Promise<ChatExportRemoteSource>>(async () => {
+    throw new Error('This chat could not be read.')
+  })
+  remoteExportSourceRef.current = async () => {
+    const held = { events, hasMore, beforeCursor }
+    const key = { workspaceRoot: binding.sessionRoot ?? '', workspaceId, agentId }
+    const all = await loadWholeConversation((input) => transport.loadEarlier(input), key, held)
+    return {
+      events: all,
+      title: label,
+      project: remoteOrigin?.workspaceName ?? null,
+      providerId: conversation?.providerId || null,
+      modelId: conversation?.modelId || null,
+      workspaceRoot: remoteOrigin?.workspaceRoot ?? '',
+    }
+  }
+  const exportable = chatExportSupported()
+  const exportsRemote = transport.kind === 'remote'
   useEffect(
     () =>
       registerMountedChatView({
@@ -2795,12 +2818,20 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         openSideQuestion: () => openSideQuestionRef.current(),
         hasMessages: () => hasMessagesRef.current,
         // Main reads a local chat's transcript; a chat on another machine has
-        // none here to read.
+        // none here to read, so this window reads it from there and hands it on.
         ...(exportable
-          ? { exportChat: (action: ChatExportAction) => void exportChatOrToast({ workspaceId, agentId, action }) }
+          ? {
+              exportChat: (action: ChatExportAction) =>
+                void exportChatOrToast({
+                  workspaceId,
+                  agentId,
+                  action,
+                  ...(exportsRemote ? { remote: () => remoteExportSourceRef.current() } : {}),
+                }),
+            }
           : {}),
       }),
-    [workspaceId, agentId, stepTurn, openChatFind, exportable],
+    [workspaceId, agentId, stepTurn, openChatFind, exportable, exportsRemote],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]

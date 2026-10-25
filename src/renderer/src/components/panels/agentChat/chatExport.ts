@@ -1,4 +1,4 @@
-import type { ChatExportAction } from '../../../../../shared/chat-export'
+import type { ChatExportAction, ChatExportRemoteSource } from '../../../../../shared/chat-export'
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
 import { clientSupports, hostPlatform } from '../../../clientCapabilities'
 import { showToast } from '../../../store/toastStore'
@@ -54,17 +54,27 @@ export function chatHasMessages(
   )
 }
 
-/** Export one chat, and say how it went. Never throws: a menu has nowhere of its own to show an error. */
+/**
+ * Export one chat, and say how it went. Never throws: a menu has nowhere of its
+ * own to show an error. A chat followed from a paired machine names `remote`,
+ * which reads its whole transcript from that machine first: main has none of
+ * it to read.
+ */
 export async function exportChatOrToast(input: {
   workspaceId: string
   agentId: string
   action: ChatExportAction
+  remote?: () => Promise<ChatExportRemoteSource>
 }): Promise<void> {
+  const { remote, ...chat } = input
   const copying = input.action === 'copy' || input.action === 'copy-markdown'
-  const result = await window.api.exportChat(input).catch((error: unknown) => ({
+  const failed = (error: unknown) => ({
     ok: false as const,
     message: error instanceof Error ? error.message : 'The chat could not be exported.',
-  }))
+  })
+  const result = await (remote ? remote().then((source) => ({ ...chat, remote: source })) : Promise.resolve(chat))
+    .then((asked) => window.api.exportChat(asked))
+    .catch(failed)
   if (!result.ok) {
     showToast({
       tone: 'error',
