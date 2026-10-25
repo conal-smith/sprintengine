@@ -474,7 +474,8 @@ needs none. All of it is additive: a desktop without the capability refuses
 the kind as `unsupported_command` and lists neither member, and a client
 sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first, and offers no effort control). The
-Studio RPC does not advertise it, having no method for it.
+Studio RPC advertises it too: its `conversation.setReasoningEffort` method, an
+owner's for now, reads the lane's own validator and reaches the same host.
 A live chat's MCP servers are the `conversation-mcp-server-actions` capability
 (2026-10-25): an `mcpServerAction` command names a server as the chat's CLI
 does (`serverId`) and an `action`, `reconnect`, `enable` or `disable`, and the
@@ -486,8 +487,9 @@ callback on the desktop itself, so one begun from another device could not be
 finished there, and the validator refuses it. All of it is additive: a
 desktop without the capability refuses the kind as `unsupported_command`, and
 a client sends it only where it is advertised (a desktop following another
-machine's chat refuses it there in words first). The Studio RPC does not
-advertise it, having no method for it.
+machine's chat refuses it there in words first). The Studio RPC advertises
+it too: its `conversation.mcpServerAction` method, an owner's for now, reads
+the lane's own validator and reaches the same host.
 Restarting a chat's agent is the `conversation-restart-session` capability
 (2026-10-25): a `restartSession` command has the desktop end the agent's
 process as its own Restart agent session does, suspending the session so it
@@ -500,8 +502,9 @@ dropped link is answered as the first was rather than ending the session a
 message has started since. All of it is additive: a desktop without the
 capability refuses the kind as `unsupported_command`, and a desktop following
 another machine's chat refuses it there in words first, saying to restart it
-on that machine. The Studio RPC does not advertise it, having no method for
-it.
+on that machine. The Studio RPC advertises it too: its
+`conversation.restartSession` method, an owner's for now, reads the lane's own
+validator and reaches the same host.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

@@ -104,6 +104,9 @@ The `welcome`'s `grant` is what the connection may do:
 | `conversation.setModel`            | operate        | `key`, `commandId`, `modelId`                   | `{ modelId, notice? }`                           |
 | `conversation.cancelQueued`        | operate, owner | `key`, `commandId`, `queuedId`                  | `{}`                                             |
 | `conversation.stopSubagent`        | operate, owner | `key`, `commandId`, `toolUseId`                 | `{}`                                             |
+| `conversation.setReasoningEffort`  | operate, owner | `key`, `commandId`, `effort?`                   | `{ notice? }`                                    |
+| `conversation.mcpServerAction`     | operate, owner | `key`, `commandId`, `serverId`, `action`        | `{}`                                             |
+| `conversation.restartSession`      | operate, owner | `key`, `commandId`                              | `{ notice? }`                                    |
 | `conversation.stop`                | operate        | `key`, `commandId`                              | `{}`                                             |
 | `conversation.loadEarlier`         | read           | `key`, `beforeCursor`, `turnLimit?`             | `{ page }`                                       |
 | `conversation.toolDetail`          | read           | `key`, `toolUseId`                              | `{ detail }`                                     |
