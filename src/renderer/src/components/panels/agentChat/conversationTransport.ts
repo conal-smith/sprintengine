@@ -18,6 +18,8 @@ import type {
   ConversationRewindInput,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationMcpServerActionInput,
+  ConversationMcpServerActionResult,
   ConversationRewindResult,
   ConversationSendTurnInput,
   ConversationSessionFrame,
@@ -190,6 +192,15 @@ export type ConversationTransport = {
   /** Switch a running session's model; absent where the transport cannot. */
   setModel?(input: ConversationSetModelInput): Promise<ConversationTransportResult>
   /**
+   * Set the reasoning effort the chat runs at from its next turn, on the
+   * machine that keeps it; none is its provider's own default. Absent for a
+   * chat here, whose record is the one the view writes and the runtime reads.
+   * A paired machine's chat has it, offered where its session lists efforts,
+   * which it does only where that machine takes the command
+   * (`conversation-reasoning-effort`).
+   */
+  setReasoningEffort?(input: { sessionId: string; effort?: string }): Promise<ConversationTransportResult>
+  /**
    * Hand a message to the machine the chat runs on, to hold until the turn
    * ends and send then; answered once it holds it. Used where
    * `capabilities.hostQueue` is.
@@ -266,6 +277,23 @@ export type ConversationTransport = {
    * session declares `stopSubagent` as well.
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
+  /**
+   * Restart the chat's agent on the machine it runs on, as Restart agent
+   * session does for a chat here (which suspends its session through the
+   * conversation IPC itself): answered with a `notice` where it had none
+   * running, and nothing was done. A paired machine's chat has it, refused in
+   * words for a machine that does not take the command
+   * (`conversation-restart-session`).
+   */
+  restartSession?(): Promise<ConversationTransportResult>
+  /**
+   * Reconnect, switch or sign in to one of a live chat's MCP servers, where
+   * the session lists the action (`capabilities.mcpServerActions`). A paired
+   * machine's chat has it too, its session listing an action only where that
+   * machine takes the command (`conversation-mcp-server-actions`), and never
+   * a sign-in, whose callback that machine's CLI waits for there.
+   */
+  mcpServerAction?(input: ConversationMcpServerActionInput): Promise<ConversationMcpServerActionResult>
   /**
    * Ask a side question about the chat: answered from its context, added to
    * nothing, a running turn left as it was. Absent where the transport
@@ -428,6 +456,9 @@ export const localConversationTransport: ConversationTransport = {
   fork: (input) => localParts().fork(input),
   startSession: (input) => localParts().startSession(input),
   revert: (input) => localParts().revert(input),
+  // The IPC's, in a window on either implementation, as the composer's server
+  // rows have always asked it.
+  mcpServerAction: (input) => window.api.conversationSessionMcpAction(input),
   // Read off the implementation the window chose, so it is absent where that
   // one has no way to do it.
   get stopSubagent() {
@@ -551,6 +582,10 @@ export function createRemoteConversationTransport(input: {
           // first, and the send names them, as it names the images.
           ...(turn.files?.length ? { files: turn.files } : {}),
           ...(turn.steer ? { steer: true } : {}),
+          // The mode the chat's turn runs in, as a chat here sends it. Main
+          // refuses one other than the default for a machine that would run
+          // it in the default mode instead.
+          ...(turn.mode && turn.mode !== 'default' ? { mode: turn.mode } : {}),
         }),
       ),
     queue: async (turn) =>
@@ -575,6 +610,22 @@ export function createRemoteConversationTransport(input: {
       }
     },
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
+    restartSession: async () => commandResult(await window.api.meshConversationRestartSession({ key })),
+    // Offered only for an action the pane's session lists, which it does
+    // where the machine takes the command; a sign-in never is.
+    mcpServerAction: async (asked) => {
+      if (asked.action === 'sign-in')
+        return {
+          ok: false,
+          message: `Sign in to ${asked.serverId} on ${input.machineName}: its agent waits for the sign-in there.`,
+        }
+      const done = await window.api.meshConversationMcpServerAction({
+        key,
+        serverId: asked.serverId,
+        action: asked.action,
+      })
+      return done.ok ? { ok: true } : { ok: false, message: done.message }
+    },
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).
     stopSubagent: async (input) =>
@@ -649,12 +700,29 @@ export function createRemoteConversationTransport(input: {
         await window.api.meshConversationResolveApproval({ key, requestId: response.requestId, decision }),
       )
     },
+    // The CLI's own mode rides beside its preset where the chat's session
+    // lists any, which the pane does only for a machine that runs them.
     setPermissionPreset: async (change) =>
-      commandResult(await window.api.meshConversationSetPermissionPreset({ key, preset: change.permissionPreset })),
+      commandResult(
+        await window.api.meshConversationSetPermissionPreset({
+          key,
+          preset: change.permissionPreset,
+          ...(change.permissionMode ? { permissionMode: change.permissionMode } : {}),
+        }),
+      ),
     // Offered only while the machine advertises model switching; the pane turns
     // `modelSwitch` on from its list, and the chip stays locked without it.
     setModel: async (change) =>
       commandResult(await window.api.meshConversationSetModel({ key, modelId: change.modelId })),
+    // That machine keeps the chat's effort and sends each turn at it, so the
+    // send leaves it out.
+    setReasoningEffort: async (change) =>
+      commandResult(
+        await window.api.meshConversationSetReasoningEffort({
+          key,
+          ...(change.effort ? { effort: change.effort } : {}),
+        }),
+      ),
     toolImage: async (image) => {
       const result = await window.api.meshConversationToolImage({ key, toolUseId: image.toolUseId })
       return result.ok

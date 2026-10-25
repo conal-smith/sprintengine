@@ -215,6 +215,7 @@ export const meshApi = {
     steer?: boolean
     mentions?: ConversationMentionRef[]
     files?: ConversationAttachedFile[]
+    mode?: 'default' | 'plan' | 'ask'
   }): Promise<MeshConversationCommandResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_SEND_CHANNEL, {
       key: input.key,
@@ -225,6 +226,7 @@ export const meshApi = {
       ...(input.steer ? { steer: true } : {}),
       ...(input.mentions?.length ? { mentions: input.mentions } : {}),
       ...(input.files?.length ? { files: input.files } : {}),
+      ...(input.mode && input.mode !== 'default' ? { mode: input.mode } : {}),
     }) as Promise<MeshConversationCommandResult>,
   meshConversationCancelQueued: (input: { key: MeshConversationKey; queuedId: string }) =>
     command(input.key, { kind: 'cancelQueued', queuedId: input.queuedId }),
@@ -282,10 +284,27 @@ export const meshApi = {
     requestId: string
     answers: Record<string, string>
   }) => command(input.key, { kind: 'answerQuestion', requestId: input.requestId, answers: input.answers }),
-  meshConversationSetPermissionPreset: (input: { key: MeshConversationKey; preset: CliPermissionPreset }) =>
-    command(input.key, { kind: 'setPermissionPreset', preset: input.preset }),
+  meshConversationSetPermissionPreset: (input: {
+    key: MeshConversationKey
+    preset: CliPermissionPreset
+    permissionMode?: string
+  }) =>
+    command(input.key, {
+      kind: 'setPermissionPreset',
+      preset: input.preset,
+      ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+    }),
   meshConversationSetModel: (input: { key: MeshConversationKey; modelId: string }) =>
     command(input.key, { kind: 'setModel', modelId: input.modelId }),
+  meshConversationSetReasoningEffort: (input: { key: MeshConversationKey; effort?: string }) =>
+    command(input.key, { kind: 'setReasoningEffort', ...(input.effort ? { effort: input.effort } : {}) }),
+  meshConversationMcpServerAction: (input: {
+    key: MeshConversationKey
+    serverId: string
+    action: 'reconnect' | 'enable' | 'disable'
+  }) => command(input.key, { kind: 'mcpServerAction', serverId: input.serverId, action: input.action }),
+  meshConversationRestartSession: (input: { key: MeshConversationKey }) =>
+    command(input.key, { kind: 'restartSession' }),
   meshConversationToolDetail: (input: {
     key: MeshConversationKey
     toolUseId: string
@@ -382,6 +401,9 @@ export const meshApi = {
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'
   | 'meshConversationSetModel'
+  | 'meshConversationSetReasoningEffort'
+  | 'meshConversationMcpServerAction'
+  | 'meshConversationRestartSession'
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'

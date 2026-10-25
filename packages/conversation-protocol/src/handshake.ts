@@ -99,6 +99,34 @@ export const CONVERSATION_REWIND_CAPABILITY = 'conversation-rewind' as const
  */
 export const CONVERSATION_CHECKPOINT_REVERT_CAPABILITY = 'conversation-checkpoint-revert' as const
 /**
+ * A message may say the mode its turn runs in, as the desktop's own chat
+ * sends one: `send` takes `mode` (`ask`, or `plan` where a listed chat says
+ * its provider plans, `capabilities.planMode`). A desktop without it runs
+ * every turn in the default mode, which may change what an `ask` would not.
+ */
+export const CONVERSATION_SEND_MODE_CAPABILITY = 'conversation-send-mode' as const
+/**
+ * A chat's reasoning effort may be read and set, as its effort control does
+ * on the desktop: a listed chat names the levels its provider runs
+ * (`capabilities.reasoningEfforts`) and the one it runs at
+ * (`reasoningEffort`), and `setReasoningEffort` changes it from the next
+ * turn. A desktop without it still runs each chat at the effort kept for it.
+ */
+export const CONVERSATION_REASONING_EFFORT_CAPABILITY = 'conversation-reasoning-effort' as const
+/**
+ * A live chat's MCP servers may be reconnected and switched on or off, as its
+ * composer's server rows do on the desktop: `mcpServerAction`, where a listed
+ * chat names the actions its provider takes (`capabilities.mcpServerActions`).
+ * A sign-in stays on the desktop, whose CLI waits for its callback there.
+ */
+export const CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY = 'conversation-mcp-server-actions' as const
+/**
+ * A chat's agent may be restarted, as its Restart agent session does on the
+ * desktop: `restartSession` ends its process, keeping the session's place,
+ * and the next message starts it again on the same conversation.
+ */
+export const CONVERSATION_RESTART_SESSION_CAPABILITY = 'conversation-restart-session' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -201,6 +229,10 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_SEND_MENTIONS_CAPABILITY,
   CONVERSATION_FILE_SEARCH_CAPABILITY,
   CONVERSATION_COMMANDS_CAPABILITY,
+  CONVERSATION_SEND_MODE_CAPABILITY,
+  CONVERSATION_REASONING_EFFORT_CAPABILITY,
+  CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY,
+  CONVERSATION_RESTART_SESSION_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

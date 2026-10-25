@@ -74,6 +74,51 @@
   `parseConversationCommandsAnswer` read (composerReads.ts): the matches in
   the chat's folder by relative path, and the chat CLI's slash commands
   without Studio's. All additive; the pinned files are unchanged.
+- **A chat's agent can be restarted.** `CONVERSATION_RESTART_SESSION_CAPABILITY`
+  (`conversation-restart-session`) names a desktop that takes the
+  `restartSession` command and ends the chat's agent process as its own
+  Restart agent session does, keeping the session's place for the next
+  message. Refused while the agent works; a chat with none running is
+  answered with a `notice`. `parseConversationClientMessage` keeps it under
+  its command id and drops anything beside the kind. A desktop without the
+  capability refuses the kind as `unsupported_command`. The pinned files are
+  unchanged.
+
+- **A live chat's MCP servers can be reconnected and switched.**
+  `CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY`
+  (`conversation-mcp-server-actions`) names a desktop that takes the
+  `mcpServerAction` command (`serverId`, and an `action` of
+  `ConversationWireMcpServerAction`: `reconnect`, `enable` or `disable`,
+  listed as `CONVERSATION_MCP_SERVER_ACTIONS`) and lists the actions each
+  chat's provider takes as `capabilities.mcpServerActions`. A sign-in is not
+  one: the CLI waits for its callback on the desktop.
+  `parseConversationClientMessage` refuses an action it does not name, a
+  sign-in included, or one naming no server, as `invalid_frame`;
+  `parseConversationServerFrame` keeps the actions it can read. A desktop
+  without the capability refuses the kind as `unsupported_command`. The
+  pinned files are unchanged.
+
+- **A chat's reasoning effort can be read and set.**
+  `CONVERSATION_REASONING_EFFORT_CAPABILITY` (`conversation-reasoning-effort`)
+  names a desktop that lists each chat's provider levels as
+  `capabilities.reasoningEfforts` and the one the chat runs at as
+  `reasoningEffort`, and takes `setReasoningEffort` (`effort`, absent for the
+  provider's default), kept on the chat for its next turns.
+  `isConversationReasoningEffortId` says whether a value can be a level.
+  `parseConversationClientMessage` refuses a level that cannot be one as
+  `invalid_frame`; `parseConversationServerFrame` keeps the levels it can read
+  and a `reasoningEffort` that is one. A desktop without the capability
+  refuses the kind as `unsupported_command`. The pinned files are unchanged.
+
+- **A message can say the mode its turn runs in.**
+  `CONVERSATION_SEND_MODE_CAPABILITY` (`conversation-send-mode`) names a
+  desktop whose `send` takes `mode` (`ConversationSendMode`: `plan` or `ask`)
+  and runs the turn in it, as its own chat sends one. `CONVERSATION_SEND_MODES`
+  lists them with `default`. `parseConversationClientMessage` keeps a named
+  mode beside whatever else the send says, reads `default` as none, and
+  refuses one it does not name, or one beside `queue`, as `invalid_frame`. A
+  desktop without the capability drops the member. The pinned files are
+  unchanged.
 
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)

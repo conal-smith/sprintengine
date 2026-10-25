@@ -89,17 +89,38 @@ function remoteConversationEngine(thread: MeshConversation | null, modelSwitch: 
 type RemoteAgentReads = { fork: boolean; sideQuestions: boolean; contextBreakdown: boolean }
 const NO_AGENT_READS: RemoteAgentReads = { fork: false, sideQuestions: false, contextBreakdown: false }
 
+/** What the machine a chat runs on said it takes, each read from its list. */
+type RemoteSessionFeatures = {
+  modelSwitch: boolean
+  stopSubagents: boolean
+  handoff: boolean
+  sendSkills: boolean
+  rewind: boolean
+  agentReads: RemoteAgentReads
+  cliPermissionModes: boolean
+  sendMode: boolean
+  reasoningEffort: boolean
+  mcpServerActions: boolean
+}
+
 /** The session a remote row stands for, as the chat view reads one: what that machine said it can do. */
 function remoteConversationSession(
   thread: MeshConversation | null,
   key: MeshConversationKey,
-  modelSwitch: boolean,
-  stopSubagents: boolean,
-  handoff: boolean,
-  sendSkills: boolean,
-  rewind: boolean,
-  agentReads: RemoteAgentReads,
+  features: RemoteSessionFeatures,
 ): ConversationSessionSummary {
+  const {
+    modelSwitch,
+    stopSubagents,
+    handoff,
+    sendSkills,
+    rewind,
+    agentReads,
+    cliPermissionModes,
+    sendMode,
+    reasoningEffort,
+    mcpServerActions,
+  } = features
   const capabilities = thread?.capabilities
   return {
     // A session id, even for a conversation with none live over there: a
@@ -114,22 +135,34 @@ function remoteConversationSession(
     // shows the same switcher a local chat does; without it (a desktop built
     // before the list named it) the switcher stays hidden.
     ...(thread?.permissionPreset ? { permissionPreset: thread.permissionPreset } : {}),
+    // And the CLI's own mode at it (Claude Code's Accept edits), from a
+    // machine that runs them; elsewhere the preset runs its own.
+    ...(cliPermissionModes && thread?.permissionPreset && thread.permissionMode
+      ? { permissionMode: thread.permissionMode }
+      : {}),
     createdAt: thread?.createdAt ?? 0,
     updatedAt: thread?.updatedAt ?? 0,
     capabilities: {
       tools: true,
       approvals: capabilities?.approvals ?? true,
       questions: capabilities?.questions ?? true,
-      // The remote send carries no mode or effort. It carries images where
-      // the machine lists the chat as taking them: main puts each in that
-      // machine's upload store, as the phone does, and the send names them.
-      planMode: false,
+      // Whether its provider plans, where the machine takes the mode a turn
+      // runs in; one that does not runs every turn in the default mode.
+      planMode: sendMode && capabilities?.planMode === true,
+      // The remote send carries images where the machine lists the chat as
+      // taking them: main puts each in that machine's upload store, as the
+      // phone does, and the send names them.
       images: capabilities?.images === true,
-      // Whether a message here may carry that machine's skills: it takes
-      // them with a send and lists them. How it hands them to the agent is
-      // its own to say; here only that a chip can go.
+      // That machine's skills, where it takes them with a message: its runtime
+      // resolves each against its own folder and delivers it, which is what
+      // `context` stands for here. The "+" lists them, and that machine's MCP
+      // servers beside them.
       skills: sendSkills ? 'context' : 'none',
-      reasoningEfforts: null,
+      // The levels its provider runs, where the machine takes a change of
+      // them: the effort control and `/effort` are offered as a local chat's
+      // are, and a change is that machine's to keep.
+      reasoningEfforts:
+        reasoningEffort && capabilities?.reasoningEfforts?.length ? capabilities.reasoningEfforts : null,
       interrupt: capabilities?.interrupt ?? true,
       resume: false,
       subagents: true,
@@ -162,6 +195,14 @@ function remoteConversationSession(
       contextBreakdown: agentReads.contextBreakdown && capabilities?.contextBreakdown === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
+      // What the "+" menu's server rows may do to the chat's servers over
+      // there while it runs, where the machine takes the command.
+      ...(mcpServerActions && capabilities?.mcpServerActions?.length
+        ? { mcpServerActions: capabilities.mcpServerActions }
+        : {}),
+      // The CLI's own modes it runs beside them, offered in the same picker a
+      // local chat's are, where the machine takes a switch to one.
+      ...(cliPermissionModes && capabilities?.permissionModes ? { permissionModes: capabilities.permissionModes } : {}),
     },
   }
 }
@@ -185,6 +226,8 @@ export default function RemoteConversationPanel({
   const [listedModelSwitch, setListedModelSwitch] = useState(false)
   // The machine runs chats on Manual and Auto as well as Bypass and No flag.
   const [permissionModes, setPermissionModes] = useState(false)
+  // The machine runs chats on their CLI's own modes beside the presets.
+  const [cliPermissionModes, setCliPermissionModes] = useState(false)
   // The machine holds a message queued here mid-turn and sends it when the
   // turn ends, so this machine may sleep or close meanwhile; and what it
   // holds for this chat, as it last said.
@@ -210,6 +253,12 @@ export default function RemoteConversationPanel({
   const [composerMentions, setComposerMentions] = useState(false)
   const [messageFiles, setMessageFiles] = useState(false)
   const [commandList, setCommandList] = useState(false)
+  // The machine runs a turn in the mode its message says.
+  const [sendMode, setSendMode] = useState(false)
+  // The machine lists its chats' reasoning effort and takes a change of it.
+  const [reasoningEffort, setReasoningEffort] = useState(false)
+  // The machine reconnects and switches a live chat's MCP servers.
+  const [mcpServerActions, setMcpServerActions] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -260,6 +309,7 @@ export default function RemoteConversationPanel({
     })
     const capabilities = base.capabilities
     const setModel = base.setModel
+    const setEffort = base.setReasoningEffort
     const send = base.send
     return {
       ...base,
@@ -297,6 +347,17 @@ export default function RemoteConversationPanel({
             },
           }
         : {}),
+      // Read again once accepted, as a model switch is, so the control names
+      // the level the machine says the chat now runs at.
+      ...(setEffort
+        ? {
+            setReasoningEffort: async (change: Parameters<typeof setEffort>[0]) => {
+              const result = await setEffort(change)
+              if (result.ok) setListVersion((version) => version + 1)
+              return result
+            },
+          }
+        : {}),
     }
   }, [key, machineName])
 
@@ -322,6 +383,7 @@ export default function RemoteConversationPanel({
         setListedAccess(result.access)
         setListedModelSwitch(result.modelSwitch === true)
         setPermissionModes(result.permissionModes === true)
+        setCliPermissionModes(result.cliPermissionModes === true)
         setQueuedSends(result.queuedSends === true)
         setSendSkills(result.sendSkills === true)
         setHostPullRequests(result.createPullRequest === true)
@@ -345,6 +407,9 @@ export default function RemoteConversationPanel({
         setComposerMentions(result.mentions === true)
         setMessageFiles(result.messageFiles === true)
         setCommandList(result.commands === true)
+        setSendMode(result.sendMode === true)
+        setReasoningEffort(result.reasoningEffort === true)
+        setMcpServerActions(result.mcpServerActions === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -359,13 +424,23 @@ export default function RemoteConversationPanel({
 
   const [fields, setFields] = useState<Omit<ChatAgentFields, 'conversation' | 'name'>>({})
   const update = useCallback((patch: Partial<ChatAgentFields>) => {
-    const { conversation, name: _name, ...rest } = patch
+    const { conversation, name: _name, conversationReasoningEffort: _effort, ...rest } = patch
     setFields((current) => ({ ...current, ...rest }))
     // The chat view records a model only once the machine accepted the
     // switch; the chip moves now, and the list read that follows confirms it.
     // The CLI is the machine's to say, never this pane's.
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
+    // The effort likewise: the machine keeps it, and the control reads it off
+    // the list, moved now to the level it accepted.
+    if ('conversationReasoningEffort' in patch)
+      setThread((current) => {
+        if (!current) return current
+        const { reasoningEffort: _was, ...rest } = current
+        return patch.conversationReasoningEffort
+          ? { ...rest, reasoningEffort: patch.conversationReasoningEffort }
+          : rest
+      })
   }, [])
   // The branch, changed files and pull requests the strip under the composer draws, from
   // the newest list either this pane or the sidebar read: the sidebar reads
@@ -383,8 +458,33 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, handoff, sendSkills, rewind, agentReads),
-    [thread, key, modelSwitch, stopSubagents, handoff, sendSkills, rewind, agentReads],
+    () =>
+      remoteConversationSession(thread, key, {
+        modelSwitch,
+        stopSubagents,
+        handoff,
+        sendSkills,
+        rewind,
+        agentReads,
+        cliPermissionModes,
+        sendMode,
+        reasoningEffort,
+        mcpServerActions,
+      }),
+    [
+      thread,
+      key,
+      modelSwitch,
+      stopSubagents,
+      handoff,
+      sendSkills,
+      rewind,
+      agentReads,
+      cliPermissionModes,
+      sendMode,
+      reasoningEffort,
+      mcpServerActions,
+    ],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])
@@ -394,6 +494,8 @@ export default function RemoteConversationPanel({
         ...fields,
         name: displayTitle,
         conversation: { providerId: thread?.providerId ?? '', modelId: thread?.modelId ?? '' },
+        // The effort the machine says the chat runs at, which each turn there runs at.
+        ...(thread?.reasoningEffort ? { conversationReasoningEffort: thread.reasoningEffort } : {}),
       },
       update,
       workspace: null,

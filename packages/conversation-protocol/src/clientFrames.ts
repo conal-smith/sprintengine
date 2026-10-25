@@ -9,8 +9,11 @@ import {
   CONVERSATION_MAX_REVERT_FILES,
   CONVERSATION_MAX_REVERT_PATH_CHARS,
   CONVERSATION_MAX_SEND_SKILLS,
+  CONVERSATION_MCP_SERVER_ACTIONS,
+  CONVERSATION_SEND_MODES,
   isConversationPermissionModeId,
   parseConversationWireMentions,
+  isConversationReasoningEffortId,
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
 } from './commands.js'
@@ -127,6 +130,48 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
           ...(confirmedStale === true ? { confirmedStale: true as const } : {}),
         },
       }
+    }
+    if (command.kind === 'setReasoningEffort') {
+      return id(value.commandId) && (command.effort === undefined || isConversationReasoningEffortId(command.effort))
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: {
+              kind: 'setReasoningEffort',
+              ...(command.effort === undefined ? {} : { effort: command.effort as string }),
+            },
+          }
+        : null
+    }
+    if (command.kind === 'mcpServerAction') {
+      return id(value.commandId) &&
+        id(command.serverId) &&
+        CONVERSATION_MCP_SERVER_ACTIONS.includes(command.action as never)
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: {
+              kind: 'mcpServerAction',
+              serverId: command.serverId,
+              action: command.action as (typeof CONVERSATION_MCP_SERVER_ACTIONS)[number],
+            },
+          }
+        : null
+    }
+    if (command.kind === 'restartSession') {
+      return id(value.commandId)
+        ? { type: 'command', commandId: value.commandId, command: { kind: 'restartSession' } }
+        : null
+    }
+    // The mode a turn runs in rides beside whatever else the send says, and
+    // never beside a message held for later, which goes in the default one.
+    // `default` is the same as naming none, and is read as none.
+    if (command.kind === 'send' && command.mode !== undefined) {
+      const mode = command.mode
+      if (!CONVERSATION_SEND_MODES.includes(mode as never) || command.queue !== undefined) return null
+      const frame = parseConversationClientMessage({ ...value, command: { ...command, mode: undefined } })
+      if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
+      return mode === 'default' ? frame : { ...frame, command: { ...frame.command, mode: mode as 'plan' | 'ask' } }
     }
     if (command.kind === 'cancelQueued') {
       return id(value.commandId) && id(command.queuedId)
@@ -287,7 +332,10 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
       rejection.commandKind === 'handoff' ||
       rejection.commandKind === 'rewind' ||
       rejection.commandKind === 'revert' ||
-      rejection.commandKind === 'fork')
+      rejection.commandKind === 'fork' ||
+      rejection.commandKind === 'setReasoningEffort' ||
+      rejection.commandKind === 'mcpServerAction' ||
+      rejection.commandKind === 'restartSession')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

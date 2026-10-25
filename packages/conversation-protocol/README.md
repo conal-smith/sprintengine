@@ -198,6 +198,32 @@ under their `requestId`, as it answers `watchQueued`.
   that is absolute, names a drive or climbs out with `..` refuses the frame
   (`parseConversationWireMentions`). Never beside `queue`. A desktop without
   it drops the member.
+- `conversation-send-mode`: a `send` with `mode` (`CONVERSATION_SEND_MODES`:
+  `ask`, or `plan` where a listed thread's `capabilities.planMode` says its
+  provider plans) runs its turn in that mode, as the desktop's own chat sends
+  one; `default` is read as no mode. Never beside `queue`, and a steer in a
+  mode that the running turn cannot take is refused `busy` rather than held. A
+  desktop without it drops `mode` and runs the turn in the default mode, so a
+  client sends one only where it is advertised.
+- `conversation-reasoning-effort`: a listed thread names the effort levels its
+  provider runs (`capabilities.reasoningEfforts`, empty for none) and the one
+  the chat runs at (`reasoningEffort`, absent for the provider's default), and
+  `setReasoningEffort` with an `effort` (or none, for the default) changes it
+  from the next turn, kept on the chat as the desktop's own effort control
+  keeps it. A desktop without it refuses the kind as `unsupported_command`.
+- `conversation-mcp-server-actions`: `mcpServerAction` with a `serverId` and an
+  `action` (`CONVERSATION_MCP_SERVER_ACTIONS`: `reconnect`, `enable`,
+  `disable`) does that to one of a live chat's MCP servers, as the desktop's
+  own server rows do, where a listed thread's `capabilities.mcpServerActions`
+  names the action. It never resumes a chat at rest. A sign-in is not among
+  them: the CLI waits for its callback on the desktop. A desktop without it
+  refuses the kind as `unsupported_command`.
+- `conversation-restart-session`: `restartSession` restarts the chat's agent
+  as the desktop's own Restart agent session does, ending its process and
+  keeping the session's place, so the next message starts it again on the
+  same conversation. Refused while the agent works; answered with a `notice`,
+  and nothing done, for a chat with no agent running. A desktop without it
+  refuses the kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

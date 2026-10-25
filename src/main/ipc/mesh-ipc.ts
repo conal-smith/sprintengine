@@ -235,6 +235,7 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
       skills: record.skills,
       mentions: record.mentions,
       files: record.files,
+      mode: record.mode,
     })
   })
   ipcMain.handle(MESH_CONVERSATION_TOOL_DETAIL_CHANNEL, (_event, input: unknown) => {

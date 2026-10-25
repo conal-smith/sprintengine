@@ -1087,6 +1087,8 @@ export type ElectronApi = {
     mentions?: import('./conversation/mentions').ConversationMentionRef[]
     /** Files on this computer; main puts each in that machine's store first (`conversation-message-files`). */
     files?: import('./conversation/attachedFiles').ConversationAttachedFile[]
+    /** The mode the turn runs in; anything but the default needs `conversation-send-mode` there. */
+    mode?: 'default' | 'plan' | 'ask'
   }) => Promise<MeshConversationCommandResult>
   // Take back a message the machine holds for the turn's end, by its id there.
   meshConversationCancelQueued: (input: {
@@ -1152,10 +1154,30 @@ export type ElectronApi = {
     requestId: string
     answers: Record<string, string>
   }) => Promise<MeshConversationCommandResult>
-  // `manual` and `auto` need `conversation-permission-modes` there.
+  // `manual` and `auto` need `conversation-permission-modes` there; the CLI's
+  // own mode at the preset (Accept edits), `conversation-cli-permission-modes`.
   meshConversationSetPermissionPreset: (input: {
     key: MeshConversationKey
     preset: CliPermissionPreset
+    permissionMode?: string
+  }) => Promise<MeshConversationCommandResult>
+  // Set the reasoning effort a chat over there runs at from its next turn, one
+  // of the levels its list names; none, its provider's own default. Needs
+  // `conversation-reasoning-effort` there.
+  meshConversationSetReasoningEffort: (input: {
+    key: MeshConversationKey
+    effort?: string
+  }) => Promise<MeshConversationCommandResult>
+  // Restart a chat's agent over there, as its Restart agent session does
+  // there: answered with a `notice` where it had none running. Needs
+  // `conversation-restart-session` there.
+  meshConversationRestartSession: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
+  // Reconnect one of a live chat's MCP servers over there, or switch it on or
+  // off, as its server row there does. Needs `conversation-mcp-server-actions` there.
+  meshConversationMcpServerAction: (input: {
+    key: MeshConversationKey
+    serverId: string
+    action: 'reconnect' | 'enable' | 'disable'
   }) => Promise<MeshConversationCommandResult>
   // Switch a paired machine's chat to another model of its CLI, from the
   // catalog that machine's list names. Needs `conversation-models` there.

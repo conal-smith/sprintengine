@@ -379,7 +379,8 @@ export type TailnetMeshService = {
    * hold until the chat's turn ends (`conversation-queued-sends`); a queued
    * message carries no images, and one with them is refused. `steer` hands it
    * to the turn the chat is running (`conversation-steer-sends`), refused for
-   * a machine that does not take one rather than dropped.
+   * a machine that does not take one rather than dropped. `mode` is the mode
+   * the turn runs in (`conversation-send-mode`), refused the same way.
    */
   conversationSend(input: {
     key: unknown
@@ -400,6 +401,8 @@ export type TailnetMeshService = {
      * there.
      */
     files?: unknown
+    /** The mode the turn runs in, `plan` or `ask`; absent, or `default`, the default one. */
+    mode?: unknown
   }): Promise<MeshConversationCommandResult>
   /**
    * The files and folders in a followed chat's folder on its machine that
@@ -2282,6 +2285,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ...listed,
           modelSwitch: tailnetPeerSupports(identity.value.capabilities, 'conversation-models'),
           permissionModes: tailnetPeerSupports(identity.value.capabilities, 'conversation-permission-modes'),
+          cliPermissionModes: tailnetPeerSupports(identity.value.capabilities, 'conversation-cli-permission-modes'),
           lifecycle: tailnetPeerSupports(identity.value.capabilities, 'conversation-lifecycle'),
           queuedSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-queued-sends'),
           sendSkills:
@@ -2304,6 +2308,9 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           messageFiles:
             tailnetPeerSupports(identity.value.capabilities, 'conversation-message-files') &&
             tailnetPeerSupports(identity.value.capabilities, 'upload'),
+          sendMode: tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mode'),
+          reasoningEffort: tailnetPeerSupports(identity.value.capabilities, 'conversation-reasoning-effort'),
+          mcpServerActions: tailnetPeerSupports(identity.value.capabilities, 'conversation-mcp-server-actions'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2421,6 +2428,19 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       const connection = connectionFor(key.connectionId)
       const refused = connection ? permissionModeRefusal(connection, command.preset) : null
       if (refused) return refused
+      // A CLI's own mode is dropped by a machine from before it, which then
+      // runs the preset's own: the person would be told Accept edits while
+      // the agent asked before every edit, or ran without asking.
+      if (
+        connection &&
+        command.permissionMode !== undefined &&
+        !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-cli-permission-modes')
+      )
+        return {
+          ok: false,
+          code: 'unsupported_permission_preset',
+          message: `${connection.machineName} cannot run a chat on its CLI's own modes from here yet. Update SprintEngine Studio there.`,
+        }
     }
     // Said here in words: a machine from before it answers an unknown kind.
     if (command?.kind === 'stopSubagent') {
@@ -2466,6 +2486,33 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_command',
           message: `${connection.machineName} cannot fork a chat from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'setReasoningEffort') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-reasoning-effort'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot change a chat's reasoning effort from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'mcpServerAction') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-mcp-server-actions'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot reconnect or switch a chat's MCP servers from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'restartSession') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-restart-session'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot restart a chat's agent from here yet. Restart it there, or update SprintEngine Studio there.`,
         }
     }
     const result = await remoteConversations.command(key, input.command)
@@ -2849,6 +2896,28 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: `${connection.machineName} cannot take a message into a running turn from here yet. Update SprintEngine Studio there.`,
           }
       }
+      if (input.mode !== undefined && input.mode !== 'default' && input.mode !== 'plan' && input.mode !== 'ask')
+        return { ok: false, code: 'invalid_arguments', message: '"mode" is default, plan or ask.' }
+      const mode = input.mode === 'plan' || input.mode === 'ask' ? input.mode : null
+      if (mode) {
+        if (input.queue !== undefined)
+          return {
+            ok: false,
+            code: 'invalid_arguments',
+            message: 'A queued message goes in the default mode; send it once the turn ends instead.',
+          }
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        // Refused, never dropped: a machine from before `mode` skips it and
+        // runs the turn in the default mode, where an ask may change files.
+        if (!tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-send-mode'))
+          return {
+            ok: false,
+            code: 'mode_unsupported',
+            message: `${connection.machineName} cannot run a turn in ${mode === 'plan' ? 'plan' : 'ask'} mode from here yet. Update SprintEngine Studio there.`,
+          }
+      }
       // The files go up first, wherever the pictures do: their ids ride the
       // same `uploadIds`, and the machine tells the two apart by what it kept.
       const sendWithFiles = async (imageIds: string[]): Promise<MeshConversationCommandResult> => {
@@ -2871,6 +2940,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             ...(skills.ids.length > 0 ? { skills: skills.ids } : {}),
             ...(mentions.length > 0 ? { mentions } : {}),
             ...(steer ? { steer: true } : {}),
+            ...(mode ? { mode } : {}),
           },
         })
       if (input.queue !== undefined && input.queue !== true)

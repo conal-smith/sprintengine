@@ -859,6 +859,38 @@ conversation-files`, on `conversation:read`), the picker ranks the matches
   mentions, skills or files is not handed to that machine's queue: that queue
   keeps words alone, so such a message waits in this pane and goes when the
   turn ends while this machine is awake.
+- **The CLI's own modes, as here** (2026-10-25). Where the machine advertises
+  `conversation-cli-permission-modes`, the permissions picker lists the modes
+  the chat's CLI runs beside the presets (Claude Code's Accept edits), shows
+  the one the machine lists the chat on, and a pick switches it over there. A
+  machine without the capability is offered each preset's own mode only.
+- **A turn runs in the chat's mode over there** (2026-10-25). Where the machine
+  advertises `conversation-send-mode`, a message goes in the mode the chat
+  sends its turns in, as a local chat's do, and the chat says whether its
+  provider plans from what the machine lists (`capabilities.planMode`). A
+  machine without the capability is sent no mode, and a message in one other
+  than the default is refused here in words rather than run as a default
+  turn there.
+- **Its effort is set from here** (2026-10-25). Where the machine advertises
+  `conversation-reasoning-effort`, the engine picker's effort control and
+  `/effort` are offered as a local chat's are, reading the level the machine
+  lists the chat at; a change is written to the chat's record over there,
+  which every turn after runs at, whichever device sends it.
+- **Its MCP servers are reconnected and switched from here** (2026-10-25).
+  Where the machine advertises `conversation-mcp-server-actions` and lists the
+  chat's provider as taking the action, the "+" menu's server rows over a
+  live chat offer Reconnect and switching a server back on, as a local chat's
+  do, carried out over there, and the rows are read again after. A sign-in is
+  that machine's to finish, since its CLI waits for the sign-in there, so no
+  row offers it from here. The "+" lists that machine's skills and servers
+  where it takes skills with a message (`conversation-send-skills`).
+- **Restart agent session restarts it over there** (2026-10-25). Where the
+  machine advertises `conversation-restart-session`, the palette's Restart
+  agent session has that machine end the chat's agent process as its own
+  does, and the next message starts it again on the same conversation, with
+  the slash commands read again. It is refused while the agent works, as a
+  local chat's is. A machine without the capability is not asked, and the
+  toast says to restart it there.
 
 ### Terminals stay on the machine
 

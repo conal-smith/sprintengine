@@ -110,6 +110,45 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   `conversation-send-mentions`; a desktop without it drops the member and
  *   the message goes without them, so a client sends it only where it is
  *   advertised.
+ * - `setReasoningEffort` sets the reasoning effort the chat's turns run at,
+ *   as its own effort control does on the desktop: kept on the chat, and
+ *   applied from its next turn, whichever device sends it. `effort` is one of
+ *   the levels the listed chat's provider runs (`capabilities.reasoningEfforts`);
+ *   absent, the provider's own default. Refused for a level the provider does
+ *   not run, and for a chat whose provider runs none. Answered with a `notice`
+ *   while a session is live, since the turn running keeps its own. Needs
+ *   `conversation-reasoning-effort`; a desktop without it refuses the kind as
+ *   `unsupported_command`.
+ * - `mcpServerAction` reconnects one of a live chat's MCP servers, or
+ *   switches one on or off, as its composer's server rows do on the desktop:
+ *   `serverId` names it as the chat's CLI does, and `action` is one of the
+ *   listed chat's `capabilities.mcpServerActions`. Never resumes a chat at
+ *   rest: its servers run with its agent. A sign-in is not among them: the
+ *   CLI waits for the sign-in's callback on the desktop itself, so one begun
+ *   from another device could not be finished there. Needs
+ *   `conversation-mcp-server-actions`; a desktop without it refuses the kind
+ *   as `unsupported_command`.
+ * - `restartSession` restarts the chat's agent, as its own Restart agent
+ *   session does on the desktop: its process is ended the way Settle ends
+ *   it, suspended, so the session keeps its place and the next message
+ *   starts the agent again on the same conversation, with whatever it has
+ *   installed since. Refused while the agent works (a turn, a request it
+ *   waits on, an agent or a monitor it runs). A chat with no agent running is
+ *   answered with a `notice` saying so, and nothing is done; one at rest is
+ *   never resumed for it. The same command sent again is answered as the
+ *   first was, never carried out on the session a message has started since.
+ *   Needs `conversation-restart-session`; a desktop without it refuses the
+ *   kind as `unsupported_command`.
+ * - `send` may say the `mode` the turn runs in, as the desktop's own chat
+ *   sends one: `ask` answers without changing anything, `plan` has the agent
+ *   plan and wait for the plan to be approved, where the chat's provider
+ *   plans (the listed chat's `capabilities.planMode`). Absent, or `default`,
+ *   the turn runs as every send did. Never beside `queue`: a held message is
+ *   its words alone, and would go in the default mode. A steer the running
+ *   turn cannot take is refused `busy` rather than held, for the same reason.
+ *   Needs `conversation-send-mode`; a desktop without it drops the member and
+ *   runs the turn in the default mode, which may change what an `ask` would
+ *   not, so a client sends one only where it is advertised.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -145,6 +184,7 @@ export type ConversationCommand =
       steer?: true
       composedAt?: number
       confirmedStale?: true
+      mode?: ConversationSendMode
     }
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
@@ -154,6 +194,9 @@ export type ConversationCommand =
   | { kind: 'rewind'; turnSeq: number }
   | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
   | ConversationForkCommand
+  | { kind: 'setReasoningEffort'; effort?: string }
+  | { kind: 'mcpServerAction'; serverId: string; action: ConversationWireMcpServerAction }
+  | { kind: 'restartSession' }
 
 /** Where a `fork` cuts the chat: after a reply's turn, or before one of the person's messages. */
 export type ConversationForkCommand = { kind: 'fork'; newAgentId: string } & (
@@ -187,7 +230,24 @@ export type ConversationRevertFile = {
  * new list and asks again.
  */
 export type ConversationRevertAnswer =
-  { files: ConversationRevertFile[]; reverted: boolean; kept?: string[] } | { changed: true }
+  | { files: ConversationRevertFile[]; reverted: boolean; kept?: string[] }
+  | { changed: true }
+
+/** What a device may do to one of a live chat's MCP servers (`conversation-mcp-server-actions`). */
+export type ConversationWireMcpServerAction = 'reconnect' | 'enable' | 'disable'
+
+/** Every MCP server action a device may ask for. */
+export const CONVERSATION_MCP_SERVER_ACTIONS: readonly ConversationWireMcpServerAction[] = [
+  'reconnect',
+  'enable',
+  'disable',
+]
+
+/** The modes a `send` may name beside the default one (`conversation-send-mode`). */
+export type ConversationSendMode = 'plan' | 'ask'
+
+/** Every mode a `send` may name, the default one included, which is the same as naming none. */
+export const CONVERSATION_SEND_MODES: readonly (ConversationSendMode | 'default')[] = ['default', 'plan', 'ask']
 
 /**
  * How old a `send`'s `composedAt` may be before a desktop asks for it to be
@@ -230,6 +290,9 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'rewind',
   'revert',
   'fork',
+  'setReasoningEffort',
+  'mcpServerAction',
+  'restartSession',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────
@@ -386,6 +449,15 @@ function toolName(value: unknown): value is string {
     if (code < 0x20 || code === 0x7f) return false
   }
   return true
+}
+
+// What a provider may call one of its reasoning effort levels: as short and
+// as plain as a mode id.
+const REASONING_EFFORT = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
+
+/** Whether a value can be a reasoning effort level. A desktop checks it against the chat's provider as well. */
+export function isConversationReasoningEffortId(value: unknown): value is string {
+  return typeof value === 'string' && REASONING_EFFORT.test(value)
 }
 
 /** Whether a value can be a CLI's own permission mode id. A desktop checks it against the chat's CLI as well. */

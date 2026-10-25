@@ -103,6 +103,7 @@ async function mountRemote({
   models,
   modelSwitch = false,
   permissionModes = false,
+  cliPermissionModes = false,
   queuedSends = false,
   steerSends = false,
   stopSubagents = false,
@@ -110,6 +111,21 @@ async function mountRemote({
   rewind = false,
   checkpointRevert = false,
   agentReads = {},
+  reasoningEffort = false,
+  mcpServerActions = false,
+  extensions = {
+    skills: [
+      {
+        id: 'systematic-debugging',
+        name: 'systematic-debugging',
+        description: 'Find the root cause first.',
+        source: 'custom',
+        harnesses: [],
+        installState: 'installed',
+      },
+    ],
+    servers: [],
+  },
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -123,6 +139,8 @@ async function mountRemote({
   models?: MeshConversation['models']
   modelSwitch?: boolean
   permissionModes?: boolean
+  /** The machine runs chats on their CLI's own modes (`conversation-cli-permission-modes`). */
+  cliPermissionModes?: boolean
   queuedSends?: boolean
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
@@ -139,10 +157,18 @@ async function mountRemote({
    * `conversation-context-breakdown`).
    */
   agentReads?: { fork?: boolean; sideQuestions?: boolean; contextBreakdown?: boolean }
+  /** The machine lists its chats' effort and takes a change of it (`conversation-reasoning-effort`). */
+  reasoningEffort?: boolean
+  /** The machine reconnects and switches a live chat's servers (`conversation-mcp-server-actions`). */
+  mcpServerActions?: boolean
+  /** The skills and MCP servers the machine lists for the chat's project there. */
+  extensions?: { skills: unknown[]; servers: unknown[] }
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
-  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
+  listed?: Partial<
+    Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree' | 'permissionMode' | 'reasoningEffort'>
+  >
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
   /** The machine takes its skills with a message and lists them (`conversation-send-skills`). */
@@ -198,6 +224,7 @@ async function mountRemote({
       access,
       modelSwitch,
       permissionModes,
+      cliPermissionModes,
       queuedSends,
       steerSends,
       stopSubagents,
@@ -205,6 +232,8 @@ async function mountRemote({
       rewind,
       checkpointRevert,
       ...agentReads,
+      reasoningEffort,
+      mcpServerActions,
       createPullRequest,
       sendSkills,
       mentions,
@@ -225,19 +254,7 @@ async function mountRemote({
     })),
     meshWorkspaceExtensions: vi.fn(async (_input: { connectionId: string; workspaceId: string; cli?: string }) => ({
       ok: true,
-      extensions: {
-        skills: [
-          {
-            id: 'systematic-debugging',
-            name: 'systematic-debugging',
-            description: 'Find the root cause first.',
-            source: 'custom',
-            harnesses: [],
-            installState: 'installed',
-          },
-        ],
-        servers: [],
-      },
+      extensions,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
     // machine would, and a creation records the pull request there.
@@ -367,6 +384,18 @@ async function mountRemote({
       },
     })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
+    meshConversationRestartSession: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+      }): Promise<{ ok: true; notice?: string } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
+    meshConversationMcpServerAction: vi.fn(
+      async (_input: { key: MeshConversationKey; serverId: string; action: string }) => ({ ok: true }),
+    ),
+    meshConversationSetReasoningEffort: vi.fn(async (_input: { key: MeshConversationKey; effort?: string }) => ({
+      ok: true,
+      notice: 'Reasoning effort applies from the next turn.',
+    })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
       listedModel = input.modelId
       return { ok: true, notice: 'The new model starts with your next message.' }
@@ -1344,6 +1373,298 @@ test('a refused allow leaves the chat on the mode it was on', async () => {
     expect(chat.api.meshConversationSetPermissionPreset).not.toHaveBeenCalled()
     expect(chat.host.textContent).toContain('This request has already been answered.')
     expect((await permissionsChip(chat))?.getAttribute('aria-label')).toBe('Permissions: No flag')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+/** Opens the "+" menu's skills and MCP servers picker, on its MCP servers where `mcp`. */
+async function openExtensions(chat: Awaited<ReturnType<typeof mountRemote>>, mcp = false) {
+  const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+  if (!plus) return false
+  await chat.act(async () => plus.click())
+  const row = Array.from(chat.document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+    item.textContent?.includes('Skills, plugins'),
+  )
+  if (!row) return false
+  await chat.act(async () => row.click())
+  if (mcp) {
+    const tab = Array.from(chat.document.querySelectorAll<HTMLElement>('button, [role="tab"], [role="radio"]')).find(
+      (item) => item.textContent?.trim() === 'MCP servers',
+    )
+    await chat.act(async () => tab?.click())
+  }
+  return true
+}
+
+test('a chat over there that takes that machine\'s skills lists them in the "+" menu', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    sendSkills: true,
+    extensions: {
+      skills: [
+        {
+          id: 'review',
+          name: 'review',
+          description: 'Review a change',
+          source: 'custom',
+          harnesses: [],
+          installState: 'installed',
+        },
+      ],
+      servers: [],
+    },
+  })
+  try {
+    expect(await openExtensions(chat)).toBe(true)
+    expect(chat.api.meshWorkspaceExtensions).toHaveBeenCalled()
+    expect(chat.document.body.textContent).toContain('Review a change')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+// A server the machine lists for the chat's CLI there, failed when its chat last said.
+const failedServer = { id: 'tracker', transport: 'http', scope: 'user', status: 'failed', error: 'timed out' }
+
+test('a server that failed over there is reconnected from its row, over the mesh, and read again', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    sendSkills: true,
+    mcpServerActions: true,
+    capabilities: { ...thread.capabilities!, mcpServerActions: ['reconnect', 'enable', 'disable'] },
+    extensions: { skills: [], servers: [failedServer] },
+  })
+  try {
+    expect(await openExtensions(chat, true)).toBe(true)
+    const reads = chat.api.meshWorkspaceExtensions.mock.calls.length
+    const reconnect = Array.from(chat.document.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === 'Reconnect',
+    )
+    expect(reconnect).toBeDefined()
+    await chat.act(async () => reconnect!.click())
+    expect(chat.api.meshConversationMcpServerAction).toHaveBeenCalledExactlyOnceWith({
+      key,
+      serverId: 'tracker',
+      action: 'reconnect',
+    })
+    expect(chat.api.meshWorkspaceExtensions.mock.calls.length).toBeGreaterThan(reads)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no server action where the machine does not take one, or lists the chat as taking none', async () => {
+  for (const options of [
+    { mcpServerActions: false, capabilities: { ...thread.capabilities!, mcpServerActions: ['reconnect' as const] } },
+    { mcpServerActions: true, capabilities: thread.capabilities },
+  ]) {
+    const chat = await mountRemote({
+      access: 'operate',
+      sendSkills: true,
+      extensions: { skills: [], servers: [failedServer] },
+      ...options,
+    })
+    try {
+      expect(await openExtensions(chat, true)).toBe(true)
+      expect(chat.document.body.textContent).toContain('tracker')
+      const buttons = Array.from(chat.document.querySelectorAll('button'))
+      expect(buttons.some((item) => item.textContent?.trim() === 'Reconnect')).toBe(false)
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+// From the palette, with the chat focused: the focused chat is the one restarted.
+async function restartSession(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  const view = chat.document.defaultView!
+  await chat.act(async () => {
+    chat.composer().focus()
+    view.dispatchEvent(new view.CustomEvent('sprintengine:panel-command', { detail: { id: 'chat.restartSession' } }))
+  })
+}
+
+async function toastTitles() {
+  const { useToastStore } = await import('../../../store/toastStore')
+  return useToastStore.getState().toasts.map((toast) => toast.title)
+}
+
+test('Restart agent session on a chat over there is carried out by that machine once the turn is over', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  const { useToastStore } = await import('../../../store/toastStore')
+  try {
+    useToastStore.setState({ toasts: [] })
+    // The turn still waits on its approval: refused here, as a local chat's is.
+    await restartSession(chat)
+    expect(chat.api.meshConversationRestartSession).not.toHaveBeenCalled()
+    expect(await toastTitles()).toContain('The agent is still working')
+    await settleTurn(chat)
+    await restartSession(chat)
+    expect(chat.api.meshConversationRestartSession).toHaveBeenCalledExactlyOnceWith({ key })
+    expect(await toastTitles()).toContain('Agent session restarted')
+    expect(await toastTitles()).not.toContain('This chat runs on another machine')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that had no agent running, or cannot restart one from here, says so', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  const { useToastStore } = await import('../../../store/toastStore')
+  try {
+    await settleTurn(chat)
+    useToastStore.setState({ toasts: [] })
+    chat.api.meshConversationRestartSession.mockResolvedValueOnce({
+      ok: true,
+      notice: 'This chat has no agent running. Your next message starts one.',
+    })
+    await restartSession(chat)
+    expect(await toastTitles()).toEqual(['No agent session to restart'])
+    useToastStore.setState({ toasts: [] })
+    chat.api.meshConversationRestartSession.mockResolvedValueOnce({
+      ok: false,
+      code: 'unsupported_command',
+      message: "mac-mini cannot restart a chat's agent from here yet.",
+    })
+    await restartSession(chat)
+    expect(useToastStore.getState().toasts.map((toast) => [toast.title, toast.description])).toEqual([
+      ['The session was not restarted', "mac-mini cannot restart a chat's agent from here yet."],
+    ])
+  } finally {
+    await chat.unmount()
+  }
+})
+
+// Claude Code's own modes, as its manifest names them to the picker.
+const claudeModes = [
+  { id: 'manual', label: 'Manual', level: 'manual' },
+  { id: 'acceptEdits', label: 'Accept edits', level: 'auto' },
+  { id: 'auto', label: 'Auto', level: 'auto' },
+  { id: 'bypass', label: 'Bypass permissions', level: 'bypass' },
+  { id: 'none', label: 'No flag', level: 'none' },
+]
+
+async function withClaudeModes(run: () => Promise<void>) {
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  const before = useWorkspaceStore.getState().pluginCatalogEntries
+  useWorkspaceStore.setState({ pluginCatalogEntries: [{ id: 'claude-code', permissionModes: claudeModes }] as never })
+  try {
+    await run()
+  } finally {
+    useWorkspaceStore.setState({ pluginCatalogEntries: before })
+  }
+}
+
+test("a chat on a machine that runs its CLI's own modes offers them, and Accept edits goes over the mesh", () =>
+  withClaudeModes(async () => {
+    const chat = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'none',
+      permissionModes: true,
+      cliPermissionModes: true,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+    })
+    try {
+      const chip = await permissionsChip(chat)
+      await chat.act(async () => chip!.click())
+      const row = Array.from(chat.document.querySelectorAll<HTMLButtonElement>('[data-preset-option="true"]')).find(
+        (item) => item.textContent?.includes('Accept edits'),
+      )
+      expect(row).toBeDefined()
+      await chat.act(async () => row!.click())
+      expect(chat.api.meshConversationSetPermissionPreset).toHaveBeenCalledExactlyOnceWith({
+        key,
+        preset: 'auto',
+        permissionMode: 'acceptEdits',
+      })
+      expect((await permissionsChip(chat))?.getAttribute('aria-label')).toBe('Permissions: Accept edits')
+    } finally {
+      await chat.unmount()
+    }
+  }))
+
+test('a chat listed on a mode of its CLI shows that mode, and a machine that runs none of them offers none', () =>
+  withClaudeModes(async () => {
+    const on = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'auto',
+      permissionModes: true,
+      cliPermissionModes: true,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+      listed: { permissionMode: 'acceptEdits' },
+    })
+    try {
+      expect((await permissionsChip(on))?.getAttribute('aria-label')).toBe('Permissions: Accept edits')
+    } finally {
+      await on.unmount()
+    }
+    const older = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'auto',
+      permissionModes: true,
+      cliPermissionModes: false,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+      listed: { permissionMode: 'acceptEdits' },
+    })
+    try {
+      const chip = await permissionsChip(older)
+      expect(chip?.getAttribute('aria-label')).toBe('Permissions: Auto')
+      await older.act(async () => chip!.click())
+      const rows = Array.from(older.document.querySelectorAll<HTMLButtonElement>('[data-preset-option="true"]'))
+      expect(rows.some((item) => item.textContent?.includes('Accept edits'))).toBe(false)
+    } finally {
+      await older.unmount()
+    }
+  }))
+
+test('a chat over there runs at the effort it lists, and /effort sets another over the mesh, not as a message', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: true,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+    listed: { reasoningEffort: 'low' },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort high'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).toHaveBeenCalledExactlyOnceWith({ key, effort: 'high' })
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.host.textContent).toContain('Reasoning effort applies from the next turn.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('/effort alone steps on from the effort the machine lists the chat at', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: true,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+    listed: { reasoningEffort: 'low' },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).toHaveBeenCalledExactlyOnceWith({ key, effort: 'high' })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that keeps no effort a change can reach is never asked to change one', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: false,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort high'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).not.toHaveBeenCalled()
   } finally {
     await chat.unmount()
   }

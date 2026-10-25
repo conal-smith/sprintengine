@@ -15,11 +15,16 @@ import {
   type ConversationWireHost,
   type ConversationWirePullRequest,
   type ConversationWireModels,
+  type ConversationWireMcpServerAction,
   isStaleConversationSend,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
 import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
-import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
+import {
+  conversationPhaseWorking,
+  conversationSummaryPhase,
+  conversationTurnInProgress,
+} from '../../../shared/conversation/phase'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
   ConversationContextBreakdownResult,
@@ -75,6 +80,9 @@ const MAX_COMMAND_RECEIPTS = 64
 const MAX_FORK_RECEIPTS = 64
 // A fork's id names its transcript's folder: letters, digits, `.`, `_`, `-`.
 const FORK_AGENT_ID = /^[A-Za-z0-9][\w.-]{0,199}$/u
+// Restarts remembered by the device's command, so one sent again after a
+// dropped connection is answered as the first was.
+const MAX_RESTART_RECEIPTS = 64
 /**
  * Where a step's picture is, once found, is kept this long and for this many
  * steps. Finding it scans the transcript back to the step, and a phone
@@ -117,6 +125,16 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         fork: capabilities.fork === true,
         sideQuestion: capabilities.sideQuestion === true,
         contextBreakdown: capabilities.contextBreakdown === true,
+        // The effort levels the chat's provider runs, none for one that runs
+        // none (`conversation-reasoning-effort`); a client offers its effort
+        // control only where there are some.
+        reasoningEfforts: [...(capabilities.reasoningEfforts ?? [])],
+        // What a device may do to the chat's servers while it runs
+        // (`conversation-mcp-server-actions`). Not a sign-in: the CLI waits
+        // for its callback on this machine, where no device could finish it.
+        mcpServerActions: (capabilities.mcpServerActions ?? []).filter(
+          (action): action is ConversationWireMcpServerAction => action !== 'sign-in',
+        ),
       }
     : undefined
 
@@ -631,6 +649,8 @@ export type AgentChoicePatch = {
   /** Written with the preset, or cleared with it: a mode left from an earlier preset is not this one's. */
   cliPermissionMode?: string | undefined
   conversation?: { providerId: string; modelId: string }
+  /** Cleared with `undefined`: the chat then runs at its provider's own default. */
+  conversationReasoningEffort?: string | undefined
 }
 
 /**
@@ -795,6 +815,38 @@ export function createConversationGatewayHost(
         ...(result.kept?.length ? { kept: result.kept } : {}),
       },
     }
+  }
+  const restarts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  // As this machine's own Restart agent session: the agent's process ended
+  // the way Settle ends it, suspended, so the next message starts it again on
+  // the same conversation. Refused while it works, since a suspend would
+  // interrupt the turn and end the agents it sent off. Under the device's own
+  // command: a repeat after a dropped connection is that restart, not a
+  // second one ending the session a message has started since.
+  const restartSession = (key: ConversationKey, deviceId: string, commandId: string) => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    let restarting = restarts.get(receipt)
+    if (!restarting) {
+      restarting = (async (): Promise<ConversationGatewayCommandResult> => {
+        // A chat at rest is not resumed for it: there is nothing running to end.
+        const session = sessionFor(key)
+        if (!session) return { ok: true, notice: 'This chat has no agent running. Your next message starts one.' }
+        if (conversationTurnInProgress(session))
+          return { ok: false, message: 'The agent is still working. Stop it first, then restart the session.' }
+        const suspended = await runtime.suspendSession({ sessionId: session.sessionId })
+        return suspended.ok ? { ok: true } : { ok: false, message: suspended.message }
+      })().catch((error: unknown): ConversationGatewayCommandResult => ({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The session was not restarted.',
+      }))
+      restarts.set(receipt, restarting)
+      while (restarts.size > MAX_RESTART_RECEIPTS) restarts.delete(restarts.keys().next().value!)
+      // A refusal is not kept: the person may try again once the agent stops.
+      void restarting.then((result) => {
+        if (!result.ok) restarts.delete(receipt)
+      })
+    }
+    return restarting
   }
   const starting = new Map<string, ReturnType<ConversationBackend['startSession']>>()
   const sending = new Map<
@@ -985,6 +1037,37 @@ export function createConversationGatewayHost(
     registry.writeAgentChoice?.(key, { conversation: { providerId: session.providerId, modelId } })
     return { ok: true, ...(switched.notice ? { notice: switched.notice } : {}) }
   }
+  // The effort a chat runs at, as its record keeps it and a send applies it:
+  // only a level its provider runs, as the chat view reads it.
+  const effortOf = (
+    key: { workspaceId: string; agentId: string },
+    capabilities: ConversationSessionSummary['capabilities'] | undefined,
+  ): Pick<ConversationThread, 'reasoningEffort'> => {
+    const effort = registry.reasoningEffortOf?.(key) ?? undefined
+    return effort && capabilities?.reasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}
+  }
+  // The chat's effort, as its own effort control sets it: written to its
+  // record, which every turn sent to it reads, whichever device sends it. A
+  // level its provider does not run is refused, as the control offers none.
+  // No session is resumed for it: the record is what the next turn reads.
+  // Sent twice, the second writes the same level again.
+  const setReasoningEffort = async (
+    key: ConversationKey,
+    effort: string | undefined,
+  ): Promise<ConversationGatewayCommandResult> => {
+    if (!registry.writeAgentChoice || !registry.reasoningEffortOf)
+      return { ok: false, message: 'This desktop keeps no reasoning effort for its chats.' }
+    const session = sessionFor(key)
+    const providerId = session?.providerId ?? (await threadFor(key))?.providerId
+    if (!providerId) return { ok: false, message: 'Conversation is unavailable.' }
+    const levels = (session?.capabilities ?? runtime.getProviderCapabilities(providerId))?.reasoningEfforts ?? []
+    if (levels.length === 0) return { ok: false, message: "This chat's agent has no reasoning effort to set." }
+    if (effort !== undefined && !levels.includes(effort))
+      return { ok: false, message: `This chat's agent does not run at ${effort} effort.` }
+    registry.writeAgentChoice(key, { conversationReasoningEffort: effort })
+    // As the chat view says it: the turn running, if any, keeps its own.
+    return { ok: true, ...(session ? { notice: 'Reasoning effort applies from the next turn.' } : {}) }
+  }
   // The machine once per workspace, and the pull requests in one read of the
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
@@ -1120,6 +1203,7 @@ export function createConversationGatewayHost(
             // client read it as taking no pictures, and a screenshot dropped
             // into it went over as the path of a file on the other machine.
             ...capabilitiesOf(summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
+            ...effortOf(key, summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
             ...turnStartOf(summary),
             ...workingSinceOf(summary),
             ...backgroundWorkOf(summary),
@@ -1149,6 +1233,7 @@ export function createConversationGatewayHost(
           ...(models ? { models } : {}),
           sessionId: summary.sessionId,
           ...capabilitiesOf(summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
+          ...effortOf(summary, summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
           ...turnStartOf(summary),
           ...workingSinceOf(summary),
           ...backgroundWorkOf(summary),
@@ -1396,6 +1481,8 @@ export function createConversationGatewayHost(
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
       if (command.kind === 'fork') return fork(key, deviceId, commandId, command)
+      if (command.kind === 'setReasoningEffort') return setReasoningEffort(key, command.effort)
+      if (command.kind === 'restartSession') return restartSession(key, deviceId, commandId)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
       if (command.kind === 'cancelQueued')
@@ -1450,12 +1537,14 @@ export function createConversationGatewayHost(
       // which a phone sends again as it does any send made mid-turn.
       const steer = command.kind === 'send' && command.steer === true
       const holdInstead = (reason: string): ConversationGatewayCommandResult => {
+        // Nor one in a mode of its own: held, it would go in the default one.
         if (
           command.kind !== 'send' ||
           !held ||
           command.uploadIds?.length ||
           command.skills?.length ||
-          command.mentions?.length
+          command.mentions?.length ||
+          command.mode
         )
           return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
         const stale = staleHold()
@@ -1496,6 +1585,10 @@ export function createConversationGatewayHost(
           if (!resumed.ok) return resumed
           session = resumed.session
         }
+        // Its servers run with its agent, so a chat at rest is not resumed to
+        // reach them, as its own server rows offer nothing then either.
+        if (!session && command.kind === 'mcpServerAction')
+          return { ok: false, message: 'This chat has no agent running. Send it a message, then try again.' }
         if (!session) return { ok: false, message: 'Conversation is unavailable.' }
         switch (command.kind) {
           case 'send': {
@@ -1526,6 +1619,10 @@ export function createConversationGatewayHost(
               ...(command.composedAt !== undefined ? { composedAt: command.composedAt } : {}),
               ...(command.confirmedStale ? { confirmedStale: true } : {}),
             }
+            // The mode the device's chat sends the turn in, as this machine's
+            // own chat does; the runtime refuses `plan` for a provider that
+            // does not plan.
+            const turnMode = command.mode ? { mode: command.mode } : {}
             if (retry)
               return api.send({
                 sessionId: session.sessionId,
@@ -1536,6 +1633,7 @@ export function createConversationGatewayHost(
                 ...turnSkills,
                 ...turnMentions,
                 ...turnSteer,
+                ...turnMode,
                 ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
@@ -1619,6 +1717,7 @@ export function createConversationGatewayHost(
                 ...turnSkills,
                 ...turnMentions,
                 ...turnSteer,
+                ...turnMode,
                 ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
@@ -1656,6 +1755,17 @@ export function createConversationGatewayHost(
           // finds it ended and is refused in words, which changes nothing.
           case 'stopSubagent':
             return runtime.stopSubagent({ sessionId: session.sessionId, toolUseId: command.toolUseId })
+          // As the chat's server row on this machine does it, refused for an
+          // action its provider does not take. Sent twice, a reconnect
+          // reconnects again and a switch finds the server where it left it.
+          case 'mcpServerAction': {
+            const done = await runtime.mcpServerAction({
+              sessionId: session.sessionId,
+              serverId: command.serverId,
+              action: command.action,
+            })
+            return done.ok ? { ok: true } : { ok: false, message: done.message }
+          }
           case 'resolveApproval':
             return api.resolveApproval({
               sessionId: session.sessionId,

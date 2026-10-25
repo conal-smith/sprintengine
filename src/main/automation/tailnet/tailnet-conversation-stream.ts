@@ -84,6 +84,9 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   rewind: true,
   revert: true,
   fork: true,
+  setReasoningEffort: true,
+  mcpServerAction: true,
+  restartSession: true,
 }
 
 /**

@@ -11,7 +11,10 @@ import {
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
   CONVERSATION_MAX_REVERT_PATH_CHARS,
+  CONVERSATION_MCP_SERVER_ACTIONS,
+  type ConversationWireMcpServerAction,
   isConversationPermissionModeId,
+  isConversationReasoningEffortId,
   type ConversationQueuedFrame,
   type ConversationQueuedMessage,
   type ConversationRevertAnswer,
@@ -92,7 +95,27 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * `conversation-context-breakdown`. Absent means unknown.
      */
     contextBreakdown?: boolean
+    /**
+     * The reasoning effort levels the chat's provider runs, from a desktop
+     * that advertises `conversation-reasoning-effort`; empty for a provider
+     * that runs none. Absent means unknown.
+     */
+    reasoningEfforts?: string[]
+    /**
+     * What a device may do to the chat's MCP servers while it runs (an
+     * `mcpServerAction` command), from a desktop that advertises
+     * `conversation-mcp-server-actions`; empty for a provider that takes
+     * none. Absent means unknown.
+     */
+    mcpServerActions?: ConversationWireMcpServerAction[]
   }
+  /**
+   * The reasoning effort the chat runs at, one of its provider's
+   * `capabilities.reasoningEfforts`, from a desktop that advertises
+   * `conversation-reasoning-effort`. Absent for the provider's own default,
+   * and from a desktop built before it was listed.
+   */
+  reasoningEffort?: string
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
    * listed, and for a chat whose machine the desktop cannot name yet.
@@ -601,6 +624,7 @@ function thread(value: unknown): ConversationThread | null {
     isConversationPermissionModeId(value.permissionMode)
       ? { permissionMode: value.permissionMode }
       : {}),
+    ...(isConversationReasoningEffortId(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {}),
     ...(models ? { models } : {}),
     // A machine or a pull request this client cannot read is left out: the
     // row shows no mark rather than a wrong one.
@@ -647,6 +671,16 @@ function thread(value: unknown): ConversationThread | null {
             ...(typeof flags.fork === 'boolean' ? { fork: flags.fork } : {}),
             ...(typeof flags.sideQuestion === 'boolean' ? { sideQuestion: flags.sideQuestion } : {}),
             ...(typeof flags.contextBreakdown === 'boolean' ? { contextBreakdown: flags.contextBreakdown } : {}),
+            ...(Array.isArray(flags.mcpServerActions)
+              ? {
+                  mcpServerActions: flags.mcpServerActions.filter((action): action is ConversationWireMcpServerAction =>
+                    CONVERSATION_MCP_SERVER_ACTIONS.includes(action as never),
+                  ),
+                }
+              : {}),
+            ...(Array.isArray(flags.reasoningEfforts)
+              ? { reasoningEfforts: flags.reasoningEfforts.filter(isConversationReasoningEffortId) }
+              : {}),
           },
         }
       : {}),

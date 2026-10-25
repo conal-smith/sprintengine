@@ -2554,6 +2554,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // the module-level responder above; this view only registers itself.
   const changeReasoningEffort = (effort: string | undefined) => {
     if (effort && !capabilities?.reasoningEfforts?.includes(effort)) return
+    // A chat on another machine keeps its effort over there, and each turn
+    // runs at it: the record here moves once that machine has taken it, and
+    // its word on when it applies is shown.
+    const setRemotely = transport.setReasoningEffort
+    if (setRemotely && sessionId) {
+      if (effort === reasoningEffort) return
+      setActionError(null)
+      setPermissionNotice(null)
+      void setRemotely({ sessionId, ...(effort ? { effort } : {}) })
+        .then((result) => {
+          if (!result.ok) {
+            setActionError(result.message)
+            return
+          }
+          updateBinding({ conversationReasoningEffort: effort })
+          setPermissionNotice(result.notice ?? null)
+        })
+        .catch((error: unknown) =>
+          setActionError(error instanceof Error ? error.message : 'Could not change the reasoning effort.'),
+        )
+      return
+    }
     updateBinding({ conversationReasoningEffort: effort })
     if (sessionId) setPermissionNotice('Reasoning effort applies from the next turn.')
   }
@@ -2662,10 +2684,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // conversation (sessionRecovery.ts covers a session the runtime no longer
   // holds) — then list the slash commands again, so a skill or plugin
   // installed since shows up. Refused while the agent works: a suspend
-  // interrupts the turn and ends the agents it sent off.
+  // interrupts the turn and ends the agents it sent off. A chat on another
+  // machine is restarted by that machine, the same way.
   const restartSessionRef = useRef<() => Promise<void>>(async () => undefined)
   restartSessionRef.current = async () => {
-    if (transport.kind !== 'local') {
+    const restartRemotely = transport.restartSession
+    if (transport.kind !== 'local' && !restartRemotely) {
       showToast({ tone: 'warn', title: 'This chat runs on another machine', description: 'Restart it there.' })
       return
     }
@@ -2679,6 +2703,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         title: 'The agent is still working',
         description: 'Stop it first, then restart the session.',
       })
+      return
+    }
+    if (restartRemotely) {
+      const result = await restartRemotely().catch((error: unknown) => ({
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+      }))
+      if (!result.ok) {
+        showToast({ tone: 'error', title: 'The session was not restarted', description: result.message })
+        return
+      }
+      conversationCommands.refresh()
+      // A notice is that machine saying it had no agent running for the chat.
+      showToast(
+        result.notice
+          ? { tone: 'neutral', title: 'No agent session to restart', description: result.notice }
+          : {
+              tone: 'good',
+              title: 'Agent session restarted',
+              description: 'Your next message starts it again, with the conversation as it was.',
+            },
+      )
       return
     }
     if (!sessionId) {
@@ -2983,6 +3029,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     },
     [updateBinding, setDraftMetadata],
   )
+  const runMcpServerAction = transport.mcpServerAction
   const plusMenuSkills = useMemo(
     () =>
       supportsSkills
@@ -3000,14 +3047,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
             mcpPickable: false,
             // A chat on a paired machine lists that machine's.
             ...(transport.remoteExtensions ? { remote: transport.remoteExtensions } : {}),
-            // A live chat here can reconnect its servers, switch them, and
-            // sign in to one, as far as its CLI lets it.
-            ...(transport.kind === 'local' && sessionId && mcpServerActions?.length
+            // A live chat can reconnect its servers, switch them, and sign in
+            // to one, as far as its CLI lets it; one on a paired machine as
+            // far as that machine takes it, which its session says.
+            ...(runMcpServerAction && sessionId && mcpServerActions?.length
               ? {
                   mcpActions: {
                     available: mcpServerActions,
                     run: (serverId: string, action: ConversationMcpServerAction) =>
-                      window.api.conversationSessionMcpAction({ sessionId, serverId, action }),
+                      runMcpServerAction({ sessionId, serverId, action }),
                   },
                 }
               : {}),
@@ -3020,7 +3068,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       setAttachedSkills,
       chatCli,
       transport.remoteExtensions,
-      transport.kind,
+      runMcpServerAction,
       sessionId,
       mcpServerActions,
     ],
@@ -3381,8 +3429,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     machineName: transport.machineName,
   })
   // The CLI's modes under its own names. A mode of its own is offered where
-  // this chat's runtime maps it, and only a local chat says which it maps; a
-  // remote one is told presets, so it lists each preset's own mode.
+  // this chat's runtime maps it: a local chat says which it maps, and a remote
+  // one says so where its machine lists them (`conversation-cli-permission-modes`);
+  // one from a machine that does not lists each preset's own mode.
   const permissionOptions = usePermissionModeOptions(chatCli, 'chat', capabilities?.permissionModes ?? NO_MODES)
   // A mode of the CLI's own at a preset this chat cannot run is dimmed with
   // that preset's reason.

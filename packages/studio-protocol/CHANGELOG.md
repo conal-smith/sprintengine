@@ -4,6 +4,19 @@
 
 ### Added
 
+- **A chat's effort, its MCP servers and its agent's restart**
+  (`conversation-reasoning-effort`, `conversation-mcp-server-actions` and
+  `conversation-restart-session`, in `welcome.conversation`, owners):
+  `conversation.setReasoningEffort` sets the level the chat runs at from its
+  next turn (`effort?`, none for the provider's default);
+  `conversation.mcpServerAction` reconnects one of a live chat's MCP servers
+  or switches it on or off (`serverId`, `action`: `reconnect`, `enable` or
+  `disable`); `conversation.restartSession` ends the chat's agent process,
+  keeping its place for the next message. Their params are read by the
+  conversation lane's own validator, and they reach the same host. A Studio
+  built before them does not advertise them and refuses the methods as
+  unknown.
+
 - **One agent stopped by itself** (`conversation-stop-subagent`, in
   `welcome.conversation`, owners): `conversation.stopSubagent` stops one agent a
   conversation spawned, named by the call that spawned it (`toolUseId`), and

@@ -273,7 +273,12 @@ cannot describe. `0.2.0` added three capabilities and no version:
 `conversation-cli-permission-modes` (a `permissionMode` beside the preset).
 Each degrades on a desktop without it to something that desktop already does:
 `hello` and `resolvePlan` are refused under their ids, and an unknown
-`permissionMode` member is dropped, so the preset's own mode runs.
+`permissionMode` member is dropped, so the preset's own mode runs. A desktop
+following another machine's chat reads the listed `permissionMode` and
+`capabilities.permissionModes`, and sends a `permissionMode`, only where that
+machine advertises the capability (2026-10-25); it refuses one in words for a
+machine that does not, rather than let it be dropped there and the person be
+told one mode while the agent ran on another.
 
 An `answerQuestion`'s answers are keyed by each question's whole text, which
 is how the CLI reads them back. The first version capped a key at 200
@@ -520,6 +525,62 @@ words first). A paired desktop's files attached by path ride the existing
 phone. The Studio RPC advertises `conversation-send-mentions`, its
 `conversation.send` reading the lane's own validator, and not the two reads,
 which it has no method for.
+The mode a turn runs in is the `conversation-send-mode` capability
+(2026-10-25): a `send` may say `mode`, `ask`, or `plan` where the listed chat's
+`capabilities.planMode` says its provider plans, and the desktop runs the turn
+in it as its own chat sends one; `default` is read as none. `mode` is never
+beside `queue`, and a steer in a mode of its own that the running turn cannot
+take is refused `busy` rather than held, since a held message goes in the
+default mode. All of it is additive, but a desktop without the capability
+drops the member and runs the turn in the default mode, where an `ask` may
+change files, so a client sends one only where it is advertised (a desktop
+following another machine's chat refuses one there in words first, and lists
+`planMode` from that machine only where it is). The Studio RPC advertises it
+too: its `conversation.send` reads the lane's own validator and reaches the
+same host.
+A chat's reasoning effort is the `conversation-reasoning-effort` capability
+(2026-10-25): each listed chat names the levels its provider runs as
+`capabilities.reasoningEfforts` (an optional string array, empty for a
+provider that runs none) and the level its record keeps as `reasoningEffort`
+(absent for the provider's own default), and a `setReasoningEffort` command
+(`effort`, or none for the default) writes the chat's record, as the
+desktop's own effort control does, for every turn after to run at whichever
+device sends it. It is answered with a `notice` while a session is live, and
+needs none. All of it is additive: a desktop without the capability refuses
+the kind as `unsupported_command` and lists neither member, and a client
+sends it only where it is advertised (a desktop following another machine's
+chat refuses it there in words first, and offers no effort control). The
+Studio RPC advertises it too: its `conversation.setReasoningEffort` method, an
+owner's for now, reads the lane's own validator and reaches the same host.
+A live chat's MCP servers are the `conversation-mcp-server-actions` capability
+(2026-10-25): an `mcpServerAction` command names a server as the chat's CLI
+does (`serverId`) and an `action`, `reconnect`, `enable` or `disable`, and the
+desktop carries it out as the chat's own server rows do, through its runtime.
+Each listed chat names the actions its provider takes as
+`capabilities.mcpServerActions`, an optional array. It never resumes a chat at
+rest. A sign-in is not among the actions: the CLI waits for the sign-in's
+callback on the desktop itself, so one begun from another device could not be
+finished there, and the validator refuses it. All of it is additive: a
+desktop without the capability refuses the kind as `unsupported_command`, and
+a client sends it only where it is advertised (a desktop following another
+machine's chat refuses it there in words first). The Studio RPC advertises
+it too: its `conversation.mcpServerAction` method, an owner's for now, reads
+the lane's own validator and reaches the same host.
+Restarting a chat's agent is the `conversation-restart-session` capability
+(2026-10-25): a `restartSession` command has the desktop end the agent's
+process as its own Restart agent session does, suspending the session so it
+keeps its resume cursor and the next message starts the agent again on the
+same conversation. It is refused while the agent works (a turn, a request it
+waits on, a background agent or monitor), and a chat with no agent running is
+answered with a `notice` and left as it is, never resumed for it. The desktop
+keeps the answer under the device's command id, so one sent again after a
+dropped link is answered as the first was rather than ending the session a
+message has started since. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command`, and a desktop following
+another machine's chat refuses it there in words first, saying to restart it
+on that machine. The Studio RPC advertises it too: its
+`conversation.restartSession` method, an owner's for now, reads the lane's own
+validator and reaches the same host.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

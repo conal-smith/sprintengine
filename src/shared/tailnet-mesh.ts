@@ -1,4 +1,7 @@
-import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
+import type {
+  ConversationWireCommand,
+  ConversationWirePermissionPreset,
+} from '../../packages/conversation-protocol/src'
 import type { ConversationFileSearchEntry } from '../../packages/conversation-protocol/src/composerReads'
 import type { ConversationCommand } from './conversation/commands'
 import type {
@@ -459,6 +462,12 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * its chats run on `manual` and `auto` too. False for a machine that reads
  * those as `none`, where only `none` and `bypass` are offered.
  *
+ * `cliPermissionModes`: the machine advertises
+ * `conversation-cli-permission-modes` — its list names the CLI's own mode a
+ * chat runs at its preset (Claude Code's Accept edits) and the modes its
+ * provider runs, and a preset switch may name one. False for a machine that
+ * does not, where each preset runs its own mode.
+ *
  * `lifecycle`: the machine advertises `conversation-lifecycle` — its list
  * leaves out settled chats and names their titles and clocks, and it takes
  * `conversation.settle` and `conversation.visit`. False for a machine that
@@ -525,6 +534,22 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * and the agent reads it there by its path. False for a machine that does not,
  * where a file is typed as its path.
  *
+ * `sendMode`: the machine advertises `conversation-send-mode` — a message to
+ * one of its chats may say the mode its turn runs in, `ask`, or `plan` where
+ * that chat's provider plans (its listed `capabilities.planMode`). False for a
+ * machine that does not, where every turn runs in the default mode.
+ *
+ * `reasoningEffort`: the machine advertises `conversation-reasoning-effort` —
+ * its list names the effort levels each chat's provider runs and the one the
+ * chat runs at, and it takes `setReasoningEffort`. False for a machine that
+ * does not, whose chats run at the effort kept for them there, unchangeable
+ * from here.
+ *
+ * `mcpServerActions`: the machine advertises `conversation-mcp-server-actions`
+ * — a live chat's MCP servers may be reconnected and switched on or off from
+ * here, where its listed `capabilities.mcpServerActions` names the action. A
+ * sign-in is that machine's to finish, and is never among them.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -541,6 +566,7 @@ export type MeshConversationListResult =
       access: MeshConversationAccess
       modelSwitch: boolean
       permissionModes?: boolean
+      cliPermissionModes?: boolean
       lifecycle?: boolean
       queuedSends?: boolean
       sendSkills?: boolean
@@ -555,6 +581,9 @@ export type MeshConversationListResult =
       mentions?: boolean
       commands?: boolean
       messageFiles?: boolean
+      sendMode?: boolean
+      reasoningEffort?: boolean
+      mcpServerActions?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -570,11 +599,14 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
 
 /**
  * The commands a remote device may send. A permanent rule is not among them.
- * A queued send and taking one back need `conversation-queued-sends` there;
+ * Restarting a chat's agent needs `conversation-restart-session` there.
+ * A queued send and taking one back need `conversation-queued-sends` there; a
+ * preset switch naming the CLI's own mode, `conversation-cli-permission-modes`;
  * a rewind `conversation-rewind`, and a revert `conversation-checkpoint-revert`.
  */
 export type MeshConversationCommand =
   | ConversationWireCommand
+  | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
@@ -582,6 +614,9 @@ export type MeshConversationCommand =
   | { kind: 'rewind'; turnSeq: number }
   | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
   | ConversationForkCommand
+  | { kind: 'setReasoningEffort'; effort?: string }
+  | { kind: 'mcpServerAction'; serverId: string; action: 'reconnect' | 'enable' | 'disable' }
+  | { kind: 'restartSession' }
 
 /**
  * The files and folders in a paired machine's chat folder that match a
