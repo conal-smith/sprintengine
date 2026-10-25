@@ -488,6 +488,20 @@ desktop without the capability refuses the kind as `unsupported_command`, and
 a client sends it only where it is advertised (a desktop following another
 machine's chat refuses it there in words first). The Studio RPC does not
 advertise it, having no method for it.
+Restarting a chat's agent is the `conversation-restart-session` capability
+(2026-10-25): a `restartSession` command has the desktop end the agent's
+process as its own Restart agent session does, suspending the session so it
+keeps its resume cursor and the next message starts the agent again on the
+same conversation. It is refused while the agent works (a turn, a request it
+waits on, a background agent or monitor), and a chat with no agent running is
+answered with a `notice` and left as it is, never resumed for it. The desktop
+keeps the answer under the device's command id, so one sent again after a
+dropped link is answered as the first was rather than ending the session a
+message has started since. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command`, and a desktop following
+another machine's chat refuses it there in words first, saying to restart it
+on that machine. The Studio RPC does not advertise it, having no method for
+it.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

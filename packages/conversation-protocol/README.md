@@ -166,6 +166,12 @@ and adds, each behind its capability:
   names the action. It never resumes a chat at rest. A sign-in is not among
   them: the CLI waits for its callback on the desktop. A desktop without it
   refuses the kind as `unsupported_command`.
+- `conversation-restart-session`: `restartSession` restarts the chat's agent
+  as the desktop's own Restart agent session does, ending its process and
+  keeping the session's place, so the next message starts it again on the
+  same conversation. Refused while the agent works; answered with a `notice`,
+  and nothing done, for a chat with no agent running. A desktop without it
+  refuses the kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

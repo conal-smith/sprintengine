@@ -546,6 +546,7 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
 
 /**
  * The commands a remote device may send. A permanent rule is not among them.
+ * Restarting a chat's agent needs `conversation-restart-session` there.
  * A queued send and taking one back need `conversation-queued-sends` there; a
  * preset switch naming the CLI's own mode, `conversation-cli-permission-modes`.
  */
@@ -557,6 +558,7 @@ export type MeshConversationCommand =
   | { kind: 'stopSubagent'; toolUseId: string }
   | { kind: 'setReasoningEffort'; effort?: string }
   | { kind: 'mcpServerAction'; serverId: string; action: 'reconnect' | 'enable' | 'disable' }
+  | { kind: 'restartSession' }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }

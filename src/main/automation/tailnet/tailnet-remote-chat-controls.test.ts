@@ -129,3 +129,16 @@ test("a machine that does not take a chat's server actions is not asked to recon
     await machine.close()
   }
 })
+
+test("a machine that does not restart a chat's agent from here is not asked to", async () => {
+  const machine = await pairedMachine(['conversations', 'conversation-steer-sends'])
+  try {
+    const before = machine.asked()
+    const done = await machine.mesh.conversationCommand({ key: machine.key, command: { kind: 'restartSession' } })
+    assert.ok(!done.ok && done.code === 'unsupported_command')
+    assert.ok(!done.ok && done.message.includes('Restart it there'))
+    assert.equal(machine.asked(), before, 'nothing was sent over there')
+  } finally {
+    await machine.close()
+  }
+})

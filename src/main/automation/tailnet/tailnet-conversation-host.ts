@@ -14,7 +14,11 @@ import {
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
 import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
-import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
+import {
+  conversationPhaseWorking,
+  conversationSummaryPhase,
+  conversationTurnInProgress,
+} from '../../../shared/conversation/phase'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
   ConversationKey,
@@ -56,6 +60,9 @@ const UPLOAD_TTL_MS = 60 * 60_000
 const MAX_UPLOAD_REFS = 256
 const MAX_DEVICE_UPLOAD_REFS = 32
 const MAX_SPENT_UPLOAD_REFS = 256
+// Restarts remembered by the device's command, so one sent again after a
+// dropped connection is answered as the first was.
+const MAX_RESTART_RECEIPTS = 64
 /**
  * Where a step's picture is, once found, is kept this long and for this many
  * steps. Finding it scans the transcript back to the step, and a phone
@@ -618,6 +625,38 @@ export function createConversationGatewayHost(
   // gone; a retry of that same command is answered from the runtime's receipt
   // and does not need them again.
   const spent = new Map<string, { deviceId: string; commandId: string }>()
+  const restarts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  // As this machine's own Restart agent session: the agent's process ended
+  // the way Settle ends it, suspended, so the next message starts it again on
+  // the same conversation. Refused while it works, since a suspend would
+  // interrupt the turn and end the agents it sent off. Under the device's own
+  // command: a repeat after a dropped connection is that restart, not a
+  // second one ending the session a message has started since.
+  const restartSession = (key: ConversationKey, deviceId: string, commandId: string) => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    let restarting = restarts.get(receipt)
+    if (!restarting) {
+      restarting = (async (): Promise<ConversationGatewayCommandResult> => {
+        // A chat at rest is not resumed for it: there is nothing running to end.
+        const session = sessionFor(key)
+        if (!session) return { ok: true, notice: 'This chat has no agent running. Your next message starts one.' }
+        if (conversationTurnInProgress(session))
+          return { ok: false, message: 'The agent is still working. Stop it first, then restart the session.' }
+        const suspended = await runtime.suspendSession({ sessionId: session.sessionId })
+        return suspended.ok ? { ok: true } : { ok: false, message: suspended.message }
+      })().catch((error: unknown): ConversationGatewayCommandResult => ({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The session was not restarted.',
+      }))
+      restarts.set(receipt, restarting)
+      while (restarts.size > MAX_RESTART_RECEIPTS) restarts.delete(restarts.keys().next().value!)
+      // A refusal is not kept: the person may try again once the agent stops.
+      void restarting.then((result) => {
+        if (!result.ok) restarts.delete(receipt)
+      })
+    }
+    return restarting
+  }
   const starting = new Map<string, ReturnType<ConversationBackend['startSession']>>()
   const sending = new Map<
     string,
@@ -1075,6 +1114,7 @@ export function createConversationGatewayHost(
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
       if (command.kind === 'setReasoningEffort') return setReasoningEffort(key, command.effort)
+      if (command.kind === 'restartSession') return restartSession(key, deviceId, commandId)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
       if (command.kind === 'cancelQueued')

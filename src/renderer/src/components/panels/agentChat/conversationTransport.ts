@@ -222,6 +222,15 @@ export type ConversationTransport = {
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
   /**
+   * Restart the chat's agent on the machine it runs on, as Restart agent
+   * session does for a chat here (which suspends its session through the
+   * conversation IPC itself): answered with a `notice` where it had none
+   * running, and nothing was done. A paired machine's chat has it, refused in
+   * words for a machine that does not take the command
+   * (`conversation-restart-session`).
+   */
+  restartSession?(): Promise<ConversationTransportResult>
+  /**
    * Reconnect, switch or sign in to one of a live chat's MCP servers, where
    * the session lists the action (`capabilities.mcpServerActions`). A paired
    * machine's chat has it too, its session listing an action only where that
@@ -497,6 +506,7 @@ export function createRemoteConversationTransport(input: {
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
+    restartSession: async () => commandResult(await window.api.meshConversationRestartSession({ key })),
     // Offered only for an action the pane's session lists, which it does
     // where the machine takes the command; a sign-in never is.
     mcpServerAction: async (asked) => {

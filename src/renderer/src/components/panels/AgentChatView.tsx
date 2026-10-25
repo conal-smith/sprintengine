@@ -2683,10 +2683,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // conversation (sessionRecovery.ts covers a session the runtime no longer
   // holds) — then list the slash commands again, so a skill or plugin
   // installed since shows up. Refused while the agent works: a suspend
-  // interrupts the turn and ends the agents it sent off.
+  // interrupts the turn and ends the agents it sent off. A chat on another
+  // machine is restarted by that machine, the same way.
   const restartSessionRef = useRef<() => Promise<void>>(async () => undefined)
   restartSessionRef.current = async () => {
-    if (transport.kind !== 'local') {
+    const restartRemotely = transport.restartSession
+    if (transport.kind !== 'local' && !restartRemotely) {
       showToast({ tone: 'warn', title: 'This chat runs on another machine', description: 'Restart it there.' })
       return
     }
@@ -2700,6 +2702,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         title: 'The agent is still working',
         description: 'Stop it first, then restart the session.',
       })
+      return
+    }
+    if (restartRemotely) {
+      const result = await restartRemotely().catch((error: unknown) => ({
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+      }))
+      if (!result.ok) {
+        showToast({ tone: 'error', title: 'The session was not restarted', description: result.message })
+        return
+      }
+      conversationCommands.refresh()
+      // A notice is that machine saying it had no agent running for the chat.
+      showToast(
+        result.notice
+          ? { tone: 'neutral', title: 'No agent session to restart', description: result.notice }
+          : {
+              tone: 'good',
+              title: 'Agent session restarted',
+              description: 'Your next message starts it again, with the conversation as it was.',
+            },
+      )
       return
     }
     if (!sessionId) {

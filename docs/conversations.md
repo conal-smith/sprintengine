@@ -819,6 +819,13 @@ in the app's own process.
   that machine's to finish, since its CLI waits for the sign-in there, so no
   row offers it from here. The "+" lists that machine's skills and servers
   where it takes skills with a message (`conversation-send-skills`).
+- **Restart agent session restarts it over there** (2026-10-25). Where the
+  machine advertises `conversation-restart-session`, the palette's Restart
+  agent session has that machine end the chat's agent process as its own
+  does, and the next message starts it again on the same conversation, with
+  the slash commands read again. It is refused while the agent works, as a
+  local chat's is. A machine without the capability is not asked, and the
+  toast says to restart it there.
 
 ### Terminals stay on the machine
 

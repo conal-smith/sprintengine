@@ -245,6 +245,8 @@ export const meshApi = {
     serverId: string
     action: 'reconnect' | 'enable' | 'disable'
   }) => command(input.key, { kind: 'mcpServerAction', serverId: input.serverId, action: input.action }),
+  meshConversationRestartSession: (input: { key: MeshConversationKey }) =>
+    command(input.key, { kind: 'restartSession' }),
   meshConversationToolDetail: (input: {
     key: MeshConversationKey
     toolUseId: string
@@ -318,6 +320,7 @@ export const meshApi = {
   | 'meshConversationSetModel'
   | 'meshConversationSetReasoningEffort'
   | 'meshConversationMcpServerAction'
+  | 'meshConversationRestartSession'
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'

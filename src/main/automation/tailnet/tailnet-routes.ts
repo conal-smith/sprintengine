@@ -210,6 +210,11 @@ export const TAILNET_CAPABILITIES = [
   // A sign-in stays here: the CLI waits for its callback on this machine.
   // CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY.
   'conversation-mcp-server-actions',
+  // A chat's agent restarted from a paired machine (2026-10-25):
+  // `restartSession` ends its process as this machine's own Restart agent
+  // session does, and the next message starts it again on the same
+  // conversation. CONVERSATION_RESTART_SESSION_CAPABILITY.
+  'conversation-restart-session',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

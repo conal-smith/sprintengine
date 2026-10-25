@@ -268,6 +268,11 @@ async function mountRemote({
       ok: true,
     })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
+    meshConversationRestartSession: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+      }): Promise<{ ok: true; notice?: string } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
     meshConversationMcpServerAction: vi.fn(
       async (_input: { key: MeshConversationKey; serverId: string; action: string }) => ({ ok: true }),
     ),
@@ -1005,6 +1010,66 @@ test('no server action where the machine does not take one, or lists the chat as
     } finally {
       await chat.unmount()
     }
+  }
+})
+
+// From the palette, with the chat focused: the focused chat is the one restarted.
+async function restartSession(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  const view = chat.document.defaultView!
+  await chat.act(async () => {
+    chat.composer().focus()
+    view.dispatchEvent(new view.CustomEvent('sprintengine:panel-command', { detail: { id: 'chat.restartSession' } }))
+  })
+}
+
+async function toastTitles() {
+  const { useToastStore } = await import('../../../store/toastStore')
+  return useToastStore.getState().toasts.map((toast) => toast.title)
+}
+
+test('Restart agent session on a chat over there is carried out by that machine once the turn is over', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  const { useToastStore } = await import('../../../store/toastStore')
+  try {
+    useToastStore.setState({ toasts: [] })
+    // The turn still waits on its approval: refused here, as a local chat's is.
+    await restartSession(chat)
+    expect(chat.api.meshConversationRestartSession).not.toHaveBeenCalled()
+    expect(await toastTitles()).toContain('The agent is still working')
+    await settleTurn(chat)
+    await restartSession(chat)
+    expect(chat.api.meshConversationRestartSession).toHaveBeenCalledExactlyOnceWith({ key })
+    expect(await toastTitles()).toContain('Agent session restarted')
+    expect(await toastTitles()).not.toContain('This chat runs on another machine')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that had no agent running, or cannot restart one from here, says so', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  const { useToastStore } = await import('../../../store/toastStore')
+  try {
+    await settleTurn(chat)
+    useToastStore.setState({ toasts: [] })
+    chat.api.meshConversationRestartSession.mockResolvedValueOnce({
+      ok: true,
+      notice: 'This chat has no agent running. Your next message starts one.',
+    })
+    await restartSession(chat)
+    expect(await toastTitles()).toEqual(['No agent session to restart'])
+    useToastStore.setState({ toasts: [] })
+    chat.api.meshConversationRestartSession.mockResolvedValueOnce({
+      ok: false,
+      code: 'unsupported_command',
+      message: "mac-mini cannot restart a chat's agent from here yet.",
+    })
+    await restartSession(chat)
+    expect(useToastStore.getState().toasts.map((toast) => [toast.title, toast.description])).toEqual([
+      ['The session was not restarted', "mac-mini cannot restart a chat's agent from here yet."],
+    ])
+  } finally {
+    await chat.unmount()
   }
 })
 

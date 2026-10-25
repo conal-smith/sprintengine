@@ -1118,6 +1118,10 @@ export type ElectronApi = {
     key: MeshConversationKey
     effort?: string
   }) => Promise<MeshConversationCommandResult>
+  // Restart a chat's agent over there, as its Restart agent session does
+  // there: answered with a `notice` where it had none running. Needs
+  // `conversation-restart-session` there.
+  meshConversationRestartSession: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
   // Reconnect one of a live chat's MCP servers over there, or switch it on or
   // off, as its server row there does. Needs `conversation-mcp-server-actions` there.
   meshConversationMcpServerAction: (input: {

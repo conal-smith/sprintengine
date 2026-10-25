@@ -88,6 +88,17 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   from another device could not be finished there. Needs
  *   `conversation-mcp-server-actions`; a desktop without it refuses the kind
  *   as `unsupported_command`.
+ * - `restartSession` restarts the chat's agent, as its own Restart agent
+ *   session does on the desktop: its process is ended the way Settle ends
+ *   it, suspended, so the session keeps its place and the next message
+ *   starts the agent again on the same conversation, with whatever it has
+ *   installed since. Refused while the agent works (a turn, a request it
+ *   waits on, an agent or a monitor it runs). A chat with no agent running is
+ *   answered with a `notice` saying so, and nothing is done; one at rest is
+ *   never resumed for it. The same command sent again is answered as the
+ *   first was, never carried out on the session a message has started since.
+ *   Needs `conversation-restart-session`; a desktop without it refuses the
+ *   kind as `unsupported_command`.
  * - `send` may say the `mode` the turn runs in, as the desktop's own chat
  *   sends one: `ask` answers without changing anything, `plan` has the agent
  *   plan and wait for the plan to be approved, where the chat's provider
@@ -128,6 +139,7 @@ export type ConversationCommand =
   | { kind: 'stopSubagent'; toolUseId: string }
   | { kind: 'setReasoningEffort'; effort?: string }
   | { kind: 'mcpServerAction'; serverId: string; action: ConversationWireMcpServerAction }
+  | { kind: 'restartSession' }
 
 export type ConversationCommandKind = ConversationCommand['kind']
 
@@ -186,6 +198,7 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'stopSubagent',
   'setReasoningEffort',
   'mcpServerAction',
+  'restartSession',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────

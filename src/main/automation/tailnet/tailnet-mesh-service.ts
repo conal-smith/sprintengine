@@ -2329,6 +2329,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           message: `${connection.machineName} cannot reconnect or switch a chat's MCP servers from here yet. Update SprintEngine Studio there.`,
         }
     }
+    if (command?.kind === 'restartSession') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-restart-session'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot restart a chat's agent from here yet. Restart it there, or update SprintEngine Studio there.`,
+        }
+    }
     const result = await remoteConversations.command(key, input.command)
     // A command carried out (a model switched, a preset changed) changes
     // what the list says, and the list is re-read straight after it.

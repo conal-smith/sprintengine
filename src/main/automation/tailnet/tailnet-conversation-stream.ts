@@ -81,6 +81,7 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   stopSubagent: true,
   setReasoningEffort: true,
   mcpServerAction: true,
+  restartSession: true,
 }
 
 /**

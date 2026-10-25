@@ -128,6 +128,11 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
           }
         : null
     }
+    if (command.kind === 'restartSession') {
+      return id(value.commandId)
+        ? { type: 'command', commandId: value.commandId, command: { kind: 'restartSession' } }
+        : null
+    }
     // The mode a turn runs in rides beside whatever else the send says, and
     // never beside a message held for later, which goes in the default one.
     // `default` is the same as naming none, and is read as none.
@@ -242,7 +247,8 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
       rejection.commandKind === 'cancelQueued' ||
       rejection.commandKind === 'stopSubagent' ||
       rejection.commandKind === 'setReasoningEffort' ||
-      rejection.commandKind === 'mcpServerAction')
+      rejection.commandKind === 'mcpServerAction' ||
+      rejection.commandKind === 'restartSession')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

@@ -13,6 +13,16 @@
 
 ### Added
 
+- **A chat's agent can be restarted.** `CONVERSATION_RESTART_SESSION_CAPABILITY`
+  (`conversation-restart-session`) names a desktop that takes the
+  `restartSession` command and ends the chat's agent process as its own
+  Restart agent session does, keeping the session's place for the next
+  message. Refused while the agent works; a chat with none running is
+  answered with a `notice`. `parseConversationClientMessage` keeps it under
+  its command id and drops anything beside the kind. A desktop without the
+  capability refuses the kind as `unsupported_command`. The pinned files are
+  unchanged.
+
 - **A live chat's MCP servers can be reconnected and switched.**
   `CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY`
   (`conversation-mcp-server-actions`) names a desktop that takes the
