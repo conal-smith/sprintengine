@@ -481,6 +481,17 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * that chat's provider can (its listed `capabilities.stopSubagent`). False for
  * a machine that does not, where an agent's lane offers no Stop.
  *
+ * `rewind`: the machine advertises `conversation-rewind` — a chat of its own
+ * may be taken back to before one of its messages from here (Edit from here),
+ * where that chat's provider can (its listed `capabilities.rewind`). False for
+ * a machine that does not, where a message offers no Edit from here.
+ *
+ * `checkpointRevert`: the machine advertises `conversation-checkpoint-revert`
+ * — a turn's files in one of its chats may be put back from the turn's
+ * checkpoint from here, in that machine's checkout, where the chat keeps
+ * checkpoints (its listed `capabilities.checkpoints`). False for a machine
+ * that does not, where a turn offers no Revert.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -502,6 +513,8 @@ export type MeshConversationListResult =
       sendSkills?: boolean
       steerSends?: boolean
       stopSubagents?: boolean
+      rewind?: boolean
+      checkpointRevert?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -517,16 +530,26 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
 
 /**
  * The commands a remote device may send. A permanent rule is not among them.
- * A queued send and taking one back need `conversation-queued-sends` there.
+ * A queued send and taking one back need `conversation-queued-sends` there;
+ * a rewind `conversation-rewind`, and a revert `conversation-checkpoint-revert`.
  */
 export type MeshConversationCommand =
   | ConversationWireCommand
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'rewind'; turnSeq: number }
+  | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
 
-/** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
-export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }
+/**
+ * `notice` qualifies an accepted command, e.g. that a model switch applies
+ * from the next turn. `data` is what a command that answers more than yes or
+ * no said, accepted or refused, as the machine sent it: a `revert`'s
+ * `ConversationRevertAnswer`, read with `parseConversationRevertAnswer`.
+ */
+export type MeshConversationCommandResult =
+  | { ok: true; notice?: string; data?: Record<string, unknown> }
+  | { ok: false; code: string; message: string; data?: Record<string, unknown> }
 
 /**
  * Whether a machine's listed chat is at work, waiting on a person, or neither.

@@ -70,6 +70,28 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   a chat whose provider cannot stop one by itself (the listed chat's
  *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
  *   desktop without it refuses the kind as `unsupported_command`.
+ * - `rewind` takes the chat back to before the user message at `turnSeq`
+ *   (its `user_message` event's `seq`), as its Edit from here does on the
+ *   desktop: that message and every turn after it leave the agent's context,
+ *   and a `session_updated` carrying `rewoundFromSeq` takes them out of the
+ *   transcript's view. Files are not touched. Refused while a turn runs, and
+ *   for a chat whose provider cannot (the listed chat's
+ *   `capabilities.rewind`). Never resumes a chat at rest: the next message
+ *   starts from where it went back to. The desktop answers a repeat of the
+ *   same command id with the first answer. Needs `conversation-rewind`; a
+ *   desktop without it refuses the kind as `unsupported_command`.
+ * - `revert` puts back the files of the desktop's checkout as they were
+ *   before the turn at `turnSeq`, from its checkpoint (`undo`: as they were
+ *   before the last revert of that turn), as its Revert and Undo revert do.
+ *   Without `confirmed` it changes nothing and answers with the files it
+ *   would touch; `confirmed`, it acts on exactly the `files` named, which are
+ *   the paths that answer listed, and refuses with `changed` when the list
+ *   is no longer that. The answer rides on the `commandResult` as `data`
+ *   (`ConversationRevertAnswer`). Refused while a turn runs in the checkout.
+ *   A repeat of a confirmed revert under the same command id is answered as
+ *   the first was. Needs `conversation-checkpoint-revert`, and a listed chat
+ *   with `capabilities.checkpoints`; a desktop without it refuses the kind as
+ *   `unsupported_command`.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -97,8 +119,37 @@ export type ConversationCommand =
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'rewind'; turnSeq: number }
+  | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
 
 export type ConversationCommandKind = ConversationCommand['kind']
+
+/** The most paths a confirmed `revert` names, and the longest one. */
+export const CONVERSATION_MAX_REVERT_FILES = 10_000
+export const CONVERSATION_MAX_REVERT_PATH_CHARS = 4096
+
+/**
+ * One file a `revert` would put back, or did. `path` is relative to the
+ * desktop's checkout, a path on the desktop's disk and never the client's.
+ */
+export type ConversationRevertFile = {
+  path: string
+  status: 'added' | 'modified' | 'deleted'
+  addedLines: number
+  removedLines: number
+  binary: boolean
+}
+
+/**
+ * What a `revert` answered, as its `commandResult`'s `data`. Accepted: the
+ * files it would touch (`reverted: false`, unconfirmed) or touched (`true`),
+ * and the new files it left in place because the checkout's ignore rules
+ * ignore them, so they may well predate the turn (`kept`). Refused because
+ * the files moved since they were shown: `changed`, and the client shows the
+ * new list and asks again.
+ */
+export type ConversationRevertAnswer =
+  { files: ConversationRevertFile[]; reverted: boolean; kept?: string[] } | { changed: true }
 
 /**
  * How old a `send`'s `composedAt` may be before a desktop asks for it to be
@@ -137,6 +188,8 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'setModel',
   'cancelQueued',
   'stopSubagent',
+  'rewind',
+  'revert',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────

@@ -36,7 +36,8 @@ export type EditFromHereDraft = {
 type EditFromHereProps = {
   entry: UserEntry
   running: boolean
-  // The turn has a checkpoint this machine can restore its files from.
+  // The turn has a checkpoint its files can be restored from: on this
+  // machine, or on the paired one a remote chat runs on.
   canRestoreFiles: boolean
   onRestoreDraft: (draft: EditFromHereDraft) => void
   className?: string
@@ -68,8 +69,10 @@ function EditFromHereButton({ entry, running, canRestoreFiles, onRestoreDraft, c
     try {
       // The files a restore would put back, asked before the dialog so it can
       // name them; a turn that changed nothing offers no restore at all.
+      // A paired machine's chat restores them only where that machine does
+      // (the transport's `checkpointRevert`), in its own checkout.
       let files: ConversationCheckpointFile[] = []
-      if (canRestoreFiles && transport.revert) {
+      if (canRestoreFiles && transport.capabilities.checkpointRevert && transport.revert) {
         const preview = await transport.revert({ key, turnSeq })
         if (preview.ok) files = preview.files
       }
@@ -131,7 +134,8 @@ async function restoreTurnFiles(
   turnSeq: number,
   files: ConversationCheckpointFile[],
 ): Promise<string | null> {
-  if (!transport.revert) return 'this conversation’s files cannot be restored from here.'
+  if (!transport.capabilities.checkpointRevert || !transport.revert)
+    return 'this conversation’s files cannot be restored from here.'
   try {
     const reverted = await transport.revert({
       key,

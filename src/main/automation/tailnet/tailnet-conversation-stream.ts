@@ -14,6 +14,7 @@ import {
   parseConversationClientMessage,
   type ConversationClientMessage,
   type ConversationCommandKind,
+  type ConversationCommandResultFrame,
   type ConversationFrameRejection,
   type ConversationHelloAnswer,
   type ConversationQueuedFrame,
@@ -79,6 +80,8 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   setModel: true,
   cancelQueued: true,
   stopSubagent: true,
+  rewind: true,
+  revert: true,
 }
 
 /**
@@ -148,7 +151,7 @@ export function createResyncBackoff(now: () => number = Date.now): (deviceId: st
 }
 
 /** A frame this socket sends: the first version's, and what the full contract added since. */
-type OutgoingFrame = ConversationServerFrame | ConversationQueuedFrame
+type OutgoingFrame = ConversationServerFrame | ConversationCommandResultFrame | ConversationQueuedFrame
 
 type LiveEntry = {
   kind: 'live'
@@ -666,6 +669,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
         message?: string,
         notice?: string,
         retryAfterMs?: number,
+        data?: Record<string, unknown>,
       ): void => {
         options.audit({
           tool: `conversation.${frame.command.kind}`,
@@ -683,12 +687,15 @@ export function createTailnetConversationStream(options: TailnetConversationStre
           ...(message ? { message } : {}),
           ...(notice ? { notice } : {}),
           ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          // What a command that answers more than yes or no says (a revert's
+          // files), under the full contract's `commandResult`.
+          ...(data ? { data } : {}),
         })
       }
       if (!mayOperate) return finish(false, 'conversation_operate_required')
       if (!key) return finish(false, 'not_found')
       const commandResult = await host.command(key, options.deviceId, frame.commandId, frame.command)
-      if (commandResult.ok) finish(true, undefined, undefined, commandResult.notice)
+      if (commandResult.ok) finish(true, undefined, undefined, commandResult.notice, undefined, commandResult.data)
       // This lane names no fingerprint, so a conflict cannot come back on it.
       else
         finish(
@@ -699,6 +706,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
           commandResult.message,
           undefined,
           commandResult.code === 'busy' ? commandResult.retryAfterMs : undefined,
+          commandResult.data,
         )
     }
   }
