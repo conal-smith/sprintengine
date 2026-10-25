@@ -1,22 +1,10 @@
 import type { WorkspaceSkill } from '../../../../shared/electron-api'
 import type { AgentConversationRuntime, AgentState, CliPermissionPreset } from '../../types/workspace'
+import { conversationAgentRuntimePatch } from '../../../../shared/agent-state'
 
-// The agent-state fields that make a fresh agent a conversation-runtime agent.
-// Shared by the spawn action and its test so the routing contract cannot drift:
-// `runtimeKind`/`conversation` opt into AgentChatView, and the `cli*` fields are
-// cleared so no terminal session is ever started for this agent.
-export function conversationAgentRuntimePatch(providerId: string, modelId: string): Partial<AgentState> {
-  return {
-    runtimeKind: 'conversation',
-    conversation: { providerId, modelId },
-    cli: undefined,
-    cliStartupPrompt: undefined,
-    cliStartRequested: false,
-    cliHasLaunched: false,
-    cliResumeAvailable: false,
-    cliSessionId: undefined,
-  }
-}
+// The fields that make a fresh agent a conversation-runtime agent live beside
+// the record they patch, so main writes a fork's record with the same ones.
+export { conversationAgentRuntimePatch }
 
 /**
  * What a launch hands a new chat agent besides its runtime: the skill chips, and

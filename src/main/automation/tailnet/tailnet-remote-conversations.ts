@@ -1,11 +1,16 @@
 import { randomBytes } from 'crypto'
 
 import {
+  CONVERSATION_MAX_MESSAGE_CHARS,
   CONVERSATION_RESYNC_CLOSE_CODE,
   CONVERSATION_SCOPE_CLOSE_CODE,
   conversationCloseRetryAfterMs,
-  type ConversationClientFrame,
 } from '../../../../packages/conversation-protocol/src'
+import {
+  CONVERSATION_MAX_SIDE_QUESTION_HISTORY,
+  parseConversationContextBreakdownAnswer,
+  parseConversationSideQuestionAnswer,
+} from '../../../../packages/conversation-protocol/src/agentReads'
 import {
   explainRejectedConversationMessage,
   parseConversationClientMessage,
@@ -24,9 +29,13 @@ import {
 } from '../../../../packages/conversation-protocol/src/serverFrames'
 import { backoffDelayMs } from '../../../shared/exponentialBackoff'
 import type {
+  ConversationContextBreakdown,
+  ConversationContextBreakdownResult,
   ConversationEvent,
   ConversationPage,
   ConversationPageResult,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationToolDetail,
   ConversationToolDetailResult,
   ConversationTurnDiffResult,
@@ -84,6 +93,9 @@ const BATTERY_STRETCH = 4
 const MAX_BUSY_RETRIES = 5
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000
+// A side question is answered by the chat's agent, which may first be resumed
+// over there and then think for a while: given far longer than a read.
+const DEFAULT_SIDE_QUESTION_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_LIST_TIMEOUT_MS = 15_000
 /**
  * The longest a streaming reply's kept copy may lag what is on screen. The
@@ -138,6 +150,7 @@ export type RemoteConversationsOptions = {
   retry?: { baseMs: number; maxMs: number }
   requestTimeoutMs?: number
   commandTimeoutMs?: number
+  sideQuestionTimeoutMs?: number
   listTimeoutMs?: number
   livenessTimeoutMs?: number
   saveDelayMs?: number
@@ -157,6 +170,22 @@ export type RemoteConversations = {
   toolDetail(key: MeshConversationKey, toolUseId: string): Promise<ConversationToolDetailResult>
   turnDiff(key: MeshConversationKey, turnSeq: number, path?: string): Promise<ConversationTurnDiffResult>
   command(key: MeshConversationKey, command: unknown): Promise<MeshConversationCommandResult>
+  /**
+   * A side question asked of the chat's agent over there, under this
+   * machine's own `questionId` for it, and the answer it gave
+   * (`conversation-side-questions`). One called off here answers `cancelled`.
+   */
+  sideQuestion(
+    key: MeshConversationKey,
+    input: { questionId: string; question: string; history: ConversationSideQuestionExchange[] },
+  ): Promise<ConversationSideQuestionResult>
+  /** Call off a side question still being answered over there. */
+  cancelSideQuestion(
+    key: MeshConversationKey,
+    questionId: string,
+  ): Promise<{ ok: true } | { ok: false; message: string }>
+  /** What fills the chat's context window, as its agent over there measures it (`conversation-context-breakdown`). */
+  contextBreakdown(key: MeshConversationKey): Promise<ConversationContextBreakdownResult>
   /** Re-dial every follow waiting out a backoff or parked offline: a lid opening should reconnect at once. */
   onWake(): void
   /** Re-dial the parked follows on one machine: it just answered something else. */
@@ -229,6 +258,8 @@ type Follow = {
 }
 type SnapshotFrame = Extract<ConversationParsedServerFrame, { type: 'snapshot' }>
 
+const CONTEXT_KINDS = new Set(['used', 'free', 'buffer', 'deferred'])
+
 const followIdOf = (key: MeshConversationKey) => JSON.stringify([key.connectionId, key.workspaceId, key.agentId])
 
 export function createRemoteConversations(options: RemoteConversationsOptions): RemoteConversations {
@@ -236,6 +267,10 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
   const retry = options.retry ?? { baseMs: RECONNECT_BASE_MS, maxMs: RECONNECT_MAX_MS }
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
+  const sideQuestionTimeoutMs = options.sideQuestionTimeoutMs ?? DEFAULT_SIDE_QUESTION_TIMEOUT_MS
+  // Side questions called off here while their answer was on its way, by
+  // follow and question: the answer that still arrives says nothing.
+  const calledOff = new Set<string>()
   const listTimeoutMs = options.listTimeoutMs ?? DEFAULT_LIST_TIMEOUT_MS
   const saveDelayMs = options.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS
   const stretch = (): number => (options.isOnBattery?.() ? BATTERY_STRETCH : 1)
@@ -792,7 +827,8 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
   /** One read on a followed conversation, retried while the far end says it is busy. */
   async function request(
     key: MeshConversationKey,
-    build: (requestId: string) => ConversationClientFrame,
+    build: (requestId: string) => ConversationClientMessage,
+    timeoutMs = requestTimeoutMs,
   ): Promise<{ ok: true; data: unknown } | { ok: false; code: string; message: string }> {
     const follow = follows.get(followIdOf(key))
     if (!follow) return { ok: false, code: 'not_following', message: 'Open this conversation before reading from it.' }
@@ -804,7 +840,7 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
         const timer = setTimeout(() => {
           follow.requests.delete(requestId)
           resolve({ failure: `${machineName(follow)} did not answer in time.`, code: 'timeout' })
-        }, requestTimeoutMs)
+        }, timeoutMs)
         timer.unref?.()
         follow.requests.set(requestId, { resolve, timer })
         if (!send(follow, build(requestId))) {
@@ -1102,6 +1138,73 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
         follow.commands.set(commandId, pending)
         dispatch(follow, pending)
       })
+    },
+
+    async sideQuestion(key, input) {
+      const asked = JSON.stringify([followIdOf(key), input.questionId])
+      // The newest exchanges that fit the frame: an aside long enough to
+      // outgrow it leans on its latest answers, not on none.
+      const history: ConversationSideQuestionExchange[] = []
+      let chars = input.question.length
+      for (const exchange of input.history.slice(-CONVERSATION_MAX_SIDE_QUESTION_HISTORY).reverse()) {
+        chars += exchange.question.length + exchange.answer.length
+        if (chars > CONVERSATION_MAX_MESSAGE_CHARS) break
+        history.unshift(exchange)
+      }
+      const answer = await request(
+        key,
+        (requestId) => ({
+          type: 'askSideQuestion',
+          requestId,
+          questionId: input.questionId,
+          question: input.question,
+          ...(history.length ? { history } : {}),
+        }),
+        sideQuestionTimeoutMs,
+      )
+      const cancelled = calledOff.delete(asked)
+      if (cancelled) return { ok: false, cancelled: true, message: 'The side question was called off.' }
+      if (!answer.ok) {
+        // Given up on here, it is called off there too, so the agent stops.
+        if (answer.code === 'timeout')
+          void request(key, (requestId) => ({ type: 'cancelSideQuestion', requestId, questionId: input.questionId }))
+        return { ok: false, message: answer.message }
+      }
+      const read = parseConversationSideQuestionAnswer(answer.data)
+      return read
+        ? { ok: true, answer: read.answer }
+        : { ok: false, message: 'That machine answered with something this build cannot read.' }
+    },
+
+    async cancelSideQuestion(key, questionId) {
+      calledOff.add(JSON.stringify([followIdOf(key), questionId]))
+      // Held only until the answer it spoils arrives; a bound for one that never does.
+      while (calledOff.size > 64) calledOff.delete(calledOff.values().next().value!)
+      const answer = await request(key, (requestId) => ({ type: 'cancelSideQuestion', requestId, questionId }))
+      return answer.ok ? { ok: true } : { ok: false, message: answer.message }
+    },
+
+    async contextBreakdown(key) {
+      const answer = await request(key, (requestId) => ({ type: 'getContextBreakdown', requestId }))
+      if (!answer.ok) return { ok: false, reason: 'failed', message: answer.message }
+      const read = parseConversationContextBreakdownAnswer(answer.data)
+      return read
+        ? {
+            ok: true,
+            // The rows' kinds as this build draws them: one it does not know
+            // fills the window, which is what a row there does.
+            breakdown: {
+              ...read.breakdown,
+              categories: read.breakdown.categories.map((category) => ({
+                ...category,
+                kind: CONTEXT_KINDS.has(category.kind)
+                  ? (category.kind as ConversationContextBreakdown['categories'][number]['kind'])
+                  : 'used',
+              })),
+            },
+            ...(read.stale ? { stale: true as const } : {}),
+          }
+        : { ok: false, reason: 'failed', message: 'That machine answered with a reading this build cannot read.' }
     },
 
     onWake() {

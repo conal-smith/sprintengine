@@ -111,6 +111,18 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   desktop without it drops both members and sends as it always did, so a
  *   client sends `composedAt` with every message and decides for itself what
  *   it no longer sends without asking.
+ * - `fork` starts a new chat beside this one, `newAgentId`, holding it up to a
+ *   point, as its own Fork from here does on the desktop: through the reply of
+ *   the turn `turnId` names (`side: 'assistant'`), or up to but not including
+ *   the person's message at `turnSeq` (`side: 'user'`). The new chat joins the
+ *   same workspace on the desktop, named after this one, works in the same
+ *   files and carries on by itself; this chat is not touched. The client names
+ *   the new chat's id, so it can follow it once the fork is answered; the
+ *   desktop refuses an id that is taken. Refused while this chat is working,
+ *   and for a chat whose provider cannot be forked (the listed chat's
+ *   `capabilities.fork`). The same command sent again is answered as the
+ *   first was. Never resumes a chat at rest. Needs `conversation-fork`; a
+ *   desktop without it refuses the kind as `unsupported_command`.
  */
 export type ConversationCommand =
   | Exclude<ConversationWireCommand, { kind: 'setPermissionPreset' } | { kind: 'send' }>
@@ -131,6 +143,12 @@ export type ConversationCommand =
   | { kind: 'handoff' }
   | { kind: 'rewind'; turnSeq: number }
   | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
+  | ConversationForkCommand
+
+/** Where a `fork` cuts the chat: after a reply's turn, or before one of the person's messages. */
+export type ConversationForkCommand = { kind: 'fork'; newAgentId: string } & (
+  { side: 'assistant'; turnId: string } | { side: 'user'; turnSeq: number }
+)
 
 export type ConversationCommandKind = ConversationCommand['kind']
 
@@ -201,6 +219,7 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'handoff',
   'rewind',
   'revert',
+  'fork',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────

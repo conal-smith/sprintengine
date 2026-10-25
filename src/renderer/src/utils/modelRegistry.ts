@@ -1,5 +1,10 @@
 import { Actions, DockLocation, Model, RowNode, TabNode, TabSetNode, type IJsonModel } from 'flexlayout-react'
 import { basename, isPathOrChild, pathSeparatorFor } from './paths'
+import {
+  isMeshConversationPane,
+  meshConversationTab,
+  type MeshConversationPaneSpec,
+} from '../../../shared/tailnet-mesh'
 
 const AGENT_TAB_SPAWN_FLASH_CLASS = 'agent-tab-spawn-flash'
 const AGENT_TAB_SPAWN_FLASH_PANEL_CLASS = 'agent-tab-spawn-flash-panel'
@@ -319,6 +324,46 @@ export function addAgentTabAfter(
     Actions.addNode(agentTabNode(agentId, name, config), tabset.getId(), DockLocation.CENTER, index + 1, true),
   )
   window.setTimeout(() => clearAgentSpawnFlash(model, agentId), AGENT_TAB_SPAWN_FLASH_CLEAR_MS)
+  return true
+}
+
+/**
+ * A pane onto a chat on a paired machine, opened in the tab after the pane
+ * onto `after`, another chat of the same machine: where a fork made over there
+ * opens here, as a local fork opens after its chat (forkFromHere.tsx). False
+ * when the workspace's layout is not mounted or holds no pane onto `after`.
+ */
+export function addMeshConversationTabAfter(
+  workspaceId: string,
+  pane: MeshConversationPaneSpec,
+  after: { connectionId: string; remoteWorkspaceId: string; remoteAgentId: string },
+): boolean {
+  const model = models.get(workspaceId)
+  if (!model) return false
+  let afterTab: TabNode | null = null
+  model.visitNodes((node) => {
+    if (afterTab || !(node instanceof TabNode) || !isMeshConversationPane(node.getComponent())) return
+    const config = node.getConfig() as Partial<Record<'connectionId' | 'remoteWorkspaceId' | 'remoteAgentId', unknown>>
+    if (
+      config?.connectionId === after.connectionId &&
+      config.remoteWorkspaceId === after.remoteWorkspaceId &&
+      config.remoteAgentId === after.remoteAgentId
+    )
+      afterTab = node
+  })
+  const found = afterTab as TabNode | null
+  const tabset = found?.getParent()
+  if (!found || !(tabset instanceof TabSetNode)) return false
+  const index = tabset.getChildren().indexOf(found)
+  model.doAction(
+    Actions.addNode(
+      { type: 'tab', ...meshConversationTab(pane) },
+      tabset.getId(),
+      DockLocation.CENTER,
+      index + 1,
+      true,
+    ),
+  )
   return true
 }
 

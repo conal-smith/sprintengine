@@ -195,9 +195,13 @@ export type ConversationTransport = {
   handoff?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   /**
    * Start a new chat beside this one holding it up to an earlier message
-   * ("Fork from here"). Absent where the transport cannot: a paired machine's
-   * chat would fork into a chat over there that no tab here could open.
-   * Offered only where the provider declares `fork` as well.
+   * ("Fork from here"). Absent where the transport cannot. A paired machine's
+   * chat has it: the fork is made over there, beside the chat, and opens
+   * here as a pane of its own onto that machine (`forkRemoteChat`); its
+   * session declares `fork` only where that machine takes the command
+   * (`conversation-fork`). The key a remote fork is handed is not the one it
+   * forks: it names the chat by its ids over there. Offered only where the
+   * session declares `fork` as well.
    */
   fork?(input: ConversationForkInput): Promise<ConversationForkResult>
   /**
@@ -223,8 +227,10 @@ export type ConversationTransport = {
   /**
    * Ask a side question about the chat: answered from its context, added to
    * nothing, a running turn left as it was. Absent where the transport
-   * cannot, as `stopSubagent` is. Offered only where the provider declares
-   * `sideQuestion` as well.
+   * cannot, as `stopSubagent` is. A paired machine's chat has it, asked of
+   * its agent over there, and its session declares `sideQuestion` only where
+   * that machine answers one (`conversation-side-questions`). Offered only
+   * where the session declares `sideQuestion` as well.
    */
   askSideQuestion?(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult>
   /** Call off a side question still being answered. Present wherever `askSideQuestion` is. */
@@ -234,8 +240,10 @@ export type ConversationTransport = {
   /**
    * What fills the chat's context window, as its agent measures it. Absent
    * where the transport cannot ask, as `stopSubagent` is; the ring then opens
-   * on the total alone. Asked only where the provider declares
-   * `contextBreakdown` as well.
+   * on the total alone. A paired machine's chat has it, read from its agent
+   * over there, and its session declares `contextBreakdown` only where that
+   * machine says (`conversation-context-breakdown`). Asked only where the
+   * session declares `contextBreakdown` as well.
    */
   readContextBreakdown?(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult>
   /**
@@ -517,6 +525,30 @@ export function createRemoteConversationTransport(input: {
         return { ok: false, message: `${input.machineName} answered with files this build cannot read.` }
       return { ok: true, ...answer }
     },
+    // Each of these offered only where the machine takes it and lists the
+    // chat's provider as able (the pane's session says `fork`, `sideQuestion`,
+    // `contextBreakdown`). Every one names the chat by its ids over there; the
+    // session id a view passes is the list's, which means nothing to them.
+    fork: async (fork) => {
+      const forked = await window.api.meshConversationFork({
+        key,
+        fork:
+          fork.side === 'user'
+            ? { kind: 'fork', newAgentId: fork.newAgentId, side: 'user', turnSeq: fork.turnSeq }
+            : { kind: 'fork', newAgentId: fork.newAgentId, side: 'assistant', turnId: fork.turnId },
+      })
+      return forked.ok ? { ok: true } : { ok: false, message: forked.message }
+    },
+    askSideQuestion: (question) =>
+      window.api.meshConversationSideQuestion({
+        key,
+        requestId: question.requestId,
+        question: question.question,
+        ...(question.history?.length ? { history: question.history } : {}),
+      }),
+    cancelSideQuestion: (question) =>
+      window.api.meshConversationCancelSideQuestion({ key, requestId: question.requestId }),
+    readContextBreakdown: () => window.api.meshConversationContextBreakdown({ key }),
     respond: async (response) => {
       if (response.answers && response.approved)
         return commandResult(

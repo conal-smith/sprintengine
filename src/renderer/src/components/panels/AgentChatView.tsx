@@ -221,7 +221,7 @@ import { ConversationTodoStrip } from './agentChat/todoProgressStrip'
 import { TimelineRow, type TimelineChrome } from './agentChat/timelineRows'
 import { UnreadDivider } from './agentChat/turnMeta'
 import { editFromHereDraft, type EditFromHereDraft } from './agentChat/editFromHere'
-import { forkChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
+import { forkChat, forkRemoteChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
 import { SideQuestionDrawer, useSideQuestion, type SideQuestionApi } from './agentChat/sideQuestion'
 import { ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
 import { PendingFirstMessage } from './agentChat/pendingFirstMessage'
@@ -2921,8 +2921,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   })
               : null,
             agentName: assistantName,
-            // A paired machine's chat, or a window on the Studio protocol:
-            // the agent could say, but nothing here can ask it.
+            // A window on the Studio protocol: the agent could say, but
+            // nothing here can ask it. A paired machine's chat asks it over
+            // there, where that machine reads the window.
             ...(breakdownDeclared && !readContextBreakdown
               ? { unavailable: 'This window cannot ask the agent what fills the window, only how full it is.' }
               : {}),
@@ -3221,9 +3222,21 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // open the fork in a tab. A provider that branches only the session it is
   // running (an ACP agent's `session/fork`, `forkFromLiveSession`) has this
   // chat's session started first for a fork at the newest reply; any other
-  // is not started for nothing.
+  // is not started for nothing. A paired machine's chat is forked over there,
+  // never started here, and the fork opens as a pane onto that machine.
   const forkRef = useRef<(target: ForkFromHereTarget) => Promise<void>>(async () => undefined)
   forkRef.current = async (target) => {
+    if (transport.kind === 'remote') {
+      await forkRemoteChat({
+        transport,
+        workspaceId,
+        agentId,
+        providerId: conversation?.providerId || 'remote',
+        name: agent.name,
+        target,
+      })
+      return
+    }
     if (!workspaceRoot) throw new Error('This chat has no folder to fork in.')
     if (
       target.side === 'assistant' &&

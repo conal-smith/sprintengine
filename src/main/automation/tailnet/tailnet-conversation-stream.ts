@@ -83,6 +83,7 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   handoff: true,
   rewind: true,
   revert: true,
+  fork: true,
 }
 
 /**
@@ -201,6 +202,10 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     queuedWatch?.stop()
     queuedWatch = null
   }
+  // Side questions asked on this socket and not yet answered, by the
+  // device's id for each: called off when the socket goes, since nobody is
+  // left to read the answer.
+  const sideQuestionsAsked = new Set<string>()
   let frameSequence = 0
   let subscriptionGeneration = 0
   let readsInFlight = 0
@@ -217,6 +222,9 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     subscription?.dispose()
     subscription = null
     stopQueuedWatch()
+    for (const questionId of sideQuestionsAsked)
+      void host.cancelSideQuestion?.(options.deviceId, questionId).catch(() => undefined)
+    sideQuestionsAsked.clear()
     clearInterval(heartbeat)
     if (!socket.destroyed) {
       try {
@@ -642,6 +650,60 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     if (frame.type === 'getTurnDiff') {
       const key = requireKey(frame.requestId)
       if (key) await result(frame.requestId, await host.getTurnDiff(key, frame.turnSeq, frame.path))
+      return
+    }
+    // A side question runs the chat's agent, as a send does, so it needs the
+    // grant to operate; reading what fills the window does not.
+    if (frame.type === 'askSideQuestion') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      if (!mayOperate) {
+        sendLive({ type: 'result', requestId: frame.requestId, ok: false, code: 'conversation_operate_required' })
+        return
+      }
+      if (!host.askSideQuestion) {
+        await result(frame.requestId, { ok: false, message: 'This desktop does not answer side questions.' })
+        return
+      }
+      sideQuestionsAsked.add(frame.questionId)
+      try {
+        const answered = await host.askSideQuestion(
+          key,
+          options.deviceId,
+          frame.questionId,
+          frame.question,
+          frame.history ?? [],
+        )
+        if (answered.ok)
+          await respond({ type: 'result', requestId: frame.requestId, ok: true, data: { answer: answered.answer } })
+        else await result(frame.requestId, { ok: false, message: answered.message })
+      } finally {
+        sideQuestionsAsked.delete(frame.questionId)
+      }
+      return
+    }
+    if (frame.type === 'cancelSideQuestion') {
+      if (!host.cancelSideQuestion) {
+        await result(frame.requestId, { ok: false, message: 'This desktop does not answer side questions.' })
+        return
+      }
+      await result(frame.requestId, await host.cancelSideQuestion(options.deviceId, frame.questionId))
+      return
+    }
+    if (frame.type === 'getContextBreakdown') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      const read = host.contextBreakdown
+        ? await host.contextBreakdown(key)
+        : { ok: false as const, message: 'This desktop cannot say what fills a chat’s window.' }
+      if (read.ok)
+        await respond({
+          type: 'result',
+          requestId: frame.requestId,
+          ok: true,
+          data: { breakdown: read.breakdown, ...(read.stale ? { stale: true } : {}) },
+        })
+      else await result(frame.requestId, { ok: false, message: read.message })
       return
     }
     if (frame.type === 'watchQueued') {

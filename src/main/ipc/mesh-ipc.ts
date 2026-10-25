@@ -16,7 +16,9 @@ import {
   MESH_PAIR_CHANNEL,
   MESH_REQUEST_PAIRING_CHANNEL,
   meshConversationFrameChannel,
+  MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_COMMAND_CHANNEL,
+  MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
   MESH_CONVERSATION_EARLIER_CHANNEL,
   MESH_CONVERSATION_FOLLOW_CHANNEL,
   MESH_CONVERSATION_LIST_CHANNEL,
@@ -26,6 +28,7 @@ import {
   MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL,
   MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL,
   MESH_CONVERSATION_SEND_CHANNEL,
+  MESH_CONVERSATION_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
   MESH_CONVERSATION_ATTACHMENT_CHANNEL,
@@ -245,5 +248,24 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
   ipcMain.handle(MESH_CONVERSATION_TURN_DIFF_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input) ?? {}
     return service.mesh().conversationTurnDiff({ key: record.key, turnSeq: record.turnSeq, path: record.path })
+  })
+  // A side question to a chat over there is answered by its agent there, and
+  // may take a while: the invoke waits for it, as a local side question's does.
+  ipcMain.handle(MESH_CONVERSATION_SIDE_QUESTION_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationSideQuestion({
+      key: record.key,
+      requestId: record.requestId,
+      question: record.question,
+      history: record.history,
+    })
+  })
+  ipcMain.handle(MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationCancelSideQuestion({ key: record.key, requestId: record.requestId })
+  })
+  ipcMain.handle(MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationContextBreakdown({ key: record.key })
   })
 }

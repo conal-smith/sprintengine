@@ -121,6 +121,29 @@ export const CONVERSATION_MESSAGE_FILES_CAPABILITY = 'conversation-message-files
  * without it keeps its upload under 5MB itself.
  */
 export const CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY = 'conversation-image-downscale' as const
+/**
+ * A chat may be forked from a paired device, as its Fork from here does on the
+ * desktop: `fork` names the point and the new chat's id, and the desktop
+ * writes the new chat beside this one, in the same workspace and files. A
+ * listed chat says whether its provider can (`capabilities.fork`).
+ */
+export const CONVERSATION_FORK_CAPABILITY = 'conversation-fork' as const
+/**
+ * A side question may be asked about a chat, as its composer's /btw does on
+ * the desktop: `askSideQuestion` is answered from what the chat's agent knows
+ * and is added to nothing, a running turn left as it was, and
+ * `cancelSideQuestion` calls one off. A listed chat says whether its provider
+ * can (`capabilities.sideQuestion`).
+ */
+export const CONVERSATION_SIDE_QUESTIONS_CAPABILITY = 'conversation-side-questions' as const
+/**
+ * What fills a chat's context window may be read item by item, as the
+ * desktop's context ring opens it: `getContextBreakdown` asks the chat's
+ * agent, which measures it. A listed chat says whether its provider can
+ * (`capabilities.contextBreakdown`); without it a client shows how full the
+ * window is and nothing more.
+ */
+export const CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY = 'conversation-context-breakdown' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -146,6 +169,9 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_HANDOFF_CAPABILITY,
   CONVERSATION_REWIND_CAPABILITY,
   CONVERSATION_CHECKPOINT_REVERT_CAPABILITY,
+  CONVERSATION_FORK_CAPABILITY,
+  CONVERSATION_SIDE_QUESTIONS_CAPABILITY,
+  CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

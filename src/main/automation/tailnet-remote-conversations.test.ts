@@ -6,7 +6,12 @@ import { join } from 'node:path'
 import { test, vi } from 'vitest'
 import { createSecretCipherStandIn } from '../../../tests/stubs/secret-cipher'
 
-import type { ConversationEvent, ConversationSessionFrame } from '../../shared/conversation-runtime'
+import type {
+  ConversationContextBreakdown,
+  ConversationEvent,
+  ConversationSessionFrame,
+  ConversationSideQuestionResult,
+} from '../../shared/conversation-runtime'
 import type { TailnetScope } from '../../shared/tailnet'
 import type { MeshConversationFrame, MeshConversationKey } from '../../shared/tailnet-mesh'
 import { ConversationRuntime } from '../conversation-runtime'
@@ -1410,6 +1415,77 @@ test('a message steered from here into a turn its chat cannot take is held there
     h.provider.push(null)
   } finally {
     stopListening()
+    await h.close()
+  }
+})
+
+test("a side question and the window's breakdown are asked of the chat over there, and come back here", async () => {
+  const h = await startHarness()
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.deepEqual([listed.fork, listed.sideQuestions, listed.contextBreakdown], [true, true, true])
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    assert.deepEqual(await pane.following, { ok: true })
+    await waitFor(pane.live, 'the follow goes live')
+
+    const asked = vi.spyOn(h.runtime, 'askSideQuestion').mockResolvedValue({ ok: true, answer: 'The README.' })
+    assert.deepEqual(
+      await h.mesh.conversationSideQuestion({
+        key,
+        requestId: 'q-1',
+        question: 'What did it read first?',
+        history: [{ question: 'Did it run the tests?', answer: 'Yes.' }],
+      }),
+      { ok: true, answer: 'The README.' },
+    )
+    assert.equal(asked.mock.calls[0]![0].sessionId, h.sessionId, "asked of the chat's own session there")
+    assert.deepEqual(asked.mock.calls[0]![0].history, [{ question: 'Did it run the tests?', answer: 'Yes.' }])
+
+    // Called off from here while its answer is on its way: called off there,
+    // and settled here as called off rather than as a refusal to show.
+    let settle: (value: ConversationSideQuestionResult) => void = () => undefined
+    asked.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
+    const cancel = vi.spyOn(h.runtime, 'cancelSideQuestion').mockImplementation(async () => {
+      settle({ ok: false, cancelled: true, message: 'The side question was called off.' })
+      return { ok: true }
+    })
+    const pending = h.mesh.conversationSideQuestion({ key, requestId: 'q-2', question: 'Why?' })
+    await waitFor(() => asked.mock.calls.length === 2, 'the second question is out')
+    assert.deepEqual(await h.mesh.conversationCancelSideQuestion({ key, requestId: 'q-2' }), { ok: true })
+    const outcome = await pending
+    assert.ok(!outcome.ok && outcome.cancelled === true)
+    assert.equal(cancel.mock.calls.length, 1)
+
+    const breakdown: ConversationContextBreakdown = {
+      model: 'mock-model',
+      usedTokens: 12_000,
+      windowTokens: 200_000,
+      categories: [
+        { name: 'Messages', tokens: 12_000, kind: 'used' },
+        { name: 'Free space', tokens: 188_000, kind: 'free' },
+      ],
+      mcpServers: [],
+      skills: [],
+      memoryFiles: [],
+      agents: [],
+      autoCompactAt: null,
+      estimated: false,
+      measuredAt: 1_700_000_000_000,
+    }
+    vi.spyOn(h.runtime, 'readContextBreakdown').mockResolvedValue({ ok: true, breakdown })
+    assert.deepEqual(await h.mesh.conversationContextBreakdown({ key }), { ok: true, breakdown })
+
+    // A host that keeps no chat records cannot add a fork, and says so: the
+    // refusal comes back in its words.
+    const forked = await h.mesh.conversationCommand({
+      key,
+      command: { kind: 'fork', newAgentId: 'conversation-mock-provider-fork', side: 'assistant', turnId: 'turn-1' },
+    })
+    assert.ok(!forked.ok && forked.message.includes('cannot add a forked chat'))
+  } finally {
     await h.close()
   }
 })

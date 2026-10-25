@@ -52,7 +52,7 @@ import type {
   WorkspaceWorktreeState,
 } from '../../types/workspace'
 import { deriveWorkspaceTitle, isDefaultWorkspaceName } from '../../../../shared/workspace-title'
-import { MESH_CONVERSATION_COMPONENT, meshConversationSessionId } from '../../../../shared/tailnet-mesh'
+import { meshConversationTab, type MeshConversationPaneSpec } from '../../../../shared/tailnet-mesh'
 
 // How far the person's last-input clock may run ahead of main's copy before
 // the next report is sent as a field patch (recordWorkspaceTerminalActivity).
@@ -537,13 +537,7 @@ export type SoloChatSeed = {
    * `terminal`, no local agent record is created — the conversation lives on
    * the remote machine; this workspace is the pane onto it.
    */
-  meshConversation?: {
-    connectionId: string
-    machineName: string
-    remoteWorkspaceId: string
-    remoteAgentId: string
-    title: string
-  }
+  meshConversation?: MeshConversationPaneSpec
 }
 
 // Transform the single-agent solo-chat layout for a seed: rename the lone agent
@@ -558,18 +552,7 @@ export function applySoloChatSeed(layout: IJsonModel, seed: SoloChatSeed): IJson
     if (node.component === 'agent') {
       const target = node as { component?: unknown; id?: unknown; name?: unknown; config?: Record<string, unknown> }
       if (seed.meshConversation) {
-        const remote = seed.meshConversation
-        target.component = MESH_CONVERSATION_COMPONENT
-        target.id = `mesh-conversation:${remote.connectionId}:${encodeURIComponent(remote.remoteWorkspaceId)}:${encodeURIComponent(remote.remoteAgentId)}`
-        target.name = seed.tabName ?? remote.title
-        target.config = {
-          connectionId: remote.connectionId,
-          machineName: remote.machineName,
-          remoteWorkspaceId: remote.remoteWorkspaceId,
-          remoteAgentId: remote.remoteAgentId,
-          remoteSessionId: meshConversationSessionId(remote.remoteWorkspaceId, remote.remoteAgentId),
-          title: remote.title,
-        }
+        Object.assign(target, meshConversationTab(seed.meshConversation, seed.tabName ?? seed.meshConversation.title))
         done = true
         return
       }

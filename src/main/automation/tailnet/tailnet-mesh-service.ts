@@ -42,13 +42,19 @@ import {
   type MeshConversationListResult,
 } from '../../../shared/tailnet-mesh'
 import type {
+  ConversationContextBreakdownResult,
   ConversationImageAttachment,
   ConversationPageResult,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationToolDetailResult,
   ConversationTurnDiffResult,
 } from '../../../shared/conversation-runtime'
 import { parseImageAttachments } from '../../conversation-ipc-inputs'
-import { isConversationHighlightColor } from '../../../../packages/conversation-protocol/src/public'
+import {
+  CONVERSATION_MAX_MESSAGE_CHARS,
+  isConversationHighlightColor,
+} from '../../../../packages/conversation-protocol/src/public'
 import type { WorkspaceExtensions } from '../../../shared/workspace-extensions'
 import {
   PULL_REQUEST_BODY_MAX_CHARS,
@@ -413,6 +419,27 @@ export type TailnetMeshService = {
   }): Promise<MeshPullRequestCreateResult>
   conversationToolDetail(input: { key: unknown; toolUseId: unknown }): Promise<ConversationToolDetailResult>
   conversationTurnDiff(input: { key: unknown; turnSeq: unknown; path?: unknown }): Promise<ConversationTurnDiffResult>
+  /**
+   * A side question asked of a followed conversation's agent over there, and
+   * calling one off. Refused in words, without asking, for a machine that does
+   * not advertise `conversation-side-questions`.
+   */
+  conversationSideQuestion(input: {
+    key: unknown
+    requestId: unknown
+    question: unknown
+    history?: unknown
+  }): Promise<ConversationSideQuestionResult>
+  conversationCancelSideQuestion(input: {
+    key: unknown
+    requestId: unknown
+  }): Promise<{ ok: true } | { ok: false; message: string }>
+  /**
+   * What fills a followed conversation's context window, as its agent over
+   * there measures it. Refused in words, without asking, for a machine that
+   * does not advertise `conversation-context-breakdown`.
+   */
+  conversationContextBreakdown(input: { key: unknown }): Promise<ConversationContextBreakdownResult>
   /**
    * The picture one step of a followed conversation made or looked at, fetched
    * from the machine it runs on. Refused without asking for a machine whose
@@ -2227,6 +2254,9 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           handoff: tailnetPeerSupports(identity.value.capabilities, 'conversation-handoff'),
           rewind: tailnetPeerSupports(identity.value.capabilities, 'conversation-rewind'),
           checkpointRevert: tailnetPeerSupports(identity.value.capabilities, 'conversation-checkpoint-revert'),
+          fork: tailnetPeerSupports(identity.value.capabilities, 'conversation-fork'),
+          sideQuestions: tailnetPeerSupports(identity.value.capabilities, 'conversation-side-questions'),
+          contextBreakdown: tailnetPeerSupports(identity.value.capabilities, 'conversation-context-breakdown'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2380,6 +2410,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_command',
           message: `${connection.machineName} cannot restore a turn's files from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'fork') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-fork'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot fork a chat from here yet. Update SprintEngine Studio there.`,
         }
     }
     const result = await remoteConversations.command(key, input.command)
@@ -2656,6 +2695,56 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       if (!key || typeof input.toolUseId !== 'string' || !input.toolUseId || input.toolUseId.length > 200)
         return { ok: false, code: 'invalid_input', message: 'Name the conversation and the tool call.' }
       return remoteConversations.toolDetail(key, input.toolUseId)
+    },
+
+    async conversationSideQuestion(input): Promise<ConversationSideQuestionResult> {
+      const key = meshConversationKeyOf(input.key)
+      const history = Array.isArray(input.history)
+        ? input.history.filter(
+            (exchange): exchange is ConversationSideQuestionExchange =>
+              isRecord(exchange) && typeof exchange.question === 'string' && typeof exchange.answer === 'string',
+          )
+        : []
+      if (
+        !key ||
+        typeof input.requestId !== 'string' ||
+        !input.requestId ||
+        input.requestId.length > 200 ||
+        typeof input.question !== 'string' ||
+        !input.question.trim()
+      )
+        return { ok: false, message: 'Name the conversation and the question.' }
+      if (input.question.length > CONVERSATION_MAX_MESSAGE_CHARS)
+        return { ok: false, message: `A question may hold at most ${CONVERSATION_MAX_MESSAGE_CHARS} characters.` }
+      const connection = connectionFor(key.connectionId)
+      // Said here in words: a machine from before it answers a frame it does
+      // not know with nothing a person could act on.
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-side-questions'))
+        return {
+          ok: false,
+          message: `${connection.machineName} cannot answer a side question from here yet. Update SprintEngine Studio there.`,
+        }
+      return remoteConversations.sideQuestion(key, { questionId: input.requestId, question: input.question, history })
+    },
+
+    async conversationCancelSideQuestion(input) {
+      const key = meshConversationKeyOf(input.key)
+      if (!key || typeof input.requestId !== 'string' || !input.requestId || input.requestId.length > 200)
+        return { ok: false, message: 'Name the conversation and the question.' }
+      return remoteConversations.cancelSideQuestion(key, input.requestId)
+    },
+
+    async conversationContextBreakdown(input): Promise<ConversationContextBreakdownResult> {
+      const key = meshConversationKeyOf(input.key)
+      if (!key) return { ok: false, reason: 'failed', message: 'Name the conversation.' }
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-context-breakdown'))
+        return {
+          ok: false,
+          reason: 'unsupported',
+          message: `${connection.machineName} cannot say what fills a chat’s window from here yet. Update SprintEngine Studio there.`,
+        }
+      return remoteConversations.contextBreakdown(key)
     },
 
     async conversationToolImage(input): Promise<MeshConversationImageResult> {

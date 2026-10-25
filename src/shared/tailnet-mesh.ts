@@ -1,5 +1,6 @@
 import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
 import type {
+  ConversationForkCommand,
   ConversationHighlightColor,
   ConversationQueuedMessage,
   ConversationThread,
@@ -497,6 +498,15 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * checkpoints (its listed `capabilities.checkpoints`). False for a machine
  * that does not, where a turn offers no Revert.
  *
+ * `fork`, `sideQuestions`, `contextBreakdown`: the machine advertises
+ * `conversation-fork`, `conversation-side-questions` and
+ * `conversation-context-breakdown` — a chat of its own may be forked from
+ * here (the fork opens here as its own pane onto that machine), asked a side
+ * question, and asked what fills its context window, each where that chat's
+ * provider can (its listed `capabilities.fork`, `.sideQuestion`,
+ * `.contextBreakdown`). False for a machine that does not, where none is
+ * offered and the ring shows how full the window is alone.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -521,6 +531,9 @@ export type MeshConversationListResult =
       handoff?: boolean
       rewind?: boolean
       checkpointRevert?: boolean
+      fork?: boolean
+      sideQuestions?: boolean
+      contextBreakdown?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -547,6 +560,7 @@ export type MeshConversationCommand =
   | { kind: 'handoff' }
   | { kind: 'rewind'; turnSeq: number }
   | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
+  | ConversationForkCommand
 
 /**
  * `notice` qualifies an accepted command, e.g. that a model switch applies
@@ -607,6 +621,39 @@ export function meshConversationSessionId(workspaceId: string, agentId: string):
   return `conversation:${workspaceId}:${agentId}`
 }
 
+/** The chat a remote conversation pane follows, and what its tab is called until that machine is read. */
+export type MeshConversationPaneSpec = {
+  connectionId: string
+  machineName: string
+  remoteWorkspaceId: string
+  remoteAgentId: string
+  title: string
+}
+
+/**
+ * A layout tab that is a pane onto a chat on a paired machine: its id names
+ * the chat, so a layout never holds two tabs onto one, and its config is what
+ * the pane and the sidebar's Remote band read it by.
+ */
+export function meshConversationTab(
+  pane: MeshConversationPaneSpec,
+  name: string = pane.title,
+): { id: string; name: string; component: typeof MESH_CONVERSATION_COMPONENT; config: Record<string, string> } {
+  return {
+    id: `mesh-conversation:${pane.connectionId}:${encodeURIComponent(pane.remoteWorkspaceId)}:${encodeURIComponent(pane.remoteAgentId)}`,
+    name,
+    component: MESH_CONVERSATION_COMPONENT,
+    config: {
+      connectionId: pane.connectionId,
+      machineName: pane.machineName,
+      remoteWorkspaceId: pane.remoteWorkspaceId,
+      remoteAgentId: pane.remoteAgentId,
+      remoteSessionId: meshConversationSessionId(pane.remoteWorkspaceId, pane.remoteAgentId),
+      title: pane.title,
+    },
+  }
+}
+
 /** The channel one followed conversation's frames arrive on. The renderer picks the id and subscribes first. */
 export function meshConversationFrameChannel(followId: string): string {
   return `mesh:conversation:${followId}`
@@ -620,5 +667,8 @@ export const MESH_CONVERSATION_COMMAND_CHANNEL = 'mesh:conversation-command'
 export const MESH_CONVERSATION_SEND_CHANNEL = 'mesh:conversation-send'
 export const MESH_CONVERSATION_TOOL_DETAIL_CHANNEL = 'mesh:conversation-tool-detail'
 export const MESH_CONVERSATION_TURN_DIFF_CHANNEL = 'mesh:conversation-turn-diff'
+export const MESH_CONVERSATION_SIDE_QUESTION_CHANNEL = 'mesh:conversation-side-question'
+export const MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL = 'mesh:conversation-cancel-side-question'
+export const MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL = 'mesh:conversation-context-breakdown'
 export const MESH_CONVERSATION_TOOL_IMAGE_CHANNEL = 'mesh:conversation-tool-image'
 export const MESH_CONVERSATION_ATTACHMENT_CHANNEL = 'mesh:conversation-attachment'
