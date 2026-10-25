@@ -21,6 +21,7 @@ import {
   conversationCheckoutsOf,
   conversationHostOf,
   conversationPullRequestsOf,
+  conversationLocalServersOf,
   tailnetSelfMachine,
   type ConversationMachineContext,
 } from '../../main/automation/tailnet/tailnet-conversation-machine'
@@ -547,6 +548,17 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         found.conversations.map((entry) => [
           `${entry.workspaceId}:${entry.agentId}`,
           conversationPullRequestsOf(entry.pullRequests),
+        ]),
+      )
+    },
+    // The local servers the chats' agents linked, as the record last checked
+    // them: what a paired machine's strip draws under the chat.
+    localServersOf: async (keys: Array<{ workspaceId: string; agentId: string }>) => {
+      const found = await localServers.list({ conversations: keys })
+      return new Map(
+        found.conversations.map((entry) => [
+          `${entry.workspaceId}:${entry.agentId}`,
+          conversationLocalServersOf(entry.servers),
         ]),
       )
     },

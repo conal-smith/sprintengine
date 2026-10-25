@@ -134,6 +134,8 @@ export function ConversationComposerStrip({
   localServers?: {
     workspaceId: string
     servers: readonly StudioLocalServer[]
+    /** The paired machine they run on, for a chat there: read-only, and opened from here only where they reach. */
+    elsewhere?: { machineName: string }
   } | null
   /**
    * The subscription usage limits of the agent this chat runs on, when it has
@@ -402,7 +404,11 @@ export function ConversationComposerStrip({
       ) : null}
       {serversText !== null && localServers ? (
         <span ref={serversRef} className="ml-auto inline-flex shrink-0" data-strip-local-servers-slot="">
-          <LocalServersStripButton workspaceId={localServers.workspaceId} servers={localServers.servers} />
+          <LocalServersStripButton
+            workspaceId={localServers.workspaceId}
+            servers={localServers.servers}
+            {...(localServers.elsewhere ? { elsewhere: localServers.elsewhere } : {})}
+          />
         </span>
       ) : null}
       {pullRequestText !== null ? (

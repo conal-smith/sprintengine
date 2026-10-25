@@ -41,6 +41,13 @@ import { removeLocalServer, runLocalServer, stopLocalServer, type LocalServerAct
 // and says why — that is the one a person reaches for and has to be told
 // about.
 //
+// A server a chat on a paired machine linked is that machine's, drawn from
+// what its list says (`elsewhere`): it is opened from here only where its
+// address reaches here (a tailnet name, the machine's own address), and
+// otherwise says it is on that machine, its link still to copy. Nothing that
+// acts on a server (Share, Run again, Stop, Remove) is offered: each would
+// act on this computer's own servers, or its own tailnet.
+//
 // One server lists its actions in the menu itself. Several list one row per
 // server, each opening its actions beside it, so the menu stays as tall as
 // the number of servers rather than six times it.
@@ -74,18 +81,54 @@ export type LocalServerAction = {
 export const NO_COMMAND_REASON = "The agent didn't say how to start it, so Studio can't run it again."
 
 /**
+ * Whether a server's address names the machine it runs on and nothing else:
+ * its loopback (`localhost`, `127.0.0.1`, a `*.localhost` name), which from
+ * another machine is that machine's own.
+ */
+export function localServerListensOnlyThere(url: string): boolean {
+  if (isLoopbackUrl(url)) return true
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/u.test(host)
+  } catch {
+    return false
+  }
+}
+
+/** Why a paired machine's server on its own loopback does not open here. */
+export function onlyThereReason(machineName: string): string {
+  return `It listens on ${machineName} only, so it opens there, not here.`
+}
+
+/**
  * What a server offers, in menu order (see the header). Pure, so the rules
  * are testable without a menu.
  *
  * @param context.tailnet What Tailscale said when the menu opened; null when it
  *   has not answered or this shell cannot ask.
  * @param context.canOpenInPane This shell has the in-app browser pane.
+ * @param context.elsewhere The paired machine the server runs on, for a chat there.
  */
 export function localServerActions(
   server: StudioLocalServer,
-  context: { tailnet: TailnetShareStatus | null; canOpenInPane: boolean },
+  context: { tailnet: TailnetShareStatus | null; canOpenInPane: boolean; elsewhere?: { machineName: string } },
 ): LocalServerAction[] {
   const actions: LocalServerAction[] = []
+  if (context.elsewhere) {
+    if (localServerListensOnlyThere(server.url))
+      actions.push({
+        id: 'open',
+        label: 'Open',
+        disabled: true,
+        reason: onlyThereReason(context.elsewhere.machineName),
+      })
+    else {
+      if (context.canOpenInPane) actions.push({ id: 'open', label: 'Open' })
+      actions.push({ id: 'open-external', label: 'Open in browser' })
+    }
+    actions.push({ id: 'copy-link', label: 'Copy link' })
+    return actions
+  }
   if (context.canOpenInPane) actions.push({ id: 'open', label: 'Open' })
   actions.push({ id: 'open-external', label: 'Open in browser' }, { id: 'copy-link', label: 'Copy link' })
   if (context.tailnet?.available && isLoopbackUrl(server.url)) {
@@ -287,6 +330,8 @@ type MenuProps = {
   layer?: PopoverProps['layer']
   /** The face: the strip's button, the sidebar's mark. */
   renderTrigger: PopoverProps['renderTrigger']
+  /** The paired machine the servers run on, for a chat there: read-only, opened from here where they reach. */
+  elsewhere?: { machineName: string }
 }
 
 export function LocalServersMenu({
@@ -296,6 +341,7 @@ export function LocalServersMenu({
   placement = 'top-end',
   layer,
   renderTrigger,
+  elsewhere,
 }: MenuProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const [tailnet, setTailnet] = useState<TailnetShareStatus | null>(null)
@@ -329,13 +375,14 @@ export function LocalServersMenu({
       // dropped at once, so nothing tailnet is offered until this one's lands.
       const opening = ++openingRef.current
       setTailnet(null)
-      if (servers.some((server) => isLoopbackUrl(server.url))) {
+      // A paired machine's servers are never shared from this one's tailnet.
+      if (!elsewhere && servers.some((server) => isLoopbackUrl(server.url))) {
         void readTailnetStatus().then((status) => {
           if (openingRef.current === opening) setTailnet(status)
         })
       }
     },
-    [servers],
+    [servers, elsewhere],
   )
 
   const focusFirstItem = useCallback((surface: HTMLElement) => {
@@ -350,7 +397,7 @@ export function LocalServersMenu({
     void runAction(action, server, workspaceId, tailnet, ask)
   }
 
-  const context = { tailnet, canOpenInPane }
+  const context = { tailnet, canOpenInPane, ...(elsewhere ? { elsewhere } : {}) }
 
   return (
     // The hosts are click targets of their own (a sidebar row selects its chat
@@ -425,6 +472,11 @@ function ServerSection({
         </span>
         {server.title !== hostOf(server.url) ? (
           <span className="truncate font-mono text-micro text-[color:var(--text-subtle)]">{server.url}</span>
+        ) : null}
+        {context.elsewhere ? (
+          <span className="text-micro text-[color:var(--text-subtle)]" data-local-server-elsewhere="">
+            On {context.elsewhere.machineName}
+          </span>
         ) : null}
         {server.command ? (
           // What "Run again" runs, and where: the agent wrote it, so the

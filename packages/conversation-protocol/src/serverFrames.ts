@@ -82,6 +82,15 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    */
   pullRequests?: ConversationWirePullRequest[]
   /**
+   * The local servers the chat's agents linked there (a dev server, a
+   * preview: anything an agent named with `local_server.link`), newest first,
+   * each as the desktop last checked it. Its address is as the agent gave it,
+   * so one on `localhost` is that desktop's own and opens only there. Read
+   * from the desktop's record, so listing starts no process. Absent for a
+   * chat with none, and from a desktop built before it was listed.
+   */
+  localServers?: ConversationWireLocalServer[]
+  /**
    * The chat's title as the desktop's own sidebar shows it: the name of the
    * desktop's chat it belongs to, which a rename there changes. `title` stays
    * the agent's name, for clients that read only that. Absent from a desktop
@@ -281,6 +290,25 @@ export type ConversationWirePullRequest = {
 }
 export type ConversationWirePullRequestState = 'open' | 'merged' | 'closed'
 
+/**
+ * One local server a listed chat's agents linked. `state` is how the desktop
+ * last found its port: something answering (`running`), nothing (`stopped`),
+ * or a run the desktop started still coming up (`starting`).
+ */
+export type ConversationWireLocalServer = {
+  id: string
+  url: string
+  title: string
+  port: number
+  state: ConversationWireLocalServerState
+}
+export type ConversationWireLocalServerState = 'running' | 'stopped' | 'starting'
+
+/** The most local servers a listed chat carries; a desktop sends at most this many. */
+export const CONVERSATION_MAX_LOCAL_SERVERS = 20
+
+const LOCAL_SERVER_STATES = new Set<ConversationWireLocalServerState>(['running', 'stopped', 'starting'])
+
 /** The most pull requests a listed chat carries; a desktop sends at most this many. */
 export const CONVERSATION_MAX_PULL_REQUESTS = 20
 
@@ -318,6 +346,29 @@ export function parseConversationWirePullRequests(value: unknown): ConversationW
     })
   }
   return pullRequests
+}
+
+/** A listed chat's local servers: unreadable entries dropped, at most `CONVERSATION_MAX_LOCAL_SERVERS`. */
+export function parseConversationWireLocalServers(value: unknown): ConversationWireLocalServer[] | null {
+  if (!Array.isArray(value)) return null
+  const servers: ConversationWireLocalServer[] = []
+  for (const entry of value) {
+    if (servers.length >= CONVERSATION_MAX_LOCAL_SERVERS) break
+    if (!record(entry) || !id(entry.id)) continue
+    if (typeof entry.url !== 'string' || !/^https?:\/\//.test(entry.url) || entry.url.length > 2_000) continue
+    if (!text(entry.title, 200) || !entry.title.trim()) continue
+    if (!(typeof entry.port === 'number' && Number.isSafeInteger(entry.port) && entry.port > 0 && entry.port < 65_536))
+      continue
+    if (!LOCAL_SERVER_STATES.has(entry.state as ConversationWireLocalServerState)) continue
+    servers.push({
+      id: entry.id,
+      url: entry.url,
+      title: entry.title,
+      port: entry.port,
+      state: entry.state as ConversationWireLocalServerState,
+    })
+  }
+  return servers
 }
 
 /** A server frame after validation: events and pages are typed, everything else as the protocol declares it. */
@@ -532,6 +583,7 @@ function thread(value: unknown): ConversationThread | null {
   const models = value.models === undefined ? null : parseConversationWireModels(value.models)
   const host = value.host === undefined ? null : parseConversationWireHost(value.host)
   const pullRequests = value.pullRequests === undefined ? null : parseConversationWirePullRequests(value.pullRequests)
+  const localServers = value.localServers === undefined ? null : parseConversationWireLocalServers(value.localServers)
   const chatTitle = text(value.chatTitle, 2_000) && value.chatTitle.trim() ? value.chatTitle : null
   // A preview past its length is cut rather than refused: it is a sidebar's
   // line, and the row is worth more than the words.
@@ -573,6 +625,7 @@ function thread(value: unknown): ConversationThread | null {
     // row shows no mark rather than a wrong one.
     ...(host ? { host } : {}),
     ...(pullRequests ? { pullRequests } : {}),
+    ...(localServers?.length ? { localServers } : {}),
     // The lifecycle members: a title or a clock in the wrong shape is left
     // out, and the row reads as from a desktop that does not send it.
     ...(chatTitle ? { chatTitle } : {}),

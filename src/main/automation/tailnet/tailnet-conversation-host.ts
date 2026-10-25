@@ -11,6 +11,7 @@ import {
   type ConversationWireErrorCode,
   type ConversationWireHost,
   type ConversationWirePullRequest,
+  type ConversationWireLocalServer,
   type ConversationWireModels,
   isStaleConversationSend,
 } from '../../../../packages/conversation-protocol/src/public'
@@ -304,6 +305,13 @@ export type ConversationListMarks = {
   pullRequestsOf?: (
     keys: Array<{ workspaceId: string; agentId: string }>,
   ) => Promise<Map<string, ConversationWirePullRequest[]>>
+  /**
+   * The local servers the record holds for these chats, keyed
+   * `workspaceId:agentId`, as last checked: a chat with none is left out.
+   */
+  localServersOf?: (
+    keys: Array<{ workspaceId: string; agentId: string }>,
+  ) => Promise<Map<string, ConversationWireLocalServer[]>>
   /** This machine's own kind and colour. */
   selfMachine?: () => { kind: string; color: string }
   /**
@@ -847,7 +855,14 @@ export function createConversationGatewayHost(
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
   const withMarks = async (listed: ConversationThread[]): Promise<ConversationThread[]> => {
-    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf && !marks.checkoutsOf)
+    if (
+      !marks.machineOf &&
+      !marks.machineReader &&
+      !marks.pullRequestsOf &&
+      !marks.localServersOf &&
+      !marks.branchesOf &&
+      !marks.checkoutsOf
+    )
       return listed
     const machines = new Map<string, ConversationWireHost | null>()
     let read: ((workspaceId: string) => ConversationWireHost | null) | undefined
@@ -875,6 +890,12 @@ export function createConversationGatewayHost(
         .pullRequestsOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId })))
         .catch(() => null)
     }
+    let localServers: Map<string, ConversationWireLocalServer[]> | null = null
+    if (marks.localServersOf && listed.length > 0) {
+      localServers = await marks
+        .localServersOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId })))
+        .catch(() => null)
+    }
     let branches: Map<string, string> | null = null
     if (marks.branchesOf && listed.length > 0) {
       branches = await marks.branchesOf([...new Set(listed.map((thread) => thread.workspaceId))]).catch(() => null)
@@ -895,6 +916,7 @@ export function createConversationGatewayHost(
       const host = machineOf(thread.workspaceId)
       const branch = branches?.get(thread.workspaceId)
       const checkout = checkouts?.get(`${thread.workspaceId}:${thread.agentId}`)
+      const servers = localServers?.get(`${thread.workspaceId}:${thread.agentId}`)
       return {
         ...thread,
         ...(host ? { host } : {}),
@@ -902,6 +924,7 @@ export function createConversationGatewayHost(
         ...(checkout?.changes ? { changes: checkout.changes } : {}),
         ...(checkout?.worktree ? { worktree: true } : {}),
         ...(pullRequests ? { pullRequests: pullRequests.get(`${thread.workspaceId}:${thread.agentId}`) ?? [] } : {}),
+        ...(servers?.length ? { localServers: servers } : {}),
       }
     })
   }

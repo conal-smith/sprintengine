@@ -299,6 +299,9 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
   // A conversation's row on another machine shows its phase: running, waiting
   // on a person, done. The events that move it (never a token of a reply)
   // become the same throttled push.
+  // The list names each chat's local servers too, and a server starting or
+  // stopping moves none of the above: it is a push of its own.
+  core.localServers.onChanged(() => automationService.notifyConversationsChanged())
   conversations.onEvent((event) => {
     if (CONVERSATION_LIST_EVENTS.has(event.type)) automationService.notifyConversationsChanged()
     // An interrupted turn stops what it was waiting on in a client too.

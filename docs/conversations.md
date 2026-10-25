@@ -548,6 +548,17 @@ machine?: { kind: string; color: string }
   listing never runs `gh`, so a phone refreshing its list costs no request to
   GitHub. The record is kept current when a chat's turn ends and on its slow
   poll, and the change feed says when the list moved.
+- **`localServers`** (2026-10-25) is what the desktop's local server record
+  holds for the chat (`localServers.list`): each server its agents linked
+  (`id`, `url`, `title`, `port`, and `state`: `running`, `stopped` or
+  `starting`, as the desktop's own checks last found it), at most
+  `CONVERSATION_MAX_LOCAL_SERVERS` (20), and absent for a chat with none. The
+  command and folder that start one stay on the desktop. A server starting or
+  stopping is pushed on the change feed. A second desktop following the chat
+  draws them on its strip as that machine's, read-only: one whose address
+  reaches it (a tailnet name, the machine's own address) opens there, and one
+  on that machine's loopback says it is on that machine, its link still to
+  copy.
 - **`machine`** is how the phone draws the desktop itself: the kind and colour
   a second desktop gives it by default when it pairs by this machine's host
   name, with any override kept under `local` in the launch settings'

@@ -17,6 +17,7 @@ import { createConversationGatewayHost, type ConversationListMarks } from './tai
 import {
   conversationBranchesOf,
   conversationHostOf,
+  conversationLocalServersOf,
   conversationPullRequestsOf,
   tailnetSelfMachine,
   type ConversationMachineContext,
@@ -212,6 +213,53 @@ test('each listed chat names its machine and its pull requests, read once for th
     assert.deepEqual(
       parsed.sessions.find((thread) => thread.agentId === 'agent')?.pullRequests,
       byAgent.get('agent')?.pullRequests,
+    )
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test("each listed chat names its agents' local servers, read once for the whole list, and none for a chat without", async () => {
+  const reads: number[] = []
+  const f = await listFixture({
+    localServersOf: async (keys) => {
+      reads.push(keys.length)
+      return new Map([
+        [
+          'workspace:agent',
+          conversationLocalServersOf([
+            {
+              id: 'srv-1',
+              agentId: 'agent',
+              url: 'http://localhost:5173/',
+              title: 'localhost:5173',
+              port: 5173,
+              state: 'running',
+              linkedAt: 1,
+              stateAt: 2,
+              command: 'npm run dev',
+              cwd: '/Users/dev/app',
+              startedByStudio: true,
+            },
+          ]),
+        ],
+      ])
+    },
+  })
+  try {
+    const listed = await f.host.list()
+    const byAgent = new Map(listed.map((thread) => [thread.agentId, thread]))
+    // What a paired machine draws and opens; never the command or its folder.
+    assert.deepEqual(byAgent.get('agent')?.localServers, [
+      { id: 'srv-1', url: 'http://localhost:5173/', title: 'localhost:5173', port: 5173, state: 'running' },
+    ])
+    assert.equal('localServers' in byAgent.get('other')!, false)
+    assert.deepEqual(reads, [2], 'one record read for the whole list')
+    const parsed = parseConversationServerFrame({ type: 'sessions', requestId: 'list', sessions: listed })
+    assert.ok(parsed?.type === 'sessions')
+    assert.deepEqual(
+      parsed.sessions.find((thread) => thread.agentId === 'agent')?.localServers,
+      byAgent.get('agent')?.localServers,
     )
   } finally {
     await f.cleanup()

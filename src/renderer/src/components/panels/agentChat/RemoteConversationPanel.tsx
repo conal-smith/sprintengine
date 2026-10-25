@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
 import { meshConversationSessionId } from '../../../../../shared/tailnet-mesh'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
+import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import type {
   MeshConversation,
   MeshConversationAccess,
@@ -44,6 +45,7 @@ import {
 // link that is reconnecting keeps the transcript on screen and says so.
 
 const NO_PULL_REQUESTS: readonly BranchPullRequest[] = []
+const NO_LOCAL_SERVERS: readonly StudioLocalServer[] = []
 
 type Props = {
   /** The workspace here that holds this pane. */
@@ -320,7 +322,7 @@ export default function RemoteConversationPanel({
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
   }, [])
-  // The branch, changed files and pull requests the strip under the composer draws, from
+  // The branch, changed files, pull requests and local servers the strip under the composer draws, from
   // the newest list either this pane or the sidebar read: the sidebar reads
   // the machine again whenever it says its chats changed, so a pull request
   // the agent opens mid-conversation reaches the strip without a reopen.
@@ -332,6 +334,7 @@ export default function RemoteConversationPanel({
       worktree: facts?.worktree ?? false,
       files: remoteFileCountsOf(facts?.changes ?? null, pullRequests)?.files ?? null,
       pullRequests,
+      localServers: facts?.localServers ?? NO_LOCAL_SERVERS,
     }
   }, [facts])
   const hostUsageLimits = useMemo(

@@ -323,6 +323,12 @@ its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
 send them (`docs/conversations.md`, "Machines and pull requests in the list").
+A listed chat's `localServers` (2026-10-25: `{ id, url, title, port, state }`,
+the servers its agents linked, as the desktop last checked them, never the
+command or folder that starts one) is another, listed only for a chat that has
+some; a server starting or stopping is a change-feed push of its own. A
+desktop following another machine's chat draws them read-only, and opens one
+only where its address reaches it.
 A listed chat's `backgroundWork` (2026-10-17: `{ agents, monitors }`, the
 background agents still running and the monitors that will wake its agent) is
 another, beside a `phase` left as the turn's own: the desktop's sidebar counts

@@ -125,6 +125,24 @@ test('without the pane, Open is left out', () => {
   expect(ids(localServerActions(server(), { ...FULL, canOpenInPane: false }))).not.toContain('open')
 })
 
+test("a paired machine's server opens from here only where its address reaches here, and offers nothing that acts on it", () => {
+  const elsewhere = { ...FULL, tailnet: UP, elsewhere: { machineName: 'mac-mini' } }
+  const loopback = localServerActions(server({ state: 'stopped', startedByStudio: true }), elsewhere)
+  expect(ids(loopback)).toEqual(['open', 'copy-link'])
+  expect(loopback[0]).toMatchObject({
+    disabled: true,
+    reason: 'It listens on mac-mini only, so it opens there, not here.',
+  })
+  for (const url of ['http://127.0.0.2:3000/', 'http://app.localhost:3000/'])
+    expect(localServerActions(server({ url }), elsewhere)[0]?.disabled).toBe(true)
+  const reachable = server({ url: 'http://mac-mini.tail1234.ts.net:5173/' })
+  expect(ids(localServerActions(reachable, elsewhere))).toEqual(['open', 'open-external', 'copy-link'])
+  expect(ids(localServerActions(reachable, { ...elsewhere, canOpenInPane: false }))).toEqual([
+    'open-external',
+    'copy-link',
+  ])
+})
+
 test('how a run ended is said only for a stopped server', () => {
   const exit = { code: 1, at: 2, output: 'Error: port in use' }
   expect(localServerExitLine(server({ state: 'stopped', lastExit: exit }))).toBe('Exited with code 1')
@@ -163,7 +181,7 @@ afterEach(async () => {
   host = null
 })
 
-async function openMenu(servers: StudioLocalServer[]): Promise<void> {
+async function openMenu(servers: StudioLocalServer[], elsewhere?: { machineName: string }): Promise<void> {
   await act(async () => root?.unmount())
   host?.remove()
   host = document.createElement('div')
@@ -176,6 +194,7 @@ async function openMenu(servers: StudioLocalServer[]): Promise<void> {
           workspaceId="ws-1"
           servers={servers}
           ariaLabel="Local servers"
+          {...(elsewhere ? { elsewhere } : {})}
           renderTrigger={({ ref, togglePopover, triggerProps }) => (
             <GhostButton ref={ref} onClick={togglePopover} {...triggerProps} data-test-trigger="">
               Servers
@@ -334,4 +353,17 @@ test('several servers list one row each, with its state', async () => {
     (row) => row.textContent,
   )
   expect(rows).toEqual(['localhost:5173Running', 'StorybookStopped'])
+})
+
+test("a paired machine's server says where it runs, and asks Tailscale here nothing", async () => {
+  await openMenu([server()], { machineName: 'mac-mini' })
+  expect(document.querySelector('[data-local-server-elsewhere]')?.textContent).toBe('On mac-mini')
+  expect(api.tailnetShareStatus).not.toHaveBeenCalled()
+  expect(action('open')?.disabled).toBe(true)
+  expect(action('remove')).toBe(null)
+  await act(async () => action('copy-link')!.click())
+  expect(api.clipboardWriteText).toHaveBeenCalledWith('http://localhost:5173/')
+  await openMenu([server({ url: 'http://mac-mini.tail1234.ts.net:5173/' })], { machineName: 'mac-mini' })
+  await act(async () => action('open')!.click())
+  expect(calls.pane).toEqual([['ws-1', 'http://mac-mini.tail1234.ts.net:5173/']])
 })

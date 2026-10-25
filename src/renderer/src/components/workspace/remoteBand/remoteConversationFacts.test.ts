@@ -46,7 +46,23 @@ test('a listed chat is filed by its pairing and session, with what its tab draws
     branch: null,
     worktree: false,
     changes: null,
+    localServers: [],
   })
+})
+
+test("the local servers a chat's agents linked are kept under its agent, and a change in their state is a change", () => {
+  const localServers = [
+    { id: 'srv-1', url: 'http://localhost:5173/', title: 'localhost:5173', port: 5173, state: 'running' as const },
+  ]
+  publishRemoteConversationList('c1', [conversation({ localServers })])
+  const first = read()
+  assert.deepEqual(first.get(KEY)?.localServers, [
+    { ...localServers[0], agentId: conversation().agentId, linkedAt: 0, stateAt: 0 },
+  ])
+  publishRemoteConversationList('c1', [conversation({ localServers: [{ ...localServers[0]! }] })])
+  assert.equal(read(), first, 'the same servers read again move nothing')
+  publishRemoteConversationList('c1', [conversation({ localServers: [{ ...localServers[0]!, state: 'stopped' }] })])
+  assert.equal(read().get(KEY)?.localServers[0]?.state, 'stopped')
 })
 
 test('the files a chat changed are kept, and a change in them is a change', () => {

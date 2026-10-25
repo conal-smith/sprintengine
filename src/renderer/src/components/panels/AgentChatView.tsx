@@ -3666,14 +3666,21 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     [workspaceId, agentId],
   )
   // The local servers this conversation's agents started, from the same
-  // Studio record the sidebar's marks read; a paired machine's are its own.
+  // Studio record the sidebar's marks read. A paired machine's are its own,
+  // and its list names them with the chat: drawn read-only, and opened from
+  // here only where their address reaches here.
   const conversationLocalServers = useLocalServersOfConversation(
     transport.kind === 'remote' ? null : { workspaceId, agentId },
   )
-  const stripLocalServers = useMemo(
-    () => (conversationLocalServers.length > 0 ? { workspaceId, servers: conversationLocalServers } : null),
-    [conversationLocalServers, workspaceId],
-  )
+  const remoteLocalServers = transport.kind === 'remote' ? binding.listed?.localServers : undefined
+  const remoteMachineName = transport.kind === 'remote' ? (transport.machineName ?? 'the other machine') : null
+  const stripLocalServers = useMemo(() => {
+    if (remoteMachineName !== null)
+      return remoteLocalServers?.length
+        ? { workspaceId, servers: remoteLocalServers, elsewhere: { machineName: remoteMachineName } }
+        : null
+    return conversationLocalServers.length > 0 ? { workspaceId, servers: conversationLocalServers } : null
+  }, [conversationLocalServers, remoteLocalServers, remoteMachineName, workspaceId])
   // The subscription limits of the agent this chat runs on — read on this
   // computer for a chat that runs here, and on the paired machine a remote
   // chat runs on, where it says what its agents reported (`hostUsageLimits`).

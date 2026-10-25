@@ -7,6 +7,7 @@ import type { ChangedFileCounts } from '../../../../../shared/electron-api'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type { MeshQueuedMessage, MeshScheduledMessage } from '../../../../../shared/tailnet-mesh'
 import type { HostUsageLimits } from './hostUsageLimits'
+import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import type { Workspace } from '../../../types/workspace'
 import {
@@ -112,6 +113,8 @@ export type ChatBinding = {
     worktree: boolean
     files: ChangedFileCounts | null
     pullRequests: readonly BranchPullRequest[]
+    /** The local servers its agents linked over there, as that machine last checked them. */
+    localServers?: readonly StudioLocalServer[]
   }
 }
 

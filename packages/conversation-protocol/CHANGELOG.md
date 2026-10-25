@@ -13,6 +13,15 @@
 
 ### Added
 
+- **A listed chat names its agents' local servers.** `localServers` is an
+  optional member of `ConversationThread` (`ConversationWireLocalServer`:
+  `id`, `url`, `title`, `port`, `state`), at most
+  `CONVERSATION_MAX_LOCAL_SERVERS`, absent for a chat with none and from a
+  desktop built before it was listed. `parseConversationWireLocalServers`
+  reads it, dropping a server it cannot read (one whose address is not
+  http(s), whose port is not one), and the row keeps the rest. No
+  capability. The pinned files are unchanged.
+
 - **A desktop says what it knows of its agents' usage limits.**
   `CONVERSATION_USAGE_LIMITS_CAPABILITY` (`conversation-usage-limits`) names a
   desktop that answers `ConversationWatchUsageLimitsRequest`

@@ -124,7 +124,7 @@ async function mountRemote({
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
-  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
+  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree' | 'localServers'>>
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
   /** The machine keeps messages scheduled into its chats for a time (`conversation-scheduled-sends`). */
@@ -1241,5 +1241,29 @@ test('a pairing that may only follow sees the notice without its buttons; a mach
     expect(older.host.querySelector('[data-strip-usage-limits]')).toBeNull()
   } finally {
     await older.unmount()
+  }
+})
+
+test("the strip under a paired machine's chat names its agents' local servers, as that machine's", async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    listed: {
+      localServers: [
+        { id: 'srv-1', url: 'http://localhost:5173/', title: 'localhost:5173', port: 5173, state: 'running' },
+      ],
+    },
+  })
+  try {
+    // The list is read as the pane opens; the strip draws what it named.
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    const mark = chat.host.querySelector<HTMLElement>('[data-strip-local-servers]')
+    expect(mark?.getAttribute('aria-label')).toBe('Local server localhost:5173, running, on mac-mini')
+    await chat.act(async () => mark!.click())
+    expect(chat.document.querySelector('[data-local-server-elsewhere]')?.textContent).toBe('On mac-mini')
+    // On that machine's own loopback: it opens there, not here, and nothing here acts on it.
+    expect(chat.document.querySelector<HTMLButtonElement>('[data-local-server-action="open"]')?.disabled).toBe(true)
+    expect(chat.document.querySelector('[data-local-server-action="remove"]')).toBeNull()
+  } finally {
+    await chat.unmount()
   }
 })
