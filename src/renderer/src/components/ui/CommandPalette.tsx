@@ -39,6 +39,7 @@ import {
   type ExtensionSourceRow,
 } from '../palette/extensionsProvider'
 import { createConversationHistoryProvider, type SearchableChat } from '../palette/conversationHistoryProvider'
+import { createRemoteConversationHistoryProvider } from '../palette/remoteConversationHistoryProvider'
 import { paletteBackdropIsConversation } from '../palette/paletteBackdrop'
 import { sortWorkspacesByUserMessage } from '../../utils/workspaceRecency'
 import {
@@ -1246,6 +1247,8 @@ export default function CommandPalette({
     () => createConversationHistoryProvider({ getChats: () => searchableChatsRef.current }),
     [],
   )
+  // …and the paired machines' chats, each machine asked for itself.
+  const remoteConversationHistoryProvider = useMemo(() => createRemoteConversationHistoryProvider(), [])
   // "Build your own extension", among the Extensions rows: it opens the New
   // chat door in extension mode.
   const buildExtensionProvider = useMemo(() => createBuildExtensionPaletteProvider(), [])
@@ -1256,9 +1259,17 @@ export default function CommandPalette({
     if (groupInScope('skills', scope)) active.push(skillsProvider)
     if (groupInScope('extensions', scope)) active.push(extensionsProvider, buildExtensionProvider)
     if (groupInScope('files', scope) || groupInScope('content', scope)) active.push(diskProvider)
-    if (groupInScope('agents', scope)) active.push(conversationHistoryProvider)
+    if (groupInScope('agents', scope)) active.push(conversationHistoryProvider, remoteConversationHistoryProvider)
     return active
-  }, [skillsProvider, extensionsProvider, buildExtensionProvider, diskProvider, conversationHistoryProvider, scope])
+  }, [
+    skillsProvider,
+    extensionsProvider,
+    buildExtensionProvider,
+    diskProvider,
+    conversationHistoryProvider,
+    remoteConversationHistoryProvider,
+    scope,
+  ])
   const providerContext = useMemo(
     (): PaletteProviderContext => ({
       workspaceRoot: activeFolderPath,

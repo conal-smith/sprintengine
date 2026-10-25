@@ -277,13 +277,15 @@ export function createWorkspaceSyncService(options: WorkspaceSyncServiceOptions)
    * Stamped with the name's current stamp rather than now, as an agent main
    * registers is stamped 0: nobody decided this name, so a person's rename in
    * any window wins over it, even one typed a moment before this write and
-   * still on its way to main.
+   * still on its way to main. A name a person did decide, on a paired device
+   * (`conversation.rename`), passes `editedAt` as a window's rename stamps it.
    */
   function renameWorkspace(
     workspaceId: WorkspaceId,
     name: string,
     titleLocked: boolean,
     actor: WorkspaceMutationActor,
+    editedAt?: number,
   ): WorkspaceSyncCommandResult {
     const record = registry.getRecord(workspaceId)
     if (!record) return failure('unknown_workspace', `Workspace "${workspaceId}" is not in the registry.`)
@@ -291,7 +293,7 @@ export function createWorkspaceSyncService(options: WorkspaceSyncServiceOptions)
     return emit(
       {
         type: 'workspace.rename',
-        payload: { workspaceId, name, titleLocked, editedAt: record.fieldEditedAt?.name ?? 0 },
+        payload: { workspaceId, name, titleLocked, editedAt: editedAt ?? record.fieldEditedAt?.name ?? 0 },
       },
       registry.getState().primaryWorkspaceWindowId,
       actor,

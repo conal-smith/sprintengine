@@ -812,9 +812,9 @@ export const WorkTimelineStep = memo(function WorkTimelineStep({ tool }: { tool:
 
 // The agents a turn sent off, one card each, outside the turn's fold: the
 // fan-out is the part of the work worth seeing at a glance. A card opens the
-// agent's own thread in the Agents tab beside the chat. A chat on another
-// machine has no Agents tab to open, so there each agent is its lane, which
-// opens in place.
+// agent's own thread in the Agents tab beside the chat, a chat on another
+// machine's as well. Where no tab can be opened, each agent is its lane,
+// which opens in place.
 const AgentLaneCards = memo(function AgentLaneCards({ lanes }: { lanes: TranscriptToolEntry[] }) {
   const openAgents = useOpenAgentsPane()
   const stopAgent = useStopSubagent()

@@ -376,7 +376,8 @@ export function ConversationPermissionCard({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const denyRef = useRef<HTMLButtonElement | null>(null)
-  const { permanentApprovals } = useConversationTransport().capabilities
+  const transport = useConversationTransport()
+  const { permanentApprovals } = transport.capabilities
   // "Allow" on an app's tool is visibly an allow for that app.
   const origin = useClientToolOrigin(entry.action)
   const announcement = useArrivalFocus(
@@ -385,7 +386,11 @@ export function ConversationPermissionCard({
     () => (entry.defaultToNo ? denyRef.current : containerRef.current),
     `Permission request: ${permissionActionLabel(entry.action)}. Shift+Tab from the message box to review it.`,
   )
-  const rememberable = workspaceRoot
+  // The folder a remembered rule is scoped to, for its words. A chat on a
+  // paired machine has none here: that machine scopes the rule to its own
+  // folder when it saves it, and the folder the request runs in names it.
+  const ruleRoot = workspaceRoot ?? (transport.kind === 'remote' ? entry.cwd : undefined)
+  const rememberable = ruleRoot
     ? approvalRuleCandidate(
         {
           action: entry.action ?? '',
@@ -394,7 +399,7 @@ export function ConversationPermissionCard({
           defaultToNo: entry.defaultToNo,
           suppressAlwaysAllowRule: entry.suppressAlwaysAllowRule,
         },
-        workspaceRoot,
+        ruleRoot,
       )
     : null
   // The menu names exactly what a remembered rule grants ("git status …"),

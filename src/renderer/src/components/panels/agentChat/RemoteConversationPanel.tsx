@@ -3,12 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
 import { meshConversationSessionId } from '../../../../../shared/tailnet-mesh'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
+import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import type {
   MeshConversation,
   MeshConversationAccess,
   MeshConversationKey,
   MeshConversationLink,
   MeshQueuedMessage,
+  MeshScheduledMessage,
+  MeshConversationUsageLimits,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
 import {
@@ -18,6 +21,7 @@ import {
 import { ConversationChatBody } from '../AgentChatView'
 import { remoteFileCountsOf } from '../../workspace/terminalLines'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
+import { hostUsageLimitsOf } from './hostUsageLimits'
 import { publishRemoteChat } from './remoteChatRegistry'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
 import type { ChatReadiness } from './chatStates'
@@ -41,6 +45,7 @@ import {
 // link that is reconnecting keeps the transcript on screen and says so.
 
 const NO_PULL_REQUESTS: readonly BranchPullRequest[] = []
+const NO_LOCAL_SERVERS: readonly StudioLocalServer[] = []
 
 type Props = {
   /** The workspace here that holds this pane. */
@@ -85,13 +90,42 @@ function remoteConversationEngine(thread: MeshConversation | null, modelSwitch: 
   }
 }
 
+/** What the machine says it does for its chats beyond the turn: forks, side questions, the window's breakdown. */
+type RemoteAgentReads = { fork: boolean; sideQuestions: boolean; contextBreakdown: boolean }
+const NO_AGENT_READS: RemoteAgentReads = { fork: false, sideQuestions: false, contextBreakdown: false }
+
+/** What the machine a chat runs on said it takes, each read from its list. */
+type RemoteSessionFeatures = {
+  modelSwitch: boolean
+  stopSubagents: boolean
+  handoff: boolean
+  sendSkills: boolean
+  rewind: boolean
+  agentReads: RemoteAgentReads
+  cliPermissionModes: boolean
+  sendMode: boolean
+  reasoningEffort: boolean
+  mcpServerActions: boolean
+}
+
 /** The session a remote row stands for, as the chat view reads one: what that machine said it can do. */
 function remoteConversationSession(
   thread: MeshConversation | null,
   key: MeshConversationKey,
-  modelSwitch: boolean,
-  stopSubagents: boolean,
+  features: RemoteSessionFeatures,
 ): ConversationSessionSummary {
+  const {
+    modelSwitch,
+    stopSubagents,
+    handoff,
+    sendSkills,
+    rewind,
+    agentReads,
+    cliPermissionModes,
+    sendMode,
+    reasoningEffort,
+    mcpServerActions,
+  } = features
   const capabilities = thread?.capabilities
   return {
     // A session id, even for a conversation with none live over there: a
@@ -106,19 +140,34 @@ function remoteConversationSession(
     // shows the same switcher a local chat does; without it (a desktop built
     // before the list named it) the switcher stays hidden.
     ...(thread?.permissionPreset ? { permissionPreset: thread.permissionPreset } : {}),
+    // And the CLI's own mode at it (Claude Code's Accept edits), from a
+    // machine that runs them; elsewhere the preset runs its own.
+    ...(cliPermissionModes && thread?.permissionPreset && thread.permissionMode
+      ? { permissionMode: thread.permissionMode }
+      : {}),
     createdAt: thread?.createdAt ?? 0,
     updatedAt: thread?.updatedAt ?? 0,
     capabilities: {
       tools: true,
       approvals: capabilities?.approvals ?? true,
       questions: capabilities?.questions ?? true,
-      // The remote send carries no mode or effort. It carries images where
-      // the machine lists the chat as taking them: main puts each in that
-      // machine's upload store, as the phone does, and the send names them.
-      planMode: false,
+      // Whether its provider plans, where the machine takes the mode a turn
+      // runs in; one that does not runs every turn in the default mode.
+      planMode: sendMode && capabilities?.planMode === true,
+      // The remote send carries images where the machine lists the chat as
+      // taking them: main puts each in that machine's upload store, as the
+      // phone does, and the send names them.
       images: capabilities?.images === true,
-      skills: 'none',
-      reasoningEfforts: null,
+      // That machine's skills, where it takes them with a message: its runtime
+      // resolves each against its own folder and delivers it, which is what
+      // `context` stands for here. The "+" lists them, and that machine's MCP
+      // servers beside them.
+      skills: sendSkills ? 'context' : 'none',
+      // The levels its provider runs, where the machine takes a change of
+      // them: the effort control and `/effort` are offered as a local chat's
+      // are, and a change is that machine's to keep.
+      reasoningEfforts:
+        reasoningEffort && capabilities?.reasoningEfforts?.length ? capabilities.reasoningEfforts : null,
       interrupt: capabilities?.interrupt ?? true,
       resume: false,
       subagents: true,
@@ -136,8 +185,29 @@ function remoteConversationSession(
       // The machine's turn Stop spares such a chat's agents, so this is the
       // only Stop an agent has from here.
       stopSubagent: stopSubagents && capabilities?.stopSubagent === true,
+      // Whether the chat can be handed off to a fresh session over there: the
+      // machine takes the command and lists the chat's provider as able.
+      handoff: handoff && capabilities?.handoff === true,
+      // Whether the chat can go back to before one of its messages over there
+      // (Edit from here): the machine takes the command and lists the chat's
+      // provider as able.
+      rewind: rewind && capabilities?.rewind === true,
+      // Fork from here, a side question, and what fills the window: each
+      // where the machine takes it and lists the chat's provider as able. A
+      // fork is made over there and opens here as a pane of its own.
+      fork: agentReads.fork && capabilities?.fork === true,
+      sideQuestion: agentReads.sideQuestions && capabilities?.sideQuestion === true,
+      contextBreakdown: agentReads.contextBreakdown && capabilities?.contextBreakdown === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
+      // What the "+" menu's server rows may do to the chat's servers over
+      // there while it runs, where the machine takes the command.
+      ...(mcpServerActions && capabilities?.mcpServerActions?.length
+        ? { mcpServerActions: capabilities.mcpServerActions }
+        : {}),
+      // The CLI's own modes it runs beside them, offered in the same picker a
+      // local chat's are, where the machine takes a switch to one.
+      ...(cliPermissionModes && capabilities?.permissionModes ? { permissionModes: capabilities.permissionModes } : {}),
     },
   }
 }
@@ -161,6 +231,8 @@ export default function RemoteConversationPanel({
   const [listedModelSwitch, setListedModelSwitch] = useState(false)
   // The machine runs chats on Manual and Auto as well as Bypass and No flag.
   const [permissionModes, setPermissionModes] = useState(false)
+  // The machine runs chats on their CLI's own modes beside the presets.
+  const [cliPermissionModes, setCliPermissionModes] = useState(false)
   // The machine holds a message queued here mid-turn and sends it when the
   // turn ends, so this machine may sleep or close meanwhile; and what it
   // holds for this chat, as it last said.
@@ -172,7 +244,35 @@ export default function RemoteConversationPanel({
   const [steerSends, setSteerSends] = useState(false)
   // The machine stops one agent of one of its chats by itself.
   const [stopSubagents, setStopSubagents] = useState(false)
+  // The machine hands one of its chats off to a fresh session.
+  const [handoff, setHandoff] = useState(false)
+  // The machine takes one of its chats back to before a message, and puts a
+  // turn's files back from its checkpoint, in its own checkout.
+  const [rewind, setRewind] = useState(false)
+  const [checkpointRevert, setCheckpointRevert] = useState(false)
+  // The machine forks its chats, answers a side question about one, and says
+  // what fills one's window.
+  const [agentReads, setAgentReads] = useState<RemoteAgentReads>(NO_AGENT_READS)
+  // The machine searches a chat's folder for an @ and takes what is
+  // mentioned; takes files with a message; lists a chat CLI's commands.
+  const [composerMentions, setComposerMentions] = useState(false)
+  const [messageFiles, setMessageFiles] = useState(false)
+  const [commandList, setCommandList] = useState(false)
+  // The machine runs a turn in the mode its message says.
+  const [sendMode, setSendMode] = useState(false)
+  // The machine lists its chats' reasoning effort and takes a change of it.
+  const [reasoningEffort, setReasoningEffort] = useState(false)
+  // The machine reconnects and switches a live chat's MCP servers.
+  const [mcpServerActions, setMcpServerActions] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
+  // The machine keeps a message scheduled here for a time and sends it then;
+  // and what it keeps for this chat, as it last said.
+  const [scheduledSends, setScheduledSends] = useState(false)
+  const [hostScheduled, setHostScheduled] = useState<MeshScheduledMessage[]>([])
+  // The machine says what it knows of its agents' usage limits, and what it
+  // last said of them for this chat.
+  const [usageLimits, setUsageLimits] = useState(false)
+  const [hostUsage, setHostUsage] = useState<MeshConversationUsageLimits | null>(null)
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
   // chip names what the machine says the chat is now on.
@@ -198,6 +298,18 @@ export default function RemoteConversationPanel({
   hostPullRequestsRef.current = hostPullRequests
   const steerSendsRef = useRef(steerSends)
   steerSendsRef.current = steerSends
+  const checkpointRevertRef = useRef(checkpointRevert)
+  checkpointRevertRef.current = checkpointRevert
+  const composerMentionsRef = useRef(composerMentions)
+  composerMentionsRef.current = composerMentions
+  const messageFilesRef = useRef(messageFiles)
+  messageFilesRef.current = messageFiles
+  const commandListRef = useRef(commandList)
+  commandListRef.current = commandList
+  const scheduledSendsRef = useRef(scheduledSends)
+  scheduledSendsRef.current = scheduledSends
+  const usageLimitsRef = useRef(usageLimits)
+  usageLimitsRef.current = usageLimits
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -207,6 +319,8 @@ export default function RemoteConversationPanel({
       access: null,
       onLink: setLink,
       onQueued: setHostQueued,
+      onScheduled: setHostScheduled,
+      onUsageLimits: setHostUsage,
       // A pull request Create PR opened there is in the machine's list now:
       // read it again, so the strip says "Open PR #N" without waiting for the
       // sidebar's next read.
@@ -214,7 +328,9 @@ export default function RemoteConversationPanel({
     })
     const capabilities = base.capabilities
     const setModel = base.setModel
+    const setEffort = base.setReasoningEffort
     const send = base.send
+    const unwatchPullRequest = base.unwatchPullRequest
     return {
       ...base,
       // A chat at rest over there is listed without a session, and so without
@@ -236,12 +352,40 @@ export default function RemoteConversationPanel({
           skills: sendSkillsRef.current,
           steer: steerSendsRef.current,
           hostPullRequests: hostPullRequestsRef.current,
+          checkpointRevert: checkpointRevertRef.current,
+          mentions: composerMentionsRef.current,
+          attachFiles: messageFilesRef.current,
+          commandList: commandListRef.current,
+          hostSchedule: scheduledSendsRef.current,
+          hostUsageLimits: usageLimitsRef.current,
         }
       },
+      // A watch ended there is off its list: read it again, so the strip
+      // stops saying it is watched without waiting for the sidebar's read.
+      ...(unwatchPullRequest
+        ? {
+            unwatchPullRequest: async (input: { url: string }) => {
+              const result = await unwatchPullRequest(input)
+              if (result.ok) setListVersion((version) => version + 1)
+              return result
+            },
+          }
+        : {}),
       ...(setModel
         ? {
             setModel: async (change: Parameters<typeof setModel>[0]) => {
               const result = await setModel(change)
+              if (result.ok) setListVersion((version) => version + 1)
+              return result
+            },
+          }
+        : {}),
+      // Read again once accepted, as a model switch is, so the control names
+      // the level the machine says the chat now runs at.
+      ...(setEffort
+        ? {
+            setReasoningEffort: async (change: Parameters<typeof setEffort>[0]) => {
+              const result = await setEffort(change)
               if (result.ok) setListVersion((version) => version + 1)
               return result
             },
@@ -272,11 +416,35 @@ export default function RemoteConversationPanel({
         setListedAccess(result.access)
         setListedModelSwitch(result.modelSwitch === true)
         setPermissionModes(result.permissionModes === true)
+        setCliPermissionModes(result.cliPermissionModes === true)
         setQueuedSends(result.queuedSends === true)
         setSendSkills(result.sendSkills === true)
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
+        setHandoff(result.handoff === true)
+        setRewind(result.rewind === true)
+        setCheckpointRevert(result.checkpointRevert === true)
+        setAgentReads((current) => {
+          const next = {
+            fork: result.fork === true,
+            sideQuestions: result.sideQuestions === true,
+            contextBreakdown: result.contextBreakdown === true,
+          }
+          return current.fork === next.fork &&
+            current.sideQuestions === next.sideQuestions &&
+            current.contextBreakdown === next.contextBreakdown
+            ? current
+            : next
+        })
+        setComposerMentions(result.mentions === true)
+        setMessageFiles(result.messageFiles === true)
+        setCommandList(result.commands === true)
+        setSendMode(result.sendMode === true)
+        setReasoningEffort(result.reasoningEffort === true)
+        setMcpServerActions(result.mcpServerActions === true)
+        setScheduledSends(result.scheduledSends === true)
+        setUsageLimits(result.usageLimits === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -291,15 +459,25 @@ export default function RemoteConversationPanel({
 
   const [fields, setFields] = useState<Omit<ChatAgentFields, 'conversation' | 'name'>>({})
   const update = useCallback((patch: Partial<ChatAgentFields>) => {
-    const { conversation, name: _name, ...rest } = patch
+    const { conversation, name: _name, conversationReasoningEffort: _effort, ...rest } = patch
     setFields((current) => ({ ...current, ...rest }))
     // The chat view records a model only once the machine accepted the
     // switch; the chip moves now, and the list read that follows confirms it.
     // The CLI is the machine's to say, never this pane's.
     if (conversation?.modelId)
       setThread((current) => (current ? { ...current, modelId: conversation.modelId } : current))
+    // The effort likewise: the machine keeps it, and the control reads it off
+    // the list, moved now to the level it accepted.
+    if ('conversationReasoningEffort' in patch)
+      setThread((current) => {
+        if (!current) return current
+        const { reasoningEffort: _was, ...rest } = current
+        return patch.conversationReasoningEffort
+          ? { ...rest, reasoningEffort: patch.conversationReasoningEffort }
+          : rest
+      })
   }, [])
-  // The branch, changed files and pull requests the strip under the composer draws, from
+  // The branch, changed files, pull requests and local servers the strip under the composer draws, from
   // the newest list either this pane or the sidebar read: the sidebar reads
   // the machine again whenever it says its chats changed, so a pull request
   // the agent opens mid-conversation reaches the strip without a reopen.
@@ -311,12 +489,42 @@ export default function RemoteConversationPanel({
       worktree: facts?.worktree ?? false,
       files: remoteFileCountsOf(facts?.changes ?? null, pullRequests)?.files ?? null,
       pullRequests,
+      localServers: facts?.localServers ?? NO_LOCAL_SERVERS,
     }
   }, [facts])
+  const hostUsageLimits = useMemo(
+    () => (usageLimits && hostUsage ? hostUsageLimitsOf(machineName, hostUsage) : null),
+    [usageLimits, hostUsage, machineName],
+  )
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
-    [thread, key, modelSwitch, stopSubagents],
+    () =>
+      remoteConversationSession(thread, key, {
+        modelSwitch,
+        stopSubagents,
+        handoff,
+        sendSkills,
+        rewind,
+        agentReads,
+        cliPermissionModes,
+        sendMode,
+        reasoningEffort,
+        mcpServerActions,
+      }),
+    [
+      thread,
+      key,
+      modelSwitch,
+      stopSubagents,
+      handoff,
+      sendSkills,
+      rewind,
+      agentReads,
+      cliPermissionModes,
+      sendMode,
+      reasoningEffort,
+      mcpServerActions,
+    ],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])
@@ -326,6 +534,8 @@ export default function RemoteConversationPanel({
         ...fields,
         name: displayTitle,
         conversation: { providerId: thread?.providerId ?? '', modelId: thread?.modelId ?? '' },
+        // The effort the machine says the chat runs at, which each turn there runs at.
+        ...(thread?.reasoningEffort ? { conversationReasoningEffort: thread.reasoningEffort } : {}),
       },
       update,
       workspace: null,
@@ -338,9 +548,26 @@ export default function RemoteConversationPanel({
       // machine again; a third line saying both was the same fact once more.
       ...(engine ? { engine } : {}),
       hostQueue: { machineName, messages: hostQueued },
+      ...(scheduledSends ? { hostSchedule: { machineName, messages: hostScheduled } } : {}),
+      ...(hostUsageLimits ? { hostUsageLimits } : {}),
       listed,
     }),
-    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued, listed],
+    [
+      fields,
+      displayTitle,
+      thread,
+      update,
+      connectionId,
+      readiness,
+      session,
+      engine,
+      machineName,
+      hostQueued,
+      scheduledSends,
+      hostScheduled,
+      hostUsageLimits,
+      listed,
+    ],
   )
 
   // The Agents tab beside it reads the chat through this transport, as it

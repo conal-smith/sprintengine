@@ -1,4 +1,6 @@
 import { parseStoredAttachments } from '../../../packages/conversation-timeline/src/conversationProjection'
+import { parseConversationWireEvent } from '../../../packages/conversation-protocol/src/public'
+import type { ChatExportRemoteSource } from '../../shared/chat-export'
 import type {
   ConversationAttachmentResult,
   ConversationEvent,
@@ -60,4 +62,29 @@ export function parseChatExportSourceWire(value: unknown): ChatExportSourceWire 
     if (typeof mediaType === 'string' && typeof dataBase64 === 'string') pictures[ref] = { mediaType, dataBase64 }
   }
   return { events: events as ConversationEvent[], attachments: pictures }
+}
+
+/** Far more events than a person's chat runs to is a transcript gone wrong. */
+const MAX_REMOTE_EVENTS = 500_000
+
+const shortText = (value: unknown, max = 1_000): value is string => typeof value === 'string' && value.length <= max
+const shortTextOrNull = (value: unknown): value is string | null => value === null || shortText(value)
+
+/**
+ * A paired machine's chat as the window following it hands it over, checked
+ * before it is trusted: every event as the protocol reads one off the wire.
+ */
+export function parseChatExportRemoteSource(value: unknown): ChatExportRemoteSource | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const { events, title, project, providerId, modelId, workspaceRoot } = value as Record<string, unknown>
+  if (!Array.isArray(events) || events.length > MAX_REMOTE_EVENTS) return null
+  if (!shortText(title) || !shortText(workspaceRoot, 4_096)) return null
+  if (!shortTextOrNull(project) || !shortTextOrNull(providerId) || !shortTextOrNull(modelId)) return null
+  const parsed: ConversationEvent[] = []
+  for (const event of events) {
+    const read = parseConversationWireEvent(event)
+    if (!read) return null
+    parsed.push(read as ConversationEvent)
+  }
+  return { events: parsed, title, project, providerId, modelId, workspaceRoot }
 }

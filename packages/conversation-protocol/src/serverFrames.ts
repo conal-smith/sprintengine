@@ -10,9 +10,24 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
+  CONVERSATION_MAX_REVERT_PATH_CHARS,
+  CONVERSATION_MCP_SERVER_ACTIONS,
+  type ConversationWireMcpServerAction,
+  CONVERSATION_MAX_SCHEDULED_MESSAGES,
+  CONVERSATION_MAX_USAGE_LIMIT_PLANS,
+  CONVERSATION_MAX_USAGE_LIMIT_WINDOWS,
   isConversationPermissionModeId,
+  isConversationReasoningEffortId,
   type ConversationQueuedFrame,
   type ConversationQueuedMessage,
+  type ConversationRevertAnswer,
+  type ConversationRevertFile,
+  type ConversationScheduledFrame,
+  type ConversationScheduledMessage,
+  type ConversationUsageLimitNotice,
+  type ConversationUsageLimitSnapshot,
+  type ConversationUsageLimitWindow,
+  type ConversationUsageLimitsFrame,
 } from './commands.js'
 
 // The client half of the frame contract: what a desktop or phone following a
@@ -60,7 +75,56 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * `conversation-stop-subagent`. Absent means unknown.
      */
     stopSubagent?: boolean
+    /**
+     * The chat's provider hands a chat off to a fresh session (a `handoff`
+     * command), from a desktop that advertises `conversation-handoff`.
+     * Absent means unknown.
+     */
+    handoff?: boolean
+    /**
+     * The chat's provider can go back to before one of its messages (a
+     * `rewind` command), from a desktop that advertises `conversation-rewind`.
+     * Absent means unknown.
+     */
+    rewind?: boolean
+    /**
+     * The chat's provider can be forked (a `fork` command), from a desktop
+     * that advertises `conversation-fork`. Absent means unknown.
+     */
+    fork?: boolean
+    /**
+     * The chat's provider answers a side question (`askSideQuestion`), from a
+     * desktop that advertises `conversation-side-questions`. Absent means
+     * unknown.
+     */
+    sideQuestion?: boolean
+    /**
+     * The chat's agent says what fills its context window
+     * (`getContextBreakdown`), from a desktop that advertises
+     * `conversation-context-breakdown`. Absent means unknown.
+     */
+    contextBreakdown?: boolean
+    /**
+     * The reasoning effort levels the chat's provider runs, from a desktop
+     * that advertises `conversation-reasoning-effort`; empty for a provider
+     * that runs none. Absent means unknown.
+     */
+    reasoningEfforts?: string[]
+    /**
+     * What a device may do to the chat's MCP servers while it runs (an
+     * `mcpServerAction` command), from a desktop that advertises
+     * `conversation-mcp-server-actions`; empty for a provider that takes
+     * none. Absent means unknown.
+     */
+    mcpServerActions?: ConversationWireMcpServerAction[]
   }
+  /**
+   * The reasoning effort the chat runs at, one of its provider's
+   * `capabilities.reasoningEfforts`, from a desktop that advertises
+   * `conversation-reasoning-effort`. Absent for the provider's own default,
+   * and from a desktop built before it was listed.
+   */
+  reasoningEffort?: string
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
    * listed, and for a chat whose machine the desktop cannot name yet.
@@ -72,6 +136,15 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * empty when the chat has none.
    */
   pullRequests?: ConversationWirePullRequest[]
+  /**
+   * The local servers the chat's agents linked there (a dev server, a
+   * preview: anything an agent named with `local_server.link`), newest first,
+   * each as the desktop last checked it. Its address is as the agent gave it,
+   * so one on `localhost` is that desktop's own and opens only there. Read
+   * from the desktop's record, so listing starts no process. Absent for a
+   * chat with none, and from a desktop built before it was listed.
+   */
+  localServers?: ConversationWireLocalServer[]
   /**
    * The chat's title as the desktop's own sidebar shows it: the name of the
    * desktop's chat it belongs to, which a rename there changes. `title` stays
@@ -217,6 +290,15 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * Absent when it does not, and from a desktop built before it was listed.
    */
   worktree?: boolean
+  // ── A paired desktop's chat management ──
+  /**
+   * Whether the desktop compacts the chat by itself while it sits idle, just
+   * before its prompt cache expires: the chat's own Auto compact switch, or
+   * the desktop's default where the chat left it unset. Only a Claude chat
+   * compacts by itself yet, so a client reads it beside `providerId`. Absent
+   * from a desktop built before it was listed.
+   */
+  autoCompact?: boolean
 }
 
 /** A listed chat's background work (`ConversationThread.backgroundWork`). At least one count is above zero. */
@@ -269,8 +351,76 @@ export type ConversationWirePullRequest = {
   state: ConversationWirePullRequestState
   url: string
   title: string
+  /**
+   * Present while the chat's agent has the desktop watching the pull request
+   * (it reads it every couple of minutes and wakes the chat when it needs a
+   * look): what it waits on, as the desktop's last read left it. Absent from
+   * a desktop built before it was listed.
+   */
+  watch?: ConversationWirePullRequestWatch
 }
 export type ConversationWirePullRequestState = 'open' | 'merged' | 'closed'
+
+/**
+ * One local server a listed chat's agents linked. `state` is how the desktop
+ * last found its port: something answering (`running`), nothing (`stopped`),
+ * or a run the desktop started still coming up (`starting`).
+ */
+export type ConversationWireLocalServer = {
+  id: string
+  url: string
+  title: string
+  port: number
+  state: ConversationWireLocalServerState
+}
+export type ConversationWireLocalServerState = 'running' | 'stopped' | 'starting'
+
+/** The most local servers a listed chat carries; a desktop sends at most this many. */
+export const CONVERSATION_MAX_LOCAL_SERVERS = 20
+
+const LOCAL_SERVER_STATES = new Set<ConversationWireLocalServerState>(['running', 'stopped', 'starting'])
+
+/** What a watched pull request waits on, most pressing first (`ConversationWirePullRequest.watch`). */
+export type ConversationWirePullRequestWatch = {
+  /** When the watch began, ms epoch. */
+  since: number
+  waitingOn: ConversationWirePullRequestWaitingOn
+  approved?: true
+  autoMerge?: true
+  /** The branch it merges into, once read. */
+  base?: string
+  /** How many checks failed on its head, while some did. */
+  failedChecks?: number
+}
+export type ConversationWirePullRequestWaitingOn =
+  'first-read' | 'checks' | 'checks-failed' | 'behind' | 'conflicts' | 'changes-requested' | 'review' | 'merge'
+
+const PULL_REQUEST_WAITING_ON = new Set<string>([
+  'first-read',
+  'checks',
+  'checks-failed',
+  'behind',
+  'conflicts',
+  'changes-requested',
+  'review',
+  'merge',
+])
+
+/** A watched pull request's watch, or null: a watch this client cannot read is left out, and the pull request kept. */
+export function parseConversationWirePullRequestWatch(value: unknown): ConversationWirePullRequestWatch | null {
+  if (!record(value)) return null
+  if (typeof value.since !== 'number' || !Number.isFinite(value.since) || value.since < 0) return null
+  if (typeof value.waitingOn !== 'string' || !PULL_REQUEST_WAITING_ON.has(value.waitingOn)) return null
+  const failed = value.failedChecks
+  return {
+    since: value.since,
+    waitingOn: value.waitingOn as ConversationWirePullRequestWaitingOn,
+    ...(value.approved === true ? { approved: true as const } : {}),
+    ...(value.autoMerge === true ? { autoMerge: true as const } : {}),
+    ...(text(value.base, 255) && value.base.trim() ? { base: value.base } : {}),
+    ...(typeof failed === 'number' && Number.isSafeInteger(failed) && failed > 0 ? { failedChecks: failed } : {}),
+  }
+}
 
 /** The most pull requests a listed chat carries; a desktop sends at most this many. */
 export const CONVERSATION_MAX_PULL_REQUESTS = 20
@@ -301,19 +451,48 @@ export function parseConversationWirePullRequests(value: unknown): ConversationW
     if (!PULL_REQUEST_STATES.has(entry.state as ConversationWirePullRequestState)) continue
     if (typeof entry.url !== 'string' || !/^https?:\/\//.test(entry.url) || entry.url.length > 2_000) continue
     if (!text(entry.title, 2_000)) continue
+    const watch = parseConversationWirePullRequestWatch(entry.watch)
     pullRequests.push({
       number: entry.number,
       state: entry.state as ConversationWirePullRequestState,
       url: entry.url,
       title: entry.title,
+      ...(watch ? { watch } : {}),
     })
   }
   return pullRequests
 }
 
+/** A listed chat's local servers: unreadable entries dropped, at most `CONVERSATION_MAX_LOCAL_SERVERS`. */
+export function parseConversationWireLocalServers(value: unknown): ConversationWireLocalServer[] | null {
+  if (!Array.isArray(value)) return null
+  const servers: ConversationWireLocalServer[] = []
+  for (const entry of value) {
+    if (servers.length >= CONVERSATION_MAX_LOCAL_SERVERS) break
+    if (!record(entry) || !id(entry.id)) continue
+    if (typeof entry.url !== 'string' || !/^https?:\/\//.test(entry.url) || entry.url.length > 2_000) continue
+    if (!text(entry.title, 200) || !entry.title.trim()) continue
+    if (!(typeof entry.port === 'number' && Number.isSafeInteger(entry.port) && entry.port > 0 && entry.port < 65_536))
+      continue
+    if (!LOCAL_SERVER_STATES.has(entry.state as ConversationWireLocalServerState)) continue
+    servers.push({
+      id: entry.id,
+      url: entry.url,
+      title: entry.title,
+      port: entry.port,
+      state: entry.state as ConversationWireLocalServerState,
+    })
+  }
+  return servers
+}
+
 /** A server frame after validation: events and pages are typed, everything else as the protocol declares it. */
 export type ConversationParsedServerFrame =
-  | Exclude<ConversationServerFrame, { type: 'event' } | { type: 'snapshot' } | { type: 'sessions' }>
+  | Exclude<
+      ConversationServerFrame,
+      { type: 'event' } | { type: 'snapshot' } | { type: 'sessions' } | { type: 'commandResult' }
+    >
+  | ConversationCommandResultFrame
   | { type: 'sessions'; requestId: string; sessions: ConversationThread[] }
   | { type: 'event'; event: ConversationWireEvent }
   | {
@@ -325,6 +504,18 @@ export type ConversationParsedServerFrame =
       key?: ConversationWireKey
     }
   | ConversationQueuedFrame
+  | ConversationScheduledFrame
+  | ConversationUsageLimitsFrame
+
+/**
+ * A command's result under the full contract: a command that answers more
+ * than yes or no carries what it says in `data`, as its own doc says (a
+ * `revert`'s `ConversationRevertAnswer`), accepted or refused. A client
+ * built before it drops the member and reads the result as it always has.
+ */
+export type ConversationCommandResultFrame = Extract<ConversationServerFrame, { type: 'commandResult' }> & {
+  data?: Record<string, unknown>
+}
 
 const SERVER_FRAME_TYPES = new Set([
   'sessions',
@@ -337,6 +528,8 @@ const SERVER_FRAME_TYPES = new Set([
   'commandResult',
   'error',
   'queued',
+  'scheduled',
+  'usageLimits',
 ])
 const PHASES = new Set<ConversationWirePhase>([
   'idle',
@@ -519,6 +712,7 @@ function thread(value: unknown): ConversationThread | null {
   const models = value.models === undefined ? null : parseConversationWireModels(value.models)
   const host = value.host === undefined ? null : parseConversationWireHost(value.host)
   const pullRequests = value.pullRequests === undefined ? null : parseConversationWirePullRequests(value.pullRequests)
+  const localServers = value.localServers === undefined ? null : parseConversationWireLocalServers(value.localServers)
   const chatTitle = text(value.chatTitle, 2_000) && value.chatTitle.trim() ? value.chatTitle : null
   // A preview past its length is cut rather than refused: it is a sidebar's
   // line, and the row is worth more than the words.
@@ -555,11 +749,13 @@ function thread(value: unknown): ConversationThread | null {
     isConversationPermissionModeId(value.permissionMode)
       ? { permissionMode: value.permissionMode }
       : {}),
+    ...(isConversationReasoningEffortId(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {}),
     ...(models ? { models } : {}),
     // A machine or a pull request this client cannot read is left out: the
     // row shows no mark rather than a wrong one.
     ...(host ? { host } : {}),
     ...(pullRequests ? { pullRequests } : {}),
+    ...(localServers?.length ? { localServers } : {}),
     // The lifecycle members: a title or a clock in the wrong shape is left
     // out, and the row reads as from a desktop that does not send it.
     ...(chatTitle ? { chatTitle } : {}),
@@ -579,6 +775,7 @@ function thread(value: unknown): ConversationThread | null {
     ...(backgroundWork ? { backgroundWork } : {}),
     ...(changes ? { changes } : {}),
     ...(value.worktree === true ? { worktree: true } : {}),
+    ...(typeof value.autoCompact === 'boolean' ? { autoCompact: value.autoCompact } : {}),
     ...(flags
       ? {
           capabilities: {
@@ -596,10 +793,91 @@ function thread(value: unknown): ConversationThread | null {
               : {}),
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
             ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
+            ...(typeof flags.handoff === 'boolean' ? { handoff: flags.handoff } : {}),
+            ...(typeof flags.rewind === 'boolean' ? { rewind: flags.rewind } : {}),
+            ...(typeof flags.fork === 'boolean' ? { fork: flags.fork } : {}),
+            ...(typeof flags.sideQuestion === 'boolean' ? { sideQuestion: flags.sideQuestion } : {}),
+            ...(typeof flags.contextBreakdown === 'boolean' ? { contextBreakdown: flags.contextBreakdown } : {}),
+            ...(Array.isArray(flags.mcpServerActions)
+              ? {
+                  mcpServerActions: flags.mcpServerActions.filter((action): action is ConversationWireMcpServerAction =>
+                    CONVERSATION_MCP_SERVER_ACTIONS.includes(action as never),
+                  ),
+                }
+              : {}),
+            ...(Array.isArray(flags.reasoningEfforts)
+              ? { reasoningEfforts: flags.reasoningEfforts.filter(isConversationReasoningEffortId) }
+              : {}),
           },
         }
       : {}),
   }
+}
+
+// A provider or a plan is a short lower-case token; one this client does not
+// know still passes, and the client draws it as it can.
+const USAGE_TOKEN = /^[a-z][a-z0-9_-]{0,31}$/
+const USAGE_STATUSES = new Set(['allowed', 'warning', 'rejected'])
+const nullableClock = (value: unknown): value is number | null => value === null || clock(value)
+
+/** A `usageLimits` frame's notice, or null for one this client cannot read. */
+export function parseConversationUsageLimitNotice(value: unknown): ConversationUsageLimitNotice | null {
+  if (!record(value) || typeof value.provider !== 'string' || !USAGE_TOKEN.test(value.provider)) return null
+  if (!nullableClock(value.resetsAt) || !clock(value.hitAt) || !nullableClock(value.resumeAt)) return null
+  return {
+    provider: value.provider,
+    limit: value.limit === 'session' || value.limit === 'weekly' ? value.limit : null,
+    resetsAt: value.resetsAt,
+    hitAt: value.hitAt,
+    resumeAt: value.resumeAt,
+    ...(typeof value.failure === 'string' && value.failure && value.failure.length <= 2_000
+      ? { failure: value.failure }
+      : {}),
+  }
+}
+
+function usageWindow(value: unknown): ConversationUsageLimitWindow | null {
+  if (!record(value) || !id(value.id) || !text(value.label, 200) || !USAGE_STATUSES.has(value.status as string))
+    return null
+  const used = value.usedPercent
+  if (!(used === null || (typeof used === 'number' && Number.isFinite(used)))) return null
+  if (!nullableClock(value.resetsAt) || !clock(value.observedAt)) return null
+  return {
+    id: value.id,
+    label: value.label,
+    usedPercent: used === null ? null : Math.min(100, Math.max(0, used)),
+    resetsAt: value.resetsAt,
+    ...(typeof value.durationMs === 'number' && Number.isFinite(value.durationMs) && value.durationMs > 0
+      ? { durationMs: value.durationMs }
+      : {}),
+    ...(value.scope === 'model' ? { scope: 'model' as const } : {}),
+    status: value.status as ConversationUsageLimitWindow['status'],
+    observedAt: value.observedAt,
+  }
+}
+
+/** A `usageLimits` frame's plans: unreadable plans and windows dropped, each list bounded. */
+export function parseConversationUsageLimitSnapshots(value: unknown): ConversationUsageLimitSnapshot[] | null {
+  if (!Array.isArray(value)) return null
+  const snapshots: ConversationUsageLimitSnapshot[] = []
+  for (const entry of value) {
+    if (snapshots.length >= CONVERSATION_MAX_USAGE_LIMIT_PLANS) break
+    if (!record(entry) || typeof entry.provider !== 'string' || !USAGE_TOKEN.test(entry.provider)) continue
+    if (!Array.isArray(entry.windows) || !clock(entry.observedAt)) continue
+    const windows: ConversationUsageLimitWindow[] = []
+    for (const raw of entry.windows) {
+      if (windows.length >= CONVERSATION_MAX_USAGE_LIMIT_WINDOWS) break
+      const window = usageWindow(raw)
+      if (window) windows.push(window)
+    }
+    snapshots.push({
+      provider: entry.provider,
+      ...(typeof entry.plan === 'string' && USAGE_TOKEN.test(entry.plan) ? { plan: entry.plan } : {}),
+      windows,
+      observedAt: entry.observedAt,
+    })
+  }
+  return snapshots
 }
 
 function retry(value: Record<string, unknown>): { retryAfterMs?: number } {
@@ -718,6 +996,8 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
             ...(frame.ok === true && typeof frame.notice === 'string' && frame.notice.length <= 2_000
               ? { notice: frame.notice }
               : {}),
+            // Read by the command it answers (`parseConversationRevertAnswer`).
+            ...(record(frame.data) ? { data: frame.data } : {}),
             ...retry(frame),
           }
         : null
@@ -748,7 +1028,88 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
       }
       return { type: 'queued', key: { workspaceId: key.workspaceId, agentId: key.agentId }, messages }
     }
+    case 'scheduled': {
+      const key = frame.key
+      if (!record(key) || !id(key.workspaceId) || !id(key.agentId) || !Array.isArray(frame.messages)) return null
+      const messages: ConversationScheduledMessage[] = []
+      for (const entry of frame.messages) {
+        if (messages.length >= CONVERSATION_MAX_SCHEDULED_MESSAGES) break
+        // One unreadable message does not hide the rest.
+        if (
+          !record(entry) ||
+          !id(entry.id) ||
+          !text(entry.text, CONVERSATION_MAX_MESSAGE_CHARS) ||
+          !clock(entry.sendAt) ||
+          !clock(entry.createdAt)
+        )
+          continue
+        messages.push({
+          id: entry.id,
+          text: entry.text,
+          sendAt: entry.sendAt,
+          createdAt: entry.createdAt,
+          ...(clock(entry.waitingSince) ? { waitingSince: entry.waitingSince } : {}),
+          ...(entry.sending === true ? { sending: true as const } : {}),
+          ...(typeof entry.failure === 'string' && entry.failure.length <= 2_000 ? { failure: entry.failure } : {}),
+        })
+      }
+      return { type: 'scheduled', key: { workspaceId: key.workspaceId, agentId: key.agentId }, messages }
+    }
+    case 'usageLimits': {
+      const key = frame.key
+      if (!record(key) || !id(key.workspaceId) || !id(key.agentId) || typeof frame.autoResume !== 'boolean') return null
+      const limits = parseConversationUsageLimitSnapshots(frame.limits)
+      if (!limits) return null
+      // A notice this client cannot read is none: the row is not drawn
+      // rather than drawn wrong.
+      const notice = frame.notice === null ? null : parseConversationUsageLimitNotice(frame.notice)
+      return {
+        type: 'usageLimits',
+        key: { workspaceId: key.workspaceId, agentId: key.agentId },
+        notice,
+        autoResume: frame.autoResume,
+        limits,
+      }
+    }
     default:
       return null
   }
+}
+
+const REVERT_FILE_STATUSES = new Set<ConversationRevertFile['status']>(['added', 'modified', 'deleted'])
+
+/**
+ * A `revert`'s answer (`ConversationRevertAnswer`), from its `commandResult`'s
+ * `data`: null when it is absent or not in the documented shape. A file this
+ * client cannot read makes the whole answer unreadable rather than a shorter
+ * list, since a confirmed revert must name every path the desktop listed.
+ */
+export function parseConversationRevertAnswer(value: unknown): ConversationRevertAnswer | null {
+  if (!record(value)) return null
+  if (value.changed === true) return { changed: true }
+  if (typeof value.reverted !== 'boolean' || !Array.isArray(value.files)) return null
+  const files: ConversationRevertFile[] = []
+  for (const file of value.files) {
+    if (
+      !record(file) ||
+      !text(file.path, CONVERSATION_MAX_REVERT_PATH_CHARS) ||
+      !file.path ||
+      !REVERT_FILE_STATUSES.has(file.status as ConversationRevertFile['status']) ||
+      !integer(file.addedLines) ||
+      !integer(file.removedLines) ||
+      typeof file.binary !== 'boolean'
+    )
+      return null
+    files.push({
+      path: file.path,
+      status: file.status as ConversationRevertFile['status'],
+      addedLines: file.addedLines,
+      removedLines: file.removedLines,
+      binary: file.binary,
+    })
+  }
+  const kept = Array.isArray(value.kept)
+    ? value.kept.filter((path): path is string => text(path, CONVERSATION_MAX_REVERT_PATH_CHARS) && path.length > 0)
+    : []
+  return { files, reverted: value.reverted, ...(kept.length ? { kept } : {}) }
 }

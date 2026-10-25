@@ -6,6 +6,10 @@ import {
   MESH_SETTLE_CONVERSATION_CHANNEL,
   MESH_VISIT_CONVERSATION_CHANNEL,
   MESH_CHANGE_CONVERSATION_CHANNEL,
+  MESH_CONVERSATION_DELETE_PLAN_CHANNEL,
+  MESH_CONVERSATION_SEARCH_CHANNEL,
+  MESH_APPROVAL_RULES_CHANNEL,
+  MESH_REVOKE_APPROVAL_RULE_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -16,7 +20,9 @@ import {
   MESH_PAIR_CHANNEL,
   MESH_REQUEST_PAIRING_CHANNEL,
   meshConversationFrameChannel,
+  MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_COMMAND_CHANNEL,
+  MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
   MESH_CONVERSATION_EARLIER_CHANNEL,
   MESH_CONVERSATION_FOLLOW_CHANNEL,
   MESH_CONVERSATION_LIST_CHANNEL,
@@ -26,10 +32,14 @@ import {
   MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL,
   MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL,
   MESH_CONVERSATION_SEND_CHANNEL,
+  MESH_CONVERSATION_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
+  MESH_CONVERSATION_ATTACHMENT_CHANNEL,
   MESH_CONVERSATION_TURN_DIFF_CHANNEL,
   MESH_CONVERSATION_UNFOLLOW_CHANNEL,
+  MESH_CONVERSATION_FILE_SEARCH_CHANNEL,
+  MESH_CONVERSATION_COMMANDS_CHANNEL,
   type MeshConversationFrame,
 } from '../../shared/tailnet-mesh'
 import type { AutomationService } from '../automation/automation-service'
@@ -141,6 +151,24 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
       change: record.change,
     })
   })
+  // A paired desktop's chat management: what a Delete there would do.
+  ipcMain.handle(MESH_CONVERSATION_DELETE_PLAN_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationDeletePlan({ connectionId: record.connectionId, workspaceId: record.workspaceId })
+  })
+  // …and what was said in its chats, for the palette.
+  ipcMain.handle(MESH_CONVERSATION_SEARCH_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationSearch({ connectionId: record.connectionId, query: record.query })
+  })
+  // …and the "always allow" rules its chats run with, for Settings.
+  ipcMain.handle(MESH_APPROVAL_RULES_CHANNEL, (_event, input: unknown) =>
+    service.mesh().approvalRules({ connectionId: asRecord(input)?.connectionId }),
+  )
+  ipcMain.handle(MESH_REVOKE_APPROVAL_RULE_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().revokeApprovalRule({ connectionId: record.connectionId, ruleId: record.ruleId })
+  })
   ipcMain.handle(MESH_WORKSPACE_CHECKOUT_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input)
     return service.mesh().workspaceCheckout(record?.connectionId, record?.workspaceId)
@@ -227,6 +255,9 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
       queue: record.queue,
       steer: record.steer,
       skills: record.skills,
+      mentions: record.mentions,
+      files: record.files,
+      mode: record.mode,
     })
   })
   ipcMain.handle(MESH_CONVERSATION_TOOL_DETAIL_CHANNEL, (_event, input: unknown) => {
@@ -237,8 +268,40 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
     const record = asRecord(input) ?? {}
     return service.mesh().conversationToolImage({ key: record.key, toolUseId: record.toolUseId })
   })
+  ipcMain.handle(MESH_CONVERSATION_ATTACHMENT_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationAttachment({ key: record.key, ref: record.ref })
+  })
   ipcMain.handle(MESH_CONVERSATION_TURN_DIFF_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input) ?? {}
     return service.mesh().conversationTurnDiff({ key: record.key, turnSeq: record.turnSeq, path: record.path })
+  })
+  // A side question to a chat over there is answered by its agent there, and
+  // may take a while: the invoke waits for it, as a local side question's does.
+  ipcMain.handle(MESH_CONVERSATION_SIDE_QUESTION_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationSideQuestion({
+      key: record.key,
+      requestId: record.requestId,
+      question: record.question,
+      history: record.history,
+    })
+  })
+  ipcMain.handle(MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationCancelSideQuestion({ key: record.key, requestId: record.requestId })
+  })
+  ipcMain.handle(MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationContextBreakdown({ key: record.key })
+  })
+  // What a followed chat's composer reads of its folder over there.
+  ipcMain.handle(MESH_CONVERSATION_FILE_SEARCH_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationSearchFiles({ key: record.key, query: record.query })
+  })
+  ipcMain.handle(MESH_CONVERSATION_COMMANDS_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationCommandList({ key: record.key, refresh: record.refresh })
   })
 }

@@ -3,7 +3,9 @@ import { useSyncExternalStore } from 'react'
 import type {
   ConversationWireChanges,
   ConversationWireFileCounts,
+  ConversationWireLocalServer,
 } from '../../../../../../packages/conversation-protocol/src/public'
+import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import { cliForConversationProvider } from '../../../../../shared/conversation-harness'
 import { phaseWithBackgroundWork } from '../../../../../shared/conversation/phase'
 import { meshConversationSessionId, type MeshConversation } from '../../../../../shared/tailnet-mesh'
@@ -41,6 +43,38 @@ export type RemoteConversationFacts = {
   worktree: boolean
   /** The files its checkout carries over there; null from a machine that does not say, or a chat at rest. */
   changes: ConversationWireChanges | null
+  /** The local servers its agents linked over there, as that machine last checked them; empty for none. */
+  localServers: StudioLocalServer[]
+}
+
+const NO_SERVERS: StudioLocalServer[] = []
+
+/**
+ * A paired machine's listed servers in the shape this computer's own record
+ * hands the strip, under the chat's agent there. What a server needs to run
+ * again (its command, its folder) is that machine's, and not listed.
+ */
+export function localServersOfWire(
+  agentId: string,
+  servers: readonly ConversationWireLocalServer[] | undefined,
+): StudioLocalServer[] {
+  if (!servers?.length) return NO_SERVERS
+  return servers.map((server) => ({ ...server, agentId, linkedAt: 0, stateAt: 0 }))
+}
+
+function sameServers(a: readonly StudioLocalServer[], b: readonly StudioLocalServer[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((server, index) => {
+      const other = b[index]!
+      return (
+        server.id === other.id &&
+        server.state === other.state &&
+        server.url === other.url &&
+        server.title === other.title
+      )
+    })
+  )
 }
 
 type Snapshot = ReadonlyMap<string, RemoteConversationFacts>
@@ -66,6 +100,7 @@ function factsOf(conversation: MeshConversation): RemoteConversationFacts {
     branch: conversation.branch?.trim() || null,
     worktree: conversation.worktree === true,
     changes: conversation.changes ?? null,
+    localServers: localServersOfWire(conversation.agentId, conversation.localServers),
   }
 }
 
@@ -88,7 +123,8 @@ function sameFacts(a: RemoteConversationFacts, b: RemoteConversationFacts): bool
     a.lastTurnEndedAt !== b.lastTurnEndedAt ||
     a.branch !== b.branch ||
     a.worktree !== b.worktree ||
-    !sameChanges(a.changes, b.changes)
+    !sameChanges(a.changes, b.changes) ||
+    !sameServers(a.localServers, b.localServers)
   )
     return false
   if (a.pullRequests.length !== b.pullRequests.length) return false

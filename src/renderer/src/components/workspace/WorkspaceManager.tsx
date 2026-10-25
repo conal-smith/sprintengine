@@ -141,6 +141,7 @@ import { obtainNewChatWorktree, prepareNewChatWorktree, takeReadyNewChatWorktree
 import type { AgentState } from '../../../../shared/agent-state'
 import { openChatLink } from './manager/chatLinkOpener'
 import { remoteChatLinkTarget } from './remoteBand/remoteChatLinks'
+import { registerRemoteChatOpener } from './remoteBand/remoteChatSearch'
 import { setAppCommandRunner } from '../../commands/appCommandRunner'
 import {
   markLaunchedAgentProjected,
@@ -438,10 +439,15 @@ export default function WorkspaceManager() {
   useAppTheme()
   const dialog = useConfirmDialog()
   // The row menu's Delete chat… on a settled chat, the same flow Settings ▸ Settled chats runs.
-  const { deleteChats: deleteSettledChats } = useDeleteSettledChats()
+  const { deleteChats: deleteSettledChats, deleteThere: deleteSettledChatThere } = useDeleteSettledChats()
   const sidebarDeleteSettledChat = useCallback(
     (workspaceId: string) => void deleteSettledChats([workspaceId]),
     [deleteSettledChats],
+  )
+  // …and on a paired machine's settled chat, where that machine deletes its chats from here.
+  const sidebarDeleteSettledChatThere = useCallback(
+    (workspaceId: string) => void deleteSettledChatThere(workspaceId),
+    [deleteSettledChatThere],
   )
   const workspaceWindowId = useMemo(() => getWorkspaceWindowIdFromLocation(), [])
   // Dock-back from the external editor window: the window owning that workspace's
@@ -712,6 +718,9 @@ export default function WorkspaceManager() {
     mode?: NewAgentPanelMode
     // Opened on a scheduled agent's card: the panel edits that one.
     editingScheduledAgentId?: string | null
+    // Opened on a paired machine's project ("New chat in project" on its chat
+    // or header): the panel starts on that machine and project.
+    remoteProject?: { connectionId: string; workspaceId: string } | null
   } | null>(null)
   const scheduledAgents = useScheduledAgents()
   const newChatPanelOpen = newChatPanelState !== null
@@ -3819,8 +3828,10 @@ export default function WorkspaceManager() {
   // next time it reads the machine.
   // `place` is the row menu's Move to New Window or Move to Main Window: the
   // chat opens in that window, as a local chat is moved to it.
+  // Answers the workspace here whose pane follows the chat, or null when none
+  // could be made.
   const openRemoteSession = useCallback(
-    (spec: RemoteSessionOpenSpec, place?: RemoteWindowPlace): void => {
+    (spec: RemoteSessionOpenSpec, place?: RemoteWindowPlace): string | null => {
       if (spec.attachedWorkspaceId) {
         if (place === 'new-window') void moveWorkspaceToNewWindow(spec.attachedWorkspaceId)
         else if (place === 'main-window') moveWorkspaceToPrimaryWindow(spec.attachedWorkspaceId)
@@ -3828,7 +3839,7 @@ export default function WorkspaceManager() {
           setNewChatPanelState(null)
           setActiveWorkspaceForWindow(workspaceWindowId, spec.attachedWorkspaceId)
         }
-        return
+        return spec.attachedWorkspaceId
       }
       if (!place) setNewChatPanelState(null)
       if (!SOLO_CHAT_TEMPLATE) {
@@ -3837,7 +3848,7 @@ export default function WorkspaceManager() {
           title: `Could not open ${spec.title} from ${spec.machineName}`,
           description: 'The Solo layout template is missing.',
         })
-        return
+        return null
       }
       const workspaceId = addWorkspace(SOLO_CHAT_TEMPLATE, {
         // The CHAT's name over there, not the agent's (owner, 2026-09-13). This
@@ -3875,6 +3886,7 @@ export default function WorkspaceManager() {
         },
       })
       if (place === 'new-window') void moveWorkspaceToNewWindow(workspaceId)
+      return workspaceId
     },
     [
       addWorkspace,
@@ -4819,6 +4831,12 @@ export default function WorkspaceManager() {
     })
   })
   const sidebarNewChatInFolder = useStableCallback((folderPath: string) => openNewChatPanel(folderPath))
+  // A paired machine's project: the panel opens as for any project, then
+  // picks that machine and project itself (`NewAgentPanel.remoteProject`).
+  const sidebarNewChatOnMachine = useStableCallback((remoteProject: { connectionId: string; workspaceId: string }) => {
+    openNewChatPanel(null)
+    setNewChatPanelState((prev) => (prev ? { ...prev, remoteProject } : prev))
+  })
   const sidebarShowMenu = useStableCallback(
     (event: React.MouseEvent<HTMLButtonElement>, label: (typeof MENU_BAR_ITEMS)[number]) =>
       void handleShowMenubarMenu(event, label),
@@ -4875,6 +4893,23 @@ export default function WorkspaceManager() {
       unsubscribe?.()
     }
   }, [workspaceWindowId, moveWorkspaceToWindow, sidebarSelectWorkspace, openRemoteSession])
+  // A match the palette found in a paired machine's chat opens it here as
+  // its sidebar row opens it, on the agent the match is in
+  // (`remoteChatSearch.ts`).
+  useEffect(
+    () =>
+      registerRemoteChatOpener((target) => {
+        const spec = remoteChatLinkTarget(target.workspaceId)
+        if (!spec || spec.connectionId !== target.connectionId) return null
+        if (spec.attachedWorkspaceId || spec.conversation.agentId === target.agentId) return openRemoteSession(spec)
+        return openRemoteSession({
+          ...spec,
+          conversation: { workspaceId: target.workspaceId, agentId: target.agentId },
+          sessionId: meshConversationSessionId(target.workspaceId, target.agentId),
+        })
+      }),
+    [openRemoteSession],
+  )
   const sidebarMoveToNewWindow = useStableCallback(
     (id: WorkspaceId, placement: Parameters<typeof moveWorkspaceToNewWindow>[1]) =>
       void moveWorkspaceToNewWindow(id, placement),
@@ -5012,8 +5047,10 @@ export default function WorkspaceManager() {
             openScheduledAgentId={newChatPanelState?.editingScheduledAgentId ?? null}
             newChatOpen={newChatPanelState !== null}
             onNewChatInFolder={sidebarNewChatInFolder}
+            onNewChatOnMachine={sidebarNewChatOnMachine}
             onRevealFolder={sidebarRevealFolder}
             onDeleteSettledChat={sidebarDeleteSettledChat}
+            onDeleteSettledChatThere={sidebarDeleteSettledChatThere}
             onSetSidebarCollapsed={setSidebarCollapsed}
             sidebarWidth={sidebarWidth}
             onSetSidebarWidth={setSidebarWidth}
@@ -5203,7 +5240,8 @@ export default function WorkspaceManager() {
                         open panel must remount; keyed on identity, so removing
                         the chip never does. */}
                             <NewAgentPanel
-                              key={`${newChatPanelState.connector?.id ?? 'plain'}:${newChatPanelState.forcedSelection?.kind ?? 'remembered'}:${newChatPanelState.mode ?? 'chat'}:${newChatPanelState.editingScheduledAgentId ?? ''}`}
+                              key={`${newChatPanelState.connector?.id ?? 'plain'}:${newChatPanelState.forcedSelection?.kind ?? 'remembered'}:${newChatPanelState.mode ?? 'chat'}:${newChatPanelState.editingScheduledAgentId ?? ''}:${newChatPanelState.remoteProject ? `${newChatPanelState.remoteProject.connectionId}/${newChatPanelState.remoteProject.workspaceId}` : ''}`}
+                              remoteProject={newChatPanelState.remoteProject ?? null}
                               initialMcpServers={newChatPanelState.connector ? [newChatPanelState.connector] : null}
                               workspaceId={windowActiveWorkspaceId ?? ''}
                               conversationWorkspaceSupported={conversationSpawnEnabled}

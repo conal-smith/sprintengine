@@ -18,6 +18,8 @@ import type {
   ConversationRewindInput,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationMcpServerActionInput,
+  ConversationMcpServerActionResult,
   ConversationRewindResult,
   ConversationSendTurnInput,
   ConversationSessionFrame,
@@ -38,12 +40,18 @@ import type {
   ConversationTurnDiffInput,
   ConversationTurnDiffResult,
 } from '../../../../../shared/conversation-runtime'
+import { parseConversationRevertAnswer } from '../../../../../../packages/conversation-protocol/src/public'
+import type { ConversationCommandCatalog } from '../../../../../shared/conversation/commands'
+import type { ConversationFileSearchEntry } from '../../../../../../packages/conversation-protocol/src/public'
 import type {
   MeshConversationAccess,
   MeshConversationCommandResult,
   MeshConversationKey,
   MeshConversationLink,
   MeshQueuedMessage,
+  MeshScheduledMessage,
+  MeshConversationUsageLimits,
+  MeshUsageLimitResumeAction,
 } from '../../../../../shared/tailnet-mesh'
 
 // Where a chat view's conversation lives. The view — its transcript, pending
@@ -54,8 +62,9 @@ import type {
 //
 // What a transport cannot do is said by its capabilities, not inferred from a
 // provider id: a remote device may not choose a permanent approval rule or a
-// bypass preset, cannot revert a checkpoint on the other machine's disk, and
-// has none of this machine's skills, files or history index to offer.
+// bypass preset, reverts a checkpoint on the other machine's disk only where
+// that machine does it, and has none of this machine's skills, files or
+// history index to offer.
 //
 // A conversation on this machine is reached one of two ways, chosen once per
 // window (`window.api.studioChatTransport`): the conversation IPC, or the
@@ -70,7 +79,11 @@ export type ConversationTransportCapabilities = {
   startSession: boolean
   /** Offer "always allow" rules, which outlive the conversation. */
   permanentApprovals: boolean
-  /** Revert a turn's files from its checkpoint. */
+  /**
+   * Revert a turn's files from its checkpoint. A paired machine's chat does,
+   * in that machine's checkout, where it advertises doing so
+   * (`conversation-checkpoint-revert`).
+   */
   checkpointRevert: boolean
   /**
    * Pick another model of the chat's CLI: before the first turn, and — where
@@ -79,6 +92,25 @@ export type ConversationTransportCapabilities = {
   modelSwitch: boolean
   /** Attach skills and mention files from this machine. */
   composerContext: boolean
+  /**
+   * Mention files and folders of the chat's folder (@). Here, this machine's,
+   * searched on this disk; on a paired machine, that machine's, searched there
+   * through `searchMentions`, where it advertises the search and takes the
+   * mentions (`conversation-file-search`, `conversation-send-mentions`).
+   */
+  mentions: boolean
+  /**
+   * Attach files of any type by their path on this computer. Here the agent
+   * reads each where it is; for a paired machine each goes up to it with the
+   * message, where it advertises taking files (`conversation-message-files`).
+   */
+  attachFiles: boolean
+  /**
+   * The `/` menu lists what the chat's CLI runs in the chat's folder. Here,
+   * asked of this machine; on a paired machine, of that machine through
+   * `listCommands`, where it advertises the list (`conversation-commands`).
+   */
+  commandList: boolean
   /**
    * Carry the images a message attaches to wherever the chat runs. Offered
    * only where the session says its provider reads them (`capabilities.images`).
@@ -130,6 +162,22 @@ export type ConversationTransportCapabilities = {
    * this computer's and Create PR asks this computer's shell.
    */
   hostPullRequests: boolean
+  /**
+   * The machine the chat runs on keeps and sends the messages scheduled into
+   * it for a time, and says which it keeps: the "+"'s Schedule and the tray's
+   * rows ask it through `scheduleSend`, `sendScheduledNow` and
+   * `cancelScheduled`, where it advertises that (`conversation-scheduled-sends`).
+   * False here, where this computer's main keeps a local chat's.
+   */
+  hostSchedule: boolean
+  /**
+   * The machine the chat runs on says what it knows of its agents' usage
+   * limits, and sends the resume after one: the strip draws its plans'
+   * windows and the tray its notice, whose buttons ask it through
+   * `usageLimitResume`, where it advertises that (`conversation-usage-limits`).
+   * False here, where this computer's main reads a local chat's.
+   */
+  hostUsageLimits: boolean
 }
 
 /** What an action answers: the local session API's result, or a remote command's. */
@@ -144,6 +192,11 @@ export type ConversationTransport = {
   machineName?: string
   /** Where a remote chat's skills and MCP servers are listed: the machine and the project there. */
   remoteExtensions?: { connectionId: string; workspaceId: string }
+  /**
+   * What a remote chat's `/` list is kept under in this window, in place of a
+   * folder (`remoteCommandsFolder`): no folder of this disk names it.
+   */
+  commandsFolder?: string
   /** Where a remote chat's Create PR does its work, used where `capabilities.hostPullRequests` is. */
   pullRequestHost?: PullRequestHost
   capabilities: ConversationTransportCapabilities
@@ -158,6 +211,15 @@ export type ConversationTransport = {
   /** Switch a running session's model; absent where the transport cannot. */
   setModel?(input: ConversationSetModelInput): Promise<ConversationTransportResult>
   /**
+   * Set the reasoning effort the chat runs at from its next turn, on the
+   * machine that keeps it; none is its provider's own default. Absent for a
+   * chat here, whose record is the one the view writes and the runtime reads.
+   * A paired machine's chat has it, offered where its session lists efforts,
+   * which it does only where that machine takes the command
+   * (`conversation-reasoning-effort`).
+   */
+  setReasoningEffort?(input: { sessionId: string; effort?: string }): Promise<ConversationTransportResult>
+  /**
    * Hand a message to the machine the chat runs on, to hold until the turn
    * ends and send then; answered once it holds it. Used where
    * `capabilities.hostQueue` is.
@@ -166,28 +228,78 @@ export type ConversationTransport = {
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
   /**
-   * A sent image by the reference its `user_message` recorded. Absent for a
-   * remote conversation: the images are in the other machine's store, so a
-   * bubble there shows its images only while the send that carried them is live.
+   * Stop the machine the chat runs on watching one of its pull requests
+   * (`chat-unwatch-pull-request`). Absent here, where the window's own Studio
+   * keeps the watch. A pull request is listed as watched only by a machine
+   * that takes this, and an older one is refused in words.
+   */
+  unwatchPullRequest?(input: { url: string }): Promise<ConversationTransportResult>
+  /**
+   * Have the machine the chat runs on keep a message and send it at `sendAt`
+   * (epoch ms); answered once it keeps it. Used where `capabilities.hostSchedule` is.
+   */
+  scheduleSend?(input: { message: string; sendAt: number }): Promise<ConversationTransportResult>
+  /** Send a message that machine keeps now (a refused one again), by its id there. */
+  sendScheduledNow?(input: { scheduledId: string }): Promise<ConversationTransportResult>
+  /** Delete a message that machine keeps, by its id there: Delete, and Edit's taking it back. */
+  cancelScheduled?(input: { scheduledId: string }): Promise<ConversationTransportResult>
+  /**
+   * Act on the notice a usage limit left on the chat's turn, on the machine
+   * that sends its resume: schedule it (`always`: for every chat a limit
+   * stops there), cancel, dismiss or retry it. Used where
+   * `capabilities.hostUsageLimits` is.
+   */
+  usageLimitResume?(input: {
+    action: MeshUsageLimitResumeAction
+    always?: boolean
+  }): Promise<ConversationTransportResult>
+  /**
+   * The files and folders in the chat's folder on the machine it runs on whose
+   * names match `query`, by their paths relative to that folder. Present for a
+   * paired machine's chat, used where `capabilities.mentions` is; a chat here
+   * is searched through `services.files`.
+   */
+  searchMentions?(input: {
+    query: string
+  }): Promise<{ ok: true; entries: ConversationFileSearchEntry[] } | { ok: false; message: string }>
+  /**
+   * The slash commands the chat's CLI runs in its folder on the machine it
+   * runs on, as that machine lists them; rejects with that machine's words
+   * when it cannot. Present for a paired machine's chat, used where
+   * `capabilities.commandList` is; a chat here reads `services.commands`.
+   */
+  listCommands?(input: { refresh?: boolean }): Promise<ConversationCommandCatalog>
+  /**
+   * A sent image by the reference its `user_message` recorded. A remote
+   * conversation's are in the other machine's store, and are asked of it
+   * (`conversation-message-images`); a machine that does not serve them
+   * answers that it cannot, and the bubble says the image is over there.
    */
   attachment?(input: ConversationAttachmentInput): Promise<ConversationAttachmentResult>
   /**
    * Take the conversation back to before one of its user messages ("Edit
-   * from here"). Absent where the transport cannot; offered only where the
-   * provider declares `rewind` as well.
+   * from here"). A paired machine's chat has it too, and its session declares
+   * `rewind` only where that machine takes the command (`conversation-rewind`).
+   * Offered only where the session declares `rewind` as well.
    */
   rewind?(input: ConversationRewindInput): Promise<ConversationRewindResult>
   /**
    * Hand the chat off to a fresh session pointed at a file of its messages,
-   * instead of compacting it. Absent where the transport cannot; offered only
-   * where the provider declares `handoff` as well.
+   * instead of compacting it. A paired machine's chat has it too, and its
+   * session declares `handoff` only where that machine takes the command
+   * (`conversation-handoff`). Offered only where the session declares
+   * `handoff` as well.
    */
   handoff?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   /**
    * Start a new chat beside this one holding it up to an earlier message
-   * ("Fork from here"). Absent where the transport cannot: a paired machine's
-   * chat would fork into a chat over there that no tab here could open.
-   * Offered only where the provider declares `fork` as well.
+   * ("Fork from here"). Absent where the transport cannot. A paired machine's
+   * chat has it: the fork is made over there, beside the chat, and opens
+   * here as a pane of its own onto that machine (`forkRemoteChat`); its
+   * session declares `fork` only where that machine takes the command
+   * (`conversation-fork`). The key a remote fork is handed is not the one it
+   * forks: it names the chat by its ids over there. Offered only where the
+   * session declares `fork` as well.
    */
   fork?(input: ConversationForkInput): Promise<ConversationForkResult>
   /**
@@ -199,7 +311,7 @@ export type ConversationTransport = {
   toolImage?(input: { toolUseId: string }): Promise<ConversationToolImageResult>
   /** Start the chat's provider session here. Present where `capabilities.startSession` is. */
   startSession?(input: ConversationStartSessionInput): Promise<ConversationStartSessionResult>
-  /** Revert a turn's files from its checkpoint, or preview that. Present where `capabilities.checkpointRevert` is. */
+  /** Revert a turn's files from its checkpoint, or preview that. Used where `capabilities.checkpointRevert` is. */
   revert?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   /**
    * Stop one running agent the chat spawned, by its lane, leaving the chat and
@@ -211,10 +323,29 @@ export type ConversationTransport = {
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
   /**
+   * Restart the chat's agent on the machine it runs on, as Restart agent
+   * session does for a chat here (which suspends its session through the
+   * conversation IPC itself): answered with a `notice` where it had none
+   * running, and nothing was done. A paired machine's chat has it, refused in
+   * words for a machine that does not take the command
+   * (`conversation-restart-session`).
+   */
+  restartSession?(): Promise<ConversationTransportResult>
+  /**
+   * Reconnect, switch or sign in to one of a live chat's MCP servers, where
+   * the session lists the action (`capabilities.mcpServerActions`). A paired
+   * machine's chat has it too, its session listing an action only where that
+   * machine takes the command (`conversation-mcp-server-actions`), and never
+   * a sign-in, whose callback that machine's CLI waits for there.
+   */
+  mcpServerAction?(input: ConversationMcpServerActionInput): Promise<ConversationMcpServerActionResult>
+  /**
    * Ask a side question about the chat: answered from its context, added to
    * nothing, a running turn left as it was. Absent where the transport
-   * cannot, as `stopSubagent` is. Offered only where the provider declares
-   * `sideQuestion` as well.
+   * cannot, as `stopSubagent` is. A paired machine's chat has it, asked of
+   * its agent over there, and its session declares `sideQuestion` only where
+   * that machine answers one (`conversation-side-questions`). Offered only
+   * where the session declares `sideQuestion` as well.
    */
   askSideQuestion?(input: ConversationSideQuestionInput): Promise<ConversationSideQuestionResult>
   /** Call off a side question still being answered. Present wherever `askSideQuestion` is. */
@@ -224,8 +355,10 @@ export type ConversationTransport = {
   /**
    * What fills the chat's context window, as its agent measures it. Absent
    * where the transport cannot ask, as `stopSubagent` is; the ring then opens
-   * on the total alone. Asked only where the provider declares
-   * `contextBreakdown` as well.
+   * on the total alone. A paired machine's chat has it, read from its agent
+   * over there, and its session declares `contextBreakdown` only where that
+   * machine says (`conversation-context-breakdown`). Asked only where the
+   * session declares `contextBreakdown` as well.
    */
   readContextBreakdown?(input: ConversationContextBreakdownInput): Promise<ConversationContextBreakdownResult>
   /**
@@ -245,6 +378,9 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   checkpointRevert: true,
   modelSwitch: true,
   composerContext: true,
+  mentions: true,
+  attachFiles: true,
+  commandList: true,
   imageAttachments: true,
   localHistory: true,
   localFiles: true,
@@ -256,6 +392,10 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   hostQueue: false,
   skills: true,
   hostPullRequests: false,
+  // Main keeps and sends a local chat's scheduled messages itself.
+  hostSchedule: false,
+  // And reads a local chat's usage limits, and sends its resume, itself.
+  hostUsageLimits: false,
 }
 
 type LocalParts = Omit<ConversationTransport, 'kind' | 'capabilities' | 'services'>
@@ -365,6 +505,9 @@ export const localConversationTransport: ConversationTransport = {
   fork: (input) => localParts().fork(input),
   startSession: (input) => localParts().startSession(input),
   revert: (input) => localParts().revert(input),
+  // The IPC's, in a window on either implementation, as the composer's server
+  // rows have always asked it.
+  mcpServerAction: (input) => window.api.conversationSessionMcpAction(input),
   // Read off the implementation the window chose, so it is absent where that
   // one has no way to do it.
   get stopSubagent() {
@@ -390,6 +533,15 @@ export function useConversationTransport(): ConversationTransport {
   return useContext(ConversationTransportContext)
 }
 
+/**
+ * What a paired machine's chat's command list is kept under in this window:
+ * the chat itself, as no folder of this disk names it, so two of that
+ * machine's chats in different folders never share a list.
+ */
+export function remoteCommandsFolder(key: MeshConversationKey): string {
+  return `mesh:${key.connectionId}/${key.workspaceId}/${key.agentId}`
+}
+
 const commandResult = (result: MeshConversationCommandResult): ConversationTransportResult =>
   result.ok ? { ok: true, ...(result.notice ? { notice: result.notice } : {}) } : { ok: false, message: result.message }
 
@@ -398,7 +550,9 @@ const commandResult = (result: MeshConversationCommandResult): ConversationTrans
  * is the one every call names: the local key a view passes carries this
  * machine's idea of a workspace root, which means nothing over there.
  * `onLink` receives the connection state main narrates beside the frames, and
- * `onQueued` what the machine holds for the conversation's turn to end.
+ * `onQueued` what the machine holds for the conversation's turn to end, and
+ * `onScheduled` what it keeps for a time, and `onUsageLimits` what it knows
+ * of its usage limits for it.
  */
 export function createRemoteConversationTransport(input: {
   key: MeshConversationKey
@@ -406,6 +560,8 @@ export function createRemoteConversationTransport(input: {
   access: MeshConversationAccess | null
   onLink?: (link: MeshConversationLink) => void
   onQueued?: (messages: MeshQueuedMessage[]) => void
+  onScheduled?: (messages: MeshScheduledMessage[]) => void
+  onUsageLimits?: (said: MeshConversationUsageLimits) => void
   /** The machine recorded a pull request Create PR opened there as the chat's. */
   onPullRequestRecorded?: () => void
 }): ConversationTransport {
@@ -417,9 +573,17 @@ export function createRemoteConversationTransport(input: {
       operate: input.access === 'operate',
       startSession: false,
       permanentApprovals: false,
+      // Turned on from the machine's list, when it reverts a turn's files
+      // itself (`conversation-checkpoint-revert`): the checkpoint is on its disk.
       checkpointRevert: false,
       modelSwitch: false,
       composerContext: false,
+      // Turned on from the machine's list, when it searches a chat's folder
+      // and takes what is mentioned of it; when it takes files; and when it
+      // lists the slash commands a chat's CLI runs there.
+      mentions: false,
+      attachFiles: false,
+      commandList: false,
       // Whether this chat takes them is the machine's list's to say, through
       // the session the pane builds from it.
       imageAttachments: true,
@@ -439,13 +603,20 @@ export function createRemoteConversationTransport(input: {
       skills: false,
       // Turned on from the machine's list, when it opens pull requests for its chats.
       hostPullRequests: false,
+      // Turned on from the machine's list, when it keeps messages scheduled for a time.
+      hostSchedule: false,
+      // Turned on from the machine's list, when it says what it knows of its usage limits.
+      hostUsageLimits: false,
     },
     remoteExtensions: { connectionId: key.connectionId, workspaceId: key.workspaceId },
+    commandsFolder: remoteCommandsFolder(key),
     pullRequestHost: remotePullRequestHost(key, () => input.onPullRequestRecorded?.()),
     subscribe: (subscription, cb) =>
       window.api.onMeshConversationSession({ key, turnLimit: subscription.turnLimit }, (frame) => {
         if (frame.type === 'link') input.onLink?.(frame)
         else if (frame.type === 'queued') input.onQueued?.(frame.messages)
+        else if (frame.type === 'scheduled') input.onScheduled?.(frame.messages)
+        else if (frame.type === 'usageLimits') input.onUsageLimits?.(frame)
         else cb(frame)
       }),
     loadEarlier: (page) =>
@@ -463,18 +634,139 @@ export function createRemoteConversationTransport(input: {
           // The machine resolves them against its own folder, as its own
           // composer's chips are.
           ...(turn.skills?.length ? { skills: turn.skills.map((skill) => skill.id) } : {}),
+          // Named by their paths in the chat's folder there, as its search
+          // named them; offered only where the machine takes them.
+          ...(turn.mentions?.length ? { mentions: turn.mentions } : {}),
+          // Files from this computer: main puts each in that machine's store
+          // first, and the send names them, as it names the images.
+          ...(turn.files?.length ? { files: turn.files } : {}),
           ...(turn.steer ? { steer: true } : {}),
+          // The mode the chat's turn runs in, as a chat here sends it. Main
+          // refuses one other than the default for a machine that would run
+          // it in the default mode instead.
+          ...(turn.mode && turn.mode !== 'default' ? { mode: turn.mode } : {}),
         }),
       ),
     queue: async (turn) =>
       commandResult(await window.api.meshConversationSend({ key, message: turn.message, queue: true })),
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
+    searchMentions: async ({ query }) => {
+      const result = await window.api.meshConversationSearchFiles({ key, query })
+      return result.ok ? { ok: true, entries: result.entries } : { ok: false, message: result.message }
+    },
+    // Kept as this window keeps a list read here: under the chat's own key,
+    // never a folder of this disk's (`remoteCommandsFolder`).
+    listCommands: async ({ refresh }) => {
+      const result = await window.api.meshConversationCommands({ key, ...(refresh ? { refresh: true } : {}) })
+      if (!result.ok) throw new Error(result.message)
+      return {
+        cli: result.cli,
+        cwd: remoteCommandsFolder(key),
+        commands: result.commands,
+        fetchedAt: result.fetchedAt,
+        ...(result.error ? { error: result.error } : {}),
+      }
+    },
+    scheduleSend: async (scheduled) =>
+      commandResult(
+        await window.api.meshConversationScheduleSend({ key, message: scheduled.message, sendAt: scheduled.sendAt }),
+      ),
+    sendScheduledNow: async (scheduled) =>
+      commandResult(await window.api.meshConversationSendScheduledNow({ key, scheduledId: scheduled.scheduledId })),
+    cancelScheduled: async (scheduled) =>
+      commandResult(await window.api.meshConversationCancelScheduled({ key, scheduledId: scheduled.scheduledId })),
+    usageLimitResume: async (resume) =>
+      commandResult(
+        await window.api.meshConversationUsageLimitResume({
+          key,
+          action: resume.action,
+          ...(resume.always ? { always: true } : {}),
+        }),
+      ),
+    unwatchPullRequest: async (input) => {
+      const answer = await window.api.meshChangeConversation({
+        connectionId: key.connectionId,
+        workspaceId: key.workspaceId,
+        change: { kind: 'unwatch-pull-request', agentId: key.agentId, url: input.url },
+      })
+      return answer.ok ? { ok: true } : { ok: false, message: answer.message }
+    },
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
+    restartSession: async () => commandResult(await window.api.meshConversationRestartSession({ key })),
+    // Offered only for an action the pane's session lists, which it does
+    // where the machine takes the command; a sign-in never is.
+    mcpServerAction: async (asked) => {
+      if (asked.action === 'sign-in')
+        return {
+          ok: false,
+          message: `Sign in to ${asked.serverId} on ${input.machineName}: its agent waits for the sign-in there.`,
+        }
+      const done = await window.api.meshConversationMcpServerAction({
+        key,
+        serverId: asked.serverId,
+        action: asked.action,
+      })
+      return done.ok ? { ok: true } : { ok: false, message: done.message }
+    },
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).
     stopSubagent: async (input) =>
       commandResult(await window.api.meshConversationStopSubagent({ key, toolUseId: input.toolUseId })),
+    // Offered only where the machine takes it and lists the chat's provider as
+    // able (the pane's session says `handoff`). The file is written over
+    // there, so its path means nothing here.
+    handoff: async () => {
+      const handed = await window.api.meshConversationHandoff({ key })
+      return handed.ok ? { ok: true, path: '' } : { ok: false, message: handed.message }
+    },
+    // Offered only where the machine takes it and lists the chat's provider
+    // as able (the pane's session says `rewind`).
+    rewind: async (turn) => {
+      const rewound = await window.api.meshConversationRewind({ key, turnSeq: turn.turnSeq })
+      return rewound.ok ? { ok: true } : { ok: false, message: rewound.message }
+    },
+    // Used only where the machine reverts files itself (the pane turns
+    // `checkpointRevert` on). The paths are that machine's checkout's, shown
+    // in the dialog and sent back as they came, never looked for here.
+    revert: async (turn) => {
+      const result = await window.api.meshConversationRevert({
+        key,
+        turnSeq: turn.turnSeq,
+        ...(turn.undo ? { undo: true } : {}),
+        ...(turn.confirmed ? { confirmed: true, files: turn.files ?? [] } : {}),
+      })
+      const answer = parseConversationRevertAnswer(result.data)
+      if (!result.ok)
+        return { ok: false, message: result.message, ...(answer && 'changed' in answer ? { changed: true } : {}) }
+      if (!answer || 'changed' in answer)
+        return { ok: false, message: `${input.machineName} answered with files this build cannot read.` }
+      return { ok: true, ...answer }
+    },
+    // Each of these offered only where the machine takes it and lists the
+    // chat's provider as able (the pane's session says `fork`, `sideQuestion`,
+    // `contextBreakdown`). Every one names the chat by its ids over there; the
+    // session id a view passes is the list's, which means nothing to them.
+    fork: async (fork) => {
+      const forked = await window.api.meshConversationFork({
+        key,
+        fork:
+          fork.side === 'user'
+            ? { kind: 'fork', newAgentId: fork.newAgentId, side: 'user', turnSeq: fork.turnSeq }
+            : { kind: 'fork', newAgentId: fork.newAgentId, side: 'assistant', turnId: fork.turnId },
+      })
+      return forked.ok ? { ok: true } : { ok: false, message: forked.message }
+    },
+    askSideQuestion: (question) =>
+      window.api.meshConversationSideQuestion({
+        key,
+        requestId: question.requestId,
+        question: question.question,
+        ...(question.history?.length ? { history: question.history } : {}),
+      }),
+    cancelSideQuestion: (question) =>
+      window.api.meshConversationCancelSideQuestion({ key, requestId: question.requestId }),
+    readContextBreakdown: () => window.api.meshConversationContextBreakdown({ key }),
     respond: async (response) => {
       if (response.answers && response.approved)
         return commandResult(
@@ -491,17 +783,41 @@ export function createRemoteConversationTransport(input: {
         await window.api.meshConversationResolveApproval({ key, requestId: response.requestId, decision }),
       )
     },
+    // The CLI's own mode rides beside its preset where the chat's session
+    // lists any, which the pane does only for a machine that runs them.
     setPermissionPreset: async (change) =>
-      commandResult(await window.api.meshConversationSetPermissionPreset({ key, preset: change.permissionPreset })),
+      commandResult(
+        await window.api.meshConversationSetPermissionPreset({
+          key,
+          preset: change.permissionPreset,
+          ...(change.permissionMode ? { permissionMode: change.permissionMode } : {}),
+        }),
+      ),
     // Offered only while the machine advertises model switching; the pane turns
     // `modelSwitch` on from its list, and the chip stays locked without it.
     setModel: async (change) =>
       commandResult(await window.api.meshConversationSetModel({ key, modelId: change.modelId })),
+    // That machine keeps the chat's effort and sends each turn at it, so the
+    // send leaves it out.
+    setReasoningEffort: async (change) =>
+      commandResult(
+        await window.api.meshConversationSetReasoningEffort({
+          key,
+          ...(change.effort ? { effort: change.effort } : {}),
+        }),
+      ),
     toolImage: async (image) => {
       const result = await window.api.meshConversationToolImage({ key, toolUseId: image.toolUseId })
       return result.ok
         ? { ok: true, src: result.dataUrl }
         : { ok: false, unsupported: result.code === 'images_unsupported', message: result.message }
+    },
+    attachment: async (stored) => {
+      const result = await window.api.meshConversationAttachment({ key, ref: stored.ref })
+      const picture = result.ok ? /^data:([^;,]+);base64,(.*)$/su.exec(result.dataUrl) : null
+      return picture
+        ? { ok: true, mediaType: picture[1]!, dataBase64: picture[2]! }
+        : { ok: false, message: result.ok ? 'The picture could not be read.' : result.message }
     },
     // A chat followed from a paired machine still reads this window's Studio
     // for providers, files, plans and command lists, as it always has.

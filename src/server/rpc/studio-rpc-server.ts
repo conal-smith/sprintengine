@@ -52,8 +52,20 @@ import type {
  * `hello` frame on it, which here is the connection's own handshake —
  * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
- * `conversation-queued-sends`, whose `queued` frames its conversation topic
- * does not carry.
+ * `conversation-queued-sends`, `conversation-scheduled-sends` and
+ * `conversation-usage-limits`, whose `queued`, `scheduled` and `usageLimits`
+ * frames its conversation topic does not carry.
+ * Nor the lane's fork, side questions and context breakdown
+ * (`conversation-fork`, `conversation-side-questions`,
+ * `conversation-context-breakdown`): this socket forks by its own
+ * `conversation.fork`, which leaves the new chat's record to the window that
+ * asked, and has no method for the other two.
+ * Nor the composer's two reads of a chat's folder
+ * (`conversation-file-search`, `conversation-commands`), routes beside the
+ * tailnet's socket that this one has no method for; a window on it reads its
+ * own files and command lists. A send's `mentions` it does take
+ * (`conversation-send-mentions`): its `conversation.send` reads the lane's own
+ * validator and reaches the same host.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -63,7 +75,14 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-image-downscale' &&
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
-    capability !== 'conversation-queued-sends',
+    capability !== 'conversation-queued-sends' &&
+    capability !== 'conversation-fork' &&
+    capability !== 'conversation-side-questions' &&
+    capability !== 'conversation-context-breakdown' &&
+    capability !== 'conversation-file-search' &&
+    capability !== 'conversation-commands' &&
+    capability !== 'conversation-scheduled-sends' &&
+    capability !== 'conversation-usage-limits',
 )
 
 export type StudioRpcServerOptions = {

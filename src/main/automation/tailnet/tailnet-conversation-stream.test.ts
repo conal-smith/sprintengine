@@ -1002,6 +1002,55 @@ test("a model switch needs operate, and reaches the client with the host's own r
   )
 })
 
+test("a revert's files reach the client on its result, accepted or refused", async () => {
+  const socket = new Socket()
+  const gateway = host()
+  gateway.command = async (_key, _device, _id, command) =>
+    command.kind === 'revert' && command.confirmed
+      ? { ok: false, message: 'The files to restore changed since they were shown.', data: { changed: true } }
+      : {
+          ok: true,
+          data: {
+            files: [{ path: 'src/app.ts', status: 'modified', addedLines: 1, removedLines: 2, binary: false }],
+            reverted: false,
+          },
+        }
+  const stream = createTailnetConversationStream({
+    socket,
+    deviceId: 'device',
+    deviceName: 'phone',
+    scopes: ['conversation:operate'],
+    host: gateway,
+    onClosed: () => {},
+    audit: () => {},
+  })
+  socket.receive({ type: 'subscribe', key: { workspaceId: 'w', agentId: 'a' } })
+  await tick()
+  socket.receive({ type: 'command', commandId: 'r1', command: { kind: 'revert', turnSeq: 3 } })
+  socket.receive({
+    type: 'command',
+    commandId: 'r2',
+    command: { kind: 'revert', turnSeq: 3, confirmed: true, files: ['src/app.ts'] },
+  })
+  const settled = () =>
+    (socket.output() as Array<Frame & { commandId?: string; ok?: boolean; data?: unknown }>)
+      .filter((frame) => frame.type === 'commandResult')
+      .map((frame) => [frame.commandId, frame.ok, frame.data])
+  await waitFor(() => settled().length === 2, 'both reverts settle')
+  assert.deepEqual(settled(), [
+    [
+      'r1',
+      true,
+      {
+        files: [{ path: 'src/app.ts', status: 'modified', addedLines: 1, removedLines: 2, binary: false }],
+        reverted: false,
+      },
+    ],
+    ['r2', false, { changed: true }],
+  ])
+  stream.close(1000, '')
+})
+
 test('a message at the protocol limit is accepted and one over it is refused under its command id', async () => {
   const socket = new Socket()
   const sent: string[] = []

@@ -38,16 +38,31 @@ import {
   type MeshConversationCommandResult,
   type MeshConversationFrame,
   type MeshConversationImageResult,
+  type MeshConversationKey,
   type MeshConversationListResult,
+  type MeshConversationFileSearchResult,
+  type MeshConversationCommandsResult,
+  type MeshConversationManage,
+  type MeshConversationDeletePlanResult,
+  type MeshConversationSearchResult,
+  type MeshApprovalRulesResult,
+  type MeshRevokeApprovalRuleResult,
 } from '../../../shared/tailnet-mesh'
+import type { SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
 import type {
+  ConversationContextBreakdownResult,
   ConversationImageAttachment,
   ConversationPageResult,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationToolDetailResult,
   ConversationTurnDiffResult,
 } from '../../../shared/conversation-runtime'
 import { parseImageAttachments } from '../../conversation-ipc-inputs'
-import { isConversationHighlightColor } from '../../../../packages/conversation-protocol/src/public'
+import {
+  CONVERSATION_MAX_MESSAGE_CHARS,
+  isConversationHighlightColor,
+} from '../../../../packages/conversation-protocol/src/public'
 import type { WorkspaceExtensions } from '../../../shared/workspace-extensions'
 import {
   PULL_REQUEST_BODY_MAX_CHARS,
@@ -81,7 +96,21 @@ import {
   readRemoteIdentity,
   type RemoteJsonSocket,
   uploadRemoteConversationImage,
+  readRemoteConversationComposer,
 } from './tailnet-remote-client'
+import { readFile, stat } from 'node:fs/promises'
+import { basename } from 'node:path'
+import {
+  CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS,
+  parseConversationCommandsAnswer,
+  parseConversationFileSearchAnswer,
+  parseConversationWireMentions,
+} from '../../../../packages/conversation-protocol/src/public'
+import {
+  parseConversationAttachedFiles,
+  type ConversationAttachedFile,
+} from '../../../shared/conversation/attachedFiles'
+import { MAX_TAILNET_FILE_BYTES } from './tailnet-file-uploads'
 import { asRecord, isRecord } from '../../../shared/records'
 import { parseCliPermissionPreset } from '../../../shared/cli-permission-preset'
 import { powerActivity, type PowerActivity } from '../../power-activity'
@@ -309,6 +338,17 @@ export type TailnetMeshService = {
     workspaceId?: unknown
     change?: unknown
   }): Promise<MeshChangeConversationResult>
+  /** What deleting a settled chat on a paired machine would do, as it plans it (`chat-delete`). */
+  conversationDeletePlan(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+  }): Promise<MeshConversationDeletePlanResult>
+  /** What was said in a paired machine's chats, as its own palette finds it (`chat-search`). */
+  conversationSearch(input: { connectionId: unknown; query?: unknown }): Promise<MeshConversationSearchResult>
+  /** The "always allow" rules a paired machine's chats run with (`approval-rules`). */
+  approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult>
+  /** Revoke one of them there (`approval-rules`, on `conversation:operate`). */
+  revokeApprovalRule(input: { connectionId: unknown; ruleId?: unknown }): Promise<MeshRevokeApprovalRuleResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -356,7 +396,8 @@ export type TailnetMeshService = {
    * hold until the chat's turn ends (`conversation-queued-sends`); a queued
    * message carries no images, and one with them is refused. `steer` hands it
    * to the turn the chat is running (`conversation-steer-sends`), refused for
-   * a machine that does not take one rather than dropped.
+   * a machine that does not take one rather than dropped. `mode` is the mode
+   * the turn runs in (`conversation-send-mode`), refused the same way.
    */
   conversationSend(input: {
     key: unknown
@@ -366,7 +407,31 @@ export type TailnetMeshService = {
     /** Ids of that machine's skills the chat runs with this message (`conversation-send-skills`). */
     skills?: unknown
     steer?: unknown
+    /**
+     * Files and folders of the chat's folder over there, by their paths in it,
+     * as that machine's search named them (`conversation-send-mentions`).
+     */
+    mentions?: unknown
+    /**
+     * Files on this computer, by path: each goes up to that machine first
+     * (`conversation-message-files`), and the message names it by its path
+     * there.
+     */
+    files?: unknown
+    /** The mode the turn runs in, `plan` or `ask`; absent, or `default`, the default one. */
+    mode?: unknown
   }): Promise<MeshConversationCommandResult>
+  /**
+   * The files and folders in a followed chat's folder on its machine that
+   * match a mention's query (`conversation-file-search`). Refused without
+   * asking for a machine that does not advertise it.
+   */
+  conversationSearchFiles(input: { key: unknown; query: unknown }): Promise<MeshConversationFileSearchResult>
+  /**
+   * The slash commands a followed chat's CLI runs in its folder over there
+   * (`conversation-commands`); `refresh` asks that CLI again now.
+   */
+  conversationCommandList(input: { key: unknown; refresh?: unknown }): Promise<MeshConversationCommandsResult>
   /**
    * What a chat in one of that machine's projects can use: its skills and,
    * for a CLI, the MCP servers that CLI is configured with there
@@ -413,11 +478,39 @@ export type TailnetMeshService = {
   conversationToolDetail(input: { key: unknown; toolUseId: unknown }): Promise<ConversationToolDetailResult>
   conversationTurnDiff(input: { key: unknown; turnSeq: unknown; path?: unknown }): Promise<ConversationTurnDiffResult>
   /**
+   * A side question asked of a followed conversation's agent over there, and
+   * calling one off. Refused in words, without asking, for a machine that does
+   * not advertise `conversation-side-questions`.
+   */
+  conversationSideQuestion(input: {
+    key: unknown
+    requestId: unknown
+    question: unknown
+    history?: unknown
+  }): Promise<ConversationSideQuestionResult>
+  conversationCancelSideQuestion(input: {
+    key: unknown
+    requestId: unknown
+  }): Promise<{ ok: true } | { ok: false; message: string }>
+  /**
+   * What fills a followed conversation's context window, as its agent over
+   * there measures it. Refused in words, without asking, for a machine that
+   * does not advertise `conversation-context-breakdown`.
+   */
+  conversationContextBreakdown(input: { key: unknown }): Promise<ConversationContextBreakdownResult>
+  /**
    * The picture one step of a followed conversation made or looked at, fetched
    * from the machine it runs on. Refused without asking for a machine whose
    * last handshake did not name `conversation-images`.
    */
   conversationToolImage(input: { key: unknown; toolUseId: unknown }): Promise<MeshConversationImageResult>
+  /**
+   * A picture the person sent with a message of a followed conversation, by
+   * the `ref` its `user_message` recorded, fetched from the machine it runs
+   * on. Refused without asking for a machine whose last handshake did not
+   * name `conversation-message-images`.
+   */
+  conversationAttachment(input: { key: unknown; ref: unknown }): Promise<MeshConversationImageResult>
   shutdown(): void
 }
 
@@ -2169,6 +2262,112 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, workspaceId }
   }
 
+  // ── A paired desktop's chat management: what a menu reads first ───────
+  //
+  // Asked as a change is: a machine that has said it lacks the capability is
+  // not, and one from before the tool answers "Unknown tool", read the same.
+  async function conversationDeletePlan(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+  }): Promise<MeshConversationDeletePlanResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const workspaceId = input.workspaceId
+    if (typeof workspaceId !== 'string' || !workspaceId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the remote chat.' }
+    }
+    const unsupported = {
+      ok: false as const,
+      code: 'delete_unsupported',
+      message: `${connection.machineName} cannot delete its chats from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'chat-delete')) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'conversation.delete_plan',
+      args: { workspaceId },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return deletePlanOf(workspaceId, answer.value)
+  }
+
+  async function conversationSearch(input: {
+    connectionId: unknown
+    query?: unknown
+  }): Promise<MeshConversationSearchResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const query = typeof input.query === 'string' ? input.query.trim() : ''
+    if (query.length < 2 || query.length > 200) {
+      return { ok: false, code: 'invalid_arguments', message: 'Search for 2 to 200 characters.' }
+    }
+    const unsupported = {
+      ok: false as const,
+      code: 'search_unsupported',
+      message: `${connection.machineName} cannot search its chats from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'chat-search')) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'conversation.search',
+      args: { query },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return searchAnswerOf(answer.value)
+  }
+
+  // A paired machine's "always allow" rules, which its Settings lists and
+  // revokes, asked as the rest of its chats' management is.
+  async function callApprovalRulesTool(
+    connectionId: unknown,
+    tool: 'conversation.approval_rules' | 'conversation.approval_rule_revoke',
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; code: string; message: string }> {
+    const connection = connectionFor(connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const unsupported = {
+      ok: false as const,
+      code: 'approval_rules_unsupported',
+      message: `${connection.machineName} does not share its chat permissions yet. Update SprintEngine Studio there to see them from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'approval-rules')) return unsupported
+    const answer = await callRemoteTool({ endpoint: endpointOf(connection), token: connection.deviceToken, tool, args })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return { ok: true, value: answer.value }
+  }
+
+  async function approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult> {
+    const answer = await callApprovalRulesTool(input.connectionId, 'conversation.approval_rules', {})
+    return answer.ok ? approvalRulesOf(answer.value) : answer
+  }
+
+  async function revokeApprovalRule(input: {
+    connectionId: unknown
+    ruleId?: unknown
+  }): Promise<MeshRevokeApprovalRuleResult> {
+    if (typeof input.ruleId !== 'string' || !input.ruleId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the rule.' }
+    }
+    const answer = await callApprovalRulesTool(input.connectionId, 'conversation.approval_rule_revoke', {
+      ruleId: input.ruleId,
+    })
+    return answer.ok ? { ok: true, ruleId: input.ruleId } : answer
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2209,6 +2408,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ...listed,
           modelSwitch: tailnetPeerSupports(identity.value.capabilities, 'conversation-models'),
           permissionModes: tailnetPeerSupports(identity.value.capabilities, 'conversation-permission-modes'),
+          cliPermissionModes: tailnetPeerSupports(identity.value.capabilities, 'conversation-cli-permission-modes'),
           lifecycle: tailnetPeerSupports(identity.value.capabilities, 'conversation-lifecycle'),
           queuedSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-queued-sends'),
           sendSkills:
@@ -2216,9 +2416,30 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
+          handoff: tailnetPeerSupports(identity.value.capabilities, 'conversation-handoff'),
+          rewind: tailnetPeerSupports(identity.value.capabilities, 'conversation-rewind'),
+          checkpointRevert: tailnetPeerSupports(identity.value.capabilities, 'conversation-checkpoint-revert'),
+          fork: tailnetPeerSupports(identity.value.capabilities, 'conversation-fork'),
+          sideQuestions: tailnetPeerSupports(identity.value.capabilities, 'conversation-side-questions'),
+          contextBreakdown: tailnetPeerSupports(identity.value.capabilities, 'conversation-context-breakdown'),
+          // The composer's reach into a chat's folder over there: an @ is a
+          // search there and a name the send carries back, so both or neither.
+          mentions:
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-file-search') &&
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mentions'),
+          commands: tailnetPeerSupports(identity.value.capabilities, 'conversation-commands'),
+          messageFiles:
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-message-files') &&
+            tailnetPeerSupports(identity.value.capabilities, 'upload'),
+          sendMode: tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mode'),
+          reasoningEffort: tailnetPeerSupports(identity.value.capabilities, 'conversation-reasoning-effort'),
+          mcpServerActions: tailnetPeerSupports(identity.value.capabilities, 'conversation-mcp-server-actions'),
+          scheduledSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-scheduled-sends'),
+          usageLimits: tailnetPeerSupports(identity.value.capabilities, 'conversation-usage-limits'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
+          manage: chatManageOf(identity.value.capabilities),
         }
       : listed
   }
@@ -2245,7 +2466,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   async function fetchPicture(
     connection: StoredMeshConnection,
     key: { workspaceId: string; agentId: string },
-    toolUseId: string,
+    picture: { toolUseId: string } | { attachment: string },
     unsupported: string,
   ): Promise<MeshConversationImageResult> {
     const fetched = await fetchRemoteConversationImage({
@@ -2253,7 +2474,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       token: connection.deviceToken,
       workspaceId: key.workspaceId,
       agentId: key.agentId,
-      toolUseId,
+      ...picture,
     })
     if (!fetched.ok) {
       if (fetched.code === 'unauthorized')
@@ -2269,6 +2490,59 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     }
   }
 
+  // A picture of a followed conversation, kept once fetched: a step's (by
+  // its call) or one the person sent (by its message's `ref`), each behind
+  // the capability that serves it.
+  async function keptPicture(
+    key: MeshConversationKey,
+    picture: { toolUseId: string } | { attachment: string },
+    capability: 'conversation-images' | 'conversation-message-images',
+  ): Promise<MeshConversationImageResult> {
+    const connection = connectionFor(key.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    // A machine that said what it can do and left this out cannot serve it.
+    // One that has not said yet is asked, and answers for itself.
+    const unsupported = `This picture is on ${connection.machineName}, which does not share pictures yet.`
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, capability))
+      return { ok: false, code: 'images_unsupported', message: unsupported }
+    const id = JSON.stringify([
+      connection.id,
+      key.workspaceId,
+      key.agentId,
+      'attachment' in picture ? `attachment:${picture.attachment}` : picture.toolUseId,
+    ])
+    const kept = pictures.get(id)
+    if (kept) {
+      // The most recently shown stays longest.
+      pictures.delete(id)
+      pictures.set(id, kept)
+      return kept.result
+    }
+    const entry: KeptPicture = {
+      connectionId: connection.id,
+      result: fetchPicture(connection, key, picture, unsupported),
+      chars: 0,
+    }
+    pictures.set(id, entry)
+    void entry.result.then((answer) => {
+      if (pictures.get(id) !== entry) return
+      // Only a picture is kept: a failure may be gone on the next look.
+      if (!answer.ok) {
+        pictures.delete(id)
+        return
+      }
+      entry.chars = answer.dataUrl.length
+      pictureChars += entry.chars
+      for (const [oldest, older] of pictures) {
+        if (pictureChars <= MAX_PICTURE_CHARS || older === entry) break
+        pictures.delete(oldest)
+        pictureChars -= older.chars
+      }
+    })
+    return entry.result
+  }
+
   async function conversationCommand(input: {
     key: unknown
     command: unknown
@@ -2280,6 +2554,19 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       const connection = connectionFor(key.connectionId)
       const refused = connection ? permissionModeRefusal(connection, command.preset) : null
       if (refused) return refused
+      // A CLI's own mode is dropped by a machine from before it, which then
+      // runs the preset's own: the person would be told Accept edits while
+      // the agent asked before every edit, or ran without asking.
+      if (
+        connection &&
+        command.permissionMode !== undefined &&
+        !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-cli-permission-modes')
+      )
+        return {
+          ok: false,
+          code: 'unsupported_permission_preset',
+          message: `${connection.machineName} cannot run a chat on its CLI's own modes from here yet. Update SprintEngine Studio there.`,
+        }
     }
     // Said here in words: a machine from before it answers an unknown kind.
     if (command?.kind === 'stopSubagent') {
@@ -2291,10 +2578,97 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           message: `${connection.machineName} cannot stop one agent from here yet. Update SprintEngine Studio there.`,
         }
     }
+    if (command?.kind === 'handoff') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-handoff'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot hand a chat off from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'rewind') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-rewind'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot edit an earlier message from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'revert') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-checkpoint-revert'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot restore a turn's files from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'fork') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-fork'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot fork a chat from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'setReasoningEffort') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-reasoning-effort'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot change a chat's reasoning effort from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'mcpServerAction') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-mcp-server-actions'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot reconnect or switch a chat's MCP servers from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'restartSession') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-restart-session'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot restart a chat's agent from here yet. Restart it there, or update SprintEngine Studio there.`,
+        }
+    }
+    if (
+      command?.kind === 'scheduleSend' ||
+      command?.kind === 'sendScheduledNow' ||
+      command?.kind === 'cancelScheduled'
+    ) {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-scheduled-sends'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot schedule messages from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'usageLimitResume') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-usage-limits'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot resume its chats from here yet. Update SprintEngine Studio there.`,
+        }
+    }
     const result = await remoteConversations.command(key, input.command)
     // A command carried out (a model switched, a preset changed) changes
-    // what the list says, and the list is re-read straight after it.
-    if (result.ok) forgetSharedReads(key.connectionId, 'conversations')
+    // what the list says, and the list is re-read straight after it. A
+    // revert's preview carries nothing out.
+    if (result.ok && !(command?.kind === 'revert' && command.confirmed !== true))
+      forgetSharedReads(key.connectionId, 'conversations')
     return result
   }
 
@@ -2364,6 +2738,122 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       uploadIds.push(uploaded.value.uploadId)
     }
     return { ok: true, uploadIds }
+  }
+
+  // ── Files sent to paired machines ─────────────────────────────────────────
+  //
+  // A file attached here by its path goes up as a phone's does
+  // (`upload?kind=file`): that machine keeps it where it keeps a device's
+  // files, never in the project, and the send that names its id attaches it to
+  // the message by its path there, where the agent reads it. The upload is
+  // kept for the chat's live session, as a picture's is, so a chat at rest
+  // takes its files once a message has woken it.
+  async function uploadConversationFiles(
+    connection: StoredMeshConnection,
+    key: { workspaceId: string; agentId: string },
+    files: ConversationAttachedFile[],
+  ): Promise<{ ok: true; uploadIds: string[] } | { ok: false; code: string; message: string }> {
+    const unsupported = `${connection.machineName} does not take files from another desktop yet. Update SprintEngine Studio there, or send the file's path instead.`
+    const capabilities = peerCapabilities.get(connection.id)
+    if (
+      !tailnetPeerSupports(capabilities, 'conversation-message-files') ||
+      !tailnetPeerSupports(capabilities, 'upload')
+    )
+      return { ok: false, code: 'files_unsupported', message: unsupported }
+    const listed = await shareRead(sharedLists, connection.id, () => listConversationsNow(connection))
+    if (!listed.ok) return listed
+    if (listed.access !== 'operate')
+      return {
+        ok: false,
+        code: 'conversation_operate_required',
+        message: `This pairing may follow conversations on ${connection.machineName} but not drive them.`,
+      }
+    const thread = listed.conversations.find(
+      (entry) => entry.workspaceId === key.workspaceId && entry.agentId === key.agentId,
+    )
+    if (!thread?.sessionId)
+      return {
+        ok: false,
+        code: 'files_unavailable',
+        message: `This chat on ${connection.machineName} is at rest. Send it a message first, then attach the file.`,
+      }
+    const uploadIds: string[] = []
+    for (const file of files) {
+      const name = basename(file.path) || 'file'
+      // Read whole, under the ceiling that machine keeps a file to: checked
+      // before reading, so a large file is never held only to be refused.
+      const found = await stat(file.path).catch(() => null)
+      if (!found?.isFile())
+        return { ok: false, code: 'invalid_arguments', message: `${name} is no longer there to send.` }
+      if (found.size > MAX_TAILNET_FILE_BYTES)
+        return {
+          ok: false,
+          code: 'too_large',
+          message: `${name} is over the ${MAX_TAILNET_FILE_BYTES / (1024 * 1024)} MB a file may be to go to ${connection.machineName}.`,
+        }
+      let bytes: Buffer
+      try {
+        bytes = await readFile(file.path)
+      } catch (error) {
+        return { ok: false, code: 'invalid_arguments', message: `${name} could not be read: ${message(error)}` }
+      }
+      if (bytes.length > MAX_TAILNET_FILE_BYTES)
+        return { ok: false, code: 'too_large', message: `${name} grew past the limit as it was read.` }
+      const uploaded = await uploadRemoteConversationImage({
+        endpoint: endpointOf(connection),
+        token: connection.deviceToken,
+        sessionId: thread.sessionId,
+        name: name.slice(0, 200),
+        mediaType: 'application/octet-stream',
+        bytes,
+        kind: 'file',
+      })
+      if (!uploaded.ok) {
+        if (uploaded.code === 'unauthorized')
+          recordReachability(connection, { reachable: false, unauthorized: true, detail: uploaded.message })
+        return uploaded
+      }
+      uploadIds.push(uploaded.value.uploadId)
+    }
+    return { ok: true, uploadIds }
+  }
+
+  // ── What a paired machine's composer reads of a chat ─────────────────────
+  //
+  // The files a mention may name and the commands the chat's CLI runs, read
+  // from the machine the chat runs on, in the chat's folder there. A machine
+  // that does not serve one is refused here, before anything is asked.
+  async function readComposer(
+    rawKey: unknown,
+    read: 'files' | 'commands',
+    options: { query?: string; refresh?: boolean },
+  ): Promise<{ ok: true; value: unknown } | { ok: false; code: string; message: string }> {
+    const key = meshConversationKeyOf(rawKey)
+    if (!key) return { ok: false, code: 'invalid_arguments', message: 'Name the conversation to read.' }
+    const connection = connectionFor(key.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const capability = read === 'files' ? 'conversation-file-search' : 'conversation-commands'
+    if (!tailnetPeerSupports(peerCapabilities.get(connection.id), capability))
+      return {
+        ok: false,
+        code: read === 'files' ? 'mentions_unsupported' : 'commands_unsupported',
+        message:
+          read === 'files'
+            ? `${connection.machineName} cannot search its files from here yet. Update SprintEngine Studio there.`
+            : `${connection.machineName} cannot list its slash commands from here yet. Update SprintEngine Studio there.`,
+      }
+    const answer = await readRemoteConversationComposer({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      read,
+      workspaceId: key.workspaceId,
+      agentId: key.agentId,
+      ...(options.query !== undefined ? { query: options.query } : {}),
+      ...(options.refresh ? { refresh: true } : {}),
+    })
+    if (!answer.ok && answer.code === 'unauthorized')
+      recordReachability(connection, { reachable: false, unauthorized: true, detail: answer.message })
+    return answer
   }
 
   /**
@@ -2442,6 +2932,10 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     settleConversation,
     visitConversation,
     changeConversation,
+    conversationDeletePlan,
+    conversationSearch,
+    approvalRules,
+    revokeApprovalRule,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -2488,6 +2982,40 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     async conversationSend(input): Promise<MeshConversationCommandResult> {
       const skills = parseSkillIds(input.skills)
       if (!skills.ok) return { ok: false, code: 'invalid_arguments', message: skills.message }
+      // What the composer named of the chat's folder over there, and the
+      // files it attached here. Refused, never dropped, by a machine that
+      // cannot take them: an older one skips the member, and the message
+      // would go without what its chips showed.
+      const mentions = input.mentions === undefined ? [] : parseConversationWireMentions(input.mentions)
+      if (mentions === null)
+        return {
+          ok: false,
+          code: 'invalid_arguments',
+          message: "Mentions are files and folders of the chat's folder, by their paths in it.",
+        }
+      const files = input.files === undefined ? [] : parseConversationAttachedFiles(input.files)
+      if (files === null)
+        return { ok: false, code: 'invalid_arguments', message: 'Attached files are absolute paths, at most 50.' }
+      if (mentions.length > 0 || files.length > 0) {
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        if (
+          mentions.length > 0 &&
+          !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-send-mentions')
+        )
+          return {
+            ok: false,
+            code: 'mentions_unsupported',
+            message: `${connection.machineName} cannot take mentioned files from here yet. Update SprintEngine Studio there, or remove them.`,
+          }
+        if (input.queue === true)
+          return {
+            ok: false,
+            code: 'invalid_arguments',
+            message: 'A queued message carries no mentions or files; send it once the turn ends instead.',
+          }
+      }
       if (skills.ids.length > 0) {
         const key = meshConversationKeyOf(input.key)
         const connection = key ? connectionFor(key.connectionId) : null
@@ -2520,6 +3048,40 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: `${connection.machineName} cannot take a message into a running turn from here yet. Update SprintEngine Studio there.`,
           }
       }
+      if (input.mode !== undefined && input.mode !== 'default' && input.mode !== 'plan' && input.mode !== 'ask')
+        return { ok: false, code: 'invalid_arguments', message: '"mode" is default, plan or ask.' }
+      const mode = input.mode === 'plan' || input.mode === 'ask' ? input.mode : null
+      if (mode) {
+        if (input.queue !== undefined)
+          return {
+            ok: false,
+            code: 'invalid_arguments',
+            message: 'A queued message goes in the default mode; send it once the turn ends instead.',
+          }
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        // Refused, never dropped: a machine from before `mode` skips it and
+        // runs the turn in the default mode, where an ask may change files.
+        if (!tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-send-mode'))
+          return {
+            ok: false,
+            code: 'mode_unsupported',
+            message: `${connection.machineName} cannot run a turn in ${mode === 'plan' ? 'plan' : 'ask'} mode from here yet. Update SprintEngine Studio there.`,
+          }
+      }
+      // The files go up first, wherever the pictures do: their ids ride the
+      // same `uploadIds`, and the machine tells the two apart by what it kept.
+      const sendWithFiles = async (imageIds: string[]): Promise<MeshConversationCommandResult> => {
+        if (files.length === 0) return send(imageIds)
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!key || !connection)
+          return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        const uploaded = await uploadConversationFiles(connection, key, files)
+        if (!uploaded.ok) return uploaded
+        return send([...imageIds, ...uploaded.uploadIds])
+      }
       const send = (uploadIds: string[]) =>
         conversationCommand({
           key: input.key,
@@ -2528,7 +3090,9 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: input.message,
             ...(uploadIds.length > 0 ? { uploadIds } : {}),
             ...(skills.ids.length > 0 ? { skills: skills.ids } : {}),
+            ...(mentions.length > 0 ? { mentions } : {}),
             ...(steer ? { steer: true } : {}),
+            ...(mode ? { mode } : {}),
           },
         })
       if (input.queue !== undefined && input.queue !== true)
@@ -2545,17 +3109,47 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           }
         return conversationCommand({ key: input.key, command: { kind: 'send', message: input.message, queue: true } })
       }
-      if (input.attachments === undefined) return send([])
+      if (input.attachments === undefined) return sendWithFiles([])
       const parsed = parseImageAttachments(input.attachments)
       if (!parsed.ok) return { ok: false, code: 'invalid_arguments', message: parsed.message }
-      if (parsed.attachments.length === 0) return send([])
+      if (parsed.attachments.length === 0) return sendWithFiles([])
       const key = meshConversationKeyOf(input.key)
       if (!key) return { ok: false, code: 'invalid_arguments', message: 'Name the conversation to send to.' }
       const connection = connectionFor(key.connectionId)
       if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
       const uploaded = await uploadConversationImages(connection, key, parsed.attachments)
       if (!uploaded.ok) return uploaded
-      return send(uploaded.uploadIds)
+      return sendWithFiles(uploaded.uploadIds)
+    },
+
+    async conversationSearchFiles(input): Promise<MeshConversationFileSearchResult> {
+      if (typeof input.query !== 'string' || input.query.length > CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS)
+        return { ok: false, code: 'invalid_arguments', message: 'A search is a query of at most 200 characters.' }
+      const query = input.query.trim()
+      if (!query) return { ok: true, entries: [], truncated: false }
+      const read = await readComposer(input.key, 'files', { query })
+      if (!read.ok) return read
+      const answer = parseConversationFileSearchAnswer(read.value)
+      return answer
+        ? { ok: true, ...answer }
+        : {
+            ok: false,
+            code: 'unreadable_result',
+            message: 'That machine answered the search in a shape this build cannot read.',
+          }
+    },
+
+    async conversationCommandList(input): Promise<MeshConversationCommandsResult> {
+      const read = await readComposer(input.key, 'commands', { refresh: input.refresh === true })
+      if (!read.ok) return read
+      const answer = parseConversationCommandsAnswer(read.value)
+      return answer
+        ? { ok: true, ...answer }
+        : {
+            ok: false,
+            code: 'unreadable_result',
+            message: 'That machine answered the command list in a shape this build cannot read.',
+          }
     },
 
     async conversationToolDetail(input): Promise<ConversationToolDetailResult> {
@@ -2565,48 +3159,68 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       return remoteConversations.toolDetail(key, input.toolUseId)
     },
 
+    async conversationSideQuestion(input): Promise<ConversationSideQuestionResult> {
+      const key = meshConversationKeyOf(input.key)
+      const history = Array.isArray(input.history)
+        ? input.history.filter(
+            (exchange): exchange is ConversationSideQuestionExchange =>
+              isRecord(exchange) && typeof exchange.question === 'string' && typeof exchange.answer === 'string',
+          )
+        : []
+      if (
+        !key ||
+        typeof input.requestId !== 'string' ||
+        !input.requestId ||
+        input.requestId.length > 200 ||
+        typeof input.question !== 'string' ||
+        !input.question.trim()
+      )
+        return { ok: false, message: 'Name the conversation and the question.' }
+      if (input.question.length > CONVERSATION_MAX_MESSAGE_CHARS)
+        return { ok: false, message: `A question may hold at most ${CONVERSATION_MAX_MESSAGE_CHARS} characters.` }
+      const connection = connectionFor(key.connectionId)
+      // Said here in words: a machine from before it answers a frame it does
+      // not know with nothing a person could act on.
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-side-questions'))
+        return {
+          ok: false,
+          message: `${connection.machineName} cannot answer a side question from here yet. Update SprintEngine Studio there.`,
+        }
+      return remoteConversations.sideQuestion(key, { questionId: input.requestId, question: input.question, history })
+    },
+
+    async conversationCancelSideQuestion(input) {
+      const key = meshConversationKeyOf(input.key)
+      if (!key || typeof input.requestId !== 'string' || !input.requestId || input.requestId.length > 200)
+        return { ok: false, message: 'Name the conversation and the question.' }
+      return remoteConversations.cancelSideQuestion(key, input.requestId)
+    },
+
+    async conversationContextBreakdown(input): Promise<ConversationContextBreakdownResult> {
+      const key = meshConversationKeyOf(input.key)
+      if (!key) return { ok: false, reason: 'failed', message: 'Name the conversation.' }
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-context-breakdown'))
+        return {
+          ok: false,
+          reason: 'unsupported',
+          message: `${connection.machineName} cannot say what fills a chat’s window from here yet. Update SprintEngine Studio there.`,
+        }
+      return remoteConversations.contextBreakdown(key)
+    },
+
     async conversationToolImage(input): Promise<MeshConversationImageResult> {
       const key = meshConversationKeyOf(input.key)
       if (!key || typeof input.toolUseId !== 'string' || !input.toolUseId || input.toolUseId.length > 200)
         return { ok: false, code: 'invalid_arguments', message: 'Name the conversation and the tool call.' }
-      const connection = connectionFor(key.connectionId)
-      if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
-      // A machine that said what it can do and left this out cannot serve it.
-      // One that has not said yet is asked, and answers for itself.
-      const unsupported = `This picture is on ${connection.machineName}, which does not share pictures yet.`
-      const capabilities = peerCapabilities.get(connection.id)
-      if (capabilities && !tailnetPeerSupports(capabilities, 'conversation-images'))
-        return { ok: false, code: 'images_unsupported', message: unsupported }
-      const id = JSON.stringify([connection.id, key.workspaceId, key.agentId, input.toolUseId])
-      const kept = pictures.get(id)
-      if (kept) {
-        // The most recently shown stays longest.
-        pictures.delete(id)
-        pictures.set(id, kept)
-        return kept.result
-      }
-      const entry: KeptPicture = {
-        connectionId: connection.id,
-        result: fetchPicture(connection, key, input.toolUseId, unsupported),
-        chars: 0,
-      }
-      pictures.set(id, entry)
-      void entry.result.then((answer) => {
-        if (pictures.get(id) !== entry) return
-        // Only a picture is kept: a failure may be gone on the next look.
-        if (!answer.ok) {
-          pictures.delete(id)
-          return
-        }
-        entry.chars = answer.dataUrl.length
-        pictureChars += entry.chars
-        for (const [oldest, older] of pictures) {
-          if (pictureChars <= MAX_PICTURE_CHARS || older === entry) break
-          pictures.delete(oldest)
-          pictureChars -= older.chars
-        }
-      })
-      return entry.result
+      return keptPicture(key, { toolUseId: input.toolUseId }, 'conversation-images')
+    },
+
+    async conversationAttachment(input): Promise<MeshConversationImageResult> {
+      const key = meshConversationKeyOf(input.key)
+      if (!key || typeof input.ref !== 'string' || !input.ref || input.ref.length > 400)
+        return { ok: false, code: 'invalid_arguments', message: 'Name the conversation and the picture.' }
+      return keptPicture(key, { attachment: input.ref }, 'conversation-message-images')
     },
 
     async conversationTurnDiff(input): Promise<ConversationTurnDiffResult> {
@@ -2889,7 +3503,7 @@ function readCreatePullRequestOutcome(value: Record<string, unknown>): MeshPullR
 export function rowMenuCallOf(change: unknown): {
   tool: string
   args: Record<string, unknown>
-  capability: 'chat-row-menu' | 'chat-mark-unread'
+  capability: 'chat-row-menu' | 'chat-mark-unread' | ChatManageCapability
   /** What is asked, for a machine that cannot be: "snooze its chats". */
   ask: string
 } | null {
@@ -2930,6 +3544,152 @@ export function rowMenuCallOf(change: unknown): {
         capability: 'chat-mark-unread',
         ask: 'mark its chats unread',
       }
+    default:
+      return chatManageCallOf(value)
+  }
+}
+
+// ── A paired desktop's chat management ─────────────────────────────────
+//
+// The changes a chat's menus ask of the machine it runs on beyond its marks,
+// each over a gateway tool of its own capability, asked as the row menu's are.
+
+type ChatManageCapability =
+  'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request' | 'chat-delete' | 'chat-search'
+
+/** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
+export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
+  return {
+    rename: tailnetPeerSupports(capabilities, 'chat-rename'),
+    autoCompact: tailnetPeerSupports(capabilities, 'chat-auto-compact'),
+    unwatchPullRequest: tailnetPeerSupports(capabilities, 'chat-unwatch-pull-request'),
+    deleteSettled: tailnetPeerSupports(capabilities, 'chat-delete'),
+    search: tailnetPeerSupports(capabilities, 'chat-search'),
+  }
+}
+
+const PLAN_FATES = new Set(['remove', 'keep'])
+const KEPT_BECAUSE = new Set(['changes', 'shared', 'not-made-here', 'other-machine', 'unreadable'])
+
+/** A machine's delete plan as it answered, kept to what this build reads; null members are left as null. */
+export function deletePlanOf(workspaceId: string, value: Record<string, unknown>): MeshConversationDeletePlanResult {
+  const count = (entry: unknown) =>
+    typeof entry === 'number' && Number.isSafeInteger(entry) && entry >= 0 ? entry : null
+  const worktrees = (Array.isArray(value.worktrees) ? value.worktrees : []).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const worktree = entry as Record<string, unknown>
+    if (typeof worktree.name !== 'string' || !PLAN_FATES.has(worktree.fate as string)) return []
+    return [
+      {
+        name: worktree.name,
+        branch: typeof worktree.branch === 'string' ? worktree.branch : null,
+        pooled: worktree.pooled === true,
+        changedPaths: count(worktree.changedPaths),
+        unpushedCommits: count(worktree.unpushedCommits),
+        fate: worktree.fate as 'remove' | 'keep',
+        ...(KEPT_BECAUSE.has(worktree.keptBecause as string)
+          ? { keptBecause: worktree.keptBecause as Omit<SettledChatWorktreePlan, 'path'>['keptBecause'] }
+          : {}),
+      },
+    ]
+  })
+  return {
+    ok: true,
+    workspaceId,
+    ...(value.gone === true ? { gone: true as const } : {}),
+    ...(typeof value.refused === 'string' && value.refused ? { refused: value.refused } : {}),
+    worktrees,
+  }
+}
+
+/** A machine's rules as it listed them, kept to the ones this build can read. */
+export function approvalRulesOf(value: Record<string, unknown>): MeshApprovalRulesResult {
+  const text = (entry: unknown): entry is string =>
+    typeof entry === 'string' && entry.length > 0 && entry.length <= 2_000
+  const rules = (Array.isArray(value.rules) ? value.rules : []).slice(0, 2_000).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const rule = entry as Record<string, unknown>
+    if (!text(rule.id) || !text(rule.label)) return []
+    return [
+      {
+        id: rule.id,
+        label: rule.label,
+        toolName: text(rule.toolName) ? rule.toolName : '',
+        toolKind: text(rule.toolKind) ? rule.toolKind : 'other',
+        project: text(rule.project) ? rule.project : '',
+        createdAt: typeof rule.createdAt === 'number' && Number.isFinite(rule.createdAt) ? rule.createdAt : 0,
+      },
+    ]
+  })
+  return { ok: true, rules }
+}
+
+const HIT_FROM = new Set(['person', 'agent', 'studio'])
+
+/** A machine's search answer, kept to the chats and matches this build can read. */
+export function searchAnswerOf(value: Record<string, unknown>): MeshConversationSearchResult {
+  const chats = (Array.isArray(value.chats) ? value.chats : []).slice(0, 50).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const chat = entry as Record<string, unknown>
+    if (typeof chat.workspaceId !== 'string' || !chat.workspaceId) return []
+    const hits = (Array.isArray(chat.hits) ? chat.hits : []).slice(0, 20).flatMap((hit) => {
+      if (!hit || typeof hit !== 'object') return []
+      const found = hit as Record<string, unknown>
+      if (typeof found.agentId !== 'string' || !found.agentId) return []
+      if (typeof found.seq !== 'number' || !Number.isSafeInteger(found.seq)) return []
+      if (typeof found.snippet !== 'string') return []
+      return [
+        {
+          agentId: found.agentId,
+          seq: found.seq,
+          snippet: found.snippet.slice(0, 1_000),
+          ...(HIT_FROM.has(found.from as string) ? { from: found.from as 'person' | 'agent' | 'studio' } : {}),
+        },
+      ]
+    })
+    if (hits.length === 0) return []
+    const count = typeof chat.count === 'number' && Number.isSafeInteger(chat.count) ? chat.count : hits.length
+    return [
+      {
+        workspaceId: chat.workspaceId,
+        chatTitle: typeof chat.chatTitle === 'string' && chat.chatTitle.trim() ? chat.chatTitle : 'Chat',
+        hits,
+        count: Math.max(count, hits.length),
+      },
+    ]
+  })
+  return { ok: true, chats, truncated: value.truncated === true }
+}
+
+function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof rowMenuCallOf> {
+  switch (value.kind) {
+    case 'rename':
+      if (typeof value.name !== 'string' || !value.name.trim()) return null
+      return {
+        tool: 'conversation.rename',
+        args: { name: value.name.trim() },
+        capability: 'chat-rename',
+        ask: 'rename its chats',
+      }
+    case 'auto-compact':
+      if (typeof value.enabled !== 'boolean') return null
+      return {
+        tool: 'conversation.auto_compact',
+        args: { enabled: value.enabled },
+        capability: 'chat-auto-compact',
+        ask: 'switch Auto compact on its chats',
+      }
+    case 'unwatch-pull-request':
+      if (typeof value.agentId !== 'string' || !value.agentId) return null
+      if (value.url !== undefined && (typeof value.url !== 'string' || !value.url)) return null
+      return {
+        tool: 'conversation.pull_request_unwatch',
+        args: { agentId: value.agentId, ...(typeof value.url === 'string' ? { url: value.url } : {}) },
+        capability: 'chat-unwatch-pull-request',
+        ask: "stop watching its chats' pull requests",
+      }
+    case 'delete':
+      return { tool: 'conversation.delete', args: {}, capability: 'chat-delete', ask: 'delete its chats' }
     default:
       return null
   }

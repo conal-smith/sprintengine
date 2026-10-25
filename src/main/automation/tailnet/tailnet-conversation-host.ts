@@ -1,21 +1,37 @@
 import {
   CONVERSATION_DEFAULT_MODEL_ID,
+  CONVERSATION_MAX_FILE_SEARCH_RESULTS,
   CONVERSATION_MAX_REPLY_PREVIEW,
+  parseConversationCommandsAnswer,
   parseConversationWireHighlight,
   type ConversationCommand,
+  type ConversationForkCommand,
+  type ConversationCommandsAnswer,
+  type ConversationFileSearchAnswer,
+  type ConversationFileSearchEntry,
   type ConversationQueuedMessage,
+  type ConversationScheduledMessage,
   type ConversationThread,
+  type ConversationUsageLimitResumeAction,
+  type ConversationUsageLimitsFrame,
   type ConversationWireErrorCode,
   type ConversationWireHost,
   type ConversationWirePullRequest,
+  type ConversationWireLocalServer,
   type ConversationWireModels,
+  type ConversationWireMcpServerAction,
   isStaleConversationSend,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
 import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
-import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
+import {
+  conversationPhaseWorking,
+  conversationSummaryPhase,
+  conversationTurnInProgress,
+} from '../../../shared/conversation/phase'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
+  ConversationContextBreakdownResult,
   ConversationKey,
   ConversationImageAttachment,
   ConversationMessageOrigin,
@@ -23,6 +39,8 @@ import type {
   ConversationSessionActionResult,
   ConversationSessionFrame,
   ConversationSessionSummary,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationSubscribeInput,
 } from '../../../shared/conversation-runtime'
 import type { ConversationBackend } from '../../../server/core/conversation-backend'
@@ -32,9 +50,12 @@ import { latestTurnEnd } from '../conversation-lifecycle'
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_AGENT_SPAWN_PERMISSION_PRESET } from '../../../shared/launch-settings'
 import { parseCliPermissionModeId } from '../../../shared/cli-permission-mode'
-import { basename, dirname, isAbsolute, resolve, win32 } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path'
 import { stat } from 'node:fs/promises'
 import type { ConversationAttachedFile } from '../../../shared/conversation/attachedFiles'
+import type { ConversationCommandCatalog } from '../../../shared/conversation/commands'
+import { cliForConversationProvider } from '../../../shared/conversation-harness'
+import type { FileSearchResult } from '../../../shared/ipc/filesystem'
 import { openConfinedExistingFile } from '../../conversation-file-access'
 import { confineToRoots } from '../../studio-rpc/studio-file-confinement'
 import { distroOfUncPath } from '../../../shared/host-paths'
@@ -55,6 +76,17 @@ const UPLOAD_TTL_MS = 60 * 60_000
 const MAX_UPLOAD_REFS = 256
 const MAX_DEVICE_UPLOAD_REFS = 32
 const MAX_SPENT_UPLOAD_REFS = 256
+// Rewinds, confirmed reverts and handoffs remembered by the device's command,
+// so one sent again after a dropped connection is answered as the first was.
+const MAX_COMMAND_RECEIPTS = 64
+// Forks remembered by the device's command, so one sent again after a dropped
+// connection is answered as the first was rather than refused as taken.
+const MAX_FORK_RECEIPTS = 64
+// A fork's id names its transcript's folder: letters, digits, `.`, `_`, `-`.
+const FORK_AGENT_ID = /^[A-Za-z0-9][\w.-]{0,199}$/u
+// Restarts remembered by the device's command, so one sent again after a
+// dropped connection is answered as the first was.
+const MAX_RESTART_RECEIPTS = 64
 /**
  * Where a step's picture is, once found, is kept this long and for this many
  * steps. Finding it scans the transcript back to the step, and a phone
@@ -83,6 +115,30 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // (`conversation-stop-subagent`); a client offers an agent's Stop only
         // where it can.
         stopSubagent: capabilities.stopSubagent === true,
+        // Whether the chat can be handed off to a fresh session
+        // (`conversation-handoff`); a client offers Handoff only where it can.
+        handoff: capabilities.handoff === true,
+        // Whether the chat can go back to before one of its messages
+        // (`conversation-rewind`); a client offers Edit from here only where
+        // it can.
+        rewind: capabilities.rewind === true,
+        // Whether the chat can be forked (`conversation-fork`), a side question
+        // asked of it (`conversation-side-questions`), and its agent asked what
+        // fills its window (`conversation-context-breakdown`); a client offers
+        // each only where it can.
+        fork: capabilities.fork === true,
+        sideQuestion: capabilities.sideQuestion === true,
+        contextBreakdown: capabilities.contextBreakdown === true,
+        // The effort levels the chat's provider runs, none for one that runs
+        // none (`conversation-reasoning-effort`); a client offers its effort
+        // control only where there are some.
+        reasoningEfforts: [...(capabilities.reasoningEfforts ?? [])],
+        // What a device may do to the chat's servers while it runs
+        // (`conversation-mcp-server-actions`). Not a sign-in: the CLI waits
+        // for its callback on this machine, where no device could finish it.
+        mcpServerActions: (capabilities.mcpServerActions ?? []).filter(
+          (action): action is ConversationWireMcpServerAction => action !== 'sign-in',
+        ),
       }
     : undefined
 
@@ -179,6 +235,66 @@ export type ConversationGatewayHost = {
     listener: (messages: ConversationQueuedMessage[]) => void,
   ): () => void
   /**
+   * A side question about a chat (`conversation-side-questions`), asked of its
+   * agent and added to nothing, under the device's own `questionId`. A chat
+   * at rest is resumed for it, as a send resumes one. Absent on a host that
+   * cannot ask one.
+   */
+  askSideQuestion?(
+    key: ConversationKey,
+    deviceId: string,
+    questionId: string,
+    question: string,
+    history: ConversationSideQuestionExchange[],
+  ): Promise<ConversationSideQuestionResult>
+  /** Call off a side question the device asked and is still being answered. */
+  cancelSideQuestion?(deviceId: string, questionId: string): Promise<{ ok: true } | { ok: false; message: string }>
+  /**
+   * What fills a chat's context window, as its live session's agent measures it
+   * (`conversation-context-breakdown`). A chat with no live session is not
+   * started for it: the read says there is no agent to ask yet.
+   */
+  contextBreakdown?(key: ConversationKey): Promise<ConversationContextBreakdownResult>
+  /**
+   * The files and folders in a chat's folder whose names match `query`, best
+   * first, each by its path relative to that folder: what a paired device's @
+   * mention searches (`conversation-file-search`). The folder is the one the
+   * chat's session works in, else its workspace's, the one its mentions are
+   * resolved against when it sends; nothing outside it is named. A device's
+   * next search supersedes its last. Absent on a host that searches nothing.
+   */
+  searchFiles?(
+    key: ConversationKey,
+    deviceId: string,
+    query: string,
+    limit?: number,
+  ): Promise<ConversationComposerRead<ConversationFileSearchAnswer>>
+  /**
+   * The slash commands the chat's CLI runs in the chat's folder, as the `/`
+   * menu here lists them (`conversation-commands`). `refresh` asks the CLI
+   * again now. Absent on a host that lists none.
+   */
+  listCommands?(key: ConversationKey, refresh: boolean): Promise<ConversationComposerRead<ConversationCommandsAnswer>>
+  /**
+   * Follow what this desktop has scheduled into a chat for a time: told now,
+   * and again whenever it changes. Absent on a host that schedules nothing
+   * (one built without `scheduledSends`); returns what stops the following.
+   */
+  watchScheduled?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (messages: ConversationScheduledMessage[]) => void,
+  ): () => void
+  /**
+   * Follow what this desktop knows of its agents' usage limits, for a chat:
+   * each plan's windows and the notice a limit left on the chat's turn. Told
+   * now, and again whenever it reads differently. Absent on a host built
+   * without `usageLimits`; returns what stops the following.
+   */
+  watchUsageLimits?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (state: ConversationUsageLimitsState) => void,
+  ): () => void
+  /**
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
    * id for a different command is then refused (`command_id_conflict`).
@@ -215,6 +331,10 @@ function relay(
   return rest as ConversationGatewayCommandResult
 }
 
+/** A read for a paired device's composer, or why there is none: no such chat, or nothing to read. */
+export type ConversationComposerRead<T> =
+  { ok: true; answer: T } | { ok: false; code: 'unknown_conversation' | 'unavailable'; message: string }
+
 export type ConversationToolImagePath =
   { ok: true; path: string } | { ok: false; code: 'unknown_conversation' | 'unknown_image' }
 
@@ -234,6 +354,8 @@ export type ConversationGatewayCommandResult = {
   /** With `busy`: when trying again can succeed. */
   retryAfterMs?: number
   notice?: string
+  /** What a command that answers more than yes or no says, as its `commandResult`'s `data` (a `revert`'s files). */
+  data?: Record<string, unknown>
 }
 
 /** A count or a time in milliseconds as the wire carries it: a whole number, never below zero. */
@@ -258,6 +380,9 @@ function wholeNumbers(thread: ConversationThread): ConversationThread {
   }
 }
 
+/** Answers to Send now and Delete on a scheduled message, and to a resume's, kept for a command sent again. */
+const MAX_ANSWER_RECEIPTS = 256
+
 /** How long a send turned away behind another send to the same chat waits before trying again. */
 const SEND_BUSY_RETRY_MS = 1_000
 
@@ -279,6 +404,13 @@ export type ConversationListMarks = {
   pullRequestsOf?: (
     keys: Array<{ workspaceId: string; agentId: string }>,
   ) => Promise<Map<string, ConversationWirePullRequest[]>>
+  /**
+   * The local servers the record holds for these chats, keyed
+   * `workspaceId:agentId`, as last checked: a chat with none is left out.
+   */
+  localServersOf?: (
+    keys: Array<{ workspaceId: string; agentId: string }>,
+  ) => Promise<Map<string, ConversationWireLocalServer[]>>
   /** This machine's own kind and colour. */
   selfMachine?: () => { kind: string; color: string }
   /**
@@ -299,7 +431,18 @@ export type ConversationListMarks = {
   checkoutsOf?: (
     keys: Array<{ workspaceId: string; agentId: string; live: boolean }>,
   ) => Promise<Map<string, Pick<ConversationThread, 'changes' | 'worktree'>>>
+  /**
+   * What a paired desktop's management of each chat reads, keyed
+   * `workspaceId:agentId`: whether it compacts by itself (`autoCompact`). A
+   * chat left out lists without it.
+   */
+  manageOf?: (
+    keys: Array<{ workspaceId: string; agentId: string }>,
+  ) => Promise<Map<string, ConversationListManage>> | Map<string, ConversationListManage>
 }
+
+/** The members a paired desktop's management of a listed chat reads (`ConversationListMarks.manageOf`). */
+export type ConversationListManage = Pick<ConversationThread, 'autoCompact'>
 
 const restingRecord = (record: ConversationListWorkspace | null): boolean =>
   record !== null && isSettledWorkspace(record)
@@ -473,11 +616,59 @@ export type ConversationRegistryLink = {
    */
   heldMessages?: ConversationHeldMessages
   /**
+   * Where a message a paired machine scheduled into a chat for a time is
+   * kept, and sent from when it comes due (`conversation-scheduled-sends`).
+   * Absent, the commands are refused in words.
+   */
+  scheduledSends?: ConversationScheduledSends
+  /**
+   * What this desktop knows of its agents' usage limits, and the resume it
+   * sends a chat a limit stopped (`conversation-usage-limits`). Absent, the
+   * command is refused in words and nothing is watched.
+   */
+  usageLimits?: ConversationUsageLimits
+  /**
    * Studio's own folders of pictures (what chats sent, the pictures their steps
    * returned, pasted images). A step's picture is served from the chat's
    * folder, its session's, or one of these, and from nowhere else.
    */
   imageRoots?: () => readonly string[]
+  /**
+   * Where a fork a paired device asked for joins this desktop's records, as a
+   * window's Fork from here adds one (`conversation-fork`): `name` says what
+   * the fork of a chat is called beside the workspace's others, refusing an
+   * id the workspace holds already, and `add` writes its agent record, the
+   * chat's twin under that name. Absent, a fork is refused: one with no
+   * record would be a transcript no window here lists.
+   */
+  forks?: {
+    name(chat: ChatOf, newAgentId: string): { ok: true; name: string } | { ok: false; message: string }
+    add(chat: ChatOf, newAgentId: string, name: string): { ok: true } | { ok: false; message: string }
+  }
+  /**
+   * Search a chat's folder for files and folders by name, as the composer's @
+   * picker here does (filesystem-search.ts), for a paired device's mention
+   * (`conversation-file-search`). `channel` names the asker, so its next
+   * query supersedes its last. Absent, nothing is searched.
+   */
+  searchFiles?: (input: {
+    workspaceId: string
+    rootPath: string
+    query: string
+    limit: number
+    channel: string
+  }) => Promise<FileSearchResult>
+  /**
+   * The slash commands a CLI runs in a chat's folder, from the composer's own
+   * command lists (conversation-commands/service.ts), for a paired device's
+   * `/` menu (`conversation-commands`). Absent, none is listed.
+   */
+  commandsOf?: (input: {
+    workspaceId: string
+    cli: string
+    cwd: string
+    refresh?: boolean
+  }) => Promise<ConversationCommandCatalog>
 }
 
 type ChatOf = { workspaceId: string; agentId: string }
@@ -500,6 +691,50 @@ export type ConversationHeldMessages = {
 }
 
 /**
+ * The messages this desktop has scheduled into its chats for a time, as a
+ * paired machine schedules, sends early and deletes them: the scheduled
+ * messages keep them (scheduled-messages.ts, `scheduleFrom`), beside the ones
+ * scheduled here, and send them when they come due, so the machine that
+ * scheduled one may sleep or close meanwhile. A message held for a turn's end
+ * is `heldMessages`'s, and is in none of these.
+ */
+export type ConversationScheduledSends = {
+  /** Keep `text` for the chat until `sendAt`. `source` names the command it came in on: the same one twice is kept once. */
+  schedule(chat: ChatOf, text: string, sendAt: number, source: string): { ok: true } | { ok: false; message: string }
+  /** Send one at once, a refused one again; refused once it is no longer scheduled. */
+  sendNow(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
+  /** Delete one; refused once it is on its way into the chat, or no longer scheduled. */
+  cancel(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
+  /** What the chat has scheduled now, soonest first. */
+  list(chat: ChatOf): ConversationScheduledMessage[]
+  /** Something scheduled changed, for some chat. */
+  onChanged(listener: () => void): () => void
+}
+
+/** A `usageLimits` frame without its type and key: what a host says of one chat. */
+export type ConversationUsageLimitsState = Omit<ConversationUsageLimitsFrame, 'type' | 'key'>
+
+/**
+ * This desktop's usage limits, as a paired machine's strip and tray draw them
+ * for one of its chats: the limits its agents reported here
+ * (usage-limits/store.ts), and the resume it sends a chat a limit stopped
+ * (usage-limits/resume.ts), which a paired machine schedules, cancels,
+ * dismisses or retries as this desktop's own tray row does.
+ */
+export type ConversationUsageLimits = {
+  /** What there is to say for the chat now. */
+  list(chat: ChatOf): ConversationUsageLimitsState
+  /** Act on the chat's notice; `always` also switches on resuming every chat a limit stops. */
+  update(
+    chat: ChatOf,
+    action: ConversationUsageLimitResumeAction,
+    always: boolean,
+  ): { ok: true } | { ok: false; message: string }
+  /** The limits or a notice changed. */
+  onChanged(listener: () => void): () => void
+}
+
+/**
  * Both IPC and the network wrap this one session API; only root resolution
  * differs. `defaultPermissionPreset` answers for a conversation this app has
  * not run since it started: the preset its agent record holds, else the app's
@@ -514,6 +749,8 @@ export type AgentChoicePatch = {
   /** Written with the preset, or cleared with it: a mode left from an earlier preset is not this one's. */
   cliPermissionMode?: string | undefined
   conversation?: { providerId: string; modelId: string }
+  /** Cleared with `undefined`: the chat then runs at its provider's own default. */
+  conversationReasoningEffort?: string | undefined
 }
 
 /**
@@ -521,10 +758,10 @@ export type AgentChoicePatch = {
  * them: every chat's changes arrive on the one channel, and a follower is told
  * only when its own chat's list reads differently.
  */
-function watchHeld(
-  held: ConversationHeldMessages,
+function watchHeld<Said>(
+  held: { list(chat: ChatOf): Said; onChanged(listener: () => void): () => void },
   chat: ChatOf,
-  listener: (messages: ConversationQueuedMessage[]) => void,
+  listener: (said: Said) => void,
 ): () => void {
   const key = { workspaceId: chat.workspaceId, agentId: chat.agentId }
   let last: string | null = null
@@ -546,6 +783,28 @@ function watchHeld(
  * (`\\wsl.localhost\Ubuntu\…`), a spelling the general check refuses, so on
  * Windows such a path is held by its spelling to a root on that same share.
  */
+/**
+ * A search's matches as a paired device is told them: each by its path
+ * relative to `root`, with `/` between segments, and none that is not inside
+ * it. The device names them back as mentions, which this machine resolves
+ * against the same folder.
+ */
+function relativeSearchEntries(root: string, result: FileSearchResult, limit: number): ConversationFileSearchAnswer {
+  if (!result.ok) return { entries: [], truncated: false }
+  const entries: ConversationFileSearchEntry[] = []
+  let truncated = result.truncated
+  for (const found of result.results) {
+    const inside = relative(root, found.path)
+    if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue
+    if (entries.length >= limit) {
+      truncated = true
+      break
+    }
+    entries.push({ path: inside.split(sep).join('/'), kind: found.isDir ? 'folder' : 'file' })
+  }
+  return { entries, truncated }
+}
+
 async function confineImagePath(path: string, roots: readonly string[]): Promise<string | null> {
   const checked = await confineToRoots(path, roots)
   if (checked.ok) return checked.path
@@ -605,6 +864,90 @@ export function createConversationGatewayHost(
   // gone; a retry of that same command is answered from the runtime's receipt
   // and does not need them again.
   const spent = new Map<string, { deviceId: string; commandId: string }>()
+  const receipts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  // Carried out under the device's own command: a repeat after a dropped
+  // connection is the same rewind, revert or handoff, answered as the first
+  // was. Run again, a rewind would no longer find the message it went back
+  // before, a revert would find its own work done and refuse it as files that
+  // moved, and a handoff would be refused as one already made.
+  const receipted = (
+    key: ConversationKey,
+    deviceId: string,
+    commandId: string,
+    run: () => Promise<ConversationGatewayCommandResult>,
+  ): Promise<ConversationGatewayCommandResult> => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    let running = receipts.get(receipt)
+    if (!running) {
+      running = run().catch((error: unknown): ConversationGatewayCommandResult => ({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The conversation could not do that.',
+      }))
+      receipts.set(receipt, running)
+      while (receipts.size > MAX_COMMAND_RECEIPTS) receipts.delete(receipts.keys().next().value!)
+      // A refusal is not kept: the person may try again once the turn is over.
+      void running.then((result) => {
+        if (!result.ok) receipts.delete(receipt)
+      })
+    }
+    return running
+  }
+  // A turn's files put back, or only listed, as this machine's own Revert
+  // does. The paths are the checkout's own, relative to it, which the socket
+  // keeps them as.
+  const revert = async (
+    key: ConversationKey,
+    command: Extract<ConversationCommand, { kind: 'revert' }>,
+  ): Promise<ConversationGatewayCommandResult> => {
+    const result = await api.revertToTurn({
+      key,
+      turnSeq: command.turnSeq,
+      ...(command.undo ? { undo: true } : {}),
+      ...(command.confirmed ? { confirmed: true, files: command.files ?? [] } : {}),
+    })
+    if (!result.ok)
+      return { ok: false, message: result.message, ...(result.changed ? { data: { changed: true } } : {}) }
+    return {
+      ok: true,
+      data: {
+        files: result.files,
+        reverted: result.reverted,
+        ...(result.kept?.length ? { kept: result.kept } : {}),
+      },
+    }
+  }
+  const restarts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  // As this machine's own Restart agent session: the agent's process ended
+  // the way Settle ends it, suspended, so the next message starts it again on
+  // the same conversation. Refused while it works, since a suspend would
+  // interrupt the turn and end the agents it sent off. Under the device's own
+  // command: a repeat after a dropped connection is that restart, not a
+  // second one ending the session a message has started since.
+  const restartSession = (key: ConversationKey, deviceId: string, commandId: string) => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    let restarting = restarts.get(receipt)
+    if (!restarting) {
+      restarting = (async (): Promise<ConversationGatewayCommandResult> => {
+        // A chat at rest is not resumed for it: there is nothing running to end.
+        const session = sessionFor(key)
+        if (!session) return { ok: true, notice: 'This chat has no agent running. Your next message starts one.' }
+        if (conversationTurnInProgress(session))
+          return { ok: false, message: 'The agent is still working. Stop it first, then restart the session.' }
+        const suspended = await runtime.suspendSession({ sessionId: session.sessionId })
+        return suspended.ok ? { ok: true } : { ok: false, message: suspended.message }
+      })().catch((error: unknown): ConversationGatewayCommandResult => ({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The session was not restarted.',
+      }))
+      restarts.set(receipt, restarting)
+      while (restarts.size > MAX_RESTART_RECEIPTS) restarts.delete(restarts.keys().next().value!)
+      // A refusal is not kept: the person may try again once the agent stops.
+      void restarting.then((result) => {
+        if (!result.ok) restarts.delete(receipt)
+      })
+    }
+    return restarting
+  }
   const starting = new Map<string, ReturnType<ConversationBackend['startSession']>>()
   const sending = new Map<
     string,
@@ -645,6 +988,23 @@ export function createConversationGatewayHost(
   const threadFor = async (key: ConversationKey) => {
     const indexed = await runtime.listThreads(key)
     return indexed.ok ? indexed.threads.find((entry) => entry.agentId === key.agentId) : undefined
+  }
+  // The folder a chat works in, for what a paired device's composer reads of
+  // it: its live session's (a New chat's pool worktree), else its
+  // workspace's, which is where a send resumes it and so where the mentions
+  // it names are resolved. Null for a chat the workspace does not hold.
+  const chatFolderOf = async (key: ConversationKey): Promise<{ folder: string; providerId: string } | null> => {
+    const live = sessionFor(key)
+    const providerId = live?.providerId ?? (await threadFor(key))?.providerId
+    if (!providerId) return null
+    const sessionRoot =
+      live && typeof runtime.sessionWorkspaceRoot === 'function' ? runtime.sessionWorkspaceRoot(live.sessionId) : null
+    return { folder: sessionRoot || key.workspaceRoot, providerId }
+  }
+  const unknownChat = {
+    ok: false as const,
+    code: 'unknown_conversation' as const,
+    message: 'No eligible conversation on this machine has that id.',
   }
   // The models a chat can switch between: its CLI's catalog, and whether its
   // provider takes a new model mid-conversation — as the live session
@@ -689,6 +1049,95 @@ export function createConversationGatewayHost(
       if (starting.get(id) === request) starting.delete(id)
     }
   }
+  // "Fork from here" for a paired device, as a window here forks: the runtime
+  // writes the fork's transcript beside this chat's, then the fork joins the
+  // workspace's records as this chat's twin under its own name, so every
+  // window here lists it and the device can follow it by the id it chose.
+  // Never a resume: a fork is cut from the transcript, and a provider that
+  // branches only a live session (an ACP agent) hands the fork the
+  // conversation as text instead. Held under the device's own command, so a
+  // repeat after a dropped connection is the same fork; a refusal is not
+  // kept, since the person may try again once the turn is over.
+  const forkReceipts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  const fork = (
+    key: ConversationKey,
+    deviceId: string,
+    commandId: string,
+    command: ConversationForkCommand,
+  ): Promise<ConversationGatewayCommandResult> => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    const kept = forkReceipts.get(receipt)
+    if (kept) return kept
+    const forking = (async (): Promise<ConversationGatewayCommandResult> => {
+      const records = registry.forks
+      if (!records) return { ok: false, message: 'This desktop cannot add a forked chat.' }
+      if (!FORK_AGENT_ID.test(command.newAgentId) || command.newAgentId === key.agentId)
+        return { ok: false, message: 'The new chat needs an id of its own.' }
+      const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
+      const named = records.name(chat, command.newAgentId)
+      if (!named.ok) return named
+      const forked = await runtime.forkAtTurn({
+        key,
+        newAgentId: command.newAgentId,
+        title: named.name,
+        ...(command.side === 'user'
+          ? { side: 'user' as const, turnSeq: command.turnSeq }
+          : { side: 'assistant' as const, turnId: command.turnId }),
+      })
+      if (!forked.ok) return { ok: false, message: forked.message }
+      return records.add(chat, command.newAgentId, named.name)
+    })().catch((error: unknown): ConversationGatewayCommandResult => ({
+      ok: false,
+      message: error instanceof Error ? error.message : 'The conversation could not be forked.',
+    }))
+    forkReceipts.set(receipt, forking)
+    while (forkReceipts.size > MAX_FORK_RECEIPTS) forkReceipts.delete(forkReceipts.keys().next().value!)
+    void forking.then((result) => {
+      if (!result.ok && forkReceipts.get(receipt) === forking) forkReceipts.delete(receipt)
+    })
+    return forking
+  }
+  // Side questions a device asked, by its own id for each: where each went,
+  // so it can be called off there, or that it was called off before its
+  // session had started, so it is never asked.
+  const sideQuestions = new Map<string, { sessionId: string; requestId: string } | { calledOff: boolean }>()
+  // Send now and Delete on a message a paired machine scheduled, and what it
+  // did to a usage limit's resume, answered as they were the first time when
+  // the same command comes again (a device that lost the answer offers it
+  // again under its id): the message is gone by then, or the resume already
+  // sent, and a second answer saying so would read as a failure.
+  const answers = new Map<string, ConversationGatewayCommandResult>()
+  const once = (
+    deviceId: string,
+    commandId: string,
+    run: () => ConversationGatewayCommandResult,
+  ): ConversationGatewayCommandResult => {
+    const id = JSON.stringify([deviceId, commandId])
+    const answered = answers.get(id)
+    if (answered) return answered
+    const result = run()
+    answers.set(id, result)
+    while (answers.size > MAX_ANSWER_RECEIPTS) answers.delete(answers.keys().next().value!)
+    return result
+  }
+  const scheduledCommand = (
+    chat: ChatOf,
+    deviceId: string,
+    commandId: string,
+    command: Extract<ConversationCommand, { kind: 'scheduleSend' | 'sendScheduledNow' | 'cancelScheduled' }>,
+  ): ConversationGatewayCommandResult => {
+    const scheduled = registry.scheduledSends
+    if (!scheduled) return { ok: false, message: 'This desktop does not schedule messages from another device.' }
+    // Kept under the device's own command, so a repeat after a dropped
+    // connection, or after a restart, schedules it once.
+    const source = JSON.stringify([deviceId, commandId])
+    if (command.kind === 'scheduleSend') return scheduled.schedule(chat, command.message, command.sendAt, source)
+    return once(deviceId, commandId, () =>
+      command.kind === 'sendScheduledNow'
+        ? scheduled.sendNow(chat, command.scheduledId)
+        : scheduled.cancel(chat, command.scheduledId),
+    )
+  }
   // A switch within the chat's own CLI, to a model this machine's picker
   // offers for it. Checked here, before the runtime sees it: the id must be in
   // the catalog (or be the CLI's own default), and the provider must take a
@@ -725,11 +1174,50 @@ export function createConversationGatewayHost(
     registry.writeAgentChoice?.(key, { conversation: { providerId: session.providerId, modelId } })
     return { ok: true, ...(switched.notice ? { notice: switched.notice } : {}) }
   }
+  // The effort a chat runs at, as its record keeps it and a send applies it:
+  // only a level its provider runs, as the chat view reads it.
+  const effortOf = (
+    key: { workspaceId: string; agentId: string },
+    capabilities: ConversationSessionSummary['capabilities'] | undefined,
+  ): Pick<ConversationThread, 'reasoningEffort'> => {
+    const effort = registry.reasoningEffortOf?.(key) ?? undefined
+    return effort && capabilities?.reasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}
+  }
+  // The chat's effort, as its own effort control sets it: written to its
+  // record, which every turn sent to it reads, whichever device sends it. A
+  // level its provider does not run is refused, as the control offers none.
+  // No session is resumed for it: the record is what the next turn reads.
+  // Sent twice, the second writes the same level again.
+  const setReasoningEffort = async (
+    key: ConversationKey,
+    effort: string | undefined,
+  ): Promise<ConversationGatewayCommandResult> => {
+    if (!registry.writeAgentChoice || !registry.reasoningEffortOf)
+      return { ok: false, message: 'This desktop keeps no reasoning effort for its chats.' }
+    const session = sessionFor(key)
+    const providerId = session?.providerId ?? (await threadFor(key))?.providerId
+    if (!providerId) return { ok: false, message: 'Conversation is unavailable.' }
+    const levels = (session?.capabilities ?? runtime.getProviderCapabilities(providerId))?.reasoningEfforts ?? []
+    if (levels.length === 0) return { ok: false, message: "This chat's agent has no reasoning effort to set." }
+    if (effort !== undefined && !levels.includes(effort))
+      return { ok: false, message: `This chat's agent does not run at ${effort} effort.` }
+    registry.writeAgentChoice(key, { conversationReasoningEffort: effort })
+    // As the chat view says it: the turn running, if any, keeps its own.
+    return { ok: true, ...(session ? { notice: 'Reasoning effort applies from the next turn.' } : {}) }
+  }
   // The machine once per workspace, and the pull requests in one read of the
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
   const withMarks = async (listed: ConversationThread[]): Promise<ConversationThread[]> => {
-    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf && !marks.checkoutsOf)
+    if (
+      !marks.machineOf &&
+      !marks.machineReader &&
+      !marks.pullRequestsOf &&
+      !marks.localServersOf &&
+      !marks.branchesOf &&
+      !marks.checkoutsOf &&
+      !marks.manageOf
+    )
       return listed
     const machines = new Map<string, ConversationWireHost | null>()
     let read: ((workspaceId: string) => ConversationWireHost | null) | undefined
@@ -757,6 +1245,12 @@ export function createConversationGatewayHost(
         .pullRequestsOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId })))
         .catch(() => null)
     }
+    let localServers: Map<string, ConversationWireLocalServer[]> | null = null
+    if (marks.localServersOf && listed.length > 0) {
+      localServers = await marks
+        .localServersOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId })))
+        .catch(() => null)
+    }
     let branches: Map<string, string> | null = null
     if (marks.branchesOf && listed.length > 0) {
       branches = await marks.branchesOf([...new Set(listed.map((thread) => thread.workspaceId))]).catch(() => null)
@@ -773,17 +1267,27 @@ export function createConversationGatewayHost(
         )
         .catch(() => null)
     }
+    let manage: Map<string, ConversationListManage> | null = null
+    if (marks.manageOf && listed.length > 0) {
+      manage = await Promise.resolve(
+        marks.manageOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId }))),
+      ).catch(() => null)
+    }
     return listed.map((thread) => {
       const host = machineOf(thread.workspaceId)
       const branch = branches?.get(thread.workspaceId)
       const checkout = checkouts?.get(`${thread.workspaceId}:${thread.agentId}`)
+      const servers = localServers?.get(`${thread.workspaceId}:${thread.agentId}`)
+      const managed = manage?.get(`${thread.workspaceId}:${thread.agentId}`)
       return {
+        ...managed,
         ...thread,
         ...(host ? { host } : {}),
         ...(branch ? { branch } : {}),
         ...(checkout?.changes ? { changes: checkout.changes } : {}),
         ...(checkout?.worktree ? { worktree: true } : {}),
         ...(pullRequests ? { pullRequests: pullRequests.get(`${thread.workspaceId}:${thread.agentId}`) ?? [] } : {}),
+        ...(servers?.length ? { localServers: servers } : {}),
       }
     })
   }
@@ -860,6 +1364,7 @@ export function createConversationGatewayHost(
             // client read it as taking no pictures, and a screenshot dropped
             // into it went over as the path of a file on the other machine.
             ...capabilitiesOf(summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
+            ...effortOf(key, summary?.capabilities ?? runtime.getProviderCapabilities(thread.providerId)),
             ...turnStartOf(summary),
             ...workingSinceOf(summary),
             ...backgroundWorkOf(summary),
@@ -889,6 +1394,7 @@ export function createConversationGatewayHost(
           ...(models ? { models } : {}),
           sessionId: summary.sessionId,
           ...capabilitiesOf(summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
+          ...effortOf(summary, summary.capabilities ?? runtime.getProviderCapabilities(summary.providerId)),
           ...turnStartOf(summary),
           ...workingSinceOf(summary),
           ...backgroundWorkOf(summary),
@@ -1014,6 +1520,68 @@ export function createConversationGatewayHost(
       const mediaType = bytes.length <= MAX_ATTACHMENT_BYTES ? sniffConversationImage(bytes.subarray(0, 12)) : null
       return mediaType ? { ok: true, mediaType, bytes } : { ok: false, code: 'unknown_image' }
     },
+    ...(registry.searchFiles
+      ? {
+          async searchFiles(key, deviceId, query, limit = CONVERSATION_MAX_FILE_SEARCH_RESULTS) {
+            const chat = await chatFolderOf(key)
+            if (!chat) return unknownChat
+            const bounded = Math.max(1, Math.min(CONVERSATION_MAX_FILE_SEARCH_RESULTS, Math.trunc(limit)))
+            const found = await registry.searchFiles!({
+              workspaceId: key.workspaceId,
+              rootPath: chat.folder,
+              query,
+              limit: bounded,
+              // One search at a time per device: its next keystroke's
+              // search calls off the one still walking.
+              channel: `tailnet:${deviceId}`,
+            }).catch((error: unknown) => ({
+              ok: false as const,
+              message: error instanceof Error ? error.message : String(error),
+              engine: null,
+            }))
+            if (!found.ok) return { ok: false as const, code: 'unavailable' as const, message: found.message }
+            return { ok: true as const, answer: relativeSearchEntries(chat.folder, found, bounded) }
+          },
+        }
+      : {}),
+    ...(registry.commandsOf
+      ? {
+          async listCommands(key, refresh) {
+            const chat = await chatFolderOf(key)
+            if (!chat) return unknownChat
+            const cli = cliForConversationProvider(chat.providerId)
+            if (!cli)
+              return {
+                ok: false as const,
+                code: 'unavailable' as const,
+                message: "This chat's agent runs no slash commands.",
+              }
+            const catalog = await registry.commandsOf!({
+              workspaceId: key.workspaceId,
+              cli,
+              cwd: chat.folder,
+              ...(refresh ? { refresh: true } : {}),
+            }).catch((error: unknown) => ({
+              cli,
+              cwd: chat.folder,
+              commands: [],
+              fetchedAt: 0,
+              error: error instanceof Error ? error.message : String(error),
+            }))
+            // Read as a device reads it: Studio's own commands are each
+            // device's, and the folder the list was kept under is this disk's.
+            const answer = parseConversationCommandsAnswer({
+              cli,
+              commands: catalog.commands,
+              fetchedAt: catalog.fetchedAt,
+              ...(catalog.error ? { error: catalog.error } : {}),
+            })
+            return answer
+              ? { ok: true as const, answer }
+              : { ok: false as const, code: 'unavailable' as const, message: 'The command list could not be read.' }
+          },
+        }
+      : {}),
     registerUpload(input) {
       for (const [id, entry] of uploads) if (Date.now() - entry.at > UPLOAD_TTL_MS) discardUpload(id)
       const ownIds = [...uploads].filter(([, entry]) => entry.deviceId === input.deviceId).map(([id]) => id)
@@ -1026,14 +1594,100 @@ export function createConversationGatewayHost(
     ...(registry.heldMessages
       ? { watchQueued: (key, listener) => watchHeld(registry.heldMessages!, key, listener) }
       : {}),
+    // As the chat view's /btw asks one: of the chat's session, started first
+    // when there is none, as a send would start it, and kept out of the chat.
+    async askSideQuestion(key, deviceId, questionId, question, history) {
+      const asked = JSON.stringify([deviceId, questionId])
+      if (sideQuestions.has(asked)) return { ok: false, message: 'That side question is already being answered.' }
+      const pending = { calledOff: false }
+      sideQuestions.set(asked, pending)
+      const cancelled = { ok: false, cancelled: true, message: 'The side question was called off.' } as const
+      try {
+        const started = await ensureSession(key)
+        if (pending.calledOff) return cancelled
+        if (!started.ok) return { ok: false, message: started.message }
+        const requestId = randomUUID()
+        sideQuestions.set(asked, { sessionId: started.session.sessionId, requestId })
+        return await runtime.askSideQuestion({
+          sessionId: started.session.sessionId,
+          requestId,
+          question,
+          ...(history.length ? { history } : {}),
+        })
+      } finally {
+        sideQuestions.delete(asked)
+      }
+    },
+    async cancelSideQuestion(deviceId, questionId) {
+      const asked = sideQuestions.get(JSON.stringify([deviceId, questionId]))
+      if (!asked) return { ok: false, message: 'That side question is not being answered.' }
+      if ('calledOff' in asked) {
+        asked.calledOff = true
+        return { ok: true }
+      }
+      return runtime.cancelSideQuestion(asked)
+    },
+    // Asked of the live session's agent only: opening the ring is not a
+    // reason to start one, here any more than in a window.
+    async contextBreakdown(key) {
+      const live = sessionFor(key)
+      if (!live)
+        return {
+          ok: false,
+          reason: 'not-running',
+          message: 'The agent is not running for this chat now. Send a message and it can say what fills the window.',
+        }
+      return runtime.readContextBreakdown({ sessionId: live.sessionId })
+    },
+    ...(registry.scheduledSends
+      ? { watchScheduled: (key, listener) => watchHeld(registry.scheduledSends!, key, listener) }
+      : {}),
+    ...(registry.usageLimits
+      ? { watchUsageLimits: (key, listener) => watchHeld(registry.usageLimits!, key, listener) }
+      : {}),
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
+      if (command.kind === 'fork') return fork(key, deviceId, commandId, command)
+      if (command.kind === 'setReasoningEffort') return setReasoningEffort(key, command.effort)
+      if (command.kind === 'restartSession') return restartSession(key, deviceId, commandId)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
+      if (command.kind === 'scheduleSend' || command.kind === 'sendScheduledNow' || command.kind === 'cancelScheduled')
+        return Promise.resolve(scheduledCommand(chat, deviceId, commandId, command))
+      if (command.kind === 'usageLimitResume')
+        return Promise.resolve(
+          once(deviceId, commandId, () =>
+            registry.usageLimits
+              ? registry.usageLimits.update(chat, command.action, command.always === true)
+              : { ok: false, message: 'This desktop does not resume chats from another device.' },
+          ),
+        )
       if (command.kind === 'cancelQueued')
         return Promise.resolve(
           held ? held.cancel(chat, command.queuedId) : { ok: false, message: 'This desktop holds no queued messages.' },
         )
+      // As this machine's own Edit from here and Revert: the runtime refuses
+      // either in words while a turn runs, and neither needs a live session,
+      // so neither resumes a chat at rest: after a rewind, the next message,
+      // from either machine, starts from where the chat went back to.
+      if (command.kind === 'rewind')
+        return receipted(key, deviceId, commandId, async () => {
+          const rewound = await api.rewindToTurn({ key, turnSeq: command.turnSeq })
+          return rewound.ok ? { ok: true } : { ok: false, message: rewound.message }
+        })
+      // A preview changes no file, and is run again for each ask.
+      if (command.kind === 'revert')
+        return command.confirmed
+          ? receipted(key, deviceId, commandId, () => revert(key, command))
+          : revert(key, command)
+      // As this machine's own Handoff, which needs no live session either: it
+      // lets the session go. The file it writes stays here, so only whether it
+      // went is said.
+      if (command.kind === 'handoff')
+        return receipted(key, deviceId, commandId, async () => {
+          const handed = await runtime.handoffConversation({ key })
+          return handed.ok ? { ok: true } : { ok: false, message: handed.message }
+        })
       // A message written long ago that the person has not confirmed is not
       // held either: held now, it would go the moment the chat is free, which
       // is the late send the refusal is for. The runtime asks the same of a
@@ -1056,11 +1710,19 @@ export function createConversationGatewayHost(
       // queued send is, and answered at once with a notice saying so: the
       // person's words are never lost to a provider that cannot take them, or
       // to a turn that ended on their way. A held message is its words alone,
-      // so one with pictures or skills is refused busy instead, which a phone
-      // sends again as it does any send made mid-turn.
+      // so one with pictures, skills or mentions is refused busy instead,
+      // which a phone sends again as it does any send made mid-turn.
       const steer = command.kind === 'send' && command.steer === true
       const holdInstead = (reason: string): ConversationGatewayCommandResult => {
-        if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length)
+        // Nor one in a mode of its own: held, it would go in the default one.
+        if (
+          command.kind !== 'send' ||
+          !held ||
+          command.uploadIds?.length ||
+          command.skills?.length ||
+          command.mentions?.length ||
+          command.mode
+        )
           return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
         const stale = staleHold()
         if (stale) return stale
@@ -1100,6 +1762,10 @@ export function createConversationGatewayHost(
           if (!resumed.ok) return resumed
           session = resumed.session
         }
+        // Its servers run with its agent, so a chat at rest is not resumed to
+        // reach them, as its own server rows offer nothing then either.
+        if (!session && command.kind === 'mcpServerAction')
+          return { ok: false, message: 'This chat has no agent running. Send it a message, then try again.' }
         if (!session) return { ok: false, message: 'Conversation is unavailable.' }
         switch (command.kind) {
           case 'send': {
@@ -1112,6 +1778,11 @@ export function createConversationGatewayHost(
             // Skills the paired machine's composer attached, resolved against
             // this machine's folder as its own chips are (conversation-skills.ts).
             const turnSkills = command.skills?.length ? { skills: command.skills.map((id) => ({ id })) } : {}
+            // Files and folders the paired machine's composer mentioned, by
+            // their paths in the chat's folder here: the runtime resolves them
+            // against the session's folder as it does its own composer's, and
+            // refuses one outside it, behind a link, or gone.
+            const turnMentions = command.mentions?.length ? { mentions: command.mentions } : {}
             const retry =
               ids.length > 0 &&
               ids.every((id) => spent.get(id)?.deviceId === deviceId && spent.get(id)?.commandId === commandId)
@@ -1125,6 +1796,10 @@ export function createConversationGatewayHost(
               ...(command.composedAt !== undefined ? { composedAt: command.composedAt } : {}),
               ...(command.confirmedStale ? { confirmedStale: true } : {}),
             }
+            // The mode the device's chat sends the turn in, as this machine's
+            // own chat does; the runtime refuses `plan` for a provider that
+            // does not plan.
+            const turnMode = command.mode ? { mode: command.mode } : {}
             if (retry)
               return api.send({
                 sessionId: session.sessionId,
@@ -1133,7 +1808,9 @@ export function createConversationGatewayHost(
                 attachments: [],
                 ...turnEffort,
                 ...turnSkills,
+                ...turnMentions,
                 ...turnSteer,
+                ...turnMode,
                 ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
@@ -1215,7 +1892,9 @@ export function createConversationGatewayHost(
                 ...(files.length ? { files } : {}),
                 ...turnEffort,
                 ...turnSkills,
+                ...turnMentions,
                 ...turnSteer,
+                ...turnMode,
                 ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
@@ -1253,6 +1932,17 @@ export function createConversationGatewayHost(
           // finds it ended and is refused in words, which changes nothing.
           case 'stopSubagent':
             return runtime.stopSubagent({ sessionId: session.sessionId, toolUseId: command.toolUseId })
+          // As the chat's server row on this machine does it, refused for an
+          // action its provider does not take. Sent twice, a reconnect
+          // reconnects again and a switch finds the server where it left it.
+          case 'mcpServerAction': {
+            const done = await runtime.mcpServerAction({
+              sessionId: session.sessionId,
+              serverId: command.serverId,
+              action: command.action,
+            })
+            return done.ok ? { ok: true } : { ok: false, message: done.message }
+          }
           case 'resolveApproval':
             return api.resolveApproval({
               sessionId: session.sessionId,

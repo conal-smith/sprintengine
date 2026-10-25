@@ -219,11 +219,17 @@ function drivesChat(command: ConversationCommand): boolean {
     case 'send':
     case 'answerQuestion':
     case 'setModel':
+    // A message scheduled, or sent early, is a send all the same.
+    case 'scheduleSend':
+    case 'sendScheduledNow':
       return true
     case 'resolveApproval':
       return command.decision !== 'deny'
     case 'resolvePlan':
       return command.decision === 'approve'
+    // A resume scheduled, or sent again, is a send of Studio's own.
+    case 'usageLimitResume':
+      return command.action === 'schedule' || command.action === 'retry'
     default:
       return false
   }

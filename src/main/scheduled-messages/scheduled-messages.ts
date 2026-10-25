@@ -54,11 +54,19 @@ import { writeFileAtomically } from '../config-file-write'
 // and several queued in one turn go as one message, as the composer's own
 // queue sends them.
 //
+// A paired machine may schedule a message into a chat here too
+// (`scheduleFrom`): the person picked a time in that machine's composer, and
+// the message is kept and sent from here, as one scheduled in this machine's
+// own composer is, so it goes at its time whether or not that machine is
+// awake then. It is the same message as one scheduled here, and the tray here
+// shows it beside them.
+//
 // A held message keeps the commands it came in on (`sources`) in the file, and
 // once it has gone (sent, deleted, or its chat with it) they are remembered a
 // while longer (`heldSources`), so the same command arriving again is the same
 // message and is never held, and sent, a second time: a device that lost the
-// answer offers it again under its id, before or after a restart here.
+// answer offers it again under its id, before or after a restart here. A
+// message a paired machine scheduled keeps its command the same way.
 
 export const SCHEDULED_MESSAGES_FILE = 'scheduled-messages.json'
 const FORMAT_VERSION = 1
@@ -77,6 +85,12 @@ const MAX_TIMER_MS = 15 * 60_000
 const MAX_FAILURE_LENGTH = 300
 /** Held messages one chat may wait on; a machine queueing past this is refused rather than kept without end. */
 const MAX_HELD_PER_CHAT = 20
+/**
+ * Messages a paired machine may have scheduled for a time into one chat: the
+ * most a `scheduled` frame names (CONVERSATION_MAX_SCHEDULED_MESSAGES), so
+ * each one it scheduled is one its tray can draw.
+ */
+const MAX_SCHEDULED_FROM_AFAR_PER_CHAT = 50
 /**
  * Commands a held message that has gone came in on, remembered so one arriving
  * again is not held a second time. A message still held keeps its own.
@@ -128,6 +142,12 @@ export type ScheduledMessages = {
    * the same message, held once.
    */
   hold(chat: ScheduledMessageChat, text: string, source: string): ScheduledMessageHoldResult
+  /**
+   * Schedule a message a paired machine asked for, to go at `sendAt` as one
+   * scheduled here does. `source` names the command it came in on; the same
+   * one again is the same message, scheduled once.
+   */
+  scheduleFrom(chat: ScheduledMessageChat, text: string, sendAt: number, source: string): ScheduledMessageHoldResult
   /** The computer woke or was unlocked: timers stood still while it slept, so read the clock again. */
   wake(): void
   /** Chats may have been deleted: forget their messages. */
@@ -445,6 +465,42 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     return { ok: true, id }
   }
 
+  function scheduleFrom(
+    chat: ScheduledMessageChat,
+    input: string,
+    sendAt: number,
+    source: string,
+  ): ScheduledMessageHoldResult {
+    // The same command again is the same message, still waiting or gone.
+    const scheduled = messages.find((entry) => entry.sources?.includes(source))
+    if (scheduled) return { ok: true, id: scheduled.id }
+    const gone = heldSources.get(source)
+    if (gone !== undefined) return { ok: true, id: gone }
+    const text = input.trim()
+    if (!text) return { ok: false, reason: 'A scheduled message needs words.' }
+    if (text.length > MAX_SCHEDULED_MESSAGE_LENGTH)
+      return { ok: false, reason: `A scheduled message holds at most ${MAX_SCHEDULED_MESSAGE_LENGTH} characters.` }
+    if (!isTime(sendAt)) return { ok: false, reason: 'A scheduled message needs a time to go.' }
+    if (!deps.chatExists(chat)) return { ok: false, reason: 'The chat is not on this machine any more.' }
+    if (messages.filter((entry) => !entry.queued && sameChat(entry, chat)).length >= MAX_SCHEDULED_FROM_AFAR_PER_CHAT)
+      return { ok: false, reason: 'This chat already has as many scheduled messages as it can.' }
+    const id = newId()
+    messages = [
+      ...messages,
+      {
+        id,
+        workspaceId: chat.workspaceId,
+        agentId: chat.agentId,
+        text,
+        sendAt,
+        createdAt: now(),
+        sources: [source],
+      },
+    ]
+    changed()
+    return { ok: true, id }
+  }
+
   // ── Life ─────────────────────────────────────────────────────────────────
 
   async function start(): Promise<void> {
@@ -481,6 +537,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
   return {
     start,
     hold,
+    scheduleFrom,
     wake() {
       if (!running) return
       if (timer !== null) clearTimer(timer)

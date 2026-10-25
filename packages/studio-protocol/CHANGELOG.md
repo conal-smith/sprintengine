@@ -4,6 +4,36 @@
 
 ### Added
 
+- **A chat's effort, its MCP servers and its agent's restart**
+  (`conversation-reasoning-effort`, `conversation-mcp-server-actions` and
+  `conversation-restart-session`, in `welcome.conversation`, owners):
+  `conversation.setReasoningEffort` sets the level the chat runs at from its
+  next turn (`effort?`, none for the provider's default);
+  `conversation.mcpServerAction` reconnects one of a live chat's MCP servers
+  or switches it on or off (`serverId`, `action`: `reconnect`, `enable` or
+  `disable`); `conversation.restartSession` ends the chat's agent process,
+  keeping its place for the next message. Their params are read by the
+  conversation lane's own validator, and they reach the same host. A Studio
+  built before them does not advertise them and refuses the methods as
+  unknown.
+- **A usage limit's resume** (owners): `conversation.usageLimitResume`
+  (`action`: `schedule`, `cancel`, `dismiss` or `retry`; `always` beside
+  `schedule`) acts on the notice a usage limit left on a chat's turn, as the
+  conversation lane's `usageLimitResume` does, read by its own validator and
+  carried to the same host. The socket does not advertise
+  `conversation-usage-limits`: its conversation topic carries no `usageLimits`
+  frames. A Studio built before it refuses the method as unknown.
+
+- **A message scheduled for a time** (owners): `conversation.scheduleSend`
+  (`message`, `sendAt`) has the desktop keep a message and send it into the
+  chat then, and `conversation.sendScheduledNow` and
+  `conversation.cancelScheduled` (`scheduledId`) send one it keeps at once or
+  delete it: the conversation lane's `scheduleSend`, `sendScheduledNow` and
+  `cancelScheduled`, read by its own validator and carried to the same host.
+  The socket does not advertise `conversation-scheduled-sends`: its
+  conversation topic carries no `scheduled` frames, as it carries no `queued`
+  ones. A Studio built before them refuses the methods as unknown.
+
 - **One agent stopped by itself** (`conversation-stop-subagent`, in
   `welcome.conversation`, owners): `conversation.stopSubagent` stops one agent a
   conversation spawned, named by the call that spawned it (`toolUseId`), and

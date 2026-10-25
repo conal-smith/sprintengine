@@ -13,6 +13,168 @@
 
 ### Added
 
+- **A listed chat's pull request says when the desktop watches it.**
+  `watch` is an optional member of `ConversationWirePullRequest`
+  (`ConversationWirePullRequestWatch`: `since`, `waitingOn`, and `approved`,
+  `autoMerge`, `base` and `failedChecks` where they apply), present while the
+  chat's agent has the desktop watching the pull request. Absent from a
+  desktop built before it was listed. `parseConversationWirePullRequests`
+  keeps a watch it can read and leaves out one it cannot, keeping the pull
+  request. The pinned files are unchanged.
+
+- **A listed chat says whether it compacts by itself.** `autoCompact` is an
+  optional boolean member of `ConversationThread`: whether the desktop
+  compacts the chat while it sits idle, just before its prompt cache expires,
+  by the chat's own switch or the desktop's default. Absent from a desktop
+  built before it was listed. `parseConversationServerFrame` keeps it when it
+  is a boolean. The pinned files are unchanged.
+
+- **A paired device can hand a chat off.** `CONVERSATION_HANDOFF_CAPABILITY`
+  (`conversation-handoff`) names a desktop that takes the `handoff` command
+  and hands the chat off to a fresh session as its own Handoff does: the
+  chat's messages written to a file there, the provider session let go, and
+  the next message pointing a new one at the file. A listed
+  `ConversationThread` says which chats can, as `capabilities.handoff`.
+  `parseConversationClientMessage` keeps a `handoff` that carries a command
+  id; `parseConversationServerFrame` keeps `capabilities.handoff` when it is
+  a boolean. A desktop without the capability refuses the kind as
+  `unsupported_command`. The pinned files are unchanged.
+
+- **A chat can go back to an earlier message, and a turn's files can be put
+  back, from a paired device.** `CONVERSATION_REWIND_CAPABILITY`
+  (`conversation-rewind`) names a desktop that takes the `rewind` command
+  (`turnSeq`: the user message to go back before) as its Edit from here does;
+  a listed `ConversationThread` says which chats can, as
+  `capabilities.rewind`. `CONVERSATION_CHECKPOINT_REVERT_CAPABILITY`
+  (`conversation-checkpoint-revert`) names one that takes `revert`
+  (`turnSeq`, `undo`, `confirmed`, `files`) as its Revert does, previewing
+  without `confirmed`. A command's result may now carry `data`
+  (`ConversationCommandResultFrame`), which `parseConversationServerFrame`
+  keeps when it is an object; a `revert`'s is a `ConversationRevertAnswer`,
+  read with `parseConversationRevertAnswer`. `parseConversationClientMessage`
+  keeps a `rewind` or `revert` in its documented shape and refuses any other
+  as `invalid_frame`. A desktop without either capability refuses the kind
+  as `unsupported_command`. The pinned files are unchanged.
+
+- **A paired device can fork a chat, ask it a side question, and read what
+  fills its window.** Three capabilities, each with a listed
+  `ConversationThread` flag saying which chats can:
+  `CONVERSATION_FORK_CAPABILITY` (`conversation-fork`, `capabilities.fork`)
+  names a desktop that takes the `fork` command (`ConversationForkCommand`:
+  `newAgentId` and `side: 'assistant'` with `turnId`, or `side: 'user'` with
+  `turnSeq`); `CONVERSATION_SIDE_QUESTIONS_CAPABILITY`
+  (`conversation-side-questions`, `capabilities.sideQuestion`) one that
+  answers `askSideQuestion` and `cancelSideQuestion`; and
+  `CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY`
+  (`conversation-context-breakdown`, `capabilities.contextBreakdown`) one
+  that answers `getContextBreakdown`. The frames, their answers and their
+  readers (`parseConversationSideQuestionAnswer`,
+  `parseConversationContextBreakdownAnswer`) live in a new file,
+  `agentReads.ts`. `parseConversationClientMessage` keeps each well-formed
+  frame and refuses a malformed one as `invalid_frame`;
+  `parseConversationServerFrame` keeps each flag when it is a boolean. A
+  desktop without a capability refuses `fork` as `unsupported_command` and the
+  frames as `invalid_frame`. The pinned files are unchanged.
+
+- **A client's composer reaches the chat's folder on the desktop.**
+  `CONVERSATION_SEND_MENTIONS_CAPABILITY` (`conversation-send-mentions`): a
+  `send` may name `mentions` (`ConversationWireMention`, at most
+  `CONVERSATION_MAX_SEND_MENTIONS`), each by its path relative to the chat's
+  folder, which the desktop resolves as its own composer's chips are.
+  `parseConversationClientMessage` keeps them and refuses, as a bad frame, one
+  that is absolute, names a drive, climbs out with `..`, or rides beside
+  `queue`; `parseConversationWireMentions` reads a list alone.
+  `CONVERSATION_FILE_SEARCH_CAPABILITY` (`conversation-file-search`) and
+  `CONVERSATION_COMMANDS_CAPABILITY` (`conversation-commands`) name GETs
+  beside the socket, whose answers `parseConversationFileSearchAnswer` and
+  `parseConversationCommandsAnswer` read (composerReads.ts): the matches in
+  the chat's folder by relative path, and the chat CLI's slash commands
+  without Studio's. All additive; the pinned files are unchanged.
+- **A chat's agent can be restarted.** `CONVERSATION_RESTART_SESSION_CAPABILITY`
+  (`conversation-restart-session`) names a desktop that takes the
+  `restartSession` command and ends the chat's agent process as its own
+  Restart agent session does, keeping the session's place for the next
+  message. Refused while the agent works; a chat with none running is
+  answered with a `notice`. `parseConversationClientMessage` keeps it under
+  its command id and drops anything beside the kind. A desktop without the
+  capability refuses the kind as `unsupported_command`. The pinned files are
+  unchanged.
+
+- **A live chat's MCP servers can be reconnected and switched.**
+  `CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY`
+  (`conversation-mcp-server-actions`) names a desktop that takes the
+  `mcpServerAction` command (`serverId`, and an `action` of
+  `ConversationWireMcpServerAction`: `reconnect`, `enable` or `disable`,
+  listed as `CONVERSATION_MCP_SERVER_ACTIONS`) and lists the actions each
+  chat's provider takes as `capabilities.mcpServerActions`. A sign-in is not
+  one: the CLI waits for its callback on the desktop.
+  `parseConversationClientMessage` refuses an action it does not name, a
+  sign-in included, or one naming no server, as `invalid_frame`;
+  `parseConversationServerFrame` keeps the actions it can read. A desktop
+  without the capability refuses the kind as `unsupported_command`. The
+  pinned files are unchanged.
+
+- **A chat's reasoning effort can be read and set.**
+  `CONVERSATION_REASONING_EFFORT_CAPABILITY` (`conversation-reasoning-effort`)
+  names a desktop that lists each chat's provider levels as
+  `capabilities.reasoningEfforts` and the one the chat runs at as
+  `reasoningEffort`, and takes `setReasoningEffort` (`effort`, absent for the
+  provider's default), kept on the chat for its next turns.
+  `isConversationReasoningEffortId` says whether a value can be a level.
+  `parseConversationClientMessage` refuses a level that cannot be one as
+  `invalid_frame`; `parseConversationServerFrame` keeps the levels it can read
+  and a `reasoningEffort` that is one. A desktop without the capability
+  refuses the kind as `unsupported_command`. The pinned files are unchanged.
+
+- **A message can say the mode its turn runs in.**
+  `CONVERSATION_SEND_MODE_CAPABILITY` (`conversation-send-mode`) names a
+  desktop whose `send` takes `mode` (`ConversationSendMode`: `plan` or `ask`)
+  and runs the turn in it, as its own chat sends one. `CONVERSATION_SEND_MODES`
+  lists them with `default`. `parseConversationClientMessage` keeps a named
+  mode beside whatever else the send says, reads `default` as none, and
+  refuses one it does not name, or one beside `queue`, as `invalid_frame`. A
+  desktop without the capability drops the member. The pinned files are
+  unchanged.
+
+- **A listed chat names its agents' local servers.** `localServers` is an
+  optional member of `ConversationThread` (`ConversationWireLocalServer`:
+  `id`, `url`, `title`, `port`, `state`), at most
+  `CONVERSATION_MAX_LOCAL_SERVERS`, absent for a chat with none and from a
+  desktop built before it was listed. `parseConversationWireLocalServers`
+  reads it, dropping a server it cannot read (one whose address is not
+  http(s), whose port is not one), and the row keeps the rest. No
+  capability. The pinned files are unchanged.
+
+- **A desktop says what it knows of its agents' usage limits.**
+  `CONVERSATION_USAGE_LIMITS_CAPABILITY` (`conversation-usage-limits`) names a
+  desktop that answers `ConversationWatchUsageLimitsRequest`
+  (`watchUsageLimits`) with `ConversationUsageLimitsFrame`s (`usageLimits`: the
+  followed chat's `ConversationUsageLimitNotice` or null, `autoResume`, and
+  each plan's `ConversationUsageLimitSnapshot`, at most
+  `CONVERSATION_MAX_USAGE_LIMIT_PLANS` of
+  `CONVERSATION_MAX_USAGE_LIMIT_WINDOWS` windows each), now and on every
+  change, and takes `usageLimitResume` (`action`, one of
+  `CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS`, and `always` beside `schedule`).
+  `parseConversationUsageLimitNotice` and
+  `parseConversationUsageLimitSnapshots` read the frame's members;
+  `parseConversationClientMessage` refuses a malformed resume as
+  `invalid_frame`. A desktop without the capability refuses the kind as
+  `unsupported_command`. The pinned files are unchanged.
+
+- **A message can be scheduled into a chat for a time.**
+  `CONVERSATION_SCHEDULED_SENDS_CAPABILITY` (`conversation-scheduled-sends`)
+  names a desktop that takes `scheduleSend` (`message`, `sendAt`), keeps the
+  message and sends it then, and takes `sendScheduledNow` and
+  `cancelScheduled` (`scheduledId`) to send one at once or delete it.
+  `ConversationWatchScheduledRequest` (`watchScheduled`) has it send
+  `ConversationScheduledFrame`s (`scheduled`: the chat's `key` and its
+  `ConversationScheduledMessage`s, at most
+  `CONVERSATION_MAX_SCHEDULED_MESSAGES`) now and on every change.
+  `parseConversationClientMessage` keeps each and refuses a malformed one as
+  `invalid_frame`; `parseConversationServerFrame` reads the frame, skipping a
+  message it cannot read. A desktop without the capability refuses the kinds
+  as `unsupported_command`. The pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the
@@ -50,6 +212,7 @@
   listed. `parseConversationServerFrame` keeps `highlight` when its star is a
   boolean or its colour one it knows, and `autoSettle` only when it is `true`.
   The pinned files are unchanged.
+
 - **A send says when it was written.** `composedAt` (epoch ms) and
   `confirmedStale` are optional members of a `send` command, beside any other.
   `isStaleConversationSend` says whether a desktop refuses one at a time: it
@@ -85,6 +248,7 @@
   before they were listed. `parseConversationServerFrame` keeps `changes` when
   every count is whole and not negative (`parseConversationWireChanges`), and
   `worktree` only when it is `true`. The pinned files are unchanged.
+
 - **A listed chat says what it still has working after its turn.**
   `backgroundWork` is an optional member of `ConversationThread`,
   `ConversationBackgroundWork` (`{ agents, monitors }`): the background agents
@@ -97,6 +261,7 @@
   `parseConversationServerFrame` keeps it when both counts are whole and one
   is above zero, and leaves it out otherwise (`parseConversationBackgroundWork`).
   The pinned files are unchanged.
+
 - **A session can have a goal.** `ConversationGoal` (`objective`, `status`)
   is a goal the agent keeps working toward by itself, and
   `ConversationGoalStatus` says where it stands. A `session_updated` event
@@ -113,6 +278,7 @@
   absent from a desktop built before they were listed;
   `parseConversationServerFrame` keeps each when it is a clock and leaves out
   anything else. The pinned files are unchanged.
+
 - **A message can carry files, not only pictures.**
   `CONVERSATION_MESSAGE_FILES_CAPABILITY` (`conversation-message-files`) names
   a desktop whose upload route takes `kind=file`: a file of any type, which a
@@ -246,6 +412,7 @@
   chats as well as ACP agents, which already sent them. Both are optional
   payload members, so a reader that does not know them skips them, and the
   wire validator passes them through. The pinned files are unchanged.
+
 - **A listed chat names its machine and its pull requests.** `host`
   (`ConversationWireHost`: `id`, `kind`, `label`, `color`) and `pullRequests`
   (`ConversationWirePullRequest`: `number`, `state`, `url`, `title`, at most
@@ -254,6 +421,7 @@
   on their own by `parseConversationWireHost` and
   `parseConversationWirePullRequests`. An unreadable one is left out and the
   row kept. The pinned files are unchanged.
+
 - **`turn_retrying`**, an event for a model call the provider will try
   again, with `ConversationTurnRetryingPayload` (`attempt`, `maxAttempts`,
   `retryInMs`, and the failure's `error` category and HTTP `status`). Until

@@ -833,6 +833,18 @@
       "sha256": "32ab506d18b5e8ab44ff26209fe600fe55f60008121fc93310f8c9e91caa6160"
     },
     {
+      "name": "conversation.delete_plan",
+      "sha256": "75064ce1a5a283409a6aecdd884ea0c1d0ae91d5564ed2a18b3b5a0567caa804"
+    },
+    {
+      "name": "conversation.search",
+      "sha256": "b00c23e3089e8e40ba81f7034cf7a6eb714989266de51da6700fe063ed34f869"
+    },
+    {
+      "name": "conversation.approval_rules",
+      "sha256": "85a7e146983c306dc792227a3778e8d691a63d0507f5e17db93a569f69e1188f"
+    },
+    {
       "name": "conversation.pull_request_state",
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },

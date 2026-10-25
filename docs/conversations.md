@@ -139,8 +139,9 @@ Both chats work in the same files, and nothing is restored: a fork made after
 the agent changed files sees them changed. The forked turns' changed-files
 cards and Revert stay with the original chat, whose checkpoints they are.
 
-The fork is offered while the chat is idle, on this machine (a paired
-machine's chat is not forked from here), wherever the runtime can be forked:
+The fork is offered while the chat is idle, wherever the runtime can be
+forked (a paired machine's chat is forked over there, by that machine, and
+opens here as a pane onto it; see "Following from another desktop" below):
 
 | Runtime                           | How the fork continues                                                                                                                                                                      |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,8 +180,9 @@ It is Claude Code's own `/btw`, asked over the SDK (`askSideQuestion`), and is
 offered for Claude chats on this machine, a WSL server's or an SSH machine's.
 A Claude Code that has no side questions says so in the drawer. Its cost joins
 the session's running total, so the chat's next turn reports it; Claude Code
-writes no request for it to its session log. Codex, the ACP runtimes and a
-paired machine's chat do not offer it, and there `/btw` goes to the CLI as
+writes no request for it to its session log. A paired machine's
+Claude chat offers it too, asked of its agent over there (2026-10-25). Codex
+and the ACP runtimes do not offer it, and there `/btw` goes to the CLI as
 before.
 
 ## Installed CLI providers
@@ -548,6 +550,17 @@ machine?: { kind: string; color: string }
   listing never runs `gh`, so a phone refreshing its list costs no request to
   GitHub. The record is kept current when a chat's turn ends and on its slow
   poll, and the change feed says when the list moved.
+- **`localServers`** (2026-10-25) is what the desktop's local server record
+  holds for the chat (`localServers.list`): each server its agents linked
+  (`id`, `url`, `title`, `port`, and `state`: `running`, `stopped` or
+  `starting`, as the desktop's own checks last found it), at most
+  `CONVERSATION_MAX_LOCAL_SERVERS` (20), and absent for a chat with none. The
+  command and folder that start one stay on the desktop. A server starting or
+  stopping is pushed on the change feed. A second desktop following the chat
+  draws them on its strip as that machine's, read-only: one whose address
+  reaches it (a tailnet name, the machine's own address) opens there, and one
+  on that machine's loopback says it is on that machine, its link still to
+  copy.
 - **`machine`** is how the phone draws the desktop itself: the kind and colour
   a second desktop gives it by default when it pairs by this machine's host
   name, with any override kept under `local` in the launch settings'
@@ -625,7 +638,10 @@ additions.
   the desktop's own "finished while you were away" mark too. New chat
   covering a window's chat counts as nobody looking at it, as a door does,
   so it is not stamped; unlike a door it is not leaving the chat, whose "New"
-  divider holds and whose Mark unread waits until the person moves on.
+  divider holds and whose Mark unread waits until the person moves on. A
+  desktop following a paired machine's chat draws the same "New" divider,
+  read from that machine's `lastVisitedAt` as its list gave it before the
+  opening's first visit.
 - **`conversation.mark_unread`** `{ workspaceId }` (2026-10-07, on a desktop
   that advertises `chat-mark-unread`) moves the chat's `lastVisitedAt`
   **back**, to its latest finish less a millisecond, and answers
@@ -692,11 +708,84 @@ section, tinted with its colour, asleep in its project's Snoozed shelf until
 it wakes. Mark unread is `conversation.mark_unread` above, offered where the
 machine advertises `chat-mark-unread`. Copy link to chat links the chat by its
 id on that machine, which opens it there and on any desktop that follows it;
-Move to New Window opens it in a window of its own. Rename, New chat in
-project, Reveal folder and Close workspace are about a workspace on the
-desktop doing the asking, and are not offered for a chat no window there has
-open. A machine without the capability answers the tools "Unknown tool", and
+Move to New Window opens it in a window of its own. New chat in project, on
+a chat whether a window there has it open or not and on the project's own
+header, opens that desktop's New chat on this machine and the project the
+chat stands in, where the pairing may start a chat here
+(`conversation:operate`); the chat is started with `conversation.create` as
+any New chat on a paired machine is. Reveal folder and Close workspace are
+about a workspace on the desktop doing the asking, and are not offered for a
+chat no window there has open. A machine without the capability answers the tools "Unknown tool", and
 its chats offer none of the four.
+
+Beyond its marks, a paired desktop manages a chat here as it manages one of
+its own, each part on a capability of its own (2026-10-25). Each is a gateway
+tool listed to paired devices only, on `conversation:operate` and audited; a
+client offers the item for a machine's chats only where it is advertised, and
+an older machine answers the tool "Unknown tool":
+
+- **`conversation.rename`** `{ workspaceId, name }` (`chat-rename`) names the
+  chat as the desktop's own Rename does: locked against the titler, so its
+  messages never rename it again, and stamped now. Every device lists it by
+  the new name (`chatTitle`), and a paired desktop's row opened from the chat
+  takes it too. A name of 1 to 500 characters; the name it already has
+  changes nothing. Offered on a chat no window there has open as well as on
+  one it does; without the capability a row opened there is renamed on that
+  computer alone.
+- **`conversation.auto_compact`** `{ workspaceId, enabled }`
+  (`chat-auto-compact`) is the chat's Auto compact switch, as the desktop's
+  own menu sets it: the chat's choice from then on, whatever the desktop's
+  default says. The desktop compacts its own chats, so the rule is the one of
+  the machine the chat runs on, and each listed chat says how it stands as
+  `autoCompact` (its own switch, or the desktop's default where it left that
+  unset), read beside its `providerId`: only a Claude chat compacts by itself
+  yet. A switch moves the list. It compacts nothing at once.
+- **`conversation.pull_request_unwatch`** `{ workspaceId, agentId, url? }`
+  (`chat-unwatch-pull-request`) is Stop watching: the desktop stops watching
+  the chat's pull request at `url`, or every one the chat's agent has it
+  watching without one, and the chat is not woken for it again. The pull
+  request stays the chat's. It answers `{ stopped, pullRequests }`, the
+  addresses it stopped; one not watched changes nothing. Each listed pull
+  request says while it is watched as `watch` (what it waits on, as the
+  desktop's own strip says it), so a paired desktop's strip and menus say it
+  too and offer Stop watching where the desktop's own do.
+- **`conversation.delete_plan`** `{ workspaceId }` and
+  **`conversation.delete`** `{ workspaceId }` (`chat-delete`) are Delete on a
+  settled chat, as the desktop's own Delete runs it: the plan says what would
+  go, each worktree the chat owns by its name and branch (never a path), with
+  `refused` while the chat is not settled or an agent in it works; the delete
+  takes its history, its record and the worktree it owns, never one with
+  uncommitted changes, and keeps the branch. There is no undo. A chat already
+  gone answers `gone: true` to both, so a delete sent twice does no harm. The
+  plan is a read on `conversation:read`; the delete needs
+  `conversation:operate` and is audited. A paired desktop offers Delete on a
+  settled chat it opened from here, asks the plan, says it in its
+  confirmation, and once this desktop has deleted the chat removes its own
+  record of it. A desktop whose Studio server runs in a process of its own
+  refuses both as `unavailable`.
+- **`conversation.search`** `{ query }` (`chat-search`) finds what was said in
+  the desktop's chats as its own palette does: the chats its sidebar lists,
+  most recently spoken in first, each through the runtime's transcript search.
+  It answers `{ chats: [{ workspaceId, chatTitle, hits, count }], truncated }`,
+  each hit an `agentId`, the `seq` of its message, a `snippet` and who said it
+  (`from`), at most 50 chats and 20 hits each, and `truncated` once it stopped
+  early, at that limit or after eight seconds. A query is 2 to 200
+  characters. It is a read, on `conversation:read`. A paired desktop's palette
+  asks each machine that advertises it beside its own search, lists one row
+  per chat with the machine's name, and opens a row as the chat's sidebar row
+  opens it, landing on the matching message as a match in one of its own
+  chats does.
+- **`conversation.approval_rules`** `{}` and
+  **`conversation.approval_rule_revoke`** `{ ruleId }` (`approval-rules`) are
+  the "always allow" rules the desktop's chats run with, as its Settings ▸
+  Chats lists and revokes them: each rule by its `id`, `label`, `toolName`
+  and `toolKind`, the project it holds in by its folder's name (`project`,
+  never a path), and `createdAt`. A rule already gone changes nothing when
+  revoked. The list is a read on `conversation:read`; a revoke needs
+  `conversation:operate` and is audited. A paired desktop's Settings lists each
+  machine's rules under its name, beside its own, since a chat followed from
+  there asks that machine's rules, and says so for a machine that does not
+  share them.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:
@@ -751,7 +840,9 @@ in the app's own process.
 - **What the view offers is what the grant and the lane allow.** A pairing
   without `conversation:operate` sees the conversation with the composer,
   approvals and stop closed. A remote view never offers a permanent approval
-  rule, a checkpoint revert, or this machine's skills and files. Images it
+  rule, a checkpoint revert, or this machine's skills and files: what its
+  composer offers of skills, mentions and commands is that machine's (below).
+  Images it
   does offer, where the machine lists the chat as taking them: main puts each
   in that machine's upload store, as the phone does, and the send names them. It
   offers the same two-preset switcher a local chat does, reading the preset the
@@ -794,6 +885,118 @@ in the app's own process.
   offers "Stop this agent", as a local chat's do, and it stops that agent
   alone over there. The machine's turn Stop spares a Claude chat's agents, so
   this is how one is stopped from here.
+- **Handoff works over there too** (owner report 2026-10-25). Where the
+  machine advertises `conversation-handoff` and lists the chat's provider as
+  able (`capabilities.handoff`), a cold chat's cache notice leads with
+  Handoff, as a local chat's does, and the machine hands the chat off: the
+  file of its messages is written on that machine, beside the transcript, and
+  the next message from either machine starts the new session there. A repeat
+  of the same command after a dropped connection is the same handoff. A
+  machine without the capability offers Compact alone.
+- **Edit from here and Revert work over there too** (owner report
+  2026-10-25). Where the machine advertises `conversation-rewind` and lists
+  the chat's provider as able (`capabilities.rewind`), each message offers
+  Edit from here, as a local chat's does: the chat goes back over there and
+  the message returns to this composer. Where it advertises
+  `conversation-checkpoint-revert`, a turn with a checkpoint offers Revert to
+  before this turn and Undo revert, and Edit from here offers to restore the
+  files too: that machine lists the files and puts them back in its own
+  checkout, so the paths in the dialog name its disk, not this one. A pairing
+  that may only follow is offered neither.
+- **Fork from here, side questions and the context ring work over there**
+  (owner ask 2026-10-25: every feature of a local chat in a remote one). Each
+  is offered where the machine advertises it and lists the chat's provider as
+  able. Fork from here (`conversation-fork`, `capabilities.fork`) is made by
+  that machine as its own would be: the new chat joins the chat's workspace
+  there, named after it beside that workspace's other chats, and is written to
+  its records so every window there lists it. Here it opens as a pane onto that
+  machine in the tab after this chat's; a message forked before waits in its
+  composer, without the files it attached, whose paths are on that machine. A
+  repeat of the same command after a dropped connection is the same fork, and
+  a chat at rest is forked from its transcript without being resumed. A side
+  question (`conversation-side-questions`, `capabilities.sideQuestion`) is
+  asked of the chat's agent over there, resuming a chat at rest as a send
+  would, and needs a pairing that may drive; closing the drawer, or the
+  connection dropping, calls it off there. Continue in a new chat forks over
+  there as Fork from here does. The context ring
+  (`conversation-context-breakdown`, `capabilities.contextBreakdown`) opens
+  what fills the window, read from the agent over there; a chat with no live
+  session there says there is no agent to ask yet, as a local one does. A
+  machine without a capability offers none of it, and the ring shows how full
+  the window is alone.
+- **The composer reaches the chat's folder over there** (2026-10-25). Where
+  the machine advertises `conversation-file-search` and
+  `conversation-send-mentions`, an @ searches the chat's folder there (`GET
+conversation-files`, on `conversation:read`), the picker ranks the matches
+  and their folders as a search here is ranked, and the send names each pick
+  by its path in that folder (`mentions`), which that machine resolves as its
+  own composer's chips are, refusing one outside the folder, behind a link, or
+  gone. Where it advertises `conversation-commands`, the `/` menu lists what
+  the chat's CLI runs in that folder (`GET conversation-commands`), asked when
+  the menu opens rather than as the chat does, since each ask may start the
+  CLI over there; asking again (`refresh`) needs `conversation:operate`. A `$`
+  lists that machine's skills, as the "+" does. Where it advertises
+  `conversation-message-files`, a file attached here by its path is a card, as
+  in a local chat: main reads it (25 MB at most), puts it in that machine's
+  store with `upload?kind=file` under the chat's live session, and the send
+  names it, so the agent reads it there by that path. A chat at rest there
+  takes files once a message has woken it, as it takes pictures. A machine
+  without one of these leaves that part of the composer as before: no @, the
+  `/` menu with Studio's commands, a file typed as its path. A message holding
+  mentions, skills or files is not handed to that machine's queue: that queue
+  keeps words alone, so such a message waits in this pane and goes when the
+  turn ends while this machine is awake.
+- **The CLI's own modes, as here** (2026-10-25). Where the machine advertises
+  `conversation-cli-permission-modes`, the permissions picker lists the modes
+  the chat's CLI runs beside the presets (Claude Code's Accept edits), shows
+  the one the machine lists the chat on, and a pick switches it over there. A
+  machine without the capability is offered each preset's own mode only.
+- **A turn runs in the chat's mode over there** (2026-10-25). Where the machine
+  advertises `conversation-send-mode`, a message goes in the mode the chat
+  sends its turns in, as a local chat's do, and the chat says whether its
+  provider plans from what the machine lists (`capabilities.planMode`). A
+  machine without the capability is sent no mode, and a message in one other
+  than the default is refused here in words rather than run as a default
+  turn there.
+- **Its effort is set from here** (2026-10-25). Where the machine advertises
+  `conversation-reasoning-effort`, the engine picker's effort control and
+  `/effort` are offered as a local chat's are, reading the level the machine
+  lists the chat at; a change is written to the chat's record over there,
+  which every turn after runs at, whichever device sends it.
+- **Its MCP servers are reconnected and switched from here** (2026-10-25).
+  Where the machine advertises `conversation-mcp-server-actions` and lists the
+  chat's provider as taking the action, the "+" menu's server rows over a
+  live chat offer Reconnect and switching a server back on, as a local chat's
+  do, carried out over there, and the rows are read again after. A sign-in is
+  that machine's to finish, since its CLI waits for the sign-in there, so no
+  row offers it from here. The "+" lists that machine's skills and servers
+  where it takes skills with a message (`conversation-send-skills`).
+- **Restart agent session restarts it over there** (2026-10-25). Where the
+  machine advertises `conversation-restart-session`, the palette's Restart
+  agent session has that machine end the chat's agent process as its own
+  does, and the next message starts it again on the same conversation, with
+  the slash commands read again. It is refused while the agent works, as a
+  local chat's is. A machine without the capability is not asked, and the
+  toast says to restart it there.
+- **A scheduled message is the other machine's to send** (2026-10-25). Where
+  the machine advertises `conversation-scheduled-sends`, the "+"'s Schedule is
+  offered as on a local chat, and the message goes to that machine at once
+  (`scheduleSend`): it keeps it among its own scheduled messages, shows it in
+  the chat's own tray there, and sends it at its time whether or not this
+  machine is awake. The tray here draws what that machine says it keeps
+  (`watchScheduled`, `scheduled` frames), and its Send now, Retry, Delete and
+  Edit ask that machine; Edit deletes it there and puts it back in this
+  composer, still set for its time. A machine without the capability, and a
+  pairing that may only follow, offer no Schedule.
+- **Its usage limits are the other machine's** (2026-10-25). Where the machine
+  advertises `conversation-usage-limits`, the strip under the composer draws
+  the chat's plan as that machine's agents reported it, and the mark's list
+  every plan there, named as that machine's; the tray draws the notice a usage
+  limit left on the chat's turn there, with Resume at reset, Always resume at
+  reset, Cancel, Retry and Dismiss asking that machine, which sends the
+  resume (`watchUsageLimits`, `usageLimits` frames, `usageLimitResume`). A
+  pairing that may only follow sees the notice without its buttons; a machine
+  without the capability draws neither, as before.
 
 ### Terminals stay on the machine
 

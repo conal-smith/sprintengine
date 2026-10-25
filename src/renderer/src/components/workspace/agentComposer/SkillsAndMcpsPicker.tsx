@@ -326,7 +326,7 @@ export function SkillsAndMcpsPicker({
       setBusyKey(null)
     }
   }
-  const remoteExtensions = useRemoteExtensions(remote ?? null, serversCli, open)
+  const remoteExtensions = useRemoteExtensions(remote ?? null, serversCli, open, serversRead)
   const skillInventory = remote ? remoteExtensions : localInventory
   const reportedServers = remote ? remoteExtensions.servers : localServers
   const sources = useSkillSourcesById(open)
@@ -865,12 +865,15 @@ function useCliMcpServers(
 
 /**
  * A paired machine's skills and MCP servers for one of its projects, read on
- * every open as the local ones are.
+ * every open as the local ones are, and again after a server's action
+ * (`read`), so its row shows how the server is now. The composer's `$`
+ * type-ahead reads a remote chat's skills through it too.
  */
-function useRemoteExtensions(
+export function useRemoteExtensions(
   remote: { connectionId: string; workspaceId: string } | null,
   cli: string | null,
   active: boolean,
+  read = 0,
 ): { skills: WorkspaceSkill[]; servers: AgentMcpServer[]; loading: boolean; error: string | null } {
   const [state, setState] = useState<{
     skills: WorkspaceSkill[]
@@ -906,7 +909,7 @@ function useRemoteExtensions(
     return () => {
       cancelled = true
     }
-  }, [active, cli, connectionId, workspaceId])
+  }, [active, cli, connectionId, workspaceId, read])
   return state
 }
 

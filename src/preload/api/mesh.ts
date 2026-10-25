@@ -7,6 +7,10 @@ import {
   MESH_SETTLE_CONVERSATION_CHANNEL,
   MESH_VISIT_CONVERSATION_CHANNEL,
   MESH_CHANGE_CONVERSATION_CHANNEL,
+  MESH_CONVERSATION_DELETE_PLAN_CHANNEL,
+  MESH_CONVERSATION_SEARCH_CHANNEL,
+  MESH_APPROVAL_RULES_CHANNEL,
+  MESH_REVOKE_APPROVAL_RULE_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -23,6 +27,10 @@ import {
   type MeshNewChatWorktree,
   type MeshSettleConversationResult,
   type MeshChangeConversationResult,
+  type MeshConversationDeletePlanResult,
+  type MeshConversationSearchResult,
+  type MeshApprovalRulesResult,
+  type MeshRevokeApprovalRuleResult,
   type MeshConversationChange,
   type MeshVisitConversationResult,
   type MeshWorkspaceCheckoutResult,
@@ -32,7 +40,9 @@ import {
   type MeshPairResult,
   type MeshRequestPairingResult,
   meshConversationFrameChannel,
+  MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_COMMAND_CHANNEL,
+  MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
   MESH_CONVERSATION_EARLIER_CHANNEL,
   MESH_CONVERSATION_FOLLOW_CHANNEL,
   MESH_CONVERSATION_LIST_CHANNEL,
@@ -42,14 +52,21 @@ import {
   MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL,
   MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL,
   MESH_CONVERSATION_SEND_CHANNEL,
+  MESH_CONVERSATION_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
+  MESH_CONVERSATION_ATTACHMENT_CHANNEL,
   MESH_CONVERSATION_TURN_DIFF_CHANNEL,
   MESH_CONVERSATION_UNFOLLOW_CHANNEL,
+  MESH_CONVERSATION_FILE_SEARCH_CHANNEL,
+  MESH_CONVERSATION_COMMANDS_CHANNEL,
+  type MeshConversationFileSearchResult,
+  type MeshConversationCommandsResult,
   type MeshConversationCommand,
   type MeshConversationCommandResult,
   type MeshConversationFrame,
   type MeshConversationKey,
+  type MeshUsageLimitResumeAction,
   type MeshConversationImageResult,
   type MeshConversationListResult,
   type MeshPullRequestCreateResult,
@@ -58,9 +75,14 @@ import {
   type MeshPullRequestStateResult,
 } from '../../shared/tailnet-mesh'
 import type { PullRequestCheckoutPin } from '../../shared/git/pull-request-create'
+import type { ConversationMentionRef } from '../../shared/conversation/mentions'
+import type { ConversationAttachedFile } from '../../shared/conversation/attachedFiles'
 import type {
+  ConversationContextBreakdownResult,
   ConversationImageAttachment,
   ConversationPageResult,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationToolDetailResult,
   ConversationTurnDiffResult,
 } from '../../shared/conversation-runtime'
@@ -134,6 +156,17 @@ export const meshApi = {
     change: MeshConversationChange
   }): Promise<MeshChangeConversationResult> =>
     ipcRenderer.invoke(MESH_CHANGE_CONVERSATION_CHANNEL, input) as Promise<MeshChangeConversationResult>,
+  meshConversationDeletePlan: (input: {
+    connectionId: string
+    workspaceId: string
+  }): Promise<MeshConversationDeletePlanResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_DELETE_PLAN_CHANNEL, input) as Promise<MeshConversationDeletePlanResult>,
+  meshConversationSearch: (input: { connectionId: string; query: string }): Promise<MeshConversationSearchResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_SEARCH_CHANNEL, input) as Promise<MeshConversationSearchResult>,
+  meshApprovalRules: (input: { connectionId: string }): Promise<MeshApprovalRulesResult> =>
+    ipcRenderer.invoke(MESH_APPROVAL_RULES_CHANNEL, input) as Promise<MeshApprovalRulesResult>,
+  meshRevokeApprovalRule: (input: { connectionId: string; ruleId: string }): Promise<MeshRevokeApprovalRuleResult> =>
+    ipcRenderer.invoke(MESH_REVOKE_APPROVAL_RULE_CHANNEL, input) as Promise<MeshRevokeApprovalRuleResult>,
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string): Promise<MeshWorkspaceCheckoutResult> =>
     ipcRenderer.invoke(MESH_WORKSPACE_CHECKOUT_CHANNEL, {
       connectionId,
@@ -200,6 +233,9 @@ export const meshApi = {
     queue?: boolean
     skills?: string[]
     steer?: boolean
+    mentions?: ConversationMentionRef[]
+    files?: ConversationAttachedFile[]
+    mode?: 'default' | 'plan' | 'ask'
   }): Promise<MeshConversationCommandResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_SEND_CHANNEL, {
       key: input.key,
@@ -208,12 +244,68 @@ export const meshApi = {
       ...(input.queue ? { queue: true } : {}),
       ...(input.skills?.length ? { skills: input.skills } : {}),
       ...(input.steer ? { steer: true } : {}),
+      ...(input.mentions?.length ? { mentions: input.mentions } : {}),
+      ...(input.files?.length ? { files: input.files } : {}),
+      ...(input.mode && input.mode !== 'default' ? { mode: input.mode } : {}),
     }) as Promise<MeshConversationCommandResult>,
   meshConversationCancelQueued: (input: { key: MeshConversationKey; queuedId: string }) =>
     command(input.key, { kind: 'cancelQueued', queuedId: input.queuedId }),
   meshConversationInterrupt: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'interrupt' }),
   meshConversationStopSubagent: (input: { key: MeshConversationKey; toolUseId: string }) =>
     command(input.key, { kind: 'stopSubagent', toolUseId: input.toolUseId }),
+  meshConversationHandoff: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'handoff' }),
+  meshConversationRewind: (input: { key: MeshConversationKey; turnSeq: number }) =>
+    command(input.key, { kind: 'rewind', turnSeq: input.turnSeq }),
+  meshConversationRevert: (input: {
+    key: MeshConversationKey
+    turnSeq: number
+    undo?: boolean
+    confirmed?: boolean
+    files?: string[]
+  }) =>
+    command(input.key, {
+      kind: 'revert',
+      turnSeq: input.turnSeq,
+      ...(input.undo ? { undo: true } : {}),
+      ...(input.confirmed ? { confirmed: true, files: input.files ?? [] } : {}),
+    }),
+  meshConversationFork: (input: {
+    key: MeshConversationKey
+    fork: Extract<MeshConversationCommand, { kind: 'fork' }>
+  }) => command(input.key, input.fork),
+  meshConversationSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+    question: string
+    history?: ConversationSideQuestionExchange[]
+  }): Promise<ConversationSideQuestionResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_SIDE_QUESTION_CHANNEL, input) as Promise<ConversationSideQuestionResult>,
+  meshConversationCancelSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+  }): Promise<{ ok: true } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL, input) as Promise<
+      { ok: true } | { ok: false; message: string }
+    >,
+  meshConversationContextBreakdown: (input: {
+    key: MeshConversationKey
+  }): Promise<ConversationContextBreakdownResult> =>
+    ipcRenderer.invoke(
+      MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
+      input,
+    ) as Promise<ConversationContextBreakdownResult>,
+  meshConversationScheduleSend: (input: { key: MeshConversationKey; message: string; sendAt: number }) =>
+    command(input.key, { kind: 'scheduleSend', message: input.message, sendAt: input.sendAt }),
+  meshConversationSendScheduledNow: (input: { key: MeshConversationKey; scheduledId: string }) =>
+    command(input.key, { kind: 'sendScheduledNow', scheduledId: input.scheduledId }),
+  meshConversationCancelScheduled: (input: { key: MeshConversationKey; scheduledId: string }) =>
+    command(input.key, { kind: 'cancelScheduled', scheduledId: input.scheduledId }),
+  meshConversationUsageLimitResume: (input: {
+    key: MeshConversationKey
+    action: MeshUsageLimitResumeAction
+    always?: boolean
+  }) =>
+    command(input.key, { kind: 'usageLimitResume', action: input.action, ...(input.always ? { always: true } : {}) }),
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -224,10 +316,27 @@ export const meshApi = {
     requestId: string
     answers: Record<string, string>
   }) => command(input.key, { kind: 'answerQuestion', requestId: input.requestId, answers: input.answers }),
-  meshConversationSetPermissionPreset: (input: { key: MeshConversationKey; preset: CliPermissionPreset }) =>
-    command(input.key, { kind: 'setPermissionPreset', preset: input.preset }),
+  meshConversationSetPermissionPreset: (input: {
+    key: MeshConversationKey
+    preset: CliPermissionPreset
+    permissionMode?: string
+  }) =>
+    command(input.key, {
+      kind: 'setPermissionPreset',
+      preset: input.preset,
+      ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+    }),
   meshConversationSetModel: (input: { key: MeshConversationKey; modelId: string }) =>
     command(input.key, { kind: 'setModel', modelId: input.modelId }),
+  meshConversationSetReasoningEffort: (input: { key: MeshConversationKey; effort?: string }) =>
+    command(input.key, { kind: 'setReasoningEffort', ...(input.effort ? { effort: input.effort } : {}) }),
+  meshConversationMcpServerAction: (input: {
+    key: MeshConversationKey
+    serverId: string
+    action: 'reconnect' | 'enable' | 'disable'
+  }) => command(input.key, { kind: 'mcpServerAction', serverId: input.serverId, action: input.action }),
+  meshConversationRestartSession: (input: { key: MeshConversationKey }) =>
+    command(input.key, { kind: 'restartSession' }),
   meshConversationToolDetail: (input: {
     key: MeshConversationKey
     toolUseId: string
@@ -244,6 +353,24 @@ export const meshApi = {
     toolUseId: string
   }): Promise<MeshConversationImageResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_TOOL_IMAGE_CHANNEL, input) as Promise<MeshConversationImageResult>,
+  meshConversationAttachment: (input: {
+    key: MeshConversationKey
+    ref: string
+  }): Promise<MeshConversationImageResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_ATTACHMENT_CHANNEL, input) as Promise<MeshConversationImageResult>,
+  meshConversationSearchFiles: (input: {
+    key: MeshConversationKey
+    query: string
+  }): Promise<MeshConversationFileSearchResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_FILE_SEARCH_CHANNEL, input) as Promise<MeshConversationFileSearchResult>,
+  meshConversationCommands: (input: {
+    key: MeshConversationKey
+    refresh?: boolean
+  }): Promise<MeshConversationCommandsResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_COMMANDS_CHANNEL, {
+      key: input.key,
+      ...(input.refresh ? { refresh: true } : {}),
+    }) as Promise<MeshConversationCommandsResult>,
   // A remote chat's Create PR: each step runs on the chat's machine.
   meshConversationPullRequestState: (input: { key: MeshConversationKey }): Promise<MeshPullRequestStateResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL, input) as Promise<MeshPullRequestStateResult>,
@@ -284,6 +411,10 @@ export const meshApi = {
   | 'meshSettleConversation'
   | 'meshVisitConversation'
   | 'meshChangeConversation'
+  | 'meshConversationDeletePlan'
+  | 'meshConversationSearch'
+  | 'meshApprovalRules'
+  | 'meshRevokeApprovalRule'
   | 'meshWorkspaceCheckout'
   | 'meshWorkspaceExtensions'
   | 'meshGetLiveState'
@@ -295,13 +426,30 @@ export const meshApi = {
   | 'meshConversationCancelQueued'
   | 'meshConversationInterrupt'
   | 'meshConversationStopSubagent'
+  | 'meshConversationHandoff'
+  | 'meshConversationRewind'
+  | 'meshConversationRevert'
+  | 'meshConversationFork'
+  | 'meshConversationSideQuestion'
+  | 'meshConversationCancelSideQuestion'
+  | 'meshConversationContextBreakdown'
+  | 'meshConversationScheduleSend'
+  | 'meshConversationSendScheduledNow'
+  | 'meshConversationCancelScheduled'
+  | 'meshConversationUsageLimitResume'
   | 'meshConversationResolveApproval'
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'
   | 'meshConversationSetModel'
+  | 'meshConversationSetReasoningEffort'
+  | 'meshConversationMcpServerAction'
+  | 'meshConversationRestartSession'
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'
+  | 'meshConversationAttachment'
+  | 'meshConversationSearchFiles'
+  | 'meshConversationCommands'
   | 'meshConversationPullRequestState'
   | 'meshConversationPullRequestDraft'
   | 'meshConversationPullRequestDraftCancel'

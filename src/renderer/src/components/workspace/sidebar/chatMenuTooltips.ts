@@ -13,8 +13,17 @@
 import type { HighlightColor } from '../../../types/workspace'
 import { getHighlightSwatch } from '../../../utils/highlight'
 import { hostPlatform } from '../../../clientCapabilities'
+import type { MeshConversationManage } from '../../../../../shared/tailnet-mesh'
 
-export type ChatMenuPlace = { kind: 'local' } | { kind: 'remote'; machineName: string; marks: boolean }
+export type ChatMenuPlace =
+  | { kind: 'local' }
+  | {
+      kind: 'remote'
+      machineName: string
+      marks: boolean
+      /** What of the chat's management its machine takes from here; none when absent. */
+      manage?: MeshConversationManage
+    }
 
 const LOCAL: ChatMenuPlace = { kind: 'local' }
 
@@ -45,11 +54,15 @@ export const chatMenuTooltips = {
   rename: (where: ChatMenuPlace = LOCAL) =>
     where.kind === 'local'
       ? 'Rename this chat.'
-      : `Rename this chat on this computer. ${where.machineName} keeps its own name for it.`,
-  newChat: (projectless: boolean) =>
+      : where.manage?.rename
+        ? `Rename this chat on ${where.machineName}, and on every device that follows it.`
+        : `Rename this chat on this computer. ${where.machineName} keeps its own name for it.`,
+  newChat: (projectless: boolean, where: ChatMenuPlace = LOCAL) =>
     projectless
       ? 'Start a new chat that has no project, in a folder of its own.'
-      : "Start a new chat in this chat's project.",
+      : where.kind === 'remote'
+        ? `Start a new chat in this chat's project on ${where.machineName}, where it runs.`
+        : "Start a new chat in this chat's project.",
   reveal: () => `Show this chat's folder in ${fileManager()}.`,
   /** Why Reveal folder is off: the folder is on another machine, or gone. */
   revealUnavailable: (where: ChatMenuPlace) =>
@@ -68,8 +81,9 @@ export const chatMenuTooltips = {
     (starred
       ? 'Take this chat out of Starred.'
       : 'Keep this chat in Starred, at the top of the list. A starred chat never settles by itself.') + markKept(where),
-  stopWatching: (pullRequest: number) =>
-    `Stop watching pull request #${pullRequest} for this chat. The chat stays as it is.`,
+  stopWatching: (pullRequest: number, where: ChatMenuPlace = LOCAL) =>
+    `Stop watching pull request #${pullRequest} for this chat. The chat stays as it is.` +
+    (where.kind === 'remote' ? ` ${where.machineName} keeps the watch, and stops it.` : ''),
   schedule: (paused: boolean) =>
     paused
       ? 'Let the schedule that started this chat run again.'
@@ -102,9 +116,10 @@ export const chatMenuTooltips = {
       : 'The pull request rules are in Settings ▸ Settled chats.'),
   // Studio's own compaction before a cache expires (conversation-auto-compact.ts):
   // idle, Claude only, at least 100k tokens, a minute or five before expiry.
-  autoCompact: (claude: boolean) =>
+  autoCompact: (claude: boolean, where: ChatMenuPlace = LOCAL) =>
     claude
-      ? 'Compacts this chat by itself while it sits idle, just before its prompt cache expires: 1 minute before on a 5-minute cache, 5 minutes before on a 1-hour cache. Only when it holds at least 100k tokens. Compacting then reads the conversation from the cache cheaply, so coming back later doesn’t re-read all of it at the uncached price. Your visible history stays as it is; a divider marks where it compacted.'
+      ? 'Compacts this chat by itself while it sits idle, just before its prompt cache expires: 1 minute before on a 5-minute cache, 5 minutes before on a 1-hour cache. Only when it holds at least 100k tokens. Compacting then reads the conversation from the cache cheaply, so coming back later doesn’t re-read all of it at the uncached price. Your visible history stays as it is; a divider marks where it compacted.' +
+        (where.kind === 'remote' ? ` ${where.machineName} runs this chat, so it compacts it and keeps the switch.` : '')
       : 'Only Claude chats can compact by themselves before their cache expires, for now.',
   highlight: (color: HighlightColor | null, where: ChatMenuPlace = LOCAL) =>
     (color === null
@@ -112,6 +127,8 @@ export const chatMenuTooltips = {
       : `Tint this chat's row ${getHighlightSwatch(color).label.toLowerCase()}.`) + markKept(where),
   typeAction: (label: string) => `${label}: an action this chat's workspace type adds.`,
   // Settings ▸ Settled chats deletes the same way (useDeleteSettledChats).
-  deleteSettled: () =>
-    'Delete this settled chat and its history for good. Its worktree is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.',
+  deleteSettled: (where: ChatMenuPlace = LOCAL) =>
+    where.kind === 'remote'
+      ? `Delete this settled chat and its history on ${where.machineName} for good, for every device that follows it, and this computer's record of it. Its worktree there is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.`
+      : 'Delete this settled chat and its history for good. Its worktree is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.',
 } as const

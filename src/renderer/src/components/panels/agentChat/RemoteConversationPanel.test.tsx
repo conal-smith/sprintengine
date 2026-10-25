@@ -103,28 +103,91 @@ async function mountRemote({
   models,
   modelSwitch = false,
   permissionModes = false,
+  cliPermissionModes = false,
   queuedSends = false,
   steerSends = false,
   stopSubagents = false,
+  handoff = false,
+  rewind = false,
+  checkpointRevert = false,
+  agentReads = {},
+  reasoningEffort = false,
+  mcpServerActions = false,
+  extensions = {
+    skills: [
+      {
+        id: 'systematic-debugging',
+        name: 'systematic-debugging',
+        description: 'Find the root cause first.',
+        source: 'custom',
+        harnesses: [],
+        installState: 'installed',
+      },
+    ],
+    servers: [],
+  },
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
+  sendSkills = false,
+  mentions = false,
+  commands = false,
+  messageFiles = false,
+  scheduledSends = false,
+  usageLimits = false,
 }: {
   access: 'read' | 'operate'
   permissionPreset?: MeshConversation['permissionPreset']
   models?: MeshConversation['models']
   modelSwitch?: boolean
   permissionModes?: boolean
+  /** The machine runs chats on their CLI's own modes (`conversation-cli-permission-modes`). */
+  cliPermissionModes?: boolean
   queuedSends?: boolean
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
   stopSubagents?: boolean
+  /** The machine hands its chats off to a fresh session (`conversation-handoff`). */
+  handoff?: boolean
+  /** The machine takes a chat back to before one of its messages (`conversation-rewind`). */
+  rewind?: boolean
+  /** The machine puts a turn's files back from its checkpoint (`conversation-checkpoint-revert`). */
+  checkpointRevert?: boolean
+  /**
+   * The machine forks its chats, answers side questions about them and says
+   * what fills their windows (`conversation-fork`, `conversation-side-questions`,
+   * `conversation-context-breakdown`).
+   */
+  agentReads?: { fork?: boolean; sideQuestions?: boolean; contextBreakdown?: boolean }
+  /** The machine lists its chats' effort and takes a change of it (`conversation-reasoning-effort`). */
+  reasoningEffort?: boolean
+  /** The machine reconnects and switches a live chat's servers (`conversation-mcp-server-actions`). */
+  mcpServerActions?: boolean
+  /** The skills and MCP servers the machine lists for the chat's project there. */
+  extensions?: { skills: unknown[]; servers: unknown[] }
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
-  listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
+  listed?: Partial<
+    Pick<
+      MeshConversation,
+      'branch' | 'pullRequests' | 'changes' | 'worktree' | 'permissionMode' | 'reasoningEffort' | 'localServers'
+    >
+  >
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
+  /** The machine takes its skills with a message and lists them (`conversation-send-skills`). */
+  sendSkills?: boolean
+  /** The machine searches a chat's folder and takes mentions (`conversation-file-search`, `conversation-send-mentions`). */
+  mentions?: boolean
+  /** The machine lists a chat CLI's slash commands (`conversation-commands`). */
+  commands?: boolean
+  /** The machine takes files with a message (`conversation-message-files`). */
+  messageFiles?: boolean
+  /** The machine keeps messages scheduled into its chats for a time (`conversation-scheduled-sends`). */
+  scheduledSends?: boolean
+  /** The machine says what it knows of its agents' usage limits (`conversation-usage-limits`). */
+  usageLimits?: boolean
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -139,8 +202,12 @@ async function mountRemote({
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     MutationObserver: dom.window.MutationObserver,
+    // jsdom has no CSS namespace; the skill type-ahead escapes a row's id with it.
+    CSS: { escape: (value: string) => value.replace(/["\\]/gu, '\\$&') },
     IS_REACT_ACT_ENVIRONMENT: true,
   }
+  // Nor does it scroll: the type-ahead keeps its highlighted row in view.
+  dom.window.HTMLElement.prototype.scrollIntoView = () => undefined
   Object.assign(globalThis, globals)
   const receivers: Array<(frame: MeshConversationFrame) => void> = []
   const followed: MeshConversationKey[] = []
@@ -166,10 +233,39 @@ async function mountRemote({
       access,
       modelSwitch,
       permissionModes,
+      cliPermissionModes,
       queuedSends,
       steerSends,
       stopSubagents,
+      handoff,
+      rewind,
+      checkpointRevert,
+      ...agentReads,
+      reasoningEffort,
+      mcpServerActions,
       createPullRequest,
+      sendSkills,
+      mentions,
+      commands,
+      messageFiles,
+      scheduledSends,
+      usageLimits,
+    })),
+    // The composer's reads of the chat's folder over there.
+    meshConversationSearchFiles: vi.fn(async (_input: { key: MeshConversationKey; query: string }) => ({
+      ok: true,
+      entries: [{ path: 'docs/release-notes.md', kind: 'file' }],
+      truncated: false,
+    })),
+    meshConversationCommands: vi.fn(async (_input: { key: MeshConversationKey; refresh?: boolean }) => ({
+      ok: true,
+      cli: 'claude-code',
+      fetchedAt: 1_700_000_000_000,
+      commands: [{ name: 'review-pr', description: 'Review a pull request over there', source: 'custom' }],
+    })),
+    meshWorkspaceExtensions: vi.fn(async (_input: { connectionId: string; workspaceId: string; cli?: string }) => ({
+      ok: true,
+      extensions,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
     // machine would, and a creation records the pull request there.
@@ -242,10 +338,95 @@ async function mountRemote({
     })),
     meshConversationResolveApproval: vi.fn(async () => ({ ok: true })),
     meshConversationInterrupt: vi.fn(async () => ({ ok: true })),
+    meshConversationHandoff: vi.fn(async (_input: { key: MeshConversationKey }) => ({ ok: true as const })),
     meshConversationStopSubagent: vi.fn(async (_input: { key: MeshConversationKey; toolUseId: string }) => ({
       ok: true,
     })),
+    meshConversationRewind: vi.fn(async (_input: { key: MeshConversationKey; turnSeq: number }) => ({ ok: true })),
+    // What the machine's checkout would put back, and then puts back.
+    meshConversationRevert: vi.fn(
+      async (input: {
+        key: MeshConversationKey
+        turnSeq: number
+        undo?: boolean
+        confirmed?: boolean
+        files?: string[]
+      }): Promise<
+        | { ok: true; data?: Record<string, unknown> }
+        | { ok: false; code: string; message: string; data?: Record<string, unknown> }
+      > => ({
+        ok: true,
+        data: {
+          files: [{ path: 'src/upload.ts', status: 'modified', addedLines: 1, removedLines: 1, binary: false }],
+          reverted: input.confirmed === true,
+        },
+      }),
+    ),
+    meshConversationFork: vi.fn(
+      async (_input: { key: MeshConversationKey; fork: Record<string, unknown> }): Promise<{ ok: true }> => ({
+        ok: true,
+      }),
+    ),
+    meshConversationSideQuestion: vi.fn(
+      async (_input: { key: MeshConversationKey; requestId: string; question: string }) => ({
+        ok: true,
+        answer: 'In src/upload.test.ts.',
+      }),
+    ),
+    meshConversationCancelSideQuestion: vi.fn(async () => ({ ok: true })),
+    meshConversationContextBreakdown: vi.fn(async (_input: { key: MeshConversationKey }) => ({
+      ok: true,
+      breakdown: {
+        model: 'opus',
+        usedTokens: 76_000,
+        windowTokens: 200_000,
+        categories: [
+          { name: 'MCP tools', tokens: 20_000, kind: 'used' },
+          { name: 'Messages', tokens: 56_000, kind: 'used' },
+          { name: 'Free space', tokens: 124_000, kind: 'free' },
+        ],
+        mcpServers: [{ name: 'linear', tokens: 20_000, tools: [] }],
+        skills: [],
+        memoryFiles: [],
+        agents: [],
+        autoCompactAt: null,
+        estimated: true,
+        measuredAt: 0,
+      },
+    })),
+    meshConversationScheduleSend: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+        message: string
+        sendAt: number
+      }): Promise<{ ok: true } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
+    meshConversationSendScheduledNow: vi.fn(async (_input: { key: MeshConversationKey; scheduledId: string }) => ({
+      ok: true,
+    })),
+    meshConversationCancelScheduled: vi.fn(async (_input: { key: MeshConversationKey; scheduledId: string }) => ({
+      ok: true,
+    })),
+    meshConversationUsageLimitResume: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+        action: string
+        always?: boolean
+      }): Promise<{ ok: true } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
+    meshConversationRestartSession: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+      }): Promise<{ ok: true; notice?: string } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
+    meshConversationMcpServerAction: vi.fn(
+      async (_input: { key: MeshConversationKey; serverId: string; action: string }) => ({ ok: true }),
+    ),
+    meshConversationSetReasoningEffort: vi.fn(async (_input: { key: MeshConversationKey; effort?: string }) => ({
+      ok: true,
+      notice: 'Reasoning effort applies from the next turn.',
+    })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
       listedModel = input.modelId
       return { ok: true, notice: 'The new model starts with your next message.' }
@@ -258,19 +439,25 @@ async function mountRemote({
   const { act, createElement } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const { default: RemoteConversationPanel } = await import('./RemoteConversationPanel')
+  // Edit from here and Revert ask before they act, as the app's own root lets them.
+  const { ConfirmDialogProvider } = await import('../../ui/ConfirmDialog')
   const { EditorView } = await import('@codemirror/view')
   const host = dom.window.document.createElement('div')
   dom.window.document.body.appendChild(host)
   const root = createRoot(host)
   await act(async () =>
     root.render(
-      createElement(RemoteConversationPanel, {
-        workspaceId: 'local-workspace',
-        connectionId: key.connectionId,
-        machineName: 'mac-mini',
-        remoteWorkspaceId: key.workspaceId,
-        remoteAgentId: key.agentId,
-      }),
+      createElement(
+        ConfirmDialogProvider,
+        null,
+        createElement(RemoteConversationPanel, {
+          workspaceId: 'local-workspace',
+          connectionId: key.connectionId,
+          machineName: 'mac-mini',
+          remoteWorkspaceId: key.workspaceId,
+          remoteAgentId: key.agentId,
+        }),
+      ),
     ),
   )
   const earlier = event('user_message', { turnId: 'earlier', text: 'Bump the timeout' })
@@ -398,7 +585,8 @@ test('a conversation on a paired machine renders in the chat view and is driven 
     expect(chat.host.querySelector('[data-conversation-strip] [data-strip-branch]')).toBeNull()
     expect(chat.host.querySelector('[data-conversation-strip] [data-diff-stat-pill]')).toBeNull()
     // A turn's changes can be read, but its files are on the other machine's
-    // disk, so nothing offers to revert them.
+    // disk, and this machine does not say it reverts them itself, so nothing
+    // offers to.
     expect(chat.host.textContent).toContain('1 file changed')
     expect(chat.host.textContent).not.toContain('Revert to before this turn')
     // Its tree is listed, but the diff window and the editor open this disk's files.
@@ -409,6 +597,40 @@ test('a conversation on a paired machine renders in the chat view and is driven 
     // a picker showing a guess would be worse than none.
     expect(chat.host.textContent).not.toContain('Bypass permissions')
     expect(chat.host.textContent).not.toContain('CLI default')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('an approval over there can be allowed for the rest of the conversation, never for good', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  try {
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) })
+      chat.emit({
+        type: 'event',
+        event: event('approval_requested', {
+          turnId: 'a',
+          requestId: 'approval-2',
+          action: 'Bash',
+          summary: 'git status',
+          input: { command: 'git status' },
+          // The folder the request runs in on that machine.
+          cwd: '/Users/conal/project',
+        }),
+      })
+    })
+    await chat.act(async () =>
+      chat.host.querySelector<HTMLButtonElement>('button[aria-label="Remember permission"]')!.click(),
+    )
+    const rows = Array.from(chat.document.querySelectorAll<HTMLElement>('[data-menu-item="true"]'))
+    expect(rows.map((row) => row.textContent?.trim())).toEqual(['Allow "git status …" for this conversation'])
+    await chat.act(async () => rows[0]!.click())
+    expect(chat.api.meshConversationResolveApproval).toHaveBeenCalledWith({
+      key,
+      requestId: 'approval-2',
+      decision: 'conversation',
+    })
   } finally {
     await chat.unmount()
   }
@@ -646,6 +868,162 @@ test('a pairing that may only follow sees no Stop on an agent', async () => {
   }
 })
 
+/** What the composer's "+" offers, by each row's words. */
+async function optionsMenu(chat: Awaited<ReturnType<typeof mountRemote>>): Promise<string[]> {
+  const plus = chat.host.querySelector<HTMLButtonElement>('button[aria-label="Options"]')
+  expect(plus, 'the composer has its "+"').not.toBeNull()
+  await chat.act(async () => plus!.click())
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-menu-item="true"]')).map(
+    (row) => row.textContent?.trim() ?? '',
+  )
+}
+
+test('a chat over there offers that machine\'s skills from the "+", where it takes them with a message', async () => {
+  const takes = await mountRemote({ access: 'operate', sendSkills: true })
+  try {
+    expect((await optionsMenu(takes)).some((row) => row.startsWith('Skills'))).toBe(true)
+  } finally {
+    await takes.unmount()
+  }
+  const older = await mountRemote({ access: 'operate', sendSkills: false })
+  try {
+    expect((await optionsMenu(older)).some((row) => row.startsWith('Skills'))).toBe(false)
+  } finally {
+    await older.unmount()
+  }
+})
+
+/** The chat's cache went cold long ago, with the whole conversation to re-read. */
+async function coldCache(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  await settleTurn(chat)
+  await chat.act(async () => {
+    chat.emit({
+      type: 'event',
+      event: event('usage_updated', { promptCache: { ttl: '5m', cached: true, recacheTokens: 221_000 } }),
+    })
+  })
+}
+const handoffButton = (chat: Awaited<ReturnType<typeof mountRemote>>) =>
+  Array.from(chat.host.querySelectorAll<HTMLButtonElement>('button')).find(
+    (button) => button.textContent?.trim() === 'Handoff',
+  )
+
+test('a cold chat over there offers Handoff, which that machine carries out', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    handoff: true,
+    capabilities: { ...thread.capabilities!, handoff: true },
+  })
+  try {
+    await coldCache(chat)
+    const button = handoffButton(chat)
+    expect(button, 'the cache notice leads with Handoff').toBeDefined()
+    await chat.act(async () => button!.click())
+    expect(chat.api.meshConversationHandoff).toHaveBeenCalledExactlyOnceWith({ key })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+const allAgentReads = { fork: true, sideQuestions: true, contextBreakdown: true }
+const ableChat = { ...thread.capabilities!, fork: true, sideQuestion: true, contextBreakdown: true }
+
+test('Fork from here on a chat over there forks it there, by its ids there', async () => {
+  const chat = await mountRemote({ access: 'operate', agentReads: allAgentReads, capabilities: ableChat })
+  try {
+    await settleTurn(chat)
+    const forks = Array.from(chat.host.querySelectorAll('button')).filter(
+      (button) => button.textContent?.trim() === 'Fork from here',
+    )
+    expect(forks.length, 'offered on the replies and the messages').toBeGreaterThan(0)
+    await chat.act(async () => forks.at(-1)!.click())
+    expect(chat.api.meshConversationFork).toHaveBeenCalledOnce()
+    const [asked] = chat.api.meshConversationFork.mock.calls[0]!
+    expect(asked.key).toEqual(key)
+    expect(asked.fork).toMatchObject({ kind: 'fork', side: 'assistant', turnId: 'a' })
+    expect(String(asked.fork.newAgentId)).toMatch(/^conversation-claude-agent-/)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Handoff where the machine cannot hand a chat off, lists its chat as unable, or the pairing only follows', async () => {
+  for (const options of [
+    { access: 'operate' as const, handoff: false, capabilities: { ...thread.capabilities!, handoff: true } },
+    { access: 'operate' as const, handoff: true, capabilities: { ...thread.capabilities!, handoff: false } },
+    { access: 'operate' as const, handoff: true, capabilities: thread.capabilities },
+    { access: 'read' as const, handoff: true, capabilities: { ...thread.capabilities!, handoff: true } },
+  ]) {
+    const chat = await mountRemote(options)
+    try {
+      await coldCache(chat)
+      expect(handoffButton(chat)).toBeUndefined()
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+test('/btw in a chat over there is asked of its agent there, and the chat is sent nothing', async () => {
+  const chat = await mountRemote({ access: 'operate', agentReads: allAgentReads, capabilities: ableChat })
+  try {
+    await chat.act(async () => chat.type('/btw which file flakes?'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.api.meshConversationSideQuestion).toHaveBeenCalledOnce()
+    expect(chat.api.meshConversationSideQuestion.mock.calls[0]![0]).toMatchObject({
+      key,
+      question: 'which file flakes?',
+    })
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.document.body.textContent).toContain('In src/upload.test.ts.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test("the ring of a chat over there opens what fills its window, read from that machine's agent", async () => {
+  const chat = await mountRemote({ access: 'operate', agentReads: allAgentReads, capabilities: ableChat })
+  try {
+    await chat.act(async () =>
+      chat.emit({ type: 'event', event: event('usage_updated', { contextWindow: 200_000, contextUsed: 76_000 }) }),
+    )
+    const ring = () => chat.host.querySelector<HTMLButtonElement>('[data-strip-context] [data-strip-context-button]')!
+    await chat.act(async () => ring().click())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.api.meshConversationContextBreakdown).toHaveBeenCalledExactlyOnceWith({ key })
+    const panel = chat.document.querySelector('[data-context-breakdown]')
+    expect(panel?.querySelector('[data-context-heaviest="mcp"]')?.textContent).toContain('linear')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('none of the three where the machine does not take them, or lists its chat as unable', async () => {
+  for (const options of [
+    { agentReads: {}, capabilities: ableChat },
+    { agentReads: allAgentReads, capabilities: thread.capabilities },
+  ]) {
+    const chat = await mountRemote({ access: 'operate', ...options })
+    try {
+      await settleTurn(chat)
+      expect(chat.button('Fork from here')).toBeUndefined()
+      await chat.act(async () =>
+        chat.emit({ type: 'event', event: event('usage_updated', { contextWindow: 200_000, contextUsed: 76_000 }) }),
+      )
+      await chat.act(async () =>
+        chat.host.querySelector<HTMLButtonElement>('[data-strip-context] [data-strip-context-button]')?.click(),
+      )
+      expect(chat.api.meshConversationContextBreakdown).not.toHaveBeenCalled()
+      await chat.act(async () => chat.type('/btw which file flakes?'))
+      await chat.act(async () => chat.enter())
+      expect(chat.api.meshConversationSideQuestion).not.toHaveBeenCalled()
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
 /** Settles the turn the mounted chat is waiting on, so a send goes at once rather than queueing. */
 async function settleTurn(chat: Awaited<ReturnType<typeof mountRemote>>) {
   await chat.act(async () => {
@@ -653,6 +1031,156 @@ async function settleTurn(chat: Awaited<ReturnType<typeof mountRemote>>) {
     chat.emit({ type: 'event', event: event('turn_completed', { turnId: 'a' }) })
   })
 }
+
+const dialog = (chat: Awaited<ReturnType<typeof mountRemote>>) =>
+  chat.document.querySelector<HTMLElement>('[role="dialog"]')
+const dialogButton = (chat: Awaited<ReturnType<typeof mountRemote>>, label: string) =>
+  Array.from(dialog(chat)?.querySelectorAll('button') ?? []).find((item) => item.textContent?.trim() === label)
+const buttons = (chat: Awaited<ReturnType<typeof mountRemote>>, label: string) =>
+  Array.from(chat.host.querySelectorAll('button')).filter((item) => item.textContent?.trim() === label)
+/** Waits out the reads a click starts before its dialog opens. */
+async function settle(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  for (let i = 0; i < 5; i++) await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+}
+
+test('Edit from here on a chat over there takes it back over there, and restores its files there when asked', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    rewind: true,
+    checkpointRevert: true,
+    capabilities: { ...thread.capabilities!, rewind: true },
+  })
+  try {
+    await settleTurn(chat)
+    // Each message offers it; the first is the one whose turn kept a checkpoint.
+    expect(buttons(chat, 'Edit from here')).toHaveLength(2)
+    await chat.act(async () => buttons(chat, 'Edit from here')[0]!.click())
+    await settle(chat)
+    // The files a restore would put back are listed by that machine first.
+    const preview = chat.api.meshConversationRevert.mock.calls[0]![0]
+    expect(preview).toEqual({ key, turnSeq: expect.any(Number) })
+    const restore = dialog(chat)!.querySelector<HTMLElement>('[role="checkbox"], input[type="checkbox"]')!
+    expect(dialog(chat)!.textContent).toContain('Also restore 1 file to before this message')
+    await chat.act(async () => restore.click())
+    expect(dialog(chat)!.textContent).toContain('src/upload.ts')
+    await chat.act(async () => dialogButton(chat, 'Edit from here')!.click())
+    await settle(chat)
+    expect(chat.api.meshConversationRewind).toHaveBeenCalledExactlyOnceWith({ key, turnSeq: preview.turnSeq })
+    expect(chat.api.meshConversationRevert).toHaveBeenLastCalledWith({
+      key,
+      turnSeq: preview.turnSeq,
+      confirmed: true,
+      files: ['src/upload.ts'],
+    })
+    // The message is back in the composer, to be edited and sent again.
+    expect(chat.draft()).toBe('Bump the timeout')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('Edit from here over there leaves the files alone where that machine does not restore them', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    rewind: true,
+    capabilities: { ...thread.capabilities!, rewind: true },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => buttons(chat, 'Edit from here')[0]!.click())
+    await settle(chat)
+    expect(chat.api.meshConversationRevert).not.toHaveBeenCalled()
+    expect(dialog(chat)!.textContent).toContain('Files are left as they are.')
+    await chat.act(async () => dialogButton(chat, 'Edit from here')!.click())
+    await settle(chat)
+    expect(chat.api.meshConversationRewind).toHaveBeenCalledOnce()
+    expect(chat.api.meshConversationRevert).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Edit from here where the machine cannot go back, lists its chat as unable, or the pairing may only follow', async () => {
+  for (const options of [
+    { access: 'operate' as const, rewind: false, capabilities: { ...thread.capabilities!, rewind: true } },
+    { access: 'operate' as const, rewind: true, capabilities: { ...thread.capabilities!, rewind: false } },
+    { access: 'operate' as const, rewind: true, capabilities: thread.capabilities },
+    { access: 'read' as const, rewind: true, capabilities: { ...thread.capabilities!, rewind: true } },
+  ]) {
+    const chat = await mountRemote(options)
+    try {
+      await settleTurn(chat)
+      expect(chat.host.textContent).toContain('Bump the timeout')
+      expect(buttons(chat, 'Edit from here')).toHaveLength(0)
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+test('a turn over there is reverted by that machine, and files that moved are shown again before it acts', async () => {
+  const chat = await mountRemote({ access: 'operate', checkpointRevert: true })
+  try {
+    await settleTurn(chat)
+    chat.api.meshConversationRevert
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: {
+          files: [{ path: 'src/upload.ts', status: 'modified', addedLines: 1, removedLines: 1, binary: false }],
+          reverted: false,
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        ok: false,
+        code: 'unavailable',
+        message: 'The files to restore changed since they were shown. Review the new list and confirm again.',
+        data: { changed: true },
+      }))
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: {
+          files: [
+            { path: 'src/upload.ts', status: 'modified', addedLines: 1, removedLines: 1, binary: false },
+            { path: 'src/retry.ts', status: 'added', addedLines: 4, removedLines: 0, binary: false },
+          ],
+          reverted: false,
+        },
+      }))
+    const revert = buttons(chat, 'Revert to before this turn')
+    expect(revert.length).toBeGreaterThan(0)
+    await chat.act(async () => revert[0]!.click())
+    await settle(chat)
+    expect(dialog(chat)!.textContent).toContain('src/upload.ts')
+    await chat.act(async () => dialogButton(chat, 'Revert files')!.click())
+    await settle(chat)
+    // The list moved over there: the new one is shown, with why.
+    expect(dialog(chat)!.textContent).toContain('changed since they were shown')
+    expect(dialog(chat)!.textContent).toContain('src/retry.ts')
+    await chat.act(async () => dialogButton(chat, 'Revert files')!.click())
+    await settle(chat)
+    const turnSeq = chat.api.meshConversationRevert.mock.calls[0]![0].turnSeq
+    expect(chat.api.meshConversationRevert.mock.calls.map(([input]) => input)).toEqual([
+      { key, turnSeq },
+      { key, turnSeq, confirmed: true, files: ['src/upload.ts'] },
+      { key, turnSeq },
+      { key, turnSeq, confirmed: true, files: ['src/upload.ts', 'src/retry.ts'] },
+    ])
+    expect(dialog(chat)).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a pairing that may only follow sees no Revert, even where the machine reverts', async () => {
+  const chat = await mountRemote({ access: 'read', checkpointRevert: true })
+  try {
+    await settleTurn(chat)
+    expect(chat.host.textContent).toContain('1 file changed')
+    expect(buttons(chat, 'Revert to before this turn')).toHaveLength(0)
+  } finally {
+    await chat.unmount()
+  }
+})
 
 /** A drop of files from the system, each with its path on this disk. */
 function dropFiles(
@@ -881,6 +1409,298 @@ test('a refused allow leaves the chat on the mode it was on', async () => {
   }
 })
 
+/** Opens the "+" menu's skills and MCP servers picker, on its MCP servers where `mcp`. */
+async function openExtensions(chat: Awaited<ReturnType<typeof mountRemote>>, mcp = false) {
+  const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+  if (!plus) return false
+  await chat.act(async () => plus.click())
+  const row = Array.from(chat.document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+    item.textContent?.includes('Skills, plugins'),
+  )
+  if (!row) return false
+  await chat.act(async () => row.click())
+  if (mcp) {
+    const tab = Array.from(chat.document.querySelectorAll<HTMLElement>('button, [role="tab"], [role="radio"]')).find(
+      (item) => item.textContent?.trim() === 'MCP servers',
+    )
+    await chat.act(async () => tab?.click())
+  }
+  return true
+}
+
+test('a chat over there that takes that machine\'s skills lists them in the "+" menu', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    sendSkills: true,
+    extensions: {
+      skills: [
+        {
+          id: 'review',
+          name: 'review',
+          description: 'Review a change',
+          source: 'custom',
+          harnesses: [],
+          installState: 'installed',
+        },
+      ],
+      servers: [],
+    },
+  })
+  try {
+    expect(await openExtensions(chat)).toBe(true)
+    expect(chat.api.meshWorkspaceExtensions).toHaveBeenCalled()
+    expect(chat.document.body.textContent).toContain('Review a change')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+// A server the machine lists for the chat's CLI there, failed when its chat last said.
+const failedServer = { id: 'tracker', transport: 'http', scope: 'user', status: 'failed', error: 'timed out' }
+
+test('a server that failed over there is reconnected from its row, over the mesh, and read again', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    sendSkills: true,
+    mcpServerActions: true,
+    capabilities: { ...thread.capabilities!, mcpServerActions: ['reconnect', 'enable', 'disable'] },
+    extensions: { skills: [], servers: [failedServer] },
+  })
+  try {
+    expect(await openExtensions(chat, true)).toBe(true)
+    const reads = chat.api.meshWorkspaceExtensions.mock.calls.length
+    const reconnect = Array.from(chat.document.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === 'Reconnect',
+    )
+    expect(reconnect).toBeDefined()
+    await chat.act(async () => reconnect!.click())
+    expect(chat.api.meshConversationMcpServerAction).toHaveBeenCalledExactlyOnceWith({
+      key,
+      serverId: 'tracker',
+      action: 'reconnect',
+    })
+    expect(chat.api.meshWorkspaceExtensions.mock.calls.length).toBeGreaterThan(reads)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no server action where the machine does not take one, or lists the chat as taking none', async () => {
+  for (const options of [
+    { mcpServerActions: false, capabilities: { ...thread.capabilities!, mcpServerActions: ['reconnect' as const] } },
+    { mcpServerActions: true, capabilities: thread.capabilities },
+  ]) {
+    const chat = await mountRemote({
+      access: 'operate',
+      sendSkills: true,
+      extensions: { skills: [], servers: [failedServer] },
+      ...options,
+    })
+    try {
+      expect(await openExtensions(chat, true)).toBe(true)
+      expect(chat.document.body.textContent).toContain('tracker')
+      const buttons = Array.from(chat.document.querySelectorAll('button'))
+      expect(buttons.some((item) => item.textContent?.trim() === 'Reconnect')).toBe(false)
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+// From the palette, with the chat focused: the focused chat is the one restarted.
+async function restartSession(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  const view = chat.document.defaultView!
+  await chat.act(async () => {
+    chat.composer().focus()
+    view.dispatchEvent(new view.CustomEvent('sprintengine:panel-command', { detail: { id: 'chat.restartSession' } }))
+  })
+}
+
+async function toastTitles() {
+  const { useToastStore } = await import('../../../store/toastStore')
+  return useToastStore.getState().toasts.map((toast) => toast.title)
+}
+
+test('Restart agent session on a chat over there is carried out by that machine once the turn is over', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  const { useToastStore } = await import('../../../store/toastStore')
+  try {
+    useToastStore.setState({ toasts: [] })
+    // The turn still waits on its approval: refused here, as a local chat's is.
+    await restartSession(chat)
+    expect(chat.api.meshConversationRestartSession).not.toHaveBeenCalled()
+    expect(await toastTitles()).toContain('The agent is still working')
+    await settleTurn(chat)
+    await restartSession(chat)
+    expect(chat.api.meshConversationRestartSession).toHaveBeenCalledExactlyOnceWith({ key })
+    expect(await toastTitles()).toContain('Agent session restarted')
+    expect(await toastTitles()).not.toContain('This chat runs on another machine')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that had no agent running, or cannot restart one from here, says so', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  const { useToastStore } = await import('../../../store/toastStore')
+  try {
+    await settleTurn(chat)
+    useToastStore.setState({ toasts: [] })
+    chat.api.meshConversationRestartSession.mockResolvedValueOnce({
+      ok: true,
+      notice: 'This chat has no agent running. Your next message starts one.',
+    })
+    await restartSession(chat)
+    expect(await toastTitles()).toEqual(['No agent session to restart'])
+    useToastStore.setState({ toasts: [] })
+    chat.api.meshConversationRestartSession.mockResolvedValueOnce({
+      ok: false,
+      code: 'unsupported_command',
+      message: "mac-mini cannot restart a chat's agent from here yet.",
+    })
+    await restartSession(chat)
+    expect(useToastStore.getState().toasts.map((toast) => [toast.title, toast.description])).toEqual([
+      ['The session was not restarted', "mac-mini cannot restart a chat's agent from here yet."],
+    ])
+  } finally {
+    await chat.unmount()
+  }
+})
+
+// Claude Code's own modes, as its manifest names them to the picker.
+const claudeModes = [
+  { id: 'manual', label: 'Manual', level: 'manual' },
+  { id: 'acceptEdits', label: 'Accept edits', level: 'auto' },
+  { id: 'auto', label: 'Auto', level: 'auto' },
+  { id: 'bypass', label: 'Bypass permissions', level: 'bypass' },
+  { id: 'none', label: 'No flag', level: 'none' },
+]
+
+async function withClaudeModes(run: () => Promise<void>) {
+  const { useWorkspaceStore } = await import('../../../store/workspaceStore')
+  const before = useWorkspaceStore.getState().pluginCatalogEntries
+  useWorkspaceStore.setState({ pluginCatalogEntries: [{ id: 'claude-code', permissionModes: claudeModes }] as never })
+  try {
+    await run()
+  } finally {
+    useWorkspaceStore.setState({ pluginCatalogEntries: before })
+  }
+}
+
+test("a chat on a machine that runs its CLI's own modes offers them, and Accept edits goes over the mesh", () =>
+  withClaudeModes(async () => {
+    const chat = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'none',
+      permissionModes: true,
+      cliPermissionModes: true,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+    })
+    try {
+      const chip = await permissionsChip(chat)
+      await chat.act(async () => chip!.click())
+      const row = Array.from(chat.document.querySelectorAll<HTMLButtonElement>('[data-preset-option="true"]')).find(
+        (item) => item.textContent?.includes('Accept edits'),
+      )
+      expect(row).toBeDefined()
+      await chat.act(async () => row!.click())
+      expect(chat.api.meshConversationSetPermissionPreset).toHaveBeenCalledExactlyOnceWith({
+        key,
+        preset: 'auto',
+        permissionMode: 'acceptEdits',
+      })
+      expect((await permissionsChip(chat))?.getAttribute('aria-label')).toBe('Permissions: Accept edits')
+    } finally {
+      await chat.unmount()
+    }
+  }))
+
+test('a chat listed on a mode of its CLI shows that mode, and a machine that runs none of them offers none', () =>
+  withClaudeModes(async () => {
+    const on = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'auto',
+      permissionModes: true,
+      cliPermissionModes: true,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+      listed: { permissionMode: 'acceptEdits' },
+    })
+    try {
+      expect((await permissionsChip(on))?.getAttribute('aria-label')).toBe('Permissions: Accept edits')
+    } finally {
+      await on.unmount()
+    }
+    const older = await mountRemote({
+      access: 'operate',
+      permissionPreset: 'auto',
+      permissionModes: true,
+      cliPermissionModes: false,
+      capabilities: { ...thread.capabilities!, permissionModes: ['acceptEdits'] },
+      listed: { permissionMode: 'acceptEdits' },
+    })
+    try {
+      const chip = await permissionsChip(older)
+      expect(chip?.getAttribute('aria-label')).toBe('Permissions: Auto')
+      await older.act(async () => chip!.click())
+      const rows = Array.from(older.document.querySelectorAll<HTMLButtonElement>('[data-preset-option="true"]'))
+      expect(rows.some((item) => item.textContent?.includes('Accept edits'))).toBe(false)
+    } finally {
+      await older.unmount()
+    }
+  }))
+
+test('a chat over there runs at the effort it lists, and /effort sets another over the mesh, not as a message', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: true,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+    listed: { reasoningEffort: 'low' },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort high'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).toHaveBeenCalledExactlyOnceWith({ key, effort: 'high' })
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.host.textContent).toContain('Reasoning effort applies from the next turn.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('/effort alone steps on from the effort the machine lists the chat at', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: true,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+    listed: { reasoningEffort: 'low' },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).toHaveBeenCalledExactlyOnceWith({ key, effort: 'high' })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that keeps no effort a change can reach is never asked to change one', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    reasoningEffort: false,
+    capabilities: { ...thread.capabilities!, reasoningEfforts: ['low', 'high'] },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('/effort high'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSetReasoningEffort).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
 // The catalog the machine lists for the chat's CLI. This machine's own catalog
 // for that CLI is empty here, so every model row the picker shows is the
 // machine's.
@@ -1046,5 +1866,314 @@ test('no Create PR for a machine that does not open pull requests, or a pairing 
     } finally {
       await chat.unmount()
     }
+  }
+})
+
+// ── The composer's reach into a chat's folder over there ────────────────────
+
+/** Past the mention search's debounce, with its answer in. */
+async function settleSearch(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  await chat.act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  })
+}
+
+test("an @ in a chat over there searches the chat's folder there, and the send names the pick", async () => {
+  const chat = await mountRemote({ access: 'operate', mentions: true })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('@release'))
+    await settleSearch(chat)
+    expect(chat.api.meshConversationSearchFiles).toHaveBeenLastCalledWith({ key, query: 'release' })
+    const option = Array.from(chat.document.querySelectorAll('[role="option"]')).find((row) =>
+      row.textContent?.includes('docs/release-notes.md'),
+    )
+    expect(option, 'the match over there is offered').toBeDefined()
+    await chat.act(async () => chat.enter())
+    expect(chat.host.querySelector('[aria-label="Remove docs/release-notes.md"]'), 'it waits as a chip').not.toBeNull()
+    await chat.act(async () => chat.type('Summarise this'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Summarise this',
+      mentions: [{ path: 'docs/release-notes.md', kind: 'file' }],
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('the "+" schedules a message on a machine that keeps them: it goes there, and the tray draws what it keeps', async () => {
+  const chat = await mountRemote({ access: 'operate', scheduledSends: true })
+  try {
+    const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+    await chat.act(async () => plus!.click())
+    const row = chat.document.querySelector<HTMLElement>(
+      '[role="menu"][aria-label="Options"] [data-composer-schedule="true"]',
+    )
+    expect(row?.textContent?.trim()).toBe('Schedule')
+    await chat.act(async () => row!.click())
+    await chat.act(async () => chat.type('Start the migration.'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    // Kept and sent over there, not sent now, and nothing is kept here.
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.api.meshConversationScheduleSend).toHaveBeenCalledOnce()
+    const asked = chat.api.meshConversationScheduleSend.mock.calls[0]![0]
+    expect(asked).toMatchObject({ key, message: 'Start the migration.' })
+    expect(asked.sendAt).toBeGreaterThan(Date.now())
+    expect(chat.draft()).toBe('')
+
+    await chat.act(async () =>
+      chat.emit({
+        type: 'scheduled',
+        messages: [{ id: 'sm-1', text: 'Start the migration.', sendAt: asked.sendAt, createdAt: Date.now() }],
+      }),
+    )
+    const tray = () => chat.host.querySelector<HTMLElement>('[role="group"][aria-label="Scheduled message"]')
+    expect(tray()?.textContent).toContain('Sends ')
+    expect(tray()?.textContent).toContain('Start the migration.')
+    const inTray = (label: string) =>
+      Array.from(tray()!.querySelectorAll('button')).find((item) => item.textContent?.trim() === label)!
+    await chat.act(async () => inTray('Send now').click())
+    expect(chat.api.meshConversationSendScheduledNow).toHaveBeenCalledExactlyOnceWith({ key, scheduledId: 'sm-1' })
+    await chat.act(async () => inTray('Delete').click())
+    expect(chat.api.meshConversationCancelScheduled).toHaveBeenCalledExactlyOnceWith({ key, scheduledId: 'sm-1' })
+    // Edit takes it back from there, into this composer still set for its time.
+    await chat.act(async () => inTray('Edit').click())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.api.meshConversationCancelScheduled).toHaveBeenCalledTimes(2)
+    expect(chat.draft()).toBe('Start the migration.')
+    expect(chat.host.querySelector('[data-send-time-tag="true"]'), 'still set for its time').not.toBeNull()
+    await chat.act(async () => chat.emit({ type: 'scheduled', messages: [] }))
+    expect(tray()).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a scheduled message the machine could not keep stays in the composer, and the refusal is in its words', async () => {
+  const chat = await mountRemote({ access: 'operate', scheduledSends: true })
+  try {
+    chat.api.meshConversationScheduleSend.mockResolvedValueOnce({
+      ok: false,
+      code: 'unavailable',
+      message: 'The chat is not on this machine any more.',
+    })
+    await chat.act(async () => chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')!.click())
+    await chat.act(async () =>
+      chat.document
+        .querySelector<HTMLElement>('[role="menu"][aria-label="Options"] [data-composer-schedule="true"]')!
+        .click(),
+    )
+    await chat.act(async () => chat.type('Later, the docs.'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.draft()).toBe('Later, the docs.')
+    expect(chat.host.textContent).toContain(
+      'mac-mini could not schedule the message: The chat is not on this machine any more.',
+    )
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Schedule for a machine that does not keep scheduled messages, or a pairing that may only follow', async () => {
+  for (const options of [
+    { access: 'operate' as const, scheduledSends: false },
+    { access: 'read' as const, scheduledSends: true },
+  ]) {
+    const chat = await mountRemote(options)
+    try {
+      const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+      if (plus) await chat.act(async () => plus.click())
+      expect(chat.document.querySelector('[data-composer-schedule]')).toBeNull()
+      await chat.act(async () =>
+        chat.emit({ type: 'scheduled', messages: [{ id: 'sm-1', text: 'Kept there.', sendAt: 5, createdAt: 1 }] }),
+      )
+      expect(chat.host.querySelector('[role="group"][aria-label="Scheduled message"]')).toBeNull()
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+/** What a machine says of its usage limits while the chat's session limit is used up. */
+function sessionLimitReached(resumeAt: number | null = null): MeshConversationFrame {
+  const resetsAt = Date.now() + 2 * 60 * 60_000
+  return {
+    type: 'usageLimits',
+    notice: { provider: 'claude', limit: 'session', resetsAt, hitAt: Date.now() - 60_000, resumeAt },
+    autoResume: false,
+    limits: [
+      {
+        provider: 'claude',
+        plan: 'max',
+        observedAt: Date.now(),
+        windows: [
+          {
+            id: 'five_hour',
+            label: 'Session (5h)',
+            usedPercent: 100,
+            resetsAt,
+            status: 'rejected',
+            observedAt: Date.now(),
+          },
+        ],
+      },
+    ],
+  }
+}
+
+test('a chat over there that a usage limit stopped says so in the tray, and its resume is asked of that machine', async () => {
+  const chat = await mountRemote({ access: 'operate', usageLimits: true })
+  try {
+    await chat.act(async () => chat.emit(sessionLimitReached()))
+    expect(chat.host.textContent).toContain("Claude's session limit is used up.")
+    // The strip draws that machine's reading of the plan, as a local chat's draws this one's.
+    const mark = chat.host.querySelector<HTMLElement>('[data-strip-usage-limits="claude"]')
+    expect(mark?.getAttribute('aria-label')).toContain('on mac-mini')
+    await chat.act(async () => chat.button('Resume at reset')!.click())
+    expect(chat.api.meshConversationUsageLimitResume).toHaveBeenCalledExactlyOnceWith({ key, action: 'schedule' })
+    await chat.act(async () => chat.button('Always resume at reset')!.click())
+    expect(chat.api.meshConversationUsageLimitResume).toHaveBeenLastCalledWith({
+      key,
+      action: 'schedule',
+      always: true,
+    })
+    // That machine says it is scheduled: the row says when it goes, with Cancel.
+    await chat.act(async () => chat.emit(sessionLimitReached(Date.now() + 2 * 60 * 60_000)))
+    expect(chat.host.textContent).toContain('Resumes at')
+    await chat.act(async () => chat.button('Cancel')!.click())
+    expect(chat.api.meshConversationUsageLimitResume).toHaveBeenLastCalledWith({ key, action: 'cancel' })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that does not search its chats offers no @, and nothing is asked of it', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('@release'))
+    await settleSearch(chat)
+    expect(chat.api.meshConversationSearchFiles).not.toHaveBeenCalled()
+    expect(chat.document.querySelector('[aria-label="Mention a workspace file"]')).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('the `/` menu of a chat over there lists what its CLI runs there, asked once the menu opens', async () => {
+  const chat = await mountRemote({ access: 'operate', commands: true })
+  try {
+    await settleTurn(chat)
+    expect(chat.api.meshConversationCommands, 'nothing is asked as the chat opens').not.toHaveBeenCalled()
+    await chat.act(async () => chat.type('/rev'))
+    await settleSearch(chat)
+    expect(chat.api.meshConversationCommands).toHaveBeenCalledWith({ key })
+    expect(chat.document.body.textContent).toContain('review-pr')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test("a $ in a chat over there lists that machine's skills, and the send carries the pick", async () => {
+  const chat = await mountRemote({ access: 'operate', sendSkills: true })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('$systematic'))
+    await settleSearch(chat)
+    expect(chat.api.meshWorkspaceExtensions).toHaveBeenCalledWith({
+      connectionId: key.connectionId,
+      workspaceId: key.workspaceId,
+    })
+    expect(chat.document.body.textContent).toContain('Find the root cause first.')
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => chat.type('Why does it flake?'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Why does it flake?',
+      skills: ['systematic-debugging'],
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a file dropped on a chat over there that takes files waits as a card, and goes up with the message', async () => {
+  const chat = await mountRemote({ access: 'operate', messageFiles: true })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => {
+      dropFiles(chat, [{ name: 'brief.pdf', type: 'application/pdf', path: '/Users/dev/Desktop/brief.pdf' }])
+    })
+    expect(chat.composer().textContent, 'the path is not typed into the message').not.toContain('/Users/dev')
+    await chat.act(async () => chat.type('Read the brief'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Read the brief',
+      files: [{ path: '/Users/dev/Desktop/brief.pdf' }],
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that takes no files has a dropped file typed as its path, as before', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => {
+      dropFiles(chat, [{ name: 'brief.pdf', type: 'application/pdf', path: '/Users/dev/Desktop/brief.pdf' }])
+    })
+    expect(chat.composer().textContent).toContain('/Users/dev/Desktop/brief.pdf')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a pairing that may only follow sees the notice without its buttons; a machine that says nothing draws neither', async () => {
+  const reader = await mountRemote({ access: 'read', usageLimits: true })
+  try {
+    await reader.act(async () => reader.emit(sessionLimitReached()))
+    expect(reader.host.textContent).toContain("Claude's session limit is used up.")
+    expect(reader.button('Resume at reset')).toBeUndefined()
+  } finally {
+    await reader.unmount()
+  }
+  const older = await mountRemote({ access: 'operate', usageLimits: false })
+  try {
+    await older.act(async () => older.emit(sessionLimitReached()))
+    expect(older.host.textContent).not.toContain('session limit is used up')
+    expect(older.host.querySelector('[data-strip-usage-limits]')).toBeNull()
+  } finally {
+    await older.unmount()
+  }
+})
+
+test("the strip under a paired machine's chat names its agents' local servers, as that machine's", async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    listed: {
+      localServers: [
+        { id: 'srv-1', url: 'http://localhost:5173/', title: 'localhost:5173', port: 5173, state: 'running' },
+      ],
+    },
+  })
+  try {
+    // The list is read as the pane opens; the strip draws what it named.
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    const mark = chat.host.querySelector<HTMLElement>('[data-strip-local-servers]')
+    expect(mark?.getAttribute('aria-label')).toBe('Local server localhost:5173, running, on mac-mini')
+    await chat.act(async () => mark!.click())
+    expect(chat.document.querySelector('[data-local-server-elsewhere]')?.textContent).toBe('On mac-mini')
+    // On that machine's own loopback: it opens there, not here, and nothing here acts on it.
+    expect(chat.document.querySelector<HTMLButtonElement>('[data-local-server-action="open"]')?.disabled).toBe(true)
+    expect(chat.document.querySelector('[data-local-server-action="remove"]')).toBeNull()
+  } finally {
+    await chat.unmount()
   }
 })

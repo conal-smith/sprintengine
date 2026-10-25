@@ -158,6 +158,10 @@ import type {
   MeshNewChatWorktree,
   MeshSettleConversationResult,
   MeshChangeConversationResult,
+  MeshConversationDeletePlanResult,
+  MeshConversationSearchResult,
+  MeshApprovalRulesResult,
+  MeshRevokeApprovalRuleResult,
   MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
@@ -171,11 +175,15 @@ import type {
   MeshPairResult,
   MeshRequestPairingResult,
   TailnetForgetMachineResult,
+  MeshConversationCommand,
   MeshConversationCommandResult,
   MeshConversationFrame,
   MeshConversationKey,
+  MeshUsageLimitResumeAction,
   MeshConversationImageResult,
   MeshConversationListResult,
+  MeshConversationFileSearchResult,
+  MeshConversationCommandsResult,
 } from './tailnet-mesh'
 import type {
   ScheduledAgentDraft,
@@ -211,6 +219,7 @@ import type {
   ConversationCancelSideQuestionInput,
   ConversationContextBreakdownInput,
   ConversationContextBreakdownResult,
+  ConversationSideQuestionExchange,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
@@ -1022,6 +1031,17 @@ export type ElectronApi = {
     workspaceId: string
     change: MeshConversationChange
   }) => Promise<MeshChangeConversationResult>
+  /** What deleting a settled chat on a paired machine would do, as that machine plans it (`chat-delete` there). */
+  meshConversationDeletePlan: (input: {
+    connectionId: string
+    workspaceId: string
+  }) => Promise<MeshConversationDeletePlanResult>
+  /** What was said in a paired machine's chats, as its own palette finds it (`chat-search` there). */
+  meshConversationSearch: (input: { connectionId: string; query: string }) => Promise<MeshConversationSearchResult>
+  /** The "always allow" rules a paired machine's chats run with (`approval-rules` there). */
+  meshApprovalRules: (input: { connectionId: string }) => Promise<MeshApprovalRulesResult>
+  /** Revoke one of them there. */
+  meshRevokeApprovalRule: (input: { connectionId: string; ruleId: string }) => Promise<MeshRevokeApprovalRuleResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */
@@ -1079,6 +1099,12 @@ export type ElectronApi = {
     /** That machine's skill ids the chat runs with this message (`conversation-send-skills`). */
     skills?: string[]
     steer?: boolean
+    /** Files and folders of the chat's folder there, by their paths in it (`conversation-send-mentions`). */
+    mentions?: import('./conversation/mentions').ConversationMentionRef[]
+    /** Files on this computer; main puts each in that machine's store first (`conversation-message-files`). */
+    files?: import('./conversation/attachedFiles').ConversationAttachedFile[]
+    /** The mode the turn runs in; anything but the default needs `conversation-send-mode` there. */
+    mode?: 'default' | 'plan' | 'ask'
   }) => Promise<MeshConversationCommandResult>
   // Take back a message the machine holds for the turn's end, by its id there.
   meshConversationCancelQueued: (input: {
@@ -1092,6 +1118,72 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationCommandResult>
+  // Hand a chat over there off to a fresh session, as its Handoff does there.
+  // Needs `conversation-handoff` there.
+  meshConversationHandoff: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
+  // Take a chat over there back to before the message at `turnSeq`, as its
+  // Edit from here does there. Needs `conversation-rewind` there.
+  meshConversationRewind: (input: {
+    key: MeshConversationKey
+    turnSeq: number
+  }) => Promise<MeshConversationCommandResult>
+  // List, or with `confirmed` put back, the files of a turn over there from its
+  // checkpoint, in that machine's checkout; the answer is the result's `data`.
+  // Needs `conversation-checkpoint-revert` there.
+  meshConversationRevert: (input: {
+    key: MeshConversationKey
+    turnSeq: number
+    undo?: boolean
+    confirmed?: boolean
+    files?: string[]
+  }) => Promise<MeshConversationCommandResult>
+  // Fork a chat over there, as its Fork from here does there: the new chat,
+  // named by `fork.newAgentId`, joins that machine's workspace beside it.
+  // Needs `conversation-fork` there.
+  meshConversationFork: (input: {
+    key: MeshConversationKey
+    fork: Extract<MeshConversationCommand, { kind: 'fork' }>
+  }) => Promise<MeshConversationCommandResult>
+  // A side question asked of a chat's agent over there, under this window's
+  // own `requestId` for it, and calling one off. Needs
+  // `conversation-side-questions` there.
+  meshConversationSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+    question: string
+    history?: ConversationSideQuestionExchange[]
+  }) => Promise<ConversationSideQuestionResult>
+  meshConversationCancelSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+  }) => Promise<{ ok: true } | { ok: false; message: string }>
+  // What fills a chat's context window, as its agent over there measures it.
+  // Needs `conversation-context-breakdown` there.
+  meshConversationContextBreakdown: (input: { key: MeshConversationKey }) => Promise<ConversationContextBreakdownResult>
+  // Schedule a message into a chat over there for a time, kept and sent by
+  // that machine; send one it keeps now, or delete one. Needs
+  // `conversation-scheduled-sends` there.
+  meshConversationScheduleSend: (input: {
+    key: MeshConversationKey
+    message: string
+    sendAt: number
+  }) => Promise<MeshConversationCommandResult>
+  meshConversationSendScheduledNow: (input: {
+    key: MeshConversationKey
+    scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
+  meshConversationCancelScheduled: (input: {
+    key: MeshConversationKey
+    scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
+  // Act on a chat over there that a usage limit stopped: schedule its resume
+  // for the reset (`always`: for every such chat there), cancel, dismiss or
+  // retry it. Needs `conversation-usage-limits` there.
+  meshConversationUsageLimitResume: (input: {
+    key: MeshConversationKey
+    action: MeshUsageLimitResumeAction
+    always?: boolean
+  }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -1102,10 +1194,30 @@ export type ElectronApi = {
     requestId: string
     answers: Record<string, string>
   }) => Promise<MeshConversationCommandResult>
-  // `manual` and `auto` need `conversation-permission-modes` there.
+  // `manual` and `auto` need `conversation-permission-modes` there; the CLI's
+  // own mode at the preset (Accept edits), `conversation-cli-permission-modes`.
   meshConversationSetPermissionPreset: (input: {
     key: MeshConversationKey
     preset: CliPermissionPreset
+    permissionMode?: string
+  }) => Promise<MeshConversationCommandResult>
+  // Set the reasoning effort a chat over there runs at from its next turn, one
+  // of the levels its list names; none, its provider's own default. Needs
+  // `conversation-reasoning-effort` there.
+  meshConversationSetReasoningEffort: (input: {
+    key: MeshConversationKey
+    effort?: string
+  }) => Promise<MeshConversationCommandResult>
+  // Restart a chat's agent over there, as its Restart agent session does
+  // there: answered with a `notice` where it had none running. Needs
+  // `conversation-restart-session` there.
+  meshConversationRestartSession: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
+  // Reconnect one of a live chat's MCP servers over there, or switch it on or
+  // off, as its server row there does. Needs `conversation-mcp-server-actions` there.
+  meshConversationMcpServerAction: (input: {
+    key: MeshConversationKey
+    serverId: string
+    action: 'reconnect' | 'enable' | 'disable'
   }) => Promise<MeshConversationCommandResult>
   // Switch a paired machine's chat to another model of its CLI, from the
   // catalog that machine's list names. Needs `conversation-models` there.
@@ -1128,6 +1240,21 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationImageResult>
+  // A picture the person sent with a message of a paired machine's chat, by
+  // the `ref` its message recorded, as a data URL. Needs
+  // `conversation-message-images` there.
+  meshConversationAttachment: (input: { key: MeshConversationKey; ref: string }) => Promise<MeshConversationImageResult>
+  // What a followed chat's composer reads of its folder over there: the files
+  // an @ may name (`conversation-file-search`) and its CLI's `/` list
+  // (`conversation-commands`).
+  meshConversationSearchFiles: (input: {
+    key: MeshConversationKey
+    query: string
+  }) => Promise<MeshConversationFileSearchResult>
+  meshConversationCommands: (input: {
+    key: MeshConversationKey
+    refresh?: boolean
+  }) => Promise<MeshConversationCommandsResult>
   // A paired machine's chat's Create PR (`chat-create-pull-request`), the
   // steps of the shell's own below, each run on that machine in the chat's
   // checkout there. A pull request it creates is recorded there as the chat's.

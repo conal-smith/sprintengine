@@ -5,7 +5,9 @@ import { conversationWorkingRoot, type AgentState } from '../../../../../shared/
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
 import type { ChangedFileCounts } from '../../../../../shared/electron-api'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
-import type { MeshQueuedMessage } from '../../../../../shared/tailnet-mesh'
+import type { MeshQueuedMessage, MeshScheduledMessage } from '../../../../../shared/tailnet-mesh'
+import type { HostUsageLimits } from './hostUsageLimits'
+import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import type { Workspace } from '../../../types/workspace'
 import {
@@ -86,6 +88,19 @@ export type ChatBinding = {
    */
   hostQueue?: { machineName: string; messages: MeshQueuedMessage[] }
   /**
+   * The messages the machine running the chat keeps for it until a time, as
+   * that machine last said, for a chat on another machine that schedules them
+   * there (`capabilities.hostSchedule`).
+   */
+  hostSchedule?: { machineName: string; messages: MeshScheduledMessage[] }
+  /**
+   * What the machine running the chat knows of its agents' usage limits, and
+   * the notice a limit left on the chat's turn there, as that machine last
+   * said, for a chat on another machine that says so
+   * (`capabilities.hostUsageLimits`).
+   */
+  hostUsageLimits?: HostUsageLimits
+  /**
    * Where a chat on another machine works, as that machine lists it: the
    * branch its folder is on, whether that is a worktree, the files its
    * checkout carries (null where it did not say) and the pull requests it
@@ -98,6 +113,8 @@ export type ChatBinding = {
     worktree: boolean
     files: ChangedFileCounts | null
     pullRequests: readonly BranchPullRequest[]
+    /** The local servers its agents linked over there, as that machine last checked them. */
+    localServers?: readonly StudioLocalServer[]
   }
 }
 

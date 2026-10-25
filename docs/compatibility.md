@@ -273,7 +273,12 @@ cannot describe. `0.2.0` added three capabilities and no version:
 `conversation-cli-permission-modes` (a `permissionMode` beside the preset).
 Each degrades on a desktop without it to something that desktop already does:
 `hello` and `resolvePlan` are refused under their ids, and an unknown
-`permissionMode` member is dropped, so the preset's own mode runs.
+`permissionMode` member is dropped, so the preset's own mode runs. A desktop
+following another machine's chat reads the listed `permissionMode` and
+`capabilities.permissionModes`, and sends a `permissionMode`, only where that
+machine advertises the capability (2026-10-25); it refuses one in words for a
+machine that does not, rather than let it be dropped there and the person be
+told one mode while the agent ran on another.
 
 An `answerQuestion`'s answers are keyed by each question's whole text, which
 is how the CLI reads them back. The first version capped a key at 200
@@ -323,6 +328,12 @@ its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
 send them (`docs/conversations.md`, "Machines and pull requests in the list").
+A listed chat's `localServers` (2026-10-25: `{ id, url, title, port, state }`,
+the servers its agents linked, as the desktop last checked them, never the
+command or folder that starts one) is another, listed only for a chat that has
+some; a server starting or stopping is a change-feed push of its own. A
+desktop following another machine's chat draws them read-only, and opens one
+only where its address reaches it.
 A listed chat's `backgroundWork` (2026-10-17: `{ agents, monitors }`, the
 background agents still running and the monitors that will wake its agent) is
 another, beside a `phase` left as the turn's own: the desktop's sidebar counts
@@ -444,6 +455,175 @@ sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first). The Studio RPC advertises it too: its
 `conversation.stopSubagent` method, an owner's for now, reads the lane's own
 validator and reaches the same host.
+A chat handed off from a paired device is the `conversation-handoff`
+capability (2026-10-25): a `handoff` command, carrying nothing but its command
+id, hands the chat off to a fresh session as the desktop's own Handoff does,
+the file of its messages written on the desktop and its path kept there. Each
+listed chat says whether its provider can as `capabilities.handoff`, an
+optional boolean. The desktop answers a repeat of the same command id with
+the first answer, and keeps no refusal, so a press refused mid-turn may go
+once the turn is over. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command`, and a desktop following
+another machine's chat refuses it there in words first. The Studio RPC
+advertises it too, through the `conversation.handoff` method it already had.
+Edit from here and Revert from a paired device are the `conversation-rewind`
+and `conversation-checkpoint-revert` capabilities (2026-10-25). A `rewind`
+command takes a chat back to before the user message at `turnSeq`, as the
+desktop's own Edit from here does, and each listed chat says whether its
+provider can as `capabilities.rewind`, an optional boolean. A `revert`
+command puts a turn's files back from its checkpoint in the desktop's own
+checkout (`undo` for the last revert's undo): without `confirmed` it only
+lists the files, and `confirmed` it acts on exactly the `files` that list
+named, refusing when they moved. Its answer rides on the `commandResult` as
+`data`, a new optional member under the full contract that an older client
+drops: the files (paths relative to the desktop's checkout), whether they
+were reverted, the ignored new files it `kept`, or `changed`. The desktop
+answers a repeat of a rewind or a confirmed revert under the same command id
+with the first answer, and keeps no refusal. All of it is additive: a
+desktop without either capability refuses the kind as
+`unsupported_command`, and a desktop following another machine's chat
+refuses it there in words first. The Studio RPC advertises both too: its
+`conversation.rewind` and `conversation.revert` methods, an owner's, reach
+the same runtime.
+A chat forked, asked a side question, or asked what fills its window from a
+paired device is three capabilities (2026-10-25), each additive.
+`conversation-fork`: a `fork` command names the new chat's id (`newAgentId`,
+the client's, so it can follow the fork once answered) and the point
+(`side: 'assistant'` with `turnId`, or `side: 'user'` with `turnSeq`), and the
+desktop forks the chat as its own Fork from here does, writing the fork's
+agent record into the chat's workspace; the same command id sent again is
+answered as the first was, a refusal is not kept, and an id the workspace
+holds is refused. `conversation-side-questions`: `askSideQuestion` (`requestId`,
+the client's `questionId`, `question`, optional `history`) is answered by a
+`result` whose `data` is `{ answer }`, needs `conversation:operate`, and
+`cancelSideQuestion` (`requestId`, `questionId`) calls one off; one still out
+when the socket closes is called off. `conversation-context-breakdown`:
+`getContextBreakdown` (`requestId`) is answered by a `result` whose `data` is
+`{ breakdown, stale? }`, read from the chat's live session only. Each listed
+chat says whether its provider can as `capabilities.fork`,
+`capabilities.sideQuestion` and `capabilities.contextBreakdown`, optional
+booleans. A desktop without them refuses `fork` as `unsupported_command` and
+the three frames as `invalid_frame` under their request ids, and a desktop
+following another machine's chat refuses each there in words first. The
+Studio RPC advertises none of them: it forks by its own `conversation.fork`,
+whose new chat's record is the asking window's to write, and has no method for
+the other two.
+A paired desktop's composer reaches a chat's folder through three
+capabilities (2026-10-25). `conversation-send-mentions`: a `send` may name
+`mentions`, files and folders of the chat's folder by their paths relative to
+it (`{ path, kind: 'file' | 'folder', line?, endLine? }`, at most 50), which
+the desktop resolves as its own composer's chips are; an absolute path, a
+drive or a `..` segment is a bad frame, and `mentions` is never beside
+`queue`. `conversation-file-search`: `GET /tailnet/v1/conversation-files`
+with `workspaceId`, `agentId` and `query` (200 characters at most) answers
+`{ entries: [{ path, kind }], truncated }`, at most 50 matches, each relative
+to the chat's folder, on `conversation:read`. `conversation-commands`: `GET
+/tailnet/v1/conversation-commands` with `workspaceId` and `agentId` answers
+`{ cli, commands, fetchedAt, error? }`, the chat CLI's own commands without
+Studio's, on `conversation:read`; `refresh=1` asks the CLI again and needs
+`conversation:operate`. The two reads search and list only a folder on that
+computer (an SSH workspace's list is the one its sessions published, never a
+probe). All of it is additive: a desktop without them drops `mentions` and
+answers the routes 404, and a client sends or asks only where they are
+advertised (a desktop following another machine's chat refuses each there in
+words first). A paired desktop's files attached by path ride the existing
+`conversation-message-files` upload, which a desktop now sends as well as the
+phone. The Studio RPC advertises `conversation-send-mentions`, its
+`conversation.send` reading the lane's own validator, and not the two reads,
+which it has no method for.
+The mode a turn runs in is the `conversation-send-mode` capability
+(2026-10-25): a `send` may say `mode`, `ask`, or `plan` where the listed chat's
+`capabilities.planMode` says its provider plans, and the desktop runs the turn
+in it as its own chat sends one; `default` is read as none. `mode` is never
+beside `queue`, and a steer in a mode of its own that the running turn cannot
+take is refused `busy` rather than held, since a held message goes in the
+default mode. All of it is additive, but a desktop without the capability
+drops the member and runs the turn in the default mode, where an `ask` may
+change files, so a client sends one only where it is advertised (a desktop
+following another machine's chat refuses one there in words first, and lists
+`planMode` from that machine only where it is). The Studio RPC advertises it
+too: its `conversation.send` reads the lane's own validator and reaches the
+same host.
+A chat's reasoning effort is the `conversation-reasoning-effort` capability
+(2026-10-25): each listed chat names the levels its provider runs as
+`capabilities.reasoningEfforts` (an optional string array, empty for a
+provider that runs none) and the level its record keeps as `reasoningEffort`
+(absent for the provider's own default), and a `setReasoningEffort` command
+(`effort`, or none for the default) writes the chat's record, as the
+desktop's own effort control does, for every turn after to run at whichever
+device sends it. It is answered with a `notice` while a session is live, and
+needs none. All of it is additive: a desktop without the capability refuses
+the kind as `unsupported_command` and lists neither member, and a client
+sends it only where it is advertised (a desktop following another machine's
+chat refuses it there in words first, and offers no effort control). The
+Studio RPC advertises it too: its `conversation.setReasoningEffort` method, an
+owner's for now, reads the lane's own validator and reaches the same host.
+A live chat's MCP servers are the `conversation-mcp-server-actions` capability
+(2026-10-25): an `mcpServerAction` command names a server as the chat's CLI
+does (`serverId`) and an `action`, `reconnect`, `enable` or `disable`, and the
+desktop carries it out as the chat's own server rows do, through its runtime.
+Each listed chat names the actions its provider takes as
+`capabilities.mcpServerActions`, an optional array. It never resumes a chat at
+rest. A sign-in is not among the actions: the CLI waits for the sign-in's
+callback on the desktop itself, so one begun from another device could not be
+finished there, and the validator refuses it. All of it is additive: a
+desktop without the capability refuses the kind as `unsupported_command`, and
+a client sends it only where it is advertised (a desktop following another
+machine's chat refuses it there in words first). The Studio RPC advertises
+it too: its `conversation.mcpServerAction` method, an owner's for now, reads
+the lane's own validator and reaches the same host.
+Restarting a chat's agent is the `conversation-restart-session` capability
+(2026-10-25): a `restartSession` command has the desktop end the agent's
+process as its own Restart agent session does, suspending the session so it
+keeps its resume cursor and the next message starts the agent again on the
+same conversation. It is refused while the agent works (a turn, a request it
+waits on, a background agent or monitor), and a chat with no agent running is
+answered with a `notice` and left as it is, never resumed for it. The desktop
+keeps the answer under the device's command id, so one sent again after a
+dropped link is answered as the first was rather than ending the session a
+message has started since. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command`, and a desktop following
+another machine's chat refuses it there in words first, saying to restart it
+on that machine. The Studio RPC advertises it too: its
+`conversation.restartSession` method, an owner's for now, reads the lane's own
+validator and reaches the same host.
+A message scheduled for a time is the `conversation-scheduled-sends`
+capability (2026-10-25): `scheduleSend` (`message`, `sendAt` in epoch ms on the
+desktop's clock) has the desktop keep it among its own scheduled messages and
+send it then, as one scheduled in its own composer, answered once it is kept;
+`sendScheduledNow` and `cancelScheduled` (`scheduledId`) send one at once (a
+refused one again) or delete it; and `{ type: 'watchScheduled', requestId }`
+has the desktop send a `scheduled` frame (`ConversationScheduledFrame`: the
+chat's `key` and its scheduled `messages`, soonest first, whole each time) now
+and whenever they change. A message held for a turn's end is in its `queued`
+frame, never in this one. The same `scheduleSend` offered again under its id
+is kept once, across a restart too (its command joins the `sources` the held
+messages keep), and a repeated Send now or Delete is answered as the first
+was. All of it is additive: a desktop without the capability refuses the
+three kinds as `unsupported_command` and `watchScheduled` as `invalid_frame`,
+and a client sends them only where it is advertised (a desktop following
+another machine's chat refuses them there in words first). The Studio RPC
+carries the three as owners' methods (`conversation.scheduleSend`,
+`conversation.sendScheduledNow`, `conversation.cancelScheduled`), as it carries
+`conversation.cancelQueued`, but does not advertise the capability: its
+conversation topic carries no `scheduled` frames.
+A desktop's usage limits are the `conversation-usage-limits` capability
+(2026-10-25): `{ type: 'watchUsageLimits', requestId }` has it send a
+`usageLimits` frame (`ConversationUsageLimitsFrame`: the chat's `key`, the
+`notice` a usage limit left on that chat's turn or null, `autoResume`, and
+`limits`, each plan's windows as its agents reported them, without billing)
+now and whenever any of it changes; and `usageLimitResume` (`action`:
+`schedule`, `cancel`, `dismiss` or `retry`; `always` beside `schedule`
+switches the desktop's resume on for every chat a limit stops) acts on the
+notice as the desktop's own tray row does. A repeat under the same id is
+answered as the first was. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command` and the request as
+`invalid_frame`, and a client asks only where it is advertised. A provider
+or a plan name a client does not know passes the validator, for a newer
+desktop to add one; the desktop client leaves such a plan out. The Studio
+RPC carries the command as an owner's method, `conversation.usageLimitResume`,
+but does not advertise the capability: its conversation topic carries no
+`usageLimits` frames.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the
@@ -493,6 +673,25 @@ Snooze and Auto-settle for a machine's chats only where it is advertised, an
 older machine answers the tools "Unknown tool", and an older client ignores
 the members. The pinned phone files are unchanged. The Studio RPC does not
 advertise it, having no method for them.
+A paired desktop's chat management beyond the marks (2026-10-25) is a
+capability per part, each naming gateway tools listed to paired devices only,
+without the `conversation-` prefix: `chat-rename` (`conversation.rename`),
+`chat-auto-compact` (`conversation.auto_compact`),
+`chat-unwatch-pull-request` (`conversation.pull_request_unwatch`) and
+`chat-delete` (`conversation.delete_plan`, a read, and `conversation.delete`)
+`chat-search` (`conversation.search`, a read) and `approval-rules`
+(`conversation.approval_rules`, a read, and
+`conversation.approval_rule_revoke`), each on `conversation:operate` but the
+reads. A listed chat says whether it compacts by itself as
+`autoCompact`, an optional boolean of `ConversationThread` that
+`parseConversationServerFrame` keeps when it is one, and a listed pull
+request says while it is watched as `watch`, an optional member of
+`ConversationWirePullRequest` kept when it can be read. The list result a
+desktop's window reads names which a machine takes as `manage`
+(`{ rename, autoCompact, unwatchPullRequest, deleteSettled, search }`), an optional member a window
+from before it ignores. All of it is additive: a client offers each item for a
+machine's chats only where it is advertised, and an older machine answers the
+tools "Unknown tool". The Studio RPC does not advertise them.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.

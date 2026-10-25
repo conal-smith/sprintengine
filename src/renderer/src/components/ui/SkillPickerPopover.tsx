@@ -45,7 +45,7 @@ const SOURCE_LABEL: Record<WorkspaceSkillSource, string> = {
   plugin: 'Plugin',
 }
 
-type SkillInventoryState = {
+export type SkillInventoryState = {
   skills: WorkspaceSkill[]
   loading: boolean
   error: string | null
@@ -655,15 +655,27 @@ export const InlineSkillPicker = forwardRef<
     // an Escape the caller's field did not already consume. The caller marks
     // the trigger dismissed so the typed character stays literal.
     onDismiss?: () => void
+    // Skills listed elsewhere, in place of this machine's: a paired machine's,
+    // for a chat that runs there. Picked as they are listed, never installed
+    // here; that machine installs one into the chat's folder when the message
+    // carrying it goes.
+    inventory?: SkillInventoryState
   }
->(function InlineSkillPicker({ workspaceRoot, pluginId = null, query, onPick, onMatchCountChange, onDismiss }, ref) {
+>(function InlineSkillPicker(
+  { workspaceRoot, pluginId = null, query, onPick, onMatchCountChange, onDismiss, inventory: listed },
+  ref,
+) {
   const [activeIndex, setActiveIndex] = useState(0)
   const [actionError, setActionError] = useState<string | null>(null)
-  const inventory = usePickerSkills(workspaceRoot, pluginId, true)
+  const local = usePickerSkills(listed ? null : workspaceRoot, pluginId, !listed)
+  const inventory = listed ?? local
   const groups = useMemo(() => groupSkills(inventory.skills, query), [inventory.skills, query])
   const clampedActive = Math.min(activeIndex, Math.max(0, groups.flat.length - 1))
 
-  const { installingId, pick } = usePickWithInstall(onPick, setActionError)
+  const installing = usePickWithInstall(onPick, setActionError)
+  const installingId = listed ? null : installing.installingId
+  const pickListed = useCallback(async ({ fromSource: _source, ...skill }: PickerSkill) => onPick(skill), [onPick])
+  const pick = listed ? pickListed : installing.pick
 
   // Reset the highlight whenever typing changes the filter.
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, net, powerMonitor, powerSaveBlocker, safeStorage } from 'electron'
+import { createAppSettledChatDeletion } from './settled-chat-deletion-app'
 import { createHash } from 'crypto'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
@@ -1837,6 +1838,25 @@ export function createAppServices(
         // An agent that starts a chat hears back from it, as one that launches
         // a terminal agent does.
         linkLaunchedAgent: (link) => agentLaunchNotices.link(link),
+        // A paired desktop's Delete on a settled chat here, made as a window's
+        // Delete makes it (settled-chat-deletion-app.ts), its record removed
+        // as the paired device's. Built on first ask.
+        settledChatDeletion: (() => {
+          let deletion: ReturnType<typeof createAppSettledChatDeletion> | null = null
+          return () => {
+            deletion ??= createAppSettledChatDeletion(
+              { workspaceSyncService, conversations, worktreePool, liveWorkPaths },
+              'mobile',
+            )
+            const made = deletion
+            return {
+              plan: (ids) => made.plan(ids),
+              delete: (ids) => made.delete(ids),
+              has: (workspaceId) =>
+                workspaceSyncService.getSnapshot().state.workspaces.some((workspace) => workspace.id === workspaceId),
+            }
+          }
+        })(),
         appTools: desktopGatewayTools({
           browser: clientToolsEnabled ? [] : browserTools,
           canvas: clientToolsEnabled ? [] : canvasTools,

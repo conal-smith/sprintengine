@@ -138,14 +138,109 @@ and adds, each behind its capability:
   listed thread's `capabilities.steer`), and is answered when that turn ends.
   With no turn running it is an ordinary send. A turn that cannot take it has
   the desktop hold it as a `queue` send is held, answered at once with a
-  `notice`; one with `uploadIds` or `skills`, which cannot be held, is refused
-  `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
+  `notice`; one with `uploadIds`, `skills` or `mentions`, which cannot be
+  held, is refused `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
   a send made while a turn runs is refused `busy` as before.
 - `conversation-stop-subagent`: `stopSubagent` stops one agent a chat spawned,
   named by the call that spawned it (`toolUseId`), where the chat's provider
   can (a listed thread's `capabilities.stopSubagent`), and leaves the chat,
   its turn and its other agents running. A desktop without it refuses the
   kind as `unsupported_command`.
+- `conversation-handoff`: `handoff` hands a chat off to a fresh session
+  instead of compacting it, where the chat's provider can (a listed thread's
+  `capabilities.handoff`): the desktop writes the chat's messages to a file,
+  lets the provider session go, and the next message starts a new one pointed
+  at the file. Refused while anything in the chat is running. A desktop
+  without it refuses the kind as `unsupported_command`.
+- `conversation-rewind`: `rewind` takes a chat back to before the user message
+  at `turnSeq`, where the chat's provider can (a listed thread's
+  `capabilities.rewind`): that message and every turn after it leave the
+  agent's context and the transcript's view, and the files stay as they are.
+  A repeat under the same `commandId` is answered as the first was. A desktop
+  without it refuses the kind as `unsupported_command`.
+- `conversation-checkpoint-revert`: `revert` puts a turn's files back from its
+  checkpoint in the desktop's checkout, for a listed thread with
+  `capabilities.checkpoints` (`undo`: as they were before that turn's last
+  revert). Unconfirmed it lists the files it would touch; `confirmed`, it acts
+  on exactly the `files` that list named and refuses when the list moved. The
+  answer rides on the `commandResult` as `data`
+  (`ConversationRevertAnswer`, read with `parseConversationRevertAnswer`): the
+  files, whether they were reverted, the ignored new files it `kept`, or
+  `changed`. Its paths are relative to the desktop's checkout. A desktop
+  without it refuses the kind as `unsupported_command`.
+- `conversation-fork`: `fork` starts a new chat beside this one, under the id
+  the client names (`newAgentId`), holding it through the reply of `turnId`
+  (`side: 'assistant'`) or up to the message at `turnSeq` (`side: 'user'`),
+  where the chat's provider can (a listed thread's `capabilities.fork`). The
+  desktop names it and lists it with the chat's workspace. The same command
+  id sent again is the same fork. A desktop without it refuses the kind as
+  `unsupported_command`.
+- `conversation-side-questions`: `{ type: 'askSideQuestion', requestId,
+questionId, question, history? }` asks the chat's agent about the chat and
+  adds the exchange to nothing; the `result`'s `data` is
+  `{ answer }` (`parseConversationSideQuestionAnswer`). It needs
+  `conversation:operate`. `{ type: 'cancelSideQuestion', requestId,
+questionId }` calls one off. A listed thread says which chats can
+  (`capabilities.sideQuestion`).
+- `conversation-context-breakdown`: `{ type: 'getContextBreakdown',
+requestId }` reads what fills the chat's context window from its live agent;
+  the `result`'s `data` is `{ breakdown, stale? }`
+  (`parseConversationContextBreakdownAnswer`). A listed thread says which
+  chats can (`capabilities.contextBreakdown`).
+
+A desktop without either read capability answers its frames `invalid_frame`
+under their `requestId`, as it answers `watchQueued`.
+
+- `conversation-send-mentions`: a `send` may name `mentions`
+  (`ConversationWireMention`: `path` relative to the chat's folder, `kind`,
+  `line?`, `endLine?`; at most `CONVERSATION_MAX_SEND_MENTIONS`), which the
+  desktop resolves against the chat's folder as its own composer's are. One
+  that is absolute, names a drive or climbs out with `..` refuses the frame
+  (`parseConversationWireMentions`). Never beside `queue`. A desktop without
+  it drops the member.
+- `conversation-send-mode`: a `send` with `mode` (`CONVERSATION_SEND_MODES`:
+  `ask`, or `plan` where a listed thread's `capabilities.planMode` says its
+  provider plans) runs its turn in that mode, as the desktop's own chat sends
+  one; `default` is read as no mode. Never beside `queue`, and a steer in a
+  mode that the running turn cannot take is refused `busy` rather than held. A
+  desktop without it drops `mode` and runs the turn in the default mode, so a
+  client sends one only where it is advertised.
+- `conversation-reasoning-effort`: a listed thread names the effort levels its
+  provider runs (`capabilities.reasoningEfforts`, empty for none) and the one
+  the chat runs at (`reasoningEffort`, absent for the provider's default), and
+  `setReasoningEffort` with an `effort` (or none, for the default) changes it
+  from the next turn, kept on the chat as the desktop's own effort control
+  keeps it. A desktop without it refuses the kind as `unsupported_command`.
+- `conversation-mcp-server-actions`: `mcpServerAction` with a `serverId` and an
+  `action` (`CONVERSATION_MCP_SERVER_ACTIONS`: `reconnect`, `enable`,
+  `disable`) does that to one of a live chat's MCP servers, as the desktop's
+  own server rows do, where a listed thread's `capabilities.mcpServerActions`
+  names the action. It never resumes a chat at rest. A sign-in is not among
+  them: the CLI waits for its callback on the desktop. A desktop without it
+  refuses the kind as `unsupported_command`.
+- `conversation-restart-session`: `restartSession` restarts the chat's agent
+  as the desktop's own Restart agent session does, ending its process and
+  keeping the session's place, so the next message starts it again on the
+  same conversation. Refused while the agent works; answered with a `notice`,
+  and nothing done, for a chat with no agent running. A desktop without it
+  refuses the kind as `unsupported_command`.
+- `conversation-scheduled-sends`: `scheduleSend` with a `message` and a
+  `sendAt` (epoch ms) has the desktop keep the message and send it then,
+  answered once it is kept; `sendScheduledNow` and `cancelScheduled` with a
+  `scheduledId` send one at once or delete it; and
+  `{ type: 'watchScheduled', requestId }` has the desktop send a `scheduled`
+  frame (`ConversationScheduledFrame`: the chat's `key` and its scheduled
+  `messages`, soonest first, whole each time) now and whenever they change. A
+  desktop without it refuses the three kinds as `unsupported_command` and
+  `watchScheduled` as `invalid_frame`.
+- `conversation-usage-limits`: `{ type: 'watchUsageLimits', requestId }` has
+  the desktop send a `usageLimits` frame (`ConversationUsageLimitsFrame`: the
+  chat's `key`, the `notice` a usage limit left on its turn or null,
+  `autoResume`, and each plan's windows in `limits`) now and whenever any of
+  it changes; `usageLimitResume` with an `action` (`schedule`, `cancel`,
+  `dismiss`, `retry`; `always` beside `schedule`) acts on the notice. A
+  desktop without it refuses the kind as `unsupported_command` and
+  `watchUsageLimits` as `invalid_frame`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the
@@ -160,6 +255,19 @@ type, and a `send` names its `uploadId` in `uploadIds` beside any picture's.
 The desktop attaches it to the message by its path there, so the
 `user_message` lists it in `files` (`{ path }`). A client without it offers
 pictures only.
+
+`conversation-file-search` (`CONVERSATION_FILE_SEARCH_CAPABILITY`) and
+`conversation-commands` (`CONVERSATION_COMMANDS_CAPABILITY`) name no frame
+either: each is a GET beside the socket, under `conversation:read`, naming the
+chat by `workspaceId` and `agentId`. `GET /tailnet/v1/conversation-files`
+takes a `query` and answers the files and folders in the chat's folder whose
+names match, each by its path relative to that folder
+(`ConversationFileSearchAnswer`, read with `parseConversationFileSearchAnswer`);
+what a client picks goes back in a send's `mentions`. `GET
+/tailnet/v1/conversation-commands` answers the slash commands the chat's CLI
+runs there (`ConversationCommandsAnswer`, read with
+`parseConversationCommandsAnswer`), Studio's own never among them; `refresh=1`
+asks the CLI again and needs `conversation:operate`.
 
 `conversation-image-downscale` (`CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY`)
 names no frame either. A desktop that advertises it shrinks each picture

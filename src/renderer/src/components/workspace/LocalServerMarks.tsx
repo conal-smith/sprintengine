@@ -76,27 +76,32 @@ export function localServersRowMarkCopy(
 export function LocalServersStripButton({
   workspaceId,
   servers,
+  elsewhere,
 }: {
   workspaceId: string
   servers: readonly StudioLocalServer[]
+  /** The paired machine the servers run on, for a chat there. */
+  elsewhere?: { machineName: string }
 }): JSX.Element | null {
   const copy = localServersStripCopy(servers)
   if (!copy) return null
   const single = servers.length === 1 ? servers[0] : null
+  const ariaLabel = elsewhere ? `${copy.ariaLabel}, on ${elsewhere.machineName}` : copy.ariaLabel
   return (
     <LocalServersMenu
       workspaceId={workspaceId}
       servers={servers}
       ariaLabel={single ? `Local server ${single.title}` : 'Local servers from this conversation'}
+      {...(elsewhere ? { elsewhere } : {})}
       renderTrigger={({ ref, togglePopover, triggerProps }) => (
-        <Tooltip content={copy.ariaLabel} placement="top" wrapperClassName="flex min-w-0">
+        <Tooltip content={ariaLabel} placement="top" wrapperClassName="flex min-w-0">
           <GhostButton
             ref={ref}
             size="xs"
             tone="subtle"
             onClick={togglePopover}
             {...triggerProps}
-            aria-label={copy.ariaLabel}
+            aria-label={ariaLabel}
             data-strip-local-servers={servers.length}
             className="min-w-0 gap-1.5 whitespace-nowrap"
           >

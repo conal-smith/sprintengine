@@ -127,12 +127,15 @@ export function useRemoteSessions({ enabled: wanted }: { enabled: boolean }): Re
             // …and whether it takes its chats' row menu and Mark unread from here.
             const rowMenu = listed?.ok ? listed.rowMenu === true : entry.rowMenu
             const markUnread = listed?.ok ? listed.markUnread === true : entry.markUnread
+            // …and what of its chats' management it takes from here.
+            const manage = listed?.ok ? listed.manage : entry.manage
             const listedParts = {
               ...(conversations ? { conversations } : {}),
               ...(lifecycle !== undefined ? { lifecycle } : {}),
               ...(access !== undefined ? { access } : {}),
               ...(rowMenu !== undefined ? { rowMenu } : {}),
               ...(markUnread !== undefined ? { markUnread } : {}),
+              ...(manage !== undefined ? { manage } : {}),
             }
             if (!result) return { ...entry, at: Date.now(), ...listedParts }
             return {

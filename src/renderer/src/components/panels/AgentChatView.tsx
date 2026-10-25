@@ -120,6 +120,7 @@ import { useConversationSession } from './agentChat/useConversationSession'
 import { useChatViewActive } from './agentChat/chatViewActivity'
 import { prefersReducedMotion } from './agentChat/reducedMotion'
 import { useConversationTransport } from './agentChat/conversationTransport'
+import type { ChatCommandSource } from './agentChat/chatServices'
 import { openCliSignInTerminal } from './agentChat/cliSignIn'
 import { useLocalChatBinding, type ChatBinding } from './agentChat/chatBinding'
 import { latestReplyTurnId } from './agentChat/turnFolds'
@@ -137,13 +138,16 @@ import type { ContextBreakdownSource } from './agentChat/ContextBreakdown'
 import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
 import { useUsageLimitSnapshot } from './agentChat/usageLimits'
-import { UsageLimitResumeRow } from './agentChat/usageLimitResume'
-import { ScheduledMessageRows } from './agentChat/scheduledMessages'
-import type { ScheduledMessage } from '../../../../shared/scheduled-messages'
+import { HostUsageLimitNoticeRow, UsageLimitResumeRow } from './agentChat/usageLimitResume'
+import {
+  HostScheduledMessageRows,
+  ScheduledMessageRows,
+  type ScheduledMessageView,
+} from './agentChat/scheduledMessages'
 import { canScheduleMessages, updateScheduledMessage } from '../../store/scheduledMessagesStore'
 import { SendTimeTag } from '../workspace/agentComposer/schedule/SendTimeEditor'
 import { defaultSendAt } from '../workspace/agentComposer/schedule/sendTime'
-import { usageLimitProviderOf } from '../../store/usageLimitsStore'
+import { selectUsageLimitSnapshot, usageLimitProviderOf } from '../../store/usageLimitsStore'
 import { studioAppCommands, useConversationCommands } from './agentChat/useConversationCommands'
 import { composerAppCommand } from './agentChat/composerAppCommands'
 import { commandInsertText } from './agentChat/slashCommandMenu'
@@ -197,7 +201,7 @@ import { loadWholeConversation } from './agentChat/conversationReplay'
 import { ConversationReplayView, type ConversationReplaySource } from './agentChat/conversationReplayView'
 import { onChatReplayRequest, takeChatReplayRequest } from './agentChat/chatReplayRequests'
 import { chatExportSupported, exportChatOrToast } from './agentChat/chatExport'
-import type { ChatExportAction } from '../../../../shared/chat-export'
+import type { ChatExportAction, ChatExportRemoteSource } from '../../../../shared/chat-export'
 import { useConversationScrollRestore } from './agentChat/conversationScrollRestore'
 import { useComposerSkillReader } from './agentChat/composerSkillReader'
 import { nextConversationEffort } from './agentChat/conversationEffort'
@@ -221,7 +225,7 @@ import { ConversationTodoStrip } from './agentChat/todoProgressStrip'
 import { TimelineRow, type TimelineChrome } from './agentChat/timelineRows'
 import { UnreadDivider } from './agentChat/turnMeta'
 import { editFromHereDraft, type EditFromHereDraft } from './agentChat/editFromHere'
-import { forkChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
+import { forkChat, forkRemoteChat, takeForkedAttachments, type ForkFromHereTarget } from './agentChat/forkFromHere'
 import { SideQuestionDrawer, useSideQuestion, type SideQuestionApi } from './agentChat/sideQuestion'
 import { ReadinessState, readinessLabel, type ChatReadiness } from './agentChat/chatStates'
 import { PendingFirstMessage } from './agentChat/pendingFirstMessage'
@@ -804,9 +808,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   }, [projection.activeTurn, turnRequestedAt, pending])
   // The "New" divider: where the replies the reader has not seen begin, as
   // they stood when the chat was opened (`unreadDivider.ts`). A chat followed
-  // from another machine keeps its visit clock there, so only one here has a
-  // divider.
-  const opening = useChatOpening(transport.kind === 'local' ? workspaceId : null)
+  // from another machine keeps its visit clock there, and its opening is said
+  // with that machine's clock as its list read it (the sidebar's visit
+  // target), so it has a divider as one here does.
+  const opening = useChatOpening(workspaceId)
   const unreadRowId = useMemo(
     () => (opening ? unreadDividerRowId(timelineRows, opening, { historyAbove: hasMore }) : null),
     [timelineRows, opening, hasMore],
@@ -2553,6 +2558,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // the module-level responder above; this view only registers itself.
   const changeReasoningEffort = (effort: string | undefined) => {
     if (effort && !capabilities?.reasoningEfforts?.includes(effort)) return
+    // A chat on another machine keeps its effort over there, and each turn
+    // runs at it: the record here moves once that machine has taken it, and
+    // its word on when it applies is shown.
+    const setRemotely = transport.setReasoningEffort
+    if (setRemotely && sessionId) {
+      if (effort === reasoningEffort) return
+      setActionError(null)
+      setPermissionNotice(null)
+      void setRemotely({ sessionId, ...(effort ? { effort } : {}) })
+        .then((result) => {
+          if (!result.ok) {
+            setActionError(result.message)
+            return
+          }
+          updateBinding({ conversationReasoningEffort: effort })
+          setPermissionNotice(result.notice ?? null)
+        })
+        .catch((error: unknown) =>
+          setActionError(error instanceof Error ? error.message : 'Could not change the reasoning effort.'),
+        )
+      return
+    }
     updateBinding({ conversationReasoningEffort: effort })
     if (sessionId) setPermissionNotice('Reasoning effort applies from the next turn.')
   }
@@ -2661,10 +2688,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // conversation (sessionRecovery.ts covers a session the runtime no longer
   // holds) — then list the slash commands again, so a skill or plugin
   // installed since shows up. Refused while the agent works: a suspend
-  // interrupts the turn and ends the agents it sent off.
+  // interrupts the turn and ends the agents it sent off. A chat on another
+  // machine is restarted by that machine, the same way.
   const restartSessionRef = useRef<() => Promise<void>>(async () => undefined)
   restartSessionRef.current = async () => {
-    if (transport.kind !== 'local') {
+    const restartRemotely = transport.restartSession
+    if (transport.kind !== 'local' && !restartRemotely) {
       showToast({ tone: 'warn', title: 'This chat runs on another machine', description: 'Restart it there.' })
       return
     }
@@ -2678,6 +2707,28 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         title: 'The agent is still working',
         description: 'Stop it first, then restart the session.',
       })
+      return
+    }
+    if (restartRemotely) {
+      const result = await restartRemotely().catch((error: unknown) => ({
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+      }))
+      if (!result.ok) {
+        showToast({ tone: 'error', title: 'The session was not restarted', description: result.message })
+        return
+      }
+      conversationCommands.refresh()
+      // A notice is that machine saying it had no agent running for the chat.
+      showToast(
+        result.notice
+          ? { tone: 'neutral', title: 'No agent session to restart', description: result.notice }
+          : {
+              tone: 'good',
+              title: 'Agent session restarted',
+              description: 'Your next message starts it again, with the conversation as it was.',
+            },
+      )
       return
     }
     if (!sessionId) {
@@ -2772,7 +2823,30 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // nothing to export. Earlier pages not read in yet are messages too.
   const hasMessagesRef = useRef(false)
   hasMessagesRef.current = hasMore || timelineRows.some((row) => row.kind === 'user' || row.kind === 'assistant')
-  const exportable = transport.kind === 'local' && chatExportSupported()
+  // A chat followed from a paired machine is exported from its transcript
+  // there, read back to its first page as Replay reads it, with what that
+  // machine lists about it; its pictures stay there and are named.
+  const remoteOrigin = useWorkspaceStore(
+    (s) => s.workspaces.find((candidate) => candidate.id === workspaceId)?.remoteOrigin ?? null,
+  )
+  const remoteExportSourceRef = useRef<() => Promise<ChatExportRemoteSource>>(async () => {
+    throw new Error('This chat could not be read.')
+  })
+  remoteExportSourceRef.current = async () => {
+    const held = { events, hasMore, beforeCursor }
+    const key = { workspaceRoot: binding.sessionRoot ?? '', workspaceId, agentId }
+    const all = await loadWholeConversation((input) => transport.loadEarlier(input), key, held)
+    return {
+      events: all,
+      title: label,
+      project: remoteOrigin?.workspaceName ?? null,
+      providerId: conversation?.providerId || null,
+      modelId: conversation?.modelId || null,
+      workspaceRoot: remoteOrigin?.workspaceRoot ?? '',
+    }
+  }
+  const exportable = chatExportSupported()
+  const exportsRemote = transport.kind === 'remote'
   useEffect(
     () =>
       registerMountedChatView({
@@ -2794,12 +2868,20 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         openSideQuestion: () => openSideQuestionRef.current(),
         hasMessages: () => hasMessagesRef.current,
         // Main reads a local chat's transcript; a chat on another machine has
-        // none here to read.
+        // none here to read, so this window reads it from there and hands it on.
         ...(exportable
-          ? { exportChat: (action: ChatExportAction) => void exportChatOrToast({ workspaceId, agentId, action }) }
+          ? {
+              exportChat: (action: ChatExportAction) =>
+                void exportChatOrToast({
+                  workspaceId,
+                  agentId,
+                  action,
+                  ...(exportsRemote ? { remote: () => remoteExportSourceRef.current() } : {}),
+                }),
+            }
           : {}),
       }),
-    [workspaceId, agentId, stepTurn, openChatFind, exportable],
+    [workspaceId, agentId, stepTurn, openChatFind, exportable, exportsRemote],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]
@@ -2921,8 +3003,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   })
               : null,
             agentName: assistantName,
-            // A paired machine's chat, or a window on the Studio protocol:
-            // the agent could say, but nothing here can ask it.
+            // A window on the Studio protocol: the agent could say, but
+            // nothing here can ask it. A paired machine's chat asks it over
+            // there, where that machine reads the window.
             ...(breakdownDeclared && !readContextBreakdown
               ? { unavailable: 'This window cannot ask the agent what fills the window, only how full it is.' }
               : {}),
@@ -2938,15 +3021,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // control.
   const imagesEnabled = ready && capabilities?.images === true && transport.capabilities.imageAttachments
   // Files attached by path are cards only where the agent can read them by
-  // that path and the card can open them: a chat on this computer (not a
-  // paired machine's, an SSH machine's or a WSL distribution's), in a window
-  // that reads a file's path. Anywhere else a file is typed as its path.
+  // that path and the card can open them: a chat on this computer (not an
+  // SSH machine's or a WSL distribution's), in a window that reads a file's
+  // path. A paired machine's chat takes them too where that machine takes
+  // files: each goes up to it with the message, and the agent reads it there.
+  // Anywhere else a file is typed as its path.
   const filesEnabled =
     ready &&
-    transport.kind === 'local' &&
-    transport.capabilities.localFiles &&
-    workspaceRunsHere(binding.workspace) &&
-    clientSupports('drag-paths')
+    clientSupports('drag-paths') &&
+    (transport.kind === 'local'
+      ? transport.capabilities.localFiles && workspaceRunsHere(binding.workspace)
+      : transport.capabilities.attachFiles)
 
   const skillInventory = useWorkspaceSkills(
     workspaceRoot,
@@ -2979,6 +3064,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     },
     [updateBinding, setDraftMetadata],
   )
+  const runMcpServerAction = transport.mcpServerAction
   const plusMenuSkills = useMemo(
     () =>
       supportsSkills
@@ -2996,14 +3082,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
             mcpPickable: false,
             // A chat on a paired machine lists that machine's.
             ...(transport.remoteExtensions ? { remote: transport.remoteExtensions } : {}),
-            // A live chat here can reconnect its servers, switch them, and
-            // sign in to one, as far as its CLI lets it.
-            ...(transport.kind === 'local' && sessionId && mcpServerActions?.length
+            // A live chat can reconnect its servers, switch them, and sign in
+            // to one, as far as its CLI lets it; one on a paired machine as
+            // far as that machine takes it, which its session says.
+            ...(runMcpServerAction && sessionId && mcpServerActions?.length
               ? {
                   mcpActions: {
                     available: mcpServerActions,
                     run: (serverId: string, action: ConversationMcpServerAction) =>
-                      window.api.conversationSessionMcpAction({ sessionId, serverId, action }),
+                      runMcpServerAction({ sessionId, serverId, action }),
                   },
                 }
               : {}),
@@ -3016,7 +3103,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       setAttachedSkills,
       chatCli,
       transport.remoteExtensions,
-      transport.kind,
+      runMcpServerAction,
       sessionId,
       mcpServerActions,
     ],
@@ -3033,10 +3120,27 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     detachRecall()
   }
   // The `/` menu lists what the chat's CLI runs in this folder, plus Studio's
-  // own few. A chat on another machine has no folder here to ask about, so its
-  // menu holds Studio's commands, and the CLI's only once a list for it has
-  // reached this machine.
+  // own few. A chat on another machine has no folder here to ask about: where
+  // that machine lists its CLI's commands, the menu asks it for the chat's
+  // folder there; elsewhere it holds Studio's commands, and the CLI's only
+  // once a list for it has reached this machine.
   const localCommands = transport.capabilities.composerContext
+  const listCommandsThere = !localCommands && transport.capabilities.commandList ? transport.listCommands : undefined
+  const commandSource = useMemo<ChatCommandSource | undefined>(
+    () =>
+      listCommandsThere
+        ? {
+            // Kept under the CLI and the key this view asked with, whatever
+            // that machine calls them.
+            list: async (input) => ({
+              ...(await listCommandsThere(input.refresh ? { refresh: true } : {})),
+              cli: input.cli,
+              cwd: input.cwd,
+            }),
+          }
+        : undefined,
+    [listCommandsThere],
+  )
   const appCommands = useMemo(
     () =>
       studioAppCommands({
@@ -3049,12 +3153,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   )
   const conversationCommands = useConversationCommands(
     chatCli,
-    localCommands ? workspaceRoot : (binding.sessionRoot ?? null),
-    { appCommands, discover: localCommands },
+    localCommands
+      ? workspaceRoot
+      : ((commandSource ? transport.commandsFolder : undefined) ?? binding.sessionRoot ?? null),
+    {
+      appCommands,
+      discover: localCommands || Boolean(commandSource),
+      ...(commandSource ? { source: commandSource } : {}),
+    },
   )
   const commandCatalog = conversationCommands.catalog
   const commandMenuAvailable = Boolean(
-    chatCli && (localCommands ? workspaceRoot : conversationCommands.commands.length),
+    chatCli && (localCommands ? workspaceRoot : commandSource || conversationCommands.commands.length),
   )
   // A picked command's argument hint, shown under the field until the person
   // types past what the pick left there.
@@ -3063,10 +3173,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     workspaceRoot,
     draft,
     caret: composerCaret,
-    // The type-ahead reads this machine's inventory; a remote chat's skills come from its "+".
-    skillsEnabled: supportsSkills && transport.capabilities.composerContext,
-    // A file mention names a file on this machine's disk.
-    mentionsEnabled: transport.capabilities.composerContext,
+    // The type-ahead reads this machine's inventory, and a remote chat's that
+    // machine's, as its "+" does.
+    skillsEnabled: supportsSkills && (transport.capabilities.composerContext || Boolean(transport.remoteExtensions)),
+    remoteSkills: transport.capabilities.composerContext ? null : (transport.remoteExtensions ?? null),
+    // A file mention names a file in the chat's folder: on this machine's
+    // disk, or, for a remote chat, in its folder over there, searched there.
+    mentionsEnabled: transport.capabilities.mentions,
     commandMenu: commandMenuAvailable
       ? {
           commands: conversationCommands.commands,
@@ -3221,9 +3334,21 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // open the fork in a tab. A provider that branches only the session it is
   // running (an ACP agent's `session/fork`, `forkFromLiveSession`) has this
   // chat's session started first for a fork at the newest reply; any other
-  // is not started for nothing.
+  // is not started for nothing. A paired machine's chat is forked over there,
+  // never started here, and the fork opens as a pane onto that machine.
   const forkRef = useRef<(target: ForkFromHereTarget) => Promise<void>>(async () => undefined)
   forkRef.current = async (target) => {
+    if (transport.kind === 'remote') {
+      await forkRemoteChat({
+        transport,
+        workspaceId,
+        agentId,
+        providerId: conversation?.providerId || 'remote',
+        name: agent.name,
+        target,
+      })
+      return
+    }
     if (!workspaceRoot) throw new Error('This chat has no folder to fork in.')
     if (
       target.side === 'assistant' &&
@@ -3339,8 +3464,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     machineName: transport.machineName,
   })
   // The CLI's modes under its own names. A mode of its own is offered where
-  // this chat's runtime maps it, and only a local chat says which it maps; a
-  // remote one is told presets, so it lists each preset's own mode.
+  // this chat's runtime maps it: a local chat says which it maps, and a remote
+  // one says so where its machine lists them (`conversation-cli-permission-modes`);
+  // one from a machine that does not lists each preset's own mode.
   const permissionOptions = usePermissionModeOptions(chatCli, 'chat', capabilities?.permissionModes ?? NO_MODES)
   // A mode of the CLI's own at a preset this chat cannot run is dimmed with
   // that preset's reason.
@@ -3528,8 +3654,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   })
   // ── Scheduling the next message ──────────────────────────────────────────
   // Offered for a chat that runs on this computer, as its usage-limit resume
-  // is: main sends the message, through this computer's own chats.
-  const scheduleOffered = operate && transport.kind !== 'remote' && !stripFacts.machine && canScheduleMessages()
+  // is: main sends the message, through this computer's own chats. And for a
+  // chat on a paired machine that keeps scheduled messages itself
+  // (`hostSchedule`): that machine keeps the message and sends it, so it goes
+  // at its time whether or not this one is awake then, and the tray draws
+  // what it says it keeps.
+  const hostSchedule =
+    transport.kind === 'remote' && transport.capabilities.hostSchedule && transport.scheduleSend
+      ? (binding.hostSchedule ?? null)
+      : null
+  const remoteSchedule = hostSchedule !== null
+  const scheduleOffered =
+    operate && (transport.kind === 'remote' ? remoteSchedule : !stripFacts.machine && canScheduleMessages())
   // What a scheduled message carries is its text: a picture or a file staged
   // with it is the moment's, and is not kept for later.
   const scheduleBlocked =
@@ -3551,9 +3687,41 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   useEffect(() => {
     if (!scheduleOffered) setSendAt(null)
   }, [scheduleOffered])
+  // A paired machine's scheduled message is sent early, or deleted, over
+  // there; a refusal is said here in that machine's words.
+  const askHostScheduled = useCallback(
+    async (ask: 'send' | 'delete', message: ScheduledMessageView): Promise<boolean> => {
+      const call = ask === 'send' ? transport.sendScheduledNow : transport.cancelScheduled
+      if (!call) return false
+      const machine = transport.machineName ?? 'The other machine'
+      let result: { ok: true } | { ok: false; message: string }
+      try {
+        result = await call({ scheduledId: message.id })
+      } catch (err) {
+        result = { ok: false, message: err instanceof Error ? err.message : 'It did not answer.' }
+      }
+      if (!result.ok)
+        setActionError(
+          `${machine} could not ${ask === 'send' ? 'send' : 'delete'} the scheduled message: ${result.message.replace(/\.$/u, '')}.`,
+        )
+      return result.ok
+    },
+    [transport],
+  )
+  const sendHostScheduledNow = useCallback(
+    (message: ScheduledMessageView) => void askHostScheduled('send', message),
+    [askHostScheduled],
+  )
+  const deleteHostScheduled = useCallback(
+    (message: ScheduledMessageView) => void askHostScheduled('delete', message),
+    [askHostScheduled],
+  )
   const editScheduledMessage = useCallback(
-    (message: ScheduledMessage) => {
-      void updateScheduledMessage({ kind: 'delete', id: message.id }).then((deleted) => {
+    (message: ScheduledMessageView & { queued?: true }) => {
+      const deleting = remoteSchedule
+        ? askHostScheduled('delete', message)
+        : updateScheduledMessage({ kind: 'delete', id: message.id })
+      void deleting.then((deleted) => {
         if (!deleted) return
         setDraft((current) => [message.text, current].filter(Boolean).join('\n'))
         // One a paired machine queued was set for the turn's end, not for a
@@ -3562,7 +3730,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         composerRef.current?.focus()
       })
     },
-    [setDraft],
+    [setDraft, remoteSchedule, askHostScheduled],
   )
   scheduleDraftRef.current = async () => {
     if (sendAt === null) return
@@ -3576,10 +3744,29 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       setActionError('That time has passed — pick one ahead, or send it now.')
       return
     }
-    const scheduled = await updateScheduledMessage({ kind: 'schedule', workspaceId, agentId, text, sendAt })
-    if (!scheduled) {
-      setActionError('The message could not be scheduled.')
-      return
+    if (remoteSchedule) {
+      // Kept and sent by the machine the chat runs on; its tray rows come back
+      // from what it says it keeps.
+      const machine = transport.machineName ?? 'The other machine'
+      let kept: { ok: true } | { ok: false; message: string }
+      try {
+        kept = (await transport.scheduleSend?.({ message: text, sendAt })) ?? {
+          ok: false,
+          message: 'it does not schedule messages',
+        }
+      } catch (err) {
+        kept = { ok: false, message: err instanceof Error ? err.message : 'it did not answer' }
+      }
+      if (!kept.ok) {
+        setActionError(`${machine} could not schedule the message: ${kept.message.replace(/\.$/u, '')}.`)
+        return
+      }
+    } else {
+      const scheduled = await updateScheduledMessage({ kind: 'schedule', workspaceId, agentId, text, sendAt })
+      if (!scheduled) {
+        setActionError('The message could not be scheduled.')
+        return
+      }
     }
     setActionError(null)
     clearDraft()
@@ -3592,7 +3779,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const conversationPullRequests =
     transport.kind === 'remote' ? (binding.listed?.pullRequests ?? localPullRequests) : localPullRequests
   // The person's "Stop watching" on the strip's pull request: the record's
-  // change comes back through the list above, so nothing is held here.
+  // change comes back through the list above, so nothing is held here. A
+  // chat on a paired machine is watched by that machine, which ends it, where
+  // this pairing may drive the chat.
   const stopWatchingPullRequest = useCallback(
     (url: string) => {
       void unwatchPullRequest({ workspaceId, agentId }, url).then((stopped) => {
@@ -3601,23 +3790,70 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     },
     [workspaceId, agentId],
   )
+  const remoteUnwatch = transport.kind === 'remote' && operate ? transport.unwatchPullRequest : undefined
+  const stopRemoteWatch = useCallback(
+    (url: string) => {
+      void remoteUnwatch?.({ url }).then((stopped) => {
+        if (!stopped.ok) setActionError(`Could not stop watching the pull request: ${stopped.message}`)
+      })
+    },
+    [remoteUnwatch],
+  )
   // The local servers this conversation's agents started, from the same
-  // Studio record the sidebar's marks read; a paired machine's are its own.
+  // Studio record the sidebar's marks read. A paired machine's are its own,
+  // and its list names them with the chat: drawn read-only, and opened from
+  // here only where their address reaches here.
   const conversationLocalServers = useLocalServersOfConversation(
     transport.kind === 'remote' ? null : { workspaceId, agentId },
   )
-  const stripLocalServers = useMemo(
-    () => (conversationLocalServers.length > 0 ? { workspaceId, servers: conversationLocalServers } : null),
-    [conversationLocalServers, workspaceId],
-  )
+  const remoteLocalServers = transport.kind === 'remote' ? binding.listed?.localServers : undefined
+  const remoteMachineName = transport.kind === 'remote' ? (transport.machineName ?? 'the other machine') : null
+  const stripLocalServers = useMemo(() => {
+    if (remoteMachineName !== null)
+      return remoteLocalServers?.length
+        ? { workspaceId, servers: remoteLocalServers, elsewhere: { machineName: remoteMachineName } }
+        : null
+    return conversationLocalServers.length > 0 ? { workspaceId, servers: conversationLocalServers } : null
+  }, [conversationLocalServers, remoteLocalServers, remoteMachineName, workspaceId])
   // The subscription limits of the agent this chat runs on — read on this
-  // computer, so only for a chat that runs here.
+  // computer for a chat that runs here, and on the paired machine a remote
+  // chat runs on, where it says what its agents reported (`hostUsageLimits`).
+  // A chat on WSL or an SSH machine has its agent's readings over there, and
+  // nothing there says them.
   const usageLimitsShown = useWorkspaceStore((s) => s.appSettings.appearance.usageLimits)
+  const hostUsageLimits =
+    transport.kind === 'remote' && transport.capabilities.hostUsageLimits ? (binding.hostUsageLimits ?? null) : null
   const usageProvider =
     usageLimitsShown && transport.kind !== 'remote' && !stripFacts.machine
       ? usageLimitProviderOf(conversation?.providerId)
       : null
-  const stripUsageLimits = useUsageLimitSnapshot(usageProvider)
+  const localUsageLimits = useUsageLimitSnapshot(usageProvider)
+  const hostUsageProvider = usageLimitsShown && hostUsageLimits ? usageLimitProviderOf(conversation?.providerId) : null
+  const stripUsageLimits = hostUsageLimits
+    ? selectUsageLimitSnapshot(hostUsageLimits.state, hostUsageProvider)
+    : localUsageLimits
+  const usageLimitsElsewhere = useMemo(
+    () => (hostUsageLimits ? { machineName: hostUsageLimits.machineName, state: hostUsageLimits.state } : undefined),
+    [hostUsageLimits],
+  )
+  // The resume row's buttons on a remote chat ask that machine, which sends
+  // the resume; a refusal is said here in its words.
+  const actOnHostUsageLimit = useCallback(
+    (action: 'schedule' | 'cancel' | 'dismiss' | 'retry', always?: boolean) => {
+      const resume = transport.usageLimitResume
+      if (!resume) return
+      void resume({ action, ...(always ? { always: true } : {}) }).then(
+        (result) => {
+          if (!result.ok)
+            setActionError(
+              `${transport.machineName ?? 'The other machine'} could not do that: ${result.message.replace(/\.$/u, '')}.`,
+            )
+        },
+        () => setActionError(`${transport.machineName ?? 'The other machine'} did not answer.`),
+      )
+    },
+    [transport],
+  )
   // "Create PR" works in this computer's checkout, or on the paired machine a
   // remote chat runs on, which does every step in its own checkout (owner
   // ruling 2026-10-18) where it says it can and this pairing may drive the
@@ -4063,8 +4299,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
 
               {/* A turn a usage limit stopped: when the limit resets, and
                 the resume Studio can send the chat then. Read on this
-                computer, so only for a chat that runs here. */}
-              {transport.kind !== 'remote' && !stripFacts.machine ? (
+                computer for a chat that runs here, and on the paired
+                machine a remote chat runs on, which sends its resume. */}
+              {hostUsageLimits ? (
+                <HostUsageLimitNoticeRow
+                  notice={hostUsageLimits.notice}
+                  autoResume={hostUsageLimits.autoResume}
+                  {...(operate && transport.usageLimitResume ? { onAct: actOnHostUsageLimit } : {})}
+                />
+              ) : transport.kind !== 'remote' && !stripFacts.machine ? (
                 <UsageLimitResumeRow workspaceId={workspaceId} agentId={agentId} />
               ) : null}
 
@@ -4072,7 +4315,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                 goes out, with Send now, Edit and Delete. Edit takes one back
                 into the composer still set for its time, so pressing
                 Schedule again puts it back. */}
-              {scheduleOffered ? (
+              {scheduleOffered && hostSchedule ? (
+                <HostScheduledMessageRows
+                  messages={hostSchedule.messages}
+                  machineName={hostSchedule.machineName}
+                  onSendNow={sendHostScheduledNow}
+                  onEdit={editScheduledMessage}
+                  onDelete={deleteHostScheduled}
+                />
+              ) : scheduleOffered ? (
                 <ScheduledMessageRows workspaceId={workspaceId} agentId={agentId} onEdit={editScheduledMessage} />
               ) : null}
 
@@ -4446,10 +4697,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               context={contextReading}
               contextBreakdown={contextBreakdownSource}
               pullRequests={conversationPullRequests}
-              {...(transport.kind === 'remote' ? {} : { onStopWatchingPullRequest: stopWatchingPullRequest })}
+              {...(transport.kind !== 'remote'
+                ? { onStopWatchingPullRequest: stopWatchingPullRequest }
+                : remoteUnwatch
+                  ? { onStopWatchingPullRequest: stopRemoteWatch }
+                  : {})}
               createPullRequest={createPullRequest}
               localServers={stripLocalServers}
               usageLimits={stripUsageLimits}
+              {...(usageLimitsElsewhere ? { usageLimitsElsewhere } : {})}
             />
           </div>
           {replay ? (

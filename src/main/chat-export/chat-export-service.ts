@@ -51,13 +51,26 @@ export type ChatExportDeps = {
 }
 
 export async function runChatExport(input: ChatExportInput, deps: ChatExportDeps): Promise<ChatExportResult> {
-  const chat = deps.chat(input.workspaceId, input.agentId)
+  // A chat followed from a paired machine comes with its transcript, read
+  // from that machine by the window following it; its pictures stay there.
+  const { remote } = input
+  const chat: ChatExportChat | null = remote
+    ? {
+        title: remote.title,
+        project: remote.project,
+        providerId: remote.providerId,
+        modelId: remote.modelId,
+        workspaceRoot: remote.workspaceRoot,
+      }
+    : deps.chat(input.workspaceId, input.agentId)
   if (!chat) return { ok: false, message: 'This chat could not be found.' }
-  const read = await deps.readSource({
-    workspaceRoot: chat.workspaceRoot,
-    workspaceId: input.workspaceId,
-    agentId: input.agentId,
-  })
+  const read = remote
+    ? { ok: true as const, source: { events: remote.events, attachments: {} } }
+    : await deps.readSource({
+        workspaceRoot: chat.workspaceRoot,
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+      })
   if (!read.ok) return { ok: false, message: read.message }
   const exportedAt = deps.now()
   const timeZone = deps.timeZone()

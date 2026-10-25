@@ -14,9 +14,12 @@ import {
   parseConversationClientMessage,
   type ConversationClientMessage,
   type ConversationCommandKind,
+  type ConversationCommandResultFrame,
   type ConversationFrameRejection,
   type ConversationHelloAnswer,
   type ConversationQueuedFrame,
+  type ConversationScheduledFrame,
+  type ConversationUsageLimitsFrame,
   type ConversationServerFrame,
   type ConversationWireErrorCode,
 } from '../../../../packages/conversation-protocol/src/public'
@@ -79,6 +82,17 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   setModel: true,
   cancelQueued: true,
   stopSubagent: true,
+  handoff: true,
+  rewind: true,
+  revert: true,
+  fork: true,
+  setReasoningEffort: true,
+  mcpServerAction: true,
+  restartSession: true,
+  scheduleSend: true,
+  sendScheduledNow: true,
+  cancelScheduled: true,
+  usageLimitResume: true,
 }
 
 /**
@@ -148,7 +162,12 @@ export function createResyncBackoff(now: () => number = Date.now): (deviceId: st
 }
 
 /** A frame this socket sends: the first version's, and what the full contract added since. */
-type OutgoingFrame = ConversationServerFrame | ConversationQueuedFrame
+type OutgoingFrame =
+  | ConversationServerFrame
+  | ConversationCommandResultFrame
+  | ConversationQueuedFrame
+  | ConversationScheduledFrame
+  | ConversationUsageLimitsFrame
 
 type LiveEntry = {
   kind: 'live'
@@ -193,9 +212,31 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   // What this desktop holds for the chat followed, told to a client that
   // asked (`watchQueued`); it ends when the socket follows another chat.
   let queuedWatch: { chat: string; stop(): void } | null = null
+  // What it has scheduled into that chat for a time (`watchScheduled`),
+  // which ends the same way.
+  let scheduledWatch: { chat: string; stop(): void } | null = null
+  // And what it knows of the usage limits, for that chat (`watchUsageLimits`).
+  let usageWatch: { chat: string; stop(): void } | null = null
   const stopQueuedWatch = (): void => {
     queuedWatch?.stop()
     queuedWatch = null
+  }
+  // Side questions asked on this socket and not yet answered, by the
+  // device's id for each: called off when the socket goes, since nobody is
+  // left to read the answer.
+  const sideQuestionsAsked = new Set<string>()
+  const stopScheduledWatch = (): void => {
+    scheduledWatch?.stop()
+    scheduledWatch = null
+  }
+  const stopUsageWatch = (): void => {
+    usageWatch?.stop()
+    usageWatch = null
+  }
+  const stopWatches = (): void => {
+    stopQueuedWatch()
+    stopScheduledWatch()
+    stopUsageWatch()
   }
   let frameSequence = 0
   let subscriptionGeneration = 0
@@ -212,7 +253,10 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     for (const waiter of bulkWaiters.splice(0)) waiter.resolve()
     subscription?.dispose()
     subscription = null
-    stopQueuedWatch()
+    stopWatches()
+    for (const questionId of sideQuestionsAsked)
+      void host.cancelSideQuestion?.(options.deviceId, questionId).catch(() => undefined)
+    sideQuestionsAsked.clear()
     clearInterval(heartbeat)
     if (!socket.destroyed) {
       try {
@@ -549,7 +593,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     subscription?.dispose()
     subscription = null
     currentKey = null
-    stopQueuedWatch()
+    stopWatches()
     dropQueued()
   }
   const subscribe = async (frame: Extract<ConversationClientMessage, { type: 'subscribe' }>): Promise<void> => {
@@ -566,6 +610,8 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     // A watch on another chat's held messages ends with the move; one on this
     // chat (a client joining it again) carries on.
     if (queuedWatch && queuedWatch.chat !== chatId(key)) stopQueuedWatch()
+    if (scheduledWatch && scheduledWatch.chat !== chatId(key)) stopScheduledWatch()
+    if (usageWatch && usageWatch.chat !== chatId(key)) stopUsageWatch()
     currentKey = key
     // Every snapshot and fence names the conversation it belongs to, so a
     // client can refuse one for a conversation it no longer follows.
@@ -640,6 +686,60 @@ export function createTailnetConversationStream(options: TailnetConversationStre
       if (key) await result(frame.requestId, await host.getTurnDiff(key, frame.turnSeq, frame.path))
       return
     }
+    // A side question runs the chat's agent, as a send does, so it needs the
+    // grant to operate; reading what fills the window does not.
+    if (frame.type === 'askSideQuestion') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      if (!mayOperate) {
+        sendLive({ type: 'result', requestId: frame.requestId, ok: false, code: 'conversation_operate_required' })
+        return
+      }
+      if (!host.askSideQuestion) {
+        await result(frame.requestId, { ok: false, message: 'This desktop does not answer side questions.' })
+        return
+      }
+      sideQuestionsAsked.add(frame.questionId)
+      try {
+        const answered = await host.askSideQuestion(
+          key,
+          options.deviceId,
+          frame.questionId,
+          frame.question,
+          frame.history ?? [],
+        )
+        if (answered.ok)
+          await respond({ type: 'result', requestId: frame.requestId, ok: true, data: { answer: answered.answer } })
+        else await result(frame.requestId, { ok: false, message: answered.message })
+      } finally {
+        sideQuestionsAsked.delete(frame.questionId)
+      }
+      return
+    }
+    if (frame.type === 'cancelSideQuestion') {
+      if (!host.cancelSideQuestion) {
+        await result(frame.requestId, { ok: false, message: 'This desktop does not answer side questions.' })
+        return
+      }
+      await result(frame.requestId, await host.cancelSideQuestion(options.deviceId, frame.questionId))
+      return
+    }
+    if (frame.type === 'getContextBreakdown') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      const read = host.contextBreakdown
+        ? await host.contextBreakdown(key)
+        : { ok: false as const, message: 'This desktop cannot say what fills a chat’s window.' }
+      if (read.ok)
+        await respond({
+          type: 'result',
+          requestId: frame.requestId,
+          ok: true,
+          data: { breakdown: read.breakdown, ...(read.stale ? { stale: true } : {}) },
+        })
+      else await result(frame.requestId, { ok: false, message: read.message })
+      return
+    }
     if (frame.type === 'watchQueued') {
       const key = requireKey(frame.requestId)
       if (!key) return
@@ -657,6 +757,38 @@ export function createTailnetConversationStream(options: TailnetConversationStre
       queuedWatch = { chat: chatId(key), stop }
       return
     }
+    if (frame.type === 'watchScheduled') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      if (!host.watchScheduled) {
+        await result(frame.requestId, { ok: false, message: 'This desktop schedules no messages from another device.' })
+        return
+      }
+      await result(frame.requestId, { ok: true })
+      // Begun afresh after each fence, as the held messages' watch is.
+      stopScheduledWatch()
+      if (closed || !currentKey || chatId(currentKey) !== chatId(key)) return
+      const wireKey = { workspaceId: key.workspaceId, agentId: key.agentId }
+      const stop = host.watchScheduled(wireKey, (messages) => sendLive({ type: 'scheduled', key: wireKey, messages }))
+      scheduledWatch = { chat: chatId(key), stop }
+      return
+    }
+    if (frame.type === 'watchUsageLimits') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      if (!host.watchUsageLimits) {
+        await result(frame.requestId, { ok: false, message: 'This desktop says nothing of its usage limits.' })
+        return
+      }
+      await result(frame.requestId, { ok: true })
+      // Begun afresh after each fence, as the held messages' watch is.
+      stopUsageWatch()
+      if (closed || !currentKey || chatId(currentKey) !== chatId(key)) return
+      const wireKey = { workspaceId: key.workspaceId, agentId: key.agentId }
+      const stop = host.watchUsageLimits(wireKey, (state) => sendLive({ type: 'usageLimits', key: wireKey, ...state }))
+      usageWatch = { chat: chatId(key), stop }
+      return
+    }
     if (frame.type === 'command') {
       const started = now()
       const key = currentKey
@@ -666,6 +798,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
         message?: string,
         notice?: string,
         retryAfterMs?: number,
+        data?: Record<string, unknown>,
       ): void => {
         options.audit({
           tool: `conversation.${frame.command.kind}`,
@@ -683,12 +816,15 @@ export function createTailnetConversationStream(options: TailnetConversationStre
           ...(message ? { message } : {}),
           ...(notice ? { notice } : {}),
           ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          // What a command that answers more than yes or no says (a revert's
+          // files), under the full contract's `commandResult`.
+          ...(data ? { data } : {}),
         })
       }
       if (!mayOperate) return finish(false, 'conversation_operate_required')
       if (!key) return finish(false, 'not_found')
       const commandResult = await host.command(key, options.deviceId, frame.commandId, frame.command)
-      if (commandResult.ok) finish(true, undefined, undefined, commandResult.notice)
+      if (commandResult.ok) finish(true, undefined, undefined, commandResult.notice, undefined, commandResult.data)
       // This lane names no fingerprint, so a conflict cannot come back on it.
       else
         finish(
@@ -699,6 +835,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
           commandResult.message,
           undefined,
           commandResult.code === 'busy' ? commandResult.retryAfterMs : undefined,
+          commandResult.data,
         )
     }
   }

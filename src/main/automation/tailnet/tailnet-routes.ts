@@ -51,6 +51,17 @@ export const TAILNET_UPLOAD_PATH = `${TAILNET_ROUTE_PREFIX}/upload`
  * the step names; nothing in the request is a path.
  */
 export const TAILNET_CONVERSATION_IMAGE_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-image`
+/**
+ * What a paired desktop's composer reads of one chat here, as JSON: the files
+ * and folders a mention may name, `GET ?workspaceId=&agentId=&query=`
+ * (`conversation-file-search`), and the slash commands the chat's CLI runs,
+ * `GET ?workspaceId=&agentId=` (`conversation-commands`). Plain GETs beside
+ * the socket rather than frames on it: each is a one-shot read for a picker,
+ * asked while no chat need be followed, and the lane's frames stay the
+ * phone's.
+ */
+export const TAILNET_CONVERSATION_FILES_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-files`
+export const TAILNET_CONVERSATION_COMMANDS_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-commands`
 
 // ── What this transport speaks ───────────────────────────────────────────────
 //
@@ -194,6 +205,86 @@ export const TAILNET_CAPABILITIES = [
   // at a time, so a paired machine needs its own Stop for each.
   // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
   'conversation-stop-subagent',
+  // A chat may be handed off to a fresh session from a paired machine, as its
+  // own Handoff does here (2026-10-25): `handoff`, where a listed chat says
+  // its provider can (`capabilities.handoff`). CONVERSATION_HANDOFF_CAPABILITY.
+  'conversation-handoff',
+  // A chat may be taken back to before one of its messages from a paired
+  // machine, as Edit from here does here (2026-10-25): `rewind`, where a
+  // listed chat says its provider can (`capabilities.rewind`).
+  // CONVERSATION_REWIND_CAPABILITY.
+  'conversation-rewind',
+  // A turn's files may be put back from its checkpoint from a paired machine,
+  // as Revert and Undo revert do here (2026-10-25): `revert` lists the files
+  // and then acts on exactly those, in this machine's checkout, for a listed
+  // chat with `capabilities.checkpoints`. CONVERSATION_CHECKPOINT_REVERT_CAPABILITY.
+  'conversation-checkpoint-revert',
+  // A chat forked from a paired machine, as Fork from here forks one here
+  // (2026-10-25): `fork` names the point and the new chat's id, and the fork
+  // joins the chat's workspace on this machine. A listed chat says whether
+  // its provider can (`capabilities.fork`). CONVERSATION_FORK_CAPABILITY.
+  'conversation-fork',
+  // A side question about a chat, as the composer's /btw asks one here
+  // (2026-10-25): `askSideQuestion` is answered from the chat's context and
+  // added to nothing, `cancelSideQuestion` calls one off, and a listed chat
+  // says whether its provider can (`capabilities.sideQuestion`).
+  // CONVERSATION_SIDE_QUESTIONS_CAPABILITY.
+  'conversation-side-questions',
+  // What fills a chat's context window, as the ring opens it here
+  // (2026-10-25): `getContextBreakdown` asks the chat's live agent, and a
+  // listed chat says whether its provider can (`capabilities.contextBreakdown`).
+  // CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY.
+  'conversation-context-breakdown',
+  // A paired desktop's composer reaches a chat's folder here (2026-10-25):
+  // `send` takes `mentions`, files and folders by their paths in the chat's
+  // folder, resolved here as this machine's own @ chips are; `GET
+  // conversation-files` searches that folder for them; and `GET
+  // conversation-commands` lists the slash commands the chat's CLI runs
+  // there. Both reads are `conversation:read`, and name no path outside the
+  // folder. A client that does not see one leaves that part of its composer
+  // to its own machine, as before. CONVERSATION_SEND_MENTIONS_CAPABILITY,
+  // CONVERSATION_FILE_SEARCH_CAPABILITY, CONVERSATION_COMMANDS_CAPABILITY.
+  'conversation-send-mentions',
+  'conversation-file-search',
+  'conversation-commands',
+  // A message may say the mode its turn runs in (2026-10-25): `send` takes
+  // `mode`, `ask`, or `plan` where a listed chat says its provider plans
+  // (`capabilities.planMode`), as this machine's own chat sends one.
+  // CONVERSATION_SEND_MODE_CAPABILITY.
+  'conversation-send-mode',
+  // A chat's reasoning effort from a paired machine (2026-10-25): a listed
+  // chat names the levels its provider runs and the one it runs at, and
+  // `setReasoningEffort` changes it on the chat's record, as this machine's
+  // effort control does. CONVERSATION_REASONING_EFFORT_CAPABILITY.
+  'conversation-reasoning-effort',
+  // A live chat's MCP servers from a paired machine (2026-10-25):
+  // `mcpServerAction` reconnects one or switches it on or off, where a listed
+  // chat names the actions its provider takes (`capabilities.mcpServerActions`).
+  // A sign-in stays here: the CLI waits for its callback on this machine.
+  // CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY.
+  'conversation-mcp-server-actions',
+  // A chat's agent restarted from a paired machine (2026-10-25):
+  // `restartSession` ends its process as this machine's own Restart agent
+  // session does, and the next message starts it again on the same
+  // conversation. CONVERSATION_RESTART_SESSION_CAPABILITY.
+  'conversation-restart-session',
+  // A message may be scheduled into a chat here for a time (2026-10-25), as
+  // this machine's own composer schedules one: `scheduleSend` keeps it among
+  // this machine's scheduled messages, which send it then whether or not the
+  // machine that scheduled it is awake; `sendScheduledNow` and
+  // `cancelScheduled` send one early or delete it; and `watchScheduled` has
+  // the socket say what is scheduled for the chat it follows, in `scheduled`
+  // frames. A client offers no Schedule for a machine without it.
+  // CONVERSATION_SCHEDULED_SENDS_CAPABILITY.
+  'conversation-scheduled-sends',
+  // This machine's usage limits for a paired machine's chat strip and tray
+  // (2026-10-25): `watchUsageLimits` has the socket say, in `usageLimits`
+  // frames, every plan's windows as this machine's agents reported them and
+  // the notice a limit left on the followed chat's turn; `usageLimitResume`
+  // schedules, cancels, dismisses or retries the resume this machine sends it
+  // when the limit resets. A client draws neither for a machine without it.
+  // CONVERSATION_USAGE_LIMITS_CAPABILITY.
+  'conversation-usage-limits',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:
@@ -256,6 +347,39 @@ export const TAILNET_CAPABILITIES = [
   // desktop asking prices them itself. A client that does not see it says
   // the machine's Studio needs updating rather than asking.
   'usage-report',
+  // ── A paired desktop's chat management (2026-10-25) ──
+  // What a paired desktop's menus ask of a chat here beyond its marks. Each
+  // names gateway tools served to paired devices only; a client that does not
+  // see one offers the item for this machine's chats on that computer alone,
+  // or not at all, and an older machine answers the tool "Unknown tool".
+  //
+  // Rename: `conversation.rename` names the chat on this machine, so every
+  // device lists it by the new name (the list's `chatTitle`).
+  'chat-rename',
+  // Auto compact: `conversation.auto_compact` switches it for a chat here,
+  // and a listed chat says whether it compacts by itself (`autoCompact`, by
+  // its own switch or this machine's default), so a paired desktop's menu
+  // shows this machine's rule for its own chat.
+  'chat-auto-compact',
+  // Stop watching: `conversation.pull_request_unwatch` ends this machine's
+  // watch of a chat's pull request, and each listed pull request says while
+  // it is watched (`watch`), so a paired desktop offers Stop watching where
+  // this machine's own menu and strip do.
+  'chat-unwatch-pull-request',
+  // Delete: `conversation.delete_plan` says what deleting a settled chat here
+  // would do (its worktrees by name and branch, never a path), and
+  // `conversation.delete` deletes it as this machine's own Delete does. A
+  // paired desktop's Delete on a settled chat it opened from here asks both.
+  'chat-delete',
+  // Search: `conversation.search` finds what was said in the chats here, as
+  // this machine's own palette does, so a paired desktop's palette lists them
+  // beside its own and opens a match at its message.
+  'chat-search',
+  // Permissions: `conversation.approval_rules` lists the "always allow" rules
+  // this machine's chats run with (each project by its folder's name, never
+  // a path), and `conversation.approval_rule_revoke` revokes one, so a paired
+  // desktop's Settings lists them beside its own.
+  'approval-rules',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

@@ -77,6 +77,74 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as
  */
 export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent' as const
 /**
+ * A chat may be handed off to a fresh session instead of compacted, as its
+ * Handoff does on the desktop: `handoff` writes the chat's messages to a file
+ * there and lets the provider session go, and the next message starts a new
+ * one pointed at the file. A listed chat says whether its provider can
+ * (`capabilities.handoff`).
+ */
+export const CONVERSATION_HANDOFF_CAPABILITY = 'conversation-handoff' as const
+/**
+ * A chat may be taken back to before one of its messages, as its Edit from
+ * here does on the desktop: `rewind` names the message by its `seq`, and the
+ * desktop drops it and every turn after it from the agent's context. A listed
+ * chat says whether its provider can (`capabilities.rewind`).
+ */
+export const CONVERSATION_REWIND_CAPABILITY = 'conversation-rewind' as const
+/**
+ * A turn's files may be put back from its checkpoint, as its Revert and Undo
+ * revert do on the desktop: `revert` answers with the files it would touch,
+ * then acts on exactly those once confirmed, in the desktop's own checkout.
+ * Offered for a listed chat with `capabilities.checkpoints`.
+ */
+export const CONVERSATION_CHECKPOINT_REVERT_CAPABILITY = 'conversation-checkpoint-revert' as const
+/**
+ * A message may say the mode its turn runs in, as the desktop's own chat
+ * sends one: `send` takes `mode` (`ask`, or `plan` where a listed chat says
+ * its provider plans, `capabilities.planMode`). A desktop without it runs
+ * every turn in the default mode, which may change what an `ask` would not.
+ */
+export const CONVERSATION_SEND_MODE_CAPABILITY = 'conversation-send-mode' as const
+/**
+ * A chat's reasoning effort may be read and set, as its effort control does
+ * on the desktop: a listed chat names the levels its provider runs
+ * (`capabilities.reasoningEfforts`) and the one it runs at
+ * (`reasoningEffort`), and `setReasoningEffort` changes it from the next
+ * turn. A desktop without it still runs each chat at the effort kept for it.
+ */
+export const CONVERSATION_REASONING_EFFORT_CAPABILITY = 'conversation-reasoning-effort' as const
+/**
+ * A live chat's MCP servers may be reconnected and switched on or off, as its
+ * composer's server rows do on the desktop: `mcpServerAction`, where a listed
+ * chat names the actions its provider takes (`capabilities.mcpServerActions`).
+ * A sign-in stays on the desktop, whose CLI waits for its callback there.
+ */
+export const CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY = 'conversation-mcp-server-actions' as const
+/**
+ * A chat's agent may be restarted, as its Restart agent session does on the
+ * desktop: `restartSession` ends its process, keeping the session's place,
+ * and the next message starts it again on the same conversation.
+ */
+export const CONVERSATION_RESTART_SESSION_CAPABILITY = 'conversation-restart-session' as const
+/**
+ * A message may be scheduled into a chat for a time, as the desktop's own
+ * composer schedules one: `scheduleSend` has the desktop keep it and send it
+ * then, `sendScheduledNow` and `cancelScheduled` send one at once or delete
+ * it, and `watchScheduled` has the desktop say what it has scheduled for the
+ * chat followed, in `scheduled` frames. The desktop sends it, so the device
+ * that scheduled it may sleep or close meanwhile.
+ */
+export const CONVERSATION_SCHEDULED_SENDS_CAPABILITY = 'conversation-scheduled-sends' as const
+/**
+ * The desktop says what it knows of its agents' subscription limits, as its
+ * own composer strip and tray draw them: `watchUsageLimits` has it send
+ * `usageLimits` frames for the chat followed (each plan's windows, and the
+ * notice a usage limit left on the chat's turn), and `usageLimitResume`
+ * schedules, cancels, dismisses or retries the resume it sends the chat once
+ * the limit resets. They are read and sent over there, where the agents run.
+ */
+export const CONVERSATION_USAGE_LIMITS_CAPABILITY = 'conversation-usage-limits' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -99,6 +167,55 @@ export const CONVERSATION_MESSAGE_FILES_CAPABILITY = 'conversation-message-files
  * without it keeps its upload under 5MB itself.
  */
 export const CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY = 'conversation-image-downscale' as const
+/**
+ * A chat may be forked from a paired device, as its Fork from here does on the
+ * desktop: `fork` names the point and the new chat's id, and the desktop
+ * writes the new chat beside this one, in the same workspace and files. A
+ * listed chat says whether its provider can (`capabilities.fork`).
+ */
+export const CONVERSATION_FORK_CAPABILITY = 'conversation-fork' as const
+/**
+ * A side question may be asked about a chat, as its composer's /btw does on
+ * the desktop: `askSideQuestion` is answered from what the chat's agent knows
+ * and is added to nothing, a running turn left as it was, and
+ * `cancelSideQuestion` calls one off. A listed chat says whether its provider
+ * can (`capabilities.sideQuestion`).
+ */
+export const CONVERSATION_SIDE_QUESTIONS_CAPABILITY = 'conversation-side-questions' as const
+/**
+ * What fills a chat's context window may be read item by item, as the
+ * desktop's context ring opens it: `getContextBreakdown` asks the chat's
+ * agent, which measures it. A listed chat says whether its provider can
+ * (`capabilities.contextBreakdown`); without it a client shows how full the
+ * window is and nothing more.
+ */
+export const CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY = 'conversation-context-breakdown' as const
+/**
+ * A message may name files and folders of the chat's folder, as its own
+ * composer's @ chips do: `send` takes `mentions` (`ConversationWireMention`,
+ * each by its path relative to that folder), and the desktop resolves them
+ * against the chat's folder there as it resolves its own. A desktop without it
+ * drops the member, so a client sends it only where it is advertised.
+ */
+export const CONVERSATION_SEND_MENTIONS_CAPABILITY = 'conversation-send-mentions' as const
+/**
+ * The files and folders a mention may name are searched for on the desktop:
+ * `GET conversation-files` beside the socket takes the chat's `workspaceId`
+ * and `agentId` and a `query`, and answers the matches in the chat's folder
+ * there by their paths relative to it (`ConversationFileSearchAnswer`). Under
+ * `conversation:read`; no path outside the folder is ever named.
+ */
+export const CONVERSATION_FILE_SEARCH_CAPABILITY = 'conversation-file-search' as const
+/**
+ * The slash commands a chat's CLI runs in the chat's folder are listed by the
+ * desktop, as its own composer's `/` menu lists them: `GET
+ * conversation-commands` beside the socket takes the chat's `workspaceId` and
+ * `agentId` and answers its CLI's commands and plugins there
+ * (`ConversationCommandsAnswer`). Under `conversation:read`; `refresh` asks the
+ * CLI again now, under `conversation:operate`. A client without it offers only
+ * its own commands.
+ */
+export const CONVERSATION_COMMANDS_CAPABILITY = 'conversation-commands' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -121,6 +238,21 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_MESSAGE_FILES_CAPABILITY,
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
+  CONVERSATION_HANDOFF_CAPABILITY,
+  CONVERSATION_REWIND_CAPABILITY,
+  CONVERSATION_CHECKPOINT_REVERT_CAPABILITY,
+  CONVERSATION_FORK_CAPABILITY,
+  CONVERSATION_SIDE_QUESTIONS_CAPABILITY,
+  CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY,
+  CONVERSATION_SEND_MENTIONS_CAPABILITY,
+  CONVERSATION_FILE_SEARCH_CAPABILITY,
+  CONVERSATION_COMMANDS_CAPABILITY,
+  CONVERSATION_SEND_MODE_CAPABILITY,
+  CONVERSATION_REASONING_EFFORT_CAPABILITY,
+  CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY,
+  CONVERSATION_RESTART_SESSION_CAPABILITY,
+  CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
+  CONVERSATION_USAGE_LIMITS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

@@ -187,16 +187,26 @@ export function useUsageLimitSnapshot(provider: UsageLimitProvider | null): Usag
 /**
  * The strip's mark: the provider's fullest window as a small bar, in the warn
  * tone at 90% or at the limit. The tooltip says it in words; a click opens
- * every provider's windows.
+ * every provider's windows: this computer's, or, for a chat on a paired
+ * machine, that machine's (`elsewhere`), as its agents reported them there.
  */
-export function UsageLimitsStripButton({ snapshot }: { snapshot: UsageLimitSnapshot }): JSX.Element {
+export function UsageLimitsStripButton({
+  snapshot,
+  elsewhere,
+}: {
+  snapshot: UsageLimitSnapshot
+  elsewhere?: { machineName: string; state: UsageLimitsState }
+}): JSX.Element {
   const [open, setOpen] = useState(false)
   // Redrawn when the words change, at most once a minute: a reset passing
   // empties the bar, and "resets in" counts down.
   const now = useRelativeNowFor((at) => usageStripLabel(snapshot, at), RESET_TICK_MS)
-  const state = useUsageLimitsStore((store) => store.state)
+  const own = useUsageLimitsStore((store) => store.state)
+  const state = elsewhere ? elsewhere.state : own
   const window = headlineWindow(snapshot, now)
-  const label = usageStripLabel(snapshot, now)
+  const label = elsewhere
+    ? `${usageStripLabel(snapshot, now)}, on ${elsewhere.machineName}`
+    : usageStripLabel(snapshot, now)
   return (
     <Popover
       open={open}

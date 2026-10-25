@@ -9,12 +9,15 @@ import { useState } from 'react'
 import { newAgentIdSuffix } from '../../../../../shared/agent-ids'
 
 import type { ConversationImageAttachment, ConversationKey } from '../../../../../shared/conversation-runtime'
-import type { AgentState } from '../../../types/workspace'
 import { GhostButton, Tooltip } from '../../ui'
 import { showToast } from '../../../store/toastStore'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { placeSpawnedAgentTab } from '../../workspace/manager/layoutTabActions'
-import { conversationAgentRuntimePatch } from '../../workspace/conversationSpawnOptions'
+import { forkedAgentPatch, forkName } from '../../../../../shared/conversation/fork'
+import { SOLO_CHAT_TEMPLATE_ID } from '../../../../../shared/layouts/templates'
+import { meshConversationSessionId, type MeshConversationPaneSpec } from '../../../../../shared/tailnet-mesh'
+import { LAYOUT_TEMPLATES } from '../../../layouts/templates'
+import { addMeshConversationTabAfter } from '../../../utils/modelRegistry'
 import { composerDraftStore, type ComposerDraft } from './draftStore'
 import type { TranscriptEntry } from './conversationProjection'
 import { useConversationTransport, type ConversationTransport } from './conversationTransport'
@@ -55,7 +58,10 @@ const forkedAttachmentsKey = (workspaceId: string, agentId: string) => `${worksp
 function letGoOfStaleForks(now: number): void {
   const workspaces = useWorkspaceStore.getState().workspaces
   for (const [key, held] of forkedAttachments) {
-    const agentGone = !workspaces.find((workspace) => workspace.id === held.workspaceId)?.agents[held.agentId]
+    // A pane onto a paired machine's chat has no record here: its fork's
+    // images wait for as long as the workspace holding the pane is open.
+    const workspace = workspaces.find((candidate) => candidate.id === held.workspaceId)
+    const agentGone = !workspace || (!workspace.agents[held.agentId] && !workspace.remoteOrigin)
     if (agentGone || now - held.at > FORKED_ATTACHMENTS_TTL_MS) forkedAttachments.delete(key)
   }
   // Oldest first: a Map keeps the order its entries went in.
@@ -230,33 +236,95 @@ export async function forkChat(input: {
 }
 
 /**
- * What a fork is called: the chat's name with "(fork)", numbered past the
- * forks of it already open. A fork of a fork counts among the forks of the
- * chat it started from, so a second generation reads "Atlas (fork 2)", never
- * "Atlas (fork) (fork)".
+ * Fork a chat followed from a paired machine. The machine makes the fork, as
+ * its own Fork from here would: beside the chat in its workspace there, named
+ * after it beside that workspace's other chats, in the same files. Here it
+ * opens as a pane onto that machine in the tab after this chat's, as a local
+ * fork opens after its chat, or, where this chat's layout is not mounted, as a
+ * chat of its own, the way a chat started over there from New chat opens. A
+ * message forked before goes into its composer; the files it attached by path
+ * stay behind, since those paths are on that machine's disk.
  */
-export function forkName(parentName: string, taken: readonly string[]): string {
-  const base = parentName.replace(/ \(fork(?: \d+)?\)$/u, '')
-  const names = new Set(taken)
-  if (!names.has(`${base} (fork)`)) return `${base} (fork)`
-  let index = 2
-  while (names.has(`${base} (fork ${index})`)) index += 1
-  return `${base} (fork ${index})`
-}
-
-/** The fork's agent record: the parent's engine and folder under the fork's own name. */
-export function forkedAgentPatch(parent: AgentState, name: string): Partial<AgentState> {
-  const conversation = parent.conversation!
-  return {
-    name,
-    ...conversationAgentRuntimePatch(conversation.providerId, conversation.modelId),
-    // A chat started in a worktree is keyed by it; the fork's transcript was
-    // written there.
-    execution: { ...parent.execution },
-    ...(parent.cliPermissionPreset ? { cliPermissionPreset: parent.cliPermissionPreset } : {}),
-    ...(parent.cliPermissionMode ? { cliPermissionMode: parent.cliPermissionMode } : {}),
-    ...(parent.conversationMode ? { conversationMode: parent.conversationMode } : {}),
-    ...(parent.conversationReasoningEffort ? { conversationReasoningEffort: parent.conversationReasoningEffort } : {}),
-    ...(parent.conversationSkills?.length ? { conversationSkills: [...parent.conversationSkills] } : {}),
+export async function forkRemoteChat(input: {
+  transport: Pick<ConversationTransport, 'fork' | 'machineName' | 'remoteExtensions'>
+  /** The workspace here whose pane follows the chat. */
+  workspaceId: string
+  /** The chat's id over there, and the provider it runs on, which names the fork's id as a local fork's. */
+  agentId: string
+  providerId: string
+  /** The chat's name, for the fork's until the machine says what it called it. */
+  name: string
+  target: ForkFromHereTarget
+}): Promise<void> {
+  const { target } = input
+  const remote = input.transport.remoteExtensions
+  const origin = useWorkspaceStore
+    .getState()
+    .workspaces.find((candidate) => candidate.id === input.workspaceId)?.remoteOrigin
+  if (!input.transport.fork || !remote) throw new Error('This chat cannot be forked here.')
+  const machineName = input.transport.machineName ?? origin?.machineName ?? 'the other machine'
+  const agentId = `conversation-${input.providerId}-${newAgentIdSuffix()}`
+  const forked = await input.transport.fork({
+    // The transport names the chat by its ids over there; this key is only
+    // the shape the call takes, and its root means nothing to that machine.
+    key: { workspaceRoot: '', workspaceId: remote.workspaceId, agentId: input.agentId },
+    newAgentId: agentId,
+    ...(target.side === 'user'
+      ? { side: 'user' as const, turnSeq: target.turnSeq }
+      : { side: 'assistant' as const, turnId: target.turnId }),
+  })
+  if (!forked.ok) throw new Error(forked.message)
+  // What the machine called it, beside the chats of its workspace there.
+  const listed = await window.api.meshConversationList(remote.connectionId).catch(() => null)
+  const named = listed?.ok
+    ? listed.conversations.find(
+        (conversation) => conversation.workspaceId === remote.workspaceId && conversation.agentId === agentId,
+      )?.title
+    : undefined
+  const name = named || forkName(input.name || 'Chat', [])
+  const pane: MeshConversationPaneSpec = {
+    connectionId: remote.connectionId,
+    machineName,
+    remoteWorkspaceId: remote.workspaceId,
+    remoteAgentId: agentId,
+    title: name,
   }
+  let workspaceId = input.workspaceId
+  if (
+    !addMeshConversationTabAfter(workspaceId, pane, {
+      connectionId: remote.connectionId,
+      remoteWorkspaceId: remote.workspaceId,
+      remoteAgentId: input.agentId,
+    })
+  ) {
+    const template = LAYOUT_TEMPLATES.find((candidate) => candidate.id === SOLO_CHAT_TEMPLATE_ID)
+    // Made all the same, and listed with that machine's chats.
+    if (!template || !origin) {
+      showToast({
+        tone: 'neutral',
+        title: `Forked into ${name} on ${machineName}`,
+        description: `No pane could open for it here. It is listed under ${machineName} in the sidebar.`,
+      })
+      return
+    }
+    workspaceId = useWorkspaceStore.getState().addWorkspace(template, {
+      name,
+      folderPath: null,
+      // The chat over there is in the same workspace as the one it was forked
+      // from, so it is known by the same project and checkout; only the
+      // session the band recognises it by is its own.
+      remoteOrigin: { ...origin, sessionId: meshConversationSessionId(remote.workspaceId, agentId) },
+      seedAgent: { tabName: name, meshConversation: pane },
+    })
+  }
+  if (target.side === 'user') {
+    const { files: _paths, ...draft } = target.draft
+    composerDraftStore().getState().put(workspaceId, agentId, draft)
+    if (target.attachments?.length) holdForkedAttachments(workspaceId, agentId, target.attachments)
+  } else if (target.draft?.text.trim())
+    composerDraftStore().getState().put(workspaceId, agentId, { text: target.draft.text, skillIds: [], mentions: [] })
+  showToast({
+    tone: 'neutral',
+    title: `Forked into ${name} on ${machineName}. Both chats work in the same files there.`,
+  })
 }

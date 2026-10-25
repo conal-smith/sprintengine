@@ -12,5 +12,8 @@ export * from './events.js'
 export * from './commands.js'
 export * from './handshake.js'
 export * from './clientFrames.js'
+export * from './agentReads.js'
+// What a client's composer reads from the desktop beside the socket.
+export * from './composerReads.js'
 // How a tool step is worded and toned, which every view of a conversation shares.
 export * from './presentation.js'

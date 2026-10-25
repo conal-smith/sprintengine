@@ -244,7 +244,7 @@ test('a row menu change is not asked of a machine that does not take it, and one
       { kind: 'highlight', color: 'teal' },
       { kind: 'snooze', until: 'soon' },
       { kind: 'auto-settle' },
-      { kind: 'rename', name: 'x' },
+      { kind: 'rename', name: '  ' },
       null,
     ]) {
       const refused = await machine.mesh.changeConversation({

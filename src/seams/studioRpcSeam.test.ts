@@ -316,6 +316,17 @@ test('every method the server serves has its call in the SDK, under the same sco
     'conversation.cancelQueued': 'request',
     // So is stopping one agent of a chat, an owner's for now: no SDK call names it yet.
     'conversation.stopSubagent': 'request',
+    // And a chat's effort, its MCP servers and its agent's restart, owners' for
+    // now, as a chat followed from another desktop uses them.
+    'conversation.setReasoningEffort': 'request',
+    'conversation.mcpServerAction': 'request',
+    'conversation.restartSession': 'request',
+    // And scheduling a message for a time, sending one early or deleting it.
+    'conversation.scheduleSend': 'request',
+    'conversation.sendScheduledNow': 'request',
+    'conversation.cancelScheduled': 'request',
+    // And a usage limit's resume, which the tray row asks for.
+    'conversation.usageLimitResume': 'request',
     'conversation.loadEarlier': 'conversations.loadEarlier',
     'conversation.toolDetail': 'conversations.toolDetail',
     'conversation.turnDiff': 'conversations.turnDiff',

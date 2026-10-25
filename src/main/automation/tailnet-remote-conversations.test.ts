@@ -6,13 +6,22 @@ import { join } from 'node:path'
 import { test, vi } from 'vitest'
 import { createSecretCipherStandIn } from '../../../tests/stubs/secret-cipher'
 
-import type { ConversationEvent, ConversationSessionFrame } from '../../shared/conversation-runtime'
+import type {
+  ConversationContextBreakdown,
+  ConversationEvent,
+  ConversationSessionFrame,
+  ConversationSideQuestionResult,
+} from '../../shared/conversation-runtime'
 import type { TailnetScope } from '../../shared/tailnet'
 import type { MeshConversationFrame, MeshConversationKey } from '../../shared/tailnet-mesh'
 import { ConversationRuntime } from '../conversation-runtime'
 import type { ConversationProviderAdapter } from '../providers/conversation-provider-adapter'
 import { createMockConversationProvider } from '../providers/mock-conversation-provider'
-import { createConversationGatewayHost, type ConversationGatewayHost } from './tailnet/tailnet-conversation-host'
+import {
+  createConversationGatewayHost,
+  type ConversationGatewayHost,
+  type ConversationUsageLimits,
+} from './tailnet/tailnet-conversation-host'
 import { createTailnetDeviceStore, type TailnetDeviceStore } from './tailnet/tailnet-devices'
 import { createTailnetMeshService, type TailnetMeshService } from './tailnet/tailnet-mesh-service'
 import { createTailnetMeshStore } from './tailnet/tailnet-mesh-store'
@@ -26,7 +35,7 @@ import {
 import type { RemoteJsonSocket, RemoteJsonSocketHandlers } from './tailnet/tailnet-remote-client'
 import { pairingUrl } from './tailnet/tailnet-service'
 import { createScheduledMessages } from '../scheduled-messages/scheduled-messages'
-import { studioHeldMessages } from '../../server/core/studio-scheduled-messages'
+import { studioHeldMessages, studioScheduledSends } from '../../server/core/studio-scheduled-messages'
 import {
   TAILNET_IDENTITY_PATH,
   TAILNET_MCP_PATH,
@@ -109,6 +118,8 @@ async function waitFor(predicate: () => boolean, what: string): Promise<void> {
 }
 
 type Harness = {
+  /** The far end's clock, which its scheduled messages keep time by. */
+  hostNow(): number
   runtime: ConversationRuntime
   provider: ReturnType<typeof pushProvider>
   devices: TailnetDeviceStore
@@ -133,7 +144,9 @@ const agentId = 'agent'
  */
 type HarnessTools = (runtime: ConversationRuntime, workspaceRoot: string) => McpToolRegistration[]
 
-async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTools } = {}): Promise<Harness> {
+async function startHarness(
+  options: { holdQueued?: boolean; tools?: HarnessTools; usageLimits?: ConversationUsageLimits } = {},
+): Promise<Harness> {
   const workspaceRoot = mkdtempSync(join(tmpdir(), 'remote-conversation-host-'))
   const remoteDir = mkdtempSync(join(tmpdir(), 'remote-conversation-devices-'))
   const localDir = mkdtempSync(join(tmpdir(), 'remote-conversation-local-'))
@@ -186,7 +199,12 @@ async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTool
           }
         : null,
     undefined,
-    scheduled ? { heldMessages: studioHeldMessages(() => scheduled) } : {},
+    {
+      ...(scheduled
+        ? { heldMessages: studioHeldMessages(() => scheduled), scheduledSends: studioScheduledSends(() => scheduled) }
+        : {}),
+      ...(options.usageLimits ? { usageLimits: options.usageLimits } : {}),
+    },
   )
   if (scheduled) {
     await scheduled.start()
@@ -246,6 +264,7 @@ async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTool
   })
   assert.ok(started.ok)
   const harness: Harness = {
+    hostNow: () => Date.now() + skew,
     runtime,
     provider,
     devices,
@@ -1336,6 +1355,161 @@ test('a held message is taken back from here, and every window is told it is gon
   }
 })
 
+test('a message scheduled from here is kept there, and goes at its time with this desktop gone', async () => {
+  const h = await startHarness({ holdQueued: true })
+  const asked: string[] = []
+  const stopListening = h.runtime.onEvent((event) => {
+    if (event.type === 'user_message' && event.workspaceId === workspaceId && event.agentId === agentId)
+      asked.push(String(event.payload?.text ?? ''))
+  })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.equal(listed.scheduledSends, true, 'the machine says it keeps scheduled messages')
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    await waitFor(() => pane.of('scheduled').length > 0, 'told what the machine keeps, nothing yet')
+    assert.deepEqual(pane.of('scheduled').at(-1)?.messages, [])
+
+    const sendAt = h.hostNow() + 400
+    const kept = await h.mesh.conversationCommand({
+      key,
+      command: { kind: 'scheduleSend', message: 'Start the migration.', sendAt },
+    })
+    assert.deepEqual(kept, { ok: true })
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 1, 'the window sees what is kept there')
+    const [message] = pane.of('scheduled').at(-1)!.messages
+    assert.equal(message?.text, 'Start the migration.')
+    assert.equal(message?.sendAt, sendAt)
+    // A second window opened now is told at once, without asking the machine again.
+    const second = follower(h.mesh, key, 'pane-2')
+    await second.following
+    assert.equal(second.of('scheduled').at(-1)?.messages[0]?.text, 'Start the migration.')
+
+    // The laptop closes: the machine sends it at its time all the same.
+    h.mesh.shutdown()
+    await h.provider.turnStarted()
+    assert.deepEqual(asked, ['Start the migration.'], 'sent into the chat over there, once')
+    h.provider.push(null)
+  } finally {
+    stopListening()
+    await h.close()
+  }
+})
+
+test("a message scheduled there is sent now or deleted from here, and a repeat is refused in the machine's words", async () => {
+  const h = await startHarness({ holdQueued: true })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    assert.ok((await h.mesh.listConversations(connectionId)).ok)
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    const later = h.hostNow() + 60 * 60_000
+    for (const message of ['Tomorrow, the docs.', 'Tomorrow, the tests.'])
+      assert.deepEqual(
+        await h.mesh.conversationCommand({ key, command: { kind: 'scheduleSend', message, sendAt: later } }),
+        { ok: true },
+      )
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 2, 'both kept')
+    const [docs, tests] = pane.of('scheduled').at(-1)!.messages
+    assert.deepEqual(
+      await h.mesh.conversationCommand({ key, command: { kind: 'cancelScheduled', scheduledId: docs!.id } }),
+      { ok: true },
+    )
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 1, 'deleted')
+    const again = await h.mesh.conversationCommand({ key, command: { kind: 'cancelScheduled', scheduledId: docs!.id } })
+    assert.equal(again.ok, false)
+    assert.match(!again.ok ? again.message : '', /no longer scheduled/)
+
+    assert.deepEqual(
+      await h.mesh.conversationCommand({ key, command: { kind: 'sendScheduledNow', scheduledId: tests!.id } }),
+      { ok: true },
+    )
+    await h.provider.turnStarted()
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages[0]?.sending === true, 'on its way, and said so')
+    h.provider.push(null)
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 0, 'it went')
+  } finally {
+    await h.close()
+  }
+})
+
+test('a machine that keeps no scheduled messages refuses one in words', async () => {
+  const h = await startHarness()
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    assert.ok((await h.mesh.listConversations(connectionId)).ok)
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    // This host keeps none (no `scheduledSends`): its refusal is in words too.
+    const refused = await h.mesh.conversationCommand({
+      key,
+      command: { kind: 'scheduleSend', message: 'Later.', sendAt: h.hostNow() + 60_000 },
+    })
+    assert.equal(refused.ok, false)
+    assert.match(!refused.ok ? refused.message : '', /schedule/)
+  } finally {
+    await h.close()
+  }
+})
+
+test("a paired desktop hears a chat's usage limits from the machine it runs on, and its resume is asked of that machine", async () => {
+  const notice = { provider: 'claude', limit: 'session' as const, resetsAt: 9_000_000, hitAt: 5, resumeAt: null }
+  let resumeAt: number | null = null
+  const asked: Array<[string, boolean]> = []
+  const changed = new Set<() => void>()
+  const usageLimits: ConversationUsageLimits = {
+    list: (chat) => ({
+      notice: chat.agentId === agentId ? { ...notice, resumeAt } : null,
+      autoResume: false,
+      limits: [{ provider: 'claude', observedAt: 1, windows: [] }],
+    }),
+    update(_chat, action, always) {
+      asked.push([action, always])
+      resumeAt = action === 'schedule' ? 9_000_000 : null
+      for (const listener of changed) listener()
+      return { ok: true }
+    },
+    onChanged(listener) {
+      changed.add(listener)
+      return () => changed.delete(listener)
+    },
+  }
+  const h = await startHarness({ usageLimits })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.equal(listed.usageLimits, true, 'the machine says it tells its usage limits')
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    await waitFor(() => pane.of('usageLimits').length > 0, 'told what the machine knows')
+    assert.deepEqual(pane.of('usageLimits').at(-1), {
+      type: 'usageLimits',
+      notice,
+      autoResume: false,
+      limits: [{ provider: 'claude', observedAt: 1, windows: [] }],
+    })
+    assert.deepEqual(
+      await h.mesh.conversationCommand({ key, command: { kind: 'usageLimitResume', action: 'schedule' } }),
+      { ok: true },
+    )
+    assert.deepEqual(asked, [['schedule', false]])
+    await waitFor(() => pane.of('usageLimits').at(-1)?.notice?.resumeAt === 9_000_000, 'the resume is said scheduled')
+    // A second window opened now is told at once, without asking the machine again.
+    const second = follower(h.mesh, key, 'pane-2')
+    await second.following
+    assert.equal(second.of('usageLimits').at(-1)?.notice?.resumeAt, 9_000_000)
+  } finally {
+    await h.close()
+  }
+})
+
 test('the held messages are asked for after each fence, and never of a machine that said it holds none', async () => {
   vi.useFakeTimers()
   try {
@@ -1410,6 +1584,77 @@ test('a message steered from here into a turn its chat cannot take is held there
     h.provider.push(null)
   } finally {
     stopListening()
+    await h.close()
+  }
+})
+
+test("a side question and the window's breakdown are asked of the chat over there, and come back here", async () => {
+  const h = await startHarness()
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.deepEqual([listed.fork, listed.sideQuestions, listed.contextBreakdown], [true, true, true])
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    assert.deepEqual(await pane.following, { ok: true })
+    await waitFor(pane.live, 'the follow goes live')
+
+    const asked = vi.spyOn(h.runtime, 'askSideQuestion').mockResolvedValue({ ok: true, answer: 'The README.' })
+    assert.deepEqual(
+      await h.mesh.conversationSideQuestion({
+        key,
+        requestId: 'q-1',
+        question: 'What did it read first?',
+        history: [{ question: 'Did it run the tests?', answer: 'Yes.' }],
+      }),
+      { ok: true, answer: 'The README.' },
+    )
+    assert.equal(asked.mock.calls[0]![0].sessionId, h.sessionId, "asked of the chat's own session there")
+    assert.deepEqual(asked.mock.calls[0]![0].history, [{ question: 'Did it run the tests?', answer: 'Yes.' }])
+
+    // Called off from here while its answer is on its way: called off there,
+    // and settled here as called off rather than as a refusal to show.
+    let settle: (value: ConversationSideQuestionResult) => void = () => undefined
+    asked.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
+    const cancel = vi.spyOn(h.runtime, 'cancelSideQuestion').mockImplementation(async () => {
+      settle({ ok: false, cancelled: true, message: 'The side question was called off.' })
+      return { ok: true }
+    })
+    const pending = h.mesh.conversationSideQuestion({ key, requestId: 'q-2', question: 'Why?' })
+    await waitFor(() => asked.mock.calls.length === 2, 'the second question is out')
+    assert.deepEqual(await h.mesh.conversationCancelSideQuestion({ key, requestId: 'q-2' }), { ok: true })
+    const outcome = await pending
+    assert.ok(!outcome.ok && outcome.cancelled === true)
+    assert.equal(cancel.mock.calls.length, 1)
+
+    const breakdown: ConversationContextBreakdown = {
+      model: 'mock-model',
+      usedTokens: 12_000,
+      windowTokens: 200_000,
+      categories: [
+        { name: 'Messages', tokens: 12_000, kind: 'used' },
+        { name: 'Free space', tokens: 188_000, kind: 'free' },
+      ],
+      mcpServers: [],
+      skills: [],
+      memoryFiles: [],
+      agents: [],
+      autoCompactAt: null,
+      estimated: false,
+      measuredAt: 1_700_000_000_000,
+    }
+    vi.spyOn(h.runtime, 'readContextBreakdown').mockResolvedValue({ ok: true, breakdown })
+    assert.deepEqual(await h.mesh.conversationContextBreakdown({ key }), { ok: true, breakdown })
+
+    // A host that keeps no chat records cannot add a fork, and says so: the
+    // refusal comes back in its words.
+    const forked = await h.mesh.conversationCommand({
+      key,
+      command: { kind: 'fork', newAgentId: 'conversation-mock-provider-fork', side: 'assistant', turnId: 'turn-1' },
+    })
+    assert.ok(!forked.ok && forked.message.includes('cannot add a forked chat'))
+  } finally {
     await h.close()
   }
 })
