@@ -6,6 +6,8 @@ import {
   type ConversationQueuedMessage,
   type ConversationScheduledMessage,
   type ConversationThread,
+  type ConversationUsageLimitResumeAction,
+  type ConversationUsageLimitsFrame,
   type ConversationWireErrorCode,
   type ConversationWireHost,
   type ConversationWirePullRequest,
@@ -189,6 +191,16 @@ export type ConversationGatewayHost = {
     listener: (messages: ConversationScheduledMessage[]) => void,
   ): () => void
   /**
+   * Follow what this desktop knows of its agents' usage limits, for a chat:
+   * each plan's windows and the notice a limit left on the chat's turn. Told
+   * now, and again whenever it reads differently. Absent on a host built
+   * without `usageLimits`; returns what stops the following.
+   */
+  watchUsageLimits?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (state: ConversationUsageLimitsState) => void,
+  ): () => void
+  /**
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
    * id for a different command is then refused (`command_id_conflict`).
@@ -268,8 +280,8 @@ function wholeNumbers(thread: ConversationThread): ConversationThread {
   }
 }
 
-/** Answers to Send now and Delete on a scheduled message, kept for a command sent again. */
-const MAX_SCHEDULED_RECEIPTS = 256
+/** Answers to Send now and Delete on a scheduled message, and to a resume's, kept for a command sent again. */
+const MAX_COMMAND_RECEIPTS = 256
 
 /** How long a send turned away behind another send to the same chat waits before trying again. */
 const SEND_BUSY_RETRY_MS = 1_000
@@ -492,6 +504,12 @@ export type ConversationRegistryLink = {
    */
   scheduledSends?: ConversationScheduledSends
   /**
+   * What this desktop knows of its agents' usage limits, and the resume it
+   * sends a chat a limit stopped (`conversation-usage-limits`). Absent, the
+   * command is refused in words and nothing is watched.
+   */
+  usageLimits?: ConversationUsageLimits
+  /**
    * Studio's own folders of pictures (what chats sent, the pictures their steps
    * returned, pasted images). A step's picture is served from the chat's
    * folder, its session's, or one of these, and from nowhere else.
@@ -539,6 +557,29 @@ export type ConversationScheduledSends = {
   onChanged(listener: () => void): () => void
 }
 
+/** A `usageLimits` frame without its type and key: what a host says of one chat. */
+export type ConversationUsageLimitsState = Omit<ConversationUsageLimitsFrame, 'type' | 'key'>
+
+/**
+ * This desktop's usage limits, as a paired machine's strip and tray draw them
+ * for one of its chats: the limits its agents reported here
+ * (usage-limits/store.ts), and the resume it sends a chat a limit stopped
+ * (usage-limits/resume.ts), which a paired machine schedules, cancels,
+ * dismisses or retries as this desktop's own tray row does.
+ */
+export type ConversationUsageLimits = {
+  /** What there is to say for the chat now. */
+  list(chat: ChatOf): ConversationUsageLimitsState
+  /** Act on the chat's notice; `always` also switches on resuming every chat a limit stops. */
+  update(
+    chat: ChatOf,
+    action: ConversationUsageLimitResumeAction,
+    always: boolean,
+  ): { ok: true } | { ok: false; message: string }
+  /** The limits or a notice changed. */
+  onChanged(listener: () => void): () => void
+}
+
 /**
  * Both IPC and the network wrap this one session API; only root resolution
  * differs. `defaultPermissionPreset` answers for a conversation this app has
@@ -561,10 +602,10 @@ export type AgentChoicePatch = {
  * them: every chat's changes arrive on the one channel, and a follower is told
  * only when its own chat's list reads differently.
  */
-function watchHeld<Message>(
-  held: { list(chat: ChatOf): Message[]; onChanged(listener: () => void): () => void },
+function watchHeld<Said>(
+  held: { list(chat: ChatOf): Said; onChanged(listener: () => void): () => void },
   chat: ChatOf,
-  listener: (messages: Message[]) => void,
+  listener: (said: Said) => void,
 ): () => void {
   const key = { workspaceId: chat.workspaceId, agentId: chat.agentId }
   let last: string | null = null
@@ -729,11 +770,25 @@ export function createConversationGatewayHost(
       if (starting.get(id) === request) starting.delete(id)
     }
   }
-  // Send now and Delete on a message a paired machine scheduled, answered as
-  // they were the first time when the same command comes again (a device
-  // that lost the answer offers it again under its id): the message is gone
-  // by then, and a second answer saying so would read as a failure.
-  const scheduledReceipts = new Map<string, ConversationGatewayCommandResult>()
+  // Send now and Delete on a message a paired machine scheduled, and what it
+  // did to a usage limit's resume, answered as they were the first time when
+  // the same command comes again (a device that lost the answer offers it
+  // again under its id): the message is gone by then, or the resume already
+  // sent, and a second answer saying so would read as a failure.
+  const receipts = new Map<string, ConversationGatewayCommandResult>()
+  const once = (
+    deviceId: string,
+    commandId: string,
+    run: () => ConversationGatewayCommandResult,
+  ): ConversationGatewayCommandResult => {
+    const id = JSON.stringify([deviceId, commandId])
+    const answered = receipts.get(id)
+    if (answered) return answered
+    const result = run()
+    receipts.set(id, result)
+    while (receipts.size > MAX_COMMAND_RECEIPTS) receipts.delete(receipts.keys().next().value!)
+    return result
+  }
   const scheduledCommand = (
     chat: ChatOf,
     deviceId: string,
@@ -746,16 +801,11 @@ export function createConversationGatewayHost(
     // connection, or after a restart, schedules it once.
     const source = JSON.stringify([deviceId, commandId])
     if (command.kind === 'scheduleSend') return scheduled.schedule(chat, command.message, command.sendAt, source)
-    const answered = scheduledReceipts.get(source)
-    if (answered) return answered
-    const result =
+    return once(deviceId, commandId, () =>
       command.kind === 'sendScheduledNow'
         ? scheduled.sendNow(chat, command.scheduledId)
-        : scheduled.cancel(chat, command.scheduledId)
-    scheduledReceipts.set(source, result)
-    while (scheduledReceipts.size > MAX_SCHEDULED_RECEIPTS)
-      scheduledReceipts.delete(scheduledReceipts.keys().next().value!)
-    return result
+        : scheduled.cancel(chat, command.scheduledId),
+    )
   }
   // A switch within the chat's own CLI, to a model this machine's picker
   // offers for it. Checked here, before the runtime sees it: the id must be in
@@ -1097,12 +1147,23 @@ export function createConversationGatewayHost(
     ...(registry.scheduledSends
       ? { watchScheduled: (key, listener) => watchHeld(registry.scheduledSends!, key, listener) }
       : {}),
+    ...(registry.usageLimits
+      ? { watchUsageLimits: (key, listener) => watchHeld(registry.usageLimits!, key, listener) }
+      : {}),
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
       if (command.kind === 'scheduleSend' || command.kind === 'sendScheduledNow' || command.kind === 'cancelScheduled')
         return Promise.resolve(scheduledCommand(chat, deviceId, commandId, command))
+      if (command.kind === 'usageLimitResume')
+        return Promise.resolve(
+          once(deviceId, commandId, () =>
+            registry.usageLimits
+              ? registry.usageLimits.update(chat, command.action, command.always === true)
+              : { ok: false, message: 'This desktop does not resume chats from another device.' },
+          ),
+        )
       if (command.kind === 'cancelQueued')
         return Promise.resolve(
           held ? held.cancel(chat, command.queuedId) : { ok: false, message: 'This desktop holds no queued messages.' },

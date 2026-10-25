@@ -137,7 +137,7 @@ import type { ContextBreakdownSource } from './agentChat/ContextBreakdown'
 import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
 import { useUsageLimitSnapshot } from './agentChat/usageLimits'
-import { UsageLimitResumeRow } from './agentChat/usageLimitResume'
+import { HostUsageLimitNoticeRow, UsageLimitResumeRow } from './agentChat/usageLimitResume'
 import {
   HostScheduledMessageRows,
   ScheduledMessageRows,
@@ -146,7 +146,7 @@ import {
 import { canScheduleMessages, updateScheduledMessage } from '../../store/scheduledMessagesStore'
 import { SendTimeTag } from '../workspace/agentComposer/schedule/SendTimeEditor'
 import { defaultSendAt } from '../workspace/agentComposer/schedule/sendTime'
-import { usageLimitProviderOf } from '../../store/usageLimitsStore'
+import { selectUsageLimitSnapshot, usageLimitProviderOf } from '../../store/usageLimitsStore'
 import { studioAppCommands, useConversationCommands } from './agentChat/useConversationCommands'
 import { composerAppCommand } from './agentChat/composerAppCommands'
 import { commandInsertText } from './agentChat/slashCommandMenu'
@@ -3675,13 +3675,44 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     [conversationLocalServers, workspaceId],
   )
   // The subscription limits of the agent this chat runs on — read on this
-  // computer, so only for a chat that runs here.
+  // computer for a chat that runs here, and on the paired machine a remote
+  // chat runs on, where it says what its agents reported (`hostUsageLimits`).
+  // A chat on WSL or an SSH machine has its agent's readings over there, and
+  // nothing there says them.
   const usageLimitsShown = useWorkspaceStore((s) => s.appSettings.appearance.usageLimits)
+  const hostUsageLimits =
+    transport.kind === 'remote' && transport.capabilities.hostUsageLimits ? (binding.hostUsageLimits ?? null) : null
   const usageProvider =
     usageLimitsShown && transport.kind !== 'remote' && !stripFacts.machine
       ? usageLimitProviderOf(conversation?.providerId)
       : null
-  const stripUsageLimits = useUsageLimitSnapshot(usageProvider)
+  const localUsageLimits = useUsageLimitSnapshot(usageProvider)
+  const hostUsageProvider = usageLimitsShown && hostUsageLimits ? usageLimitProviderOf(conversation?.providerId) : null
+  const stripUsageLimits = hostUsageLimits
+    ? selectUsageLimitSnapshot(hostUsageLimits.state, hostUsageProvider)
+    : localUsageLimits
+  const usageLimitsElsewhere = useMemo(
+    () => (hostUsageLimits ? { machineName: hostUsageLimits.machineName, state: hostUsageLimits.state } : undefined),
+    [hostUsageLimits],
+  )
+  // The resume row's buttons on a remote chat ask that machine, which sends
+  // the resume; a refusal is said here in its words.
+  const actOnHostUsageLimit = useCallback(
+    (action: 'schedule' | 'cancel' | 'dismiss' | 'retry', always?: boolean) => {
+      const resume = transport.usageLimitResume
+      if (!resume) return
+      void resume({ action, ...(always ? { always: true } : {}) }).then(
+        (result) => {
+          if (!result.ok)
+            setActionError(
+              `${transport.machineName ?? 'The other machine'} could not do that: ${result.message.replace(/\.$/u, '')}.`,
+            )
+        },
+        () => setActionError(`${transport.machineName ?? 'The other machine'} did not answer.`),
+      )
+    },
+    [transport],
+  )
   // "Create PR" works in this computer's checkout, or on the paired machine a
   // remote chat runs on, which does every step in its own checkout (owner
   // ruling 2026-10-18) where it says it can and this pairing may drive the
@@ -4127,8 +4158,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
 
               {/* A turn a usage limit stopped: when the limit resets, and
                 the resume Studio can send the chat then. Read on this
-                computer, so only for a chat that runs here. */}
-              {transport.kind !== 'remote' && !stripFacts.machine ? (
+                computer for a chat that runs here, and on the paired
+                machine a remote chat runs on, which sends its resume. */}
+              {hostUsageLimits ? (
+                <HostUsageLimitNoticeRow
+                  notice={hostUsageLimits.notice}
+                  autoResume={hostUsageLimits.autoResume}
+                  {...(operate && transport.usageLimitResume ? { onAct: actOnHostUsageLimit } : {})}
+                />
+              ) : transport.kind !== 'remote' && !stripFacts.machine ? (
                 <UsageLimitResumeRow workspaceId={workspaceId} agentId={agentId} />
               ) : null}
 
@@ -4522,6 +4560,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               createPullRequest={createPullRequest}
               localServers={stripLocalServers}
               usageLimits={stripUsageLimits}
+              {...(usageLimitsElsewhere ? { usageLimitsElsewhere } : {})}
             />
           </div>
           {replay ? (

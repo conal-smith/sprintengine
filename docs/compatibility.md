@@ -464,6 +464,23 @@ carries the three as owners' methods (`conversation.scheduleSend`,
 `conversation.sendScheduledNow`, `conversation.cancelScheduled`), as it carries
 `conversation.cancelQueued`, but does not advertise the capability: its
 conversation topic carries no `scheduled` frames.
+A desktop's usage limits are the `conversation-usage-limits` capability
+(2026-10-25): `{ type: 'watchUsageLimits', requestId }` has it send a
+`usageLimits` frame (`ConversationUsageLimitsFrame`: the chat's `key`, the
+`notice` a usage limit left on that chat's turn or null, `autoResume`, and
+`limits`, each plan's windows as its agents reported them, without billing)
+now and whenever any of it changes; and `usageLimitResume` (`action`:
+`schedule`, `cancel`, `dismiss` or `retry`; `always` beside `schedule`
+switches the desktop's resume on for every chat a limit stops) acts on the
+notice as the desktop's own tray row does. A repeat under the same id is
+answered as the first was. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command` and the request as
+`invalid_frame`, and a client asks only where it is advertised. A provider
+or a plan name a client does not know passes the validator, for a newer
+desktop to add one; the desktop client leaves such a plan out. The Studio
+RPC carries the command as an owner's method, `conversation.usageLimitResume`,
+but does not advertise the capability: its conversation topic carries no
+`usageLimits` frames.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

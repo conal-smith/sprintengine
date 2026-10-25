@@ -14,6 +14,7 @@ import {
 import {
   CONVERSATION_QUEUED_SENDS_CAPABILITY,
   CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
+  CONVERSATION_USAGE_LIMITS_CAPABILITY,
   conversationPeerSupports,
 } from '../../../../packages/conversation-protocol/src/handshake'
 import {
@@ -42,6 +43,7 @@ import type {
   MeshLinkState,
   MeshQueuedMessage,
   MeshScheduledMessage,
+  MeshConversationUsageLimits,
 } from '../../../shared/tailnet-mesh'
 import { asRecord } from '../../../shared/records'
 import type { RemoteConversationCache, RemoteConversationCacheRecord } from './tailnet-remote-conversation-cache'
@@ -230,6 +232,8 @@ type Follow = {
   queued: MeshQueuedMessage[] | null
   /** What the machine last said it has scheduled into the conversation, for a window that joins later. */
   scheduled: MeshScheduledMessage[] | null
+  /** What the machine last said of its usage limits for the conversation, for a window that joins later. */
+  usageLimits: MeshConversationUsageLimits | null
 }
 type SnapshotFrame = Extract<ConversationParsedServerFrame, { type: 'snapshot' }>
 
@@ -582,7 +586,8 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
       frame.type === 'snapshot' ||
       frame.type === 'synchronized' ||
       frame.type === 'queued' ||
-      frame.type === 'scheduled'
+      frame.type === 'scheduled' ||
+      frame.type === 'usageLimits'
         ? frame.key
         : frame.type === 'event'
           ? { workspaceId: frame.event.workspaceId, agentId: frame.event.agentId }
@@ -679,6 +684,7 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
         for (const command of follow.commands.values()) if (!command.sent) dispatch(follow, command)
         watchQueued(follow)
         watchScheduled(follow)
+        watchUsageLimits(follow)
         return
       }
       case 'queued': {
@@ -689,6 +695,17 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
       case 'scheduled': {
         follow.scheduled = frame.messages
         emit(follow, { type: 'scheduled', messages: frame.messages })
+        return
+      }
+      case 'usageLimits': {
+        const said: MeshConversationUsageLimits = {
+          type: 'usageLimits',
+          notice: frame.notice,
+          autoResume: frame.autoResume,
+          limits: frame.limits,
+        }
+        follow.usageLimits = said
+        emit(follow, said)
         return
       }
       case 'subscribeFailed': {
@@ -860,6 +877,13 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
     send(follow, { type: 'watchScheduled', requestId: `scheduled-${++follow.requestSequence}` })
   }
 
+  /** Ask the machine what it knows of its usage limits, after each fence, as `watchScheduled` asks. */
+  function watchUsageLimits(follow: Follow): void {
+    const capabilities = options.capabilitiesOf?.(follow.key.connectionId)
+    if (capabilities && !conversationPeerSupports(capabilities, CONVERSATION_USAGE_LIMITS_CAPABILITY)) return
+    send(follow, { type: 'watchUsageLimits', requestId: `usage-${++follow.requestSequence}` })
+  }
+
   function dispatch(follow: Follow, command: PendingCommand): void {
     if (!follow.synchronized) return
     command.sent = send(follow, command.frame)
@@ -978,6 +1002,7 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
           dirty: false,
           queued: null,
           scheduled: null,
+          usageLimits: null,
         }
         created.loaded = options.cache.load(key).then(
           (record) => {
@@ -1024,6 +1049,7 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
       // as the first was.
       if (joined.queued) input.emit({ type: 'queued', messages: joined.queued })
       if (joined.scheduled) input.emit({ type: 'scheduled', messages: joined.scheduled })
+      if (joined.usageLimits) input.emit(joined.usageLimits)
       return { ok: true }
     },
 

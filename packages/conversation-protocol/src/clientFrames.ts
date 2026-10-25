@@ -7,10 +7,13 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_SEND_SKILLS,
+  CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS,
   isConversationPermissionModeId,
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
   type ConversationWatchScheduledRequest,
+  type ConversationWatchUsageLimitsRequest,
+  type ConversationUsageLimitResumeAction,
 } from './commands.js'
 import type { ConversationHelloRequest } from './handshake.js'
 
@@ -27,6 +30,7 @@ export type ConversationClientMessage =
   | ConversationHelloRequest
   | ConversationWatchQueuedRequest
   | ConversationWatchScheduledRequest
+  | ConversationWatchUsageLimitsRequest
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -75,6 +79,8 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
     return id(value.requestId) ? { type: 'watchQueued', requestId: value.requestId } : null
   if (value.type === 'watchScheduled')
     return id(value.requestId) ? { type: 'watchScheduled', requestId: value.requestId } : null
+  if (value.type === 'watchUsageLimits')
+    return id(value.requestId) ? { type: 'watchUsageLimits', requestId: value.requestId } : null
   if (value.type === 'command' && record(value.command)) {
     const command = value.command
     // When the message was written, and whether the person confirmed one
@@ -138,6 +144,17 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
             command: { kind: command.kind, scheduledId: command.scheduledId },
           }
         : null
+    }
+    if (command.kind === 'usageLimitResume') {
+      const action = command.action as ConversationUsageLimitResumeAction
+      if (!id(value.commandId) || !CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS.includes(action)) return null
+      // "Always" is a way to schedule, and only that.
+      if (command.always !== undefined && (command.always !== true || action !== 'schedule')) return null
+      return {
+        type: 'command',
+        commandId: value.commandId,
+        command: { kind: 'usageLimitResume', action, ...(command.always === true ? { always: true } : {}) },
+      }
     }
     // A steer is read as the send it rides on, and is never one held for
     // later: the two ask for opposite things.
@@ -230,7 +247,8 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
       rejection.commandKind === 'stopSubagent' ||
       rejection.commandKind === 'scheduleSend' ||
       rejection.commandKind === 'sendScheduledNow' ||
-      rejection.commandKind === 'cancelScheduled')
+      rejection.commandKind === 'cancelScheduled' ||
+      rejection.commandKind === 'usageLimitResume')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

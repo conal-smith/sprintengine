@@ -155,6 +155,14 @@ and adds, each behind its capability:
   `messages`, soonest first, whole each time) now and whenever they change. A
   desktop without it refuses the three kinds as `unsupported_command` and
   `watchScheduled` as `invalid_frame`.
+- `conversation-usage-limits`: `{ type: 'watchUsageLimits', requestId }` has
+  the desktop send a `usageLimits` frame (`ConversationUsageLimitsFrame`: the
+  chat's `key`, the `notice` a usage limit left on its turn or null,
+  `autoResume`, and each plan's windows in `limits`) now and whenever any of
+  it changes; `usageLimitResume` with an `action` (`schedule`, `cancel`,
+  `dismiss`, `retry`; `always` beside `schedule`) acts on the notice. A
+  desktop without it refuses the kind as `unsupported_command` and
+  `watchUsageLimits` as `invalid_frame`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

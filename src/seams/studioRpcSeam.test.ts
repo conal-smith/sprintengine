@@ -320,6 +320,8 @@ test('every method the server serves has its call in the SDK, under the same sco
     'conversation.scheduleSend': 'request',
     'conversation.sendScheduledNow': 'request',
     'conversation.cancelScheduled': 'request',
+    // And a usage limit's resume, which the tray row asks for.
+    'conversation.usageLimitResume': 'request',
     'conversation.loadEarlier': 'conversations.loadEarlier',
     'conversation.toolDetail': 'conversations.toolDetail',
     'conversation.turnDiff': 'conversations.turnDiff',

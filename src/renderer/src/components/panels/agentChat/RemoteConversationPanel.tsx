@@ -10,6 +10,7 @@ import type {
   MeshConversationLink,
   MeshQueuedMessage,
   MeshScheduledMessage,
+  MeshConversationUsageLimits,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
 import {
@@ -19,6 +20,7 @@ import {
 import { ConversationChatBody } from '../AgentChatView'
 import { remoteFileCountsOf } from '../../workspace/terminalLines'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
+import { hostUsageLimitsOf } from './hostUsageLimits'
 import { publishRemoteChat } from './remoteChatRegistry'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
 import type { ChatReadiness } from './chatStates'
@@ -178,6 +180,10 @@ export default function RemoteConversationPanel({
   // and what it keeps for this chat, as it last said.
   const [scheduledSends, setScheduledSends] = useState(false)
   const [hostScheduled, setHostScheduled] = useState<MeshScheduledMessage[]>([])
+  // The machine says what it knows of its agents' usage limits, and what it
+  // last said of them for this chat.
+  const [usageLimits, setUsageLimits] = useState(false)
+  const [hostUsage, setHostUsage] = useState<MeshConversationUsageLimits | null>(null)
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
   // chip names what the machine says the chat is now on.
@@ -205,6 +211,8 @@ export default function RemoteConversationPanel({
   steerSendsRef.current = steerSends
   const scheduledSendsRef = useRef(scheduledSends)
   scheduledSendsRef.current = scheduledSends
+  const usageLimitsRef = useRef(usageLimits)
+  usageLimitsRef.current = usageLimits
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -215,6 +223,7 @@ export default function RemoteConversationPanel({
       onLink: setLink,
       onQueued: setHostQueued,
       onScheduled: setHostScheduled,
+      onUsageLimits: setHostUsage,
       // A pull request Create PR opened there is in the machine's list now:
       // read it again, so the strip says "Open PR #N" without waiting for the
       // sidebar's next read.
@@ -245,6 +254,7 @@ export default function RemoteConversationPanel({
           steer: steerSendsRef.current,
           hostPullRequests: hostPullRequestsRef.current,
           hostSchedule: scheduledSendsRef.current,
+          hostUsageLimits: usageLimitsRef.current,
         }
       },
       ...(setModel
@@ -287,6 +297,7 @@ export default function RemoteConversationPanel({
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
         setScheduledSends(result.scheduledSends === true)
+        setUsageLimits(result.usageLimits === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -323,6 +334,10 @@ export default function RemoteConversationPanel({
       pullRequests,
     }
   }, [facts])
+  const hostUsageLimits = useMemo(
+    () => (usageLimits && hostUsage ? hostUsageLimitsOf(machineName, hostUsage) : null),
+    [usageLimits, hostUsage, machineName],
+  )
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
     () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
@@ -349,6 +364,7 @@ export default function RemoteConversationPanel({
       ...(engine ? { engine } : {}),
       hostQueue: { machineName, messages: hostQueued },
       ...(scheduledSends ? { hostSchedule: { machineName, messages: hostScheduled } } : {}),
+      ...(hostUsageLimits ? { hostUsageLimits } : {}),
       listed,
     }),
     [
@@ -364,6 +380,7 @@ export default function RemoteConversationPanel({
       hostQueued,
       scheduledSends,
       hostScheduled,
+      hostUsageLimits,
       listed,
     ],
   )

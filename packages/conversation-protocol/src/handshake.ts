@@ -86,6 +86,15 @@ export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent
  */
 export const CONVERSATION_SCHEDULED_SENDS_CAPABILITY = 'conversation-scheduled-sends' as const
 /**
+ * The desktop says what it knows of its agents' subscription limits, as its
+ * own composer strip and tray draw them: `watchUsageLimits` has it send
+ * `usageLimits` frames for the chat followed (each plan's windows, and the
+ * notice a usage limit left on the chat's turn), and `usageLimitResume`
+ * schedules, cancels, dismisses or retries the resume it sends the chat once
+ * the limit resets. They are read and sent over there, where the agents run.
+ */
+export const CONVERSATION_USAGE_LIMITS_CAPABILITY = 'conversation-usage-limits' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -131,6 +140,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
   CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
+  CONVERSATION_USAGE_LIMITS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

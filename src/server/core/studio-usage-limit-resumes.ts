@@ -8,7 +8,10 @@ import type {
 import { usageLimitKindOf } from '../../shared/usage-limit-resume'
 import type { UsageLimitHit, UsageLimitProvider, UsageLimitsState } from '../../shared/usage-limits'
 import { isSettledWorkspace } from '../../shared/workspace-lifecycle'
-import type { ConversationGatewayHost } from '../../main/automation/tailnet/tailnet-conversation-host'
+import type {
+  ConversationGatewayHost,
+  ConversationUsageLimits,
+} from '../../main/automation/tailnet/tailnet-conversation-host'
 import {
   createUsageLimitResumer,
   USAGE_LIMIT_RESUMES_FILE,
@@ -101,4 +104,52 @@ export function createStudioUsageLimitResumes(deps: StudioUsageLimitResumesDeps)
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.log ? { log: deps.log } : {}),
   })
+}
+
+/**
+ * The usage limits as the conversation host says them to a paired machine
+ * following one of this machine's chats: every plan's windows as this
+ * process's store holds them, and the chat's notice from the resumes, which
+ * that machine acts on as this machine's own tray row does. Read through
+ * `resumes` at each call, since the hosts are made before it is.
+ */
+export function studioConversationUsageLimits(
+  resumes: () => UsageLimitResumer,
+  usage: Pick<ReturnType<typeof usageLimitsStore>, 'state' | 'onChanged'> = usageLimitsStore(),
+): ConversationUsageLimits {
+  return {
+    list(chat) {
+      const state = resumes().state()
+      const notice =
+        state.notices.find((entry) => entry.workspaceId === chat.workspaceId && entry.agentId === chat.agentId) ?? null
+      return {
+        notice: notice
+          ? {
+              provider: notice.provider,
+              limit: notice.limit,
+              resetsAt: notice.resetsAt,
+              hitAt: notice.hitAt,
+              resumeAt: notice.resumeAt,
+              ...(notice.failure !== undefined ? { failure: notice.failure } : {}),
+            }
+          : null,
+        autoResume: state.autoResume,
+        // What the strip and its list draw: never billing, which only says
+        // whether a plan is shown at all, and the store shows a subscription's alone.
+        limits: usage.state().snapshots.map(({ billing: _billing, ...snapshot }) => snapshot),
+      }
+    },
+    update(chat, action, always) {
+      const chatKey = { workspaceId: chat.workspaceId, agentId: chat.agentId }
+      if (always) resumes().update({ kind: 'auto', enabled: true })
+      resumes().update({ kind: action, ...chatKey })
+      return { ok: true }
+    },
+    onChanged(listener) {
+      const stops = [resumes().onChanged(() => listener()), usage.onChanged(() => listener())]
+      return () => {
+        for (const stop of stops) stop()
+      }
+    },
+  }
 }

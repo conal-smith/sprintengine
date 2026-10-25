@@ -45,6 +45,8 @@ import type {
   MeshConversationLink,
   MeshQueuedMessage,
   MeshScheduledMessage,
+  MeshConversationUsageLimits,
+  MeshUsageLimitResumeAction,
 } from '../../../../../shared/tailnet-mesh'
 
 // Where a chat view's conversation lives. The view — its transcript, pending
@@ -139,6 +141,14 @@ export type ConversationTransportCapabilities = {
    * False here, where this computer's main keeps a local chat's.
    */
   hostSchedule: boolean
+  /**
+   * The machine the chat runs on says what it knows of its agents' usage
+   * limits, and sends the resume after one: the strip draws its plans'
+   * windows and the tray its notice, whose buttons ask it through
+   * `usageLimitResume`, where it advertises that (`conversation-usage-limits`).
+   * False here, where this computer's main reads a local chat's.
+   */
+  hostUsageLimits: boolean
 }
 
 /** What an action answers: the local session API's result, or a remote command's. */
@@ -183,6 +193,16 @@ export type ConversationTransport = {
   sendScheduledNow?(input: { scheduledId: string }): Promise<ConversationTransportResult>
   /** Delete a message that machine keeps, by its id there: Delete, and Edit's taking it back. */
   cancelScheduled?(input: { scheduledId: string }): Promise<ConversationTransportResult>
+  /**
+   * Act on the notice a usage limit left on the chat's turn, on the machine
+   * that sends its resume: schedule it (`always`: for every chat a limit
+   * stops there), cancel, dismiss or retry it. Used where
+   * `capabilities.hostUsageLimits` is.
+   */
+  usageLimitResume?(input: {
+    action: MeshUsageLimitResumeAction
+    always?: boolean
+  }): Promise<ConversationTransportResult>
   /**
    * A sent image by the reference its `user_message` recorded. Absent for a
    * remote conversation: the images are in the other machine's store, so a
@@ -276,6 +296,8 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   hostPullRequests: false,
   // Main keeps and sends a local chat's scheduled messages itself.
   hostSchedule: false,
+  // And reads a local chat's usage limits, and sends its resume, itself.
+  hostUsageLimits: false,
 }
 
 type LocalParts = Omit<ConversationTransport, 'kind' | 'capabilities' | 'services'>
@@ -419,7 +441,8 @@ const commandResult = (result: MeshConversationCommandResult): ConversationTrans
  * machine's idea of a workspace root, which means nothing over there.
  * `onLink` receives the connection state main narrates beside the frames, and
  * `onQueued` what the machine holds for the conversation's turn to end, and
- * `onScheduled` what it keeps for a time.
+ * `onScheduled` what it keeps for a time, and `onUsageLimits` what it knows
+ * of its usage limits for it.
  */
 export function createRemoteConversationTransport(input: {
   key: MeshConversationKey
@@ -428,6 +451,7 @@ export function createRemoteConversationTransport(input: {
   onLink?: (link: MeshConversationLink) => void
   onQueued?: (messages: MeshQueuedMessage[]) => void
   onScheduled?: (messages: MeshScheduledMessage[]) => void
+  onUsageLimits?: (said: MeshConversationUsageLimits) => void
   /** The machine recorded a pull request Create PR opened there as the chat's. */
   onPullRequestRecorded?: () => void
 }): ConversationTransport {
@@ -463,6 +487,8 @@ export function createRemoteConversationTransport(input: {
       hostPullRequests: false,
       // Turned on from the machine's list, when it keeps messages scheduled for a time.
       hostSchedule: false,
+      // Turned on from the machine's list, when it says what it knows of its usage limits.
+      hostUsageLimits: false,
     },
     remoteExtensions: { connectionId: key.connectionId, workspaceId: key.workspaceId },
     pullRequestHost: remotePullRequestHost(key, () => input.onPullRequestRecorded?.()),
@@ -471,6 +497,7 @@ export function createRemoteConversationTransport(input: {
         if (frame.type === 'link') input.onLink?.(frame)
         else if (frame.type === 'queued') input.onQueued?.(frame.messages)
         else if (frame.type === 'scheduled') input.onScheduled?.(frame.messages)
+        else if (frame.type === 'usageLimits') input.onUsageLimits?.(frame)
         else cb(frame)
       }),
     loadEarlier: (page) =>
@@ -503,6 +530,14 @@ export function createRemoteConversationTransport(input: {
       commandResult(await window.api.meshConversationSendScheduledNow({ key, scheduledId: scheduled.scheduledId })),
     cancelScheduled: async (scheduled) =>
       commandResult(await window.api.meshConversationCancelScheduled({ key, scheduledId: scheduled.scheduledId })),
+    usageLimitResume: async (resume) =>
+      commandResult(
+        await window.api.meshConversationUsageLimitResume({
+          key,
+          action: resume.action,
+          ...(resume.always ? { always: true } : {}),
+        }),
+      ),
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).

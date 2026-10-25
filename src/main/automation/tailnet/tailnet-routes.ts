@@ -203,6 +203,14 @@ export const TAILNET_CAPABILITIES = [
   // frames. A client offers no Schedule for a machine without it.
   // CONVERSATION_SCHEDULED_SENDS_CAPABILITY.
   'conversation-scheduled-sends',
+  // This machine's usage limits for a paired machine's chat strip and tray
+  // (2026-10-25): `watchUsageLimits` has the socket say, in `usageLimits`
+  // frames, every plan's windows as this machine's agents reported them and
+  // the notice a limit left on the followed chat's turn; `usageLimitResume`
+  // schedules, cancels, dismisses or retries the resume this machine sends it
+  // when the limit resets. A client draws neither for a machine without it.
+  // CONVERSATION_USAGE_LIMITS_CAPABILITY.
+  'conversation-usage-limits',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

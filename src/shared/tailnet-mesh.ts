@@ -4,6 +4,9 @@ import type {
   ConversationQueuedMessage,
   ConversationScheduledMessage,
   ConversationThread,
+  ConversationUsageLimitNotice,
+  ConversationUsageLimitResumeAction,
+  ConversationUsageLimitSnapshot,
 } from '../../packages/conversation-protocol/src/public'
 import type { ConversationSessionFrame } from './conversation-runtime'
 import { conversationPhaseWorking, phaseWithBackgroundWork } from './conversation/phase'
@@ -456,8 +459,35 @@ export type MeshConversationScheduled = { type: 'scheduled'; messages: MeshSched
 /** A message a paired machine has scheduled into its chat, by that machine's id for it. */
 export type MeshScheduledMessage = ConversationScheduledMessage
 
+/**
+ * What the machine knows of its agents' usage limits, for this conversation,
+ * whole each time (`conversation-usage-limits`): the notice a limit left on
+ * the chat's turn (null for none), whether it resumes every such chat by
+ * itself, and each plan's windows. The last heard stands while the link is
+ * down.
+ */
+export type MeshConversationUsageLimits = {
+  type: 'usageLimits'
+  notice: MeshUsageLimitNotice | null
+  autoResume: boolean
+  limits: MeshUsageLimitSnapshot[]
+}
+
+/** A paired machine's notice for a chat a usage limit stopped. */
+export type MeshUsageLimitNotice = ConversationUsageLimitNotice
+
+/** One plan's windows as a paired machine's agents reported them. */
+export type MeshUsageLimitSnapshot = ConversationUsageLimitSnapshot
+
+/** What a paired machine's resume row asks of it. */
+export type MeshUsageLimitResumeAction = ConversationUsageLimitResumeAction
+
 export type MeshConversationFrame =
-  ConversationSessionFrame | MeshConversationLink | MeshConversationQueued | MeshConversationScheduled
+  | ConversationSessionFrame
+  | MeshConversationLink
+  | MeshConversationQueued
+  | MeshConversationScheduled
+  | MeshConversationUsageLimits
 
 /**
  * `modelSwitch`: the machine advertises `conversation-models` — its list names
@@ -499,6 +529,11 @@ export type MeshConversationFrame =
  * deleted from here. False for a machine that does not, whose chats offer no
  * Schedule here.
  *
+ * `usageLimits`: the machine advertises `conversation-usage-limits` — its
+ * chats' strip draws its plans' usage limits here, and their tray its notice
+ * for a chat a limit stopped, with the resume it sends. False for a machine
+ * that does not, whose chats draw neither here.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -521,6 +556,7 @@ export type MeshConversationListResult =
       steerSends?: boolean
       stopSubagents?: boolean
       scheduledSends?: boolean
+      usageLimits?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -538,7 +574,8 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
  * The commands a remote device may send. A permanent rule is not among them.
  * A queued send and taking one back need `conversation-queued-sends` there;
  * scheduling one, and sending or deleting one scheduled, need
- * `conversation-scheduled-sends`.
+ * `conversation-scheduled-sends`, and a usage limit's resume
+ * `conversation-usage-limits`.
  */
 export type MeshConversationCommand =
   | ConversationWireCommand
@@ -548,6 +585,7 @@ export type MeshConversationCommand =
   | { kind: 'scheduleSend'; message: string; sendAt: number }
   | { kind: 'sendScheduledNow'; scheduledId: string }
   | { kind: 'cancelScheduled'; scheduledId: string }
+  | { kind: 'usageLimitResume'; action: MeshUsageLimitResumeAction; always?: true }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }

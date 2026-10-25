@@ -11,11 +11,17 @@ import {
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
   CONVERSATION_MAX_SCHEDULED_MESSAGES,
+  CONVERSATION_MAX_USAGE_LIMIT_PLANS,
+  CONVERSATION_MAX_USAGE_LIMIT_WINDOWS,
   isConversationPermissionModeId,
   type ConversationQueuedFrame,
   type ConversationQueuedMessage,
   type ConversationScheduledFrame,
   type ConversationScheduledMessage,
+  type ConversationUsageLimitNotice,
+  type ConversationUsageLimitSnapshot,
+  type ConversationUsageLimitWindow,
+  type ConversationUsageLimitsFrame,
 } from './commands.js'
 
 // The client half of the frame contract: what a desktop or phone following a
@@ -329,6 +335,7 @@ export type ConversationParsedServerFrame =
     }
   | ConversationQueuedFrame
   | ConversationScheduledFrame
+  | ConversationUsageLimitsFrame
 
 const SERVER_FRAME_TYPES = new Set([
   'sessions',
@@ -342,6 +349,7 @@ const SERVER_FRAME_TYPES = new Set([
   'error',
   'queued',
   'scheduled',
+  'usageLimits',
 ])
 const PHASES = new Set<ConversationWirePhase>([
   'idle',
@@ -607,6 +615,72 @@ function thread(value: unknown): ConversationThread | null {
   }
 }
 
+// A provider or a plan is a short lower-case token; one this client does not
+// know still passes, and the client draws it as it can.
+const USAGE_TOKEN = /^[a-z][a-z0-9_-]{0,31}$/
+const USAGE_STATUSES = new Set(['allowed', 'warning', 'rejected'])
+const nullableClock = (value: unknown): value is number | null => value === null || clock(value)
+
+/** A `usageLimits` frame's notice, or null for one this client cannot read. */
+export function parseConversationUsageLimitNotice(value: unknown): ConversationUsageLimitNotice | null {
+  if (!record(value) || typeof value.provider !== 'string' || !USAGE_TOKEN.test(value.provider)) return null
+  if (!nullableClock(value.resetsAt) || !clock(value.hitAt) || !nullableClock(value.resumeAt)) return null
+  return {
+    provider: value.provider,
+    limit: value.limit === 'session' || value.limit === 'weekly' ? value.limit : null,
+    resetsAt: value.resetsAt,
+    hitAt: value.hitAt,
+    resumeAt: value.resumeAt,
+    ...(typeof value.failure === 'string' && value.failure && value.failure.length <= 2_000
+      ? { failure: value.failure }
+      : {}),
+  }
+}
+
+function usageWindow(value: unknown): ConversationUsageLimitWindow | null {
+  if (!record(value) || !id(value.id) || !text(value.label, 200) || !USAGE_STATUSES.has(value.status as string))
+    return null
+  const used = value.usedPercent
+  if (!(used === null || (typeof used === 'number' && Number.isFinite(used)))) return null
+  if (!nullableClock(value.resetsAt) || !clock(value.observedAt)) return null
+  return {
+    id: value.id,
+    label: value.label,
+    usedPercent: used === null ? null : Math.min(100, Math.max(0, used)),
+    resetsAt: value.resetsAt,
+    ...(typeof value.durationMs === 'number' && Number.isFinite(value.durationMs) && value.durationMs > 0
+      ? { durationMs: value.durationMs }
+      : {}),
+    ...(value.scope === 'model' ? { scope: 'model' as const } : {}),
+    status: value.status as ConversationUsageLimitWindow['status'],
+    observedAt: value.observedAt,
+  }
+}
+
+/** A `usageLimits` frame's plans: unreadable plans and windows dropped, each list bounded. */
+export function parseConversationUsageLimitSnapshots(value: unknown): ConversationUsageLimitSnapshot[] | null {
+  if (!Array.isArray(value)) return null
+  const snapshots: ConversationUsageLimitSnapshot[] = []
+  for (const entry of value) {
+    if (snapshots.length >= CONVERSATION_MAX_USAGE_LIMIT_PLANS) break
+    if (!record(entry) || typeof entry.provider !== 'string' || !USAGE_TOKEN.test(entry.provider)) continue
+    if (!Array.isArray(entry.windows) || !clock(entry.observedAt)) continue
+    const windows: ConversationUsageLimitWindow[] = []
+    for (const raw of entry.windows) {
+      if (windows.length >= CONVERSATION_MAX_USAGE_LIMIT_WINDOWS) break
+      const window = usageWindow(raw)
+      if (window) windows.push(window)
+    }
+    snapshots.push({
+      provider: entry.provider,
+      ...(typeof entry.plan === 'string' && USAGE_TOKEN.test(entry.plan) ? { plan: entry.plan } : {}),
+      windows,
+      observedAt: entry.observedAt,
+    })
+  }
+  return snapshots
+}
+
 function retry(value: Record<string, unknown>): { retryAfterMs?: number } {
   return integer(value.retryAfterMs) ? { retryAfterMs: value.retryAfterMs } : {}
 }
@@ -779,6 +853,22 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
         })
       }
       return { type: 'scheduled', key: { workspaceId: key.workspaceId, agentId: key.agentId }, messages }
+    }
+    case 'usageLimits': {
+      const key = frame.key
+      if (!record(key) || !id(key.workspaceId) || !id(key.agentId) || typeof frame.autoResume !== 'boolean') return null
+      const limits = parseConversationUsageLimitSnapshots(frame.limits)
+      if (!limits) return null
+      // A notice this client cannot read is none: the row is not drawn
+      // rather than drawn wrong.
+      const notice = frame.notice === null ? null : parseConversationUsageLimitNotice(frame.notice)
+      return {
+        type: 'usageLimits',
+        key: { workspaceId: key.workspaceId, agentId: key.agentId },
+        notice,
+        autoResume: frame.autoResume,
+        limits,
+      }
     }
     default:
       return null

@@ -12,7 +12,11 @@ import type { MeshConversationFrame, MeshConversationKey } from '../../shared/ta
 import { ConversationRuntime } from '../conversation-runtime'
 import type { ConversationProviderAdapter } from '../providers/conversation-provider-adapter'
 import { createMockConversationProvider } from '../providers/mock-conversation-provider'
-import { createConversationGatewayHost, type ConversationGatewayHost } from './tailnet/tailnet-conversation-host'
+import {
+  createConversationGatewayHost,
+  type ConversationGatewayHost,
+  type ConversationUsageLimits,
+} from './tailnet/tailnet-conversation-host'
 import { createTailnetDeviceStore, type TailnetDeviceStore } from './tailnet/tailnet-devices'
 import { createTailnetMeshService, type TailnetMeshService } from './tailnet/tailnet-mesh-service'
 import { createTailnetMeshStore } from './tailnet/tailnet-mesh-store'
@@ -135,7 +139,9 @@ const agentId = 'agent'
  */
 type HarnessTools = (runtime: ConversationRuntime, workspaceRoot: string) => McpToolRegistration[]
 
-async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTools } = {}): Promise<Harness> {
+async function startHarness(
+  options: { holdQueued?: boolean; tools?: HarnessTools; usageLimits?: ConversationUsageLimits } = {},
+): Promise<Harness> {
   const workspaceRoot = mkdtempSync(join(tmpdir(), 'remote-conversation-host-'))
   const remoteDir = mkdtempSync(join(tmpdir(), 'remote-conversation-devices-'))
   const localDir = mkdtempSync(join(tmpdir(), 'remote-conversation-local-'))
@@ -188,9 +194,12 @@ async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTool
           }
         : null,
     undefined,
-    scheduled
-      ? { heldMessages: studioHeldMessages(() => scheduled), scheduledSends: studioScheduledSends(() => scheduled) }
-      : {},
+    {
+      ...(scheduled
+        ? { heldMessages: studioHeldMessages(() => scheduled), scheduledSends: studioScheduledSends(() => scheduled) }
+        : {}),
+      ...(options.usageLimits ? { usageLimits: options.usageLimits } : {}),
+    },
   )
   if (scheduled) {
     await scheduled.start()
@@ -1438,6 +1447,59 @@ test('a machine that keeps no scheduled messages refuses one in words', async ()
     })
     assert.equal(refused.ok, false)
     assert.match(!refused.ok ? refused.message : '', /schedule/)
+  } finally {
+    await h.close()
+  }
+})
+
+test("a paired desktop hears a chat's usage limits from the machine it runs on, and its resume is asked of that machine", async () => {
+  const notice = { provider: 'claude', limit: 'session' as const, resetsAt: 9_000_000, hitAt: 5, resumeAt: null }
+  let resumeAt: number | null = null
+  const asked: Array<[string, boolean]> = []
+  const changed = new Set<() => void>()
+  const usageLimits: ConversationUsageLimits = {
+    list: (chat) => ({
+      notice: chat.agentId === agentId ? { ...notice, resumeAt } : null,
+      autoResume: false,
+      limits: [{ provider: 'claude', observedAt: 1, windows: [] }],
+    }),
+    update(_chat, action, always) {
+      asked.push([action, always])
+      resumeAt = action === 'schedule' ? 9_000_000 : null
+      for (const listener of changed) listener()
+      return { ok: true }
+    },
+    onChanged(listener) {
+      changed.add(listener)
+      return () => changed.delete(listener)
+    },
+  }
+  const h = await startHarness({ usageLimits })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.equal(listed.usageLimits, true, 'the machine says it tells its usage limits')
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    await waitFor(() => pane.of('usageLimits').length > 0, 'told what the machine knows')
+    assert.deepEqual(pane.of('usageLimits').at(-1), {
+      type: 'usageLimits',
+      notice,
+      autoResume: false,
+      limits: [{ provider: 'claude', observedAt: 1, windows: [] }],
+    })
+    assert.deepEqual(
+      await h.mesh.conversationCommand({ key, command: { kind: 'usageLimitResume', action: 'schedule' } }),
+      { ok: true },
+    )
+    assert.deepEqual(asked, [['schedule', false]])
+    await waitFor(() => pane.of('usageLimits').at(-1)?.notice?.resumeAt === 9_000_000, 'the resume is said scheduled')
+    // A second window opened now is told at once, without asking the machine again.
+    const second = follower(h.mesh, key, 'pane-2')
+    await second.following
+    assert.equal(second.of('usageLimits').at(-1)?.notice?.resumeAt, 9_000_000)
   } finally {
     await h.close()
   }

@@ -13,6 +13,22 @@
 
 ### Added
 
+- **A desktop says what it knows of its agents' usage limits.**
+  `CONVERSATION_USAGE_LIMITS_CAPABILITY` (`conversation-usage-limits`) names a
+  desktop that answers `ConversationWatchUsageLimitsRequest`
+  (`watchUsageLimits`) with `ConversationUsageLimitsFrame`s (`usageLimits`: the
+  followed chat's `ConversationUsageLimitNotice` or null, `autoResume`, and
+  each plan's `ConversationUsageLimitSnapshot`, at most
+  `CONVERSATION_MAX_USAGE_LIMIT_PLANS` of
+  `CONVERSATION_MAX_USAGE_LIMIT_WINDOWS` windows each), now and on every
+  change, and takes `usageLimitResume` (`action`, one of
+  `CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS`, and `always` beside `schedule`).
+  `parseConversationUsageLimitNotice` and
+  `parseConversationUsageLimitSnapshots` read the frame's members;
+  `parseConversationClientMessage` refuses a malformed resume as
+  `invalid_frame`. A desktop without the capability refuses the kind as
+  `unsupported_command`. The pinned files are unchanged.
+
 - **A message can be scheduled into a chat for a time.**
   `CONVERSATION_SCHEDULED_SENDS_CAPABILITY` (`conversation-scheduled-sends`)
   names a desktop that takes `scheduleSend` (`message`, `sendAt`), keeps the

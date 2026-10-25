@@ -76,7 +76,7 @@ import {
 import type { WslServers } from '../wsl/desktop-wsl-servers'
 import type { StudioRole } from './data-dir'
 import { takeDataDir } from './take-data-dir'
-import { createStudioUsageLimitResumes } from './studio-usage-limit-resumes'
+import { createStudioUsageLimitResumes, studioConversationUsageLimits } from './studio-usage-limit-resumes'
 import { studioPullRequestWakes } from './studio-pull-request-wakes'
 import { createStudioScheduledMessages, studioHeldMessages, studioScheduledSends } from './studio-scheduled-messages'
 import { createStudioAutoCompact } from './studio-auto-compact'
@@ -703,6 +703,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         // A message a paired machine scheduled into a chat here for a time is
         // kept among the same scheduled messages, and sent from here then.
         scheduledSends: studioScheduledSends(() => scheduledMessages),
+        // What this machine's agents reported of their plans' limits, and the
+        // resume it sends a chat a limit stopped, for a paired machine's strip
+        // and tray.
+        usageLimits: studioConversationUsageLimits(() => usageLimitResumes),
       },
     )
 

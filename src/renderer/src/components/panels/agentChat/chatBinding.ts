@@ -6,6 +6,7 @@ import type { ConversationSessionSummary } from '../../../../../shared/conversat
 import type { ChangedFileCounts } from '../../../../../shared/electron-api'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
 import type { MeshQueuedMessage, MeshScheduledMessage } from '../../../../../shared/tailnet-mesh'
+import type { HostUsageLimits } from './hostUsageLimits'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import type { Workspace } from '../../../types/workspace'
 import {
@@ -91,6 +92,13 @@ export type ChatBinding = {
    * there (`capabilities.hostSchedule`).
    */
   hostSchedule?: { machineName: string; messages: MeshScheduledMessage[] }
+  /**
+   * What the machine running the chat knows of its agents' usage limits, and
+   * the notice a limit left on the chat's turn there, as that machine last
+   * said, for a chat on another machine that says so
+   * (`capabilities.hostUsageLimits`).
+   */
+  hostUsageLimits?: HostUsageLimits
   /**
    * Where a chat on another machine works, as that machine lists it: the
    * branch its folder is on, whether that is a worktree, the files its

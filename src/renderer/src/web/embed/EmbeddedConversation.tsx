@@ -48,6 +48,7 @@ const READ_ONLY = {
   skills: false,
   hostPullRequests: false,
   hostSchedule: false,
+  hostUsageLimits: false,
 } as const
 
 const refused = async () => ({ ok: false as const, message: 'This view is read-only.' })

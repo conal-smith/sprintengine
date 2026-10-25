@@ -174,6 +174,7 @@ import type {
   MeshConversationCommandResult,
   MeshConversationFrame,
   MeshConversationKey,
+  MeshUsageLimitResumeAction,
   MeshConversationImageResult,
   MeshConversationListResult,
 } from './tailnet-mesh'
@@ -1107,6 +1108,14 @@ export type ElectronApi = {
   meshConversationCancelScheduled: (input: {
     key: MeshConversationKey
     scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
+  // Act on a chat over there that a usage limit stopped: schedule its resume
+  // for the reset (`always`: for every such chat there), cancel, dismiss or
+  // retry it. Needs `conversation-usage-limits` there.
+  meshConversationUsageLimitResume: (input: {
+    key: MeshConversationKey
+    action: MeshUsageLimitResumeAction
+    always?: boolean
   }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey

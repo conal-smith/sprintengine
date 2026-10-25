@@ -227,6 +227,9 @@ function drivesChat(command: ConversationCommand): boolean {
       return command.decision !== 'deny'
     case 'resolvePlan':
       return command.decision === 'approve'
+    // A resume scheduled, or sent again, is a send of Studio's own.
+    case 'usageLimitResume':
+      return command.action === 'schedule' || command.action === 'retry'
     default:
       return false
   }

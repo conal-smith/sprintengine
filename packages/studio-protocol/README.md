@@ -107,6 +107,7 @@ The `welcome`'s `grant` is what the connection may do:
 | `conversation.scheduleSend`        | operate, owner | `key`, `commandId`, `message`, `sendAt`         | `{}`, once it is kept                            |
 | `conversation.sendScheduledNow`    | operate, owner | `key`, `commandId`, `scheduledId`               | `{}`                                             |
 | `conversation.cancelScheduled`     | operate, owner | `key`, `commandId`, `scheduledId`               | `{}`                                             |
+| `conversation.usageLimitResume`    | operate, owner | `key`, `commandId`, `action`, `always?`         | `{}`                                             |
 | `conversation.stop`                | operate        | `key`, `commandId`                              | `{}`                                             |
 | `conversation.loadEarlier`         | read           | `key`, `beforeCursor`, `turnLimit?`             | `{ page }`                                       |
 | `conversation.toolDetail`          | read           | `key`, `toolUseId`                              | `{ detail }`                                     |

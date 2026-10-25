@@ -9,6 +9,7 @@ import {
   type ConversationQuestionAnswers,
   type ConversationRequestDecision,
   type ConversationThread,
+  type ConversationUsageLimitResumeAction,
   type ConversationWirePage,
   type ConversationWirePermissionPreset,
 } from './conversation.js'
@@ -182,6 +183,17 @@ type StudioConversationMethodMap = {
   }
   'conversation.sendScheduledNow': { params: Addressed<{ scheduledId: string }>; result: StudioCommandAnswer }
   'conversation.cancelScheduled': { params: Addressed<{ scheduledId: string }>; result: StudioCommandAnswer }
+  /**
+   * Acts on the notice a usage limit left on the chat's turn (the
+   * conversation lane's `usageLimitResume`): schedules the resume the desktop
+   * sends once the limit resets (`always`: for every chat a limit stops),
+   * cancels, dismisses or retries it. An owner's only: this socket's
+   * conversation topic names no notice.
+   */
+  'conversation.usageLimitResume': {
+    params: Addressed<{ action: ConversationUsageLimitResumeAction; always?: true }>
+    result: StudioCommandAnswer
+  }
   /** Ends the chat's live session. Idempotent by nature: stopping a stopped chat answers ok. */
   'conversation.stop': { params: Addressed<object>; result: StudioCommandAnswer }
   'conversation.loadEarlier': {
@@ -234,6 +246,7 @@ export const STUDIO_METHODS: { readonly [M in StudioMethod]: StudioMethodSpec } 
   'conversation.scheduleSend': { ...operate, owner: true },
   'conversation.sendScheduledNow': { ...operate, owner: true },
   'conversation.cancelScheduled': { ...operate, owner: true },
+  'conversation.usageLimitResume': { ...operate, owner: true },
   'conversation.stop': operate,
   'conversation.loadEarlier': read(),
   'conversation.toolDetail': read(),
@@ -300,6 +313,7 @@ export const STUDIO_COMMAND_METHODS = {
   'conversation.scheduleSend': 'scheduleSend',
   'conversation.sendScheduledNow': 'sendScheduledNow',
   'conversation.cancelScheduled': 'cancelScheduled',
+  'conversation.usageLimitResume': 'usageLimitResume',
 } as const satisfies Partial<Record<StudioMethod, ConversationCommand['kind']>>
 
 export type StudioCommandMethod = keyof typeof STUDIO_COMMAND_METHODS

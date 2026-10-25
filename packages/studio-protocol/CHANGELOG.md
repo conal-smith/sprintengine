@@ -4,6 +4,14 @@
 
 ### Added
 
+- **A usage limit's resume** (owners): `conversation.usageLimitResume`
+  (`action`: `schedule`, `cancel`, `dismiss` or `retry`; `always` beside
+  `schedule`) acts on the notice a usage limit left on a chat's turn, as the
+  conversation lane's `usageLimitResume` does, read by its own validator and
+  carried to the same host. The socket does not advertise
+  `conversation-usage-limits`: its conversation topic carries no `usageLimits`
+  frames. A Studio built before it refuses the method as unknown.
+
 - **A message scheduled for a time** (owners): `conversation.scheduleSend`
   (`message`, `sendAt`) has the desktop keep a message and send it into the
   chat then, and `conversation.sendScheduledNow` and

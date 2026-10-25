@@ -110,6 +110,7 @@ async function mountRemote({
   listed = {},
   createPullRequest = false,
   scheduledSends = false,
+  usageLimits = false,
 }: {
   access: 'read' | 'operate'
   permissionPreset?: MeshConversation['permissionPreset']
@@ -128,6 +129,8 @@ async function mountRemote({
   createPullRequest?: boolean
   /** The machine keeps messages scheduled into its chats for a time (`conversation-scheduled-sends`). */
   scheduledSends?: boolean
+  /** The machine says what it knows of its agents' usage limits (`conversation-usage-limits`). */
+  usageLimits?: boolean
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -174,6 +177,7 @@ async function mountRemote({
       stopSubagents,
       createPullRequest,
       scheduledSends,
+      usageLimits,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
     // machine would, and a creation records the pull request there.
@@ -262,6 +266,13 @@ async function mountRemote({
     meshConversationCancelScheduled: vi.fn(async (_input: { key: MeshConversationKey; scheduledId: string }) => ({
       ok: true,
     })),
+    meshConversationUsageLimitResume: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+        action: string
+        always?: boolean
+      }): Promise<{ ok: true } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
       listedModel = input.modelId
@@ -1158,5 +1169,77 @@ test('no Schedule for a machine that does not keep scheduled messages, or a pair
     } finally {
       await chat.unmount()
     }
+  }
+})
+
+/** What a machine says of its usage limits while the chat's session limit is used up. */
+function sessionLimitReached(resumeAt: number | null = null): MeshConversationFrame {
+  const resetsAt = Date.now() + 2 * 60 * 60_000
+  return {
+    type: 'usageLimits',
+    notice: { provider: 'claude', limit: 'session', resetsAt, hitAt: Date.now() - 60_000, resumeAt },
+    autoResume: false,
+    limits: [
+      {
+        provider: 'claude',
+        plan: 'max',
+        observedAt: Date.now(),
+        windows: [
+          {
+            id: 'five_hour',
+            label: 'Session (5h)',
+            usedPercent: 100,
+            resetsAt,
+            status: 'rejected',
+            observedAt: Date.now(),
+          },
+        ],
+      },
+    ],
+  }
+}
+
+test('a chat over there that a usage limit stopped says so in the tray, and its resume is asked of that machine', async () => {
+  const chat = await mountRemote({ access: 'operate', usageLimits: true })
+  try {
+    await chat.act(async () => chat.emit(sessionLimitReached()))
+    expect(chat.host.textContent).toContain("Claude's session limit is used up.")
+    // The strip draws that machine's reading of the plan, as a local chat's draws this one's.
+    const mark = chat.host.querySelector<HTMLElement>('[data-strip-usage-limits="claude"]')
+    expect(mark?.getAttribute('aria-label')).toContain('on mac-mini')
+    await chat.act(async () => chat.button('Resume at reset')!.click())
+    expect(chat.api.meshConversationUsageLimitResume).toHaveBeenCalledExactlyOnceWith({ key, action: 'schedule' })
+    await chat.act(async () => chat.button('Always resume at reset')!.click())
+    expect(chat.api.meshConversationUsageLimitResume).toHaveBeenLastCalledWith({
+      key,
+      action: 'schedule',
+      always: true,
+    })
+    // That machine says it is scheduled: the row says when it goes, with Cancel.
+    await chat.act(async () => chat.emit(sessionLimitReached(Date.now() + 2 * 60 * 60_000)))
+    expect(chat.host.textContent).toContain('Resumes at')
+    await chat.act(async () => chat.button('Cancel')!.click())
+    expect(chat.api.meshConversationUsageLimitResume).toHaveBeenLastCalledWith({ key, action: 'cancel' })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a pairing that may only follow sees the notice without its buttons; a machine that says nothing draws neither', async () => {
+  const reader = await mountRemote({ access: 'read', usageLimits: true })
+  try {
+    await reader.act(async () => reader.emit(sessionLimitReached()))
+    expect(reader.host.textContent).toContain("Claude's session limit is used up.")
+    expect(reader.button('Resume at reset')).toBeUndefined()
+  } finally {
+    await reader.unmount()
+  }
+  const older = await mountRemote({ access: 'operate', usageLimits: false })
+  try {
+    await older.act(async () => older.emit(sessionLimitReached()))
+    expect(older.host.textContent).not.toContain('session limit is used up')
+    expect(older.host.querySelector('[data-strip-usage-limits]')).toBeNull()
+  } finally {
+    await older.unmount()
   }
 })

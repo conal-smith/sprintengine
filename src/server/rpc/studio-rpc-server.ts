@@ -52,8 +52,9 @@ import type {
  * `hello` frame on it, which here is the connection's own handshake —
  * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
- * `conversation-queued-sends` and `conversation-scheduled-sends`, whose
- * `queued` and `scheduled` frames its conversation topic does not carry.
+ * `conversation-queued-sends`, `conversation-scheduled-sends` and
+ * `conversation-usage-limits`, whose `queued`, `scheduled` and `usageLimits`
+ * frames its conversation topic does not carry.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -64,7 +65,8 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
     capability !== 'conversation-queued-sends' &&
-    capability !== 'conversation-scheduled-sends',
+    capability !== 'conversation-scheduled-sends' &&
+    capability !== 'conversation-usage-limits',
 )
 
 export type StudioRpcServerOptions = {
