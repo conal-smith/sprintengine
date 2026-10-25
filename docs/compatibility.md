@@ -673,6 +673,25 @@ Snooze and Auto-settle for a machine's chats only where it is advertised, an
 older machine answers the tools "Unknown tool", and an older client ignores
 the members. The pinned phone files are unchanged. The Studio RPC does not
 advertise it, having no method for them.
+A paired desktop's chat management beyond the marks (2026-10-25) is a
+capability per part, each naming gateway tools listed to paired devices only,
+without the `conversation-` prefix: `chat-rename` (`conversation.rename`),
+`chat-auto-compact` (`conversation.auto_compact`),
+`chat-unwatch-pull-request` (`conversation.pull_request_unwatch`) and
+`chat-delete` (`conversation.delete_plan`, a read, and `conversation.delete`)
+`chat-search` (`conversation.search`, a read) and `approval-rules`
+(`conversation.approval_rules`, a read, and
+`conversation.approval_rule_revoke`), each on `conversation:operate` but the
+reads. A listed chat says whether it compacts by itself as
+`autoCompact`, an optional boolean of `ConversationThread` that
+`parseConversationServerFrame` keeps when it is one, and a listed pull
+request says while it is watched as `watch`, an optional member of
+`ConversationWirePullRequest` kept when it can be read. The list result a
+desktop's window reads names which a machine takes as `manage`
+(`{ rename, autoCompact, unwatchPullRequest, deleteSettled, search }`), an optional member a window
+from before it ignores. All of it is additive: a client offers each item for a
+machine's chats only where it is advertised, and an older machine answers the
+tools "Unknown tool". The Studio RPC does not advertise them.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.

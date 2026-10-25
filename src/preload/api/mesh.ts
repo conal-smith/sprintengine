@@ -7,6 +7,10 @@ import {
   MESH_SETTLE_CONVERSATION_CHANNEL,
   MESH_VISIT_CONVERSATION_CHANNEL,
   MESH_CHANGE_CONVERSATION_CHANNEL,
+  MESH_CONVERSATION_DELETE_PLAN_CHANNEL,
+  MESH_CONVERSATION_SEARCH_CHANNEL,
+  MESH_APPROVAL_RULES_CHANNEL,
+  MESH_REVOKE_APPROVAL_RULE_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -23,6 +27,10 @@ import {
   type MeshNewChatWorktree,
   type MeshSettleConversationResult,
   type MeshChangeConversationResult,
+  type MeshConversationDeletePlanResult,
+  type MeshConversationSearchResult,
+  type MeshApprovalRulesResult,
+  type MeshRevokeApprovalRuleResult,
   type MeshConversationChange,
   type MeshVisitConversationResult,
   type MeshWorkspaceCheckoutResult,
@@ -148,6 +156,17 @@ export const meshApi = {
     change: MeshConversationChange
   }): Promise<MeshChangeConversationResult> =>
     ipcRenderer.invoke(MESH_CHANGE_CONVERSATION_CHANNEL, input) as Promise<MeshChangeConversationResult>,
+  meshConversationDeletePlan: (input: {
+    connectionId: string
+    workspaceId: string
+  }): Promise<MeshConversationDeletePlanResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_DELETE_PLAN_CHANNEL, input) as Promise<MeshConversationDeletePlanResult>,
+  meshConversationSearch: (input: { connectionId: string; query: string }): Promise<MeshConversationSearchResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_SEARCH_CHANNEL, input) as Promise<MeshConversationSearchResult>,
+  meshApprovalRules: (input: { connectionId: string }): Promise<MeshApprovalRulesResult> =>
+    ipcRenderer.invoke(MESH_APPROVAL_RULES_CHANNEL, input) as Promise<MeshApprovalRulesResult>,
+  meshRevokeApprovalRule: (input: { connectionId: string; ruleId: string }): Promise<MeshRevokeApprovalRuleResult> =>
+    ipcRenderer.invoke(MESH_REVOKE_APPROVAL_RULE_CHANNEL, input) as Promise<MeshRevokeApprovalRuleResult>,
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string): Promise<MeshWorkspaceCheckoutResult> =>
     ipcRenderer.invoke(MESH_WORKSPACE_CHECKOUT_CHANNEL, {
       connectionId,
@@ -392,6 +411,10 @@ export const meshApi = {
   | 'meshSettleConversation'
   | 'meshVisitConversation'
   | 'meshChangeConversation'
+  | 'meshConversationDeletePlan'
+  | 'meshConversationSearch'
+  | 'meshApprovalRules'
+  | 'meshRevokeApprovalRule'
   | 'meshWorkspaceCheckout'
   | 'meshWorkspaceExtensions'
   | 'meshGetLiveState'

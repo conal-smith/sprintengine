@@ -11,16 +11,24 @@ export function ChatExportMenuItems({
   agentId,
   empty,
   onDone,
+  run: exportAs,
 }: {
   workspaceId: string
   agentId: string
   /** The chat has no message yet, so there is nothing to export. */
   empty: boolean
   onDone: () => void
+  /**
+   * The export itself, where the chat's view carries it out: a paired
+   * machine's chat, whose transcript its view reads from there. Absent, main
+   * reads the chat's transcript here.
+   */
+  run?: (action: ChatExportAction) => void
 }) {
   const run = (action: ChatExportAction) => {
     onDone()
-    void exportChatOrToast({ workspaceId, agentId, action })
+    if (exportAs) exportAs(action)
+    else void exportChatOrToast({ workspaceId, agentId, action })
   }
   const copies = CHAT_EXPORT_MENU.filter((row) => row.action === 'copy' || row.action === 'copy-markdown')
   const files = CHAT_EXPORT_MENU.filter((row) => !copies.includes(row))

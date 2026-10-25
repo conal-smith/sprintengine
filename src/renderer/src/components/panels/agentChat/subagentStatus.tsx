@@ -6,7 +6,6 @@ import { AgentGlyph, TruncatedText, WorkingMark, type AgentGlyphState } from '..
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { openAgentsPane } from '../../workspace/pane/agents/agentsPaneFocus'
 import { useConversationLinkContext } from './conversationLinks'
-import { useConversationTransport } from './conversationTransport'
 import type { TranscriptToolEntry } from './conversationProjection'
 import { flattenToolEntries, subagentLaneLabel, toolObject } from './conversationTimeline'
 import { LiveElapsed } from './liveElapsed'
@@ -235,14 +234,14 @@ export function AgentLaneSummary({ lane }: { lane: TranscriptToolEntry }): JSX.E
 }
 
 /**
- * Opens this chat's Agents tab, on one agent when given its lane. Null where
- * the tab cannot follow: a chat on another machine, which the tab has no
- * session of its own for.
+ * Opens this chat's Agents tab, on one agent when given its lane. A chat on
+ * another machine is opened there too: its pane says it is open in this
+ * workspace (`publishRemoteChat`), by its agent id on that machine, which is
+ * the id its links carry, and the tab reads it through the pane's transport.
  */
 export function useOpenAgentsPane(): ((laneId: string | null) => void) | null {
   const context = useConversationLinkContext()
-  const transport = useConversationTransport()
-  if (transport.kind !== 'local' || !context?.workspaceId || !context.agentId) return null
+  if (!context?.workspaceId || !context.agentId) return null
   const { workspaceId, agentId } = context
   return (laneId) => openAgentsPane(workspaceId, agentId, laneId)
 }

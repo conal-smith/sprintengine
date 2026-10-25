@@ -93,6 +93,7 @@ import { distroOfHostId, isWslHostId } from '../../../../shared/execution-host'
 import { useStableCallback } from '../../hooks/useStableCallback'
 import { useRemoteSessions } from './remoteBand/useRemoteSessions'
 import { publishRemoteChatLinkTargets } from './remoteBand/remoteChatLinks'
+import { publishRemoteSearchMachines } from './remoteBand/remoteChatSearch'
 import {
   attachedConversations,
   buildRemoteBand,
@@ -118,8 +119,11 @@ import {
   sameRemoteChatMarks,
   withPendingRemoteMarks,
   withRemoteChatMarks,
+  remoteWatchedPullRequest,
+  remoteManageWritable,
   type PendingRemoteMarks,
   type RemoteChatMarks,
+  type RemoteChatPending,
   type RemoteConversation,
   type RemoteSessionOpenSpec,
   type RemoteWindowPlace,
@@ -318,12 +322,24 @@ type WorkspaceSidebarProps = {
   // Scope a new chat to a specific project folder (workspace-row context menu).
   // The panel owns the agent/engine choice — the sidebar only opens it.
   onNewChatInFolder: (folderPath: string) => void
+  /**
+   * Open New chat on a paired machine's project: the project the chat
+   * `workspaceId` there stands in. Absent, a paired machine's chats and
+   * projects offer no New chat in project.
+   */
+  onNewChatOnMachine?: (target: { connectionId: string; workspaceId: string }) => void
   onRevealFolder: (folderPath: string) => void
   /**
    * Delete a settled chat for good, after asking (`useDeleteSettledChats`).
    * Absent, the row menu offers no Delete.
    */
   onDeleteSettledChat?: (workspaceId: string) => void
+  /**
+   * Delete a paired machine's settled chat there, after asking, and then this
+   * computer's record of it (`chat-delete` there). Absent, such a chat's menu
+   * offers no Delete.
+   */
+  onDeleteSettledChatThere?: (workspaceId: string) => void
   onSetSidebarCollapsed: (collapsed: boolean) => void
   // Persisted expanded width (px) and its setter, for drag-to-resize.
   sidebarWidth: number
@@ -412,8 +428,10 @@ function WorkspaceSidebar({
   openScheduledAgentId = null,
   newChatOpen = false,
   onNewChatInFolder,
+  onNewChatOnMachine,
   onRevealFolder,
   onDeleteSettledChat,
+  onDeleteSettledChatThere,
   onSetSidebarCollapsed,
   sidebarWidth,
   onSetSidebarWidth,
@@ -958,6 +976,10 @@ function WorkspaceSidebar({
   const [contextMenu, setContextMenu] = useState<{ workspaceId: WorkspaceId; x: number; y: number } | null>(null)
   // The menu of a chat on a paired machine that no window here holds, by its row's key.
   const [remoteMenu, setRemoteMenu] = useState<{ key: string; x: number; y: number } | null>(null)
+  // A paired machine's chat no window here holds, being renamed in its row
+  // (`chat-rename`): its key there, and what has been typed.
+  const [renamingRemote, setRenamingRemote] = useState<{ key: string; value: string } | null>(null)
+  const remoteRenameInputRef = useRef<HTMLInputElement>(null)
   const [folderMenu, setFolderMenu] = useState<{ folderKey: string; x: number; y: number } | null>(null)
   const [pendingTypeAction, setPendingTypeAction] = useState<{
     workspaceId: WorkspaceId
@@ -1307,6 +1329,20 @@ function WorkspaceSidebar({
   )
   // What a link to one of their chats opens (`remoteChatLinks.ts`).
   useEffect(() => publishRemoteChatLinkTargets(remoteGroups), [remoteGroups])
+  // …and which of them the palette may search, off the tailnet none
+  // (`remoteChatSearch.ts`). A search is a read, so a pairing that may only
+  // follow their chats may search them too.
+  useEffect(
+    () =>
+      publishRemoteSearchMachines(
+        remoteLink === 'down'
+          ? []
+          : remotePresence.mesh
+              .filter((connection) => remoteBrowses.get(connection.id)?.manage?.search === true)
+              .map((connection) => ({ connectionId: connection.id, machineName: connection.machineName })),
+      ),
+    [remotePresence.mesh, remoteBrowses, remoteLink],
+  )
   useEffect(() => {
     if (pendingRemoteMarks.size === 0) return
     const kept = new Map(
@@ -1492,7 +1528,8 @@ function WorkspaceSidebar({
     (
       target: { connectionId: string; workspaceId: string; title: string },
       change: MeshConversationChange,
-      marks?: Partial<RemoteChatMarks>,
+      marks?: RemoteChatPending,
+      onTaken?: () => void,
     ) => {
       const call = window.api?.meshChangeConversation
       if (typeof call !== 'function') return
@@ -1526,6 +1563,7 @@ function WorkspaceSidebar({
             return
           }
           if (marks) settlePending(true)
+          onTaken?.()
           // Read again, so the list that says the change is what replaces it.
           refreshRemote(target.connectionId)
         })
@@ -1626,6 +1664,11 @@ function WorkspaceSidebar({
         stamp: () => {
           void visit({ connectionId: origin.connectionId, workspaceId: chatWorkspaceId }).catch(() => undefined)
         },
+        // The "New" divider weighs the machine's visit clock, as its list said
+        // it before this opening's first stamp, against the replies that
+        // machine timed.
+        opened: () => noteChatOpened(workspace.id, row.lastVisitedAt, Date.now()),
+        left: () => noteChatLeft(workspace.id),
       }
     }
     // The chat's latest finish this window knows of: its agents' terminals
@@ -1699,6 +1742,64 @@ function WorkspaceSidebar({
       conversation,
     }
   }
+
+  // Rename on a paired machine's chat, open here or not, where that machine
+  // keeps its chats' names for every device (`chat-rename`): the name is
+  // asked of it, drawn at once and held until its list says it, and a
+  // refusal puts the old name back with the machine's own words. A row
+  // opened here takes the name too, once the machine has it, so the rest of
+  // this window names it the same way.
+  const remoteRenameTargetOf = (workspace: Workspace) => {
+    const origin = workspace.remoteOrigin
+    const conversation = origin ? remoteConversationByWorkspace.get(workspace.id) : undefined
+    if (!origin || !conversation?.manage.rename) return null
+    return {
+      connectionId: origin.connectionId,
+      workspaceId: remoteOriginChatWorkspaceId(origin),
+      title: conversation.title,
+    }
+  }
+  // New chat in project on a paired machine's project: opened on that
+  // machine, where this pairing may start a chat there (`conversation.create`
+  // on `conversation:operate`). The project is the one the chat stands in.
+  const remoteNewChatTargetOf = (
+    connectionId: string | undefined,
+    workspaceId: string | undefined,
+  ): { connectionId: string; workspaceId: string } | null => {
+    if (!onNewChatOnMachine || !connectionId || !workspaceId) return null
+    return remoteBrowses.get(connectionId)?.access === 'operate' ? { connectionId, workspaceId } : null
+  }
+  const remoteNewChatOfWorkspace = (workspace: Workspace) =>
+    workspace.remoteOrigin
+      ? remoteNewChatTargetOf(workspace.remoteOrigin.connectionId, remoteOriginChatWorkspaceId(workspace.remoteOrigin))
+      : null
+  // A header founded by a paired machine's chats: the first of them names the project there.
+  const remoteNewChatOfGroup = (group: FolderGroup | undefined) => {
+    if (!group?.remote) return null
+    const row = group.remoteRows[0]
+    if (row) return remoteNewChatTargetOf(row.connectionId, row.workspaceId)
+    const opened = group.workspaces.find((workspace) => workspace.remoteOrigin)
+    return opened ? remoteNewChatOfWorkspace(opened) : null
+  }
+  const renameRemoteChat = (
+    target: { connectionId: string; workspaceId: string; title: string },
+    typed: string,
+    openedHere?: WorkspaceId,
+  ) => {
+    const name = typed.trim()
+    if (!name || name === target.title) return
+    changeRemoteChat(target, { kind: 'rename', name }, { chatTitle: name }, () => {
+      if (openedHere) renameWorkspace(openedHere, name)
+    })
+  }
+
+  // Auto compact on a paired machine's chat is that machine's rule for its
+  // own chat (`chat-auto-compact`): switched there, drawn at once, and held
+  // until its list says it, as a mark is.
+  const toggleRemoteAutoCompact = (
+    target: { connectionId: string; workspaceId: string; title: string },
+    current: { on: boolean },
+  ) => changeRemoteChat(target, { kind: 'auto-compact', enabled: !current.on }, { autoCompact: !current.on })
 
   // A row opened from a paired machine's chat is settled by that machine,
   // which owns the chat; Settle from its menu asks it first, and only once it
@@ -2252,10 +2353,36 @@ function WorkspaceSidebar({
     return () => window.removeEventListener('keydown', onKey)
   }, [activeWorkspaceId, renamingId, workspaceById, startRename])
 
+  // A row opened from a paired machine that keeps its chats' names is
+  // renamed there (`renameRemoteChat`); any other is renamed here.
+  const renameRemoteRef = useRef<(workspaceId: WorkspaceId, name: string) => boolean>(() => false)
+  renameRemoteRef.current = (workspaceId, name) => {
+    const workspace = workspaceById.get(workspaceId)
+    const target = workspace ? remoteRenameTargetOf(workspace) : null
+    if (!target) return false
+    renameRemoteChat(target, name, workspaceId)
+    return true
+  }
   const commitRename = useCallback(() => {
-    if (renamingId) renameWorkspace(renamingId, renameValue)
+    if (renamingId && !renameRemoteRef.current(renamingId, renameValue)) renameWorkspace(renamingId, renameValue)
     setRenamingId(null)
   }, [renamingId, renameValue, renameWorkspace])
+  // A paired machine's chat no window here holds, renamed from its row.
+  const commitRemoteRename = () => {
+    const renaming = renamingRemote
+    setRenamingRemote(null)
+    const conversation = renaming ? unattachedRemote.find((candidate) => candidate.key === renaming.key) : undefined
+    if (!renaming || !conversation?.manage.rename) return
+    renameRemoteChat(
+      { connectionId: conversation.connectionId, workspaceId: conversation.workspaceId, title: conversation.title },
+      renaming.value,
+    )
+  }
+  useEffect(() => {
+    if (!renamingRemote?.key) return
+    remoteRenameInputRef.current?.focus()
+    remoteRenameInputRef.current?.select()
+  }, [renamingRemote?.key])
 
   const runWorkspaceTypeRowAction = useCallback(
     async (workspaceId: WorkspaceId, action: WorkspaceTypeRowAction) => {
@@ -2880,12 +3007,33 @@ function WorkspaceSidebar({
               <StarGlyph filled className="icon-xs shrink-0 text-[color:var(--tone-warn)]" label="Starred" />
             ) : null}
             {/* Weight marks a running turn, or one that wants you, the way
-                `workspaceRowEmphasis` weights a local row. */}
-            <TruncatedText
-              as="span"
-              text={conversation.title}
-              className={`min-w-0 flex-1 ${working || needsAttention || unseenDone ? 'font-semibold' : ''}`}
-            />
+                `workspaceRowEmphasis` weights a local row. Renamed in place,
+                as a local row is, where its machine keeps the name. */}
+            {renamingRemote?.key === conversation.key ? (
+              <Input
+                ref={remoteRenameInputRef}
+                size="none"
+                fullWidth={false}
+                aria-label={`Rename ${conversation.title}`}
+                value={renamingRemote.value}
+                onChange={(event) => setRenamingRemote({ key: conversation.key, value: event.target.value })}
+                onBlur={commitRemoteRename}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  if (isImeKey(event)) return
+                  if (event.key === 'Enter') commitRemoteRename()
+                  if (event.key === 'Escape') setRenamingRemote(null)
+                  event.stopPropagation()
+                }}
+                className="min-w-0 flex-1 px-1.5 py-0 text-heading"
+              />
+            ) : (
+              <TruncatedText
+                as="span"
+                text={conversation.title}
+                className={`min-w-0 flex-1 ${working || needsAttention || unseenDone ? 'font-semibold' : ''}`}
+              />
+            )}
             <span className="sr-only"> (on {conversation.machineName}, not open here)</span>
             {asleepUntil !== null ? <span className="sr-only"> (snoozed)</span> : null}
             {needsAttention ? <span className="sr-only"> (needs your input)</span> : null}
@@ -3643,15 +3791,30 @@ function WorkspaceSidebar({
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? remoteMarksTargetOf(workspace) !== null : false
           })()}
+          remoteManage={remoteConversationByWorkspace.get(contextMenu.workspaceId)?.manage}
+          remoteNewChat={(() => {
+            const workspace = workspaceById.get(contextMenu.workspaceId)
+            return workspace ? remoteNewChatOfWorkspace(workspace) !== null : false
+          })()}
           autoCompact={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
+            // A paired machine's chat wears that machine's switch, where it takes it from here.
+            const remote = remoteConversationByWorkspace.get(contextMenu.workspaceId)
+            if (workspace?.remoteOrigin) return remote?.manage.autoCompact ? remote.autoCompact : null
             return workspace ? autoCompactSwitchOf(workspace, autoCompactByDefault) : null
           })()}
           canMarkUnread={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? canMarkWorkspaceUnread(workspace) : false
           })()}
-          watchedPullRequestNumber={watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ?? null}
+          watchedPullRequestNumber={
+            watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ??
+            (() => {
+              // A paired machine's chat: the watch is that machine's, ended there.
+              const conversation = remoteConversationByWorkspace.get(contextMenu.workspaceId)
+              return conversation ? (remoteWatchedPullRequest(conversation)?.number ?? null) : null
+            })()
+          }
           schedule={(() => {
             // A chat a schedule here started: its menu pauses (or resumes)
             // that schedule. Only while the schedule is still in the list.
@@ -3660,6 +3823,16 @@ function WorkspaceSidebar({
             return agent ? { paused: agent.pausedAt !== undefined } : null
           })()}
           canDelete={onDeleteSettledChat !== undefined}
+          remoteDelete={(() => {
+            // A settled chat is off its machine's list, so the machine's own
+            // word on what it takes is read off its newest list instead.
+            const origin = workspaceById.get(contextMenu.workspaceId)?.remoteOrigin
+            return Boolean(
+              origin &&
+              onDeleteSettledChatThere &&
+              remoteManageWritable(remoteBrowses.get(origin.connectionId)).deleteSettled,
+            )
+          })()}
           onClose={() => setContextMenu(null)}
           onSelect={(action) => {
             const workspace =
@@ -3670,7 +3843,8 @@ function WorkspaceSidebar({
             }
             if (action === 'delete-settled') {
               setContextMenu(null)
-              onDeleteSettledChat?.(workspace.id)
+              if (workspace.remoteOrigin) onDeleteSettledChatThere?.(workspace.id)
+              else onDeleteSettledChat?.(workspace.id)
               return
             }
             // A paired machine's chat that keeps its marks there: they are
@@ -3722,6 +3896,21 @@ function WorkspaceSidebar({
               setContextMenu(null)
               return
             }
+            if (action === 'stop-watching' && workspace.remoteOrigin) {
+              const conversation = remoteConversationByWorkspace.get(workspace.id)
+              const watched = conversation ? remoteWatchedPullRequest(conversation) : null
+              if (watched)
+                changeRemoteChat(
+                  {
+                    connectionId: workspace.remoteOrigin.connectionId,
+                    workspaceId: remoteOriginChatWorkspaceId(workspace.remoteOrigin),
+                    title: workspace.name,
+                  },
+                  { kind: 'unwatch-pull-request', agentId: watched.agentId, url: watched.url },
+                )
+              setContextMenu(null)
+              return
+            }
             if (action === 'stop-watching') {
               const watched = watchedPullRequestOfRow(workspace.id)
               if (watched)
@@ -3745,6 +3934,12 @@ function WorkspaceSidebar({
             // it was cut from, not the worktree itself. One rule decides both
             // whether the item is offered and where it goes.
             const newChatTarget = newChatProjectTarget(workspace)
+            const remoteNewChat = remoteNewChatOfWorkspace(workspace)
+            if (action === 'new-chat' && remoteNewChat) {
+              onNewChatOnMachine?.(remoteNewChat)
+              setContextMenu(null)
+              return
+            }
             if (action === 'new-chat' && newChatTarget) {
               onNewChatInFolder(newChatTarget)
               setContextMenu(null)
@@ -3776,7 +3971,22 @@ function WorkspaceSidebar({
               return
             }
             // The chat's own choice from here on, the other way from what it
-            // reads as now, whether that came from the default or from it.
+            // reads as now, whether that came from the default or from it. A
+            // paired machine's chat is switched there, by the machine that
+            // compacts it.
+            if (action === 'toggle-auto-compact' && workspace.remoteOrigin) {
+              const conversation = remoteConversationByWorkspace.get(workspace.id)
+              if (conversation?.manage.autoCompact && conversation.autoCompact?.claude)
+                toggleRemoteAutoCompact(
+                  {
+                    connectionId: workspace.remoteOrigin.connectionId,
+                    workspaceId: remoteOriginChatWorkspaceId(workspace.remoteOrigin),
+                    title: workspace.name,
+                  },
+                  conversation.autoCompact,
+                )
+              return
+            }
             if (action === 'toggle-auto-compact') {
               const current = autoCompactSwitchOf(workspace, autoCompactByDefault)
               if (current?.claude) setWorkspaceAutoCompact(workspace.id, !current.on)
@@ -3847,6 +4057,10 @@ function WorkspaceSidebar({
                 machineName={conversation.machineName}
                 canSettle={conversation.agents[0]?.lifecycle === true}
                 marks={conversation.rowMenu}
+                manage={conversation.manage}
+                autoCompact={conversation.autoCompact}
+                watchedPullRequestNumber={remoteWatchedPullRequest(conversation)?.number ?? null}
+                canNewChat={remoteNewChatTargetOf(conversation.connectionId, conversation.workspaceId) !== null}
                 canMarkUnread={canMarkRemoteConversationUnread(conversation, now)}
                 isDetachedWindow={isDetachedWindow}
                 workspaceId={conversation.workspaceId}
@@ -3864,8 +4078,24 @@ function WorkspaceSidebar({
                     changeRemoteChatMarks(target, conversation, action)
                     return
                   }
+                  if (action === 'toggle-auto-compact') {
+                    if (conversation.autoCompact?.claude) toggleRemoteAutoCompact(target, conversation.autoCompact)
+                    return
+                  }
                   setRemoteMenu(null)
-                  if (action === 'open') onOpenRemoteSession?.(openSpecOfConversation(conversation))
+                  if (action === 'rename') setRenamingRemote({ key: conversation.key, value: conversation.title })
+                  else if (action === 'new-chat') {
+                    const project = remoteNewChatTargetOf(conversation.connectionId, conversation.workspaceId)
+                    if (project) onNewChatOnMachine?.(project)
+                  } else if (action === 'stop-watching') {
+                    const watched = remoteWatchedPullRequest(conversation)
+                    if (watched)
+                      changeRemoteChat(target, {
+                        kind: 'unwatch-pull-request',
+                        agentId: watched.agentId,
+                        url: watched.url,
+                      })
+                  } else if (action === 'open') onOpenRemoteSession?.(openSpecOfConversation(conversation))
                   else if (action === 'toggle-settle') settleRemoteConversation(conversation)
                   else if (action === 'mark-unread') changeRemoteChat(target, { kind: 'mark-unread' })
                   else if (action === 'copy-link') {
@@ -3890,6 +4120,7 @@ function WorkspaceSidebar({
           x={folderMenu.x}
           y={folderMenu.y}
           group={groups.find((g) => g.key === folderMenu.folderKey) ?? null}
+          remoteNewChat={remoteNewChatOfGroup(groups.find((g) => g.key === folderMenu.folderKey)) !== null}
           projectColorKey={projectKeyOf(folderMenu.folderKey)}
           projectColorSettled={projectKeySettled(folderMenu.folderKey)}
           projectColor={projectColors[projectKeyOf(folderMenu.folderKey) ?? ''] ?? null}
@@ -3904,7 +4135,9 @@ function WorkspaceSidebar({
             const group = groups.find((g) => g.key === folderMenu.folderKey)
             setFolderMenu(null)
             if (!group) return
-            if (action === 'new-chat' && group.fullPath && !group.missing) {
+            const remoteNewChat = remoteNewChatOfGroup(group)
+            if (action === 'new-chat' && remoteNewChat) onNewChatOnMachine?.(remoteNewChat)
+            else if (action === 'new-chat' && group.fullPath && !group.missing) {
               onNewChatInFolder(group.fullPath)
             }
             if (action === 'reveal' && group.fullPath) onRevealFolder(group.fullPath)
@@ -5159,5 +5392,13 @@ function remoteChangeRefusedTitle(change: MeshConversationChange, title: string)
       return `Auto-settle was not changed for ${title}`
     case 'mark-unread':
       return 'Not marked unread'
+    case 'rename':
+      return `${title} was not renamed`
+    case 'auto-compact':
+      return `Auto compact was not changed for ${title}`
+    case 'unwatch-pull-request':
+      return `${title}'s pull request is still watched`
+    case 'delete':
+      return `${title} was not deleted`
   }
 }

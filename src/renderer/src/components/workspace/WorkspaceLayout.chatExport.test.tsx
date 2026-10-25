@@ -118,6 +118,14 @@ async function setup() {
                   tab('chat-2', 'New chat', 'agent'),
                   { type: 'tab', id: 'term-1', name: 'zsh', component: 'terminal' },
                   { type: 'tab', id: 'notes', name: 'Notes', component: 'not-a-panel' },
+                  // A chat followed from a paired machine, by its agent id there.
+                  {
+                    type: 'tab',
+                    id: 'mesh-conversation:c1:rw1:agent-there',
+                    name: 'Parser review',
+                    component: 'mesh-conversation',
+                    config: { connectionId: 'c1', remoteWorkspaceId: 'rw1', remoteAgentId: 'agent-there' },
+                  },
                 ],
               },
             ],
@@ -250,4 +258,45 @@ test('a terminal has no conversation to export', async () => {
   assert.equal(exportRow(menu), undefined)
   assert.ok(!rows(menu).some((label) => label.startsWith('Export')))
   await closeMenu()
+})
+
+test('a paired machine’s chat replays and exports from its tab, through its pane', async () => {
+  const { dom, act, settle, openMenu, closeMenu, rows, exportRow, exports } = strip
+  const { registerMountedChatView } = await import('../panels/agentChat/mountedChatViews')
+  const asked: string[] = []
+  // Its pane, drawn: it reads the transcript from that machine and hands it on.
+  const unregister = registerMountedChatView({
+    workspaceId: 'w1',
+    agentId: 'agent-there',
+    isFocused: () => false,
+    toggleModelPicker: () => {},
+    hasMessages: () => true,
+    exportChat: (action) => asked.push(action),
+  })
+  try {
+    const menu = await openMenu('Parser review')
+    const order = rows(menu)
+    assert.ok(order.includes('Replay conversation'), order.join(' | '))
+    const row = exportRow(menu)
+    assert.ok(row && !row.disabled, 'Export chat is on')
+    const hide = [...menu.querySelectorAll<HTMLButtonElement>('[data-menu-item="true"]')].find(
+      (candidate) => candidate.textContent === 'Hide tab',
+    )
+    assert.ok(hide?.disabled, 'Hide tab stays off: nothing here would bring the tab back')
+    assert.ok(!order.some((label) => label.startsWith('Continue in terminal')))
+    act(() => row.click())
+    await settle()
+    const flyout = dom.window.document.querySelector<HTMLElement>('[role="menu"][aria-label="Export chat"]')!
+    const copy = [...flyout.querySelectorAll<HTMLButtonElement>('[data-menu-item="true"]')].find(
+      (candidate) => candidate.textContent === 'Copy chat as Markdown',
+    )!
+    const before = exports.length
+    act(() => copy.click())
+    await settle()
+    assert.deepEqual(asked, ['copy-markdown'], 'the pane carried it out')
+    assert.equal(exports.length, before, 'and main was not asked for a transcript it does not have')
+  } finally {
+    unregister()
+    await closeMenu()
+  }
 })

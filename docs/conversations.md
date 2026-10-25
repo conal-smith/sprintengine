@@ -638,7 +638,10 @@ additions.
   the desktop's own "finished while you were away" mark too. New chat
   covering a window's chat counts as nobody looking at it, as a door does,
   so it is not stamped; unlike a door it is not leaving the chat, whose "New"
-  divider holds and whose Mark unread waits until the person moves on.
+  divider holds and whose Mark unread waits until the person moves on. A
+  desktop following a paired machine's chat draws the same "New" divider,
+  read from that machine's `lastVisitedAt` as its list gave it before the
+  opening's first visit.
 - **`conversation.mark_unread`** `{ workspaceId }` (2026-10-07, on a desktop
   that advertises `chat-mark-unread`) moves the chat's `lastVisitedAt`
   **back**, to its latest finish less a millisecond, and answers
@@ -705,11 +708,84 @@ section, tinted with its colour, asleep in its project's Snoozed shelf until
 it wakes. Mark unread is `conversation.mark_unread` above, offered where the
 machine advertises `chat-mark-unread`. Copy link to chat links the chat by its
 id on that machine, which opens it there and on any desktop that follows it;
-Move to New Window opens it in a window of its own. Rename, New chat in
-project, Reveal folder and Close workspace are about a workspace on the
-desktop doing the asking, and are not offered for a chat no window there has
-open. A machine without the capability answers the tools "Unknown tool", and
+Move to New Window opens it in a window of its own. New chat in project, on
+a chat whether a window there has it open or not and on the project's own
+header, opens that desktop's New chat on this machine and the project the
+chat stands in, where the pairing may start a chat here
+(`conversation:operate`); the chat is started with `conversation.create` as
+any New chat on a paired machine is. Reveal folder and Close workspace are
+about a workspace on the desktop doing the asking, and are not offered for a
+chat no window there has open. A machine without the capability answers the tools "Unknown tool", and
 its chats offer none of the four.
+
+Beyond its marks, a paired desktop manages a chat here as it manages one of
+its own, each part on a capability of its own (2026-10-25). Each is a gateway
+tool listed to paired devices only, on `conversation:operate` and audited; a
+client offers the item for a machine's chats only where it is advertised, and
+an older machine answers the tool "Unknown tool":
+
+- **`conversation.rename`** `{ workspaceId, name }` (`chat-rename`) names the
+  chat as the desktop's own Rename does: locked against the titler, so its
+  messages never rename it again, and stamped now. Every device lists it by
+  the new name (`chatTitle`), and a paired desktop's row opened from the chat
+  takes it too. A name of 1 to 500 characters; the name it already has
+  changes nothing. Offered on a chat no window there has open as well as on
+  one it does; without the capability a row opened there is renamed on that
+  computer alone.
+- **`conversation.auto_compact`** `{ workspaceId, enabled }`
+  (`chat-auto-compact`) is the chat's Auto compact switch, as the desktop's
+  own menu sets it: the chat's choice from then on, whatever the desktop's
+  default says. The desktop compacts its own chats, so the rule is the one of
+  the machine the chat runs on, and each listed chat says how it stands as
+  `autoCompact` (its own switch, or the desktop's default where it left that
+  unset), read beside its `providerId`: only a Claude chat compacts by itself
+  yet. A switch moves the list. It compacts nothing at once.
+- **`conversation.pull_request_unwatch`** `{ workspaceId, agentId, url? }`
+  (`chat-unwatch-pull-request`) is Stop watching: the desktop stops watching
+  the chat's pull request at `url`, or every one the chat's agent has it
+  watching without one, and the chat is not woken for it again. The pull
+  request stays the chat's. It answers `{ stopped, pullRequests }`, the
+  addresses it stopped; one not watched changes nothing. Each listed pull
+  request says while it is watched as `watch` (what it waits on, as the
+  desktop's own strip says it), so a paired desktop's strip and menus say it
+  too and offer Stop watching where the desktop's own do.
+- **`conversation.delete_plan`** `{ workspaceId }` and
+  **`conversation.delete`** `{ workspaceId }` (`chat-delete`) are Delete on a
+  settled chat, as the desktop's own Delete runs it: the plan says what would
+  go, each worktree the chat owns by its name and branch (never a path), with
+  `refused` while the chat is not settled or an agent in it works; the delete
+  takes its history, its record and the worktree it owns, never one with
+  uncommitted changes, and keeps the branch. There is no undo. A chat already
+  gone answers `gone: true` to both, so a delete sent twice does no harm. The
+  plan is a read on `conversation:read`; the delete needs
+  `conversation:operate` and is audited. A paired desktop offers Delete on a
+  settled chat it opened from here, asks the plan, says it in its
+  confirmation, and once this desktop has deleted the chat removes its own
+  record of it. A desktop whose Studio server runs in a process of its own
+  refuses both as `unavailable`.
+- **`conversation.search`** `{ query }` (`chat-search`) finds what was said in
+  the desktop's chats as its own palette does: the chats its sidebar lists,
+  most recently spoken in first, each through the runtime's transcript search.
+  It answers `{ chats: [{ workspaceId, chatTitle, hits, count }], truncated }`,
+  each hit an `agentId`, the `seq` of its message, a `snippet` and who said it
+  (`from`), at most 50 chats and 20 hits each, and `truncated` once it stopped
+  early, at that limit or after eight seconds. A query is 2 to 200
+  characters. It is a read, on `conversation:read`. A paired desktop's palette
+  asks each machine that advertises it beside its own search, lists one row
+  per chat with the machine's name, and opens a row as the chat's sidebar row
+  opens it, landing on the matching message as a match in one of its own
+  chats does.
+- **`conversation.approval_rules`** `{}` and
+  **`conversation.approval_rule_revoke`** `{ ruleId }` (`approval-rules`) are
+  the "always allow" rules the desktop's chats run with, as its Settings ▸
+  Chats lists and revokes them: each rule by its `id`, `label`, `toolName`
+  and `toolKind`, the project it holds in by its folder's name (`project`,
+  never a path), and `createdAt`. A rule already gone changes nothing when
+  revoked. The list is a read on `conversation:read`; a revoke needs
+  `conversation:operate` and is audited. A paired desktop's Settings lists each
+  machine's rules under its name, beside its own, since a chat followed from
+  there asks that machine's rules, and says so for a machine that does not
+  share them.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:

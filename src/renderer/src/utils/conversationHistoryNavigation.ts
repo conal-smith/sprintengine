@@ -52,6 +52,14 @@ export async function openConversationMatch(input: {
   useWorkspaceStore.getState().setActiveWorkspace(input.workspaceId)
   return false
 }
+/**
+ * Land a chat this window draws at one of its messages, as a search match is
+ * landed on: a paired machine's chat, whose pane here goes by its agent id there.
+ */
+export function requestConversationJump(workspaceId: string, agentId: string, seq: number): void {
+  jumps.set(`${workspaceId}:${agentId}`, seq)
+  notify()
+}
 export function clearConversationJump(workspaceId: string, agentId: string): void {
   jumps.delete(`${workspaceId}:${agentId}`)
   notify()

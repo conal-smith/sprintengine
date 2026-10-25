@@ -42,7 +42,13 @@ import {
   type MeshConversationListResult,
   type MeshConversationFileSearchResult,
   type MeshConversationCommandsResult,
+  type MeshConversationManage,
+  type MeshConversationDeletePlanResult,
+  type MeshConversationSearchResult,
+  type MeshApprovalRulesResult,
+  type MeshRevokeApprovalRuleResult,
 } from '../../../shared/tailnet-mesh'
+import type { SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
 import type {
   ConversationContextBreakdownResult,
   ConversationImageAttachment,
@@ -332,6 +338,17 @@ export type TailnetMeshService = {
     workspaceId?: unknown
     change?: unknown
   }): Promise<MeshChangeConversationResult>
+  /** What deleting a settled chat on a paired machine would do, as it plans it (`chat-delete`). */
+  conversationDeletePlan(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+  }): Promise<MeshConversationDeletePlanResult>
+  /** What was said in a paired machine's chats, as its own palette finds it (`chat-search`). */
+  conversationSearch(input: { connectionId: unknown; query?: unknown }): Promise<MeshConversationSearchResult>
+  /** The "always allow" rules a paired machine's chats run with (`approval-rules`). */
+  approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult>
+  /** Revoke one of them there (`approval-rules`, on `conversation:operate`). */
+  revokeApprovalRule(input: { connectionId: unknown; ruleId?: unknown }): Promise<MeshRevokeApprovalRuleResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -2245,6 +2262,112 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, workspaceId }
   }
 
+  // ── A paired desktop's chat management: what a menu reads first ───────
+  //
+  // Asked as a change is: a machine that has said it lacks the capability is
+  // not, and one from before the tool answers "Unknown tool", read the same.
+  async function conversationDeletePlan(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+  }): Promise<MeshConversationDeletePlanResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const workspaceId = input.workspaceId
+    if (typeof workspaceId !== 'string' || !workspaceId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the remote chat.' }
+    }
+    const unsupported = {
+      ok: false as const,
+      code: 'delete_unsupported',
+      message: `${connection.machineName} cannot delete its chats from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'chat-delete')) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'conversation.delete_plan',
+      args: { workspaceId },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return deletePlanOf(workspaceId, answer.value)
+  }
+
+  async function conversationSearch(input: {
+    connectionId: unknown
+    query?: unknown
+  }): Promise<MeshConversationSearchResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const query = typeof input.query === 'string' ? input.query.trim() : ''
+    if (query.length < 2 || query.length > 200) {
+      return { ok: false, code: 'invalid_arguments', message: 'Search for 2 to 200 characters.' }
+    }
+    const unsupported = {
+      ok: false as const,
+      code: 'search_unsupported',
+      message: `${connection.machineName} cannot search its chats from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'chat-search')) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'conversation.search',
+      args: { query },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return searchAnswerOf(answer.value)
+  }
+
+  // A paired machine's "always allow" rules, which its Settings lists and
+  // revokes, asked as the rest of its chats' management is.
+  async function callApprovalRulesTool(
+    connectionId: unknown,
+    tool: 'conversation.approval_rules' | 'conversation.approval_rule_revoke',
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; code: string; message: string }> {
+    const connection = connectionFor(connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const unsupported = {
+      ok: false as const,
+      code: 'approval_rules_unsupported',
+      message: `${connection.machineName} does not share its chat permissions yet. Update SprintEngine Studio there to see them from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'approval-rules')) return unsupported
+    const answer = await callRemoteTool({ endpoint: endpointOf(connection), token: connection.deviceToken, tool, args })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return { ok: true, value: answer.value }
+  }
+
+  async function approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult> {
+    const answer = await callApprovalRulesTool(input.connectionId, 'conversation.approval_rules', {})
+    return answer.ok ? approvalRulesOf(answer.value) : answer
+  }
+
+  async function revokeApprovalRule(input: {
+    connectionId: unknown
+    ruleId?: unknown
+  }): Promise<MeshRevokeApprovalRuleResult> {
+    if (typeof input.ruleId !== 'string' || !input.ruleId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the rule.' }
+    }
+    const answer = await callApprovalRulesTool(input.connectionId, 'conversation.approval_rule_revoke', {
+      ruleId: input.ruleId,
+    })
+    return answer.ok ? { ok: true, ruleId: input.ruleId } : answer
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2316,6 +2439,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
+          manage: chatManageOf(identity.value.capabilities),
         }
       : listed
   }
@@ -2808,6 +2932,10 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     settleConversation,
     visitConversation,
     changeConversation,
+    conversationDeletePlan,
+    conversationSearch,
+    approvalRules,
+    revokeApprovalRule,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -3375,7 +3503,7 @@ function readCreatePullRequestOutcome(value: Record<string, unknown>): MeshPullR
 export function rowMenuCallOf(change: unknown): {
   tool: string
   args: Record<string, unknown>
-  capability: 'chat-row-menu' | 'chat-mark-unread'
+  capability: 'chat-row-menu' | 'chat-mark-unread' | ChatManageCapability
   /** What is asked, for a machine that cannot be: "snooze its chats". */
   ask: string
 } | null {
@@ -3416,6 +3544,152 @@ export function rowMenuCallOf(change: unknown): {
         capability: 'chat-mark-unread',
         ask: 'mark its chats unread',
       }
+    default:
+      return chatManageCallOf(value)
+  }
+}
+
+// ── A paired desktop's chat management ─────────────────────────────────
+//
+// The changes a chat's menus ask of the machine it runs on beyond its marks,
+// each over a gateway tool of its own capability, asked as the row menu's are.
+
+type ChatManageCapability =
+  'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request' | 'chat-delete' | 'chat-search'
+
+/** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
+export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
+  return {
+    rename: tailnetPeerSupports(capabilities, 'chat-rename'),
+    autoCompact: tailnetPeerSupports(capabilities, 'chat-auto-compact'),
+    unwatchPullRequest: tailnetPeerSupports(capabilities, 'chat-unwatch-pull-request'),
+    deleteSettled: tailnetPeerSupports(capabilities, 'chat-delete'),
+    search: tailnetPeerSupports(capabilities, 'chat-search'),
+  }
+}
+
+const PLAN_FATES = new Set(['remove', 'keep'])
+const KEPT_BECAUSE = new Set(['changes', 'shared', 'not-made-here', 'other-machine', 'unreadable'])
+
+/** A machine's delete plan as it answered, kept to what this build reads; null members are left as null. */
+export function deletePlanOf(workspaceId: string, value: Record<string, unknown>): MeshConversationDeletePlanResult {
+  const count = (entry: unknown) =>
+    typeof entry === 'number' && Number.isSafeInteger(entry) && entry >= 0 ? entry : null
+  const worktrees = (Array.isArray(value.worktrees) ? value.worktrees : []).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const worktree = entry as Record<string, unknown>
+    if (typeof worktree.name !== 'string' || !PLAN_FATES.has(worktree.fate as string)) return []
+    return [
+      {
+        name: worktree.name,
+        branch: typeof worktree.branch === 'string' ? worktree.branch : null,
+        pooled: worktree.pooled === true,
+        changedPaths: count(worktree.changedPaths),
+        unpushedCommits: count(worktree.unpushedCommits),
+        fate: worktree.fate as 'remove' | 'keep',
+        ...(KEPT_BECAUSE.has(worktree.keptBecause as string)
+          ? { keptBecause: worktree.keptBecause as Omit<SettledChatWorktreePlan, 'path'>['keptBecause'] }
+          : {}),
+      },
+    ]
+  })
+  return {
+    ok: true,
+    workspaceId,
+    ...(value.gone === true ? { gone: true as const } : {}),
+    ...(typeof value.refused === 'string' && value.refused ? { refused: value.refused } : {}),
+    worktrees,
+  }
+}
+
+/** A machine's rules as it listed them, kept to the ones this build can read. */
+export function approvalRulesOf(value: Record<string, unknown>): MeshApprovalRulesResult {
+  const text = (entry: unknown): entry is string =>
+    typeof entry === 'string' && entry.length > 0 && entry.length <= 2_000
+  const rules = (Array.isArray(value.rules) ? value.rules : []).slice(0, 2_000).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const rule = entry as Record<string, unknown>
+    if (!text(rule.id) || !text(rule.label)) return []
+    return [
+      {
+        id: rule.id,
+        label: rule.label,
+        toolName: text(rule.toolName) ? rule.toolName : '',
+        toolKind: text(rule.toolKind) ? rule.toolKind : 'other',
+        project: text(rule.project) ? rule.project : '',
+        createdAt: typeof rule.createdAt === 'number' && Number.isFinite(rule.createdAt) ? rule.createdAt : 0,
+      },
+    ]
+  })
+  return { ok: true, rules }
+}
+
+const HIT_FROM = new Set(['person', 'agent', 'studio'])
+
+/** A machine's search answer, kept to the chats and matches this build can read. */
+export function searchAnswerOf(value: Record<string, unknown>): MeshConversationSearchResult {
+  const chats = (Array.isArray(value.chats) ? value.chats : []).slice(0, 50).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const chat = entry as Record<string, unknown>
+    if (typeof chat.workspaceId !== 'string' || !chat.workspaceId) return []
+    const hits = (Array.isArray(chat.hits) ? chat.hits : []).slice(0, 20).flatMap((hit) => {
+      if (!hit || typeof hit !== 'object') return []
+      const found = hit as Record<string, unknown>
+      if (typeof found.agentId !== 'string' || !found.agentId) return []
+      if (typeof found.seq !== 'number' || !Number.isSafeInteger(found.seq)) return []
+      if (typeof found.snippet !== 'string') return []
+      return [
+        {
+          agentId: found.agentId,
+          seq: found.seq,
+          snippet: found.snippet.slice(0, 1_000),
+          ...(HIT_FROM.has(found.from as string) ? { from: found.from as 'person' | 'agent' | 'studio' } : {}),
+        },
+      ]
+    })
+    if (hits.length === 0) return []
+    const count = typeof chat.count === 'number' && Number.isSafeInteger(chat.count) ? chat.count : hits.length
+    return [
+      {
+        workspaceId: chat.workspaceId,
+        chatTitle: typeof chat.chatTitle === 'string' && chat.chatTitle.trim() ? chat.chatTitle : 'Chat',
+        hits,
+        count: Math.max(count, hits.length),
+      },
+    ]
+  })
+  return { ok: true, chats, truncated: value.truncated === true }
+}
+
+function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof rowMenuCallOf> {
+  switch (value.kind) {
+    case 'rename':
+      if (typeof value.name !== 'string' || !value.name.trim()) return null
+      return {
+        tool: 'conversation.rename',
+        args: { name: value.name.trim() },
+        capability: 'chat-rename',
+        ask: 'rename its chats',
+      }
+    case 'auto-compact':
+      if (typeof value.enabled !== 'boolean') return null
+      return {
+        tool: 'conversation.auto_compact',
+        args: { enabled: value.enabled },
+        capability: 'chat-auto-compact',
+        ask: 'switch Auto compact on its chats',
+      }
+    case 'unwatch-pull-request':
+      if (typeof value.agentId !== 'string' || !value.agentId) return null
+      if (value.url !== undefined && (typeof value.url !== 'string' || !value.url)) return null
+      return {
+        tool: 'conversation.pull_request_unwatch',
+        args: { agentId: value.agentId, ...(typeof value.url === 'string' ? { url: value.url } : {}) },
+        capability: 'chat-unwatch-pull-request',
+        ask: "stop watching its chats' pull requests",
+      }
+    case 'delete':
+      return { tool: 'conversation.delete', args: {}, capability: 'chat-delete', ask: 'delete its chats' }
     default:
       return null
   }

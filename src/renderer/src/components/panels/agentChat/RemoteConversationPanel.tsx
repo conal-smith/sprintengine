@@ -330,6 +330,7 @@ export default function RemoteConversationPanel({
     const setModel = base.setModel
     const setEffort = base.setReasoningEffort
     const send = base.send
+    const unwatchPullRequest = base.unwatchPullRequest
     return {
       ...base,
       // A chat at rest over there is listed without a session, and so without
@@ -359,6 +360,17 @@ export default function RemoteConversationPanel({
           hostUsageLimits: usageLimitsRef.current,
         }
       },
+      // A watch ended there is off its list: read it again, so the strip
+      // stops saying it is watched without waiting for the sidebar's read.
+      ...(unwatchPullRequest
+        ? {
+            unwatchPullRequest: async (input: { url: string }) => {
+              const result = await unwatchPullRequest(input)
+              if (result.ok) setListVersion((version) => version + 1)
+              return result
+            },
+          }
+        : {}),
       ...(setModel
         ? {
             setModel: async (change: Parameters<typeof setModel>[0]) => {

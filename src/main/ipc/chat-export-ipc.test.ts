@@ -6,7 +6,9 @@ import { CHAT_EXPORT_CHANNEL, type ChatExportInput } from '../../shared/chat-exp
 import { registerChatExportIpc } from './chat-export-ipc'
 
 // The export channel takes a chat and a format, checks both, and passes on
-// nothing else: no path or text a window sends reaches the export.
+// nothing else: no path or text a window sends reaches the export, but for
+// the transcript of a paired machine's chat, which this machine does not
+// keep, checked event by event.
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
@@ -91,4 +93,45 @@ test('an export that throws is an answer, not a dropped request', async () => {
     await handlers.get(CHAT_EXPORT_CHANNEL)!({ sender: {} }, { workspaceId: 'w', agentId: 'a', action: 'pdf' }),
     { ok: false, message: 'The page for the PDF did not load.' },
   )
+})
+
+test('a paired machine’s chat comes with its transcript, each event checked as one off the wire', async () => {
+  const { invoke, runs } = setup()
+  const remote = {
+    events: [
+      {
+        id: 'e1',
+        seq: 1,
+        type: 'user_message',
+        sessionId: 's1',
+        workspaceId: 'rw1',
+        agentId: 'agent-there',
+        providerId: 'claude-agent',
+        modelId: 'default',
+        createdAt: 1,
+        payload: { text: 'Hello' },
+      },
+    ],
+    title: 'Parser review',
+    project: 'parser',
+    providerId: 'claude-agent',
+    modelId: null,
+    workspaceRoot: '/Users/dev/parser',
+  }
+  const asked = { workspaceId: 'w-followed', agentId: 'agent-there', action: 'copy' }
+  assert.deepEqual(await invoke({ ...asked, remote }), { ok: true, kind: 'copied' })
+  assert.equal(runs.at(-1)?.remote?.events.length, 1)
+  assert.equal(runs.at(-1)?.remote?.title, 'Parser review')
+  const count = runs.length
+  for (const broken of [
+    { ...remote, events: [{ type: 'user_message' }] },
+    { ...remote, events: 'no' },
+    { ...remote, title: 7 },
+    'no',
+  ])
+    assert.deepEqual(await invoke({ ...asked, remote: broken }), {
+      ok: false,
+      message: "That chat's transcript could not be read.",
+    })
+  assert.equal(runs.length, count, 'and none of them ran')
 })

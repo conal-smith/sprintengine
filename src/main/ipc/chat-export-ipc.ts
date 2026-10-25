@@ -13,6 +13,10 @@ import { assertAppSender } from './ipc-sender'
 // workspace, reads the transcript itself, shows the save dialog itself and
 // writes where the person chose, so a page that reached the preload cannot
 // make this write anything anywhere. Only the app's own window is answered.
+// A chat followed from a paired machine has no transcript here to read: the
+// window that follows it hands over the events it read from that machine,
+// each checked as the protocol checks one off the wire, and main still asks
+// where to save.
 
 export function registerChatExportIpc(
   ipcMain: Pick<IpcMain, 'handle'>,
@@ -28,8 +32,16 @@ export function registerChatExportIpc(
     assertSender(event)
     const parsed = parseChatExportInput(raw)
     if (!parsed.ok) return parsed
+    const remote = (raw as { remote?: unknown }).remote
+    let input: ChatExportInput = parsed.input
+    if (remote !== undefined) {
+      const { parseChatExportRemoteSource } = await import('../chat-export/chat-export-source')
+      const source = parseChatExportRemoteSource(remote)
+      if (!source) return { ok: false, message: "That chat's transcript could not be read." }
+      input = { ...input, remote: source }
+    }
     try {
-      return await deps.run(parsed.input, event.sender)
+      return await deps.run(input, event.sender)
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'The chat could not be exported.' }
     }

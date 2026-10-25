@@ -2,6 +2,8 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
 import type { ConversationEventType } from '../../shared/conversation-runtime'
 import { createAutomationService } from '../../main/automation/automation-service'
 import { createConversationTools, type ConversationToolsDeps } from '../../main/automation/conversation-tools'
+import { searchChatsHere } from '../../main/automation/conversation-search'
+import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../shared/workspace-lifecycle'
 import {
   chatCheckoutFromRegistry,
   createConversationPullRequestTools,
@@ -92,6 +94,8 @@ export type StudioGatewayOptions = Pick<
    * and leaves it out.
    */
   linkLaunchedAgent?: ConversationToolsDeps['linkLaunchedAgent']
+  /** Deleting a settled chat for a paired desktop; absent where this process has no worktree pool. */
+  settledChatDeletion?: ConversationToolsDeps['settledChatDeletion']
 }
 
 export type StudioGateway = ReturnType<typeof createStudioGateway>
@@ -115,6 +119,45 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
       resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
       lifecycle: core.conversationLifecycle,
       ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
+      // A paired desktop's Delete on a settled chat here: this process's own
+      // deletion where it has one (the desktop in process), none elsewhere.
+      ...(options.settledChatDeletion ? { settledChatDeletion: options.settledChatDeletion } : {}),
+      // A paired desktop's palette, finding what was said in the chats here:
+      // the ones this sidebar lists, most recently spoken in first.
+      searchChats: (query) =>
+        searchChatsHere(query, {
+          chats: () =>
+            core.workspaceRegistry
+              .getRecords()
+              .filter((record) => record.folderPath && !record.remoteOrigin && !isSettledWorkspace(record))
+              .sort((a, b) => workspaceLastUserMessageAt(b) - workspaceLastUserMessageAt(a))
+              .map((record) => ({
+                workspaceId: record.id,
+                workspaceRoot: record.folderPath!,
+                chatTitle: record.name,
+              })),
+          search: (input) => core.conversations.searchThreads(input),
+        }),
+      // A paired desktop's Settings, listing and revoking the "always allow"
+      // rules the chats here run with.
+      approvalRules: {
+        list: () => core.conversations.listApprovalRules(),
+        revoke: (ruleId) => core.conversations.revokeApprovalRule(ruleId),
+      },
+      // A paired desktop's Stop watching on a chat here.
+      pullRequestWatches: {
+        watchedOf: async (key) => {
+          await core.pullRequests.record.whenLoaded()
+          return core.pullRequests.record
+            .forConversation(key)
+            .filter((pr) => pr.watch)
+            .map((pr) => pr.url)
+        },
+        unwatch: async (key, url) => {
+          await core.pullRequests.record.whenLoaded()
+          return core.pullRequests.unwatchForAgent(key, { url })
+        },
+      },
     }),
     // A paired desktop's Create PR on one of this machine's chats: the
     // checkout, git, the forge's CLI and the drafting CLI are here, and so is

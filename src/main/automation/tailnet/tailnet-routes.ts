@@ -347,6 +347,39 @@ export const TAILNET_CAPABILITIES = [
   // desktop asking prices them itself. A client that does not see it says
   // the machine's Studio needs updating rather than asking.
   'usage-report',
+  // ── A paired desktop's chat management (2026-10-25) ──
+  // What a paired desktop's menus ask of a chat here beyond its marks. Each
+  // names gateway tools served to paired devices only; a client that does not
+  // see one offers the item for this machine's chats on that computer alone,
+  // or not at all, and an older machine answers the tool "Unknown tool".
+  //
+  // Rename: `conversation.rename` names the chat on this machine, so every
+  // device lists it by the new name (the list's `chatTitle`).
+  'chat-rename',
+  // Auto compact: `conversation.auto_compact` switches it for a chat here,
+  // and a listed chat says whether it compacts by itself (`autoCompact`, by
+  // its own switch or this machine's default), so a paired desktop's menu
+  // shows this machine's rule for its own chat.
+  'chat-auto-compact',
+  // Stop watching: `conversation.pull_request_unwatch` ends this machine's
+  // watch of a chat's pull request, and each listed pull request says while
+  // it is watched (`watch`), so a paired desktop offers Stop watching where
+  // this machine's own menu and strip do.
+  'chat-unwatch-pull-request',
+  // Delete: `conversation.delete_plan` says what deleting a settled chat here
+  // would do (its worktrees by name and branch, never a path), and
+  // `conversation.delete` deletes it as this machine's own Delete does. A
+  // paired desktop's Delete on a settled chat it opened from here asks both.
+  'chat-delete',
+  // Search: `conversation.search` finds what was said in the chats here, as
+  // this machine's own palette does, so a paired desktop's palette lists them
+  // beside its own and opens a match at its message.
+  'chat-search',
+  // Permissions: `conversation.approval_rules` lists the "always allow" rules
+  // this machine's chats run with (each project by its folder's name, never
+  // a path), and `conversation.approval_rule_revoke` revokes one, so a paired
+  // desktop's Settings lists them beside its own.
+  'approval-rules',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

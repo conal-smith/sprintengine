@@ -228,6 +228,13 @@ export type ConversationTransport = {
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
   /**
+   * Stop the machine the chat runs on watching one of its pull requests
+   * (`chat-unwatch-pull-request`). Absent here, where the window's own Studio
+   * keeps the watch. A pull request is listed as watched only by a machine
+   * that takes this, and an older one is refused in words.
+   */
+  unwatchPullRequest?(input: { url: string }): Promise<ConversationTransportResult>
+  /**
    * Have the machine the chat runs on keep a message and send it at `sendAt`
    * (epoch ms); answered once it keeps it. Used where `capabilities.hostSchedule` is.
    */
@@ -677,6 +684,14 @@ export function createRemoteConversationTransport(input: {
           ...(resume.always ? { always: true } : {}),
         }),
       ),
+    unwatchPullRequest: async (input) => {
+      const answer = await window.api.meshChangeConversation({
+        connectionId: key.connectionId,
+        workspaceId: key.workspaceId,
+        change: { kind: 'unwatch-pull-request', agentId: key.agentId, url: input.url },
+      })
+      return answer.ok ? { ok: true } : { ok: false, message: answer.message }
+    },
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
     restartSession: async () => commandResult(await window.api.meshConversationRestartSession({ key })),
     // Offered only for an action the pane's session lists, which it does

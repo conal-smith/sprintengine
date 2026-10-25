@@ -78,6 +78,8 @@ import { chatResumesInTerminal, resumeChatInTerminalOrToast } from '../panels/ag
 import { requestChatReplay } from '../panels/agentChat/chatReplayRequests'
 import { chatExportSupported, chatHasMessages } from '../panels/agentChat/chatExport'
 import { ChatExportMenuItems } from './ChatExportMenuItems'
+import { mountedChatViewFor } from '../panels/agentChat/mountedChatViews'
+import type { ChatExportAction } from '../../../../shared/chat-export'
 import { ModuleContributionBoundary } from '../../modules/ModuleContributionBoundary'
 import { GitBranchGlyph } from './WorkspaceActions'
 import { remotePaneTabLabel } from './remoteBand/remoteSessionsModel'
@@ -187,6 +189,8 @@ type TabMenuState = {
   chatId: string | null
   /** Export chat for the tab's chat, where this shell can export one, and whether the chat is still empty. */
   chatExport: { empty: boolean } | null
+  /** A paired machine's chat exports through its pane, which reads its transcript from there. */
+  remoteExport?: ((action: ChatExportAction) => void) | null
 }
 
 /**
@@ -1075,12 +1079,40 @@ function WorkspaceLayoutBody({
         if (candidate instanceof TabNode && candidate.getComponent() === 'agent') agentTabCount += 1
       })
 
-      const config = node.getConfig() as { highlightColor?: HighlightColor; agentId?: string } | undefined
+      const config = node.getConfig() as
+        { highlightColor?: HighlightColor; agentId?: string; remoteAgentId?: string } | undefined
       const tabAgentId = node.getComponent() === 'agent' ? (config?.agentId ?? node.getId()) : null
       const store = useWorkspaceStore.getState()
       const tabAgent = tabAgentId
         ? store.workspaces.find((workspace) => workspace.id === workspaceId)?.agents[tabAgentId]
         : undefined
+      // A chat followed from a paired machine has no record here, only its
+      // pane, which goes by the chat's agent id over there. It replays as a
+      // local chat does, its pane reading the whole of it from that machine,
+      // and it exports through its pane, which hands main what it read. The
+      // rest of a chat tab's menu is this computer's: hiding the tab would
+      // leave nothing here to bring it back from, and the tools apps give
+      // chats are this computer's apps', not that machine's.
+      const remoteChatId = node.getComponent() === MESH_CONVERSATION_COMPONENT ? (config?.remoteAgentId ?? null) : null
+      if (remoteChatId) {
+        const view = mountedChatViewFor(workspaceId, remoteChatId)
+        setTabMenu({
+          x: event.clientX,
+          y: event.clientY,
+          node,
+          canHideTab: false,
+          canHideAllTabs: agentTabCount > 0,
+          canCloseOtherTabs: otherClosableTabs.length > 0,
+          isTerminal: false,
+          currentColor: config?.highlightColor ?? null,
+          resumableChatId: null,
+          agentId: null,
+          chatId: remoteChatId,
+          chatExport: view?.exportChat ? { empty: view.hasMessages?.() === false } : null,
+          remoteExport: view?.exportChat ?? null,
+        })
+        return
+      }
 
       setTabMenu({
         x: event.clientX,
@@ -1930,6 +1962,7 @@ function WorkspaceLayoutBody({
               agentId={tabMenu.chatId}
               empty={tabMenu.chatExport.empty}
               onDone={() => setTabMenu(null)}
+              {...(tabMenu.remoteExport ? { run: tabMenu.remoteExport } : {})}
             />
           ) : null}
           {tabMenu.resumableChatId ? (

@@ -1554,6 +1554,29 @@ test('NewAgentPanel', async () => {
     )
 
     await check(
+      "a paired machine's New chat in project opens on that machine and the project its chat stands in",
+      async () => {
+        seedStore()
+        resetRememberedMachineForTests()
+        meshConnections = [machine('m1', 'Air'), machine('m2', 'Mini')]
+        meshBrowseAnswer = (id) => ({
+          connectionId: id,
+          reachable: true,
+          unreachableReason: null,
+          unauthorized: false,
+          scopes: [],
+          workspaces: [workspace('w1', 'alpha'), workspace('w2', 'beta')],
+          gaps: [],
+        })
+        const view = await remoteRender({ remoteProject: { connectionId: 'm2', workspaceId: 'w2' } })
+        await settle()
+        assert.ok(machineTrigger(view)?.textContent?.includes('Mini'), 'the machine is picked')
+        assert.ok(buttonWithText(view.container, 'beta'), 'and the project, though there are two')
+        view.unmount()
+      },
+    )
+
+    await check(
       "a remote machine's project list holds its projects, never the worktrees its chats run in",
       async () => {
         seedStore()

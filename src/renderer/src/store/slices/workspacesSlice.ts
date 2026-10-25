@@ -1562,7 +1562,8 @@ export function createWorkspacesSlice(
       // The opening, said before the chat is drawn so its view mounts at the
       // "New" divider (`unreadDivider.ts`), with the visit clock as it stands
       // before this opening is stamped. A chat followed from another machine
-      // keeps its clock there, and has no divider here.
+      // keeps its clock there, and the sidebar's visit target says its
+      // opening with that clock as the machine's list reads it.
       const opened = getState().workspaces.find((w) => w.id === id)
       if (opened && !opened.remoteOrigin)
         noteChatOpened(id, typeof opened.lastVisitedAt === 'number' ? opened.lastVisitedAt : null, Date.now())

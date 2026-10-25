@@ -201,7 +201,7 @@ import { loadWholeConversation } from './agentChat/conversationReplay'
 import { ConversationReplayView, type ConversationReplaySource } from './agentChat/conversationReplayView'
 import { onChatReplayRequest, takeChatReplayRequest } from './agentChat/chatReplayRequests'
 import { chatExportSupported, exportChatOrToast } from './agentChat/chatExport'
-import type { ChatExportAction } from '../../../../shared/chat-export'
+import type { ChatExportAction, ChatExportRemoteSource } from '../../../../shared/chat-export'
 import { useConversationScrollRestore } from './agentChat/conversationScrollRestore'
 import { useComposerSkillReader } from './agentChat/composerSkillReader'
 import { nextConversationEffort } from './agentChat/conversationEffort'
@@ -808,9 +808,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   }, [projection.activeTurn, turnRequestedAt, pending])
   // The "New" divider: where the replies the reader has not seen begin, as
   // they stood when the chat was opened (`unreadDivider.ts`). A chat followed
-  // from another machine keeps its visit clock there, so only one here has a
-  // divider.
-  const opening = useChatOpening(transport.kind === 'local' ? workspaceId : null)
+  // from another machine keeps its visit clock there, and its opening is said
+  // with that machine's clock as its list read it (the sidebar's visit
+  // target), so it has a divider as one here does.
+  const opening = useChatOpening(workspaceId)
   const unreadRowId = useMemo(
     () => (opening ? unreadDividerRowId(timelineRows, opening, { historyAbove: hasMore }) : null),
     [timelineRows, opening, hasMore],
@@ -2822,7 +2823,30 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // nothing to export. Earlier pages not read in yet are messages too.
   const hasMessagesRef = useRef(false)
   hasMessagesRef.current = hasMore || timelineRows.some((row) => row.kind === 'user' || row.kind === 'assistant')
-  const exportable = transport.kind === 'local' && chatExportSupported()
+  // A chat followed from a paired machine is exported from its transcript
+  // there, read back to its first page as Replay reads it, with what that
+  // machine lists about it; its pictures stay there and are named.
+  const remoteOrigin = useWorkspaceStore(
+    (s) => s.workspaces.find((candidate) => candidate.id === workspaceId)?.remoteOrigin ?? null,
+  )
+  const remoteExportSourceRef = useRef<() => Promise<ChatExportRemoteSource>>(async () => {
+    throw new Error('This chat could not be read.')
+  })
+  remoteExportSourceRef.current = async () => {
+    const held = { events, hasMore, beforeCursor }
+    const key = { workspaceRoot: binding.sessionRoot ?? '', workspaceId, agentId }
+    const all = await loadWholeConversation((input) => transport.loadEarlier(input), key, held)
+    return {
+      events: all,
+      title: label,
+      project: remoteOrigin?.workspaceName ?? null,
+      providerId: conversation?.providerId || null,
+      modelId: conversation?.modelId || null,
+      workspaceRoot: remoteOrigin?.workspaceRoot ?? '',
+    }
+  }
+  const exportable = chatExportSupported()
+  const exportsRemote = transport.kind === 'remote'
   useEffect(
     () =>
       registerMountedChatView({
@@ -2844,12 +2868,20 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         openSideQuestion: () => openSideQuestionRef.current(),
         hasMessages: () => hasMessagesRef.current,
         // Main reads a local chat's transcript; a chat on another machine has
-        // none here to read.
+        // none here to read, so this window reads it from there and hands it on.
         ...(exportable
-          ? { exportChat: (action: ChatExportAction) => void exportChatOrToast({ workspaceId, agentId, action }) }
+          ? {
+              exportChat: (action: ChatExportAction) =>
+                void exportChatOrToast({
+                  workspaceId,
+                  agentId,
+                  action,
+                  ...(exportsRemote ? { remote: () => remoteExportSourceRef.current() } : {}),
+                }),
+            }
           : {}),
       }),
-    [workspaceId, agentId, stepTurn, openChatFind, exportable],
+    [workspaceId, agentId, stepTurn, openChatFind, exportable, exportsRemote],
   )
   const modelPickerShortcutLabel = useMemo(() => {
     const keybinding = getEffectiveKeybindings(MODEL_PICKER_TOGGLE_COMMAND, keybindingSettings)[0]
@@ -3747,7 +3779,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const conversationPullRequests =
     transport.kind === 'remote' ? (binding.listed?.pullRequests ?? localPullRequests) : localPullRequests
   // The person's "Stop watching" on the strip's pull request: the record's
-  // change comes back through the list above, so nothing is held here.
+  // change comes back through the list above, so nothing is held here. A
+  // chat on a paired machine is watched by that machine, which ends it, where
+  // this pairing may drive the chat.
   const stopWatchingPullRequest = useCallback(
     (url: string) => {
       void unwatchPullRequest({ workspaceId, agentId }, url).then((stopped) => {
@@ -3755,6 +3789,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       })
     },
     [workspaceId, agentId],
+  )
+  const remoteUnwatch = transport.kind === 'remote' && operate ? transport.unwatchPullRequest : undefined
+  const stopRemoteWatch = useCallback(
+    (url: string) => {
+      void remoteUnwatch?.({ url }).then((stopped) => {
+        if (!stopped.ok) setActionError(`Could not stop watching the pull request: ${stopped.message}`)
+      })
+    },
+    [remoteUnwatch],
   )
   // The local servers this conversation's agents started, from the same
   // Studio record the sidebar's marks read. A paired machine's are its own,
@@ -4654,7 +4697,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               context={contextReading}
               contextBreakdown={contextBreakdownSource}
               pullRequests={conversationPullRequests}
-              {...(transport.kind === 'remote' ? {} : { onStopWatchingPullRequest: stopWatchingPullRequest })}
+              {...(transport.kind !== 'remote'
+                ? { onStopWatchingPullRequest: stopWatchingPullRequest }
+                : remoteUnwatch
+                  ? { onStopWatchingPullRequest: stopRemoteWatch }
+                  : {})}
               createPullRequest={createPullRequest}
               localServers={stripLocalServers}
               usageLimits={stripUsageLimits}

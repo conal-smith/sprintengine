@@ -31,6 +31,7 @@ import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { clientSupports } from '../../../clientCapabilities'
 import { cliForConversationProvider } from '../../../../../shared/conversation-harness'
 import { chatMenuTooltips as tips, type ChatMenuPlace } from './chatMenuTooltips'
+import type { MeshConversationManage } from '../../../../../shared/tailnet-mesh'
 
 export function sidebarWorkspaceOf(workspace: Workspace): {
   id: string
@@ -58,7 +59,8 @@ export function workspaceTypeRowActions(
 /**
  * A chat row's Auto compact switch: on by its own choice, or by the app-wide
  * default where it left that unset; and whether its chat is Claude's, the one
- * it works on yet. Null for a row with no chat in it, or a paired machine's.
+ * it works on yet. Null for a row with no chat in it, or a paired machine's,
+ * whose switch is that machine's (`RemoteConversation.autoCompact`).
  */
 export function autoCompactSwitchOf(
   workspace: Workspace,
@@ -160,8 +162,9 @@ function ChatRestAndMarkItems({
   /**
    * The Auto compact switch: whether it is on for this chat (its own choice,
    * or the app-wide default), and whether the chat is Claude's, the only one
-   * it works on yet. Null leaves it off the menu: a paired machine's chat, or
-   * a row with no chat in it.
+   * it works on yet. Null leaves it off the menu: a row with no chat in it,
+   * or a paired machine's chat where that machine does not take the switch
+   * from here.
    */
   autoCompact?: { on: boolean; claude: boolean } | null
   between?: ReactNode
@@ -258,7 +261,7 @@ function ChatRestAndMarkItems({
           disabled={!autoCompact.claude}
           hint={autoCompact.claude ? undefined : 'Claude only'}
           trailing={<SwitchGlyph checked={autoCompact.claude && autoCompact.on} />}
-          tooltip={tips.autoCompact(autoCompact.claude)}
+          tooltip={tips.autoCompact(autoCompact.claude, where)}
           onClick={() => onSelect('toggle-auto-compact')}
         >
           Auto compact
@@ -287,11 +290,14 @@ export function WorkspaceContextMenu({
   now,
   working,
   remoteMarks = false,
+  remoteManage,
+  remoteNewChat = false,
   autoCompact = null,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
   schedule = null,
   canDelete = false,
+  remoteDelete = false,
   onClose,
   onSelect,
   onPickColor,
@@ -311,6 +317,10 @@ export function WorkspaceContextMenu({
    * that machine's, and `workspace` carries them as that machine lists them.
    */
   remoteMarks?: boolean
+  /** What of a paired machine's chat's management its machine takes from here (`MeshConversationManage`). */
+  remoteManage?: MeshConversationManage
+  /** A paired machine's chat whose machine this pairing may start a chat on: New chat in project opens there. */
+  remoteNewChat?: boolean
   /**
    * The Auto compact switch for a chat here (see `ChatRestAndMarkItems`);
    * null leaves it off the menu.
@@ -330,11 +340,17 @@ export function WorkspaceContextMenu({
   schedule?: { paused: boolean } | null
   /**
    * The window can delete settled chats (a confirm dialog and main's delete
-   * are there). Delete is offered only on a settled chat of this computer:
-   * Settle is how a chat is put away, and deleting is for one already put
-   * away. A paired machine's settled chat has no row here.
+   * are there). Delete is offered only on a settled chat: Settle is how a
+   * chat is put away, and deleting is for one already put away. A paired
+   * machine's is offered where that machine deletes its chats from here
+   * (`remoteDelete`).
    */
   canDelete?: boolean
+  /**
+   * A paired machine's settled chat, whose machine deletes its chats from
+   * here (`chat-delete`): Delete deletes it there, then this computer's record.
+   */
+  remoteDelete?: boolean
   onClose: () => void
   onSelect: (action: ContextMenuAction) => void
   onPickColor: (color: HighlightColor) => void
@@ -363,7 +379,12 @@ export function WorkspaceContextMenu({
   // are that machine's, offered where it takes them.
   const remote = Boolean(workspace.remoteOrigin)
   const where: ChatMenuPlace = workspace.remoteOrigin
-    ? { kind: 'remote', machineName: workspace.remoteOrigin.machineName, marks: remoteMarks }
+    ? {
+        kind: 'remote',
+        machineName: workspace.remoteOrigin.machineName,
+        marks: remoteMarks,
+        ...(remoteManage ? { manage: remoteManage } : {}),
+      }
     : { kind: 'local' }
   // Reveal is shown off, and says why, for a folder this computer cannot
   // show: one on the paired machine the chat runs on, or one gone from disk.
@@ -397,6 +418,10 @@ export function WorkspaceContextMenu({
           onClick={() => onSelect('new-chat')}
         >
           {isProjectlessChatsRoot(newChatTarget) ? 'New chat without a project' : 'New chat in project'}
+        </ChatMenuItem>
+      ) : remote && remoteNewChat ? (
+        <ChatMenuItem tooltip={tips.newChat(false, where)} onClick={() => onSelect('new-chat')}>
+          New chat in project
         </ChatMenuItem>
       ) : null}
       {folderPathExists ? (
@@ -436,7 +461,7 @@ export function WorkspaceContextMenu({
         working={working}
         snooze={snoozed ? 'wake' : sleeps ? { disabled: !canSnooze } : null}
         autoSettle={remote && !remoteMarks ? null : autoSettle}
-        autoCompact={remote ? null : autoCompact}
+        autoCompact={remote && !remoteManage?.autoCompact ? null : autoCompact}
         between={
           <>
             {/* A chat whose agent has Studio babysitting its pull request reads as
@@ -444,7 +469,7 @@ export function WorkspaceContextMenu({
                 as it is. Settle ends the watch too, with the chat. */}
             {watchedPullRequestNumber !== null ? (
               <ChatMenuItem
-                tooltip={tips.stopWatching(watchedPullRequestNumber)}
+                tooltip={tips.stopWatching(watchedPullRequestNumber, where)}
                 onClick={() => onSelect('stop-watching')}
               >
                 Stop watching #{watchedPullRequestNumber}
@@ -482,10 +507,10 @@ export function WorkspaceContextMenu({
           ))}
         </>
       ) : null}
-      {canDelete && settled && !remote ? (
+      {canDelete && settled && (!remote || remoteDelete) ? (
         <>
           <MenuDivider />
-          <ChatMenuItem variant="danger" tooltip={tips.deleteSettled()} onClick={() => onSelect('delete-settled')}>
+          <ChatMenuItem variant="danger" tooltip={tips.deleteSettled(where)} onClick={() => onSelect('delete-settled')}>
             Delete chat…
           </ChatMenuItem>
         </>
@@ -495,7 +520,17 @@ export function WorkspaceContextMenu({
 }
 
 export type RemoteConversationMenuAction =
-  'open' | 'mark-unread' | 'copy-link' | 'move-to-new-window' | 'move-to-main-window' | ChatMarkAction
+  | 'open'
+  | 'mark-unread'
+  | 'copy-link'
+  | 'move-to-new-window'
+  | 'move-to-main-window'
+  | ChatMarkAction
+  // ── A paired desktop's chat management ──
+  | 'rename'
+  | 'toggle-auto-compact'
+  | 'stop-watching'
+  | 'new-chat'
 
 /**
  * The link to a chat: by its id on the machine it runs on, so the same link
@@ -511,9 +546,11 @@ export function chatLinkIdOf(workspace: Pick<Workspace, 'id' | 'remoteOrigin'>):
 // state (`chat-mark-unread`) are offered where the machine takes them; an
 // older machine's chat offers what it can, as a local menu hides what does
 // not apply. Reveal folder is shown off, saying why: the folder is on the
-// other machine's disk. Left out because they are about a workspace here,
-// which this row does not have until it is opened: Rename, New chat in
-// project, the workspace type's own actions, and Close workspace.
+// other machine's disk. Rename is offered where the machine keeps the name
+// (`chat-rename`), and New chat in project where this pairing may start a
+// chat there, opening New chat on that machine and project. Left out because
+// they are about a workspace here, which this row does not have until it is
+// opened: the workspace type's own actions, and Close workspace.
 export function RemoteConversationContextMenu({
   x,
   y,
@@ -521,6 +558,10 @@ export function RemoteConversationContextMenu({
   machineName,
   canSettle,
   marks,
+  manage,
+  autoCompact = null,
+  watchedPullRequestNumber = null,
+  canNewChat = false,
   canMarkUnread,
   isDetachedWindow,
   workspaceId,
@@ -542,6 +583,14 @@ export function RemoteConversationContextMenu({
   canSettle: boolean
   /** The machine takes the row menu's Star, Highlight color, Snooze and Auto-settle (`chat-row-menu`). */
   marks: boolean
+  /** What of the chat's management the machine takes from here; none when absent. */
+  manage?: MeshConversationManage
+  /** The chat's Auto compact switch as its machine reads it; offered where the machine takes it from here. */
+  autoCompact?: { on: boolean; claude: boolean } | null
+  /** The pull request its machine watches for it, by number, where the machine takes Stop watching from here. */
+  watchedPullRequestNumber?: number | null
+  /** This pairing may start a chat on the machine: New chat in project opens there, in this chat's project. */
+  canNewChat?: boolean
   /** Its agent finished something nobody has been marked as missing, and the machine takes Mark unread. */
   canMarkUnread: boolean
   isDetachedWindow: boolean
@@ -561,7 +610,7 @@ export function RemoteConversationContextMenu({
 }) {
   const canCopyLink = clientSupports('deep-links') && chatLinkFor(workspaceId) !== null
   const snoozed = isSnoozedWorkspace({ snoozedUntil }, now)
-  const where: ChatMenuPlace = { kind: 'remote', machineName, marks }
+  const where: ChatMenuPlace = { kind: 'remote', machineName, marks, ...(manage ? { manage } : {}) }
   return (
     <ContextMenu
       x={x}
@@ -576,6 +625,16 @@ export function RemoteConversationContextMenu({
       {canMarkUnread ? (
         <ChatMenuItem tooltip={tips.markUnread(where)} onClick={() => onSelect('mark-unread')}>
           Mark unread
+        </ChatMenuItem>
+      ) : null}
+      {manage?.rename ? (
+        <ChatMenuItem tooltip={tips.rename(where)} onClick={() => onSelect('rename')}>
+          Rename
+        </ChatMenuItem>
+      ) : null}
+      {canNewChat ? (
+        <ChatMenuItem tooltip={tips.newChat(false, where)} onClick={() => onSelect('new-chat')}>
+          New chat in project
         </ChatMenuItem>
       ) : null}
       {/* Off, and saying why: the folder is on the other machine's disk. */}
@@ -614,11 +673,21 @@ export function RemoteConversationContextMenu({
               working={working}
               snooze={snoozed ? 'wake' : { disabled: false }}
               autoSettle={autoSettle}
-              // Auto compact is this computer's rule for its own chats: a
-              // paired machine's is never offered it.
-              onSelect={(action) => {
-                if (action !== 'toggle-auto-compact') onSelect(action)
-              }}
+              // Auto compact is the rule of the machine that runs the chat,
+              // switched there where that machine takes it from here.
+              autoCompact={manage?.autoCompact ? autoCompact : null}
+              between={
+                // The watch is the machine's, ended there; the chat stays as it is.
+                watchedPullRequestNumber !== null ? (
+                  <ChatMenuItem
+                    tooltip={tips.stopWatching(watchedPullRequestNumber, where)}
+                    onClick={() => onSelect('stop-watching')}
+                  >
+                    Stop watching #{watchedPullRequestNumber}
+                  </ChatMenuItem>
+                ) : null
+              }
+              onSelect={onSelect}
               onPickColor={onPickColor}
             />
           ) : (
@@ -643,6 +712,7 @@ export function FolderContextMenu({
   x,
   y,
   group,
+  remoteNewChat = false,
   projectColorKey: colorKey,
   projectColorSettled,
   projectColor,
@@ -654,6 +724,11 @@ export function FolderContextMenu({
   x: number
   y: number
   group: FolderGroup | null
+  /**
+   * A header of a paired machine's project, on a machine this pairing may
+   * start a chat on: New chat in project opens New chat there.
+   */
+  remoteNewChat?: boolean
   /** The project this header names, or null when it is not a project. */
   projectColorKey: string | null
   /** Whether that key is the project's FINAL one — see `canPickColor` below. */
@@ -670,7 +745,7 @@ export function FolderContextMenu({
   if (!group) return null
   const canReveal = Boolean(group.fullPath) && !group.missing
   const canForget = Boolean(group.fullPath)
-  const canCreateWorkspace = Boolean(group.fullPath) && !group.missing
+  const canCreateWorkspace = (Boolean(group.fullPath) && !group.missing) || (Boolean(group.remote) && remoteNewChat)
   // "Changed by you" (decision 5) — but only where there is a project to
   // change, and only once we know which project it IS. The "No folder" bucket
   // is not a project, and a remote group's root lives on another machine with

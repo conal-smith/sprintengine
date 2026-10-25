@@ -3,6 +3,8 @@
 // an email. The window names the chat and what to make of it, nothing else;
 // main reads the transcript, asks where to save, and writes.
 
+import type { ConversationEvent } from './conversation-runtime'
+
 export const CHAT_EXPORT_CHANNEL = 'chat-export:run'
 
 /** The files a chat is exported as. */
@@ -17,7 +19,29 @@ export type ChatExportFileFormat = (typeof CHAT_EXPORT_FILE_FORMATS)[number]
 export const CHAT_EXPORT_ACTIONS = [...CHAT_EXPORT_FILE_FORMATS, 'copy', 'copy-markdown'] as const
 export type ChatExportAction = (typeof CHAT_EXPORT_ACTIONS)[number]
 
-export type ChatExportInput = { workspaceId: string; agentId: string; action: ChatExportAction }
+/**
+ * A chat followed from a paired machine, whose transcript is kept on that
+ * machine and not here: the window following it reads the whole of it from
+ * there (`loadEarlier` back to the first page) and hands it over with what the
+ * machine lists about the chat. The pictures its messages attached stay over
+ * there, and are named rather than drawn.
+ */
+export type ChatExportRemoteSource = {
+  events: ConversationEvent[]
+  title: string
+  project: string | null
+  providerId: string | null
+  modelId: string | null
+  /** The chat's folder on that machine, which its steps' paths are read against. */
+  workspaceRoot: string
+}
+
+export type ChatExportInput = {
+  workspaceId: string
+  agentId: string
+  action: ChatExportAction
+  remote?: ChatExportRemoteSource
+}
 
 export type ChatExportResult =
   | { ok: true; kind: 'saved'; path: string; fileName: string }

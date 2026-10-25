@@ -290,6 +290,15 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
    * Absent when it does not, and from a desktop built before it was listed.
    */
   worktree?: boolean
+  // ── A paired desktop's chat management ──
+  /**
+   * Whether the desktop compacts the chat by itself while it sits idle, just
+   * before its prompt cache expires: the chat's own Auto compact switch, or
+   * the desktop's default where the chat left it unset. Only a Claude chat
+   * compacts by itself yet, so a client reads it beside `providerId`. Absent
+   * from a desktop built before it was listed.
+   */
+  autoCompact?: boolean
 }
 
 /** A listed chat's background work (`ConversationThread.backgroundWork`). At least one count is above zero. */
@@ -342,6 +351,13 @@ export type ConversationWirePullRequest = {
   state: ConversationWirePullRequestState
   url: string
   title: string
+  /**
+   * Present while the chat's agent has the desktop watching the pull request
+   * (it reads it every couple of minutes and wakes the chat when it needs a
+   * look): what it waits on, as the desktop's last read left it. Absent from
+   * a desktop built before it was listed.
+   */
+  watch?: ConversationWirePullRequestWatch
 }
 export type ConversationWirePullRequestState = 'open' | 'merged' | 'closed'
 
@@ -363,6 +379,48 @@ export type ConversationWireLocalServerState = 'running' | 'stopped' | 'starting
 export const CONVERSATION_MAX_LOCAL_SERVERS = 20
 
 const LOCAL_SERVER_STATES = new Set<ConversationWireLocalServerState>(['running', 'stopped', 'starting'])
+
+/** What a watched pull request waits on, most pressing first (`ConversationWirePullRequest.watch`). */
+export type ConversationWirePullRequestWatch = {
+  /** When the watch began, ms epoch. */
+  since: number
+  waitingOn: ConversationWirePullRequestWaitingOn
+  approved?: true
+  autoMerge?: true
+  /** The branch it merges into, once read. */
+  base?: string
+  /** How many checks failed on its head, while some did. */
+  failedChecks?: number
+}
+export type ConversationWirePullRequestWaitingOn =
+  'first-read' | 'checks' | 'checks-failed' | 'behind' | 'conflicts' | 'changes-requested' | 'review' | 'merge'
+
+const PULL_REQUEST_WAITING_ON = new Set<string>([
+  'first-read',
+  'checks',
+  'checks-failed',
+  'behind',
+  'conflicts',
+  'changes-requested',
+  'review',
+  'merge',
+])
+
+/** A watched pull request's watch, or null: a watch this client cannot read is left out, and the pull request kept. */
+export function parseConversationWirePullRequestWatch(value: unknown): ConversationWirePullRequestWatch | null {
+  if (!record(value)) return null
+  if (typeof value.since !== 'number' || !Number.isFinite(value.since) || value.since < 0) return null
+  if (typeof value.waitingOn !== 'string' || !PULL_REQUEST_WAITING_ON.has(value.waitingOn)) return null
+  const failed = value.failedChecks
+  return {
+    since: value.since,
+    waitingOn: value.waitingOn as ConversationWirePullRequestWaitingOn,
+    ...(value.approved === true ? { approved: true as const } : {}),
+    ...(value.autoMerge === true ? { autoMerge: true as const } : {}),
+    ...(text(value.base, 255) && value.base.trim() ? { base: value.base } : {}),
+    ...(typeof failed === 'number' && Number.isSafeInteger(failed) && failed > 0 ? { failedChecks: failed } : {}),
+  }
+}
 
 /** The most pull requests a listed chat carries; a desktop sends at most this many. */
 export const CONVERSATION_MAX_PULL_REQUESTS = 20
@@ -393,11 +451,13 @@ export function parseConversationWirePullRequests(value: unknown): ConversationW
     if (!PULL_REQUEST_STATES.has(entry.state as ConversationWirePullRequestState)) continue
     if (typeof entry.url !== 'string' || !/^https?:\/\//.test(entry.url) || entry.url.length > 2_000) continue
     if (!text(entry.title, 2_000)) continue
+    const watch = parseConversationWirePullRequestWatch(entry.watch)
     pullRequests.push({
       number: entry.number,
       state: entry.state as ConversationWirePullRequestState,
       url: entry.url,
       title: entry.title,
+      ...(watch ? { watch } : {}),
     })
   }
   return pullRequests
@@ -715,6 +775,7 @@ function thread(value: unknown): ConversationThread | null {
     ...(backgroundWork ? { backgroundWork } : {}),
     ...(changes ? { changes } : {}),
     ...(value.worktree === true ? { worktree: true } : {}),
+    ...(typeof value.autoCompact === 'boolean' ? { autoCompact: value.autoCompact } : {}),
     ...(flags
       ? {
           capabilities: {

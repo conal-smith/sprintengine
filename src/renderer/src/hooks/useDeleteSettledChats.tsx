@@ -4,7 +4,10 @@ import type { WorkspaceId } from '../types/workspace'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import { showToast } from '../store/toastStore'
 import { useConfirmDialog } from '../components/ui/ConfirmDialog'
-import { remoteConversationTitle } from '../components/workspace/remoteBand/remoteSessionsModel'
+import {
+  remoteConversationTitle,
+  remoteOriginChatWorkspaceId,
+} from '../components/workspace/remoteBand/remoteSessionsModel'
 import { deletionConfirmation, deletionToast } from '../utils/settledChatDeletion'
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -23,6 +26,8 @@ function titleOf(workspaceId: string): string {
  */
 export function useDeleteSettledChats(): {
   deleteChats: (workspaceIds: readonly WorkspaceId[]) => Promise<WorkspaceId[]>
+  /** Delete a paired machine's settled chat there, then this computer's record of it; whether it went. */
+  deleteThere: (workspaceId: WorkspaceId) => Promise<boolean>
   deleting: ReadonlySet<WorkspaceId>
 } {
   const dialog = useConfirmDialog()
@@ -86,5 +91,87 @@ export function useDeleteSettledChats(): {
     [dialog],
   )
 
-  return { deleteChats, deleting }
+  // A settled chat opened here from a paired machine that deletes its chats
+  // from here (`chat-delete`): deleted there, for every device that follows
+  // it, as that machine plans it, and then this computer's record of it. The
+  // confirmation says what goes there; there is no undo on either machine.
+  const deleteThere = useCallback(
+    async (workspaceId: WorkspaceId): Promise<boolean> => {
+      const api = window.api
+      const origin = useWorkspaceStore
+        .getState()
+        .workspaces.find((workspace) => workspace.id === workspaceId)?.remoteOrigin
+      const title = titleOf(workspaceId)
+      const failed = (description: string) =>
+        showToast({ tone: 'error', title: 'The chat was not deleted', description })
+      if (
+        !origin ||
+        typeof api?.meshConversationDeletePlan !== 'function' ||
+        typeof api.meshChangeConversation !== 'function' ||
+        typeof api.deleteSettledChats !== 'function'
+      ) {
+        failed('Deleting chats on another machine is not available here.')
+        return false
+      }
+      const target = { connectionId: origin.connectionId, workspaceId: remoteOriginChatWorkspaceId(origin) }
+      setDeleting((current) => new Set([...current, workspaceId]))
+      try {
+        const plan = await api.meshConversationDeletePlan(target)
+        const refused = !plan.ok ? plan.message : plan.refused
+        if (!plan.ok || refused) {
+          failed(refused ?? 'Nothing could be deleted.')
+          return false
+        }
+        // Gone there already: only this computer's record is left to take.
+        if (!plan.gone) {
+          const confirmation = deletionConfirmation(
+            [
+              {
+                workspaceId,
+                remoteMachine: null,
+                worktrees: plan.worktrees.map((tree) => ({ ...tree, path: tree.name })),
+              },
+            ],
+            () => title,
+          )
+          const confirmed = await dialog.confirm({
+            title: `Delete “${title}” on ${origin.machineName}?`,
+            body: (
+              <div className="space-y-2">
+                {[
+                  `It runs on ${origin.machineName}, and is deleted there, for every device that follows it.`,
+                  ...confirmation.paragraphs,
+                ].map((paragraph) => (
+                  <p key={paragraph}>{paragraph}</p>
+                ))}
+              </div>
+            ),
+            confirmLabel: 'Delete',
+            tone: 'danger',
+          })
+          if (!confirmed) return false
+          const deleted = await api.meshChangeConversation({ ...target, change: { kind: 'delete' } })
+          if (!deleted.ok) {
+            failed(deleted.message)
+            return false
+          }
+        }
+        const [removed] = await api.deleteSettledChats([workspaceId])
+        if (removed && !removed.ok) {
+          failed(`It was deleted on ${origin.machineName}, but not removed here: ${removed.message}`)
+          return false
+        }
+        showToast({ tone: 'good', title: `Deleted “${title}” on ${origin.machineName}` })
+        return true
+      } catch (error) {
+        failed(errorText(error))
+        return false
+      } finally {
+        setDeleting((current) => new Set([...current].filter((id) => id !== workspaceId)))
+      }
+    },
+    [dialog],
+  )
+
+  return { deleteChats, deleteThere, deleting }
 }

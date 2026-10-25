@@ -199,3 +199,29 @@ test('the suggested name is the title made safe for every system, and the day', 
   )
   assert.equal(chatExportFileName('Notes', 'markdown', Date.UTC(2026, 9, 20), 'UTC'), 'Notes – 2026-10-20.md')
 })
+
+test('a paired machine’s chat is exported from the transcript its window read from there', async () => {
+  const { deps, recorded } = harness()
+  const result = await runChatExport(
+    {
+      workspaceId: 'w-followed',
+      agentId: 'agent-there',
+      action: 'copy-markdown',
+      remote: {
+        events: exportChatEvents(),
+        title: 'Parser review',
+        project: 'parser',
+        providerId: 'claude-agent',
+        modelId: 'default',
+        workspaceRoot: EXPORT_CHAT_WORKSPACE_ROOT,
+      },
+    },
+    deps,
+  )
+  assert.deepEqual(result, { ok: true, kind: 'copied' })
+  assert.deepEqual(recorded.read, [], 'nothing is read here: the transcript is on that machine')
+  const text = recorded.clipboard[0]!.text
+  assert.ok(text.startsWith('# Parser review\n'), text.slice(0, 80))
+  // Its pictures stay on that machine, and are named.
+  assert.ok(text.includes('[image: screenshot.png]'))
+})

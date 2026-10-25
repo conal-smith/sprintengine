@@ -13,6 +13,22 @@
 
 ### Added
 
+- **A listed chat's pull request says when the desktop watches it.**
+  `watch` is an optional member of `ConversationWirePullRequest`
+  (`ConversationWirePullRequestWatch`: `since`, `waitingOn`, and `approved`,
+  `autoMerge`, `base` and `failedChecks` where they apply), present while the
+  chat's agent has the desktop watching the pull request. Absent from a
+  desktop built before it was listed. `parseConversationWirePullRequests`
+  keeps a watch it can read and leaves out one it cannot, keeping the pull
+  request. The pinned files are unchanged.
+
+- **A listed chat says whether it compacts by itself.** `autoCompact` is an
+  optional boolean member of `ConversationThread`: whether the desktop
+  compacts the chat while it sits idle, just before its prompt cache expires,
+  by the chat's own switch or the desktop's default. Absent from a desktop
+  built before it was listed. `parseConversationServerFrame` keeps it when it
+  is a boolean. The pinned files are unchanged.
+
 - **A paired device can hand a chat off.** `CONVERSATION_HANDOFF_CAPABILITY`
   (`conversation-handoff`) names a desktop that takes the `handoff` command
   and hands the chat off to a fresh session as its own Handoff does: the
