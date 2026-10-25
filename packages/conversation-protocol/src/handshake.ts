@@ -77,6 +77,13 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as
  */
 export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent' as const
 /**
+ * A message may say the mode its turn runs in, as the desktop's own chat
+ * sends one: `send` takes `mode` (`ask`, or `plan` where a listed chat says
+ * its provider plans, `capabilities.planMode`). A desktop without it runs
+ * every turn in the default mode, which may change what an `ask` would not.
+ */
+export const CONVERSATION_SEND_MODE_CAPABILITY = 'conversation-send-mode' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -121,6 +128,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_MESSAGE_FILES_CAPABILITY,
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
+  CONVERSATION_SEND_MODE_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

@@ -1060,7 +1060,8 @@ export function createConversationGatewayHost(
       // sends again as it does any send made mid-turn.
       const steer = command.kind === 'send' && command.steer === true
       const holdInstead = (reason: string): ConversationGatewayCommandResult => {
-        if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length)
+        // Nor one in a mode of its own: held, it would go in the default one.
+        if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length || command.mode)
           return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
         const stale = staleHold()
         if (stale) return stale
@@ -1125,6 +1126,10 @@ export function createConversationGatewayHost(
               ...(command.composedAt !== undefined ? { composedAt: command.composedAt } : {}),
               ...(command.confirmedStale ? { confirmedStale: true } : {}),
             }
+            // The mode the device's chat sends the turn in, as this machine's
+            // own chat does; the runtime refuses `plan` for a provider that
+            // does not plan.
+            const turnMode = command.mode ? { mode: command.mode } : {}
             if (retry)
               return api.send({
                 sessionId: session.sessionId,
@@ -1134,6 +1139,7 @@ export function createConversationGatewayHost(
                 ...turnEffort,
                 ...turnSkills,
                 ...turnSteer,
+                ...turnMode,
                 ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),
@@ -1216,6 +1222,7 @@ export function createConversationGatewayHost(
                 ...turnEffort,
                 ...turnSkills,
                 ...turnSteer,
+                ...turnMode,
                 ...written,
                 ...stamp,
                 ...(registry.sendOrigin ? { origin: registry.sendOrigin } : {}),

@@ -194,6 +194,11 @@ export const TAILNET_CAPABILITIES = [
   // at a time, so a paired machine needs its own Stop for each.
   // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
   'conversation-stop-subagent',
+  // A message may say the mode its turn runs in (2026-10-25): `send` takes
+  // `mode`, `ask`, or `plan` where a listed chat says its provider plans
+  // (`capabilities.planMode`), as this machine's own chat sends one.
+  // CONVERSATION_SEND_MODE_CAPABILITY.
+  'conversation-send-mode',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

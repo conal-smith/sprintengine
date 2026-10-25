@@ -464,6 +464,10 @@ export function createRemoteConversationTransport(input: {
           // composer's chips are.
           ...(turn.skills?.length ? { skills: turn.skills.map((skill) => skill.id) } : {}),
           ...(turn.steer ? { steer: true } : {}),
+          // The mode the chat's turn runs in, as a chat here sends it. Main
+          // refuses one other than the default for a machine that would run
+          // it in the default mode instead.
+          ...(turn.mode && turn.mode !== 'default' ? { mode: turn.mode } : {}),
         }),
       ),
     queue: async (turn) =>

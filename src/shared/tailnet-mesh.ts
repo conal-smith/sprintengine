@@ -490,6 +490,11 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * that chat's provider can (its listed `capabilities.stopSubagent`). False for
  * a machine that does not, where an agent's lane offers no Stop.
  *
+ * `sendMode`: the machine advertises `conversation-send-mode` — a message to
+ * one of its chats may say the mode its turn runs in, `ask`, or `plan` where
+ * that chat's provider plans (its listed `capabilities.planMode`). False for a
+ * machine that does not, where every turn runs in the default mode.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -512,6 +517,7 @@ export type MeshConversationListResult =
       sendSkills?: boolean
       steerSends?: boolean
       stopSubagents?: boolean
+      sendMode?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean

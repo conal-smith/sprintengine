@@ -92,6 +92,7 @@ function remoteConversationSession(
   modelSwitch: boolean,
   stopSubagents: boolean,
   cliPermissionModes: boolean,
+  sendMode: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -118,10 +119,12 @@ function remoteConversationSession(
       tools: true,
       approvals: capabilities?.approvals ?? true,
       questions: capabilities?.questions ?? true,
-      // The remote send carries no mode or effort. It carries images where
-      // the machine lists the chat as taking them: main puts each in that
-      // machine's upload store, as the phone does, and the send names them.
-      planMode: false,
+      // Whether its provider plans, where the machine takes the mode a turn
+      // runs in; one that does not runs every turn in the default mode.
+      planMode: sendMode && capabilities?.planMode === true,
+      // The remote send carries images where the machine lists the chat as
+      // taking them: main puts each in that machine's upload store, as the
+      // phone does, and the send names them.
       images: capabilities?.images === true,
       skills: 'none',
       reasoningEfforts: null,
@@ -183,6 +186,8 @@ export default function RemoteConversationPanel({
   const [steerSends, setSteerSends] = useState(false)
   // The machine stops one agent of one of its chats by itself.
   const [stopSubagents, setStopSubagents] = useState(false)
+  // The machine runs a turn in the mode its message says.
+  const [sendMode, setSendMode] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -289,6 +294,7 @@ export default function RemoteConversationPanel({
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
+        setSendMode(result.sendMode === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -327,8 +333,8 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, cliPermissionModes),
-    [thread, key, modelSwitch, stopSubagents, cliPermissionModes],
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode),
+    [thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

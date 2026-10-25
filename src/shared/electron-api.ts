@@ -1079,6 +1079,8 @@ export type ElectronApi = {
     /** That machine's skill ids the chat runs with this message (`conversation-send-skills`). */
     skills?: string[]
     steer?: boolean
+    /** The mode the turn runs in; anything but the default needs `conversation-send-mode` there. */
+    mode?: 'default' | 'plan' | 'ask'
   }) => Promise<MeshConversationCommandResult>
   // Take back a message the machine holds for the turn's end, by its id there.
   meshConversationCancelQueued: (input: {

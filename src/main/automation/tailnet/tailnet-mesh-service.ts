@@ -356,7 +356,8 @@ export type TailnetMeshService = {
    * hold until the chat's turn ends (`conversation-queued-sends`); a queued
    * message carries no images, and one with them is refused. `steer` hands it
    * to the turn the chat is running (`conversation-steer-sends`), refused for
-   * a machine that does not take one rather than dropped.
+   * a machine that does not take one rather than dropped. `mode` is the mode
+   * the turn runs in (`conversation-send-mode`), refused the same way.
    */
   conversationSend(input: {
     key: unknown
@@ -366,6 +367,8 @@ export type TailnetMeshService = {
     /** Ids of that machine's skills the chat runs with this message (`conversation-send-skills`). */
     skills?: unknown
     steer?: unknown
+    /** The mode the turn runs in, `plan` or `ask`; absent, or `default`, the default one. */
+    mode?: unknown
   }): Promise<MeshConversationCommandResult>
   /**
    * What a chat in one of that machine's projects can use: its skills and,
@@ -2217,6 +2220,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
+          sendMode: tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mode'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2534,6 +2538,28 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: `${connection.machineName} cannot take a message into a running turn from here yet. Update SprintEngine Studio there.`,
           }
       }
+      if (input.mode !== undefined && input.mode !== 'default' && input.mode !== 'plan' && input.mode !== 'ask')
+        return { ok: false, code: 'invalid_arguments', message: '"mode" is default, plan or ask.' }
+      const mode = input.mode === 'plan' || input.mode === 'ask' ? input.mode : null
+      if (mode) {
+        if (input.queue !== undefined)
+          return {
+            ok: false,
+            code: 'invalid_arguments',
+            message: 'A queued message goes in the default mode; send it once the turn ends instead.',
+          }
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        // Refused, never dropped: a machine from before `mode` skips it and
+        // runs the turn in the default mode, where an ask may change files.
+        if (!tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-send-mode'))
+          return {
+            ok: false,
+            code: 'mode_unsupported',
+            message: `${connection.machineName} cannot run a turn in ${mode === 'plan' ? 'plan' : 'ask'} mode from here yet. Update SprintEngine Studio there.`,
+          }
+      }
       const send = (uploadIds: string[]) =>
         conversationCommand({
           key: input.key,
@@ -2543,6 +2569,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             ...(uploadIds.length > 0 ? { uploadIds } : {}),
             ...(skills.ids.length > 0 ? { skills: skills.ids } : {}),
             ...(steer ? { steer: true } : {}),
+            ...(mode ? { mode } : {}),
           },
         })
       if (input.queue !== undefined && input.queue !== true)

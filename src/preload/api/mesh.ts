@@ -200,6 +200,7 @@ export const meshApi = {
     queue?: boolean
     skills?: string[]
     steer?: boolean
+    mode?: 'default' | 'plan' | 'ask'
   }): Promise<MeshConversationCommandResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_SEND_CHANNEL, {
       key: input.key,
@@ -208,6 +209,7 @@ export const meshApi = {
       ...(input.queue ? { queue: true } : {}),
       ...(input.skills?.length ? { skills: input.skills } : {}),
       ...(input.steer ? { steer: true } : {}),
+      ...(input.mode && input.mode !== 'default' ? { mode: input.mode } : {}),
     }) as Promise<MeshConversationCommandResult>,
   meshConversationCancelQueued: (input: { key: MeshConversationKey; queuedId: string }) =>
     command(input.key, { kind: 'cancelQueued', queuedId: input.queuedId }),

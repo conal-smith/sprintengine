@@ -449,6 +449,19 @@ sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first). The Studio RPC advertises it too: its
 `conversation.stopSubagent` method, an owner's for now, reads the lane's own
 validator and reaches the same host.
+The mode a turn runs in is the `conversation-send-mode` capability
+(2026-10-25): a `send` may say `mode`, `ask`, or `plan` where the listed chat's
+`capabilities.planMode` says its provider plans, and the desktop runs the turn
+in it as its own chat sends one; `default` is read as none. `mode` is never
+beside `queue`, and a steer in a mode of its own that the running turn cannot
+take is refused `busy` rather than held, since a held message goes in the
+default mode. All of it is additive, but a desktop without the capability
+drops the member and runs the turn in the default mode, where an `ask` may
+change files, so a client sends one only where it is advertised (a desktop
+following another machine's chat refuses one there in words first, and lists
+`planMode` from that machine only where it is). The Studio RPC advertises it
+too: its `conversation.send` reads the lane's own validator and reaches the
+same host.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

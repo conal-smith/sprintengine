@@ -146,6 +146,13 @@ and adds, each behind its capability:
   can (a listed thread's `capabilities.stopSubagent`), and leaves the chat,
   its turn and its other agents running. A desktop without it refuses the
   kind as `unsupported_command`.
+- `conversation-send-mode`: a `send` with `mode` (`CONVERSATION_SEND_MODES`:
+  `ask`, or `plan` where a listed thread's `capabilities.planMode` says its
+  provider plans) runs its turn in that mode, as the desktop's own chat sends
+  one; `default` is read as no mode. Never beside `queue`, and a steer in a
+  mode that the running turn cannot take is refused `busy` rather than held. A
+  desktop without it drops `mode` and runs the turn in the default mode, so a
+  client sends one only where it is advertised.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

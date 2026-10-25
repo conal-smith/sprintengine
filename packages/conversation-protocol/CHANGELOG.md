@@ -13,6 +13,16 @@
 
 ### Added
 
+- **A message can say the mode its turn runs in.**
+  `CONVERSATION_SEND_MODE_CAPABILITY` (`conversation-send-mode`) names a
+  desktop whose `send` takes `mode` (`ConversationSendMode`: `plan` or `ask`)
+  and runs the turn in it, as its own chat sends one. `CONVERSATION_SEND_MODES`
+  lists them with `default`. `parseConversationClientMessage` keeps a named
+  mode beside whatever else the send says, reads `default` as none, and
+  refuses one it does not name, or one beside `queue`, as `invalid_frame`. A
+  desktop without the capability drops the member. The pinned files are
+  unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the

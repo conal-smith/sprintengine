@@ -70,6 +70,16 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   a chat whose provider cannot stop one by itself (the listed chat's
  *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
  *   desktop without it refuses the kind as `unsupported_command`.
+ * - `send` may say the `mode` the turn runs in, as the desktop's own chat
+ *   sends one: `ask` answers without changing anything, `plan` has the agent
+ *   plan and wait for the plan to be approved, where the chat's provider
+ *   plans (the listed chat's `capabilities.planMode`). Absent, or `default`,
+ *   the turn runs as every send did. Never beside `queue`: a held message is
+ *   its words alone, and would go in the default mode. A steer the running
+ *   turn cannot take is refused `busy` rather than held, for the same reason.
+ *   Needs `conversation-send-mode`; a desktop without it drops the member and
+ *   runs the turn in the default mode, which may change what an `ask` would
+ *   not, so a client sends one only where it is advertised.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -92,6 +102,7 @@ export type ConversationCommand =
       steer?: true
       composedAt?: number
       confirmedStale?: true
+      mode?: ConversationSendMode
     }
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
@@ -99,6 +110,12 @@ export type ConversationCommand =
   | { kind: 'stopSubagent'; toolUseId: string }
 
 export type ConversationCommandKind = ConversationCommand['kind']
+
+/** The modes a `send` may name beside the default one (`conversation-send-mode`). */
+export type ConversationSendMode = 'plan' | 'ask'
+
+/** Every mode a `send` may name, the default one included, which is the same as naming none. */
+export const CONVERSATION_SEND_MODES: readonly (ConversationSendMode | 'default')[] = ['default', 'plan', 'ask']
 
 /**
  * How old a `send`'s `composedAt` may be before a desktop asks for it to be

@@ -799,6 +799,13 @@ in the app's own process.
   the chat's CLI runs beside the presets (Claude Code's Accept edits), shows
   the one the machine lists the chat on, and a pick switches it over there. A
   machine without the capability is offered each preset's own mode only.
+- **A turn runs in the chat's mode over there** (2026-10-25). Where the machine
+  advertises `conversation-send-mode`, a message goes in the mode the chat
+  sends its turns in, as a local chat's do, and the chat says whether its
+  provider plans from what the machine lists (`capabilities.planMode`). A
+  machine without the capability is sent no mode, and a message in one other
+  than the default is refused here in words rather than run as a default
+  turn there.
 
 ### Terminals stay on the machine
 

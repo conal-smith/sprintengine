@@ -77,3 +77,23 @@ test("a machine that runs no CLI's own modes is not asked to switch a chat to on
     await machine.close()
   }
 })
+
+test('a machine that does not take the mode a turn runs in is not sent one, and a default send goes as before', async () => {
+  const machine = await pairedMachine(['conversations'])
+  try {
+    const before = machine.asked()
+    for (const mode of ['ask', 'plan']) {
+      const sent = await machine.mesh.conversationSend({ key: machine.key, message: 'Only look', mode })
+      assert.ok(!sent.ok && sent.code === 'mode_unsupported')
+      assert.ok(!sent.ok && sent.message.includes('Update SprintEngine Studio there'))
+    }
+    assert.equal(machine.asked(), before, 'nothing was sent over there')
+    // A queued message is its words alone, and goes in the default mode.
+    const queued = await machine.mesh.conversationSend({ key: machine.key, message: 'Later', mode: 'ask', queue: true })
+    assert.ok(!queued.ok && queued.code === 'invalid_arguments')
+    const odd = await machine.mesh.conversationSend({ key: machine.key, message: 'Hm', mode: 'yolo' })
+    assert.ok(!odd.ok && odd.code === 'invalid_arguments')
+  } finally {
+    await machine.close()
+  }
+})

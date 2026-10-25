@@ -7,6 +7,7 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_SEND_SKILLS,
+  CONVERSATION_SEND_MODES,
   isConversationPermissionModeId,
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
@@ -97,6 +98,16 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
           ...(confirmedStale === true ? { confirmedStale: true as const } : {}),
         },
       }
+    }
+    // The mode a turn runs in rides beside whatever else the send says, and
+    // never beside a message held for later, which goes in the default one.
+    // `default` is the same as naming none, and is read as none.
+    if (command.kind === 'send' && command.mode !== undefined) {
+      const mode = command.mode
+      if (!CONVERSATION_SEND_MODES.includes(mode as never) || command.queue !== undefined) return null
+      const frame = parseConversationClientMessage({ ...value, command: { ...command, mode: undefined } })
+      if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
+      return mode === 'default' ? frame : { ...frame, command: { ...frame.command, mode: mode as 'plan' | 'ask' } }
     }
     if (command.kind === 'cancelQueued') {
       return id(value.commandId) && id(command.queuedId)
