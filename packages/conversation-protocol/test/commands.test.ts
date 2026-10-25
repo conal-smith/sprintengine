@@ -44,8 +44,8 @@ const FIRST_VERSION_FRAMES: unknown[] = [
   command({ kind: 'answerQuestion', requestId: 'req-1', answers: { 'Which file?': 'a.ts' } }),
   command({ kind: 'setPermissionPreset', preset: 'auto' }),
   command({ kind: 'setModel', modelId: 'default' }),
-  // Refused by both.
-  command({ kind: 'resolveApproval', requestId: 'req-1', decision: 'always' }),
+  // Refused by both. (A permanent rule is read by the full contract alone,
+  // for a desktop that takes one: permanent-approvals.test.ts.)
   command({ kind: 'send', message: 7 }),
   { type: 'subscribe', key, afterSeq: -1 },
   { type: 'unknown' },

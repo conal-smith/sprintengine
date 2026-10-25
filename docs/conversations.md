@@ -28,7 +28,9 @@ the composer, with a counter and keyboard navigation when several are waiting.
 Remembered tool permissions are scoped to the conversation or workspace.
 Requests that cannot be represented safely as a rule offer only a one-time
 decision. Deny-by-default requests focus Deny. Workspace rules can be reviewed
-and revoked. Remote clients cannot choose a permanent rule.
+and revoked. A remote client chooses a permanent rule only where the machine
+it drives advertises `conversation-permanent-approvals`, and the rule is that
+machine's, saved for its own workspace.
 
 ### Permission modes
 
@@ -314,9 +316,12 @@ same socket and the same frames; nothing in the wire is specific to a phone.
   Bypass, and switch a chat between any of the modes the host runs (all four on
   a host that advertises `conversation-permission-modes`, Bypass and No flag on
   one that does not, which is never sent Manual or Auto). A conversation a
-  remote send resumes starts under the preset it was left on. The one thing a
-  remote command cannot choose is a permanent approval rule, which outlives the
-  conversation; that is refused before the runtime sees it.
+  remote send resumes starts under the preset it was left on. A permanent
+  approval rule, which outlives the conversation, it chooses as the host's
+  own "Always allow … in this workspace" does (owner ruling 2026-10-25): the
+  rule is saved for the chat's workspace here, among this machine's own rules,
+  which Settings lists and revokes (`conversation-permanent-approvals`). A
+  host without the capability refuses it before the runtime sees it.
 - **Starting a chat.** The same grant starts one: `conversation.create` adds a
   chat agent to one of this machine's workspaces, starts its session on the
   named CLI (the launcher's model and preset, else this machine's choice for
@@ -484,7 +489,9 @@ declares:
   retry is answered with the first attempt's result. A tool permission is
   answered `once`, `conversation` or `deny`, a question with its answers, a
   plan with `approve` or `reject`, and each answer can name the kind it is for.
-  A permanent approval rule is the person's to make here and has no command.
+  A tool permission may also be answered `always` where the host advertises
+  `conversation-permanent-approvals`: the rule is saved here, for the chat's
+  workspace, as this machine's own "Always allow" saves one.
 - **Capabilities and a version.** `hello` answers the conversation protocol
   version (1), its minimum, and the conversation capabilities this machine
   advertises (`conversation-hello`). Features are asked about by capability,
@@ -839,8 +846,10 @@ in the app's own process.
   retrying, and a socket silent past two of the host's pings is re-dialled.
 - **What the view offers is what the grant and the lane allow.** A pairing
   without `conversation:operate` sees the conversation with the composer,
-  approvals and stop closed. A remote view never offers a permanent approval
-  rule, a checkpoint revert, or this machine's skills and files: what its
+  approvals and stop closed. A remote view offers a permanent approval rule
+  only where the machine saves one (`conversation-permanent-approvals`), the
+  remember menu's "Always allow … in this workspace" naming that machine's
+  workspace; and never a checkpoint revert, or this machine's skills and files: what its
   composer offers of skills, mentions and commands is that machine's (below).
   Images it
   does offer, where the machine lists the chat as taking them: main puts each
@@ -870,6 +879,18 @@ in the app's own process.
   sends them. A machine without the capability, or one that refuses to hold a
   message, leaves it queued in this pane, which sends it when the turn ends
   only while this machine is awake, as every queued message was before.
+  Where the machine also advertises `conversation-queued-attachments`
+  (2026-10-25), a message with images, files, skills or mentions is handed
+  over whole: main uploads its images and files first, as for a send now, and
+  the machine copies the pictures to its own disk and keeps the files while it
+  holds the message, so nothing of it waits here once Enter is pressed (owner
+  ruling 2026-10-25). The held row counts what it carries ("1 picture, 1
+  skill"). Edit brings back its words, skills and mentions; its pictures and
+  files are the other machine's copies and do not come back, which the row's
+  tooltip and the line after Edit say. Send now on a held message carrying
+  pictures or files stops the turn instead of taking it back to steer, so it
+  goes whole from there. A machine that holds words only is handed words only:
+  a message carrying more waits in this pane, as before.
 - **A message can steer the turn over there** (2026-10-14). Where the machine
   advertises `conversation-steer-sends` and lists the chat's provider as taking
   a message mid-turn (`capabilities.steer`), the composer's Steer, chosen in
@@ -943,9 +964,9 @@ conversation-files`, on `conversation:read`), the picker ranks the matches
   takes files once a message has woken it, as it takes pictures. A machine
   without one of these leaves that part of the composer as before: no @, the
   `/` menu with Studio's commands, a file typed as its path. A message holding
-  mentions, skills or files is not handed to that machine's queue: that queue
-  keeps words alone, so such a message waits in this pane and goes when the
-  turn ends while this machine is awake.
+  mentions, skills or files is handed to that machine's queue only where it
+  keeps them too (`conversation-queued-attachments`, above); elsewhere it waits
+  in this pane and goes when the turn ends while this machine is awake.
 - **The CLI's own modes, as here** (2026-10-25). Where the machine advertises
   `conversation-cli-permission-modes`, the permissions picker lists the modes
   the chat's CLI runs beside the presets (Claude Code's Accept edits), shows

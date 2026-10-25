@@ -47,7 +47,7 @@ async function fixture(options: { scheduled?: boolean } = {}) {
     options.scheduled === false
       ? {}
       : {
-          heldMessages: studioHeldMessages(() => scheduled),
+          heldMessages: studioHeldMessages(() => scheduled, workspaceRoot),
           scheduledSends: studioScheduledSends(() => scheduled),
         },
   )

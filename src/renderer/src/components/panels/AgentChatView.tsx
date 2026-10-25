@@ -212,7 +212,7 @@ import {
   readImageAttachment,
 } from './agentChat/imageAttachments'
 import { ConversationPendingDock, coversComposer, type ApprovalModeSwitch } from './agentChat/pendingDock'
-import { QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
+import { heldMessageCarries, QueuedTurnRow, queuedTurnSendNow } from './agentChat/queuedTurnBubble'
 import { followUpSendPresentation, primaryClickModifier, resolveComposerDispatch } from './agentChat/followUpDispatch'
 import { FollowUpSendButton } from './agentChat/FollowUpSendButton'
 import { ComposerTray, ComposerTrayRow } from './agentChat/composerTray'
@@ -1513,36 +1513,42 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // A chat on another machine that holds its own queue (`hostQueue`): a
   // message queued while its turn runs is handed to that machine at once, and
   // that machine sends it when the turn ends, so it goes even if this one is
-  // asleep or closed by then (owner report 2026-10-08). Only words are handed
-  // over, as that machine keeps nothing else for later: a message with images
-  // waits here and goes with them when the turn ends, as before. And only
-  // while the queue here is empty: a message refused there waits here, and
-  // what follows it joins it here, so one message is never split between the
-  // two machines.
+  // asleep or closed by then (owner report 2026-10-08). Where that machine
+  // holds a message whole (`hostQueueAttachments`), its images, files, skills
+  // and mentions go with it, uploaded first as a send's are, and nothing of it
+  // stays here once it is held (owner ruling 2026-10-25: "once I press Enter
+  // there shouldn't be anything sitting on my machine waiting"). A machine
+  // that holds words only is handed words only: a message carrying more waits
+  // here and goes with it when the turn ends, as before. And only while the
+  // queue here is empty: a message refused there waits here, and what follows
+  // it joins it here, so one message is never split between the two machines.
   const hostQueue = transport.capabilities.hostQueue && transport.queue ? (binding.hostQueue ?? null) : null
   // Messages on their way to that machine, until it answers that it holds them.
-  const [handingOff, setHandingOff] = useState<string[]>([])
+  const [handingOff, setHandingOff] = useState<QueuedTurn[]>([])
   // The held messages an Edit is taking back, so a second click asks once.
   const takingBackRef = useRef(new Set<string>())
   const handToHost = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (turn: QueuedTurn): Promise<boolean> => {
       const queue = transport.queue
       if (!queue) return false
-      setHandingOff((current) => [...current, text])
+      setHandingOff((current) => [...current, turn])
       let result: { ok: true } | { ok: false; message: string }
       try {
-        result = await queue({ message: text })
+        const files = attachedFilesOf(turn.metadata.files)
+        result = await queue({
+          message: turn.text,
+          ...(turn.attachments.length ? { attachments: turn.attachments } : {}),
+          ...(turn.metadata.skillIds.length ? { skills: turn.metadata.skillIds } : {}),
+          ...(turn.metadata.mentions.length ? { mentions: turn.metadata.mentions } : {}),
+          ...(files.length ? { files } : {}),
+        })
       } catch (err) {
         result = { ok: false, message: err instanceof Error ? err.message : 'The message did not reach it.' }
       }
-      setHandingOff((current) => {
-        const index = current.indexOf(text)
-        return index < 0 ? current : [...current.slice(0, index), ...current.slice(index + 1)]
-      })
+      setHandingOff((current) => current.filter((entry) => entry !== turn))
       if (result.ok) return true
-      // Not held there: it waits here, as every queued message did before,
-      // ahead of anything queued since — never lost.
-      const turn: QueuedTurn = { text, attachments: [], metadata: { skillIds: [], mentions: [], files: [] } }
+      // Not held there: it waits here, whole, as every queued message did
+      // before, ahead of anything queued since — never lost.
       setQueuedTurn((current) =>
         current ? queueComposerDraft(turn, current.text, current.attachments, current.metadata).turn : turn,
       )
@@ -1558,10 +1564,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const handsQueueToHost =
     hostQueue !== null &&
     queuedTurn === null &&
-    attachments.length === 0 &&
-    !draftMetadata.mentions.length &&
-    !draftMetadata.skillIds.length &&
-    !draftMetadata.files.length
+    (transport.capabilities.hostQueueAttachments ||
+      (attachments.length === 0 &&
+        !draftMetadata.mentions.length &&
+        !draftMetadata.skillIds.length &&
+        !draftMetadata.files.length))
 
   // What "send it now" does for the queued message: a steer where both the
   // transport and the provider take one, else stop the turn and let the queue
@@ -1639,10 +1646,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           void steerTurnRef.current(turn)
           return true
         }
-        if (handsQueueToHost && text) {
+        if (handsQueueToHost) {
+          const { turn, dropped } = queueComposerDraft(null, text, attachments, draftMetadata)
           clearDraft()
-          setActionError(null)
-          void handToHost(text)
+          setAttachments([])
+          setActionError(queuedDropNotice(dropped))
+          void handToHost(turn)
           return true
         }
         // The cap is the IPC boundary's; trimming to it is right, hiding the trim
@@ -2239,9 +2248,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // again, as any is. The row says "Send now" then, so it must not stop the
   // turn (owner report 2026-10-24: a held message sent now ended the turn and
   // the helper it was running). Elsewhere it is Stop and send.
+  // One carrying pictures or files is let go by stopping the turn instead:
+  // they are on that machine, which sends them with it, and taken back to be
+  // steered from here they would be lost.
   const sendHostQueuedNow = (message: MeshQueuedMessage | undefined) => {
     if (!message || queuedSendNow.disabled || !operate) return
-    if (queuedSendNow.kind === 'steer' && transport.cancelQueued) void steerHostQueued(message)
+    const keptThere = Boolean(message.images?.length || message.files?.length)
+    if (queuedSendNow.kind === 'steer' && transport.cancelQueued && !keptThere) void steerHostQueued(message)
     else stopForHostQueue()
   }
   const steerHostQueued = async (message: MeshQueuedMessage) => {
@@ -2253,7 +2266,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         setActionError(result.message)
         return
       }
-      await steerTurn({ text: message.text, attachments: [], metadata: { skillIds: [], mentions: [], files: [] } })
+      await steerTurn({
+        text: message.text,
+        attachments: [],
+        metadata: { skillIds: [...(message.skills ?? [])], mentions: [...(message.mentions ?? [])], files: [] },
+      })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'The message could not be sent now.')
     } finally {
@@ -2262,7 +2279,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   }
   // Edit on a message that machine holds: taken back there first, so it cannot
   // go as well as come back here. One already on its way stays where it is,
-  // and the refusal says so.
+  // and the refusal says so. Its words, skills and mentions come back into the
+  // composer; its pictures and files are that machine's copies, which go with
+  // the held message, so the line says to attach them again.
   const takeBackHostQueued = async (message: MeshQueuedMessage) => {
     if (!transport.cancelQueued || takingBackRef.current.has(message.id)) return
     takingBackRef.current.add(message.id)
@@ -2273,6 +2292,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         return
       }
       setDraft((current) => [message.text, current].filter(Boolean).join('\n'))
+      if (message.skills?.length || message.mentions?.length)
+        setDraftMetadata((current) => ({
+          ...current,
+          skillIds: [...new Set([...(message.skills ?? []), ...current.skillIds])],
+          mentions: [...(message.mentions ?? []), ...current.mentions],
+        }))
+      const left = heldMessageCarries({ images: message.images, files: message.files })
+      if (left)
+        setActionError(
+          `Its ${left} did not come back from ${hostQueue?.machineName ?? 'the other machine'}. Attach them again to send them.`,
+        )
       composerRef.current?.focus()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'The message could not be taken back.')
@@ -2323,10 +2353,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     }
     // Held by the machine running the chat, then let go by stopping its turn.
     // A steer goes into that turn instead, through the queue below.
-    if (handsQueueToHost && text && dispatch !== 'steer') {
+    if (handsQueueToHost && dispatch !== 'steer') {
+      const { turn, dropped } = queueComposerDraft(null, text, attachments, draftMetadata)
       clearDraft()
-      setActionError(null)
-      void handToHost(text).then((held) => {
+      setAttachments([])
+      setActionError(queuedDropNotice(dropped))
+      void handToHost(turn).then((held) => {
         if (held) stopForHostQueue()
       })
       return
@@ -4252,8 +4284,16 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                */}
               {hostQueue && handingOff.length > 0 ? (
                 <QueuedTurnRow
-                  text={handingOff.join('\n')}
-                  attachments={[]}
+                  text={handingOff
+                    .map((turn) => turn.text)
+                    .filter(Boolean)
+                    .join('\n')}
+                  attachments={handingOff.flatMap((turn) => turn.attachments)}
+                  carries={heldMessageCarries({
+                    files: handingOff.flatMap((turn) => turn.metadata.files),
+                    skills: handingOff.flatMap((turn) => turn.metadata.skillIds),
+                    mentions: handingOff.flatMap((turn) => turn.metadata.mentions),
+                  })}
                   sendNow={null}
                   shortcutLabel={sendNowShortcutLabel}
                   onSendNow={() => undefined}
@@ -4266,6 +4306,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                   key={message.id}
                   text={message.text}
                   attachments={[]}
+                  carries={heldMessageCarries(message)}
+                  {...(message.images?.length || message.files?.length
+                    ? {
+                        editHint:
+                          'Take its words, skills and mentions back into the composer. Its pictures and files are not brought back.',
+                      }
+                    : {})}
                   sendNow={
                     message.failure !== undefined
                       ? null

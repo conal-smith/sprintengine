@@ -42,11 +42,7 @@ test('a queued send keeps `queue`; an older desktop drops it and takes an ordina
   })
 })
 
-test('a queued send is its words alone, and says `queue` only as true', () => {
-  assert.equal(
-    parseConversationClientMessage(command({ kind: 'send', message: 'Look.', queue: true, uploadIds: ['u-1'] })),
-    null,
-  )
+test('a queued send says `queue` only as true', () => {
   for (const queue of [false, 'yes', 1, null])
     assert.equal(parseConversationClientMessage(command({ kind: 'send', message: 'x', queue })), null, String(queue))
   assert.equal(parseConversationClientMessage(command({ kind: 'send', message: 7, queue: true })), null)

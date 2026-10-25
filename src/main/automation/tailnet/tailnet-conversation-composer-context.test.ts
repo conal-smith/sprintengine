@@ -188,13 +188,13 @@ test("a send's mentions are resolved against the chat's folder here, and one out
   }
 })
 
-test('a steer with mentions that the turn cannot take is refused busy, never held as words alone', async () => {
-  const held: string[] = []
+test('a steer with mentions that the turn cannot take is held with its mentions, never as words alone', async () => {
+  const held: Array<{ text: string; mentions: unknown }> = []
   const f = await fixture({
     registry: {
       heldMessages: {
-        hold: (_chat, text) => {
-          held.push(text)
+        hold: (_chat, text, _source, carried) => {
+          held.push({ text, mentions: carried?.mentions })
           return { ok: true }
         },
         cancel: () => ({ ok: true }),
@@ -221,9 +221,8 @@ test('a steer with mentions that the turn cannot take is refused busy, never hel
       steer: true,
       mentions: [{ path: 'docs/notes.md', kind: 'file' }],
     })
-    assert.equal(result.ok, false)
-    assert.equal(result.code, 'busy')
-    assert.deepEqual(held, [])
+    assert.equal(result.ok, true, result.message ?? '')
+    assert.deepEqual(held, [{ text: 'Also read this', mentions: [{ path: 'docs/notes.md', kind: 'file' }] }])
   } finally {
     await f.cleanup()
   }

@@ -105,6 +105,8 @@ async function mountRemote({
   permissionModes = false,
   cliPermissionModes = false,
   queuedSends = false,
+  queuedAttachments = false,
+  permanentApprovals = false,
   steerSends = false,
   stopSubagents = false,
   handoff = false,
@@ -144,6 +146,10 @@ async function mountRemote({
   /** The machine runs chats on their CLI's own modes (`conversation-cli-permission-modes`). */
   cliPermissionModes?: boolean
   queuedSends?: boolean
+  /** The machine holds a queued message's images, files, skills and mentions (`conversation-queued-attachments`). */
+  queuedAttachments?: boolean
+  /** The machine saves an "always allow" rule chosen here (`conversation-permanent-approvals`). */
+  permanentApprovals?: boolean
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
   stopSubagents?: boolean
@@ -235,6 +241,8 @@ async function mountRemote({
       permissionModes,
       cliPermissionModes,
       queuedSends,
+      queuedAttachments,
+      permanentApprovals,
       steerSends,
       stopSubagents,
       handoff,
@@ -630,6 +638,40 @@ test('an approval over there can be allowed for the rest of the conversation, ne
       key,
       requestId: 'approval-2',
       decision: 'conversation',
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that saves the rule offers "always allow" in its workspace, and the rule goes over the mesh', async () => {
+  const chat = await mountRemote({ access: 'operate', permanentApprovals: true })
+  try {
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) })
+      chat.emit({
+        type: 'event',
+        event: event('approval_requested', {
+          turnId: 'a',
+          requestId: 'approval-2',
+          action: 'Bash',
+          summary: 'git status',
+          input: { command: 'git status' },
+          cwd: '/Users/dev/project',
+        }),
+      })
+    })
+    await chat.act(async () =>
+      chat.host.querySelector<HTMLButtonElement>('button[aria-label="Remember permission"]')!.click(),
+    )
+    const rows = Array.from(chat.document.querySelectorAll<HTMLElement>('[data-menu-item="true"]'))
+    expect(rows).toHaveLength(2)
+    expect(rows[1]!.textContent).toContain('workspace')
+    await chat.act(async () => rows[1]!.click())
+    expect(chat.api.meshConversationResolveApproval).toHaveBeenCalledWith({
+      key,
+      requestId: 'approval-2',
+      decision: 'always',
     })
   } finally {
     await chat.unmount()
@@ -1224,6 +1266,89 @@ test('an image dropped on a chat over there that takes images is attached, and g
       message: 'What is wrong here?',
       attachments: [expect.objectContaining({ mediaType: 'image/png', name: 'shot.png', dataBase64: 'iVBORw0KGgo=' })],
     })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a message with a picture queued for a machine that holds it whole goes over at once, and nothing waits here', async () => {
+  const chat = await mountRemote({ access: 'operate', queuedSends: true, queuedAttachments: true })
+  try {
+    await chat.act(async () => {
+      dropFiles(chat, [{ name: 'shot.png', type: 'image/png', path: '/Users/dev/Desktop/shot.png' }])
+    })
+    await chat.act(async () => chat.type('And this one'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenCalledExactlyOnceWith({
+      key,
+      message: 'And this one',
+      queue: true,
+      attachments: [expect.objectContaining({ mediaType: 'image/png', name: 'shot.png' })],
+    })
+    expect(chat.draft()).toBe('')
+    expect(chat.host.querySelector('[aria-label="Remove shot.png"]'), 'the picture left the composer').toBeNull()
+    await chat.act(async () =>
+      chat.emit({
+        type: 'queued',
+        messages: [
+          { id: 'sm-1', text: 'And this one', createdAt: 1_700_000_000_000, images: ['shot.png'], skills: ['review'] },
+        ],
+      }),
+    )
+    const row = chat.host.querySelector('[aria-label="Queued message"]')
+    expect(row?.textContent).toContain('1 picture, 1 skill')
+    // The turn ending sends nothing from here.
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: false }) })
+      chat.emit({ type: 'event', event: event('turn_completed', { turnId: 'a' }) })
+    })
+    expect(chat.api.meshConversationSend).toHaveBeenCalledTimes(1)
+    // Edit brings back the words and the skill, and says the picture did not come.
+    await chat.act(async () => chat.button('Edit')!.click())
+    expect(chat.api.meshConversationCancelQueued).toHaveBeenCalledExactlyOnceWith({ key, queuedId: 'sm-1' })
+    expect(chat.draft()).toBe('And this one')
+    expect(chat.host.textContent).toContain('Its 1 picture did not come back from mac-mini')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a message with a picture waits here for a machine that holds words only', async () => {
+  const chat = await mountRemote({ access: 'operate', queuedSends: true })
+  try {
+    await chat.act(async () => {
+      dropFiles(chat, [{ name: 'shot.png', type: 'image/png', path: '/Users/dev/Desktop/shot.png' }])
+    })
+    await chat.act(async () => chat.type('And this one'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.host.querySelector('[aria-label="Queued message"]')?.textContent).toContain('And this one')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('Send now on a held message carrying a picture stops the turn there, rather than take it back without it', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    queuedSends: true,
+    queuedAttachments: true,
+    steerSends: true,
+    capabilities: { ...thread.capabilities!, steer: true },
+  })
+  try {
+    await chat.act(async () =>
+      chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) }),
+    )
+    await chat.act(async () =>
+      chat.emit({
+        type: 'queued',
+        messages: [{ id: 'sm-1', text: 'Look', createdAt: 1_700_000_000_000, images: ['shot.png'] }],
+      }),
+    )
+    await chat.act(async () => chat.button('Send now')!.click())
+    expect(chat.api.meshConversationCancelQueued).not.toHaveBeenCalled()
+    expect(chat.api.meshConversationInterrupt).toHaveBeenCalledOnce()
   } finally {
     await chat.unmount()
   }

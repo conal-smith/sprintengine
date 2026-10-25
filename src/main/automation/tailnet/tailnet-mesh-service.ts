@@ -393,8 +393,11 @@ export type TailnetMeshService = {
    * upload route first, the way the phone attaches one, and the send names
    * them by the ids that route answered. Without images it is the `send`
    * command as it always was. `queue` hands the message to the machine to
-   * hold until the chat's turn ends (`conversation-queued-sends`); a queued
-   * message carries no images, and one with them is refused. `steer` hands it
+   * hold until the chat's turn ends (`conversation-queued-sends`), with its
+   * images, files, skills and mentions where that machine holds them too
+   * (`conversation-queued-attachments`): uploaded first, as for a send now,
+   * and held there from then on. A machine that does not hold them has a
+   * queued message carrying any refused in words. `steer` hands it
    * to the turn the chat is running (`conversation-steer-sends`), refused for
    * a machine that does not take one rather than dropped. `mode` is the mode
    * the turn runs in (`conversation-send-mode`), refused the same way.
@@ -2436,6 +2439,12 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           mcpServerActions: tailnetPeerSupports(identity.value.capabilities, 'conversation-mcp-server-actions'),
           scheduledSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-scheduled-sends'),
           usageLimits: tailnetPeerSupports(identity.value.capabilities, 'conversation-usage-limits'),
+          // A queued message there holds its pictures, files, skills and mentions.
+          queuedAttachments:
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-queued-sends') &&
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-queued-attachments'),
+          // An approval may be answered there with an "always allow" rule.
+          permanentApprovals: tailnetPeerSupports(identity.value.capabilities, 'conversation-permanent-approvals'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2566,6 +2575,20 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_permission_preset',
           message: `${connection.machineName} cannot run a chat on its CLI's own modes from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    // A rule that outlives the conversation is saved over there, by a machine
+    // that takes one. One that said it does not is told so here in words; one
+    // that has not said is asked, and from before the rule refuses it as
+    // unsafe itself, which is never more than it was asked.
+    if (command?.kind === 'resolveApproval' && command.decision === 'always') {
+      const connection = connectionFor(key.connectionId)
+      const capabilities = connection ? peerCapabilities.get(connection.id) : undefined
+      if (connection && capabilities && !tailnetPeerSupports(capabilities, 'conversation-permanent-approvals'))
+        return {
+          ok: false,
+          code: 'unsafe_remote_decision',
+          message: `${connection.machineName} cannot save an "always allow" rule from here yet. Update SprintEngine Studio there, or allow it for this conversation.`,
         }
     }
     // Said here in words: a machine from before it answers an unknown kind.
@@ -2980,6 +3003,23 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     conversationCommand,
 
     async conversationSend(input): Promise<MeshConversationCommandResult> {
+      if (input.queue !== undefined && input.queue !== true)
+        return { ok: false, code: 'invalid_arguments', message: '"queue" is true or left out.' }
+      // Whether the machine holds what a queued message carries beside its
+      // words; one that does not refuses the frame, so it is said here instead.
+      const queuedCarry = (): MeshConversationCommandResult | null => {
+        if (input.queue !== true) return null
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        return tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-queued-attachments')
+          ? null
+          : {
+              ok: false,
+              code: 'invalid_arguments',
+              message: `${connection.machineName} holds a queued message's words only. Update SprintEngine Studio there, or send it once the turn ends.`,
+            }
+      }
       const skills = parseSkillIds(input.skills)
       if (!skills.ok) return { ok: false, code: 'invalid_arguments', message: skills.message }
       // What the composer named of the chat's folder over there, and the
@@ -3009,12 +3049,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             code: 'mentions_unsupported',
             message: `${connection.machineName} cannot take mentioned files from here yet. Update SprintEngine Studio there, or remove them.`,
           }
-        if (input.queue === true)
-          return {
-            ok: false,
-            code: 'invalid_arguments',
-            message: 'A queued message carries no mentions or files; send it once the turn ends instead.',
-          }
+        const refused = queuedCarry()
+        if (refused) return refused
       }
       if (skills.ids.length > 0) {
         const key = meshConversationKeyOf(input.key)
@@ -3022,12 +3058,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
         if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
         if (!tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-send-skills'))
           return { ok: false, code: 'skills_unsupported', message: skillsUnsupported(connection) }
-        if (input.queue === true)
-          return {
-            ok: false,
-            code: 'invalid_arguments',
-            message: 'A queued message carries no skills; send it once the turn ends instead.',
-          }
+        const refused = queuedCarry()
+        if (refused) return refused
       }
       if (input.steer !== undefined && input.steer !== true)
         return { ok: false, code: 'invalid_arguments', message: '"steer" is true or left out.' }
@@ -3093,21 +3125,19 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             ...(mentions.length > 0 ? { mentions } : {}),
             ...(steer ? { steer: true } : {}),
             ...(mode ? { mode } : {}),
+            ...(input.queue === true ? { queue: true } : {}),
           },
         })
-      if (input.queue !== undefined && input.queue !== true)
-        return { ok: false, code: 'invalid_arguments', message: '"queue" is true or left out.' }
-      // A queued message is held over there for the turn's end, and is its
-      // words alone: the wire refuses `queue` beside pictures, since an upload
-      // is staged for its send and would be gone by the turn it waits for.
-      if (input.queue === true) {
-        if (input.attachments !== undefined && !(Array.isArray(input.attachments) && input.attachments.length === 0))
-          return {
-            ok: false,
-            code: 'invalid_arguments',
-            message: 'A queued message carries no images; send it once the turn ends instead.',
-          }
-        return conversationCommand({ key: input.key, command: { kind: 'send', message: input.message, queue: true } })
+      // A queued message is held over there for the turn's end. Its pictures
+      // go up first as a send's do, and the machine keeps them for the turn it
+      // waits for; one that does not keep them is not sent any.
+      if (
+        input.queue === true &&
+        input.attachments !== undefined &&
+        !(Array.isArray(input.attachments) && input.attachments.length === 0)
+      ) {
+        const refused = queuedCarry()
+        if (refused) return refused
       }
       if (input.attachments === undefined) return sendWithFiles([])
       const parsed = parseImageAttachments(input.attachments)

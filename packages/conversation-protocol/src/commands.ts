@@ -11,13 +11,17 @@ import type { ConversationWireCommand, ConversationWireKey, ConversationWirePerm
 /**
  * An answer to a `tool` permission request: allow this request `once`, allow
  * requests of its kind for the rest of the `conversation`, or `deny` it. A
- * rule that outlives the conversation is the person's to make on the desktop
- * itself, and no client can choose one.
+ * rule that outlives the conversation (`always`) is not among them: the first
+ * version of the lane refuses it, and only a desktop that advertises
+ * `conversation-permanent-approvals` takes it (`ConversationCommand`).
  */
 export type ConversationRequestDecision = 'once' | 'conversation' | 'deny'
 
 /** Every decision a client may send, narrowest first. */
 export const CONVERSATION_REQUEST_DECISIONS: readonly ConversationRequestDecision[] = ['once', 'conversation', 'deny']
+
+/** The rule that outlives the conversation, for a desktop that takes one (`conversation-permanent-approvals`). */
+export type ConversationPermanentRequestDecision = 'always'
 
 /** An answer to a `plan` request: carry the plan out, or send the agent back to planning. */
 export type ConversationPlanDecision = 'approve' | 'reject'
@@ -38,14 +42,20 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   (`once` carries it out, `deny` rejects it), which every desktop still takes.
  * - `send` may say `queue`: the desktop holds the message and sends it the
  *   moment the chat's turn ends (at once, if none is running), and answers as
- *   soon as it holds it rather than when a turn ends. A held message is its
- *   words alone, so `queue` never rides beside `uploadIds`. Needs
+ *   soon as it holds it rather than when a turn ends. Needs
  *   `conversation-queued-sends`; a desktop without it drops the member, and
- *   a send made while a turn runs is refused `busy`, as every send was.
+ *   a send made while a turn runs is refused `busy`, as every send was. A
+ *   held message is its words alone, and `queue` rides beside neither
+ *   `uploadIds`, `skills` nor `mentions`, unless the desktop also advertises
+ *   `conversation-queued-attachments`: then it holds all three with the
+ *   message, keeping the pictures and files on its own disk from the moment
+ *   it holds it (an upload is otherwise spent within the hour), and sends
+ *   them with it as a send made then would. Never beside `mode` or `steer`.
  * - `send` may name `skills`: ids of the desktop's skills the chat runs with
- *   this message, at most `CONVERSATION_MAX_SEND_SKILLS`. Never beside
- *   `queue`. Needs `conversation-send-skills`; a desktop without it drops the
- *   member and the message goes without them.
+ *   this message, at most `CONVERSATION_MAX_SEND_SKILLS`. Beside `queue` only
+ *   for a desktop that holds what a message carries
+ *   (`conversation-queued-attachments`). Needs `conversation-send-skills`; a
+ *   desktop without it drops the member and the message goes without them.
  * - `send` may say `steer`: the message goes into the turn that is running
  *   rather than waiting for it to end, where the chat's provider takes one
  *   (the listed chat's `capabilities.steer`). Answered when that turn ends, as
@@ -53,9 +63,10 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   cannot take it (a provider that cannot, a request the agent waits on, a
  *   turn that ended on the way) has the desktop hold it as a `queue` send is
  *   held, answered at once with a `notice` saying so; one carrying
- *   `uploadIds`, `skills` or `mentions`, which a held message cannot, is
- *   refused `busy` instead, and sent again goes as the next turn once the
- *   turn is over. One that reached the chat is answered as taken even if
+ *   `uploadIds`, `skills` or `mentions` is held with them by a desktop that
+ *   advertises `conversation-queued-attachments`, and refused `busy` by one
+ *   that does not, and sent again goes as the next turn once the turn is
+ *   over. One that reached the chat is answered as taken even if
  *   its turn then fails, with that in its `notice`, so a client never sends
  *   the same words twice. Never beside `queue`. Needs `conversation-steer-sends`; a desktop without it
  *   drops the member, and a send made while a turn runs is refused `busy`.
@@ -106,7 +117,7 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   at most `CONVERSATION_MAX_SEND_MENTIONS`), as its own composer's @ chips
  *   name them. The desktop resolves each against the chat's own folder, as it
  *   resolves its own, and refuses the send in words for one outside it or gone.
- *   Never beside `queue`, as `skills` are not. Needs
+ *   Beside `queue` only where `skills` are (`conversation-queued-attachments`). Needs
  *   `conversation-send-mentions`; a desktop without it drops the member and
  *   the message goes without them, so a client sends it only where it is
  *   advertised.
@@ -143,8 +154,8 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   sends one: `ask` answers without changing anything, `plan` has the agent
  *   plan and wait for the plan to be approved, where the chat's provider
  *   plans (the listed chat's `capabilities.planMode`). Absent, or `default`,
- *   the turn runs as every send did. Never beside `queue`: a held message is
- *   its words alone, and would go in the default mode. A steer the running
+ *   the turn runs as every send did. Never beside `queue`: a held message
+ *   goes in the default mode, whatever else it carries. A steer the running
  *   turn cannot take is refused `busy` rather than held, for the same reason.
  *   Needs `conversation-send-mode`; a desktop without it drops the member and
  *   runs the turn in the default mode, which may change what an `ask` would
@@ -179,6 +190,14 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   desktop without it drops both members and sends as it always did, so a
  *   client sends `composedAt` with every message and decides for itself what
  *   it no longer sends without asking.
+ * - `resolveApproval` may answer a `tool` request `always`: allowed, and
+ *   requests of its kind allowed from then on in the chat's workspace on the
+ *   desktop, as its own "Always allow … in this workspace" saves a rule there,
+ *   in the desktop's own rules, which its Settings lists and revokes. Needs
+ *   `conversation:operate`, as every answer does, and
+ *   `conversation-permanent-approvals`; a desktop without it refuses the
+ *   decision as `unsafe_remote_decision`, so a client offers it only where it
+ *   is advertised.
  * - `fork` starts a new chat beside this one, `newAgentId`, holding it up to a
  *   point, as its own Fork from here does on the desktop: through the reply of
  *   the turn `turnId` names (`side: 'assistant'`), or up to but not including
@@ -207,6 +226,7 @@ export type ConversationCommand =
       mode?: ConversationSendMode
     }
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
+  | { kind: 'resolveApproval'; requestId: string; decision: ConversationPermanentRequestDecision }
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
@@ -343,6 +363,17 @@ export type ConversationQueuedMessage = {
    * waiting on the person, until it is taken back.
    */
   failure?: string
+  /**
+   * What it carries beside its words (`conversation-queued-attachments`):
+   * the names of its pictures and of its files, which stay on the desktop,
+   * the ids of its skills, and the files and folders of the chat's folder it
+   * mentions. Each absent when there are none, and from a desktop without
+   * the capability.
+   */
+  images?: string[]
+  files?: string[]
+  skills?: string[]
+  mentions?: ConversationWireMention[]
 }
 
 /** What a desktop holds for one chat, at most this many. */

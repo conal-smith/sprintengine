@@ -376,8 +376,9 @@ const KEY_REQUIRED = '"key" names the conversation: { workspaceId, agentId, work
 /**
  * A command method's params as the conversation command they carry, read by
  * the conversation lane's own validator. The refusal is the lane's own
- * (`explainRejectedConversationMessage`), so an `always` decision is refused
- * as unsafe and an over-long message as too large, exactly as on the tailnet.
+ * (`explainRejectedConversationMessage`), so an over-long message is refused
+ * as too large, exactly as on the tailnet. An `always` decision is refused as
+ * unsafe, as by a desktop without `conversation-permanent-approvals`.
  */
 export function parseStudioCommand(
   method: StudioCommandMethod,
@@ -390,6 +391,12 @@ export function parseStudioCommand(
   // Pictures travel beside the socket, not in it, and this version has no
   // upload route: refused rather than dropped, so a send never silently loses one.
   if (params.uploadIds !== undefined) return refuse('invalid_params', 'This connection does not carry pictures yet.')
+  // A rule that outlives the conversation is taken on the tailnet from a
+  // desktop that advertises `conversation-permanent-approvals`; this socket
+  // does not advertise it, and refuses the decision as the lane's first
+  // version does.
+  if (method === 'conversation.resolveApproval' && params.decision === 'always')
+    return refuse('unsafe_remote_decision', 'A remote device cannot choose a permanent rule.')
   const { key: _key, commandId, ...members } = params
   const frame = { type: 'command', commandId, command: { ...members, kind: STUDIO_COMMAND_METHODS[method] } }
   const parsed = parseConversationClientMessage(frame)

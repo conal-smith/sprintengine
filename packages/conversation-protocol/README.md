@@ -124,7 +124,8 @@ and adds, each behind its capability:
   (`capabilities.permissionModes`). A desktop without it drops the member and
   runs the preset's own mode, which is the fallback the field is shaped for.
 - `conversation-queued-sends`: a `send` with `queue: true` (its words alone,
-  never beside `uploadIds`) is held by the desktop and sent when the chat's
+  never beside `uploadIds`, `skills` or `mentions` unless the desktop also
+  advertises `conversation-queued-attachments`) is held by the desktop and sent when the chat's
   turn ends, answered once it is held; `cancelQueued` with a `queuedId` takes
   one back; and `{ type: 'watchQueued', requestId }` has the desktop send a
   `queued` frame (`ConversationQueuedFrame`: the chat's `key` and its held
@@ -138,8 +139,9 @@ and adds, each behind its capability:
   listed thread's `capabilities.steer`), and is answered when that turn ends.
   With no turn running it is an ordinary send. A turn that cannot take it has
   the desktop hold it as a `queue` send is held, answered at once with a
-  `notice`; one with `uploadIds`, `skills` or `mentions`, which cannot be
-  held, is refused `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
+  `notice`; one with `uploadIds`, `skills` or `mentions` is held with them by
+  a desktop that advertises `conversation-queued-attachments`, and refused
+  `busy` by one that does not. Never beside `queue`. A desktop without it drops `steer`, so
   a send made while a turn runs is refused `busy` as before.
 - `conversation-stop-subagent`: `stopSubagent` stops one agent a chat spawned,
   named by the call that spawned it (`toolUseId`), where the chat's provider
@@ -196,8 +198,9 @@ under their `requestId`, as it answers `watchQueued`.
   `line?`, `endLine?`; at most `CONVERSATION_MAX_SEND_MENTIONS`), which the
   desktop resolves against the chat's folder as its own composer's are. One
   that is absolute, names a drive or climbs out with `..` refuses the frame
-  (`parseConversationWireMentions`). Never beside `queue`. A desktop without
-  it drops the member.
+  (`parseConversationWireMentions`). Beside `queue` only where the desktop
+  advertises `conversation-queued-attachments`. A desktop without it drops the
+  member.
 - `conversation-send-mode`: a `send` with `mode` (`CONVERSATION_SEND_MODES`:
   `ask`, or `plan` where a listed thread's `capabilities.planMode` says its
   provider plans) runs its turn in that mode, as the desktop's own chat sends
@@ -241,6 +244,22 @@ under their `requestId`, as it answers `watchQueued`.
   `dismiss`, `retry`; `always` beside `schedule`) acts on the notice. A
   desktop without it refuses the kind as `unsupported_command` and
   `watchUsageLimits` as `invalid_frame`.
+- `conversation-queued-attachments`: a `send` with `queue: true` may carry
+  `uploadIds` (pictures and files), `skills` and `mentions`, and a steer the
+  running turn cannot take is held with them rather than refused `busy`. The
+  desktop keeps the pictures and files on its own disk from the moment it
+  holds the message, so the device that queued it may sleep or close, and
+  sends them with it when the turn ends, as a send made then would. Each
+  `queued` frame's message names what it carries: `images` and `files` by
+  name, `skills` by id, and `mentions`. Never beside `mode` or `steer`. A
+  desktop without it refuses a queued send carrying any of them as
+  `invalid_frame`, so a client keeps such a message itself there.
+- `conversation-permanent-approvals`: `resolveApproval` may answer a `tool`
+  request with `decision: 'always'`, from a device with `conversation:operate`:
+  allowed, and a rule saved for the chat's workspace on the desktop, among
+  its own "always allow" rules, as its own "Always allow … in this workspace"
+  saves one. A desktop without it refuses the decision as
+  `unsafe_remote_decision`, as the first version does.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

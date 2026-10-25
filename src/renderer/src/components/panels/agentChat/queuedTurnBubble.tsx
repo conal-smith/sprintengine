@@ -58,19 +58,45 @@ function QueuedGlyph() {
   )
 }
 
+const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+
+/**
+ * What a message the machine running the chat holds carries beside its words,
+ * in a few words ("2 pictures, 1 file"), or null for one of words alone. Its
+ * pictures and files are on that machine, so they are counted, not drawn.
+ */
+export function heldMessageCarries(message: {
+  images?: readonly string[]
+  files?: readonly string[]
+  skills?: readonly string[]
+  mentions?: readonly unknown[]
+}): string | null {
+  const parts = [
+    message.images?.length ? counted(message.images.length, 'picture', 'pictures') : null,
+    message.files?.length ? counted(message.files.length, 'file', 'files') : null,
+    message.skills?.length ? counted(message.skills.length, 'skill', 'skills') : null,
+    message.mentions?.length ? counted(message.mentions.length, 'mention', 'mentions') : null,
+  ].filter((part): part is string => part !== null)
+  return parts.length ? parts.join(', ') : null
+}
+
 export function QueuedTurnRow({
   text,
   attachments,
+  carries,
   sendNow,
   shortcutLabel,
   onSendNow,
   onEdit,
+  editHint = 'Take it back into the composer',
   status = 'Queued',
   statusHint = 'Sends when this turn ends',
   failed = false,
 }: {
   text: string
   attachments: ConversationImageAttachment[]
+  // What a held message carries that is not drawn here, in a few words.
+  carries?: string | null
   // Null where the message cannot be sent sooner from here (one on its way
   // to the machine that will hold it, or one that machine could not send).
   sendNow: QueuedTurnSendNow | null
@@ -79,6 +105,8 @@ export function QueuedTurnRow({
   onSendNow: () => void
   // Absent where the message cannot be taken back from here.
   onEdit?: () => void
+  // What Edit brings back, where that is less than the whole message.
+  editHint?: string
   // What the row says of the message, and its tooltip. A message the machine
   // running the chat holds says so: it is that machine that sends it.
   status?: string
@@ -109,7 +137,7 @@ export function QueuedTurnRow({
               </Tooltip>
             ) : null}
             {onEdit ? (
-              <Tooltip content="Take it back into the composer" placement="top">
+              <Tooltip content={editHint} placement="top">
                 <GhostButton size="xs" onClick={onEdit}>
                   Edit
                 </GhostButton>
@@ -126,6 +154,7 @@ export function QueuedTurnRow({
         {attachments.map((attachment) => (
           <AttachmentThumbnail key={attachment.id} attachment={attachment} className="size-icon-md shrink-0" />
         ))}
+        {carries ? <span className="shrink-0 text-meta text-[color:var(--text-subtle)]">{carries}</span> : null}
         {text ? (
           <TruncatedText as="span" text={text} className="min-w-0 text-meta italic text-[color:var(--text-muted)]" />
         ) : null}

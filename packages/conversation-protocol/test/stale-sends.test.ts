@@ -47,8 +47,15 @@ test('the stamp rides beside a held, steered or skilled send', () => {
     skills: ['review'],
     composedAt: 9,
   })
-  // A held message is still its words alone.
-  assert.equal(parseConversationClientMessage(frame({ queue: true, uploadIds: ['u'], composedAt: 9 })), null)
+  // And beside a held message's uploads (`conversation-queued-attachments`).
+  const carried = parseConversationClientMessage(frame({ queue: true, uploadIds: ['u'], composedAt: 9 }))
+  assert.deepEqual(carried?.type === 'command' && carried.command, {
+    kind: 'send',
+    message: 'Run the migration',
+    uploadIds: ['u'],
+    queue: true,
+    composedAt: 9,
+  })
 })
 
 test('a malformed stamp refuses the frame', () => {

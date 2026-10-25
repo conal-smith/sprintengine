@@ -412,8 +412,9 @@ export function ConversationPermissionCard({
           label: rememberLabels.conversation,
           onSelect: () => onApprove(entry.requestId, true, undefined, 'conversation'),
         },
-        // A rule that outlives the conversation is this machine's
-        // decision; a transport that cannot make it does not offer it.
+        // A rule that outlives the conversation is saved by the machine the
+        // chat runs on, in its own rules; a transport whose machine does not
+        // save one does not offer it.
         ...(permanentApprovals
           ? [
               {

@@ -752,7 +752,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         // A message a paired machine queued while the chat's turn ran is held
         // here, among the scheduled messages below, and sent from here when the
         // turn ends: the machine that typed it may sleep or close meanwhile.
-        heldMessages: studioHeldMessages(() => scheduledMessages),
+        heldMessages: studioHeldMessages(() => scheduledMessages, dataDir),
         // A fork a paired machine asked for joins the chat's workspace as a
         // window's Fork from here adds one (forkFromHere.tsx): named after the
         // chat beside the workspace's others, the chat's twin in its engine,

@@ -836,3 +836,23 @@ test('a remote model switch on a chat with no live session resumes it and switch
     await f.cleanup()
   }
 })
+
+test('an "always allow" from a paired device is the rule this machine saves for its own workspace', async () => {
+  const f = await fixture()
+  try {
+    const started = await f.start()
+    assert.ok(started.ok)
+    const resolve = vi.spyOn(f.runtime, 'respondToRequest').mockResolvedValue({ ok: true, session: started.session })
+    const answered = await f.host.command(f.key, 'laptop', 'always-1', {
+      kind: 'resolveApproval',
+      requestId: 'request-1',
+      decision: 'always',
+    })
+    assert.equal(answered.ok, true)
+    assert.equal(resolve.mock.calls[0]?.[0].decision, 'always')
+    assert.equal(resolve.mock.calls[0]?.[0].approved, true)
+    assert.equal(resolve.mock.calls[0]?.[0].sessionId, started.session.sessionId)
+  } finally {
+    await f.cleanup()
+  }
+})

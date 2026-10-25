@@ -237,6 +237,10 @@ export default function RemoteConversationPanel({
   // turn ends, so this machine may sleep or close meanwhile; and what it
   // holds for this chat, as it last said.
   const [queuedSends, setQueuedSends] = useState(false)
+  // It holds a queued message's images, files, skills and mentions too.
+  const [queuedAttachments, setQueuedAttachments] = useState(false)
+  // It saves an "always allow" rule an approval here chose, for its own workspace.
+  const [permanentApprovals, setPermanentApprovals] = useState(false)
   const [sendSkills, setSendSkills] = useState(false)
   // The machine opens a pull request for one of its chats (Create PR).
   const [hostPullRequests, setHostPullRequests] = useState(false)
@@ -292,6 +296,10 @@ export default function RemoteConversationPanel({
   permissionModesRef.current = permissionModes
   const queuedSendsRef = useRef(queuedSends)
   queuedSendsRef.current = queuedSends
+  const queuedAttachmentsRef = useRef(queuedAttachments)
+  queuedAttachmentsRef.current = queuedAttachments
+  const permanentApprovalsRef = useRef(permanentApprovals)
+  permanentApprovalsRef.current = permanentApprovals
   const sendSkillsRef = useRef(sendSkills)
   sendSkillsRef.current = sendSkills
   const hostPullRequestsRef = useRef(hostPullRequests)
@@ -349,6 +357,8 @@ export default function RemoteConversationPanel({
           modelSwitch: modelSwitchRef.current,
           permissionModes: permissionModesRef.current,
           hostQueue: queuedSendsRef.current,
+          hostQueueAttachments: queuedSendsRef.current && queuedAttachmentsRef.current,
+          permanentApprovals: permanentApprovalsRef.current,
           skills: sendSkillsRef.current,
           steer: steerSendsRef.current,
           hostPullRequests: hostPullRequestsRef.current,
@@ -418,6 +428,8 @@ export default function RemoteConversationPanel({
         setPermissionModes(result.permissionModes === true)
         setCliPermissionModes(result.cliPermissionModes === true)
         setQueuedSends(result.queuedSends === true)
+        setQueuedAttachments(result.queuedAttachments === true)
+        setPermanentApprovals(result.permanentApprovals === true)
         setSendSkills(result.sendSkills === true)
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)

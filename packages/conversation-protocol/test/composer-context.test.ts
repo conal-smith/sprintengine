@@ -67,8 +67,11 @@ test('a mention that is not a path inside the chat folder refuses the frame', ()
   )
 })
 
-test('mentions never ride a queued message', () => {
-  assert.equal(send({ mentions: [{ path: 'a.ts', kind: 'file' }], queue: true }), null)
+test('mentions ride a queued message, for a desktop that holds them', () => {
+  const frame = send({ mentions: [{ path: 'a.ts', kind: 'file' }], queue: true })
+  assert.ok(frame && frame.type === 'command' && frame.command.kind === 'send')
+  assert.deepEqual(frame.command.mentions, [{ path: 'a.ts', kind: 'file' }])
+  assert.equal(frame.command.queue, true)
 })
 
 test('a send with no mentions is read as before', () => {

@@ -11,6 +11,8 @@ import {
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
   CONVERSATION_MAX_REVERT_PATH_CHARS,
+  CONVERSATION_MAX_SEND_SKILLS,
+  parseConversationWireMentions,
   CONVERSATION_MCP_SERVER_ACTIONS,
   type ConversationWireMcpServerAction,
   CONVERSATION_MAX_SCHEDULED_MESSAGES,
@@ -563,6 +565,33 @@ function clock(value: unknown): value is number {
 function optional<T>(value: unknown, check: (value: unknown) => value is T): boolean {
   return value === undefined || check(value)
 }
+// What a held message carries, as a `queued` frame names it
+// (`conversation-queued-attachments`): pictures and files by name, at most as
+// many as one message takes, a name no longer than a file system's.
+const MAX_QUEUED_CARRIED = 64
+const MAX_CARRIED_NAME_CHARS = 255
+function carriedNames(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_QUEUED_CARRIED &&
+    value.every((name) => typeof name === 'string' && name.length > 0 && name.length <= MAX_CARRIED_NAME_CHARS)
+  )
+}
+/**
+ * The members of a held message that say what it carries, each kept when it
+ * reads and left out when it does not: the message's words still stand.
+ */
+function queuedCarries(entry: Record<string, unknown>): Partial<ConversationQueuedMessage> {
+  const mentions = entry.mentions === undefined ? null : parseConversationWireMentions(entry.mentions)
+  return {
+    ...(carriedNames(entry.images) && entry.images.length ? { images: [...entry.images] } : {}),
+    ...(carriedNames(entry.files) && entry.files.length ? { files: [...entry.files] } : {}),
+    ...(carriedNames(entry.skills) && entry.skills.length && entry.skills.length <= CONVERSATION_MAX_SEND_SKILLS
+      ? { skills: [...entry.skills] }
+      : {}),
+    ...(mentions?.length ? { mentions } : {}),
+  }
+}
 /** An error code as a string. Codes this build has never heard of pass: a newer desktop may add one. */
 function code(value: unknown): value is ConversationWireErrorCode {
   return typeof value === 'string' && /^[a-z_]{1,64}$/.test(value)
@@ -1024,6 +1053,7 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
           text: entry.text,
           createdAt: entry.createdAt,
           ...(typeof entry.failure === 'string' && entry.failure.length <= 2_000 ? { failure: entry.failure } : {}),
+          ...queuedCarries(entry),
         })
       }
       return { type: 'queued', key: { workspaceId: key.workspaceId, agentId: key.agentId }, messages }

@@ -220,15 +220,18 @@ test('a file attached here goes up with the message, and the agent is handed its
     })
     assert.equal(gone.ok, false)
     assert.match(gone.ok ? '' : gone.message, /no longer there/u)
-    // A queued message carries words alone.
+    assert.equal(turns.mock.calls.length, before)
+    // A queued message carries its file too (`conversation-queued-attachments`).
+    // This machine holds nothing for later, so it goes now, file and all, as
+    // a queued send to such a host always has.
     const queued = await h.mesh.conversationSend({
       key: h.key,
       message: 'Later',
       files: [{ path: local }],
       queue: true,
     })
-    assert.equal(queued.ok ? '' : queued.code, 'invalid_arguments')
-    assert.equal(turns.mock.calls.length, before)
+    assert.equal(queued.ok, true, queued.ok ? '' : queued.message)
+    assert.equal(turns.mock.calls.at(-1)?.[0].files?.length, 1)
   } finally {
     await h.close()
   }

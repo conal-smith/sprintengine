@@ -216,6 +216,26 @@ export const CONVERSATION_FILE_SEARCH_CAPABILITY = 'conversation-file-search' as
  * its own commands.
  */
 export const CONVERSATION_COMMANDS_CAPABILITY = 'conversation-commands' as const
+/**
+ * A message the desktop holds for a turn's end may carry what a message sent
+ * now does: a `send` with `queue` takes `uploadIds` (pictures and files),
+ * `skills` and `mentions`, and a steer the running turn cannot take is held
+ * with them rather than refused `busy`. The desktop keeps what the message
+ * carries, on its own disk, from the moment it is held, so the device that
+ * queued it may sleep or close; and its `queued` frames name what each held
+ * message carries. A desktop without it refuses a queued send carrying any of
+ * them, so a client keeps such a message itself there, as before.
+ */
+export const CONVERSATION_QUEUED_ATTACHMENTS_CAPABILITY = 'conversation-queued-attachments' as const
+/**
+ * An approval may be answered with a rule that outlives the conversation, as
+ * the desktop's own "Always allow … in this workspace" makes one:
+ * `resolveApproval` takes `decision: 'always'` from a device that may operate
+ * the chat, and the desktop saves the rule for the chat's workspace there, in
+ * its own rules, which its Settings lists and revokes. A desktop without it
+ * refuses the decision as `unsafe_remote_decision`.
+ */
+export const CONVERSATION_PERMANENT_APPROVALS_CAPABILITY = 'conversation-permanent-approvals' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -253,6 +273,8 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_RESTART_SESSION_CAPABILITY,
   CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
   CONVERSATION_USAGE_LIMITS_CAPABILITY,
+  CONVERSATION_QUEUED_ATTACHMENTS_CAPABILITY,
+  CONVERSATION_PERMANENT_APPROVALS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

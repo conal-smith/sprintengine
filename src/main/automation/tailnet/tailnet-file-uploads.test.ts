@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 
-import { createTailnetFileUploads } from './tailnet-file-uploads'
+import { createTailnetFileUploads, holdTailnetUpload, releaseTailnetUpload } from './tailnet-file-uploads'
 
 let root: string
 
@@ -75,4 +75,27 @@ test('two devices whose ids differ only in characters a folder name drops keep a
   assert.notEqual(dirname(dirname(first.path)), dirname(dirname(second.path)))
   uploads.forgetDevice('device1')
   assert.ok(existsSync(dirname(first.path)))
+})
+
+test('a file a held message carries outlives the week, and goes or stays as the message did', () => {
+  const now = Date.UTC(2026, 9, 1)
+  const uploads = createTailnetFileUploads({ root, now: () => now })
+  const held = uploads.place('device-1', 'held.txt')
+  const dropped = uploads.place('device-1', 'dropped.txt')
+  writeFileSync(held.path, 'held')
+  writeFileSync(dropped.path, 'dropped')
+  assert.equal(holdTailnetUpload(root, held.path), true)
+  assert.equal(holdTailnetUpload(root, dropped.path), true)
+  // Only an upload's own file is ever marked or removed.
+  assert.equal(holdTailnetUpload(root, join(root, 'elsewhere.txt')), false)
+  assert.equal(holdTailnetUpload(root, join(root, '..', 'outside', 'a', 'b')), false)
+  const eightDaysAgo = new Date(now - 8 * 24 * 60 * 60 * 1000)
+  utimesSync(dirname(held.path), eightDaysAgo, eightDaysAgo)
+  uploads.place('device-2', 'next.txt')
+  assert.ok(existsSync(held.path), 'pruning passes a held file by')
+  releaseTailnetUpload(root, held.path, true)
+  uploads.place('device-2', 'again.txt')
+  assert.ok(existsSync(held.path), 'sent, it is kept a week from now')
+  releaseTailnetUpload(root, dropped.path, false)
+  assert.equal(existsSync(dirname(dropped.path)), false, 'deleted, it goes with its folder')
 })

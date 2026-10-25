@@ -7,7 +7,11 @@ import { test, vi } from 'vitest'
 import type { ConversationSessionSummary } from '../../../shared/conversation-runtime'
 import { ConversationRuntime } from '../../conversation-runtime'
 import { createMockConversationProvider } from '../../providers/mock-conversation-provider'
-import { createConversationGatewayHost, type ConversationHeldMessages } from './tailnet-conversation-host'
+import {
+  createConversationGatewayHost,
+  type ConversationHeldAttachments,
+  type ConversationHeldMessages,
+} from './tailnet-conversation-host'
 
 // A paired device's send that says `steer` (`conversation-steer-sends`): into
 // the running turn where the chat's provider takes one, and otherwise held for
@@ -19,9 +23,11 @@ async function fixture(options: { steer?: boolean; held?: boolean } = {}) {
   const adapter = createMockConversationProvider({ steer: options.steer ?? true })
   const runtime = new ConversationRuntime({ adapters: [adapter], getProviderById: () => undefined })
   const holds: Array<{ text: string; source: string }> = []
+  const carried: Array<ConversationHeldAttachments | undefined> = []
   const heldMessages: ConversationHeldMessages = {
-    hold: (_chat, text, source) => {
+    hold: (_chat, text, source, attachments) => {
       holds.push({ text, source })
+      carried.push(attachments)
       return { ok: true }
     },
     cancel: () => ({ ok: false, message: 'Nothing is held.' }),
@@ -53,6 +59,7 @@ async function fixture(options: { steer?: boolean; held?: boolean } = {}) {
     host,
     runtime,
     holds,
+    carried,
     running,
     session: started.session,
     cleanup: async () => {
@@ -201,7 +208,7 @@ test('a steer whose turn failed after it landed is answered as taken, and not he
   }
 })
 
-test('a steer carrying what a held message cannot is refused busy, with a delay to send it again', async () => {
+test('a steer carrying skills is held with them (conversation-queued-attachments)', async () => {
   const f = await fixture({ steer: false })
   try {
     f.running()
@@ -209,6 +216,25 @@ test('a steer carrying what a held message cannot is refused busy, with a delay 
       kind: 'send',
       message: 'Keep it to one file',
       skills: ['review'],
+      steer: true,
+    })
+    assert.equal(answer.ok, true, answer.message ?? '')
+    assert.match(answer.notice ?? '', /queued/)
+    assert.deepEqual(f.holds, [{ text: 'Keep it to one file', source: JSON.stringify(['phone', 'steer-1']) }])
+    assert.deepEqual(f.carried, [{ images: [], files: [], skills: ['review'], mentions: [] }])
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a steer in a mode of its own is still refused busy, never held to go in the default one', async () => {
+  const f = await fixture({ steer: false })
+  try {
+    f.running()
+    const answer = await f.host.command(f.key, 'phone', 'steer-1', {
+      kind: 'send',
+      message: 'Plan the rest',
+      mode: 'plan',
       steer: true,
     })
     assert.equal(answer.ok, false)

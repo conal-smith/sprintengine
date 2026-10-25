@@ -20,6 +20,7 @@ import {
   type ConversationWireLocalServer,
   type ConversationWireModels,
   type ConversationWireMcpServerAction,
+  type ConversationWireMention,
   isStaleConversationSend,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
@@ -298,6 +299,9 @@ export type ConversationGatewayHost = {
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
    * id for a different command is then refused (`command_id_conflict`).
+   * `carried` is what a held message sends beside its words, by where each
+   * picture and file is on this disk: only this machine's held messages pass
+   * it, never a device.
    */
   command(
     key: ConversationKey,
@@ -305,6 +309,7 @@ export type ConversationGatewayHost = {
     commandId: string,
     command: ConversationCommand,
     fingerprint?: string,
+    carried?: ConversationHeldSend,
   ): Promise<ConversationGatewayCommandResult>
 }
 
@@ -680,14 +685,51 @@ type ChatOf = { workspaceId: string; agentId: string }
  * scheduled messages keep them (scheduled-messages.ts, `hold`).
  */
 export type ConversationHeldMessages = {
-  /** Hold `text` for the chat. `source` names the command it came in on: the same one twice is held once. */
-  hold(chat: ChatOf, text: string, source: string): { ok: true } | { ok: false; message: string }
+  /**
+   * Hold `text` for the chat, with what it `carried` beside it
+   * (`conversation-queued-attachments`), which the held messages make their
+   * own before answering. `source` names the command it came in on: the same
+   * one twice is held once.
+   */
+  hold(
+    chat: ChatOf,
+    text: string,
+    source: string,
+    carried?: ConversationHeldAttachments,
+  ): HeldAnswer | Promise<HeldAnswer>
+  /**
+   * Whether the command `source` was held already, still held or gone: sent
+   * again after a dropped connection, its uploads are spent, and it is the
+   * same message.
+   */
+  heldBefore?(source: string): boolean
   /** Take a held message back; refused once it is on its way into the chat. */
   cancel(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
   /** What the chat has held now, oldest first, leaving out one already on its way. */
   list(chat: ChatOf): ConversationQueuedMessage[]
   /** Something held changed, for some chat. */
   onChanged(listener: () => void): () => void
+}
+
+type HeldAnswer = { ok: true } | { ok: false; message: string }
+
+/**
+ * What a message a device queued carries beside its words, read off its
+ * uploads while they were still staged (`conversation-queued-attachments`): a
+ * picture's bytes, since its staged copy goes with its upload reference within
+ * the hour, and a file's place, where its upload put it and where it stays.
+ */
+export type ConversationHeldAttachments = {
+  images: Array<{ name: string; mediaType: string; bytes: Buffer }>
+  files: Array<{ path: string; name: string; bytes: number }>
+  skills: string[]
+  mentions: ConversationWireMention[]
+}
+
+/** The pictures and files a held message sends beside its words, by where each is kept on this disk. */
+export type ConversationHeldSend = {
+  images: Array<{ path: string; name: string; mediaType: string; bytes: number }>
+  files: Array<{ path: string; bytes: number }>
 }
 
 /**
@@ -859,6 +901,68 @@ export function createConversationGatewayHost(
   const spendUpload = (id: string) => {
     if (uploads.get(id)?.kind === 'file') uploads.delete(id)
     else discardUpload(id)
+  }
+  // The sessions this chat has had that the runtime still lists: an upload
+  // names the one the list showed, which a resume may since have replaced.
+  const sessionsOfChat = (chat: ChatOf): Set<string> => {
+    const listed = api.listSessions({ workspaceId: chat.workspaceId, agentId: chat.agentId })
+    return new Set(
+      listed.ok
+        ? listed.sessions
+            .filter((entry) => entry.workspaceId === chat.workspaceId && entry.agentId === chat.agentId)
+            .map((entry) => entry.sessionId)
+        : [],
+    )
+  }
+  // What a queued message carries, read off the device's uploads while they
+  // are still staged, under the checks its send would make then: each this
+  // device's, for this chat, unexpired, and as it was received. A picture is
+  // read now, since its staged copy goes with its reference; a file stays
+  // where its upload put it.
+  const carriedBy = async (
+    chat: ChatOf,
+    deviceId: string,
+    send: { uploadIds?: string[]; skills?: string[]; mentions?: ConversationWireMention[] },
+  ): Promise<{ ok: true; carried?: ConversationHeldAttachments } | { ok: false; message: string }> => {
+    const ids = send.uploadIds ?? []
+    if (!ids.length && !send.skills?.length && !send.mentions?.length) return { ok: true }
+    if (ids.length > MAX_ATTACHMENTS_PER_TURN) return { ok: false, message: 'Too many attachments.' }
+    const chatSessions = sessionsOfChat(chat)
+    const carried: ConversationHeldAttachments = {
+      images: [],
+      files: [],
+      skills: [...(send.skills ?? [])],
+      mentions: [...(send.mentions ?? [])],
+    }
+    for (const id of ids) {
+      const upload = uploads.get(id)
+      const usable =
+        upload !== undefined &&
+        upload.deviceId === deviceId &&
+        chatSessions.has(upload.sessionId) &&
+        Date.now() - upload.at <= UPLOAD_TTL_MS
+      if (upload?.kind === 'file') {
+        if (!usable) return { ok: false, message: 'File upload reference is unavailable.' }
+        const present = await stat(upload.path).catch(() => null)
+        if (!present?.isFile() || present.size !== upload.bytes)
+          return { ok: false, message: 'File upload changed after receipt.' }
+        carried.files.push({ path: upload.path, name: upload.name, bytes: upload.bytes })
+        continue
+      }
+      if (
+        !usable ||
+        !ATTACHABLE_IMAGE_TYPES.includes(upload.mediaType as (typeof ATTACHABLE_IMAGE_TYPES)[number]) ||
+        upload.bytes > MAX_ATTACHMENT_BYTES
+      )
+        return { ok: false, message: 'Image upload reference is unavailable.' }
+      try {
+        const bytes = await readBoundedConversationUpload(upload.path, upload.bytes)
+        carried.images.push({ name: upload.name, mediaType: upload.mediaType, bytes })
+      } catch {
+        return { ok: false, message: 'Image upload changed after receipt.' }
+      }
+    }
+    return { ok: true, carried }
   }
   // Images an accepted send already carried, by upload id. Their files are
   // gone; a retry of that same command is answered from the runtime's receipt
@@ -1645,7 +1749,7 @@ export function createConversationGatewayHost(
     ...(registry.usageLimits
       ? { watchUsageLimits: (key, listener) => watchHeld(registry.usageLimits!, key, listener) }
       : {}),
-    command(key, deviceId, commandId, command, fingerprint) {
+    command(key, deviceId, commandId, command, fingerprint, carried) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
       if (command.kind === 'fork') return fork(key, deviceId, commandId, command)
       if (command.kind === 'setReasoningEffort') return setReasoningEffort(key, command.effort)
@@ -1700,33 +1804,45 @@ export function createConversationGatewayHost(
               message: 'This message was written a while ago and was not sent. Send it again to send it now.',
             }
           : null
+      // A message held here goes whole: what it carries beside its words is
+      // made this machine's before it is answered (`conversation-queued-attachments`).
+      // Held under the device's own command, so a repeat after a dropped
+      // connection, or after a restart, holds it once, and finds its uploads
+      // spent by the first: it is answered as held without reading them.
+      const holdMessage = async (
+        send: Extract<ConversationCommand, { kind: 'send' }>,
+        heldMessages: ConversationHeldMessages,
+      ): Promise<ConversationGatewayCommandResult> => {
+        const source = JSON.stringify([deviceId, commandId])
+        if (heldMessages.heldBefore?.(source)) return { ok: true }
+        const read = await carriedBy(key, deviceId, send)
+        if (!read.ok) return read
+        const holding = await heldMessages.hold(chat, send.message, source, read.carried)
+        // Its pictures are in the held message now, and its files are its own:
+        // their staged copies and references go, as a sent message's do.
+        if (holding.ok) for (const id of send.uploadIds ?? []) spendUpload(id)
+        return holding
+      }
       // A queued message is held here and sent from here when the turn ends,
       // answered as soon as it is held: no session is resumed for it now, and
-      // nothing waits on the turn. Held under the device's own command, so a
-      // repeat after a dropped connection, or after a restart, holds it once.
+      // nothing waits on the turn.
       if (command.kind === 'send' && command.queue && held)
-        return Promise.resolve(staleHold() ?? held.hold(chat, command.message, JSON.stringify([deviceId, commandId])))
+        return Promise.resolve(staleHold() ?? holdMessage(command, held))
       // A steer the running turn cannot take is held for the turn's end, as a
       // queued send is, and answered at once with a notice saying so: the
       // person's words are never lost to a provider that cannot take them, or
-      // to a turn that ended on their way. A held message is its words alone,
-      // so one with pictures, skills or mentions is refused busy instead,
-      // which a phone sends again as it does any send made mid-turn.
+      // to a turn that ended on their way. Its pictures, files, skills and
+      // mentions are held with it.
       const steer = command.kind === 'send' && command.steer === true
-      const holdInstead = (reason: string): ConversationGatewayCommandResult => {
-        // Nor one in a mode of its own: held, it would go in the default one.
-        if (
-          command.kind !== 'send' ||
-          !held ||
-          command.uploadIds?.length ||
-          command.skills?.length ||
-          command.mentions?.length ||
-          command.mode
-        )
+      const holdInstead = async (reason: string): Promise<ConversationGatewayCommandResult> => {
+        // Not one in a mode of its own: held, it would go in the default one.
+        // Refused busy, which a phone sends again as it does any send made
+        // mid-turn.
+        if (command.kind !== 'send' || !held || command.mode)
           return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
         const stale = staleHold()
         if (stale) return stale
-        const holding = held.hold(chat, command.message, JSON.stringify([deviceId, commandId]))
+        const holding = await holdMessage(command, held)
         return holding.ok
           ? { ok: true, notice: `${reason.replace(/\.$/u, '')}, so it is queued and goes when this turn ends.` }
           : holding
@@ -1738,7 +1854,7 @@ export function createConversationGatewayHost(
       // Not asked of a provider that cannot take one: the runtime would only
       // refuse it, after resolving its skills and mentions.
       if (joinsTurn && live?.capabilities?.steer !== true)
-        return Promise.resolve(holdInstead('This agent cannot take a message while it is working.'))
+        return holdInstead('This agent cannot take a message while it is working.')
       const stamp = fingerprint ? { commandFingerprint: fingerprint } : {}
       const execute = async (): Promise<ConversationGatewayCommandResult> => relay(await run())
       const run = async (): Promise<ConversationGatewayCommandResult | ConversationSessionActionResult> => {
@@ -1746,14 +1862,7 @@ export function createConversationGatewayHost(
         // may replace (a failed turn's session is listed, but a send resumes
         // the chat on a new one, and the runtime forgets the old): read before
         // that, any session of this chat will do.
-        const listedForChat = api.listSessions({ workspaceId: key.workspaceId, agentId: key.agentId })
-        const chatSessions = new Set(
-          listedForChat.ok
-            ? listedForChat.sessions
-                .filter((entry) => entry.workspaceId === key.workspaceId && entry.agentId === key.agentId)
-                .map((entry) => entry.sessionId)
-            : [],
-        )
+        const chatSessions = sessionsOfChat(key)
         let session = sessionFor(key)
         // A send, or a preset switch, reaches a conversation with no live
         // session by resuming it; the switch then applies to that session.
@@ -1774,7 +1883,9 @@ export function createConversationGatewayHost(
             const turnEffort =
               effort && session.capabilities?.reasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}
             const ids = command.uploadIds ?? []
-            if (ids.length > MAX_ATTACHMENTS_PER_TURN) return { ok: false, message: 'Too many attachments.' }
+            const heldCount = (carried?.images.length ?? 0) + (carried?.files.length ?? 0)
+            if (ids.length + heldCount > MAX_ATTACHMENTS_PER_TURN)
+              return { ok: false, message: 'Too many attachments.' }
             // Skills the paired machine's composer attached, resolved against
             // this machine's folder as its own chips are (conversation-skills.ts).
             const turnSkills = command.skills?.length ? { skills: command.skills.map((id) => ({ id })) } : {}
@@ -1858,6 +1969,29 @@ export function createConversationGatewayHost(
                 name: upload.name,
                 byteLength: bytes.length,
               })
+            }
+            // What a held message carries, kept on this disk since it was held:
+            // read as an upload is, and refused in words for one gone or changed.
+            for (const image of carried?.images ?? []) {
+              let bytes: Buffer
+              try {
+                bytes = await readBoundedConversationUpload(image.path, image.bytes)
+              } catch {
+                return { ok: false, message: `The picture ${image.name} is no longer on this machine.` }
+              }
+              attachments.push({
+                id: randomUUID(),
+                mediaType: image.mediaType,
+                dataBase64: bytes.toString('base64'),
+                name: image.name,
+                byteLength: bytes.length,
+              })
+            }
+            for (const file of carried?.files ?? []) {
+              const present = await stat(file.path).catch(() => null)
+              if (!present?.isFile() || present.size !== file.bytes)
+                return { ok: false, message: 'A file this message carried is no longer on this machine as it was.' }
+              files.push({ path: file.path })
             }
             // A message from a paired device is the person speaking, as one
             // typed here is: the chat moves up the desktop's own list, and every
@@ -2013,7 +2147,7 @@ export function createConversationGatewayHost(
               retryAfterMs: SEND_BUSY_RETRY_MS,
               message: 'A conversation send is already in progress.',
             })
-      const hasImages = Boolean(command.uploadIds?.length)
+      const hasImages = Boolean(command.uploadIds?.length || carried?.images.length)
       if (hasImages && imageSends >= 2)
         return Promise.resolve({
           ok: false,

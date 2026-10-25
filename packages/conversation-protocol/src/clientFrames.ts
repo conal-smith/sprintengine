@@ -283,36 +283,50 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
       if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
       return { ...frame, command: { ...frame.command, steer: true } }
     }
-    // Mentions ride a message the chat runs now, as skills do, and are read
-    // off the send before the rest of it is.
+    // Mentions ride a message as skills do, one held for later included
+    // (`conversation-queued-attachments`), and are read off the send before
+    // the rest of it is.
     if (command.kind === 'send' && command.mentions !== undefined) {
       const mentions = parseConversationWireMentions(command.mentions)
-      if (command.queue !== undefined || !mentions) return null
+      if (!mentions) return null
       const frame = parseConversationClientMessage({ ...value, command: { ...command, mentions: undefined } })
       if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
       return mentions.length ? { ...frame, command: { ...frame.command, mentions } } : frame
     }
-    // Skills ride a message the chat runs now, not one held for later.
+    // Skills ride a message the chat runs now, and one held for later where
+    // the desktop holds what a message carries (`conversation-queued-attachments`).
     if (command.kind === 'send' && command.skills !== undefined) {
       const skills = command.skills
       if (
-        command.queue !== undefined ||
         !Array.isArray(skills) ||
         skills.length > CONVERSATION_MAX_SEND_SKILLS ||
         !skills.every((skill) => typeof skill === 'string' && SKILL_ID.test(skill))
       )
         return null
-      const frame = parseConversationClientFrame({ ...value, command: { ...command, skills: undefined } })
+      const frame = parseConversationClientMessage({ ...value, command: { ...command, skills: undefined } })
       if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
       return { ...frame, command: { ...frame.command, skills: [...(skills as string[])] } }
     }
-    // A held message is its words alone: the pictures a send carries are
-    // staged for that send, and would be gone by the turn it waits for.
+    // A held message may carry the pictures and files a send stages: the
+    // desktop keeps them for the turn it waits on (`conversation-queued-attachments`).
+    // One from before that desktop never sends them beside `queue`.
     if (command.kind === 'send' && command.queue !== undefined) {
-      if (command.queue !== true || command.uploadIds !== undefined) return null
+      if (command.queue !== true) return null
       const frame = parseConversationClientFrame(value)
       if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
       return { ...frame, command: { ...frame.command, queue: true } }
+    }
+    // A rule that outlives the conversation, saved on the desktop for the
+    // chat's workspace (`conversation-permanent-approvals`). The first
+    // version refuses the decision as unsafe.
+    if (command.kind === 'resolveApproval' && command.decision === 'always') {
+      return id(value.commandId) && id(command.requestId)
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: { kind: 'resolveApproval', requestId: command.requestId, decision: 'always' },
+          }
+        : null
     }
     if (command.kind === 'resolvePlan') {
       return id(value.commandId) &&

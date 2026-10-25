@@ -2,7 +2,14 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
+import {
+  CONVERSATION_MAX_SEND_MENTIONS,
+  CONVERSATION_MAX_SEND_SKILLS,
+  parseConversationWireMentions,
+  type ConversationWireMention,
+} from '../../../packages/conversation-protocol/src/public'
 import type { ConversationEvent, ConversationSessionSummary } from '../../shared/conversation-runtime'
+import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENTS_PER_TURN } from '../../shared/conversation-attachments'
 import { conversationTurnInProgress } from '../../shared/conversation/phase'
 import { isRecord } from '../../shared/records'
 import {
@@ -10,6 +17,7 @@ import {
   isTime,
   MAX_SCHEDULED_MESSAGE_LENGTH,
   type ScheduledMessage,
+  type ScheduledMessageCarries,
   type ScheduledMessageChat,
   type ScheduledMessagesState,
   type ScheduledMessageUpdate,
@@ -61,6 +69,17 @@ import { writeFileAtomically } from '../config-file-write'
 // awake then. It is the same message as one scheduled here, and the tray here
 // shows it beside them.
 //
+// A held message may carry what a message sent then would: pictures, files,
+// skills and mentions (`carried`, `conversation-queued-attachments`). The
+// machine that queued it handed them over with it, so it may sleep or close
+// before the turn ends and the message still goes whole. A picture is a copy
+// made on this disk when the message was held, since the upload it came in on
+// is spent within the hour; a file stays where its upload put it, as a file
+// sent at once does. Both are kept by their paths in the file, and let go
+// (`release`) once the message has gone: sent, its pictures' copies go and its
+// files stay the message's; deleted, both go. Several held in one turn join as
+// one message only while what they carry together still fits one message.
+//
 // A held message keeps the commands it came in on (`sources`) in the file, and
 // once it has gone (sent, deleted, or its chat with it) they are remembered a
 // while longer (`heldSources`), so the same command arriving again is the same
@@ -97,7 +116,24 @@ const MAX_SCHEDULED_FROM_AFAR_PER_CHAT = 50
  */
 const MAX_HELD_SOURCES = 500
 
+/**
+ * What a held message carries beside its words, by where it is on this disk:
+ * kept with it in the file, and never in what a window is told (`carries`).
+ */
+export type ScheduledMessageCarried = {
+  /** Pictures, each a copy made on this disk when the message was held. */
+  images?: Array<{ path: string; name: string; mediaType: string; bytes: number }>
+  /** Files, each where its upload put it on this disk. */
+  files?: Array<{ path: string; name: string; bytes: number }>
+  /** Ids of this machine's skills the chat runs with the message. */
+  skills?: string[]
+  /** Files and folders of the chat's folder, by their paths in it. */
+  mentions?: ConversationWireMention[]
+}
+
 type Pending = ScheduledMessage & {
+  /** What a held message carries beside its words. Kept in the file. */
+  carried?: ScheduledMessageCarried
   /** When to look again at a message waiting on a busy chat; not kept in the file. */
   retryAt?: number
   /** How many times it was sent again after a refusal; each send needs a command id of its own. */
@@ -120,8 +156,22 @@ export type ScheduledMessagesDeps = {
   onConversationEvent: (listener: (event: ConversationEvent) => void) => () => void
   /** Whether the chat is still there; false for one deleted. */
   chatExists: (chat: ScheduledMessageChat) => boolean
-  /** Send a turn through the chat's normal send path, resuming its session when none is live. */
-  send: (chat: ScheduledMessageChat, text: string, commandId: string) => Promise<ScheduledMessageSendResult>
+  /**
+   * Send a turn through the chat's normal send path, resuming its session
+   * when none is live, with what a held message carries beside its words.
+   */
+  send: (
+    chat: ScheduledMessageChat,
+    text: string,
+    commandId: string,
+    carried?: ScheduledMessageCarried,
+  ) => Promise<ScheduledMessageSendResult>
+  /**
+   * A held message that carried pictures or files has gone: `sent` into its
+   * chat, or not (deleted, its chat with it). Its pictures' copies are no
+   * longer needed either way; its files are the message's once it was sent.
+   */
+  release?: (carried: ScheduledMessageCarried, sent: boolean) => void
   now?: () => number
   newId?: () => string
   setTimer?: (callback: () => void, ms: number) => unknown
@@ -129,7 +179,11 @@ export type ScheduledMessagesDeps = {
   log?: (message: string) => void
 }
 
-export type ScheduledMessageHoldResult = { ok: true; id: string } | { ok: false; reason: string }
+/**
+ * `repeat`: the command was held already, so nothing it carried this time was
+ * kept, and the caller lets go of what it made for it.
+ */
+export type ScheduledMessageHoldResult = { ok: true; id: string; repeat?: true } | { ok: false; reason: string }
 
 export type ScheduledMessages = {
   /** Read the file, follow the chats, and arm for what is due. */
@@ -139,9 +193,17 @@ export type ScheduledMessages = {
    * running): one a paired machine queued. It joins the chat's held message
    * that has not gone yet, a line of its own, as the composer's queue joins
    * them. `source` names the command it came in on; the same one again is
-   * the same message, held once.
+   * the same message, held once. `carried` is what it brings beside its words,
+   * its pictures already copied to this disk.
    */
-  hold(chat: ScheduledMessageChat, text: string, source: string): ScheduledMessageHoldResult
+  hold(
+    chat: ScheduledMessageChat,
+    text: string,
+    source: string,
+    carried?: ScheduledMessageCarried,
+  ): ScheduledMessageHoldResult
+  /** The held message the command `source` went into, still held or gone; null for a command never held. */
+  heldFrom(source: string): string | null
   /**
    * Schedule a message a paired machine asked for, to go at `sendAt` as one
    * scheduled here does. `source` names the command it came in on; the same
@@ -203,9 +265,10 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
 
   function state(): ScheduledMessagesState {
     return {
-      messages: messages.map(({ retryAt: _retryAt, attempt: _attempt, sources: _sources, ...entry }) => ({
-        ...entry,
-      })),
+      messages: messages.map(({ retryAt: _retryAt, attempt: _attempt, sources: _sources, carried, ...entry }) => {
+        const carries = carriesOf(carried)
+        return { ...entry, ...(carries ? { carries } : {}) }
+      }),
     }
   }
 
@@ -216,15 +279,30 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     arm()
   }
 
-  /** Take messages out, remembering the commands the held ones came in on. */
-  function remove(leaving: (entry: Pending) => boolean): boolean {
+  /**
+   * Take messages out, remembering the commands the held ones came in on, and
+   * letting go of what they carried: `sent` says the message went into its chat.
+   */
+  function remove(leaving: (entry: Pending) => boolean, sent = false): boolean {
     const before = messages.length
+    const gone: Pending[] = []
     messages = messages.filter((entry) => {
       if (!leaving(entry)) return true
       remember(entry.id, entry.sources ?? [])
+      gone.push(entry)
       return false
     })
+    for (const entry of gone) if (entry.carried) release(entry.carried, sent)
     return messages.length !== before
+  }
+
+  function release(carried: ScheduledMessageCarried, sent: boolean): void {
+    if (!carried.images?.length && !carried.files?.length) return
+    try {
+      deps.release?.(carried, sent)
+    } catch (error) {
+      log(`Could not let go of a held message's files: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   function remember(id: string, sources: readonly string[]): void {
@@ -323,6 +401,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
         // A retry is a new command: the first one's receipt answers its own id
         // with its refusal.
         `scheduled-message:${entry.id}${entry.attempt ? `:${entry.attempt}` : ''}`,
+        ...(entry.carried ? [entry.carried] : []),
       )
     } catch (error) {
       result = { ok: false, message: error instanceof Error ? error.message : String(error) }
@@ -333,7 +412,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     if (!messages.includes(entry)) return
     if (!running) return
     if (result.ok) {
-      remove((candidate) => candidate === entry)
+      remove((candidate) => candidate === entry, true)
       return changed()
     }
     // A turn that started between the look and the send: the same wait as a
@@ -412,30 +491,43 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     return state()
   }
 
-  function hold(chat: ScheduledMessageChat, input: string, source: string): ScheduledMessageHoldResult {
+  function heldFrom(source: string): string | null {
+    return messages.find((entry) => entry.sources?.includes(source))?.id ?? heldSources.get(source) ?? null
+  }
+
+  function hold(
+    chat: ScheduledMessageChat,
+    input: string,
+    source: string,
+    carrying?: ScheduledMessageCarried,
+  ): ScheduledMessageHoldResult {
     const text = input.trim()
-    if (!text) return { ok: false, reason: 'A queued message needs words.' }
+    const carried = carrying && carriesOf(carrying) ? carrying : undefined
+    // Pictures, files, skills or mentions are a message without words, as a
+    // send takes one.
+    if (!text && !carried) return { ok: false, reason: 'A queued message needs words.' }
     // The same command again is the same message: still held, or gone
     // already. Either way it is not held again.
-    const holding = messages.find((entry) => entry.sources?.includes(source))
-    if (holding) return { ok: true, id: holding.id }
-    const gone = heldSources.get(source)
-    if (gone !== undefined) return { ok: true, id: gone }
+    const known = heldFrom(source)
+    if (known !== null) return { ok: true, id: known, repeat: true }
     if (!deps.chatExists(chat)) return { ok: false, reason: 'The chat is not on this machine any more.' }
     const at = now()
     // Only one that has not gone yet takes more: one on its way has been read,
-    // and one refused waits on the person.
+    // and one refused waits on the person. And only while the two together
+    // are still one message a chat takes.
     const joined = messages.find(
       (entry) =>
         entry.queued &&
         sameChat(entry, chat) &&
         !entry.sending &&
         entry.failure === undefined &&
-        entry.text.length + 1 + text.length <= MAX_SCHEDULED_MESSAGE_LENGTH,
+        entry.text.length + 1 + text.length <= MAX_SCHEDULED_MESSAGE_LENGTH &&
+        joinCarried(entry.carried, carried) !== null,
     )
     let id: string
     if (joined) {
-      joined.text = `${joined.text}\n${text}`
+      joined.text = [joined.text, text].filter(Boolean).join('\n')
+      if (carried) joined.carried = joinCarried(joined.carried, carried) ?? joined.carried
       joined.sources = [...(joined.sources ?? []), source]
       id = joined.id
     } else {
@@ -458,6 +550,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
           waitingSince: at,
           queued: true,
           sources: [source],
+          ...(carried ? { carried } : {}),
         },
       ]
     }
@@ -522,7 +615,10 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     const fresh = messages.filter((entry) => {
       if (!entry.sources?.length) return true
       entry.sources = entry.sources.filter((source) => !savedSources.has(source))
-      return entry.sources.length > 0
+      if (entry.sources.length > 0) return true
+      // The file's copy carries its own.
+      if (entry.carried) release(entry.carried, false)
+      return false
     })
     const repeated = fresh.length !== messages.length
     messages = [...saved.messages.filter((entry) => !known.has(entry.id)), ...fresh]
@@ -537,6 +633,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
   return {
     start,
     hold,
+    heldFrom,
     scheduleFrom,
     wake() {
       if (!running) return
@@ -610,7 +707,10 @@ function isSource(value: unknown): value is string {
 
 function readPending(raw: unknown): Pending[] {
   if (!isRecord(raw) || !isId(raw.id) || !isId(raw.workspaceId) || !isId(raw.agentId)) return []
-  if (typeof raw.text !== 'string' || !raw.text.trim() || raw.text.length > MAX_SCHEDULED_MESSAGE_LENGTH) return []
+  // Written by a build before it, a message carries nothing.
+  const carried = raw.queued === true ? readCarried(raw.carried) : undefined
+  if (typeof raw.text !== 'string' || raw.text.length > MAX_SCHEDULED_MESSAGE_LENGTH) return []
+  if (!raw.text.trim() && !carried) return []
   if (!isTime(raw.sendAt) || !isTime(raw.createdAt)) return []
   return [
     {
@@ -629,8 +729,91 @@ function readPending(raw: unknown): Pending[] {
       ...(Array.isArray(raw.sources) && raw.sources.every(isSource) && raw.sources.length
         ? { sources: [...raw.sources] }
         : {}),
+      ...(carried ? { carried } : {}),
     },
   ]
+}
+
+// ── What a held message carries ───────────────────────────────────────────
+
+const MAX_CARRIED_PATH = 4096
+const MAX_CARRIED_NAME = 255
+
+/** Names, as a window and a paired machine are told them; null when it carries nothing. */
+function carriesOf(carried: ScheduledMessageCarried | undefined): ScheduledMessageCarries | null {
+  if (!carried) return null
+  const carries: ScheduledMessageCarries = {
+    ...(carried.images?.length ? { images: carried.images.map((image) => image.name) } : {}),
+    ...(carried.files?.length ? { files: carried.files.map((file) => file.name) } : {}),
+    ...(carried.skills?.length ? { skills: [...carried.skills] } : {}),
+    ...(carried.mentions?.length ? { mentions: carried.mentions.map((mention) => ({ ...mention })) } : {}),
+  }
+  return Object.keys(carries).length ? carries : null
+}
+
+/**
+ * What two held messages carry as one, or null when that is more than one
+ * message takes: pictures and files together as a send's attachments are
+ * bounded, skills and mentions as a send's are.
+ */
+function joinCarried(
+  held: ScheduledMessageCarried | undefined,
+  more: ScheduledMessageCarried | undefined,
+): ScheduledMessageCarried | null {
+  if (!more) return held ?? {}
+  const images = [...(held?.images ?? []), ...(more.images ?? [])]
+  const files = [...(held?.files ?? []), ...(more.files ?? [])]
+  const skills = [...new Set([...(held?.skills ?? []), ...(more.skills ?? [])])]
+  const seen = new Set<string>()
+  const mentions = [...(held?.mentions ?? []), ...(more.mentions ?? [])].filter((mention) => {
+    const named = JSON.stringify([mention.path, mention.kind, mention.line, mention.endLine])
+    if (seen.has(named)) return false
+    seen.add(named)
+    return true
+  })
+  if (images.length + files.length > MAX_ATTACHMENTS_PER_TURN) return null
+  if (skills.length > CONVERSATION_MAX_SEND_SKILLS || mentions.length > CONVERSATION_MAX_SEND_MENTIONS) return null
+  return {
+    ...(images.length ? { images } : {}),
+    ...(files.length ? { files } : {}),
+    ...(skills.length ? { skills } : {}),
+    ...(mentions.length ? { mentions } : {}),
+  }
+}
+
+function carriedPath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_CARRIED_PATH
+}
+function carriedName(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_CARRIED_NAME
+}
+function carriedBytes(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+/** What a held message carries, as the file kept it; an entry it cannot read is left out. */
+function readCarried(raw: unknown): ScheduledMessageCarried | undefined {
+  if (!isRecord(raw)) return undefined
+  const images = (Array.isArray(raw.images) ? raw.images : []).flatMap((image: unknown) =>
+    isRecord(image) &&
+    carriedPath(image.path) &&
+    carriedName(image.name) &&
+    ATTACHABLE_IMAGE_TYPES.includes(image.mediaType as (typeof ATTACHABLE_IMAGE_TYPES)[number]) &&
+    carriedBytes(image.bytes)
+      ? [{ path: image.path, name: image.name, mediaType: image.mediaType as string, bytes: image.bytes }]
+      : [],
+  )
+  const files = (Array.isArray(raw.files) ? raw.files : []).flatMap((file: unknown) =>
+    isRecord(file) && carriedPath(file.path) && carriedName(file.name) && carriedBytes(file.bytes)
+      ? [{ path: file.path, name: file.name, bytes: file.bytes }]
+      : [],
+  )
+  const skills = (Array.isArray(raw.skills) ? raw.skills : []).filter(
+    (skill: unknown): skill is string => typeof skill === 'string' && isId(skill),
+  )
+  const mentions = raw.mentions === undefined ? [] : (parseConversationWireMentions(raw.mentions) ?? [])
+  const carried = joinCarried(undefined, { images, files, skills, mentions })
+  return carried && carriesOf(carried) ? carried : undefined
 }
 
 /** A refusal in a few words, one line, as the tray shows it. */

@@ -1085,7 +1085,8 @@ export type ElectronApi = {
    *
    * `queue`: hand the message to the machine to hold until the chat's turn
    * ends, and answer once it holds it. Needs `conversation-queued-sends`
-   * there, and words alone: a held message carries no images.
+   * there; with images, files, skills or mentions, `conversation-queued-attachments`
+   * too, and it is refused in words for a machine that holds words alone.
    *
    * `steer`: hand the message to the turn the chat is running, answered when
    * that turn ends. Needs `conversation-steer-sends` there; a turn that cannot
@@ -1187,7 +1188,7 @@ export type ElectronApi = {
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
-    decision: 'once' | 'conversation' | 'deny'
+    decision: 'once' | 'conversation' | 'always' | 'deny'
   }) => Promise<MeshConversationCommandResult>
   meshConversationAnswerQuestion: (input: {
     key: MeshConversationKey

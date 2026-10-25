@@ -25,12 +25,18 @@ test('a send keeps the skills it names', () => {
   assert.equal(frame.command.message, 'Fix the flaky test')
 })
 
-test('skills that are not ids, too many, or beside a queued message refuse the frame', () => {
+test('skills that are not ids, or too many, refuse the frame', () => {
   assert.equal(send({ skills: 'review' }), null)
   assert.equal(send({ skills: ['../etc'] }), null)
   assert.equal(send({ skills: [''] }), null)
   assert.equal(send({ skills: Array.from({ length: CONVERSATION_MAX_SEND_SKILLS + 1 }, (_, i) => `s${i}`) }), null)
-  assert.equal(send({ skills: ['review'], queue: true }), null)
+  // Beside `queue` they are read, for a desktop that holds them
+  // (queued-attachments.test.ts).
+  assert.deepEqual(send({ skills: ['review'], queue: true }), {
+    type: 'command',
+    commandId: 'cmd-1',
+    command: { kind: 'send', message: 'Fix the flaky test', skills: ['review'], queue: true },
+  })
 })
 
 test('a send without skills is read as before', () => {
