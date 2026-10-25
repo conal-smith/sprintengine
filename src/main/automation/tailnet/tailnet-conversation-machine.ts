@@ -142,6 +142,9 @@ export function conversationPullRequestsOf(found: readonly StudioPullRequest[]):
     state: entry.state,
     url: entry.url,
     title: entry.title,
+    // Whether the chat's agent has this machine watching it, which a paired
+    // desktop's Stop watching ends (`chat-unwatch-pull-request`).
+    ...(entry.watch ? { watch: { ...entry.watch } } : {}),
   }))
 }
 

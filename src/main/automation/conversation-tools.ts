@@ -50,7 +50,11 @@ export const CONVERSATION_MUTATION_TOOL_NAMES: readonly string[] = [
  * marks: each writes this machine's record of the chat, so each needs
  * `conversation:operate` and is audited with the device that asked.
  */
-export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = ['conversation.rename', 'conversation.auto_compact']
+export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = [
+  'conversation.rename',
+  'conversation.auto_compact',
+  'conversation.pull_request_unwatch',
+]
 
 const EFFORT_ID = /^[a-z0-9_-]{1,40}$/i
 // A skill's directory name, as the chat runtime accepts one (conversation-skills.ts).
@@ -73,6 +77,16 @@ export type ConversationToolsDeps = {
    * so.
    */
   linkLaunchedAgent?: (link: LaunchedAgentLink) => LaunchLinkResult
+  /**
+   * The watches this machine keeps on chats' pull requests (pull-request-watch.ts),
+   * for a paired desktop's Stop watching. Absent where there is no record.
+   */
+  pullRequestWatches?: {
+    /** The pull requests a chat's agent has watched, by their addresses. */
+    watchedOf(key: { workspaceId: string; agentId: string }): string[] | Promise<string[]>
+    /** Stop one; whether a watch of this chat's was stopped. */
+    unwatch(key: { workspaceId: string; agentId: string }, url: string): boolean | Promise<boolean>
+  }
 }
 
 /**
@@ -580,6 +594,42 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         const set = deps.lifecycle.setAutoCompact(args.workspaceId.trim(), args.enabled, lifecycleActor(context))
         if (!set.ok) return toolError(set.code, set.message)
         return toolSuccess(set)
+      },
+    },
+    {
+      name: 'conversation.pull_request_unwatch',
+      description:
+        "Stop this machine watching a chat's pull request, as the chat's Stop watching does: the chat stops " +
+        "waiting on it and is not woken for it again. The pull request stays the chat's, and the chat stays " +
+        'as it is. Name the pull request by `url`, or leave it out to stop every watch the chat has; one not ' +
+        'watched changes nothing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId, from the conversation list." },
+          agentId: { type: 'string', description: "The chat's agentId, from the conversation list." },
+          url: { type: 'string', description: "The pull request's address, as the conversation list names it." },
+        },
+        required: ['workspaceId', 'agentId'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        if (typeof args.agentId !== 'string' || !args.agentId.trim()) {
+          return toolError('invalid_arguments', '"agentId" is required.')
+        }
+        if (args.url !== undefined && (typeof args.url !== 'string' || !args.url.trim())) {
+          return toolError('invalid_arguments', '"url" must be a pull request address when provided.')
+        }
+        const watches = deps.pullRequestWatches
+        if (!watches) return toolError('unavailable', 'This machine keeps no pull request watches.')
+        const key = { workspaceId: args.workspaceId.trim(), agentId: args.agentId.trim() }
+        const urls = typeof args.url === 'string' ? [args.url.trim()] : await watches.watchedOf(key)
+        const stopped: string[] = []
+        for (const url of urls) if (await watches.unwatch(key, url)) stopped.push(url)
+        return toolSuccess({ ok: true, ...key, stopped: stopped.length, pullRequests: stopped })
       },
     },
   ]

@@ -231,20 +231,28 @@ export type MeshConversationChange =
 /**
  * A chat's management from a paired desktop, beyond its marks, each where
  * the machine advertises its capability (`MeshConversationManage`): Rename
- * (`chat-rename`) and Auto compact (`chat-auto-compact`).
+ * (`chat-rename`), Auto compact (`chat-auto-compact`) and Stop watching
+ * (`chat-unwatch-pull-request`).
  */
-export type MeshConversationManageChange = { kind: 'rename'; name: string } | { kind: 'auto-compact'; enabled: boolean }
+export type MeshConversationManageChange =
+  | { kind: 'rename'; name: string }
+  | { kind: 'auto-compact'; enabled: boolean }
+  /** One agent's watch of a pull request, by its address; every watch the agent has without one. */
+  | { kind: 'unwatch-pull-request'; agentId: string; url?: string }
 
 /**
  * Which of a chat's management a paired machine takes from here, by the
  * capability each needs there. `rename`: `chat-rename`, the chat renamed
  * there, so every device lists it by the new name. `autoCompact`:
  * `chat-auto-compact`, the chat's Auto compact switched there, the machine
- * that runs it compacting it by itself.
+ * that runs it compacting it by itself. `unwatchPullRequest`:
+ * `chat-unwatch-pull-request`, a watch of the chat's pull request ended
+ * there, where its listed pull request says it is watched.
  */
 export type MeshConversationManage = {
   rename: boolean
   autoCompact: boolean
+  unwatchPullRequest: boolean
 }
 
 /** That machine took the change, or why not. `row_menu_unsupported` is a machine without the tool. */

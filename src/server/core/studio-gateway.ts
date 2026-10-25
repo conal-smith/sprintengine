@@ -115,6 +115,20 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
       resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
       lifecycle: core.conversationLifecycle,
       ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
+      // A paired desktop's Stop watching on a chat here.
+      pullRequestWatches: {
+        watchedOf: async (key) => {
+          await core.pullRequests.record.whenLoaded()
+          return core.pullRequests.record
+            .forConversation(key)
+            .filter((pr) => pr.watch)
+            .map((pr) => pr.url)
+        },
+        unwatch: async (key, url) => {
+          await core.pullRequests.record.whenLoaded()
+          return core.pullRequests.unwatchForAgent(key, { url })
+        },
+      },
     }),
     // A paired desktop's Create PR on one of this machine's chats: the
     // checkout, git, the forge's CLI and the drafting CLI are here, and so is

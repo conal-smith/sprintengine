@@ -9,7 +9,8 @@ test('WorkspaceSidebar.remoteManage', async () => {
   // A paired machine's chat is managed from here as a local one is, where its
   // machine takes each part (`MeshConversationManage`), open here or not:
   // Rename renames it there, so every device lists it by the new name; Auto
-  // compact is switched there, by the machine that compacts it.
+  // compact is switched there, by the machine that compacts it; Stop
+  // watching ends that machine's watch of the chat's pull request.
 
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url: 'http://localhost',
@@ -70,14 +71,23 @@ test('WorkspaceSidebar.remoteManage', async () => {
     lastSeq: 8,
     ...fields,
   })
+  // A pull request its machine watches for the chat's agent.
+  const watchedPr = (number: number) => ({
+    number,
+    state: 'open',
+    url: `https://github.com/acme/parser/pull/${number}`,
+    title: `Change ${number}`,
+    watch: { since: Date.now() - hour, waitingOn: 'checks' },
+  })
   let listed = [
     chat({
       workspaceId: 'rw1',
       chatTitle: 'Review the parser',
       lastTurnEndedAt: Date.now() - 3 * hour,
       autoCompact: false,
+      pullRequests: [watchedPr(7)],
     }),
-    chat({ workspaceId: 'rw4', chatTitle: 'Another chat', autoCompact: true }),
+    chat({ workspaceId: 'rw4', chatTitle: 'Another chat', autoCompact: true, pullRequests: [watchedPr(8)] }),
   ]
   const changes: Array<{ connectionId: string; workspaceId: string; change: Record<string, unknown> }> = []
 
@@ -125,7 +135,7 @@ test('WorkspaceSidebar.remoteManage', async () => {
       lifecycle: true,
       rowMenu: true,
       markUnread: true,
-      manage: { rename: true, autoCompact: true },
+      manage: { rename: true, autoCompact: true, unwatchPullRequest: true },
     }),
     meshChangeConversation: async (input: (typeof changes)[number]) => {
       changes.push(input)
@@ -319,6 +329,22 @@ test('WorkspaceSidebar.remoteManage', async () => {
       change: { kind: 'auto-compact', enabled: false },
     })
     await escape()
+
+    // ── Stop watching ──
+    const watchMenu = await openMenuOn(remoteRowOf('Parser, reviewed'))
+    await click(watchMenu, 'Stop watching #7')
+    assert.deepEqual(changes.at(-1), {
+      connectionId: 'c1',
+      workspaceId: 'rw1',
+      change: { kind: 'unwatch-pull-request', agentId: 'agent-1', url: 'https://github.com/acme/parser/pull/7' },
+    })
+    const followedWatch = await openMenuOn(followedRow())
+    await click(followedWatch, 'Stop watching #8')
+    assert.deepEqual(changes.at(-1), {
+      connectionId: 'c1',
+      workspaceId: 'rw4',
+      change: { kind: 'unwatch-pull-request', agentId: 'agent-1', url: 'https://github.com/acme/parser/pull/8' },
+    })
   } finally {
     act(() => {
       root.unmount()

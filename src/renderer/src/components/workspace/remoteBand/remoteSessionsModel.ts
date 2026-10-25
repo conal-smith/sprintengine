@@ -68,7 +68,7 @@ export type RemoteBrowseEntry = {
 }
 
 /** No chat management from here: a machine before it, or a pairing that may only follow. */
-export const NO_CHAT_MANAGE: MeshConversationManage = { rename: false, autoCompact: false }
+export const NO_CHAT_MANAGE: MeshConversationManage = { rename: false, autoCompact: false, unwatchPullRequest: false }
 
 /** What of a machine's chats' management this pairing may ask for: what it takes, where the pairing may drive. */
 export function remoteManageWritable(entry: RemoteBrowseEntry | undefined): MeshConversationManage {
@@ -292,6 +292,9 @@ export function branchPullRequestsOfWire(listed: readonly ConversationWirePullRe
         openedAt: 0,
         stateAt: 0,
         ...(forge === 'github' ? {} : { forge }),
+        // Watched there: the strip and the row say so, and offer Stop watching
+        // where the machine takes it from here.
+        ...(entry.watch ? { watch: { ...entry.watch } } : {}),
       },
     ]
   })
@@ -1114,6 +1117,23 @@ export function withRemoteChatMarks(workspace: Workspace, conversation: RemoteCo
     (workspace.autoSettleEnabled === true) === conversation.autoSettle
   if (same) return workspace
   return { ...workspace, highlight, snoozedUntil: conversation.snoozedUntil, autoSettleEnabled }
+}
+
+/**
+ * The pull request a paired machine watches for one of the chat's agents, and
+ * that agent, where the machine takes Stop watching from here
+ * (`chat-unwatch-pull-request`); null for none. An open one on GitHub, as a
+ * local chat's watch is.
+ */
+export function remoteWatchedPullRequest(
+  conversation: Pick<RemoteConversation, 'manage' | 'agents'>,
+): { agentId: string; url: string; number: number } | null {
+  if (!conversation.manage?.unwatchPullRequest) return null
+  for (const row of conversation.agents) {
+    const pr = row.pullRequests.find((candidate) => candidate.watch && candidate.state === 'open' && !candidate.forge)
+    if (pr) return { agentId: row.remoteAgentId, url: pr.url, number: pr.number }
+  }
+  return null
 }
 
 /**

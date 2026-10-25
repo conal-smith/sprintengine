@@ -3624,7 +3624,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const conversationPullRequests =
     transport.kind === 'remote' ? (binding.listed?.pullRequests ?? localPullRequests) : localPullRequests
   // The person's "Stop watching" on the strip's pull request: the record's
-  // change comes back through the list above, so nothing is held here.
+  // change comes back through the list above, so nothing is held here. A
+  // chat on a paired machine is watched by that machine, which ends it, where
+  // this pairing may drive the chat.
   const stopWatchingPullRequest = useCallback(
     (url: string) => {
       void unwatchPullRequest({ workspaceId, agentId }, url).then((stopped) => {
@@ -3632,6 +3634,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       })
     },
     [workspaceId, agentId],
+  )
+  const remoteUnwatch = transport.kind === 'remote' && operate ? transport.unwatchPullRequest : undefined
+  const stopRemoteWatch = useCallback(
+    (url: string) => {
+      void remoteUnwatch?.({ url }).then((stopped) => {
+        if (!stopped.ok) setActionError(`Could not stop watching the pull request: ${stopped.message}`)
+      })
+    },
+    [remoteUnwatch],
   )
   // The local servers this conversation's agents started, from the same
   // Studio record the sidebar's marks read; a paired machine's are its own.
@@ -4478,7 +4489,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               context={contextReading}
               contextBreakdown={contextBreakdownSource}
               pullRequests={conversationPullRequests}
-              {...(transport.kind === 'remote' ? {} : { onStopWatchingPullRequest: stopWatchingPullRequest })}
+              {...(transport.kind !== 'remote'
+                ? { onStopWatchingPullRequest: stopWatchingPullRequest }
+                : remoteUnwatch
+                  ? { onStopWatchingPullRequest: stopRemoteWatch }
+                  : {})}
               createPullRequest={createPullRequest}
               localServers={stripLocalServers}
               usageLimits={stripUsageLimits}

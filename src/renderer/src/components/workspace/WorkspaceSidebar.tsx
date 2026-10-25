@@ -118,6 +118,7 @@ import {
   sameRemoteChatMarks,
   withPendingRemoteMarks,
   withRemoteChatMarks,
+  remoteWatchedPullRequest,
   type PendingRemoteMarks,
   type RemoteChatMarks,
   type RemoteChatPending,
@@ -3750,7 +3751,14 @@ function WorkspaceSidebar({
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? canMarkWorkspaceUnread(workspace) : false
           })()}
-          watchedPullRequestNumber={watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ?? null}
+          watchedPullRequestNumber={
+            watchedPullRequestOfRow(contextMenu.workspaceId)?.pr.number ??
+            (() => {
+              // A paired machine's chat: the watch is that machine's, ended there.
+              const conversation = remoteConversationByWorkspace.get(contextMenu.workspaceId)
+              return conversation ? (remoteWatchedPullRequest(conversation)?.number ?? null) : null
+            })()
+          }
           schedule={(() => {
             // A chat a schedule here started: its menu pauses (or resumes)
             // that schedule. Only while the schedule is still in the list.
@@ -3818,6 +3826,21 @@ function WorkspaceSidebar({
             }
             if (action === 'rename') {
               startRename(workspace)
+              setContextMenu(null)
+              return
+            }
+            if (action === 'stop-watching' && workspace.remoteOrigin) {
+              const conversation = remoteConversationByWorkspace.get(workspace.id)
+              const watched = conversation ? remoteWatchedPullRequest(conversation) : null
+              if (watched)
+                changeRemoteChat(
+                  {
+                    connectionId: workspace.remoteOrigin.connectionId,
+                    workspaceId: remoteOriginChatWorkspaceId(workspace.remoteOrigin),
+                    title: workspace.name,
+                  },
+                  { kind: 'unwatch-pull-request', agentId: watched.agentId, url: watched.url },
+                )
               setContextMenu(null)
               return
             }
@@ -3963,6 +3986,7 @@ function WorkspaceSidebar({
                 marks={conversation.rowMenu}
                 manage={conversation.manage}
                 autoCompact={conversation.autoCompact}
+                watchedPullRequestNumber={remoteWatchedPullRequest(conversation)?.number ?? null}
                 canMarkUnread={canMarkRemoteConversationUnread(conversation, now)}
                 isDetachedWindow={isDetachedWindow}
                 workspaceId={conversation.workspaceId}
@@ -3986,7 +4010,15 @@ function WorkspaceSidebar({
                   }
                   setRemoteMenu(null)
                   if (action === 'rename') setRenamingRemote({ key: conversation.key, value: conversation.title })
-                  else if (action === 'open') onOpenRemoteSession?.(openSpecOfConversation(conversation))
+                  else if (action === 'stop-watching') {
+                    const watched = remoteWatchedPullRequest(conversation)
+                    if (watched)
+                      changeRemoteChat(target, {
+                        kind: 'unwatch-pull-request',
+                        agentId: watched.agentId,
+                        url: watched.url,
+                      })
+                  } else if (action === 'open') onOpenRemoteSession?.(openSpecOfConversation(conversation))
                   else if (action === 'toggle-settle') settleRemoteConversation(conversation)
                   else if (action === 'mark-unread') changeRemoteChat(target, { kind: 'mark-unread' })
                   else if (action === 'copy-link') {
@@ -5284,5 +5316,7 @@ function remoteChangeRefusedTitle(change: MeshConversationChange, title: string)
       return `${title} was not renamed`
     case 'auto-compact':
       return `Auto compact was not changed for ${title}`
+    case 'unwatch-pull-request':
+      return `${title}'s pull request is still watched`
   }
 }

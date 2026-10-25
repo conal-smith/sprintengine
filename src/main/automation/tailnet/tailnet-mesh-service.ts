@@ -2942,13 +2942,14 @@ export function rowMenuCallOf(change: unknown): {
 // The changes a chat's menus ask of the machine it runs on beyond its marks,
 // each over a gateway tool of its own capability, asked as the row menu's are.
 
-type ChatManageCapability = 'chat-rename' | 'chat-auto-compact'
+type ChatManageCapability = 'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request'
 
 /** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
 export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
   return {
     rename: tailnetPeerSupports(capabilities, 'chat-rename'),
     autoCompact: tailnetPeerSupports(capabilities, 'chat-auto-compact'),
+    unwatchPullRequest: tailnetPeerSupports(capabilities, 'chat-unwatch-pull-request'),
   }
 }
 
@@ -2969,6 +2970,15 @@ function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof row
         args: { enabled: value.enabled },
         capability: 'chat-auto-compact',
         ask: 'switch Auto compact on its chats',
+      }
+    case 'unwatch-pull-request':
+      if (typeof value.agentId !== 'string' || !value.agentId) return null
+      if (value.url !== undefined && (typeof value.url !== 'string' || !value.url)) return null
+      return {
+        tool: 'conversation.pull_request_unwatch',
+        args: { agentId: value.agentId, ...(typeof value.url === 'string' ? { url: value.url } : {}) },
+        capability: 'chat-unwatch-pull-request',
+        ask: "stop watching its chats' pull requests",
       }
     default:
       return null

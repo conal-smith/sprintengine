@@ -130,6 +130,32 @@ test('Auto compact is the machine’s own conversation.auto_compact, and refused
   }
 })
 
+test('Stop watching is the machine’s own conversation.pull_request_unwatch, by the agent and the address', async () => {
+  const machine = await pairedMachine(['conversations', 'chat-unwatch-pull-request'], (call) =>
+    success({ ok: true, ...call.arguments, stopped: 1 }),
+  )
+  try {
+    const url = 'https://github.com/acme/app/pull/7'
+    const answer = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'unwatch-pull-request', agentId: 'agent-1', url },
+    })
+    assert.deepEqual(answer, { ok: true, workspaceId: 'ws-1' })
+    assert.deepEqual(machine.toolCalls, [
+      { name: 'conversation.pull_request_unwatch', arguments: { workspaceId: 'ws-1', agentId: 'agent-1', url } },
+    ])
+    const unnamed = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'unwatch-pull-request', url },
+    })
+    assert.equal(!unnamed.ok && unnamed.code, 'invalid_arguments')
+  } finally {
+    await machine.close()
+  }
+})
+
 test('a machine without chat-rename is not asked, and says so in words', async () => {
   const machine = await pairedMachine(['conversations', 'chat-row-menu'], () => assert.fail('nothing is asked'))
   try {
@@ -166,8 +192,10 @@ test('a machine from before conversation.rename answers "Unknown tool", read as 
 })
 
 test('the list says which of the management a machine takes, by its capabilities', () => {
-  assert.deepEqual(chatManageOf(undefined), { rename: false, autoCompact: false })
-  assert.deepEqual(chatManageOf(['conversations']), { rename: false, autoCompact: false })
-  assert.deepEqual(chatManageOf(['conversations', 'chat-rename']), { rename: true, autoCompact: false })
-  assert.deepEqual(chatManageOf(['chat-auto-compact']), { rename: false, autoCompact: true })
+  const none = { rename: false, autoCompact: false, unwatchPullRequest: false }
+  assert.deepEqual(chatManageOf(undefined), none)
+  assert.deepEqual(chatManageOf(['conversations']), none)
+  assert.deepEqual(chatManageOf(['conversations', 'chat-rename']), { ...none, rename: true })
+  assert.deepEqual(chatManageOf(['chat-auto-compact']), { ...none, autoCompact: true })
+  assert.deepEqual(chatManageOf(['chat-unwatch-pull-request']), { ...none, unwatchPullRequest: true })
 })

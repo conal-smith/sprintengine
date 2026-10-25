@@ -79,8 +79,9 @@ export const chatMenuTooltips = {
     (starred
       ? 'Take this chat out of Starred.'
       : 'Keep this chat in Starred, at the top of the list. A starred chat never settles by itself.') + markKept(where),
-  stopWatching: (pullRequest: number) =>
-    `Stop watching pull request #${pullRequest} for this chat. The chat stays as it is.`,
+  stopWatching: (pullRequest: number, where: ChatMenuPlace = LOCAL) =>
+    `Stop watching pull request #${pullRequest} for this chat. The chat stays as it is.` +
+    (where.kind === 'remote' ? ` ${where.machineName} keeps the watch, and stops it.` : ''),
   schedule: (paused: boolean) =>
     paused
       ? 'Let the schedule that started this chat run again.'

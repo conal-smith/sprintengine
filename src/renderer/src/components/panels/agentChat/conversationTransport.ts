@@ -166,6 +166,13 @@ export type ConversationTransport = {
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
   /**
+   * Stop the machine the chat runs on watching one of its pull requests
+   * (`chat-unwatch-pull-request`). Absent here, where the window's own Studio
+   * keeps the watch. A pull request is listed as watched only by a machine
+   * that takes this, and an older one is refused in words.
+   */
+  unwatchPullRequest?(input: { url: string }): Promise<ConversationTransportResult>
+  /**
    * A sent image by the reference its `user_message` recorded. Absent for a
    * remote conversation: the images are in the other machine's store, so a
    * bubble there shows its images only while the send that carried them is live.
@@ -470,6 +477,14 @@ export function createRemoteConversationTransport(input: {
       commandResult(await window.api.meshConversationSend({ key, message: turn.message, queue: true })),
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
+    unwatchPullRequest: async (input) => {
+      const answer = await window.api.meshChangeConversation({
+        connectionId: key.connectionId,
+        workspaceId: key.workspaceId,
+        change: { kind: 'unwatch-pull-request', agentId: key.agentId, url: input.url },
+      })
+      return answer.ok ? { ok: true } : { ok: false, message: answer.message }
+    },
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).

@@ -270,6 +270,11 @@ export const TAILNET_CAPABILITIES = [
   // its own switch or this machine's default), so a paired desktop's menu
   // shows this machine's rule for its own chat.
   'chat-auto-compact',
+  // Stop watching: `conversation.pull_request_unwatch` ends this machine's
+  // watch of a chat's pull request, and each listed pull request says while
+  // it is watched (`watch`), so a paired desktop offers Stop watching where
+  // this machine's own menu and strip do.
+  'chat-unwatch-pull-request',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

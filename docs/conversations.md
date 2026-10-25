@@ -723,6 +723,15 @@ an older machine answers the tool "Unknown tool":
   `autoCompact` (its own switch, or the desktop's default where it left that
   unset), read beside its `providerId`: only a Claude chat compacts by itself
   yet. A switch moves the list. It compacts nothing at once.
+- **`conversation.pull_request_unwatch`** `{ workspaceId, agentId, url? }`
+  (`chat-unwatch-pull-request`) is Stop watching: the desktop stops watching
+  the chat's pull request at `url`, or every one the chat's agent has it
+  watching without one, and the chat is not woken for it again. The pull
+  request stays the chat's. It answers `{ stopped, pullRequests }`, the
+  addresses it stopped; one not watched changes nothing. Each listed pull
+  request says while it is watched as `watch` (what it waits on, as the
+  desktop's own strip says it), so a paired desktop's strip and menus say it
+  too and offer Stop watching where the desktop's own do.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:

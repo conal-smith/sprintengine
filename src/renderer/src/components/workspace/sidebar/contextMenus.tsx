@@ -455,7 +455,7 @@ export function WorkspaceContextMenu({
                 as it is. Settle ends the watch too, with the chat. */}
             {watchedPullRequestNumber !== null ? (
               <ChatMenuItem
-                tooltip={tips.stopWatching(watchedPullRequestNumber)}
+                tooltip={tips.stopWatching(watchedPullRequestNumber, where)}
                 onClick={() => onSelect('stop-watching')}
               >
                 Stop watching #{watchedPullRequestNumber}
@@ -515,6 +515,7 @@ export type RemoteConversationMenuAction =
   // ── A paired desktop's chat management ──
   | 'rename'
   | 'toggle-auto-compact'
+  | 'stop-watching'
 
 /**
  * The link to a chat: by its id on the machine it runs on, so the same link
@@ -543,6 +544,7 @@ export function RemoteConversationContextMenu({
   marks,
   manage,
   autoCompact = null,
+  watchedPullRequestNumber = null,
   canMarkUnread,
   isDetachedWindow,
   workspaceId,
@@ -568,6 +570,8 @@ export function RemoteConversationContextMenu({
   manage?: MeshConversationManage
   /** The chat's Auto compact switch as its machine reads it; offered where the machine takes it from here. */
   autoCompact?: { on: boolean; claude: boolean } | null
+  /** The pull request its machine watches for it, by number, where the machine takes Stop watching from here. */
+  watchedPullRequestNumber?: number | null
   /** Its agent finished something nobody has been marked as missing, and the machine takes Mark unread. */
   canMarkUnread: boolean
   isDetachedWindow: boolean
@@ -648,6 +652,17 @@ export function RemoteConversationContextMenu({
               // Auto compact is the rule of the machine that runs the chat,
               // switched there where that machine takes it from here.
               autoCompact={manage?.autoCompact ? autoCompact : null}
+              between={
+                // The watch is the machine's, ended there; the chat stays as it is.
+                watchedPullRequestNumber !== null ? (
+                  <ChatMenuItem
+                    tooltip={tips.stopWatching(watchedPullRequestNumber, where)}
+                    onClick={() => onSelect('stop-watching')}
+                  >
+                    Stop watching #{watchedPullRequestNumber}
+                  </ChatMenuItem>
+                ) : null
+              }
               onSelect={onSelect}
               onPickColor={onPickColor}
             />
