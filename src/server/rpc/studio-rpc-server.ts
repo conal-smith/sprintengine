@@ -66,6 +66,10 @@ import type {
  * own files and command lists. A send's `mentions` it does take
  * (`conversation-send-mentions`): its `conversation.send` reads the lane's own
  * validator and reaches the same host.
+ * Nor `conversation-queued-attachments`, which extends the queued sends this
+ * socket does not take, nor `conversation-permanent-approvals`: its
+ * `conversation.resolveApproval` reads its own validator, which still refuses
+ * a rule that outlives the conversation.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -82,7 +86,9 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-file-search' &&
     capability !== 'conversation-commands' &&
     capability !== 'conversation-scheduled-sends' &&
-    capability !== 'conversation-usage-limits',
+    capability !== 'conversation-usage-limits' &&
+    capability !== 'conversation-queued-attachments' &&
+    capability !== 'conversation-permanent-approvals',
 )
 
 export type StudioRpcServerOptions = {

@@ -48,6 +48,7 @@ const READ_ONLY = {
   permissionModes: false,
   steer: false,
   hostQueue: false,
+  hostQueueAttachments: false,
   skills: false,
   hostPullRequests: false,
   hostSchedule: false,

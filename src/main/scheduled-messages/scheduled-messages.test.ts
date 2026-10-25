@@ -12,6 +12,7 @@ import { parseScheduledMessageUpdate } from '../../shared/scheduled-messages'
 import {
   createScheduledMessages,
   scheduledMessagesFileStorage,
+  type ScheduledMessageCarried,
   type ScheduledMessageSendResult,
   type ScheduledMessagesStorage,
 } from './scheduled-messages'
@@ -44,7 +45,8 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number; id
   const eventListeners = new Set<(event: ConversationEvent) => void>()
   const sessions: ConversationSessionSummary[] = []
   const chats = new Set<string>([`${CHAT.workspaceId}/${CHAT.agentId}`, `${OTHER.workspaceId}/${OTHER.agentId}`])
-  const sent: Array<{ chat: typeof CHAT; text: string; commandId: string }> = []
+  const sent: Array<{ chat: typeof CHAT; text: string; commandId: string; carried?: ScheduledMessageCarried }> = []
+  const released: Array<{ carried: ScheduledMessageCarried; sent: boolean }> = []
   const storage = options.storage ?? memoryStorage()
   let sendAnswer: () => ScheduledMessageSendResult = () => ({ ok: true })
   let ids = 0
@@ -57,10 +59,11 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number; id
       return () => eventListeners.delete(listener)
     },
     chatExists: (chat) => chats.has(`${chat.workspaceId}/${chat.agentId}`),
-    send: async (chat, text, commandId) => {
-      sent.push({ chat, text, commandId })
+    send: async (chat, text, commandId, carried) => {
+      sent.push({ chat, text, commandId, ...(carried ? { carried } : {}) })
       return sendAnswer()
     },
+    release: (carried, sent) => released.push({ carried, sent }),
     now: () => now,
     newId: () => `${options.idPrefix ?? 'sm'}-${++ids}`,
     setTimer: (callback, ms) => {
@@ -107,6 +110,7 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number; id
     sessions,
     chats,
     sent,
+    released,
     advance,
     working,
     idle: () => sessions.splice(0, sessions.length),
@@ -351,7 +355,7 @@ test('the same held command arriving again after its message went is not held or
   )
   assert.deepEqual(h.scheduled.state().messages, [])
   // The device lost the answer and offers it again under the same id.
-  assert.deepEqual(h.scheduled.hold(CHAT, 'Ship it.', 'device-1:cmd-1'), { ok: true, id: 'sm-1' })
+  assert.deepEqual(h.scheduled.hold(CHAT, 'Ship it.', 'device-1:cmd-1'), { ok: true, id: 'sm-1', repeat: true })
   await h.advance(HOUR)
   assert.deepEqual(h.scheduled.state().messages, [])
   assert.equal(h.sent.length, 1, 'sent once')
@@ -491,4 +495,92 @@ test('a scheduled message from a paired machine outlives a restart, and its comm
     id: 'sm-1',
   })
   assert.equal(second.scheduled.state().messages.length, 1)
+})
+
+const PICTURE = { path: '/data/held-message-pictures/a/0', name: 'screenshot.png', mediaType: 'image/png', bytes: 9 }
+const FILE = { path: '/data/tailnet-uploads/device/u-1/notes.txt', name: 'notes.txt', bytes: 9 }
+
+test('a held message keeps what it carries across a restart, says it by name, and goes with it', async () => {
+  const storage = memoryStorage()
+  const first = harness({ storage })
+  await started(first)
+  first.working()
+  const carried = {
+    images: [PICTURE],
+    files: [FILE],
+    skills: ['review'],
+    mentions: [{ path: 'docs', kind: 'folder' as const }],
+  }
+  assert.deepEqual(first.scheduled.hold(CHAT, '', 'device-1:cmd-1', carried), { ok: true, id: 'sm-1' })
+  const [held] = first.scheduled.state().messages
+  // A window is told names, never where they are kept.
+  assert.deepEqual(held?.carries, {
+    images: ['screenshot.png'],
+    files: ['notes.txt'],
+    skills: ['review'],
+    mentions: [{ path: 'docs', kind: 'folder' }],
+  })
+  assert.equal(JSON.stringify(first.scheduled.state()).includes(PICTURE.path), false)
+  await first.scheduled.dispose()
+
+  const second = harness({ storage, now: first.now() })
+  second.working()
+  await started(second)
+  assert.deepEqual(second.scheduled.state().messages[0]?.carries?.images, ['screenshot.png'])
+  second.idle()
+  second.emit({ type: 'turn_completed' })
+  await second.advance(5_000)
+  assert.deepEqual(second.sent, [{ chat: CHAT, text: '', commandId: 'scheduled-message:sm-1', carried }])
+  assert.deepEqual(second.released, [{ carried, sent: true }])
+})
+
+test('held messages join with what they carry only while it fits one message, and a deleted one lets it go', async () => {
+  const h = harness()
+  await started(h)
+  h.working()
+  const pictures = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({ ...PICTURE, path: `${PICTURE.path}-${index}` }))
+  h.scheduled.hold(CHAT, 'First.', 'device-1:cmd-1', { images: pictures(10) })
+  h.scheduled.hold(CHAT, 'Second.', 'device-1:cmd-2', { images: pictures(4), skills: ['review'] })
+  // Sixteen pictures is one message's most: the third is a message of its own.
+  h.scheduled.hold(CHAT, 'Third.', 'device-1:cmd-3', { images: pictures(3) })
+  const messages = h.scheduled.state().messages
+  assert.deepEqual(
+    messages.map((message) => [message.text, message.carries?.images?.length, message.carries?.skills]),
+    [
+      ['First.\nSecond.', 14, ['review']],
+      ['Third.', 3, undefined],
+    ],
+  )
+  // Repeated, a command keeps nothing new.
+  assert.deepEqual(h.scheduled.hold(CHAT, 'Third.', 'device-1:cmd-3', { images: pictures(1) }), {
+    ok: true,
+    id: messages[1]!.id,
+    repeat: true,
+  })
+  h.scheduled.update({ kind: 'delete', id: messages[1]!.id })
+  assert.deepEqual(h.released, [{ carried: { images: pictures(3) }, sent: false }])
+})
+
+test('a record from before held messages carried anything still loads, and one without words needs a carry', async () => {
+  const storage = memoryStorage(
+    JSON.stringify({
+      version: 1,
+      messages: [
+        { id: 'sm-1', ...CHAT, text: 'Old.', sendAt: T0, createdAt: T0, queued: true, sources: ['a'] },
+        { id: 'sm-2', ...CHAT, text: '', sendAt: T0, createdAt: T0, queued: true, sources: ['b'] },
+        { id: 'sm-3', ...CHAT, text: '', sendAt: T0, createdAt: T0, queued: true, carried: { skills: ['review'] } },
+      ],
+    }),
+  )
+  const h = harness({ storage })
+  h.working()
+  await started(h)
+  assert.deepEqual(
+    h.scheduled.state().messages.map((message) => [message.id, message.carries ?? null]),
+    [
+      ['sm-1', null],
+      ['sm-3', { skills: ['review'] }],
+    ],
+  )
 })

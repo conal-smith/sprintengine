@@ -18,6 +18,7 @@ import type {
   ConversationRewindInput,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationImageAttachment,
   ConversationMcpServerActionInput,
   ConversationMcpServerActionResult,
   ConversationRewindResult,
@@ -42,6 +43,8 @@ import type {
 } from '../../../../../shared/conversation-runtime'
 import { parseConversationRevertAnswer } from '../../../../../../packages/conversation-protocol/src/public'
 import type { ConversationCommandCatalog } from '../../../../../shared/conversation/commands'
+import type { ConversationAttachedFile } from '../../../../../shared/conversation/attachedFiles'
+import type { ConversationMentionRef } from '../../../../../shared/conversation/mentions'
 import type { ConversationFileSearchEntry } from '../../../../../../packages/conversation-protocol/src/public'
 import type {
   MeshConversationAccess,
@@ -61,8 +64,8 @@ import type {
 // conversation over the tailnet from main.
 //
 // What a transport cannot do is said by its capabilities, not inferred from a
-// provider id: a remote device may not choose a permanent approval rule or a
-// bypass preset, reverts a checkpoint on the other machine's disk only where
+// provider id: a remote device chooses a permanent approval rule only where
+// the machine saves one for it, may not choose a bypass preset, reverts a checkpoint on the other machine's disk only where
 // that machine does it, and has none of this machine's skills, files or
 // history index to offer.
 //
@@ -77,7 +80,11 @@ export type ConversationTransportCapabilities = {
   operate: boolean
   /** Start a provider session here before the first send. A remote send resumes one over there. */
   startSession: boolean
-  /** Offer "always allow" rules, which outlive the conversation. */
+  /**
+   * Offer "always allow" rules, which outlive the conversation. A paired
+   * machine's chat does where that machine saves one for its own workspace
+   * (`conversation-permanent-approvals`).
+   */
   permanentApprovals: boolean
   /**
    * Revert a turn's files from its checkpoint. A paired machine's chat does,
@@ -149,6 +156,14 @@ export type ConversationTransportCapabilities = {
    * sent from here when the turn ends — so only while this machine is awake.
    */
   hostQueue: boolean
+  /**
+   * The machine that holds the queue holds a message whole: its images,
+   * files, skills and mentions go to it with its words (`queue`), and it
+   * sends them with the message when the turn ends
+   * (`conversation-queued-attachments`). Without it only a message of words
+   * alone is handed over, and one carrying more waits in this view.
+   */
+  hostQueueAttachments: boolean
   /**
    * Attach skills to a message. Here, the workspace's own; on a paired
    * machine, that machine's, listed through `remoteExtensions`, where it
@@ -222,9 +237,16 @@ export type ConversationTransport = {
   /**
    * Hand a message to the machine the chat runs on, to hold until the turn
    * ends and send then; answered once it holds it. Used where
-   * `capabilities.hostQueue` is.
+   * `capabilities.hostQueue` is, with what it carries beside its words only
+   * where `capabilities.hostQueueAttachments` is.
    */
-  queue?(input: { message: string }): Promise<ConversationTransportResult>
+  queue?(input: {
+    message: string
+    attachments?: ConversationImageAttachment[]
+    skills?: string[]
+    mentions?: ConversationMentionRef[]
+    files?: ConversationAttachedFile[]
+  }): Promise<ConversationTransportResult>
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
   /**
@@ -390,6 +412,7 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   steer: true,
   // The chat runs here: its queue is on the machine that sends it already.
   hostQueue: false,
+  hostQueueAttachments: false,
   skills: true,
   hostPullRequests: false,
   // Main keeps and sends a local chat's scheduled messages itself.
@@ -572,6 +595,8 @@ export function createRemoteConversationTransport(input: {
     capabilities: {
       operate: input.access === 'operate',
       startSession: false,
+      // Turned on from the machine's list, when it saves an "always allow"
+      // rule a device chose (`conversation-permanent-approvals`).
       permanentApprovals: false,
       // Turned on from the machine's list, when it reverts a turn's files
       // itself (`conversation-checkpoint-revert`): the checkpoint is on its disk.
@@ -597,8 +622,10 @@ export function createRemoteConversationTransport(input: {
       // running turn (`conversation-steer-sends`). Without it a remote Send
       // now stops the turn and sends after.
       steer: false,
-      // Turned on from the machine's list, when it advertises queued sends.
+      // Turned on from the machine's list, when it advertises queued sends,
+      // and when it holds what a queued message carries too.
       hostQueue: false,
+      hostQueueAttachments: false,
       // Turned on from the machine's list, when it takes skills with a message.
       skills: false,
       // Turned on from the machine's list, when it opens pull requests for its chats.
@@ -647,8 +674,20 @@ export function createRemoteConversationTransport(input: {
           ...(turn.mode && turn.mode !== 'default' ? { mode: turn.mode } : {}),
         }),
       ),
+    // What it carries goes up first, as a send's does, and the machine keeps
+    // it with the message; main refuses it in words for one that would not.
     queue: async (turn) =>
-      commandResult(await window.api.meshConversationSend({ key, message: turn.message, queue: true })),
+      commandResult(
+        await window.api.meshConversationSend({
+          key,
+          message: turn.message,
+          queue: true,
+          ...(turn.attachments?.length ? { attachments: turn.attachments } : {}),
+          ...(turn.skills?.length ? { skills: turn.skills } : {}),
+          ...(turn.mentions?.length ? { mentions: turn.mentions } : {}),
+          ...(turn.files?.length ? { files: turn.files } : {}),
+        }),
+      ),
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
     searchMentions: async ({ query }) => {
@@ -776,9 +815,13 @@ export function createRemoteConversationTransport(input: {
             answers: response.answers,
           }),
         )
-      if (response.decision === 'always')
-        return { ok: false, message: 'A remote device cannot choose a permanent rule.' }
-      const decision = !response.approved ? 'deny' : response.decision === 'conversation' ? 'conversation' : 'once'
+      // "Always" is offered only where the machine saves the rule
+      // (`permanentApprovals`); main refuses it in words for one that would not.
+      const decision = !response.approved
+        ? 'deny'
+        : response.decision === 'always' || response.decision === 'conversation'
+          ? response.decision
+          : 'once'
       return commandResult(
         await window.api.meshConversationResolveApproval({ key, requestId: response.requestId, decision }),
       )

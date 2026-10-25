@@ -13,6 +13,31 @@
 
 ### Added
 
+- **A message held for a turn's end carries what a message sent now does.**
+  `CONVERSATION_QUEUED_ATTACHMENTS_CAPABILITY`
+  (`conversation-queued-attachments`) names a desktop that holds a `send`
+  with `queue` beside `uploadIds` (pictures and files), `skills` and
+  `mentions`, keeping the pictures and files on its own disk from the moment
+  it holds the message and sending them with it when the turn ends; a steer
+  the running turn cannot take is held with them rather than refused `busy`.
+  `ConversationQueuedMessage` gains optional `images` and `files` (names),
+  `skills` (ids) and `mentions`, which `parseConversationServerFrame` keeps
+  when they read and drops alone when they do not.
+  `parseConversationClientMessage` now reads `queue` beside the three; `mode`
+  and `steer` beside `queue` are still refused. A client sends them beside
+  `queue` only to a desktop that advertises the capability. The pinned files
+  are unchanged.
+
+- **A paired device can make an "always allow" rule.**
+  `CONVERSATION_PERMANENT_APPROVALS_CAPABILITY`
+  (`conversation-permanent-approvals`) names a desktop that takes
+  `resolveApproval` with `decision: 'always'` from a device that may operate
+  the chat, and saves the rule for the chat's workspace there, among its own.
+  `ConversationCommand` gains the decision (`ConversationPermanentRequestDecision`),
+  which `parseConversationClientMessage` reads; the first version still
+  refuses it as `unsafe_remote_decision`, which is what a desktop without the
+  capability answers. The pinned files are unchanged.
+
 - **A listed chat's pull request says when the desktop watches it.**
   `watch` is an optional member of `ConversationWirePullRequest`
   (`ConversationWirePullRequestWatch`: `since`, `waitingOn`, and `approved`,

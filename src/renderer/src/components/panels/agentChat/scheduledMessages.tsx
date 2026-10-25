@@ -15,11 +15,16 @@ import {
   updateScheduledMessage,
   useScheduledMessagesStore,
 } from '../../../store/scheduledMessagesStore'
-import { selectChatScheduledMessages, type ScheduledMessage } from '../../../../../shared/scheduled-messages'
+import {
+  selectChatScheduledMessages,
+  type ScheduledMessage,
+  type ScheduledMessageCarries,
+} from '../../../../../shared/scheduled-messages'
 import { ScheduleGlyph } from '../../AppIcons'
 import { GhostButton, Tooltip, TruncatedText } from '../../ui'
 import { sendTimeFromNow, sendTimeWords } from '../../workspace/agentComposer/schedule/sendTime'
 import { ComposerTrayRow } from './composerTray'
+import { heldMessageCarries } from './queuedTurnBubble'
 
 /** What a row draws of a scheduled message, wherever it is kept. */
 export type ScheduledMessageView = Pick<
@@ -130,6 +135,13 @@ export function ScheduledMessageRowList<Message extends ScheduledMessageView>({
               ) : (
                 <span className="shrink-0">{scheduledMessageStatus(message, now)}</span>
               )}
+              {/* A held message a paired machine handed over says what it
+                  carries beside its words, which this machine keeps for it. */}
+              {'carries' in message && message.carries ? (
+                <span className="shrink-0 text-meta text-[color:var(--text-subtle)]">
+                  {heldMessageCarries(message.carries as ScheduledMessageCarries)}
+                </span>
+              ) : null}
               <TruncatedText
                 as="span"
                 text={message.text}

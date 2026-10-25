@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { legacyUploadOwnerDir, safeUploadName, uploadOwnerDir } from '../../../server/web/web-uploads'
 
@@ -17,10 +17,20 @@ import { legacyUploadOwnerDir, safeUploadName, uploadOwnerDir } from '../../../s
 // read a name the person recognises. A file never sent goes with its upload
 // reference (an hour); one that was sent is kept a week, then removed when
 // the next one is placed. A device's folder goes when the device is removed.
+//
+// A file a held message carries (`conversation-queued-attachments`) waits
+// with the message for its chat's turn to end, which may be longer than a
+// week when the chat refused it and it waits on the person: its upload's
+// folder is marked held (`holdTailnetUpload`) and pruning passes it by. Once
+// the message has gone the mark comes off (`releaseTailnetUpload`): sent, the
+// file is the message's and is kept a week from then, as one sent at once is;
+// deleted, it goes with its folder.
 
 export const MAX_TAILNET_FILE_BYTES = 25 * 1024 * 1024
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 export const TAILNET_UPLOADS_DIRNAME = 'tailnet-uploads'
+/** In an upload's folder while a held message carries its file. */
+const HELD_MARK = '.held'
 
 export type TailnetFilePlace = {
   /** Where the bytes go: a new folder's only file. */
@@ -58,6 +68,7 @@ export function createTailnetFileUploads(options: { root: string; now?: () => nu
       }
       for (const upload of uploads) {
         try {
+          if (existsSync(join(dir, upload, HELD_MARK))) continue
           if (now() - statSync(join(dir, upload)).mtimeMs > KEEP_MS)
             rmSync(join(dir, upload), { recursive: true, force: true })
         } catch {
@@ -88,4 +99,42 @@ export function createTailnetFileUploads(options: { root: string; now?: () => nu
       rmSync(join(options.root, legacyUploadOwnerDir(deviceId, 'device')), { recursive: true, force: true })
     },
   }
+}
+
+/**
+ * The folder of the upload `path` names under `root`, when it is one: a
+ * device's folder, then the upload's own, then its file. Null for any other
+ * path, which is never touched.
+ */
+function uploadFolderOf(root: string, path: string): string | null {
+  const inside = relative(root, path)
+  if (!inside || isAbsolute(inside)) return null
+  const parts = inside.split(sep)
+  if (parts.length !== 3 || parts.some((part) => !part || part === '..' || part === '.')) return null
+  return join(root, parts[0]!, parts[1]!)
+}
+
+/** Keep the upload at `path` through pruning while a held message carries it. False for a path that is no upload. */
+export function holdTailnetUpload(root: string, path: string): boolean {
+  const folder = uploadFolderOf(root, path)
+  if (!folder || !existsSync(path)) return false
+  writeFileSync(join(folder, HELD_MARK), '')
+  return true
+}
+
+/**
+ * A held message carrying the upload at `path` has gone. `sent`, the file is
+ * the message's: the mark comes off and it is kept a week from now. Not sent,
+ * it goes with its folder.
+ */
+export function releaseTailnetUpload(root: string, path: string, sent: boolean): void {
+  const folder = uploadFolderOf(root, path)
+  if (!folder) return
+  if (!sent) {
+    rmSync(folder, { recursive: true, force: true })
+    return
+  }
+  rmSync(join(folder, HELD_MARK), { force: true })
+  const at = new Date()
+  utimesSync(folder, at, at)
 }

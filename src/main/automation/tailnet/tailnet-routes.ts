@@ -285,6 +285,22 @@ export const TAILNET_CAPABILITIES = [
   // when the limit resets. A client draws neither for a machine without it.
   // CONVERSATION_USAGE_LIMITS_CAPABILITY.
   'conversation-usage-limits',
+  // A message held for a turn's end carries what a message sent now does
+  // (2026-10-25): a `send` with `queue` takes `uploadIds`, `skills` and
+  // `mentions`, and a steer the turn cannot take is held with them. The
+  // pictures are copied under this machine's data folder and the files kept
+  // where their uploads put them from the moment the message is held, so the
+  // machine that queued it may close; `queued` frames name what each held
+  // message carries. A client keeps such a message itself for a machine
+  // without it. CONVERSATION_QUEUED_ATTACHMENTS_CAPABILITY.
+  'conversation-queued-attachments',
+  // "Always allow" from a paired machine (2026-10-25): `resolveApproval` takes
+  // `decision: 'always'` from a device that may operate the chat, and the rule
+  // is saved for the chat's workspace here, among this machine's own, which
+  // its Settings (and a paired desktop's, through `approval-rules`) lists and
+  // revokes. A client offers the rule only for a machine that advertises it.
+  // CONVERSATION_PERMANENT_APPROVALS_CAPABILITY.
+  'conversation-permanent-approvals',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

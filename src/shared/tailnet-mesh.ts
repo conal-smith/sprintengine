@@ -712,6 +712,16 @@ export type MeshConversationFrame =
  *
  * `markUnread`: the machine advertises `chat-mark-unread` — its chats offer
  * Mark unread here.
+ *
+ * `queuedAttachments`: the machine holds a queued message's images, files,
+ * skills and mentions as well as its words (`conversation-queued-sends` and
+ * `conversation-queued-attachments`), so a message with any of them queued
+ * here mid-turn is handed over whole. False for one that holds words only,
+ * where such a message waits here.
+ *
+ * `permanentApprovals`: the machine advertises
+ * `conversation-permanent-approvals` — an approval in its chats may be
+ * answered here with "Always allow … in this workspace", the rule saved there.
  */
 export type MeshConversationListResult =
   | {
@@ -740,6 +750,8 @@ export type MeshConversationListResult =
       mcpServerActions?: boolean
       scheduledSends?: boolean
       usageLimits?: boolean
+      queuedAttachments?: boolean
+      permanentApprovals?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -756,8 +768,9 @@ export type MeshConversationListResult =
 export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: false; code: string; message: string }
 
 /**
- * The commands a remote device may send. A permanent rule is not among them.
- * Restarting a chat's agent needs `conversation-restart-session` there.
+ * The commands a remote device may send. A permanent rule ("always") needs
+ * `conversation-permanent-approvals` there, and is refused in words for a
+ * machine without it. Restarting a chat's agent needs `conversation-restart-session` there.
  * A queued send and taking one back need `conversation-queued-sends` there;
  * scheduling one, and sending or deleting one scheduled, need
  * `conversation-scheduled-sends`; a usage limit's resume
@@ -769,6 +782,7 @@ export type MeshConversationCommand =
   | ConversationWireCommand
   | { kind: 'setPermissionPreset'; preset: ConversationWirePermissionPreset; permissionMode?: string }
   | { kind: 'send'; message: string; queue: true }
+  | { kind: 'resolveApproval'; requestId: string; decision: 'always' }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
   | { kind: 'handoff' }

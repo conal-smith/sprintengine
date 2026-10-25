@@ -35,7 +35,7 @@ import {
 import type { RemoteJsonSocket, RemoteJsonSocketHandlers } from './tailnet/tailnet-remote-client'
 import { pairingUrl } from './tailnet/tailnet-service'
 import { createScheduledMessages } from '../scheduled-messages/scheduled-messages'
-import { studioHeldMessages, studioScheduledSends } from '../../server/core/studio-scheduled-messages'
+import { heldMessageSend, studioHeldMessages, studioScheduledSends } from '../../server/core/studio-scheduled-messages'
 import {
   TAILNET_IDENTITY_PATH,
   TAILNET_MCP_PATH,
@@ -172,10 +172,11 @@ async function startHarness(
         },
         onConversationEvent: (listener) => runtime.onEvent(listener),
         chatExists: (chat) => chat.workspaceId === workspaceId && chat.agentId === agentId,
-        send: async (chat, text, commandId) => {
+        send: async (chat, text, commandId, carried) => {
           const key = real.resolveKey(chat.workspaceId, chat.agentId)
           if (!key) return { ok: false, message: 'The chat has no folder on this machine' }
-          return real.command(key, 'studio-scheduled-message', commandId, { kind: 'send', message: text })
+          const [command, held] = heldMessageSend(text, carried)
+          return real.command(key, 'studio-scheduled-message', commandId, command, undefined, held)
         },
         now: () => Date.now() + skew,
       })
@@ -201,7 +202,10 @@ async function startHarness(
     undefined,
     {
       ...(scheduled
-        ? { heldMessages: studioHeldMessages(() => scheduled), scheduledSends: studioScheduledSends(() => scheduled) }
+        ? {
+            heldMessages: studioHeldMessages(() => scheduled, workspaceRoot),
+            scheduledSends: studioScheduledSends(() => scheduled),
+          }
         : {}),
       ...(options.usageLimits ? { usageLimits: options.usageLimits } : {}),
     },
@@ -823,12 +827,13 @@ test('a grant narrowed to read refuses commands; one without read ends the follo
     const again = await h.mesh.conversationCommand({ key, command: { kind: 'send', message: 'hi' } })
     assert.equal(!again.ok && again.code, 'conversation_operate_required')
 
-    // A permanent rule is refused before it leaves this machine.
+    // A permanent rule is an answer like any other: refused here for a
+    // pairing that may not operate.
     const always = await h.mesh.conversationCommand({
       key,
       command: { kind: 'resolveApproval', requestId: 'r', decision: 'always' },
     })
-    assert.equal(!always.ok && always.code, 'unsafe_remote_decision')
+    assert.equal(!always.ok && always.code, 'conversation_operate_required')
 
     const joins = h.joins.length
     h.devices.updateDeviceScopes(deviceId, ['workspace:read'])
@@ -1289,6 +1294,8 @@ test('a message queued while the turn runs over there is held there, and goes wh
     const listed = await h.mesh.listConversations(connectionId)
     assert.ok(listed.ok, listed.ok ? '' : listed.message)
     assert.equal(listed.queuedSends, true, 'the machine says it holds queued messages')
+    assert.equal(listed.queuedAttachments, true, 'whole, with what they carry')
+    assert.equal(listed.permanentApprovals, true, 'and saves an "always allow" rule chosen here')
     const key = { connectionId, workspaceId, agentId }
     const pane = follower(h.mesh, key)
     await waitFor(pane.live, 'the follow goes live')
@@ -1297,28 +1304,36 @@ test('a message queued while the turn runs over there is held there, and goes wh
 
     void h.mesh.conversationCommand({ key, command: { kind: 'send', message: 'stream' } })
     await h.provider.turnStarted()
-    // A held message is its words alone: one with pictures is refused here.
+    // Queued mid-turn with a picture, as the window sends it: the picture goes
+    // up first, and the message is answered as soon as it is held, long
+    // before the turn ends (`conversation-queued-attachments`).
+    const turns = vi.spyOn(h.runtime, 'sendTurn')
     const withPicture = await h.mesh.conversationSend({
       key,
       message: 'Look at this.',
       queue: true,
       attachments: [{ id: 'a', mediaType: 'image/png', dataBase64: 'iVBORw0KGgo=', name: 'a.png', byteLength: 8 }],
     })
-    assert.equal(withPicture.ok, false)
-    assert.equal(!withPicture.ok && withPicture.code, 'invalid_arguments')
-    // Queued mid-turn, as the window sends it: answered as soon as it is held,
-    // long before the turn ends.
+    assert.deepEqual(withPicture, { ok: true })
     const queued = await h.mesh.conversationSend({ key, message: 'And then the docs.', queue: true })
     assert.deepEqual(queued, { ok: true })
-    await waitFor(() => pane.of('queued').at(-1)?.messages.length === 1, 'the window sees what is held there')
-    assert.equal(pane.of('queued').at(-1)?.messages[0]?.text, 'And then the docs.')
+    await waitFor(
+      () => pane.of('queued').at(-1)?.messages[0]?.text === 'Look at this.\nAnd then the docs.',
+      'the window sees what is held there',
+    )
+    assert.deepEqual(pane.of('queued').at(-1)?.messages[0]?.images, ['a.png'], 'and what it carries')
 
     // The laptop closes: nothing on this side is left to send it.
     h.mesh.shutdown()
     h.provider.nextTurn()
     h.provider.push(null)
     await h.provider.turnStarted()
-    assert.deepEqual(asked, ['stream', 'And then the docs.'], 'the machine sent it into the chat once the turn ended')
+    assert.deepEqual(
+      asked,
+      ['stream', 'Look at this.\nAnd then the docs.'],
+      'the machine sent it into the chat once the turn ended',
+    )
+    assert.equal(turns.mock.calls.at(-1)?.[0].attachments?.length, 1, 'with its picture')
     h.provider.push(null)
   } finally {
     stopListening()

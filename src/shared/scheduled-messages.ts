@@ -7,7 +7,9 @@
 //
 // What a scheduled message carries is the text alone: a picture or a file
 // attached by path belongs to the moment it was attached, and is not kept on
-// this computer's disk for later.
+// this computer's disk for later. A message a paired machine queued for a
+// turn's end is the exception: that machine handed over its pictures and files
+// with it, which this computer keeps until the message goes (`carries`).
 
 import { isRecord } from './records'
 
@@ -28,6 +30,13 @@ export type ScheduledMessage = ScheduledMessageChat & {
    */
   queued?: true
   /**
+   * What a held message carries beside its words: its pictures and files by
+   * name (kept on this disk until it goes), its skills by id, and the files
+   * and folders of the chat's folder it mentions. Absent for one that carries
+   * nothing, and for every message scheduled for a time.
+   */
+  carries?: ScheduledMessageCarries
+  /**
    * It came due while the chat was working, and waits for the turn to end
    * (epoch ms it first came due). Absent while it is still ahead.
    */
@@ -39,6 +48,14 @@ export type ScheduledMessage = ScheduledMessageChat & {
    * so, until Retry, Edit or Delete; nothing is scheduled.
    */
   failure?: string
+}
+
+/** What a held message carries, as a tray names it; each list absent when empty. */
+export type ScheduledMessageCarries = {
+  images?: string[]
+  files?: string[]
+  skills?: string[]
+  mentions?: Array<{ path: string; kind: 'file' | 'folder'; line?: number; endLine?: number }>
 }
 
 export type ScheduledMessagesState = { messages: ScheduledMessage[] }

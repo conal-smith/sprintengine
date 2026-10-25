@@ -813,7 +813,7 @@ test('a socket dropped mid-turn resumes from its cursor with no gap, duplicate o
   }
 })
 
-test('remote always is refused before host execution, while a preset switch reaches the host', async () => {
+test('a permanent rule and a preset switch reach the host from a device that may operate (conversation-permanent-approvals)', async () => {
   const socket = new Socket()
   const executed: unknown[] = []
   const audited: ConversationCommandAudit[] = []
@@ -841,19 +841,16 @@ test('remote always is refused before host execution, while a preset switch reac
   socket.receive({ type: 'command', commandId: 'c2', command: { kind: 'setPermissionPreset', preset: 'bypass' } })
   // Manual reaches the host as itself.
   socket.receive({ type: 'command', commandId: 'c3', command: { kind: 'setPermissionPreset', preset: 'manual' } })
-  await waitFor(() => executed.length === 2, 'both switches reach the host')
+  await waitFor(() => executed.length === 3, 'the answer and both switches reach the host')
   assert.deepEqual(executed, [
+    { kind: 'resolveApproval', requestId: 'r', decision: 'always' },
     { kind: 'setPermissionPreset', preset: 'bypass' },
     { kind: 'setPermissionPreset', preset: 'manual' },
   ])
-  const results = (socket.output() as Frame[])
-    .filter((frame) => frame.type === 'commandResult')
-    .map((frame) => [(frame as { commandId?: string }).commandId, frame.code])
-  assert.deepEqual(results[0], ['c1', 'unsafe_remote_decision'])
   assert.deepEqual(
     audited.map((entry) => [entry.tool, entry.commandId, entry.ok, entry.code]),
     [
-      ['conversation.resolveApproval', 'c1', false, 'unsafe_remote_decision'],
+      ['conversation.resolveApproval', 'c1', true, undefined],
       ['conversation.setPermissionPreset', 'c2', true, undefined],
       ['conversation.setPermissionPreset', 'c3', true, undefined],
     ],

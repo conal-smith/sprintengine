@@ -309,7 +309,7 @@ export const meshApi = {
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
-    decision: 'once' | 'conversation' | 'deny'
+    decision: 'once' | 'conversation' | 'always' | 'deny'
   }) => command(input.key, { kind: 'resolveApproval', requestId: input.requestId, decision: input.decision }),
   meshConversationAnswerQuestion: (input: {
     key: MeshConversationKey

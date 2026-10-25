@@ -433,8 +433,8 @@ its provider takes one, and each listed chat says whether it does as
 `capabilities.steer`, an optional boolean. With no turn running the send is an
 ordinary one; a turn that cannot take it has the desktop hold the message as a
 `queue` send is held, answered at once with a `notice`, or, for a message with
-`uploadIds` or `skills` that a held one cannot carry, refused `busy` as a
-mid-turn send always was, and run as the next turn when sent again once the
+`uploadIds`, `skills` or `mentions` on a desktop without
+`conversation-queued-attachments`, refused `busy` as a mid-turn send always was, and run as the next turn when sent again once the
 turn is over. One that reached the chat is answered as taken, its turn's end
 in the `notice`, even when that turn then fails. `steer` is never beside `queue`. All of it is
 additive: a desktop without the capability drops `steer`, so the send is
@@ -624,6 +624,39 @@ desktop to add one; the desktop client leaves such a plan out. The Studio
 RPC carries the command as an owner's method, `conversation.usageLimitResume`,
 but does not advertise the capability: its conversation topic carries no
 `usageLimits` frames.
+A held message that carries more than words is the
+`conversation-queued-attachments` capability (2026-10-25): a `send` with
+`queue` may carry `uploadIds` (pictures and files), `skills` and `mentions`,
+and a steer the running turn cannot take is held with them rather than
+refused `busy`. The desktop makes them its own when it holds the message: a
+picture is copied under its data folder (`held-message-pictures`), since an
+upload's staged copy goes within the hour, and a file stays where its upload
+put it, its folder kept through the week's pruning while the message waits.
+The scheduled messages' file keeps them with the message (`carried`, an
+optional member a build before it does not write; its records still load),
+and they are let go once the message has gone: the pictures' copies always,
+the files only when it was deleted rather than sent. A repeat of the same
+command is the same message, held once, without its spent uploads. Each
+`queued` frame's message may name what it carries (`images` and `files` by
+name, `skills`, `mentions`), optional members an older client ignores. `mode`
+and `steer` beside `queue` are still refused. All of it is additive: a
+desktop without the capability refuses a queued send carrying any of the
+three as `invalid_frame`, so a client hands such a message over only where
+the capability is advertised (a desktop following another machine's chat
+keeps it in its own pane otherwise, as before). The phone's pinned files are
+unchanged. The Studio RPC does not advertise it, as it does not advertise
+queued sends.
+An approval answered with a rule that outlives the conversation is the
+`conversation-permanent-approvals` capability (2026-10-25): `resolveApproval`
+takes `decision: 'always'` from a device with `conversation:operate`, and the
+desktop saves the rule for the chat's workspace among its own, as its own
+"Always allow … in this workspace" does, where its Settings (and a paired
+desktop's, through `approval-rules`) list and revoke it. It is additive: the
+first version's validator, and so every desktop without the capability and
+the phone's pinned copy, refuses the decision as `unsafe_remote_decision`, as
+it always did, and a client offers the rule only where it is advertised. The
+Studio RPC does not advertise it: `conversation.resolveApproval` there still
+refuses the decision.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the
