@@ -802,6 +802,7 @@ test('tailnet', async () => {
         'chat-unwatch-pull-request',
         'chat-delete',
         'chat-search',
+        'approval-rules',
       ])
 
       // The pairing code is one-time: replaying it does not mint a second device.
@@ -914,6 +915,7 @@ test('tailnet', async () => {
         'chat-unwatch-pull-request',
         'chat-delete',
         'chat-search',
+        'approval-rules',
       ])
       // Every one the wire defines but shrinking an upload, which only a
       // machine with an image codec advertises; this harness has none.

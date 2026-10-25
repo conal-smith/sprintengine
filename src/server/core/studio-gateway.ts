@@ -138,6 +138,12 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
               })),
           search: (input) => core.conversations.searchThreads(input),
         }),
+      // A paired desktop's Settings, listing and revoking the "always allow"
+      // rules the chats here run with.
+      approvalRules: {
+        list: () => core.conversations.listApprovalRules(),
+        revoke: (ruleId) => core.conversations.revokeApprovalRule(ruleId),
+      },
       // A paired desktop's Stop watching on a chat here.
       pullRequestWatches: {
         watchedOf: async (key) => {

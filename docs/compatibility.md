@@ -499,8 +499,10 @@ without the `conversation-` prefix: `chat-rename` (`conversation.rename`),
 `chat-auto-compact` (`conversation.auto_compact`),
 `chat-unwatch-pull-request` (`conversation.pull_request_unwatch`) and
 `chat-delete` (`conversation.delete_plan`, a read, and `conversation.delete`)
-and `chat-search` (`conversation.search`, a read), each on
-`conversation:operate` but the reads. A listed chat says whether it compacts by itself as
+`chat-search` (`conversation.search`, a read) and `approval-rules`
+(`conversation.approval_rules`, a read, and
+`conversation.approval_rule_revoke`), each on `conversation:operate` but the
+reads. A listed chat says whether it compacts by itself as
 `autoCompact`, an optional boolean of `ConversationThread` that
 `parseConversationServerFrame` keeps when it is one, and a listed pull
 request says while it is watched as `watch`, an optional member of

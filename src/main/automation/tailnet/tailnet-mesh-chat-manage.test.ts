@@ -255,6 +255,43 @@ test('Search asks the machine once, and keeps what this build can read of its an
   }
 })
 
+test('a machine’s always-allow rules are read and revoked there, and refused in words where it does not share them', async () => {
+  const machine = await pairedMachine(['conversations', 'approval-rules'], (call) =>
+    call.name === 'conversation.approval_rules'
+      ? success({
+          ok: true,
+          rules: [
+            { id: 'r1', label: 'Run npm test', toolName: 'Bash', toolKind: 'command', project: 'parser', createdAt: 5 },
+            { label: 'no id' },
+          ],
+        })
+      : success({ ok: true, ruleId: call.arguments.ruleId }),
+  )
+  const older = await pairedMachine(['conversations'], () => assert.fail('nothing is asked'))
+  try {
+    assert.deepEqual(await machine.mesh.approvalRules({ connectionId: machine.connectionId }), {
+      ok: true,
+      rules: [
+        { id: 'r1', label: 'Run npm test', toolName: 'Bash', toolKind: 'command', project: 'parser', createdAt: 5 },
+      ],
+    })
+    assert.deepEqual(await machine.mesh.revokeApprovalRule({ connectionId: machine.connectionId, ruleId: 'r1' }), {
+      ok: true,
+      ruleId: 'r1',
+    })
+    assert.deepEqual(
+      machine.toolCalls.map((call) => call.name),
+      ['conversation.approval_rules', 'conversation.approval_rule_revoke'],
+    )
+    const refused = await older.mesh.approvalRules({ connectionId: older.connectionId })
+    assert.equal(!refused.ok && refused.code, 'approval_rules_unsupported')
+    assert.match(!refused.ok ? refused.message : '', /Update SprintEngine Studio there/)
+  } finally {
+    await machine.close()
+    await older.close()
+  }
+})
+
 test('a machine without chat-rename is not asked, and says so in words', async () => {
   const machine = await pairedMachine(['conversations', 'chat-row-menu'], () => assert.fail('nothing is asked'))
   try {

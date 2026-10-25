@@ -285,6 +285,31 @@ export type MeshConversationSearchResult =
 export const MESH_CONVERSATION_SEARCH_CHANNEL = 'mesh:conversation-search'
 
 /**
+ * The "always allow" rules a paired machine's chats run with
+ * (`conversation.approval_rules`), each project by its folder's name.
+ * `approval_rules_unsupported` is a machine without `approval-rules`.
+ */
+export type MeshApprovalRulesResult =
+  | {
+      ok: true
+      rules: Array<{
+        id: string
+        label: string
+        toolName: string
+        toolKind: string
+        project: string
+        createdAt: number
+      }>
+    }
+  | { ok: false; code: string; message: string }
+
+/** One of them revoked there (`conversation.approval_rule_revoke`). */
+export type MeshRevokeApprovalRuleResult = { ok: true; ruleId: string } | { ok: false; code: string; message: string }
+
+export const MESH_APPROVAL_RULES_CHANNEL = 'mesh:approval-rules'
+export const MESH_REVOKE_APPROVAL_RULE_CHANNEL = 'mesh:revoke-approval-rule'
+
+/**
  * What deleting a settled chat on a paired machine would do, as that machine
  * plans it (`conversation.delete_plan`): each worktree it owns by its name and
  * branch, never a path there, and `refused` while it cannot be deleted. `gone`

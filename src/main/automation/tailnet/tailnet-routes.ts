@@ -284,6 +284,11 @@ export const TAILNET_CAPABILITIES = [
   // this machine's own palette does, so a paired desktop's palette lists them
   // beside its own and opens a match at its message.
   'chat-search',
+  // Permissions: `conversation.approval_rules` lists the "always allow" rules
+  // this machine's chats run with (each project by its folder's name, never
+  // a path), and `conversation.approval_rule_revoke` revokes one, so a paired
+  // desktop's Settings lists them beside its own.
+  'approval-rules',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

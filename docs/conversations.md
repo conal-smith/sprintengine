@@ -762,6 +762,17 @@ an older machine answers the tool "Unknown tool":
   per chat with the machine's name, and opens a row as the chat's sidebar row
   opens it, landing on the matching message as a match in one of its own
   chats does.
+- **`conversation.approval_rules`** `{}` and
+  **`conversation.approval_rule_revoke`** `{ ruleId }` (`approval-rules`) are
+  the "always allow" rules the desktop's chats run with, as its Settings ▸
+  Chats lists and revokes them: each rule by its `id`, `label`, `toolName`
+  and `toolKind`, the project it holds in by its folder's name (`project`,
+  never a path), and `createdAt`. A rule already gone changes nothing when
+  revoked. The list is a read on `conversation:read`; a revoke needs
+  `conversation:operate` and is audited. A paired desktop's Settings lists each
+  machine's rules under its name, beside its own, since a chat followed from
+  there asks that machine's rules, and says so for a machine that does not
+  share them.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:

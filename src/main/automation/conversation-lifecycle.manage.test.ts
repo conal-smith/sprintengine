@@ -97,6 +97,8 @@ test('the management tools are a paired device’s, and not listed to an agent h
     'conversation.delete_plan',
     'conversation.delete',
     'conversation.search',
+    'conversation.approval_rules',
+    'conversation.approval_rule_revoke',
   ]) {
     assert.ok(names(TAILNET).includes(name), name)
     assert.ok(!names(LOCAL).includes(name), name)
@@ -109,6 +111,7 @@ test('each is an audited mutation needing conversation:operate', () => {
     'conversation.auto_compact',
     'conversation.pull_request_unwatch',
     'conversation.delete',
+    'conversation.approval_rule_revoke',
   ])
     assert.ok(CHAT_MANAGE_MUTATION_TOOL_NAMES.includes(name), name)
   for (const name of CHAT_MANAGE_MUTATION_TOOL_NAMES) {
@@ -237,4 +240,43 @@ test('Delete is refused in words where this process cannot delete', async () => 
   const { tool } = fixture()
   const refused = await tool('conversation.delete').handler({ workspaceId: 'ws-1' }, TAILNET)
   assert.equal(errorCode(refused), 'unavailable')
+})
+
+test('the always-allow rules are listed by their project’s name, never a path, and revoked once', async () => {
+  let rules = [
+    {
+      id: 'r1',
+      workspaceRoot: '/Users/dev/parser',
+      toolKind: 'command' as const,
+      toolName: 'Bash',
+      matcher: { type: 'command' as const, program: 'npm', subcommand: 'test' },
+      label: 'Run npm test',
+      createdAt: 5,
+    },
+  ]
+  const tools = createConversationTools({
+    launch: async () => assert.fail('no chat is started here'),
+    resolveAgentPermissionPreset: () => 'bypass',
+    lifecycle: {} as never,
+    approvalRules: {
+      list: async () => ({ ok: true, rules }),
+      revoke: async (ruleId) => {
+        rules = rules.filter((rule) => rule.id !== ruleId)
+        return { ok: true }
+      },
+    },
+  })
+  const tool = (name: string) => tools.find((candidate) => candidate.name === name)!
+  const listed = await tool('conversation.approval_rules').handler({}, TAILNET)
+  assert.deepEqual(listed.structuredContent, {
+    ok: true,
+    rules: [
+      { id: 'r1', label: 'Run npm test', toolName: 'Bash', toolKind: 'command', project: 'parser', createdAt: 5 },
+    ],
+  })
+  const revoked = await tool('conversation.approval_rule_revoke').handler({ ruleId: 'r1' }, TAILNET)
+  assert.deepEqual(revoked.structuredContent, { ok: true, ruleId: 'r1' })
+  const again = await tool('conversation.approval_rule_revoke').handler({ ruleId: 'r1' }, TAILNET)
+  assert.deepEqual(again.structuredContent, { ok: true, ruleId: 'r1' }, 'a rule already gone changes nothing')
+  assert.deepEqual(rules, [])
 })

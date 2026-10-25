@@ -7,6 +7,10 @@ import {
 import type { WorkspaceRegistryActor } from '../../shared/workspace-registry'
 import { MAX_CHAT_NAME_LENGTH, type ConversationLifecycle } from './conversation-lifecycle'
 import { CHAT_SEARCH_MAX_QUERY, type ChatSearchAnswer } from './conversation-search'
+import type {
+  ConversationApprovalRuleRevokeResult,
+  ConversationApprovalRulesResult,
+} from '../../shared/conversation-runtime'
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
 import {
   CONVERSATION_HIGHLIGHT_COLORS as HIGHLIGHT_COLORS,
@@ -61,6 +65,7 @@ export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = [
   'conversation.auto_compact',
   'conversation.pull_request_unwatch',
   'conversation.delete',
+  'conversation.approval_rule_revoke',
 ]
 
 const EFFORT_ID = /^[a-z0-9_-]{1,40}$/i
@@ -103,6 +108,11 @@ export type ConversationToolsDeps = {
   settledChatDeletion?: () => ChatDeletion | null
   /** What was said in this machine's chats, for a paired desktop's palette (conversation-search.ts). */
   searchChats?: (query: string) => Promise<ChatSearchAnswer>
+  /** This machine's "always allow" rules for its chats, for a paired desktop's Settings. */
+  approvalRules?: {
+    list(): Promise<ConversationApprovalRulesResult>
+    revoke(ruleId: string): Promise<ConversationApprovalRuleRevokeResult>
+  }
 }
 
 /** What `conversation.delete` and its plan ask of this machine's deletion. */
@@ -748,6 +758,53 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         }
         if (!deps.searchChats) return toolError('unavailable', 'This machine cannot search its chats from here.')
         return toolSuccess({ ok: true, ...(await deps.searchChats(query)) })
+      },
+    },
+    {
+      name: 'conversation.approval_rules',
+      description:
+        'List the "always allow" rules this machine\'s chats run with, as its Settings ▸ Chats lists them: each ' +
+        "by its id, what it allows (`label`, `toolName`, `toolKind`), the project it holds in by its folder's " +
+        'name (`project`, never a path), and when it was made. Changes nothing.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async () => {
+        if (!deps.approvalRules) return toolError('unavailable', 'This machine cannot list its permissions here.')
+        const listed = await deps.approvalRules.list()
+        if (!listed.ok) return toolError('unavailable', listed.message)
+        return toolSuccess({
+          ok: true,
+          rules: listed.rules.map((rule) => ({
+            id: rule.id,
+            label: rule.label,
+            toolName: rule.toolName,
+            toolKind: rule.toolKind,
+            project: rule.workspaceRoot.split(/[\\/]/u).filter(Boolean).at(-1) ?? rule.workspaceRoot,
+            createdAt: rule.createdAt,
+          })),
+        })
+      },
+    },
+    {
+      name: 'conversation.approval_rule_revoke',
+      description:
+        'Revoke one of this machine\'s "always allow" rules, as its Settings\' Revoke does: the next request it ' +
+        'covered asks again. A rule already gone changes nothing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ruleId: { type: 'string', description: 'The rule, by its id from conversation.approval_rules.' },
+        },
+        required: ['ruleId'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        if (typeof args.ruleId !== 'string' || !args.ruleId.trim() || args.ruleId.length > 200) {
+          return toolError('invalid_arguments', '"ruleId" is required.')
+        }
+        if (!deps.approvalRules) return toolError('unavailable', 'This machine cannot revoke its permissions here.')
+        const revoked = await deps.approvalRules.revoke(args.ruleId.trim())
+        if (!revoked.ok) return toolError('unavailable', revoked.message)
+        return toolSuccess({ ok: true, ruleId: args.ruleId.trim() })
       },
     },
   ]

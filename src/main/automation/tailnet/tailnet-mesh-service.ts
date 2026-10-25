@@ -42,6 +42,8 @@ import {
   type MeshConversationManage,
   type MeshConversationDeletePlanResult,
   type MeshConversationSearchResult,
+  type MeshApprovalRulesResult,
+  type MeshRevokeApprovalRuleResult,
 } from '../../../shared/tailnet-mesh'
 import type { SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
 import type {
@@ -320,6 +322,10 @@ export type TailnetMeshService = {
   }): Promise<MeshConversationDeletePlanResult>
   /** What was said in a paired machine's chats, as its own palette finds it (`chat-search`). */
   conversationSearch(input: { connectionId: unknown; query?: unknown }): Promise<MeshConversationSearchResult>
+  /** The "always allow" rules a paired machine's chats run with (`approval-rules`). */
+  approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult>
+  /** Revoke one of them there (`approval-rules`, on `conversation:operate`). */
+  revokeApprovalRule(input: { connectionId: unknown; ruleId?: unknown }): Promise<MeshRevokeApprovalRuleResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -2244,6 +2250,48 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return searchAnswerOf(answer.value)
   }
 
+  // A paired machine's "always allow" rules, which its Settings lists and
+  // revokes, asked as the rest of its chats' management is.
+  async function callApprovalRulesTool(
+    connectionId: unknown,
+    tool: 'conversation.approval_rules' | 'conversation.approval_rule_revoke',
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; code: string; message: string }> {
+    const connection = connectionFor(connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const unsupported = {
+      ok: false as const,
+      code: 'approval_rules_unsupported',
+      message: `${connection.machineName} does not share its chat permissions yet. Update SprintEngine Studio there to see them from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'approval-rules')) return unsupported
+    const answer = await callRemoteTool({ endpoint: endpointOf(connection), token: connection.deviceToken, tool, args })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return { ok: true, value: answer.value }
+  }
+
+  async function approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult> {
+    const answer = await callApprovalRulesTool(input.connectionId, 'conversation.approval_rules', {})
+    return answer.ok ? approvalRulesOf(answer.value) : answer
+  }
+
+  async function revokeApprovalRule(input: {
+    connectionId: unknown
+    ruleId?: unknown
+  }): Promise<MeshRevokeApprovalRuleResult> {
+    if (typeof input.ruleId !== 'string' || !input.ruleId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the rule.' }
+    }
+    const answer = await callApprovalRulesTool(input.connectionId, 'conversation.approval_rule_revoke', {
+      ruleId: input.ruleId,
+    })
+    return answer.ok ? { ok: true, ruleId: input.ruleId } : answer
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2520,6 +2568,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     changeConversation,
     conversationDeletePlan,
     conversationSearch,
+    approvalRules,
+    revokeApprovalRule,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -3064,6 +3114,28 @@ export function deletePlanOf(workspaceId: string, value: Record<string, unknown>
     ...(typeof value.refused === 'string' && value.refused ? { refused: value.refused } : {}),
     worktrees,
   }
+}
+
+/** A machine's rules as it listed them, kept to the ones this build can read. */
+export function approvalRulesOf(value: Record<string, unknown>): MeshApprovalRulesResult {
+  const text = (entry: unknown): entry is string =>
+    typeof entry === 'string' && entry.length > 0 && entry.length <= 2_000
+  const rules = (Array.isArray(value.rules) ? value.rules : []).slice(0, 2_000).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const rule = entry as Record<string, unknown>
+    if (!text(rule.id) || !text(rule.label)) return []
+    return [
+      {
+        id: rule.id,
+        label: rule.label,
+        toolName: text(rule.toolName) ? rule.toolName : '',
+        toolKind: text(rule.toolKind) ? rule.toolKind : 'other',
+        project: text(rule.project) ? rule.project : '',
+        createdAt: typeof rule.createdAt === 'number' && Number.isFinite(rule.createdAt) ? rule.createdAt : 0,
+      },
+    ]
+  })
+  return { ok: true, rules }
 }
 
 const HIT_FROM = new Set(['person', 'agent', 'studio'])
