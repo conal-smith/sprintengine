@@ -109,7 +109,7 @@ function PairedMachineApprovalRules() {
     if (typeof window.api?.meshListConnections !== 'function' || typeof window.api.meshApprovalRules !== 'function')
       return
     const connections = await window.api.meshListConnections().catch(() => [])
-    setMachines(await Promise.all(connections.map(read)))
+    setMachines(Array.isArray(connections) ? await Promise.all(connections.map(read)) : [])
   }, [read])
   useEffect(() => {
     void load()
