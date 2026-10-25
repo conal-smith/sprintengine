@@ -51,6 +51,17 @@ export const TAILNET_UPLOAD_PATH = `${TAILNET_ROUTE_PREFIX}/upload`
  * the step names; nothing in the request is a path.
  */
 export const TAILNET_CONVERSATION_IMAGE_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-image`
+/**
+ * What a paired desktop's composer reads of one chat here, as JSON: the files
+ * and folders a mention may name, `GET ?workspaceId=&agentId=&query=`
+ * (`conversation-file-search`), and the slash commands the chat's CLI runs,
+ * `GET ?workspaceId=&agentId=` (`conversation-commands`). Plain GETs beside
+ * the socket rather than frames on it: each is a one-shot read for a picker,
+ * asked while no chat need be followed, and the lane's frames stay the
+ * phone's.
+ */
+export const TAILNET_CONVERSATION_FILES_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-files`
+export const TAILNET_CONVERSATION_COMMANDS_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-commands`
 
 // ── What this transport speaks ───────────────────────────────────────────────
 //
@@ -194,6 +205,18 @@ export const TAILNET_CAPABILITIES = [
   // at a time, so a paired machine needs its own Stop for each.
   // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
   'conversation-stop-subagent',
+  // A paired desktop's composer reaches a chat's folder here (2026-10-25):
+  // `send` takes `mentions`, files and folders by their paths in the chat's
+  // folder, resolved here as this machine's own @ chips are; `GET
+  // conversation-files` searches that folder for them; and `GET
+  // conversation-commands` lists the slash commands the chat's CLI runs
+  // there. Both reads are `conversation:read`, and name no path outside the
+  // folder. A client that does not see one leaves that part of its composer
+  // to its own machine, as before. CONVERSATION_SEND_MENTIONS_CAPABILITY,
+  // CONVERSATION_FILE_SEARCH_CAPABILITY, CONVERSATION_COMMANDS_CAPABILITY.
+  'conversation-send-mentions',
+  'conversation-file-search',
+  'conversation-commands',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

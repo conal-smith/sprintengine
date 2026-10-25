@@ -38,6 +38,8 @@ import type {
   ConversationTurnDiffInput,
   ConversationTurnDiffResult,
 } from '../../../../../shared/conversation-runtime'
+import type { ConversationCommandCatalog } from '../../../../../shared/conversation/commands'
+import type { ConversationFileSearchEntry } from '../../../../../../packages/conversation-protocol/src/public'
 import type {
   MeshConversationAccess,
   MeshConversationCommandResult,
@@ -79,6 +81,25 @@ export type ConversationTransportCapabilities = {
   modelSwitch: boolean
   /** Attach skills and mention files from this machine. */
   composerContext: boolean
+  /**
+   * Mention files and folders of the chat's folder (@). Here, this machine's,
+   * searched on this disk; on a paired machine, that machine's, searched there
+   * through `searchMentions`, where it advertises the search and takes the
+   * mentions (`conversation-file-search`, `conversation-send-mentions`).
+   */
+  mentions: boolean
+  /**
+   * Attach files of any type by their path on this computer. Here the agent
+   * reads each where it is; for a paired machine each goes up to it with the
+   * message, where it advertises taking files (`conversation-message-files`).
+   */
+  attachFiles: boolean
+  /**
+   * The `/` menu lists what the chat's CLI runs in the chat's folder. Here,
+   * asked of this machine; on a paired machine, of that machine through
+   * `listCommands`, where it advertises the list (`conversation-commands`).
+   */
+  commandList: boolean
   /**
    * Carry the images a message attaches to wherever the chat runs. Offered
    * only where the session says its provider reads them (`capabilities.images`).
@@ -144,6 +165,11 @@ export type ConversationTransport = {
   machineName?: string
   /** Where a remote chat's skills and MCP servers are listed: the machine and the project there. */
   remoteExtensions?: { connectionId: string; workspaceId: string }
+  /**
+   * What a remote chat's `/` list is kept under in this window, in place of a
+   * folder (`remoteCommandsFolder`): no folder of this disk names it.
+   */
+  commandsFolder?: string
   /** Where a remote chat's Create PR does its work, used where `capabilities.hostPullRequests` is. */
   pullRequestHost?: PullRequestHost
   capabilities: ConversationTransportCapabilities
@@ -165,6 +191,22 @@ export type ConversationTransport = {
   queue?(input: { message: string }): Promise<ConversationTransportResult>
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
+  /**
+   * The files and folders in the chat's folder on the machine it runs on whose
+   * names match `query`, by their paths relative to that folder. Present for a
+   * paired machine's chat, used where `capabilities.mentions` is; a chat here
+   * is searched through `services.files`.
+   */
+  searchMentions?(input: {
+    query: string
+  }): Promise<{ ok: true; entries: ConversationFileSearchEntry[] } | { ok: false; message: string }>
+  /**
+   * The slash commands the chat's CLI runs in its folder on the machine it
+   * runs on, as that machine lists them; rejects with that machine's words
+   * when it cannot. Present for a paired machine's chat, used where
+   * `capabilities.commandList` is; a chat here reads `services.commands`.
+   */
+  listCommands?(input: { refresh?: boolean }): Promise<ConversationCommandCatalog>
   /**
    * A sent image by the reference its `user_message` recorded. Absent for a
    * remote conversation: the images are in the other machine's store, so a
@@ -245,6 +287,9 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   checkpointRevert: true,
   modelSwitch: true,
   composerContext: true,
+  mentions: true,
+  attachFiles: true,
+  commandList: true,
   imageAttachments: true,
   localHistory: true,
   localFiles: true,
@@ -390,6 +435,15 @@ export function useConversationTransport(): ConversationTransport {
   return useContext(ConversationTransportContext)
 }
 
+/**
+ * What a paired machine's chat's command list is kept under in this window:
+ * the chat itself, as no folder of this disk names it, so two of that
+ * machine's chats in different folders never share a list.
+ */
+export function remoteCommandsFolder(key: MeshConversationKey): string {
+  return `mesh:${key.connectionId}/${key.workspaceId}/${key.agentId}`
+}
+
 const commandResult = (result: MeshConversationCommandResult): ConversationTransportResult =>
   result.ok ? { ok: true, ...(result.notice ? { notice: result.notice } : {}) } : { ok: false, message: result.message }
 
@@ -420,6 +474,12 @@ export function createRemoteConversationTransport(input: {
       checkpointRevert: false,
       modelSwitch: false,
       composerContext: false,
+      // Turned on from the machine's list, when it searches a chat's folder
+      // and takes what is mentioned of it; when it takes files; and when it
+      // lists the slash commands a chat's CLI runs there.
+      mentions: false,
+      attachFiles: false,
+      commandList: false,
       // Whether this chat takes them is the machine's list's to say, through
       // the session the pane builds from it.
       imageAttachments: true,
@@ -441,6 +501,7 @@ export function createRemoteConversationTransport(input: {
       hostPullRequests: false,
     },
     remoteExtensions: { connectionId: key.connectionId, workspaceId: key.workspaceId },
+    commandsFolder: remoteCommandsFolder(key),
     pullRequestHost: remotePullRequestHost(key, () => input.onPullRequestRecorded?.()),
     subscribe: (subscription, cb) =>
       window.api.onMeshConversationSession({ key, turnLimit: subscription.turnLimit }, (frame) => {
@@ -463,6 +524,12 @@ export function createRemoteConversationTransport(input: {
           // The machine resolves them against its own folder, as its own
           // composer's chips are.
           ...(turn.skills?.length ? { skills: turn.skills.map((skill) => skill.id) } : {}),
+          // Named by their paths in the chat's folder there, as its search
+          // named them; offered only where the machine takes them.
+          ...(turn.mentions?.length ? { mentions: turn.mentions } : {}),
+          // Files from this computer: main puts each in that machine's store
+          // first, and the send names them, as it names the images.
+          ...(turn.files?.length ? { files: turn.files } : {}),
           ...(turn.steer ? { steer: true } : {}),
         }),
       ),
@@ -470,6 +537,23 @@ export function createRemoteConversationTransport(input: {
       commandResult(await window.api.meshConversationSend({ key, message: turn.message, queue: true })),
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
+    searchMentions: async ({ query }) => {
+      const result = await window.api.meshConversationSearchFiles({ key, query })
+      return result.ok ? { ok: true, entries: result.entries } : { ok: false, message: result.message }
+    },
+    // Kept as this window keeps a list read here: under the chat's own key,
+    // never a folder of this disk's (`remoteCommandsFolder`).
+    listCommands: async ({ refresh }) => {
+      const result = await window.api.meshConversationCommands({ key, ...(refresh ? { refresh: true } : {}) })
+      if (!result.ok) throw new Error(result.message)
+      return {
+        cli: result.cli,
+        cwd: remoteCommandsFolder(key),
+        commands: result.commands,
+        fetchedAt: result.fetchedAt,
+        ...(result.error ? { error: result.error } : {}),
+      }
+    },
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).

@@ -865,9 +865,10 @@ function useCliMcpServers(
 
 /**
  * A paired machine's skills and MCP servers for one of its projects, read on
- * every open as the local ones are.
+ * every open as the local ones are. The composer's `$` type-ahead reads a
+ * remote chat's skills through it too.
  */
-function useRemoteExtensions(
+export function useRemoteExtensions(
   remote: { connectionId: string; workspaceId: string } | null,
   cli: string | null,
   active: boolean,

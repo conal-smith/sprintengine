@@ -13,6 +13,21 @@
 
 ### Added
 
+- **A client's composer reaches the chat's folder on the desktop.**
+  `CONVERSATION_SEND_MENTIONS_CAPABILITY` (`conversation-send-mentions`): a
+  `send` may name `mentions` (`ConversationWireMention`, at most
+  `CONVERSATION_MAX_SEND_MENTIONS`), each by its path relative to the chat's
+  folder, which the desktop resolves as its own composer's chips are.
+  `parseConversationClientMessage` keeps them and refuses, as a bad frame, one
+  that is absolute, names a drive, climbs out with `..`, or rides beside
+  `queue`; `parseConversationWireMentions` reads a list alone.
+  `CONVERSATION_FILE_SEARCH_CAPABILITY` (`conversation-file-search`) and
+  `CONVERSATION_COMMANDS_CAPABILITY` (`conversation-commands`) name GETs
+  beside the socket, whose answers `parseConversationFileSearchAnswer` and
+  `parseConversationCommandsAnswer` read (composerReads.ts): the matches in
+  the chat's folder by relative path, and the chat CLI's slash commands
+  without Studio's. All additive; the pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the

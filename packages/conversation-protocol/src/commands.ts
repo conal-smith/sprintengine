@@ -52,12 +52,12 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   any send is. With no turn running it is an ordinary send. A turn that
  *   cannot take it (a provider that cannot, a request the agent waits on, a
  *   turn that ended on the way) has the desktop hold it as a `queue` send is
- *   held, answered at once with a `notice` saying so; one carrying `uploadIds`
- *   or `skills`, which a held message cannot, is refused `busy` instead, and
- *   sent again goes as the next turn once the turn is over. One that reached
- *   the chat is answered as taken even if its turn then fails, with that in
- *   its `notice`, so a client never sends the same words twice. Never
- *   beside `queue`. Needs `conversation-steer-sends`; a desktop without it
+ *   held, answered at once with a `notice` saying so; one carrying
+ *   `uploadIds`, `skills` or `mentions`, which a held message cannot, is
+ *   refused `busy` instead, and sent again goes as the next turn once the
+ *   turn is over. One that reached the chat is answered as taken even if
+ *   its turn then fails, with that in its `notice`, so a client never sends
+ *   the same words twice. Never beside `queue`. Needs `conversation-steer-sends`; a desktop without it
  *   drops the member, and a send made while a turn runs is refused `busy`.
  * - `cancelQueued` takes back a message the desktop holds (`queued` frames
  *   name each by `id`), refused once it is on its way into the chat. Needs
@@ -70,6 +70,15 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   a chat whose provider cannot stop one by itself (the listed chat's
  *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
  *   desktop without it refuses the kind as `unsupported_command`.
+ * - `send` may name `mentions`: files and folders of the chat's folder on the
+ *   desktop, each by its path relative to that folder (`ConversationWireMention`,
+ *   at most `CONVERSATION_MAX_SEND_MENTIONS`), as its own composer's @ chips
+ *   name them. The desktop resolves each against the chat's own folder, as it
+ *   resolves its own, and refuses the send in words for one outside it or gone.
+ *   Never beside `queue`, as `skills` are not. Needs
+ *   `conversation-send-mentions`; a desktop without it drops the member and
+ *   the message goes without them, so a client sends it only where it is
+ *   advertised.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -89,6 +98,7 @@ export type ConversationCommand =
       uploadIds?: string[]
       queue?: true
       skills?: string[]
+      mentions?: ConversationWireMention[]
       steer?: true
       composedAt?: number
       confirmedStale?: true
@@ -216,6 +226,70 @@ export const CONVERSATION_MAX_ALLOWED_TOOLS = 64
 export const CONVERSATION_MAX_SEND_SKILLS = 32
 /** The most skills a create names. */
 export const CONVERSATION_MAX_CREATE_SKILLS = 32
+
+// ── Mentions a send names ──────────────────────────────────────────────────
+//
+// A file or folder of the chat's folder on the desktop, as its own composer's
+// @ chips name one: by its path relative to that folder, with `/` between
+// segments, and for a file a line or a range of lines. Never a path of the
+// client's own: the folder is the desktop's (`conversation-send-mentions`).
+
+/** One file or folder a `send` names. */
+export type ConversationWireMention = {
+  path: string
+  kind: 'file' | 'folder'
+  /** The first line meant, from 1. */
+  line?: number
+  /** The last line meant, at or after `line`. */
+  endLine?: number
+}
+
+/** The most mentions a send names, as the desktop's own composer takes. */
+export const CONVERSATION_MAX_SEND_MENTIONS = 50
+const MAX_MENTION_PATH_CHARS = 4096
+
+function line(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+}
+
+/**
+ * A send's `mentions`, each kept as the contract defines it, or null when any
+ * is not one: an absolute path, a drive, a `..` segment, a control character
+ * or a range that runs backwards is refused rather than dropped, so a message
+ * never goes without what its chips showed. The desktop checks each again
+ * against the chat's folder.
+ */
+export function parseConversationWireMentions(value: unknown): ConversationWireMention[] | null {
+  if (!Array.isArray(value) || value.length > CONVERSATION_MAX_SEND_MENTIONS) return null
+  const mentions: ConversationWireMention[] = []
+  for (const entry of value) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null
+    const mention = entry as Record<string, unknown>
+    const path = mention.path
+    if (
+      typeof path !== 'string' ||
+      !path ||
+      path.length > MAX_MENTION_PATH_CHARS ||
+      /[\u0000-\u001f\u007f]/u.test(path) ||
+      path.startsWith('/') ||
+      path.startsWith('\\') ||
+      /^[A-Za-z]:/u.test(path) ||
+      path.split(/[\\/]/u).includes('..')
+    )
+      return null
+    if (mention.kind !== 'file' && mention.kind !== 'folder') return null
+    if (mention.line !== undefined && !line(mention.line)) return null
+    const from = line(mention.line) ? mention.line : 1
+    if (mention.endLine !== undefined && !(line(mention.endLine) && mention.endLine >= from)) return null
+    mentions.push({
+      path,
+      kind: mention.kind,
+      ...(mention.line === undefined ? {} : { line: mention.line as number }),
+      ...(mention.endLine === undefined ? {} : { endLine: mention.endLine as number }),
+    })
+  }
+  return mentions
+}
 
 // What a CLI may call one of its own modes: short, and nothing a path, a flag
 // or a markup fragment could be read as.

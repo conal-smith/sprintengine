@@ -1,8 +1,13 @@
 import {
   CONVERSATION_DEFAULT_MODEL_ID,
+  CONVERSATION_MAX_FILE_SEARCH_RESULTS,
   CONVERSATION_MAX_REPLY_PREVIEW,
+  parseConversationCommandsAnswer,
   parseConversationWireHighlight,
   type ConversationCommand,
+  type ConversationCommandsAnswer,
+  type ConversationFileSearchAnswer,
+  type ConversationFileSearchEntry,
   type ConversationQueuedMessage,
   type ConversationThread,
   type ConversationWireErrorCode,
@@ -32,9 +37,12 @@ import { latestTurnEnd } from '../conversation-lifecycle'
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_AGENT_SPAWN_PERMISSION_PRESET } from '../../../shared/launch-settings'
 import { parseCliPermissionModeId } from '../../../shared/cli-permission-mode'
-import { basename, dirname, isAbsolute, resolve, win32 } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path'
 import { stat } from 'node:fs/promises'
 import type { ConversationAttachedFile } from '../../../shared/conversation/attachedFiles'
+import type { ConversationCommandCatalog } from '../../../shared/conversation/commands'
+import { cliForConversationProvider } from '../../../shared/conversation-harness'
+import type { FileSearchResult } from '../../../shared/ipc/filesystem'
 import { openConfinedExistingFile } from '../../conversation-file-access'
 import { confineToRoots } from '../../studio-rpc/studio-file-confinement'
 import { distroOfUncPath } from '../../../shared/host-paths'
@@ -179,6 +187,26 @@ export type ConversationGatewayHost = {
     listener: (messages: ConversationQueuedMessage[]) => void,
   ): () => void
   /**
+   * The files and folders in a chat's folder whose names match `query`, best
+   * first, each by its path relative to that folder: what a paired device's @
+   * mention searches (`conversation-file-search`). The folder is the one the
+   * chat's session works in, else its workspace's, the one its mentions are
+   * resolved against when it sends; nothing outside it is named. A device's
+   * next search supersedes its last. Absent on a host that searches nothing.
+   */
+  searchFiles?(
+    key: ConversationKey,
+    deviceId: string,
+    query: string,
+    limit?: number,
+  ): Promise<ConversationComposerRead<ConversationFileSearchAnswer>>
+  /**
+   * The slash commands the chat's CLI runs in the chat's folder, as the `/`
+   * menu here lists them (`conversation-commands`). `refresh` asks the CLI
+   * again now. Absent on a host that lists none.
+   */
+  listCommands?(key: ConversationKey, refresh: boolean): Promise<ConversationComposerRead<ConversationCommandsAnswer>>
+  /**
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
    * id for a different command is then refused (`command_id_conflict`).
@@ -214,6 +242,10 @@ function relay(
   const { code: _unnamed, ...rest } = result
   return rest as ConversationGatewayCommandResult
 }
+
+/** A read for a paired device's composer, or why there is none: no such chat, or nothing to read. */
+export type ConversationComposerRead<T> =
+  { ok: true; answer: T } | { ok: false; code: 'unknown_conversation' | 'unavailable'; message: string }
 
 export type ConversationToolImagePath =
   { ok: true; path: string } | { ok: false; code: 'unknown_conversation' | 'unknown_image' }
@@ -478,6 +510,30 @@ export type ConversationRegistryLink = {
    * folder, its session's, or one of these, and from nowhere else.
    */
   imageRoots?: () => readonly string[]
+  /**
+   * Search a chat's folder for files and folders by name, as the composer's @
+   * picker here does (filesystem-search.ts), for a paired device's mention
+   * (`conversation-file-search`). `channel` names the asker, so its next
+   * query supersedes its last. Absent, nothing is searched.
+   */
+  searchFiles?: (input: {
+    workspaceId: string
+    rootPath: string
+    query: string
+    limit: number
+    channel: string
+  }) => Promise<FileSearchResult>
+  /**
+   * The slash commands a CLI runs in a chat's folder, from the composer's own
+   * command lists (conversation-commands/service.ts), for a paired device's
+   * `/` menu (`conversation-commands`). Absent, none is listed.
+   */
+  commandsOf?: (input: {
+    workspaceId: string
+    cli: string
+    cwd: string
+    refresh?: boolean
+  }) => Promise<ConversationCommandCatalog>
 }
 
 type ChatOf = { workspaceId: string; agentId: string }
@@ -546,6 +602,28 @@ function watchHeld(
  * (`\\wsl.localhost\Ubuntu\…`), a spelling the general check refuses, so on
  * Windows such a path is held by its spelling to a root on that same share.
  */
+/**
+ * A search's matches as a paired device is told them: each by its path
+ * relative to `root`, with `/` between segments, and none that is not inside
+ * it. The device names them back as mentions, which this machine resolves
+ * against the same folder.
+ */
+function relativeSearchEntries(root: string, result: FileSearchResult, limit: number): ConversationFileSearchAnswer {
+  if (!result.ok) return { entries: [], truncated: false }
+  const entries: ConversationFileSearchEntry[] = []
+  let truncated = result.truncated
+  for (const found of result.results) {
+    const inside = relative(root, found.path)
+    if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue
+    if (entries.length >= limit) {
+      truncated = true
+      break
+    }
+    entries.push({ path: inside.split(sep).join('/'), kind: found.isDir ? 'folder' : 'file' })
+  }
+  return { entries, truncated }
+}
+
 async function confineImagePath(path: string, roots: readonly string[]): Promise<string | null> {
   const checked = await confineToRoots(path, roots)
   if (checked.ok) return checked.path
@@ -645,6 +723,23 @@ export function createConversationGatewayHost(
   const threadFor = async (key: ConversationKey) => {
     const indexed = await runtime.listThreads(key)
     return indexed.ok ? indexed.threads.find((entry) => entry.agentId === key.agentId) : undefined
+  }
+  // The folder a chat works in, for what a paired device's composer reads of
+  // it: its live session's (a New chat's pool worktree), else its
+  // workspace's, which is where a send resumes it and so where the mentions
+  // it names are resolved. Null for a chat the workspace does not hold.
+  const chatFolderOf = async (key: ConversationKey): Promise<{ folder: string; providerId: string } | null> => {
+    const live = sessionFor(key)
+    const providerId = live?.providerId ?? (await threadFor(key))?.providerId
+    if (!providerId) return null
+    const sessionRoot =
+      live && typeof runtime.sessionWorkspaceRoot === 'function' ? runtime.sessionWorkspaceRoot(live.sessionId) : null
+    return { folder: sessionRoot || key.workspaceRoot, providerId }
+  }
+  const unknownChat = {
+    ok: false as const,
+    code: 'unknown_conversation' as const,
+    message: 'No eligible conversation on this machine has that id.',
   }
   // The models a chat can switch between: its CLI's catalog, and whether its
   // provider takes a new model mid-conversation — as the live session
@@ -1014,6 +1109,68 @@ export function createConversationGatewayHost(
       const mediaType = bytes.length <= MAX_ATTACHMENT_BYTES ? sniffConversationImage(bytes.subarray(0, 12)) : null
       return mediaType ? { ok: true, mediaType, bytes } : { ok: false, code: 'unknown_image' }
     },
+    ...(registry.searchFiles
+      ? {
+          async searchFiles(key, deviceId, query, limit = CONVERSATION_MAX_FILE_SEARCH_RESULTS) {
+            const chat = await chatFolderOf(key)
+            if (!chat) return unknownChat
+            const bounded = Math.max(1, Math.min(CONVERSATION_MAX_FILE_SEARCH_RESULTS, Math.trunc(limit)))
+            const found = await registry.searchFiles!({
+              workspaceId: key.workspaceId,
+              rootPath: chat.folder,
+              query,
+              limit: bounded,
+              // One search at a time per device: its next keystroke's
+              // search calls off the one still walking.
+              channel: `tailnet:${deviceId}`,
+            }).catch((error: unknown) => ({
+              ok: false as const,
+              message: error instanceof Error ? error.message : String(error),
+              engine: null,
+            }))
+            if (!found.ok) return { ok: false as const, code: 'unavailable' as const, message: found.message }
+            return { ok: true as const, answer: relativeSearchEntries(chat.folder, found, bounded) }
+          },
+        }
+      : {}),
+    ...(registry.commandsOf
+      ? {
+          async listCommands(key, refresh) {
+            const chat = await chatFolderOf(key)
+            if (!chat) return unknownChat
+            const cli = cliForConversationProvider(chat.providerId)
+            if (!cli)
+              return {
+                ok: false as const,
+                code: 'unavailable' as const,
+                message: "This chat's agent runs no slash commands.",
+              }
+            const catalog = await registry.commandsOf!({
+              workspaceId: key.workspaceId,
+              cli,
+              cwd: chat.folder,
+              ...(refresh ? { refresh: true } : {}),
+            }).catch((error: unknown) => ({
+              cli,
+              cwd: chat.folder,
+              commands: [],
+              fetchedAt: 0,
+              error: error instanceof Error ? error.message : String(error),
+            }))
+            // Read as a device reads it: Studio's own commands are each
+            // device's, and the folder the list was kept under is this disk's.
+            const answer = parseConversationCommandsAnswer({
+              cli,
+              commands: catalog.commands,
+              fetchedAt: catalog.fetchedAt,
+              ...(catalog.error ? { error: catalog.error } : {}),
+            })
+            return answer
+              ? { ok: true as const, answer }
+              : { ok: false as const, code: 'unavailable' as const, message: 'The command list could not be read.' }
+          },
+        }
+      : {}),
     registerUpload(input) {
       for (const [id, entry] of uploads) if (Date.now() - entry.at > UPLOAD_TTL_MS) discardUpload(id)
       const ownIds = [...uploads].filter(([, entry]) => entry.deviceId === input.deviceId).map(([id]) => id)
@@ -1056,11 +1213,17 @@ export function createConversationGatewayHost(
       // queued send is, and answered at once with a notice saying so: the
       // person's words are never lost to a provider that cannot take them, or
       // to a turn that ended on their way. A held message is its words alone,
-      // so one with pictures or skills is refused busy instead, which a phone
-      // sends again as it does any send made mid-turn.
+      // so one with pictures, skills or mentions is refused busy instead,
+      // which a phone sends again as it does any send made mid-turn.
       const steer = command.kind === 'send' && command.steer === true
       const holdInstead = (reason: string): ConversationGatewayCommandResult => {
-        if (command.kind !== 'send' || !held || command.uploadIds?.length || command.skills?.length)
+        if (
+          command.kind !== 'send' ||
+          !held ||
+          command.uploadIds?.length ||
+          command.skills?.length ||
+          command.mentions?.length
+        )
           return { ok: false, code: 'busy', retryAfterMs: SEND_BUSY_RETRY_MS, message: reason }
         const stale = staleHold()
         if (stale) return stale
@@ -1112,6 +1275,11 @@ export function createConversationGatewayHost(
             // Skills the paired machine's composer attached, resolved against
             // this machine's folder as its own chips are (conversation-skills.ts).
             const turnSkills = command.skills?.length ? { skills: command.skills.map((id) => ({ id })) } : {}
+            // Files and folders the paired machine's composer mentioned, by
+            // their paths in the chat's folder here: the runtime resolves them
+            // against the session's folder as it does its own composer's, and
+            // refuses one outside it, behind a link, or gone.
+            const turnMentions = command.mentions?.length ? { mentions: command.mentions } : {}
             const retry =
               ids.length > 0 &&
               ids.every((id) => spent.get(id)?.deviceId === deviceId && spent.get(id)?.commandId === commandId)
@@ -1133,6 +1301,7 @@ export function createConversationGatewayHost(
                 attachments: [],
                 ...turnEffort,
                 ...turnSkills,
+                ...turnMentions,
                 ...turnSteer,
                 ...written,
                 ...stamp,
@@ -1215,6 +1384,7 @@ export function createConversationGatewayHost(
                 ...(files.length ? { files } : {}),
                 ...turnEffort,
                 ...turnSkills,
+                ...turnMentions,
                 ...turnSteer,
                 ...written,
                 ...stamp,

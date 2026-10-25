@@ -99,6 +99,32 @@ export const CONVERSATION_MESSAGE_FILES_CAPABILITY = 'conversation-message-files
  * without it keeps its upload under 5MB itself.
  */
 export const CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY = 'conversation-image-downscale' as const
+/**
+ * A message may name files and folders of the chat's folder, as its own
+ * composer's @ chips do: `send` takes `mentions` (`ConversationWireMention`,
+ * each by its path relative to that folder), and the desktop resolves them
+ * against the chat's folder there as it resolves its own. A desktop without it
+ * drops the member, so a client sends it only where it is advertised.
+ */
+export const CONVERSATION_SEND_MENTIONS_CAPABILITY = 'conversation-send-mentions' as const
+/**
+ * The files and folders a mention may name are searched for on the desktop:
+ * `GET conversation-files` beside the socket takes the chat's `workspaceId`
+ * and `agentId` and a `query`, and answers the matches in the chat's folder
+ * there by their paths relative to it (`ConversationFileSearchAnswer`). Under
+ * `conversation:read`; no path outside the folder is ever named.
+ */
+export const CONVERSATION_FILE_SEARCH_CAPABILITY = 'conversation-file-search' as const
+/**
+ * The slash commands a chat's CLI runs in the chat's folder are listed by the
+ * desktop, as its own composer's `/` menu lists them: `GET
+ * conversation-commands` beside the socket takes the chat's `workspaceId` and
+ * `agentId` and answers its CLI's commands and plugins there
+ * (`ConversationCommandsAnswer`). Under `conversation:read`; `refresh` asks the
+ * CLI again now, under `conversation:operate`. A client without it offers only
+ * its own commands.
+ */
+export const CONVERSATION_COMMANDS_CAPABILITY = 'conversation-commands' as const
 
 /**
  * Every conversation capability this version of the package knows, in the
@@ -121,6 +147,9 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_MESSAGE_FILES_CAPABILITY,
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
+  CONVERSATION_SEND_MENTIONS_CAPABILITY,
+  CONVERSATION_FILE_SEARCH_CAPABILITY,
+  CONVERSATION_COMMANDS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

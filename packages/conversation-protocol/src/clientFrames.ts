@@ -8,6 +8,7 @@ import {
 import {
   CONVERSATION_MAX_SEND_SKILLS,
   isConversationPermissionModeId,
+  parseConversationWireMentions,
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
 } from './commands.js'
@@ -119,6 +120,15 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
       const frame = parseConversationClientMessage({ ...value, command: { ...command, steer: undefined } })
       if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
       return { ...frame, command: { ...frame.command, steer: true } }
+    }
+    // Mentions ride a message the chat runs now, as skills do, and are read
+    // off the send before the rest of it is.
+    if (command.kind === 'send' && command.mentions !== undefined) {
+      const mentions = parseConversationWireMentions(command.mentions)
+      if (command.queue !== undefined || !mentions) return null
+      const frame = parseConversationClientMessage({ ...value, command: { ...command, mentions: undefined } })
+      if (!frame || frame.type !== 'command' || frame.command.kind !== 'send') return null
+      return mentions.length ? { ...frame, command: { ...frame.command, mentions } } : frame
     }
     // Skills ride a message the chat runs now, not one held for later.
     if (command.kind === 'send' && command.skills !== undefined) {

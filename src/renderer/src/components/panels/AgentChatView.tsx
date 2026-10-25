@@ -120,6 +120,7 @@ import { useConversationSession } from './agentChat/useConversationSession'
 import { useChatViewActive } from './agentChat/chatViewActivity'
 import { prefersReducedMotion } from './agentChat/reducedMotion'
 import { useConversationTransport } from './agentChat/conversationTransport'
+import type { ChatCommandSource } from './agentChat/chatServices'
 import { openCliSignInTerminal } from './agentChat/cliSignIn'
 import { useLocalChatBinding, type ChatBinding } from './agentChat/chatBinding'
 import { latestReplyTurnId } from './agentChat/turnFolds'
@@ -2938,15 +2939,17 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // control.
   const imagesEnabled = ready && capabilities?.images === true && transport.capabilities.imageAttachments
   // Files attached by path are cards only where the agent can read them by
-  // that path and the card can open them: a chat on this computer (not a
-  // paired machine's, an SSH machine's or a WSL distribution's), in a window
-  // that reads a file's path. Anywhere else a file is typed as its path.
+  // that path and the card can open them: a chat on this computer (not an
+  // SSH machine's or a WSL distribution's), in a window that reads a file's
+  // path. A paired machine's chat takes them too where that machine takes
+  // files: each goes up to it with the message, and the agent reads it there.
+  // Anywhere else a file is typed as its path.
   const filesEnabled =
     ready &&
-    transport.kind === 'local' &&
-    transport.capabilities.localFiles &&
-    workspaceRunsHere(binding.workspace) &&
-    clientSupports('drag-paths')
+    clientSupports('drag-paths') &&
+    (transport.kind === 'local'
+      ? transport.capabilities.localFiles && workspaceRunsHere(binding.workspace)
+      : transport.capabilities.attachFiles)
 
   const skillInventory = useWorkspaceSkills(
     workspaceRoot,
@@ -3033,10 +3036,27 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     detachRecall()
   }
   // The `/` menu lists what the chat's CLI runs in this folder, plus Studio's
-  // own few. A chat on another machine has no folder here to ask about, so its
-  // menu holds Studio's commands, and the CLI's only once a list for it has
-  // reached this machine.
+  // own few. A chat on another machine has no folder here to ask about: where
+  // that machine lists its CLI's commands, the menu asks it for the chat's
+  // folder there; elsewhere it holds Studio's commands, and the CLI's only
+  // once a list for it has reached this machine.
   const localCommands = transport.capabilities.composerContext
+  const listCommandsThere = !localCommands && transport.capabilities.commandList ? transport.listCommands : undefined
+  const commandSource = useMemo<ChatCommandSource | undefined>(
+    () =>
+      listCommandsThere
+        ? {
+            // Kept under the CLI and the key this view asked with, whatever
+            // that machine calls them.
+            list: async (input) => ({
+              ...(await listCommandsThere(input.refresh ? { refresh: true } : {})),
+              cli: input.cli,
+              cwd: input.cwd,
+            }),
+          }
+        : undefined,
+    [listCommandsThere],
+  )
   const appCommands = useMemo(
     () =>
       studioAppCommands({
@@ -3049,12 +3069,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   )
   const conversationCommands = useConversationCommands(
     chatCli,
-    localCommands ? workspaceRoot : (binding.sessionRoot ?? null),
-    { appCommands, discover: localCommands },
+    localCommands
+      ? workspaceRoot
+      : ((commandSource ? transport.commandsFolder : undefined) ?? binding.sessionRoot ?? null),
+    {
+      appCommands,
+      discover: localCommands || Boolean(commandSource),
+      ...(commandSource ? { source: commandSource } : {}),
+    },
   )
   const commandCatalog = conversationCommands.catalog
   const commandMenuAvailable = Boolean(
-    chatCli && (localCommands ? workspaceRoot : conversationCommands.commands.length),
+    chatCli && (localCommands ? workspaceRoot : commandSource || conversationCommands.commands.length),
   )
   // A picked command's argument hint, shown under the field until the person
   // types past what the pick left there.
@@ -3063,10 +3089,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     workspaceRoot,
     draft,
     caret: composerCaret,
-    // The type-ahead reads this machine's inventory; a remote chat's skills come from its "+".
-    skillsEnabled: supportsSkills && transport.capabilities.composerContext,
-    // A file mention names a file on this machine's disk.
-    mentionsEnabled: transport.capabilities.composerContext,
+    // The type-ahead reads this machine's inventory, and a remote chat's that
+    // machine's, as its "+" does.
+    skillsEnabled: supportsSkills && (transport.capabilities.composerContext || Boolean(transport.remoteExtensions)),
+    remoteSkills: transport.capabilities.composerContext ? null : (transport.remoteExtensions ?? null),
+    // A file mention names a file in the chat's folder: on this machine's
+    // disk, or, for a remote chat, in its folder over there, searched there.
+    mentionsEnabled: transport.capabilities.mentions,
     commandMenu: commandMenuAvailable
       ? {
           commands: conversationCommands.commands,

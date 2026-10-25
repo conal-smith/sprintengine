@@ -91,6 +91,7 @@ function remoteConversationSession(
   key: MeshConversationKey,
   modelSwitch: boolean,
   stopSubagents: boolean,
+  sendSkills = false,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -117,7 +118,10 @@ function remoteConversationSession(
       // machine's upload store, as the phone does, and the send names them.
       planMode: false,
       images: capabilities?.images === true,
-      skills: 'none',
+      // Whether a message here may carry that machine's skills: it takes
+      // them with a send and lists them. How it hands them to the agent is
+      // its own to say; here only that a chip can go.
+      skills: sendSkills ? 'context' : 'none',
       reasoningEfforts: null,
       interrupt: capabilities?.interrupt ?? true,
       resume: false,
@@ -172,6 +176,11 @@ export default function RemoteConversationPanel({
   const [steerSends, setSteerSends] = useState(false)
   // The machine stops one agent of one of its chats by itself.
   const [stopSubagents, setStopSubagents] = useState(false)
+  // The machine searches a chat's folder for an @ and takes what is
+  // mentioned; takes files with a message; lists a chat CLI's commands.
+  const [composerMentions, setComposerMentions] = useState(false)
+  const [messageFiles, setMessageFiles] = useState(false)
+  const [commandList, setCommandList] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -198,6 +207,12 @@ export default function RemoteConversationPanel({
   hostPullRequestsRef.current = hostPullRequests
   const steerSendsRef = useRef(steerSends)
   steerSendsRef.current = steerSends
+  const composerMentionsRef = useRef(composerMentions)
+  composerMentionsRef.current = composerMentions
+  const messageFilesRef = useRef(messageFiles)
+  messageFilesRef.current = messageFiles
+  const commandListRef = useRef(commandList)
+  commandListRef.current = commandList
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -236,6 +251,9 @@ export default function RemoteConversationPanel({
           skills: sendSkillsRef.current,
           steer: steerSendsRef.current,
           hostPullRequests: hostPullRequestsRef.current,
+          mentions: composerMentionsRef.current,
+          attachFiles: messageFilesRef.current,
+          commandList: commandListRef.current,
         }
       },
       ...(setModel
@@ -277,6 +295,9 @@ export default function RemoteConversationPanel({
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
+        setComposerMentions(result.mentions === true)
+        setMessageFiles(result.messageFiles === true)
+        setCommandList(result.commands === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -315,8 +336,8 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
-    [thread, key, modelSwitch, stopSubagents],
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, sendSkills),
+    [thread, key, modelSwitch, stopSubagents, sendSkills],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

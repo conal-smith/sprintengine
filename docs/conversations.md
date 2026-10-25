@@ -751,7 +751,9 @@ in the app's own process.
 - **What the view offers is what the grant and the lane allow.** A pairing
   without `conversation:operate` sees the conversation with the composer,
   approvals and stop closed. A remote view never offers a permanent approval
-  rule, a checkpoint revert, or this machine's skills and files. Images it
+  rule, a checkpoint revert, or this machine's skills and files: what its
+  composer offers of skills, mentions and commands is that machine's (below).
+  Images it
   does offer, where the machine lists the chat as taking them: main puts each
   in that machine's upload store, as the phone does, and the send names them. It
   offers the same two-preset switcher a local chat does, reading the preset the
@@ -794,6 +796,28 @@ in the app's own process.
   offers "Stop this agent", as a local chat's do, and it stops that agent
   alone over there. The machine's turn Stop spares a Claude chat's agents, so
   this is how one is stopped from here.
+- **The composer reaches the chat's folder over there** (2026-10-25). Where
+  the machine advertises `conversation-file-search` and
+  `conversation-send-mentions`, an @ searches the chat's folder there (`GET
+conversation-files`, on `conversation:read`), the picker ranks the matches
+  and their folders as a search here is ranked, and the send names each pick
+  by its path in that folder (`mentions`), which that machine resolves as its
+  own composer's chips are, refusing one outside the folder, behind a link, or
+  gone. Where it advertises `conversation-commands`, the `/` menu lists what
+  the chat's CLI runs in that folder (`GET conversation-commands`), asked when
+  the menu opens rather than as the chat does, since each ask may start the
+  CLI over there; asking again (`refresh`) needs `conversation:operate`. A `$`
+  lists that machine's skills, as the "+" does. Where it advertises
+  `conversation-message-files`, a file attached here by its path is a card, as
+  in a local chat: main reads it (25 MB at most), puts it in that machine's
+  store with `upload?kind=file` under the chat's live session, and the send
+  names it, so the agent reads it there by that path. A chat at rest there
+  takes files once a message has woken it, as it takes pictures. A machine
+  without one of these leaves that part of the composer as before: no @, the
+  `/` menu with Studio's commands, a file typed as its path. A message holding
+  mentions, skills or files is not handed to that machine's queue: that queue
+  keeps words alone, so such a message waits in this pane and goes when the
+  turn ends while this machine is awake.
 
 ### Terminals stay on the machine
 

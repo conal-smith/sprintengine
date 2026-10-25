@@ -39,6 +39,8 @@ import {
   type MeshConversationFrame,
   type MeshConversationImageResult,
   type MeshConversationListResult,
+  type MeshConversationFileSearchResult,
+  type MeshConversationCommandsResult,
 } from '../../../shared/tailnet-mesh'
 import type {
   ConversationImageAttachment,
@@ -81,7 +83,21 @@ import {
   readRemoteIdentity,
   type RemoteJsonSocket,
   uploadRemoteConversationImage,
+  readRemoteConversationComposer,
 } from './tailnet-remote-client'
+import { readFile, stat } from 'node:fs/promises'
+import { basename } from 'node:path'
+import {
+  CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS,
+  parseConversationCommandsAnswer,
+  parseConversationFileSearchAnswer,
+  parseConversationWireMentions,
+} from '../../../../packages/conversation-protocol/src/public'
+import {
+  parseConversationAttachedFiles,
+  type ConversationAttachedFile,
+} from '../../../shared/conversation/attachedFiles'
+import { MAX_TAILNET_FILE_BYTES } from './tailnet-file-uploads'
 import { asRecord, isRecord } from '../../../shared/records'
 import { parseCliPermissionPreset } from '../../../shared/cli-permission-preset'
 import { powerActivity, type PowerActivity } from '../../power-activity'
@@ -366,7 +382,29 @@ export type TailnetMeshService = {
     /** Ids of that machine's skills the chat runs with this message (`conversation-send-skills`). */
     skills?: unknown
     steer?: unknown
+    /**
+     * Files and folders of the chat's folder over there, by their paths in it,
+     * as that machine's search named them (`conversation-send-mentions`).
+     */
+    mentions?: unknown
+    /**
+     * Files on this computer, by path: each goes up to that machine first
+     * (`conversation-message-files`), and the message names it by its path
+     * there.
+     */
+    files?: unknown
   }): Promise<MeshConversationCommandResult>
+  /**
+   * The files and folders in a followed chat's folder on its machine that
+   * match a mention's query (`conversation-file-search`). Refused without
+   * asking for a machine that does not advertise it.
+   */
+  conversationSearchFiles(input: { key: unknown; query: unknown }): Promise<MeshConversationFileSearchResult>
+  /**
+   * The slash commands a followed chat's CLI runs in its folder over there
+   * (`conversation-commands`); `refresh` asks that CLI again now.
+   */
+  conversationCommandList(input: { key: unknown; refresh?: unknown }): Promise<MeshConversationCommandsResult>
   /**
    * What a chat in one of that machine's projects can use: its skills and,
    * for a CLI, the MCP servers that CLI is configured with there
@@ -2216,6 +2254,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
+          // The composer's reach into a chat's folder over there: an @ is a
+          // search there and a name the send carries back, so both or neither.
+          mentions:
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-file-search') &&
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mentions'),
+          commands: tailnetPeerSupports(identity.value.capabilities, 'conversation-commands'),
+          messageFiles:
+            tailnetPeerSupports(identity.value.capabilities, 'conversation-message-files') &&
+            tailnetPeerSupports(identity.value.capabilities, 'upload'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2366,6 +2413,122 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, uploadIds }
   }
 
+  // ── Files sent to paired machines ─────────────────────────────────────────
+  //
+  // A file attached here by its path goes up as a phone's does
+  // (`upload?kind=file`): that machine keeps it where it keeps a device's
+  // files, never in the project, and the send that names its id attaches it to
+  // the message by its path there, where the agent reads it. The upload is
+  // kept for the chat's live session, as a picture's is, so a chat at rest
+  // takes its files once a message has woken it.
+  async function uploadConversationFiles(
+    connection: StoredMeshConnection,
+    key: { workspaceId: string; agentId: string },
+    files: ConversationAttachedFile[],
+  ): Promise<{ ok: true; uploadIds: string[] } | { ok: false; code: string; message: string }> {
+    const unsupported = `${connection.machineName} does not take files from another desktop yet. Update SprintEngine Studio there, or send the file's path instead.`
+    const capabilities = peerCapabilities.get(connection.id)
+    if (
+      !tailnetPeerSupports(capabilities, 'conversation-message-files') ||
+      !tailnetPeerSupports(capabilities, 'upload')
+    )
+      return { ok: false, code: 'files_unsupported', message: unsupported }
+    const listed = await shareRead(sharedLists, connection.id, () => listConversationsNow(connection))
+    if (!listed.ok) return listed
+    if (listed.access !== 'operate')
+      return {
+        ok: false,
+        code: 'conversation_operate_required',
+        message: `This pairing may follow conversations on ${connection.machineName} but not drive them.`,
+      }
+    const thread = listed.conversations.find(
+      (entry) => entry.workspaceId === key.workspaceId && entry.agentId === key.agentId,
+    )
+    if (!thread?.sessionId)
+      return {
+        ok: false,
+        code: 'files_unavailable',
+        message: `This chat on ${connection.machineName} is at rest. Send it a message first, then attach the file.`,
+      }
+    const uploadIds: string[] = []
+    for (const file of files) {
+      const name = basename(file.path) || 'file'
+      // Read whole, under the ceiling that machine keeps a file to: checked
+      // before reading, so a large file is never held only to be refused.
+      const found = await stat(file.path).catch(() => null)
+      if (!found?.isFile())
+        return { ok: false, code: 'invalid_arguments', message: `${name} is no longer there to send.` }
+      if (found.size > MAX_TAILNET_FILE_BYTES)
+        return {
+          ok: false,
+          code: 'too_large',
+          message: `${name} is over the ${MAX_TAILNET_FILE_BYTES / (1024 * 1024)} MB a file may be to go to ${connection.machineName}.`,
+        }
+      let bytes: Buffer
+      try {
+        bytes = await readFile(file.path)
+      } catch (error) {
+        return { ok: false, code: 'invalid_arguments', message: `${name} could not be read: ${message(error)}` }
+      }
+      if (bytes.length > MAX_TAILNET_FILE_BYTES)
+        return { ok: false, code: 'too_large', message: `${name} grew past the limit as it was read.` }
+      const uploaded = await uploadRemoteConversationImage({
+        endpoint: endpointOf(connection),
+        token: connection.deviceToken,
+        sessionId: thread.sessionId,
+        name: name.slice(0, 200),
+        mediaType: 'application/octet-stream',
+        bytes,
+        kind: 'file',
+      })
+      if (!uploaded.ok) {
+        if (uploaded.code === 'unauthorized')
+          recordReachability(connection, { reachable: false, unauthorized: true, detail: uploaded.message })
+        return uploaded
+      }
+      uploadIds.push(uploaded.value.uploadId)
+    }
+    return { ok: true, uploadIds }
+  }
+
+  // ── What a paired machine's composer reads of a chat ─────────────────────
+  //
+  // The files a mention may name and the commands the chat's CLI runs, read
+  // from the machine the chat runs on, in the chat's folder there. A machine
+  // that does not serve one is refused here, before anything is asked.
+  async function readComposer(
+    rawKey: unknown,
+    read: 'files' | 'commands',
+    options: { query?: string; refresh?: boolean },
+  ): Promise<{ ok: true; value: unknown } | { ok: false; code: string; message: string }> {
+    const key = meshConversationKeyOf(rawKey)
+    if (!key) return { ok: false, code: 'invalid_arguments', message: 'Name the conversation to read.' }
+    const connection = connectionFor(key.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const capability = read === 'files' ? 'conversation-file-search' : 'conversation-commands'
+    if (!tailnetPeerSupports(peerCapabilities.get(connection.id), capability))
+      return {
+        ok: false,
+        code: read === 'files' ? 'mentions_unsupported' : 'commands_unsupported',
+        message:
+          read === 'files'
+            ? `${connection.machineName} cannot search its files from here yet. Update SprintEngine Studio there.`
+            : `${connection.machineName} cannot list its slash commands from here yet. Update SprintEngine Studio there.`,
+      }
+    const answer = await readRemoteConversationComposer({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      read,
+      workspaceId: key.workspaceId,
+      agentId: key.agentId,
+      ...(options.query !== undefined ? { query: options.query } : {}),
+      ...(options.refresh ? { refresh: true } : {}),
+    })
+    if (!answer.ok && answer.code === 'unauthorized')
+      recordReachability(connection, { reachable: false, unauthorized: true, detail: answer.message })
+    return answer
+  }
+
   /**
    * Drop this machine's credential for one peer, and everything hanging off it.
    *
@@ -2488,6 +2651,40 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     async conversationSend(input): Promise<MeshConversationCommandResult> {
       const skills = parseSkillIds(input.skills)
       if (!skills.ok) return { ok: false, code: 'invalid_arguments', message: skills.message }
+      // What the composer named of the chat's folder over there, and the
+      // files it attached here. Refused, never dropped, by a machine that
+      // cannot take them: an older one skips the member, and the message
+      // would go without what its chips showed.
+      const mentions = input.mentions === undefined ? [] : parseConversationWireMentions(input.mentions)
+      if (mentions === null)
+        return {
+          ok: false,
+          code: 'invalid_arguments',
+          message: "Mentions are files and folders of the chat's folder, by their paths in it.",
+        }
+      const files = input.files === undefined ? [] : parseConversationAttachedFiles(input.files)
+      if (files === null)
+        return { ok: false, code: 'invalid_arguments', message: 'Attached files are absolute paths, at most 50.' }
+      if (mentions.length > 0 || files.length > 0) {
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        if (
+          mentions.length > 0 &&
+          !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-send-mentions')
+        )
+          return {
+            ok: false,
+            code: 'mentions_unsupported',
+            message: `${connection.machineName} cannot take mentioned files from here yet. Update SprintEngine Studio there, or remove them.`,
+          }
+        if (input.queue === true)
+          return {
+            ok: false,
+            code: 'invalid_arguments',
+            message: 'A queued message carries no mentions or files; send it once the turn ends instead.',
+          }
+      }
       if (skills.ids.length > 0) {
         const key = meshConversationKeyOf(input.key)
         const connection = key ? connectionFor(key.connectionId) : null
@@ -2520,6 +2717,18 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: `${connection.machineName} cannot take a message into a running turn from here yet. Update SprintEngine Studio there.`,
           }
       }
+      // The files go up first, wherever the pictures do: their ids ride the
+      // same `uploadIds`, and the machine tells the two apart by what it kept.
+      const sendWithFiles = async (imageIds: string[]): Promise<MeshConversationCommandResult> => {
+        if (files.length === 0) return send(imageIds)
+        const key = meshConversationKeyOf(input.key)
+        const connection = key ? connectionFor(key.connectionId) : null
+        if (!key || !connection)
+          return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+        const uploaded = await uploadConversationFiles(connection, key, files)
+        if (!uploaded.ok) return uploaded
+        return send([...imageIds, ...uploaded.uploadIds])
+      }
       const send = (uploadIds: string[]) =>
         conversationCommand({
           key: input.key,
@@ -2528,6 +2737,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             message: input.message,
             ...(uploadIds.length > 0 ? { uploadIds } : {}),
             ...(skills.ids.length > 0 ? { skills: skills.ids } : {}),
+            ...(mentions.length > 0 ? { mentions } : {}),
             ...(steer ? { steer: true } : {}),
           },
         })
@@ -2545,17 +2755,47 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           }
         return conversationCommand({ key: input.key, command: { kind: 'send', message: input.message, queue: true } })
       }
-      if (input.attachments === undefined) return send([])
+      if (input.attachments === undefined) return sendWithFiles([])
       const parsed = parseImageAttachments(input.attachments)
       if (!parsed.ok) return { ok: false, code: 'invalid_arguments', message: parsed.message }
-      if (parsed.attachments.length === 0) return send([])
+      if (parsed.attachments.length === 0) return sendWithFiles([])
       const key = meshConversationKeyOf(input.key)
       if (!key) return { ok: false, code: 'invalid_arguments', message: 'Name the conversation to send to.' }
       const connection = connectionFor(key.connectionId)
       if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
       const uploaded = await uploadConversationImages(connection, key, parsed.attachments)
       if (!uploaded.ok) return uploaded
-      return send(uploaded.uploadIds)
+      return sendWithFiles(uploaded.uploadIds)
+    },
+
+    async conversationSearchFiles(input): Promise<MeshConversationFileSearchResult> {
+      if (typeof input.query !== 'string' || input.query.length > CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS)
+        return { ok: false, code: 'invalid_arguments', message: 'A search is a query of at most 200 characters.' }
+      const query = input.query.trim()
+      if (!query) return { ok: true, entries: [], truncated: false }
+      const read = await readComposer(input.key, 'files', { query })
+      if (!read.ok) return read
+      const answer = parseConversationFileSearchAnswer(read.value)
+      return answer
+        ? { ok: true, ...answer }
+        : {
+            ok: false,
+            code: 'unreadable_result',
+            message: 'That machine answered the search in a shape this build cannot read.',
+          }
+    },
+
+    async conversationCommandList(input): Promise<MeshConversationCommandsResult> {
+      const read = await readComposer(input.key, 'commands', { refresh: input.refresh === true })
+      if (!read.ok) return read
+      const answer = parseConversationCommandsAnswer(read.value)
+      return answer
+        ? { ok: true, ...answer }
+        : {
+            ok: false,
+            code: 'unreadable_result',
+            message: 'That machine answered the command list in a shape this build cannot read.',
+          }
     },
 
     async conversationToolDetail(input): Promise<ConversationToolDetailResult> {

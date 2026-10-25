@@ -27,6 +27,7 @@ import {
   type SlashCommandMenuStatus,
 } from './slashCommandMenu'
 import { useConversationTransport } from './conversationTransport'
+import { useRemoteExtensions } from '../../workspace/agentComposer/SkillsAndMcpsPicker'
 import { type ComposerKeyEvent } from './ComposerField'
 import { isImeKey } from '../../../utils/imeKey'
 
@@ -71,7 +72,12 @@ export function fileMentionCandidates(root: string, files: FileSearchEntry[], qu
 
 export function useFileMentionSearch(workspaceRoot: string | null, query: string | null) {
   const channel = `mention:${useId()}`
-  const files = useConversationTransport().services.files
+  const transport = useConversationTransport()
+  const files = transport.services.files
+  // A chat on a paired machine is searched there, in its own folder: what
+  // comes back is already relative to it, and nothing on this disk is read.
+  const searchThere = transport.searchMentions
+  const searchable = Boolean(searchThere || workspaceRoot)
   const [state, setState] = useState<{ rows: ConversationMentionRef[]; loading: boolean; error: string | null }>({
     rows: [],
     loading: false,
@@ -80,22 +86,48 @@ export function useFileMentionSearch(workspaceRoot: string | null, query: string
   useEffect(() => {
     let cancelled = false
     let started = false
-    setState({ rows: [], loading: Boolean(workspaceRoot && query?.trim()), error: null })
-    if (!workspaceRoot || query === null || !query.trim()) return
+    setState({ rows: [], loading: Boolean(searchable && query?.trim()), error: null })
+    if (!searchable || query === null || !query.trim()) return
     const timer = window.setTimeout(() => {
       started = true
-      void files
-        .search(workspaceRoot, query, {
-          limit: 50,
-          purpose: 'mention',
-          channel,
-          recentAt: workspaceFileVisits(workspaceRoot),
-        })
+      const searched: Promise<{ ok: true; rows: ConversationMentionRef[] } | { ok: false; message: string }> =
+        searchThere
+          ? searchThere({ query }).then((result) =>
+              result.ok
+                ? {
+                    ok: true,
+                    // Ranked, with each match's folders, as a search here is.
+                    rows: fileMentionCandidates(
+                      '',
+                      result.entries.map((entry) => ({
+                        name: entry.path.split('/').pop() ?? entry.path,
+                        path: entry.path,
+                        parentPath: '',
+                        isDir: entry.kind === 'folder',
+                      })),
+                      query,
+                    ),
+                  }
+                : result,
+            )
+          : files
+              .search(workspaceRoot!, query, {
+                limit: 50,
+                purpose: 'mention',
+                channel,
+                recentAt: workspaceFileVisits(workspaceRoot!),
+              })
+              .then((result) =>
+                result.ok
+                  ? { ok: true, rows: fileMentionCandidates(workspaceRoot!, result.results, query) }
+                  : { ok: false, message: result.message },
+              )
+      void searched
         .then((result) => {
           if (cancelled) return
           setState(
             result.ok
-              ? { rows: fileMentionCandidates(workspaceRoot, result.results, query), loading: false, error: null }
+              ? { rows: result.rows, loading: false, error: null }
               : { rows: [], loading: false, error: result.message },
           )
         })
@@ -107,11 +139,47 @@ export function useFileMentionSearch(workspaceRoot: string | null, query: string
     return () => {
       cancelled = true
       window.clearTimeout(timer)
-      if (started) void files.cancelSearch(channel).catch(() => undefined)
+      // A search over there is superseded there by the next one.
+      if (started && !searchThere) void files.cancelSearch(channel).catch(() => undefined)
     }
-  }, [query, workspaceRoot, channel, files])
+  }, [query, workspaceRoot, channel, files, searchThere, searchable])
   return state
 }
+
+/**
+ * The `$` type-ahead for a chat on a paired machine: that machine's skills for
+ * the chat's project, read as its "+" reads them, picked as they are listed.
+ */
+const RemoteInlineSkillPicker = forwardRef<
+  InlineSkillPickerHandle,
+  {
+    remote: { connectionId: string; workspaceId: string }
+    query: string
+    onPick: (skill: WorkspaceSkill) => void
+    onDismiss: () => void
+  }
+>(function RemoteInlineSkillPicker({ remote, query, onPick, onDismiss }, ref) {
+  const listed = useRemoteExtensions(remote, null, true)
+  // Loading from the first frame, as a list read here is: an empty list
+  // before the read has even begun is not "nothing matches".
+  const asked = useRef(false)
+  if (listed.loading) asked.current = true
+  const loading = listed.loading || !asked.current
+  const inventory = useMemo(
+    () => ({ skills: listed.skills, loading, error: listed.error }),
+    [listed.skills, loading, listed.error],
+  )
+  return (
+    <InlineSkillPicker
+      ref={ref}
+      workspaceRoot={null}
+      query={query}
+      inventory={inventory}
+      onPick={onPick}
+      onDismiss={onDismiss}
+    />
+  )
+})
 
 const InlineMentionPicker = forwardRef<
   InlineSkillPickerHandle,
@@ -207,6 +275,7 @@ export function useComposerContextPicker({
   caret,
   skillsEnabled,
   mentionsEnabled = true,
+  remoteSkills = null,
   commandMenu = null,
   onPickSkill,
   onPickMention,
@@ -217,6 +286,8 @@ export function useComposerContextPicker({
   caret: number
   skillsEnabled: boolean
   mentionsEnabled?: boolean
+  /** A chat on a paired machine: its `$` lists that machine's skills for the chat's project there. */
+  remoteSkills?: { connectionId: string; workspaceId: string } | null
   /** Null where the chat has no command list: `/` then stays literal text. */
   commandMenu?: ComposerCommandMenuInput | null
   onPickSkill: (skill: WorkspaceSkill, range: TriggerRange) => void
@@ -306,6 +377,14 @@ export function useComposerContextPicker({
         workspaceRoot={workspaceRoot}
         query={trigger.query}
         onPick={(mention) => onPickMention(mention, trigger.range)}
+        onDismiss={dismiss}
+      />
+    ) : trigger?.kind === 'skill' && remoteSkills ? (
+      <RemoteInlineSkillPicker
+        ref={pickerRef}
+        remote={remoteSkills}
+        query={trigger.query}
+        onPick={(skill) => onPickSkill(skill, trigger.range)}
         onDismiss={dismiss}
       />
     ) : trigger?.kind === 'skill' ? (

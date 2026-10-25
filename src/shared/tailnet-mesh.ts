@@ -1,4 +1,6 @@
 import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
+import type { ConversationFileSearchEntry } from '../../packages/conversation-protocol/src/composerReads'
+import type { ConversationCommand } from './conversation/commands'
 import type {
   ConversationHighlightColor,
   ConversationQueuedMessage,
@@ -481,6 +483,22 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * that chat's provider can (its listed `capabilities.stopSubagent`). False for
  * a machine that does not, where an agent's lane offers no Stop.
  *
+ * `mentions`: the machine advertises `conversation-file-search` and
+ * `conversation-send-mentions` — the composer's @ searches one of its chats'
+ * folder there (`meshConversationSearchFiles`), and a message names what it
+ * picked by its path in that folder. False for a machine that does not, where
+ * the composer offers no @.
+ *
+ * `commands`: the machine advertises `conversation-commands` — the composer's
+ * `/` menu lists the commands a chat's CLI runs over there
+ * (`meshConversationCommands`). False for a machine that does not, where the
+ * menu holds this app's own commands.
+ *
+ * `messageFiles`: the machine advertises `conversation-message-files` and
+ * `upload` — a file of any type attached here goes up to it with the message,
+ * and the agent reads it there by its path. False for a machine that does not,
+ * where a file is typed as its path.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -502,6 +520,9 @@ export type MeshConversationListResult =
       sendSkills?: boolean
       steerSends?: boolean
       stopSubagents?: boolean
+      mentions?: boolean
+      commands?: boolean
+      messageFiles?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -524,6 +545,23 @@ export type MeshConversationCommand =
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+
+/**
+ * The files and folders in a paired machine's chat folder that match a
+ * mention's query, by their paths relative to that folder
+ * (`conversation-file-search`).
+ */
+export type MeshConversationFileSearchResult =
+  | { ok: true; entries: ConversationFileSearchEntry[]; truncated: boolean }
+  | { ok: false; code: string; message: string }
+
+/**
+ * The slash commands a paired machine's chat CLI runs in the chat's folder
+ * there (`conversation-commands`), as that machine's own `/` menu lists them.
+ */
+export type MeshConversationCommandsResult =
+  | { ok: true; cli: string; commands: ConversationCommand[]; fetchedAt: number; error?: string }
+  | { ok: false; code: string; message: string }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }
@@ -591,3 +629,6 @@ export const MESH_CONVERSATION_SEND_CHANNEL = 'mesh:conversation-send'
 export const MESH_CONVERSATION_TOOL_DETAIL_CHANNEL = 'mesh:conversation-tool-detail'
 export const MESH_CONVERSATION_TURN_DIFF_CHANNEL = 'mesh:conversation-turn-diff'
 export const MESH_CONVERSATION_TOOL_IMAGE_CHANNEL = 'mesh:conversation-tool-image'
+/** A paired machine's chat folder searched for a mention, and its CLI's `/` list. */
+export const MESH_CONVERSATION_FILE_SEARCH_CHANNEL = 'mesh:conversation-file-search'
+export const MESH_CONVERSATION_COMMANDS_CHANNEL = 'mesh:conversation-commands'

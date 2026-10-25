@@ -15,6 +15,14 @@ import {
   type AgentPermissionResolver,
 } from '../../main/automation/launch-permission-cap'
 import { createConversationGatewayHost } from '../../main/automation/tailnet/tailnet-conversation-host'
+import {
+  CONVERSATION_COMMANDS_CACHE_FILE,
+  createConversationCommandsDiskCache,
+} from '../../main/conversation-commands/disk-cache'
+import {
+  createConversationCommandsService,
+  type ConversationCommandsService,
+} from '../../main/conversation-commands/service'
 import { resolveCheckoutForCwd } from '../../main/checkout-resolve'
 import {
   conversationBranchesOf,
@@ -163,6 +171,13 @@ export type StudioCoreOptions = {
 export { StudioDataDirBusyError, StudioDataDirUnusableError } from './take-data-dir'
 
 export type StudioCore = ReturnType<typeof createStudioCore>
+
+/**
+ * The searcher a paired device's mention searches run under: no window's
+ * sender id is below zero, so its searches never supersede a window's, and
+ * each device's own channel keeps its searches from superseding another's.
+ */
+const TAILNET_FILE_SEARCH_SENDER = -1
 
 export function createStudioCore(platform: StudioPlatform, options: StudioCoreOptions) {
   // Installed first, so a free function deep in the graph (the credential
@@ -640,6 +655,16 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
   // that chat's events: every chat's, a distribution's or an SSH machine's
   // included. For the core's life, as the chats are.
   conversations.onEvent((event) => conversationLifecycle.onConversationEvent(event))
+  // The composer's `/` lists, one set for the process, made on first ask: a
+  // window's `conversation-commands:list` (server-ipc.ts) and a paired
+  // desktop's read of a chat here (`conversation-commands`) share its probes,
+  // their limits and its disk cache.
+  let commandLists: ConversationCommandsService | null = null
+  const conversationCommands = (): ConversationCommandsService =>
+    (commandLists ??= createConversationCommandsService({
+      cliRuntimes: () => agentLaunchSettings.get().cliRuntimes,
+      cache: createConversationCommandsDiskCache({ file: join(dataDir, CONVERSATION_COMMANDS_CACHE_FILE) }),
+    }))
   // `origin` is for Studio's own sends (a resume after a usage limit): they
   // are not the person writing, so each is recorded as Studio's and the chat
   // keeps its place in the lists ordered by when the person last did.
@@ -700,6 +725,37 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         // here, among the scheduled messages below, and sent from here when the
         // turn ends: the machine that typed it may sleep or close meanwhile.
         heldMessages: studioHeldMessages(() => scheduledMessages),
+        // A paired desktop's composer: the files a mention names, searched as
+        // the @ picker here searches, and the chat CLI's `/` list. Only a
+        // folder on this computer is searched: an SSH machine's path names
+        // nothing on this disk, and its command list is the one its sessions
+        // published, never a probe started here.
+        searchFiles: async (input) => {
+          if (workspaceRegistry.getRecord(input.workspaceId)?.environment)
+            return {
+              ok: false,
+              message: 'This chat runs on an SSH machine, whose files are not searched from here.',
+              engine: null,
+            }
+          // Loaded on the first search: the searcher's ignore-file reader is
+          // a dependency a server bundle resolves only beside node_modules,
+          // and starting must not need it.
+          const { searchFiles } = await import('../../main/filesystem-search')
+          return searchFiles(TAILNET_FILE_SEARCH_SENDER, {
+            rootPath: input.rootPath,
+            query: input.query,
+            limit: input.limit,
+            purpose: 'mention',
+            channel: input.channel,
+          })
+        },
+        commandsOf: (input) =>
+          conversationCommands().list({
+            cli: input.cli,
+            cwd: input.cwd,
+            ...(input.refresh ? { refresh: true } : {}),
+            ...(workspaceRegistry.getRecord(input.workspaceId)?.environment ? { probe: false as const } : {}),
+          }),
       },
     )
 
@@ -838,6 +894,8 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       stopScheduledMessages,
       stopAutoCompact,
       () => chatTitler.dispose(),
+      // What the command lists learned is written before the process goes.
+      () => commandLists?.dispose(),
       () => conversationOwner.shutdown(),
       () => {
         for (const stop of stopFollowingWatchedChats.splice(0)) stop()
@@ -890,6 +948,8 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     scheduledMessages,
     /** The model-written chat titles setting, as the windows push it. */
     textGenerationSettings,
+    /** The composer's `/` lists, which a window's IPC and a paired desktop's reads share. */
+    conversationCommands,
     stopUsageLimitResumes,
     stopScheduledMessages,
     stopAutoCompact,

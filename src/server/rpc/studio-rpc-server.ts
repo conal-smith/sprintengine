@@ -53,7 +53,12 @@ import type {
  * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
  * `conversation-queued-sends`, whose `queued` frames its conversation topic
- * does not carry.
+ * does not carry. Nor the composer's two reads of a chat's folder
+ * (`conversation-file-search`, `conversation-commands`), routes beside the
+ * tailnet's socket that this one has no method for; a window on it reads its
+ * own files and command lists. A send's `mentions` it does take
+ * (`conversation-send-mentions`): its `conversation.send` reads the lane's own
+ * validator and reaches the same host.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -63,7 +68,9 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-image-downscale' &&
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
-    capability !== 'conversation-queued-sends',
+    capability !== 'conversation-queued-sends' &&
+    capability !== 'conversation-file-search' &&
+    capability !== 'conversation-commands',
 )
 
 export type StudioRpcServerOptions = {

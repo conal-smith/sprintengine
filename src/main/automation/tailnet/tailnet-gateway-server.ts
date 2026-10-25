@@ -42,11 +42,14 @@ import {
   TAILNET_STREAM_PATH,
   TAILNET_CONVERSATION_PATH,
   TAILNET_CONVERSATION_IMAGE_PATH,
+  TAILNET_CONVERSATION_FILES_PATH,
+  TAILNET_CONVERSATION_COMMANDS_PATH,
   TAILNET_TRANSPORT_VERSION,
   TAILNET_UPLOAD_PATH,
   TAILNET_WS_TICKET_PATH,
 } from './tailnet-routes'
 import { openConversationImage } from './tailnet-conversation-images'
+import { CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS } from '../../../../packages/conversation-protocol/src/public'
 import {
   ATTACHABLE_IMAGE_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -759,6 +762,86 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
   }
 
+  /**
+   * What a paired desktop's composer reads of one chat: the files and folders
+   * a mention may name (`conversation-files`, by `query`) or the slash
+   * commands its CLI runs (`conversation-commands`), in the chat's folder.
+   *
+   * A read, under `conversation:read` as following the chat is; a `refresh`
+   * of the commands starts the CLI to ask it again, and is for a device that
+   * may operate the chat. The device names the chat, never a folder: the
+   * folder is the one the chat works in, and nothing outside it is answered.
+   */
+  async function handleConversationComposerRead(
+    response: ServerResponse,
+    device: TailnetDevice,
+    url: URL,
+    read: 'files' | 'commands',
+  ): Promise<void> {
+    const scopes = new Set(device.scopes)
+    if (!tailnetScopeGrantsAccess(scopes, 'conversation:read')) {
+      writeJson(response, 403, {
+        error: { code: 'tailnet_scope_required', message: 'This device may not read conversations on this machine.' },
+      })
+      return
+    }
+    const conversations = options.conversations
+    const answer = read === 'files' ? conversations?.searchFiles : conversations?.listCommands
+    if (!conversations || !answer) {
+      writeJson(response, 501, {
+        error: { code: 'unavailable', message: 'This build cannot answer that for a chat.' },
+      })
+      return
+    }
+    const workspaceId = url.searchParams.get('workspaceId')?.trim() ?? ''
+    const agentId = url.searchParams.get('agentId')?.trim() ?? ''
+    const query = url.searchParams.get('query')?.trim() ?? ''
+    if (!workspaceId || !agentId || (read === 'files' && query.length > CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS)) {
+      writeJson(response, 400, {
+        error: {
+          code: 'invalid_arguments',
+          message:
+            read === 'files'
+              ? `A search is named by workspaceId and agentId, with a query of at most ${CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS} characters.`
+              : 'A command list is named by workspaceId and agentId.',
+        },
+      })
+      return
+    }
+    const refresh = read === 'commands' && url.searchParams.get('refresh') === '1'
+    if (refresh && !tailnetScopeGrantsAccess(scopes, 'conversation:operate')) {
+      writeJson(response, 403, {
+        error: {
+          code: 'tailnet_scope_required',
+          message: 'This device may read the command list but not have the CLI asked again.',
+        },
+      })
+      return
+    }
+    const key = conversations.resolveKey(workspaceId, agentId)
+    if (!key) {
+      writeJson(response, 404, {
+        error: { code: 'unknown_conversation', message: 'No eligible conversation on this machine has that id.' },
+      })
+      return
+    }
+    const limit = Number(url.searchParams.get('limit') ?? '')
+    const result =
+      read === 'files'
+        ? // An empty query matches nothing, as the composer's own picker asks none.
+          query
+          ? await conversations.searchFiles!(key, device.id, query, Number.isSafeInteger(limit) ? limit : undefined)
+          : { ok: true as const, answer: { entries: [], truncated: false } }
+        : await conversations.listCommands!(key, refresh)
+    if (!result.ok) {
+      writeJson(response, result.code === 'unknown_conversation' ? 404 : 503, {
+        error: { code: result.code, message: result.message },
+      })
+      return
+    }
+    writeJson(response, 200, result.answer)
+  }
+
   /** A picture sent with one of a chat's messages, read whole from the attachment store (at most 5 MB). */
   async function serveSentImage(
     response: ServerResponse,
@@ -863,8 +946,9 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       writeUnauthorized(response)
       return
     }
-    // Every route below — identity, upload, conversation-image, ws-ticket and
-    // the MCP endpoint — is behind this one check, so none can skip it.
+    // Every route below — identity, upload, conversation-image, the composer's
+    // reads, ws-ticket and the MCP endpoint — is behind this one check, so
+    // none can skip it.
     const admitted = await admitPeer(device, request.socket.remoteAddress, path)
     if (!admitted.ok) {
       writePeerRefused(response, admitted)
@@ -905,6 +989,16 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
 
     if (method === 'GET' && path === TAILNET_CONVERSATION_IMAGE_PATH) {
       await handleConversationImage(response, device, parseUrl(request.url))
+      return
+    }
+
+    if (method === 'GET' && (path === TAILNET_CONVERSATION_FILES_PATH || path === TAILNET_CONVERSATION_COMMANDS_PATH)) {
+      await handleConversationComposerRead(
+        response,
+        device,
+        parseUrl(request.url),
+        path === TAILNET_CONVERSATION_FILES_PATH ? 'files' : 'commands',
+      )
       return
     }
 
