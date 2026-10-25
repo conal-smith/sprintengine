@@ -130,6 +130,7 @@ import { STUDIO_MCP_SERVER_ID, STUDIO_MCP_SERVER_NAME } from '../shared/product-
 import { excludeMcpConfigFromWorktree, restoreGitWorktree } from './git'
 import { activeWorktreePool } from './worktree-pool/active-pool'
 import { createChatFolderGuard, type GuardedChat } from './worktree-pool/chat-folder-guard'
+import { createMainCheckoutCatchUp } from './main-checkout-catch-up'
 import { createWorktreeServices } from './worktree-services'
 import { createArtifactsServices } from './artifacts-services'
 import { createConversationPeekService } from './conversation-peek/service'
@@ -764,6 +765,16 @@ export function createAppServices(
   // even when the core, which also moves every registered project at start,
   // runs in a server process of its own (main/workspace-store.ts).
   installWorkspaceStoreMigration({ log: (message) => console.info(`[workspace-store] ${message}`) })
+  const chatFolderGuard = createChatFolderGuard({
+    pool: activeWorktreePool,
+    chat: (workspaceId) => workspaceRegistryOf().getRecord(workspaceId),
+    restore: restoreGitWorktree,
+  })
+  const catchUpMainCheckout = createMainCheckoutCatchUp({
+    chat: (workspaceId) => workspaceRegistryOf().getRecord(workspaceId),
+    // Read when a chat starts, long after `liveConversationPaths` below is set.
+    liveSessionPaths: () => liveConversationPaths(),
+  })
   const core = server
     ? createRemoteCore(server)
     : createStudioCore(platform, {
@@ -771,11 +782,14 @@ export function createAppServices(
         // A worktree chat whose pool slot was given back while it sat idle
         // gets its branch checked out again, at the same path, before any
         // agent runs in it, whoever sent the turn (worktree-pool/pool-idle.ts).
-        prepareChatFolder: createChatFolderGuard({
-          pool: activeWorktreePool,
-          chat: (workspaceId) => workspaceRegistryOf().getRecord(workspaceId),
-          restore: restoreGitWorktree,
-        }),
+        prepareChatFolder: async (input) => {
+          const folder = await chatFolderGuard(input)
+          // A new chat in a project's own checkout starts on the default
+          // branch as origin has it, when that touches no one's work; never
+          // refused for it (main-checkout-catch-up.ts).
+          if (folder.ok && input.fresh) await catchUpMainCheckout(input)
+          return folder
+        },
         // A chat's agent is handed the gateway itself, on the machine its CLI
         // runs on: a Claude chat's child loads no project settings, so the
         // gateway pinned into a workspace's `.mcp.json` never reached it, and a
