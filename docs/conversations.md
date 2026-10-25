@@ -794,6 +794,16 @@ in the app's own process.
   offers "Stop this agent", as a local chat's do, and it stops that agent
   alone over there. The machine's turn Stop spares a Claude chat's agents, so
   this is how one is stopped from here.
+- **A scheduled message is the other machine's to send** (2026-10-25). Where
+  the machine advertises `conversation-scheduled-sends`, the "+"'s Schedule is
+  offered as on a local chat, and the message goes to that machine at once
+  (`scheduleSend`): it keeps it among its own scheduled messages, shows it in
+  the chat's own tray there, and sends it at its time whether or not this
+  machine is awake. The tray here draws what that machine says it keeps
+  (`watchScheduled`, `scheduled` frames), and its Send now, Retry, Delete and
+  Edit ask that machine; Edit deletes it there and puts it back in this
+  composer, still set for its time. A machine without the capability, and a
+  pairing that may only follow, offer no Schedule.
 
 ### Terminals stay on the machine
 

@@ -316,6 +316,10 @@ test('every method the server serves has its call in the SDK, under the same sco
     'conversation.cancelQueued': 'request',
     // So is stopping one agent of a chat, an owner's for now: no SDK call names it yet.
     'conversation.stopSubagent': 'request',
+    // And scheduling a message for a time, sending one early or deleting it.
+    'conversation.scheduleSend': 'request',
+    'conversation.sendScheduledNow': 'request',
+    'conversation.cancelScheduled': 'request',
     'conversation.loadEarlier': 'conversations.loadEarlier',
     'conversation.toolDetail': 'conversations.toolDetail',
     'conversation.turnDiff': 'conversations.turnDiff',

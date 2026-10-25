@@ -70,6 +70,16 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   a chat whose provider cannot stop one by itself (the listed chat's
  *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
  *   desktop without it refuses the kind as `unsupported_command`.
+ * - `scheduleSend` has the desktop keep a message and send it into the chat
+ *   at `sendAt` (epoch ms, the desktop's clock), as its own composer's
+ *   Schedule does, whether or not the client is still awake then; answered
+ *   once it is kept. Its words alone, as a held message is. One that comes
+ *   due while a turn runs waits for the turn to end. `sendScheduledNow` sends
+ *   one at once (a refused one again: Retry), and `cancelScheduled` deletes
+ *   one, which is how a client takes one back to edit it. Both name the
+ *   message by the `id` its `scheduled` frame gave, and are refused for one
+ *   that is no longer scheduled. Needs `conversation-scheduled-sends`; a
+ *   desktop without it refuses each kind as `unsupported_command`.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -97,6 +107,9 @@ export type ConversationCommand =
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'scheduleSend'; message: string; sendAt: number }
+  | { kind: 'sendScheduledNow'; scheduledId: string }
+  | { kind: 'cancelScheduled'; scheduledId: string }
 
 export type ConversationCommandKind = ConversationCommand['kind']
 
@@ -137,6 +150,9 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'setModel',
   'cancelQueued',
   'stopSubagent',
+  'scheduleSend',
+  'sendScheduledNow',
+  'cancelScheduled',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────
@@ -179,6 +195,54 @@ export type ConversationQueuedFrame = {
   type: 'queued'
   key: ConversationWireKey
   messages: ConversationQueuedMessage[]
+}
+
+// ── Messages scheduled for a time ───────────────────────────────────────────
+//
+// A message a person scheduled into a chat for a time they picked
+// (`conversation-scheduled-sends`), kept and sent by the desktop the chat runs
+// on, as a message scheduled from its own composer is. A client asks with
+// `watchScheduled` once it follows the chat, and is sent a `scheduled` frame
+// then and whenever the chat's scheduled messages change. A message the
+// desktop holds for the turn's end (`queued`) is in neither: its `queued`
+// frame names it.
+
+/** One message the desktop keeps for a chat until its time. */
+export type ConversationScheduledMessage = {
+  id: string
+  text: string
+  /** When it goes out (epoch ms, the desktop's clock). */
+  sendAt: number
+  /** When it was scheduled (epoch ms). */
+  createdAt: number
+  /** It came due while the chat was working, and goes when the turn ends (epoch ms it came due). */
+  waitingSince?: number
+  /** It is on its way into the chat now. */
+  sending?: true
+  /**
+   * It went out and the chat refused it, in the chat's words. It stays,
+   * saying so, until it is sent again or deleted.
+   */
+  failure?: string
+}
+
+/** The most scheduled messages a `scheduled` frame names for one chat. */
+export const CONVERSATION_MAX_SCHEDULED_MESSAGES = 50
+
+/**
+ * Ask the desktop to say what it has scheduled into the chat this socket
+ * follows: answered by a `result` under `requestId`, then a `scheduled` frame
+ * now and on every change, until the socket follows another chat or closes.
+ * Sent again after each subscription's fence. A desktop without
+ * `conversation-scheduled-sends` answers it `ok: false` with `invalid_frame`.
+ */
+export type ConversationWatchScheduledRequest = { type: 'watchScheduled'; requestId: string }
+
+/** What the desktop has scheduled into `key`, soonest first, whole each time: empty once nothing is. */
+export type ConversationScheduledFrame = {
+  type: 'scheduled'
+  key: ConversationWireKey
+  messages: ConversationScheduledMessage[]
 }
 
 /**

@@ -5,7 +5,7 @@ import { conversationWorkingRoot, type AgentState } from '../../../../../shared/
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
 import type { ChangedFileCounts } from '../../../../../shared/electron-api'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
-import type { MeshQueuedMessage } from '../../../../../shared/tailnet-mesh'
+import type { MeshQueuedMessage, MeshScheduledMessage } from '../../../../../shared/tailnet-mesh'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import type { Workspace } from '../../../types/workspace'
 import {
@@ -85,6 +85,12 @@ export type ChatBinding = {
    * hands its queue over (`capabilities.hostQueue`).
    */
   hostQueue?: { machineName: string; messages: MeshQueuedMessage[] }
+  /**
+   * The messages the machine running the chat keeps for it until a time, as
+   * that machine last said, for a chat on another machine that schedules them
+   * there (`capabilities.hostSchedule`).
+   */
+  hostSchedule?: { machineName: string; messages: MeshScheduledMessage[] }
   /**
    * Where a chat on another machine works, as that machine lists it: the
    * branch its folder is on, whether that is a worktree, the files its

@@ -13,6 +13,20 @@
 
 ### Added
 
+- **A message can be scheduled into a chat for a time.**
+  `CONVERSATION_SCHEDULED_SENDS_CAPABILITY` (`conversation-scheduled-sends`)
+  names a desktop that takes `scheduleSend` (`message`, `sendAt`), keeps the
+  message and sends it then, and takes `sendScheduledNow` and
+  `cancelScheduled` (`scheduledId`) to send one at once or delete it.
+  `ConversationWatchScheduledRequest` (`watchScheduled`) has it send
+  `ConversationScheduledFrame`s (`scheduled`: the chat's `key` and its
+  `ConversationScheduledMessage`s, at most
+  `CONVERSATION_MAX_SCHEDULED_MESSAGES`) now and on every change.
+  `parseConversationClientMessage` keeps each and refuses a malformed one as
+  `invalid_frame`; `parseConversationServerFrame` reads the frame, skipping a
+  message it cannot read. A desktop without the capability refuses the kinds
+  as `unsupported_command`. The pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the

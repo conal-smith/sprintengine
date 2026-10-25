@@ -17,6 +17,7 @@ import {
   type ConversationFrameRejection,
   type ConversationHelloAnswer,
   type ConversationQueuedFrame,
+  type ConversationScheduledFrame,
   type ConversationServerFrame,
   type ConversationWireErrorCode,
 } from '../../../../packages/conversation-protocol/src/public'
@@ -79,6 +80,9 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   setModel: true,
   cancelQueued: true,
   stopSubagent: true,
+  scheduleSend: true,
+  sendScheduledNow: true,
+  cancelScheduled: true,
 }
 
 /**
@@ -148,7 +152,7 @@ export function createResyncBackoff(now: () => number = Date.now): (deviceId: st
 }
 
 /** A frame this socket sends: the first version's, and what the full contract added since. */
-type OutgoingFrame = ConversationServerFrame | ConversationQueuedFrame
+type OutgoingFrame = ConversationServerFrame | ConversationQueuedFrame | ConversationScheduledFrame
 
 type LiveEntry = {
   kind: 'live'
@@ -193,9 +197,20 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   // What this desktop holds for the chat followed, told to a client that
   // asked (`watchQueued`); it ends when the socket follows another chat.
   let queuedWatch: { chat: string; stop(): void } | null = null
+  // What it has scheduled into that chat for a time (`watchScheduled`),
+  // which ends the same way.
+  let scheduledWatch: { chat: string; stop(): void } | null = null
   const stopQueuedWatch = (): void => {
     queuedWatch?.stop()
     queuedWatch = null
+  }
+  const stopScheduledWatch = (): void => {
+    scheduledWatch?.stop()
+    scheduledWatch = null
+  }
+  const stopWatches = (): void => {
+    stopQueuedWatch()
+    stopScheduledWatch()
   }
   let frameSequence = 0
   let subscriptionGeneration = 0
@@ -212,7 +227,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     for (const waiter of bulkWaiters.splice(0)) waiter.resolve()
     subscription?.dispose()
     subscription = null
-    stopQueuedWatch()
+    stopWatches()
     clearInterval(heartbeat)
     if (!socket.destroyed) {
       try {
@@ -549,7 +564,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     subscription?.dispose()
     subscription = null
     currentKey = null
-    stopQueuedWatch()
+    stopWatches()
     dropQueued()
   }
   const subscribe = async (frame: Extract<ConversationClientMessage, { type: 'subscribe' }>): Promise<void> => {
@@ -566,6 +581,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     // A watch on another chat's held messages ends with the move; one on this
     // chat (a client joining it again) carries on.
     if (queuedWatch && queuedWatch.chat !== chatId(key)) stopQueuedWatch()
+    if (scheduledWatch && scheduledWatch.chat !== chatId(key)) stopScheduledWatch()
     currentKey = key
     // Every snapshot and fence names the conversation it belongs to, so a
     // client can refuse one for a conversation it no longer follows.
@@ -655,6 +671,22 @@ export function createTailnetConversationStream(options: TailnetConversationStre
       const wireKey = { workspaceId: key.workspaceId, agentId: key.agentId }
       const stop = host.watchQueued(wireKey, (messages) => sendLive({ type: 'queued', key: wireKey, messages }))
       queuedWatch = { chat: chatId(key), stop }
+      return
+    }
+    if (frame.type === 'watchScheduled') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      if (!host.watchScheduled) {
+        await result(frame.requestId, { ok: false, message: 'This desktop schedules no messages from another device.' })
+        return
+      }
+      await result(frame.requestId, { ok: true })
+      // Begun afresh after each fence, as the held messages' watch is.
+      stopScheduledWatch()
+      if (closed || !currentKey || chatId(currentKey) !== chatId(key)) return
+      const wireKey = { workspaceId: key.workspaceId, agentId: key.agentId }
+      const stop = host.watchScheduled(wireKey, (messages) => sendLive({ type: 'scheduled', key: wireKey, messages }))
+      scheduledWatch = { chat: chatId(key), stop }
       return
     }
     if (frame.type === 'command') {

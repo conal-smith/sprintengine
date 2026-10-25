@@ -77,6 +77,15 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as
  */
 export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent' as const
 /**
+ * A message may be scheduled into a chat for a time, as the desktop's own
+ * composer schedules one: `scheduleSend` has the desktop keep it and send it
+ * then, `sendScheduledNow` and `cancelScheduled` send one at once or delete
+ * it, and `watchScheduled` has the desktop say what it has scheduled for the
+ * chat followed, in `scheduled` frames. The desktop sends it, so the device
+ * that scheduled it may sleep or close meanwhile.
+ */
+export const CONVERSATION_SCHEDULED_SENDS_CAPABILITY = 'conversation-scheduled-sends' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -121,6 +130,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_MESSAGE_FILES_CAPABILITY,
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
+  CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

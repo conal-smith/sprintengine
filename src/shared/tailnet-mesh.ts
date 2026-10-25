@@ -2,6 +2,7 @@ import type { ConversationWireCommand } from '../../packages/conversation-protoc
 import type {
   ConversationHighlightColor,
   ConversationQueuedMessage,
+  ConversationScheduledMessage,
   ConversationThread,
 } from '../../packages/conversation-protocol/src/public'
 import type { ConversationSessionFrame } from './conversation-runtime'
@@ -445,7 +446,18 @@ export type MeshConversationQueued = { type: 'queued'; messages: MeshQueuedMessa
 /** A message a paired machine holds for its chat's turn to end, by that machine's id for it. */
 export type MeshQueuedMessage = ConversationQueuedMessage
 
-export type MeshConversationFrame = ConversationSessionFrame | MeshConversationLink | MeshConversationQueued
+/**
+ * The messages the machine has scheduled into this conversation for a time,
+ * soonest first, whole each time (`conversation-scheduled-sends`). The last
+ * list heard stands while the link is down: that machine still sends them.
+ */
+export type MeshConversationScheduled = { type: 'scheduled'; messages: MeshScheduledMessage[] }
+
+/** A message a paired machine has scheduled into its chat, by that machine's id for it. */
+export type MeshScheduledMessage = ConversationScheduledMessage
+
+export type MeshConversationFrame =
+  ConversationSessionFrame | MeshConversationLink | MeshConversationQueued | MeshConversationScheduled
 
 /**
  * `modelSwitch`: the machine advertises `conversation-models` — its list names
@@ -481,6 +493,12 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * that chat's provider can (its listed `capabilities.stopSubagent`). False for
  * a machine that does not, where an agent's lane offers no Stop.
  *
+ * `scheduledSends`: the machine advertises `conversation-scheduled-sends` — a
+ * message may be scheduled into one of its chats for a time, kept and sent
+ * over there, and its chats' scheduled messages are drawn, sent early and
+ * deleted from here. False for a machine that does not, whose chats offer no
+ * Schedule here.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -502,6 +520,7 @@ export type MeshConversationListResult =
       sendSkills?: boolean
       steerSends?: boolean
       stopSubagents?: boolean
+      scheduledSends?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -517,13 +536,18 @@ export type MeshConversationImageResult = { ok: true; dataUrl: string } | { ok: 
 
 /**
  * The commands a remote device may send. A permanent rule is not among them.
- * A queued send and taking one back need `conversation-queued-sends` there.
+ * A queued send and taking one back need `conversation-queued-sends` there;
+ * scheduling one, and sending or deleting one scheduled, need
+ * `conversation-scheduled-sends`.
  */
 export type MeshConversationCommand =
   | ConversationWireCommand
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'scheduleSend'; message: string; sendAt: number }
+  | { kind: 'sendScheduledNow'; scheduledId: string }
+  | { kind: 'cancelScheduled'; scheduledId: string }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }

@@ -168,6 +168,20 @@ type StudioConversationMethodMap = {
    * owner's only for now: no SDK call names it yet.
    */
   'conversation.stopSubagent': { params: Addressed<{ toolUseId: string }>; result: StudioCommandAnswer }
+  /**
+   * Has the desktop keep a message and send it into the chat at `sendAt`
+   * (the conversation lane's `scheduleSend`), answered once it is kept; and
+   * sends one it keeps now, or deletes it, by its `id`
+   * (`sendScheduledNow`, `cancelScheduled`). Owners' only, as
+   * `conversation.cancelQueued` is: this socket's conversation topic names no
+   * scheduled message, so nothing else could address one.
+   */
+  'conversation.scheduleSend': {
+    params: Addressed<{ message: string; sendAt: number }>
+    result: StudioCommandAnswer
+  }
+  'conversation.sendScheduledNow': { params: Addressed<{ scheduledId: string }>; result: StudioCommandAnswer }
+  'conversation.cancelScheduled': { params: Addressed<{ scheduledId: string }>; result: StudioCommandAnswer }
   /** Ends the chat's live session. Idempotent by nature: stopping a stopped chat answers ok. */
   'conversation.stop': { params: Addressed<object>; result: StudioCommandAnswer }
   'conversation.loadEarlier': {
@@ -217,6 +231,9 @@ export const STUDIO_METHODS: { readonly [M in StudioMethod]: StudioMethodSpec } 
   'conversation.setModel': operate,
   'conversation.cancelQueued': { ...operate, owner: true },
   'conversation.stopSubagent': { ...operate, owner: true },
+  'conversation.scheduleSend': { ...operate, owner: true },
+  'conversation.sendScheduledNow': { ...operate, owner: true },
+  'conversation.cancelScheduled': { ...operate, owner: true },
   'conversation.stop': operate,
   'conversation.loadEarlier': read(),
   'conversation.toolDetail': read(),
@@ -280,6 +297,9 @@ export const STUDIO_COMMAND_METHODS = {
   'conversation.setModel': 'setModel',
   'conversation.cancelQueued': 'cancelQueued',
   'conversation.stopSubagent': 'stopSubagent',
+  'conversation.scheduleSend': 'scheduleSend',
+  'conversation.sendScheduledNow': 'sendScheduledNow',
+  'conversation.cancelScheduled': 'cancelScheduled',
 } as const satisfies Partial<Record<StudioMethod, ConversationCommand['kind']>>
 
 export type StudioCommandMethod = keyof typeof STUDIO_COMMAND_METHODS

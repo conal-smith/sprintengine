@@ -214,6 +214,12 @@ export const meshApi = {
   meshConversationInterrupt: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'interrupt' }),
   meshConversationStopSubagent: (input: { key: MeshConversationKey; toolUseId: string }) =>
     command(input.key, { kind: 'stopSubagent', toolUseId: input.toolUseId }),
+  meshConversationScheduleSend: (input: { key: MeshConversationKey; message: string; sendAt: number }) =>
+    command(input.key, { kind: 'scheduleSend', message: input.message, sendAt: input.sendAt }),
+  meshConversationSendScheduledNow: (input: { key: MeshConversationKey; scheduledId: string }) =>
+    command(input.key, { kind: 'sendScheduledNow', scheduledId: input.scheduledId }),
+  meshConversationCancelScheduled: (input: { key: MeshConversationKey; scheduledId: string }) =>
+    command(input.key, { kind: 'cancelScheduled', scheduledId: input.scheduledId }),
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -295,6 +301,9 @@ export const meshApi = {
   | 'meshConversationCancelQueued'
   | 'meshConversationInterrupt'
   | 'meshConversationStopSubagent'
+  | 'meshConversationScheduleSend'
+  | 'meshConversationSendScheduledNow'
+  | 'meshConversationCancelScheduled'
   | 'meshConversationResolveApproval'
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'

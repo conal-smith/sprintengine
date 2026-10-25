@@ -444,6 +444,26 @@ sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first). The Studio RPC advertises it too: its
 `conversation.stopSubagent` method, an owner's for now, reads the lane's own
 validator and reaches the same host.
+A message scheduled for a time is the `conversation-scheduled-sends`
+capability (2026-10-25): `scheduleSend` (`message`, `sendAt` in epoch ms on the
+desktop's clock) has the desktop keep it among its own scheduled messages and
+send it then, as one scheduled in its own composer, answered once it is kept;
+`sendScheduledNow` and `cancelScheduled` (`scheduledId`) send one at once (a
+refused one again) or delete it; and `{ type: 'watchScheduled', requestId }`
+has the desktop send a `scheduled` frame (`ConversationScheduledFrame`: the
+chat's `key` and its scheduled `messages`, soonest first, whole each time) now
+and whenever they change. A message held for a turn's end is in its `queued`
+frame, never in this one. The same `scheduleSend` offered again under its id
+is kept once, across a restart too (its command joins the `sources` the held
+messages keep), and a repeated Send now or Delete is answered as the first
+was. All of it is additive: a desktop without the capability refuses the
+three kinds as `unsupported_command` and `watchScheduled` as `invalid_frame`,
+and a client sends them only where it is advertised (a desktop following
+another machine's chat refuses them there in words first). The Studio RPC
+carries the three as owners' methods (`conversation.scheduleSend`,
+`conversation.sendScheduledNow`, `conversation.cancelScheduled`), as it carries
+`conversation.cancelQueued`, but does not advertise the capability: its
+conversation topic carries no `scheduled` frames.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

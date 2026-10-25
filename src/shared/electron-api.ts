@@ -1092,6 +1092,22 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationCommandResult>
+  // Schedule a message into a chat over there for a time, kept and sent by
+  // that machine; send one it keeps now, or delete one. Needs
+  // `conversation-scheduled-sends` there.
+  meshConversationScheduleSend: (input: {
+    key: MeshConversationKey
+    message: string
+    sendAt: number
+  }) => Promise<MeshConversationCommandResult>
+  meshConversationSendScheduledNow: (input: {
+    key: MeshConversationKey
+    scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
+  meshConversationCancelScheduled: (input: {
+    key: MeshConversationKey
+    scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string

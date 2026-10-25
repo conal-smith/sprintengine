@@ -4,6 +4,16 @@
 
 ### Added
 
+- **A message scheduled for a time** (owners): `conversation.scheduleSend`
+  (`message`, `sendAt`) has the desktop keep a message and send it into the
+  chat then, and `conversation.sendScheduledNow` and
+  `conversation.cancelScheduled` (`scheduledId`) send one it keeps at once or
+  delete it: the conversation lane's `scheduleSend`, `sendScheduledNow` and
+  `cancelScheduled`, read by its own validator and carried to the same host.
+  The socket does not advertise `conversation-scheduled-sends`: its
+  conversation topic carries no `scheduled` frames, as it carries no `queued`
+  ones. A Studio built before them refuses the methods as unknown.
+
 - **One agent stopped by itself** (`conversation-stop-subagent`, in
   `welcome.conversation`, owners): `conversation.stopSubagent` stops one agent a
   conversation spawned, named by the call that spawned it (`toolUseId`), and

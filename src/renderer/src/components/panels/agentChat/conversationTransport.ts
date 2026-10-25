@@ -44,6 +44,7 @@ import type {
   MeshConversationKey,
   MeshConversationLink,
   MeshQueuedMessage,
+  MeshScheduledMessage,
 } from '../../../../../shared/tailnet-mesh'
 
 // Where a chat view's conversation lives. The view — its transcript, pending
@@ -130,6 +131,14 @@ export type ConversationTransportCapabilities = {
    * this computer's and Create PR asks this computer's shell.
    */
   hostPullRequests: boolean
+  /**
+   * The machine the chat runs on keeps and sends the messages scheduled into
+   * it for a time, and says which it keeps: the "+"'s Schedule and the tray's
+   * rows ask it through `scheduleSend`, `sendScheduledNow` and
+   * `cancelScheduled`, where it advertises that (`conversation-scheduled-sends`).
+   * False here, where this computer's main keeps a local chat's.
+   */
+  hostSchedule: boolean
 }
 
 /** What an action answers: the local session API's result, or a remote command's. */
@@ -165,6 +174,15 @@ export type ConversationTransport = {
   queue?(input: { message: string }): Promise<ConversationTransportResult>
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
+  /**
+   * Have the machine the chat runs on keep a message and send it at `sendAt`
+   * (epoch ms); answered once it keeps it. Used where `capabilities.hostSchedule` is.
+   */
+  scheduleSend?(input: { message: string; sendAt: number }): Promise<ConversationTransportResult>
+  /** Send a message that machine keeps now (a refused one again), by its id there. */
+  sendScheduledNow?(input: { scheduledId: string }): Promise<ConversationTransportResult>
+  /** Delete a message that machine keeps, by its id there: Delete, and Edit's taking it back. */
+  cancelScheduled?(input: { scheduledId: string }): Promise<ConversationTransportResult>
   /**
    * A sent image by the reference its `user_message` recorded. Absent for a
    * remote conversation: the images are in the other machine's store, so a
@@ -256,6 +274,8 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   hostQueue: false,
   skills: true,
   hostPullRequests: false,
+  // Main keeps and sends a local chat's scheduled messages itself.
+  hostSchedule: false,
 }
 
 type LocalParts = Omit<ConversationTransport, 'kind' | 'capabilities' | 'services'>
@@ -398,7 +418,8 @@ const commandResult = (result: MeshConversationCommandResult): ConversationTrans
  * is the one every call names: the local key a view passes carries this
  * machine's idea of a workspace root, which means nothing over there.
  * `onLink` receives the connection state main narrates beside the frames, and
- * `onQueued` what the machine holds for the conversation's turn to end.
+ * `onQueued` what the machine holds for the conversation's turn to end, and
+ * `onScheduled` what it keeps for a time.
  */
 export function createRemoteConversationTransport(input: {
   key: MeshConversationKey
@@ -406,6 +427,7 @@ export function createRemoteConversationTransport(input: {
   access: MeshConversationAccess | null
   onLink?: (link: MeshConversationLink) => void
   onQueued?: (messages: MeshQueuedMessage[]) => void
+  onScheduled?: (messages: MeshScheduledMessage[]) => void
   /** The machine recorded a pull request Create PR opened there as the chat's. */
   onPullRequestRecorded?: () => void
 }): ConversationTransport {
@@ -439,6 +461,8 @@ export function createRemoteConversationTransport(input: {
       skills: false,
       // Turned on from the machine's list, when it opens pull requests for its chats.
       hostPullRequests: false,
+      // Turned on from the machine's list, when it keeps messages scheduled for a time.
+      hostSchedule: false,
     },
     remoteExtensions: { connectionId: key.connectionId, workspaceId: key.workspaceId },
     pullRequestHost: remotePullRequestHost(key, () => input.onPullRequestRecorded?.()),
@@ -446,6 +470,7 @@ export function createRemoteConversationTransport(input: {
       window.api.onMeshConversationSession({ key, turnLimit: subscription.turnLimit }, (frame) => {
         if (frame.type === 'link') input.onLink?.(frame)
         else if (frame.type === 'queued') input.onQueued?.(frame.messages)
+        else if (frame.type === 'scheduled') input.onScheduled?.(frame.messages)
         else cb(frame)
       }),
     loadEarlier: (page) =>
@@ -470,6 +495,14 @@ export function createRemoteConversationTransport(input: {
       commandResult(await window.api.meshConversationSend({ key, message: turn.message, queue: true })),
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
+    scheduleSend: async (scheduled) =>
+      commandResult(
+        await window.api.meshConversationScheduleSend({ key, message: scheduled.message, sendAt: scheduled.sendAt }),
+      ),
+    sendScheduledNow: async (scheduled) =>
+      commandResult(await window.api.meshConversationSendScheduledNow({ key, scheduledId: scheduled.scheduledId })),
+    cancelScheduled: async (scheduled) =>
+      commandResult(await window.api.meshConversationCancelScheduled({ key, scheduledId: scheduled.scheduledId })),
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).

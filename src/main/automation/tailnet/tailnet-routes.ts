@@ -194,6 +194,15 @@ export const TAILNET_CAPABILITIES = [
   // at a time, so a paired machine needs its own Stop for each.
   // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
   'conversation-stop-subagent',
+  // A message may be scheduled into a chat here for a time (2026-10-25), as
+  // this machine's own composer schedules one: `scheduleSend` keeps it among
+  // this machine's scheduled messages, which send it then whether or not the
+  // machine that scheduled it is awake; `sendScheduledNow` and
+  // `cancelScheduled` send one early or delete it; and `watchScheduled` has
+  // the socket say what is scheduled for the chat it follows, in `scheduled`
+  // frames. A client offers no Schedule for a machine without it.
+  // CONVERSATION_SCHEDULED_SENDS_CAPABILITY.
+  'conversation-scheduled-sends',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

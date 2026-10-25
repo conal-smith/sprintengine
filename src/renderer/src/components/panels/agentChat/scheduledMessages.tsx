@@ -3,7 +3,9 @@
 // Edit takes it back into the composer (still set for its time), Delete lets
 // it go. One the chat refused says why, with Retry. Main keeps them and sends
 // them (src/main/scheduled-messages/scheduled-messages.ts); this only draws
-// one chat's.
+// one chat's. A chat on a paired machine draws the same rows from what that
+// machine says it keeps for the chat (`scheduled` frames), and each button
+// asks that machine.
 
 import { memo, useEffect, type JSX } from 'react'
 
@@ -19,8 +21,14 @@ import { GhostButton, Tooltip, TruncatedText } from '../../ui'
 import { sendTimeFromNow, sendTimeWords } from '../../workspace/agentComposer/schedule/sendTime'
 import { ComposerTrayRow } from './composerTray'
 
+/** What a row draws of a scheduled message, wherever it is kept. */
+export type ScheduledMessageView = Pick<
+  ScheduledMessage,
+  'id' | 'text' | 'sendAt' | 'waitingSince' | 'sending' | 'failure'
+>
+
 /** What the row says of when the message goes: "Sends Today 3:00 PM", "Sending…". */
-export function scheduledMessageStatus(message: ScheduledMessage, now: number): string {
+export function scheduledMessageStatus(message: ScheduledMessageView, now: number): string {
   if (message.sending) return 'Sending…'
   if (message.failure !== undefined) {
     const reason = message.failure.trim().replace(/\.$/u, '')
@@ -43,6 +51,34 @@ function ScheduledMessageRowsBody({
   useEffect(() => retainScheduledMessages(), [])
   const state = useScheduledMessagesStore((store) => store.state)
   const messages = selectChatScheduledMessages(state, { workspaceId, agentId })
+  return (
+    <ScheduledMessageRowList
+      messages={messages}
+      onSendNow={(message) => void updateScheduledMessage({ kind: 'send-now', id: message.id })}
+      onEdit={onEdit}
+      onDelete={(message) => void updateScheduledMessage({ kind: 'delete', id: message.id })}
+    />
+  )
+}
+
+/**
+ * The rows themselves, for messages kept anywhere: this computer's, or a
+ * paired machine's for a chat that runs there. `machineName` names that
+ * machine in each row's hint.
+ */
+export function ScheduledMessageRowList<Message extends ScheduledMessageView>({
+  messages,
+  onSendNow,
+  onEdit,
+  onDelete,
+  machineName,
+}: {
+  messages: readonly Message[]
+  onSendNow: (message: Message) => void
+  onEdit: (message: Message) => void
+  onDelete: (message: Message) => void
+  machineName?: string
+}): JSX.Element | null {
   // A minute's resolution: "Today 3:00 PM" turns into "Tomorrow" at midnight.
   const now = useRelativeNow(30_000, messages.length > 0)
   if (messages.length === 0) return null
@@ -62,10 +98,7 @@ function ScheduledMessageRowsBody({
             actions={
               message.sending ? null : (
                 <>
-                  <GhostButton
-                    size="xs"
-                    onClick={() => void updateScheduledMessage({ kind: 'send-now', id: message.id })}
-                  >
+                  <GhostButton size="xs" onClick={() => onSendNow(message)}>
                     {failed ? 'Retry' : 'Send now'}
                   </GhostButton>
                   <Tooltip content="Take it back into the composer" placement="top">
@@ -73,10 +106,7 @@ function ScheduledMessageRowsBody({
                       Edit
                     </GhostButton>
                   </Tooltip>
-                  <GhostButton
-                    size="xs"
-                    onClick={() => void updateScheduledMessage({ kind: 'delete', id: message.id })}
-                  >
+                  <GhostButton size="xs" onClick={() => onDelete(message)}>
                     Delete
                   </GhostButton>
                 </>
@@ -85,7 +115,14 @@ function ScheduledMessageRowsBody({
           >
             <span className="flex min-w-0 items-center gap-2">
               {fromNow ? (
-                <Tooltip content={new Date(message.sendAt).toLocaleString()} placement="top">
+                <Tooltip
+                  content={
+                    machineName
+                      ? `${new Date(message.sendAt).toLocaleString()}, sent by ${machineName}`
+                      : new Date(message.sendAt).toLocaleString()
+                  }
+                  placement="top"
+                >
                   <span className="shrink-0" aria-label={`${scheduledMessageStatus(message, now)}, ${fromNow}`}>
                     {scheduledMessageStatus(message, now)}
                   </span>
@@ -109,3 +146,7 @@ function ScheduledMessageRowsBody({
 // Memoised: the chat body commits on every streamed token, and these rows
 // change only when main says so, through its store.
 export const ScheduledMessageRows = memo(ScheduledMessageRowsBody)
+
+// Memoised for the same reason: a paired machine's rows change only when it
+// says so, in a `scheduled` frame.
+export const HostScheduledMessageRows = memo(ScheduledMessageRowList) as typeof ScheduledMessageRowList

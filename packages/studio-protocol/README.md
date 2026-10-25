@@ -104,6 +104,9 @@ The `welcome`'s `grant` is what the connection may do:
 | `conversation.setModel`            | operate        | `key`, `commandId`, `modelId`                   | `{ modelId, notice? }`                           |
 | `conversation.cancelQueued`        | operate, owner | `key`, `commandId`, `queuedId`                  | `{}`                                             |
 | `conversation.stopSubagent`        | operate, owner | `key`, `commandId`, `toolUseId`                 | `{}`                                             |
+| `conversation.scheduleSend`        | operate, owner | `key`, `commandId`, `message`, `sendAt`         | `{}`, once it is kept                            |
+| `conversation.sendScheduledNow`    | operate, owner | `key`, `commandId`, `scheduledId`               | `{}`                                             |
+| `conversation.cancelScheduled`     | operate, owner | `key`, `commandId`, `scheduledId`               | `{}`                                             |
 | `conversation.stop`                | operate        | `key`, `commandId`                              | `{}`                                             |
 | `conversation.loadEarlier`         | read           | `key`, `beforeCursor`, `turnLimit?`             | `{ page }`                                       |
 | `conversation.toolDetail`          | read           | `key`, `toolUseId`                              | `{ detail }`                                     |

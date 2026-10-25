@@ -146,6 +146,15 @@ and adds, each behind its capability:
   can (a listed thread's `capabilities.stopSubagent`), and leaves the chat,
   its turn and its other agents running. A desktop without it refuses the
   kind as `unsupported_command`.
+- `conversation-scheduled-sends`: `scheduleSend` with a `message` and a
+  `sendAt` (epoch ms) has the desktop keep the message and send it then,
+  answered once it is kept; `sendScheduledNow` and `cancelScheduled` with a
+  `scheduledId` send one at once or delete it; and
+  `{ type: 'watchScheduled', requestId }` has the desktop send a `scheduled`
+  frame (`ConversationScheduledFrame`: the chat's `key` and its scheduled
+  `messages`, soonest first, whole each time) now and whenever they change. A
+  desktop without it refuses the three kinds as `unsupported_command` and
+  `watchScheduled` as `invalid_frame`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

@@ -109,6 +109,7 @@ async function mountRemote({
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
+  scheduledSends = false,
 }: {
   access: 'read' | 'operate'
   permissionPreset?: MeshConversation['permissionPreset']
@@ -125,6 +126,8 @@ async function mountRemote({
   listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
+  /** The machine keeps messages scheduled into its chats for a time (`conversation-scheduled-sends`). */
+  scheduledSends?: boolean
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -170,6 +173,7 @@ async function mountRemote({
       steerSends,
       stopSubagents,
       createPullRequest,
+      scheduledSends,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
     // machine would, and a creation records the pull request there.
@@ -243,6 +247,19 @@ async function mountRemote({
     meshConversationResolveApproval: vi.fn(async () => ({ ok: true })),
     meshConversationInterrupt: vi.fn(async () => ({ ok: true })),
     meshConversationStopSubagent: vi.fn(async (_input: { key: MeshConversationKey; toolUseId: string }) => ({
+      ok: true,
+    })),
+    meshConversationScheduleSend: vi.fn(
+      async (_input: {
+        key: MeshConversationKey
+        message: string
+        sendAt: number
+      }): Promise<{ ok: true } | { ok: false; code: string; message: string }> => ({ ok: true }),
+    ),
+    meshConversationSendScheduledNow: vi.fn(async (_input: { key: MeshConversationKey; scheduledId: string }) => ({
+      ok: true,
+    })),
+    meshConversationCancelScheduled: vi.fn(async (_input: { key: MeshConversationKey; scheduledId: string }) => ({
       ok: true,
     })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
@@ -1043,6 +1060,101 @@ test('no Create PR for a machine that does not open pull requests, or a pairing 
       expect(
         Array.from(chat.host.querySelectorAll('button')).some((item) => item.textContent?.includes('Create PR')),
       ).toBe(false)
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+test('the "+" schedules a message on a machine that keeps them: it goes there, and the tray draws what it keeps', async () => {
+  const chat = await mountRemote({ access: 'operate', scheduledSends: true })
+  try {
+    const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+    await chat.act(async () => plus!.click())
+    const row = chat.document.querySelector<HTMLElement>(
+      '[role="menu"][aria-label="Options"] [data-composer-schedule="true"]',
+    )
+    expect(row?.textContent?.trim()).toBe('Schedule')
+    await chat.act(async () => row!.click())
+    await chat.act(async () => chat.type('Start the migration.'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    // Kept and sent over there, not sent now, and nothing is kept here.
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.api.meshConversationScheduleSend).toHaveBeenCalledOnce()
+    const asked = chat.api.meshConversationScheduleSend.mock.calls[0]![0]
+    expect(asked).toMatchObject({ key, message: 'Start the migration.' })
+    expect(asked.sendAt).toBeGreaterThan(Date.now())
+    expect(chat.draft()).toBe('')
+
+    await chat.act(async () =>
+      chat.emit({
+        type: 'scheduled',
+        messages: [{ id: 'sm-1', text: 'Start the migration.', sendAt: asked.sendAt, createdAt: Date.now() }],
+      }),
+    )
+    const tray = () => chat.host.querySelector<HTMLElement>('[role="group"][aria-label="Scheduled message"]')
+    expect(tray()?.textContent).toContain('Sends ')
+    expect(tray()?.textContent).toContain('Start the migration.')
+    const inTray = (label: string) =>
+      Array.from(tray()!.querySelectorAll('button')).find((item) => item.textContent?.trim() === label)!
+    await chat.act(async () => inTray('Send now').click())
+    expect(chat.api.meshConversationSendScheduledNow).toHaveBeenCalledExactlyOnceWith({ key, scheduledId: 'sm-1' })
+    await chat.act(async () => inTray('Delete').click())
+    expect(chat.api.meshConversationCancelScheduled).toHaveBeenCalledExactlyOnceWith({ key, scheduledId: 'sm-1' })
+    // Edit takes it back from there, into this composer still set for its time.
+    await chat.act(async () => inTray('Edit').click())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.api.meshConversationCancelScheduled).toHaveBeenCalledTimes(2)
+    expect(chat.draft()).toBe('Start the migration.')
+    expect(chat.host.querySelector('[data-send-time-tag="true"]'), 'still set for its time').not.toBeNull()
+    await chat.act(async () => chat.emit({ type: 'scheduled', messages: [] }))
+    expect(tray()).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a scheduled message the machine could not keep stays in the composer, and the refusal is in its words', async () => {
+  const chat = await mountRemote({ access: 'operate', scheduledSends: true })
+  try {
+    chat.api.meshConversationScheduleSend.mockResolvedValueOnce({
+      ok: false,
+      code: 'unavailable',
+      message: 'The chat is not on this machine any more.',
+    })
+    await chat.act(async () => chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')!.click())
+    await chat.act(async () =>
+      chat.document
+        .querySelector<HTMLElement>('[role="menu"][aria-label="Options"] [data-composer-schedule="true"]')!
+        .click(),
+    )
+    await chat.act(async () => chat.type('Later, the docs.'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.draft()).toBe('Later, the docs.')
+    expect(chat.host.textContent).toContain(
+      'mac-mini could not schedule the message: The chat is not on this machine any more.',
+    )
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Schedule for a machine that does not keep scheduled messages, or a pairing that may only follow', async () => {
+  for (const options of [
+    { access: 'operate' as const, scheduledSends: false },
+    { access: 'read' as const, scheduledSends: true },
+  ]) {
+    const chat = await mountRemote(options)
+    try {
+      const plus = chat.host.querySelector<HTMLButtonElement>('[data-composer-options]')
+      if (plus) await chat.act(async () => plus.click())
+      expect(chat.document.querySelector('[data-composer-schedule]')).toBeNull()
+      await chat.act(async () =>
+        chat.emit({ type: 'scheduled', messages: [{ id: 'sm-1', text: 'Kept there.', sendAt: 5, createdAt: 1 }] }),
+      )
+      expect(chat.host.querySelector('[role="group"][aria-label="Scheduled message"]')).toBeNull()
     } finally {
       await chat.unmount()
     }

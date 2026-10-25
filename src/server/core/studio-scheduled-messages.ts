@@ -1,9 +1,11 @@
 import { join } from 'node:path'
 
+import { CONVERSATION_MAX_SCHEDULED_MESSAGES } from '../../../packages/conversation-protocol/src/public'
 import type { ConversationEvent, ConversationSessionSummary } from '../../shared/conversation-runtime'
 import type {
   ConversationGatewayHost,
   ConversationHeldMessages,
+  ConversationScheduledSends,
 } from '../../main/automation/tailnet/tailnet-conversation-host'
 import {
   createScheduledMessages,
@@ -97,6 +99,61 @@ export function studioHeldMessages(scheduled: () => ScheduledMessages): Conversa
           id: message.id,
           text: message.text,
           createdAt: message.createdAt,
+          ...(message.failure !== undefined ? { failure: message.failure } : {}),
+        }))
+    },
+    onChanged(listener) {
+      return scheduled().onChanged(() => listener())
+    },
+  }
+}
+
+/**
+ * The scheduled messages as the conversation host's scheduled sends: what a
+ * paired machine schedules into a chat here for a time is kept among them, so
+ * it goes from this machine at its time, shows in this chat's tray beside the
+ * ones scheduled here, and outlives a restart. The ones a paired machine
+ * queued for the turn's end are `studioHeldMessages`'s, and are left out.
+ * Read through `scheduled` at each call, as `studioHeldMessages` is.
+ */
+export function studioScheduledSends(scheduled: () => ScheduledMessages): ConversationScheduledSends {
+  const scheduledIn = (chat: { workspaceId: string; agentId: string }) =>
+    scheduled()
+      .state()
+      .messages.filter(
+        (message) => !message.queued && message.workspaceId === chat.workspaceId && message.agentId === chat.agentId,
+      )
+  const gone = { ok: false as const, message: 'That message is no longer scheduled: it was sent or deleted.' }
+  return {
+    schedule(chat, text, sendAt, source) {
+      const kept = scheduled().scheduleFrom(chat, text, sendAt, source)
+      return kept.ok ? { ok: true } : { ok: false, message: kept.reason }
+    },
+    sendNow(chat, id) {
+      const message = scheduledIn(chat).find((entry) => entry.id === id)
+      if (!message) return gone
+      if (message.sending) return { ok: false, message: 'That message is already on its way into the chat.' }
+      scheduled().update({ kind: 'send-now', id })
+      return { ok: true }
+    },
+    cancel(chat, id) {
+      const message = scheduledIn(chat).find((entry) => entry.id === id)
+      if (!message) return gone
+      if (message.sending) return { ok: false, message: 'That message is already on its way into the chat.' }
+      scheduled().update({ kind: 'delete', id })
+      return { ok: true }
+    },
+    list(chat) {
+      return scheduledIn(chat)
+        .sort((a, b) => a.sendAt - b.sendAt)
+        .slice(0, CONVERSATION_MAX_SCHEDULED_MESSAGES)
+        .map((message) => ({
+          id: message.id,
+          text: message.text,
+          sendAt: message.sendAt,
+          createdAt: message.createdAt,
+          ...(message.waitingSince !== undefined ? { waitingSince: message.waitingSince } : {}),
+          ...(message.sending ? { sending: true as const } : {}),
           ...(message.failure !== undefined ? { failure: message.failure } : {}),
         }))
     },

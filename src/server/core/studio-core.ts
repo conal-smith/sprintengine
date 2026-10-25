@@ -78,7 +78,7 @@ import type { StudioRole } from './data-dir'
 import { takeDataDir } from './take-data-dir'
 import { createStudioUsageLimitResumes } from './studio-usage-limit-resumes'
 import { studioPullRequestWakes } from './studio-pull-request-wakes'
-import { createStudioScheduledMessages, studioHeldMessages } from './studio-scheduled-messages'
+import { createStudioScheduledMessages, studioHeldMessages, studioScheduledSends } from './studio-scheduled-messages'
 import { createStudioAutoCompact } from './studio-auto-compact'
 
 // The Studio core: the services the server owns (studio-server design, section
@@ -700,6 +700,9 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         // here, among the scheduled messages below, and sent from here when the
         // turn ends: the machine that typed it may sleep or close meanwhile.
         heldMessages: studioHeldMessages(() => scheduledMessages),
+        // A message a paired machine scheduled into a chat here for a time is
+        // kept among the same scheduled messages, and sent from here then.
+        scheduledSends: studioScheduledSends(() => scheduledMessages),
       },
     )
 

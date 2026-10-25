@@ -138,8 +138,11 @@ import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
 import { useUsageLimitSnapshot } from './agentChat/usageLimits'
 import { UsageLimitResumeRow } from './agentChat/usageLimitResume'
-import { ScheduledMessageRows } from './agentChat/scheduledMessages'
-import type { ScheduledMessage } from '../../../../shared/scheduled-messages'
+import {
+  HostScheduledMessageRows,
+  ScheduledMessageRows,
+  type ScheduledMessageView,
+} from './agentChat/scheduledMessages'
 import { canScheduleMessages, updateScheduledMessage } from '../../store/scheduledMessagesStore'
 import { SendTimeTag } from '../workspace/agentComposer/schedule/SendTimeEditor'
 import { defaultSendAt } from '../workspace/agentComposer/schedule/sendTime'
@@ -3528,8 +3531,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   })
   // ── Scheduling the next message ──────────────────────────────────────────
   // Offered for a chat that runs on this computer, as its usage-limit resume
-  // is: main sends the message, through this computer's own chats.
-  const scheduleOffered = operate && transport.kind !== 'remote' && !stripFacts.machine && canScheduleMessages()
+  // is: main sends the message, through this computer's own chats. And for a
+  // chat on a paired machine that keeps scheduled messages itself
+  // (`hostSchedule`): that machine keeps the message and sends it, so it goes
+  // at its time whether or not this one is awake then, and the tray draws
+  // what it says it keeps.
+  const hostSchedule =
+    transport.kind === 'remote' && transport.capabilities.hostSchedule && transport.scheduleSend
+      ? (binding.hostSchedule ?? null)
+      : null
+  const remoteSchedule = hostSchedule !== null
+  const scheduleOffered =
+    operate && (transport.kind === 'remote' ? remoteSchedule : !stripFacts.machine && canScheduleMessages())
   // What a scheduled message carries is its text: a picture or a file staged
   // with it is the moment's, and is not kept for later.
   const scheduleBlocked =
@@ -3551,9 +3564,41 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   useEffect(() => {
     if (!scheduleOffered) setSendAt(null)
   }, [scheduleOffered])
+  // A paired machine's scheduled message is sent early, or deleted, over
+  // there; a refusal is said here in that machine's words.
+  const askHostScheduled = useCallback(
+    async (ask: 'send' | 'delete', message: ScheduledMessageView): Promise<boolean> => {
+      const call = ask === 'send' ? transport.sendScheduledNow : transport.cancelScheduled
+      if (!call) return false
+      const machine = transport.machineName ?? 'The other machine'
+      let result: { ok: true } | { ok: false; message: string }
+      try {
+        result = await call({ scheduledId: message.id })
+      } catch (err) {
+        result = { ok: false, message: err instanceof Error ? err.message : 'It did not answer.' }
+      }
+      if (!result.ok)
+        setActionError(
+          `${machine} could not ${ask === 'send' ? 'send' : 'delete'} the scheduled message: ${result.message.replace(/\.$/u, '')}.`,
+        )
+      return result.ok
+    },
+    [transport],
+  )
+  const sendHostScheduledNow = useCallback(
+    (message: ScheduledMessageView) => void askHostScheduled('send', message),
+    [askHostScheduled],
+  )
+  const deleteHostScheduled = useCallback(
+    (message: ScheduledMessageView) => void askHostScheduled('delete', message),
+    [askHostScheduled],
+  )
   const editScheduledMessage = useCallback(
-    (message: ScheduledMessage) => {
-      void updateScheduledMessage({ kind: 'delete', id: message.id }).then((deleted) => {
+    (message: ScheduledMessageView & { queued?: true }) => {
+      const deleting = remoteSchedule
+        ? askHostScheduled('delete', message)
+        : updateScheduledMessage({ kind: 'delete', id: message.id })
+      void deleting.then((deleted) => {
         if (!deleted) return
         setDraft((current) => [message.text, current].filter(Boolean).join('\n'))
         // One a paired machine queued was set for the turn's end, not for a
@@ -3562,7 +3607,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         composerRef.current?.focus()
       })
     },
-    [setDraft],
+    [setDraft, remoteSchedule, askHostScheduled],
   )
   scheduleDraftRef.current = async () => {
     if (sendAt === null) return
@@ -3576,10 +3621,29 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       setActionError('That time has passed — pick one ahead, or send it now.')
       return
     }
-    const scheduled = await updateScheduledMessage({ kind: 'schedule', workspaceId, agentId, text, sendAt })
-    if (!scheduled) {
-      setActionError('The message could not be scheduled.')
-      return
+    if (remoteSchedule) {
+      // Kept and sent by the machine the chat runs on; its tray rows come back
+      // from what it says it keeps.
+      const machine = transport.machineName ?? 'The other machine'
+      let kept: { ok: true } | { ok: false; message: string }
+      try {
+        kept = (await transport.scheduleSend?.({ message: text, sendAt })) ?? {
+          ok: false,
+          message: 'it does not schedule messages',
+        }
+      } catch (err) {
+        kept = { ok: false, message: err instanceof Error ? err.message : 'it did not answer' }
+      }
+      if (!kept.ok) {
+        setActionError(`${machine} could not schedule the message: ${kept.message.replace(/\.$/u, '')}.`)
+        return
+      }
+    } else {
+      const scheduled = await updateScheduledMessage({ kind: 'schedule', workspaceId, agentId, text, sendAt })
+      if (!scheduled) {
+        setActionError('The message could not be scheduled.')
+        return
+      }
     }
     setActionError(null)
     clearDraft()
@@ -4072,7 +4136,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                 goes out, with Send now, Edit and Delete. Edit takes one back
                 into the composer still set for its time, so pressing
                 Schedule again puts it back. */}
-              {scheduleOffered ? (
+              {scheduleOffered && hostSchedule ? (
+                <HostScheduledMessageRows
+                  messages={hostSchedule.messages}
+                  machineName={hostSchedule.machineName}
+                  onSendNow={sendHostScheduledNow}
+                  onEdit={editScheduledMessage}
+                  onDelete={deleteHostScheduled}
+                />
+              ) : scheduleOffered ? (
                 <ScheduledMessageRows workspaceId={workspaceId} agentId={agentId} onEdit={editScheduledMessage} />
               ) : null}
 

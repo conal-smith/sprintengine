@@ -26,7 +26,7 @@ import {
 import type { RemoteJsonSocket, RemoteJsonSocketHandlers } from './tailnet/tailnet-remote-client'
 import { pairingUrl } from './tailnet/tailnet-service'
 import { createScheduledMessages } from '../scheduled-messages/scheduled-messages'
-import { studioHeldMessages } from '../../server/core/studio-scheduled-messages'
+import { studioHeldMessages, studioScheduledSends } from '../../server/core/studio-scheduled-messages'
 import {
   TAILNET_IDENTITY_PATH,
   TAILNET_MCP_PATH,
@@ -109,6 +109,8 @@ async function waitFor(predicate: () => boolean, what: string): Promise<void> {
 }
 
 type Harness = {
+  /** The far end's clock, which its scheduled messages keep time by. */
+  hostNow(): number
   runtime: ConversationRuntime
   provider: ReturnType<typeof pushProvider>
   devices: TailnetDeviceStore
@@ -186,7 +188,9 @@ async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTool
           }
         : null,
     undefined,
-    scheduled ? { heldMessages: studioHeldMessages(() => scheduled) } : {},
+    scheduled
+      ? { heldMessages: studioHeldMessages(() => scheduled), scheduledSends: studioScheduledSends(() => scheduled) }
+      : {},
   )
   if (scheduled) {
     await scheduled.start()
@@ -246,6 +250,7 @@ async function startHarness(options: { holdQueued?: boolean; tools?: HarnessTool
   })
   assert.ok(started.ok)
   const harness: Harness = {
+    hostNow: () => Date.now() + skew,
     runtime,
     provider,
     devices,
@@ -1331,6 +1336,108 @@ test('a held message is taken back from here, and every window is told it is gon
     const again = await h.mesh.conversationCommand({ key, command: { kind: 'cancelQueued', queuedId } })
     assert.equal(again.ok, false, 'a message no longer held cannot be taken back twice')
     h.provider.push(null)
+  } finally {
+    await h.close()
+  }
+})
+
+test('a message scheduled from here is kept there, and goes at its time with this desktop gone', async () => {
+  const h = await startHarness({ holdQueued: true })
+  const asked: string[] = []
+  const stopListening = h.runtime.onEvent((event) => {
+    if (event.type === 'user_message' && event.workspaceId === workspaceId && event.agentId === agentId)
+      asked.push(String(event.payload?.text ?? ''))
+  })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.equal(listed.scheduledSends, true, 'the machine says it keeps scheduled messages')
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    await waitFor(() => pane.of('scheduled').length > 0, 'told what the machine keeps, nothing yet')
+    assert.deepEqual(pane.of('scheduled').at(-1)?.messages, [])
+
+    const sendAt = h.hostNow() + 400
+    const kept = await h.mesh.conversationCommand({
+      key,
+      command: { kind: 'scheduleSend', message: 'Start the migration.', sendAt },
+    })
+    assert.deepEqual(kept, { ok: true })
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 1, 'the window sees what is kept there')
+    const [message] = pane.of('scheduled').at(-1)!.messages
+    assert.equal(message?.text, 'Start the migration.')
+    assert.equal(message?.sendAt, sendAt)
+    // A second window opened now is told at once, without asking the machine again.
+    const second = follower(h.mesh, key, 'pane-2')
+    await second.following
+    assert.equal(second.of('scheduled').at(-1)?.messages[0]?.text, 'Start the migration.')
+
+    // The laptop closes: the machine sends it at its time all the same.
+    h.mesh.shutdown()
+    await h.provider.turnStarted()
+    assert.deepEqual(asked, ['Start the migration.'], 'sent into the chat over there, once')
+    h.provider.push(null)
+  } finally {
+    stopListening()
+    await h.close()
+  }
+})
+
+test("a message scheduled there is sent now or deleted from here, and a repeat is refused in the machine's words", async () => {
+  const h = await startHarness({ holdQueued: true })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    assert.ok((await h.mesh.listConversations(connectionId)).ok)
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    const later = h.hostNow() + 60 * 60_000
+    for (const message of ['Tomorrow, the docs.', 'Tomorrow, the tests.'])
+      assert.deepEqual(
+        await h.mesh.conversationCommand({ key, command: { kind: 'scheduleSend', message, sendAt: later } }),
+        { ok: true },
+      )
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 2, 'both kept')
+    const [docs, tests] = pane.of('scheduled').at(-1)!.messages
+    assert.deepEqual(
+      await h.mesh.conversationCommand({ key, command: { kind: 'cancelScheduled', scheduledId: docs!.id } }),
+      { ok: true },
+    )
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 1, 'deleted')
+    const again = await h.mesh.conversationCommand({ key, command: { kind: 'cancelScheduled', scheduledId: docs!.id } })
+    assert.equal(again.ok, false)
+    assert.match(!again.ok ? again.message : '', /no longer scheduled/)
+
+    assert.deepEqual(
+      await h.mesh.conversationCommand({ key, command: { kind: 'sendScheduledNow', scheduledId: tests!.id } }),
+      { ok: true },
+    )
+    await h.provider.turnStarted()
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages[0]?.sending === true, 'on its way, and said so')
+    h.provider.push(null)
+    await waitFor(() => pane.of('scheduled').at(-1)?.messages.length === 0, 'it went')
+  } finally {
+    await h.close()
+  }
+})
+
+test('a machine that keeps no scheduled messages refuses one in words', async () => {
+  const h = await startHarness()
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    assert.ok((await h.mesh.listConversations(connectionId)).ok)
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    // This host keeps none (no `scheduledSends`): its refusal is in words too.
+    const refused = await h.mesh.conversationCommand({
+      key,
+      command: { kind: 'scheduleSend', message: 'Later.', sendAt: h.hostNow() + 60_000 },
+    })
+    assert.equal(refused.ok, false)
+    assert.match(!refused.ok ? refused.message : '', /schedule/)
   } finally {
     await h.close()
   }

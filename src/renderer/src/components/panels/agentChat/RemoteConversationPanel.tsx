@@ -9,6 +9,7 @@ import type {
   MeshConversationKey,
   MeshConversationLink,
   MeshQueuedMessage,
+  MeshScheduledMessage,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
 import {
@@ -173,6 +174,10 @@ export default function RemoteConversationPanel({
   // The machine stops one agent of one of its chats by itself.
   const [stopSubagents, setStopSubagents] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
+  // The machine keeps a message scheduled here for a time and sends it then;
+  // and what it keeps for this chat, as it last said.
+  const [scheduledSends, setScheduledSends] = useState(false)
+  const [hostScheduled, setHostScheduled] = useState<MeshScheduledMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
   // chip names what the machine says the chat is now on.
@@ -198,6 +203,8 @@ export default function RemoteConversationPanel({
   hostPullRequestsRef.current = hostPullRequests
   const steerSendsRef = useRef(steerSends)
   steerSendsRef.current = steerSends
+  const scheduledSendsRef = useRef(scheduledSends)
+  scheduledSendsRef.current = scheduledSends
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -207,6 +214,7 @@ export default function RemoteConversationPanel({
       access: null,
       onLink: setLink,
       onQueued: setHostQueued,
+      onScheduled: setHostScheduled,
       // A pull request Create PR opened there is in the machine's list now:
       // read it again, so the strip says "Open PR #N" without waiting for the
       // sidebar's next read.
@@ -236,6 +244,7 @@ export default function RemoteConversationPanel({
           skills: sendSkillsRef.current,
           steer: steerSendsRef.current,
           hostPullRequests: hostPullRequestsRef.current,
+          hostSchedule: scheduledSendsRef.current,
         }
       },
       ...(setModel
@@ -277,6 +286,7 @@ export default function RemoteConversationPanel({
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
+        setScheduledSends(result.scheduledSends === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -338,9 +348,24 @@ export default function RemoteConversationPanel({
       // machine again; a third line saying both was the same fact once more.
       ...(engine ? { engine } : {}),
       hostQueue: { machineName, messages: hostQueued },
+      ...(scheduledSends ? { hostSchedule: { machineName, messages: hostScheduled } } : {}),
       listed,
     }),
-    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued, listed],
+    [
+      fields,
+      displayTitle,
+      thread,
+      update,
+      connectionId,
+      readiness,
+      session,
+      engine,
+      machineName,
+      hostQueued,
+      scheduledSends,
+      hostScheduled,
+      listed,
+    ],
   )
 
   // The Agents tab beside it reads the chat through this transport, as it

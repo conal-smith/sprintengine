@@ -10,9 +10,12 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
+  CONVERSATION_MAX_SCHEDULED_MESSAGES,
   isConversationPermissionModeId,
   type ConversationQueuedFrame,
   type ConversationQueuedMessage,
+  type ConversationScheduledFrame,
+  type ConversationScheduledMessage,
 } from './commands.js'
 
 // The client half of the frame contract: what a desktop or phone following a
@@ -325,6 +328,7 @@ export type ConversationParsedServerFrame =
       key?: ConversationWireKey
     }
   | ConversationQueuedFrame
+  | ConversationScheduledFrame
 
 const SERVER_FRAME_TYPES = new Set([
   'sessions',
@@ -337,6 +341,7 @@ const SERVER_FRAME_TYPES = new Set([
   'commandResult',
   'error',
   'queued',
+  'scheduled',
 ])
 const PHASES = new Set<ConversationWirePhase>([
   'idle',
@@ -747,6 +752,33 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
         })
       }
       return { type: 'queued', key: { workspaceId: key.workspaceId, agentId: key.agentId }, messages }
+    }
+    case 'scheduled': {
+      const key = frame.key
+      if (!record(key) || !id(key.workspaceId) || !id(key.agentId) || !Array.isArray(frame.messages)) return null
+      const messages: ConversationScheduledMessage[] = []
+      for (const entry of frame.messages) {
+        if (messages.length >= CONVERSATION_MAX_SCHEDULED_MESSAGES) break
+        // One unreadable message does not hide the rest.
+        if (
+          !record(entry) ||
+          !id(entry.id) ||
+          !text(entry.text, CONVERSATION_MAX_MESSAGE_CHARS) ||
+          !clock(entry.sendAt) ||
+          !clock(entry.createdAt)
+        )
+          continue
+        messages.push({
+          id: entry.id,
+          text: entry.text,
+          sendAt: entry.sendAt,
+          createdAt: entry.createdAt,
+          ...(clock(entry.waitingSince) ? { waitingSince: entry.waitingSince } : {}),
+          ...(entry.sending === true ? { sending: true as const } : {}),
+          ...(typeof entry.failure === 'string' && entry.failure.length <= 2_000 ? { failure: entry.failure } : {}),
+        })
+      }
+      return { type: 'scheduled', key: { workspaceId: key.workspaceId, agentId: key.agentId }, messages }
     }
     default:
       return null

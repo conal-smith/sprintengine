@@ -4,6 +4,7 @@ import {
   parseConversationWireHighlight,
   type ConversationCommand,
   type ConversationQueuedMessage,
+  type ConversationScheduledMessage,
   type ConversationThread,
   type ConversationWireErrorCode,
   type ConversationWireHost,
@@ -179,6 +180,15 @@ export type ConversationGatewayHost = {
     listener: (messages: ConversationQueuedMessage[]) => void,
   ): () => void
   /**
+   * Follow what this desktop has scheduled into a chat for a time: told now,
+   * and again whenever it changes. Absent on a host that schedules nothing
+   * (one built without `scheduledSends`); returns what stops the following.
+   */
+  watchScheduled?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (messages: ConversationScheduledMessage[]) => void,
+  ): () => void
+  /**
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
    * id for a different command is then refused (`command_id_conflict`).
@@ -257,6 +267,9 @@ function wholeNumbers(thread: ConversationThread): ConversationThread {
     lastSeq: wholeNumber(thread.lastSeq) ?? 0,
   }
 }
+
+/** Answers to Send now and Delete on a scheduled message, kept for a command sent again. */
+const MAX_SCHEDULED_RECEIPTS = 256
 
 /** How long a send turned away behind another send to the same chat waits before trying again. */
 const SEND_BUSY_RETRY_MS = 1_000
@@ -473,6 +486,12 @@ export type ConversationRegistryLink = {
    */
   heldMessages?: ConversationHeldMessages
   /**
+   * Where a message a paired machine scheduled into a chat for a time is
+   * kept, and sent from when it comes due (`conversation-scheduled-sends`).
+   * Absent, the commands are refused in words.
+   */
+  scheduledSends?: ConversationScheduledSends
+  /**
    * Studio's own folders of pictures (what chats sent, the pictures their steps
    * returned, pasted images). A step's picture is served from the chat's
    * folder, its session's, or one of these, and from nowhere else.
@@ -500,6 +519,27 @@ export type ConversationHeldMessages = {
 }
 
 /**
+ * The messages this desktop has scheduled into its chats for a time, as a
+ * paired machine schedules, sends early and deletes them: the scheduled
+ * messages keep them (scheduled-messages.ts, `scheduleFrom`), beside the ones
+ * scheduled here, and send them when they come due, so the machine that
+ * scheduled one may sleep or close meanwhile. A message held for a turn's end
+ * is `heldMessages`'s, and is in none of these.
+ */
+export type ConversationScheduledSends = {
+  /** Keep `text` for the chat until `sendAt`. `source` names the command it came in on: the same one twice is kept once. */
+  schedule(chat: ChatOf, text: string, sendAt: number, source: string): { ok: true } | { ok: false; message: string }
+  /** Send one at once, a refused one again; refused once it is no longer scheduled. */
+  sendNow(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
+  /** Delete one; refused once it is on its way into the chat, or no longer scheduled. */
+  cancel(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
+  /** What the chat has scheduled now, soonest first. */
+  list(chat: ChatOf): ConversationScheduledMessage[]
+  /** Something scheduled changed, for some chat. */
+  onChanged(listener: () => void): () => void
+}
+
+/**
  * Both IPC and the network wrap this one session API; only root resolution
  * differs. `defaultPermissionPreset` answers for a conversation this app has
  * not run since it started: the preset its agent record holds, else the app's
@@ -521,10 +561,10 @@ export type AgentChoicePatch = {
  * them: every chat's changes arrive on the one channel, and a follower is told
  * only when its own chat's list reads differently.
  */
-function watchHeld(
-  held: ConversationHeldMessages,
+function watchHeld<Message>(
+  held: { list(chat: ChatOf): Message[]; onChanged(listener: () => void): () => void },
   chat: ChatOf,
-  listener: (messages: ConversationQueuedMessage[]) => void,
+  listener: (messages: Message[]) => void,
 ): () => void {
   const key = { workspaceId: chat.workspaceId, agentId: chat.agentId }
   let last: string | null = null
@@ -688,6 +728,34 @@ export function createConversationGatewayHost(
     } finally {
       if (starting.get(id) === request) starting.delete(id)
     }
+  }
+  // Send now and Delete on a message a paired machine scheduled, answered as
+  // they were the first time when the same command comes again (a device
+  // that lost the answer offers it again under its id): the message is gone
+  // by then, and a second answer saying so would read as a failure.
+  const scheduledReceipts = new Map<string, ConversationGatewayCommandResult>()
+  const scheduledCommand = (
+    chat: ChatOf,
+    deviceId: string,
+    commandId: string,
+    command: Extract<ConversationCommand, { kind: 'scheduleSend' | 'sendScheduledNow' | 'cancelScheduled' }>,
+  ): ConversationGatewayCommandResult => {
+    const scheduled = registry.scheduledSends
+    if (!scheduled) return { ok: false, message: 'This desktop does not schedule messages from another device.' }
+    // Kept under the device's own command, so a repeat after a dropped
+    // connection, or after a restart, schedules it once.
+    const source = JSON.stringify([deviceId, commandId])
+    if (command.kind === 'scheduleSend') return scheduled.schedule(chat, command.message, command.sendAt, source)
+    const answered = scheduledReceipts.get(source)
+    if (answered) return answered
+    const result =
+      command.kind === 'sendScheduledNow'
+        ? scheduled.sendNow(chat, command.scheduledId)
+        : scheduled.cancel(chat, command.scheduledId)
+    scheduledReceipts.set(source, result)
+    while (scheduledReceipts.size > MAX_SCHEDULED_RECEIPTS)
+      scheduledReceipts.delete(scheduledReceipts.keys().next().value!)
+    return result
   }
   // A switch within the chat's own CLI, to a model this machine's picker
   // offers for it. Checked here, before the runtime sees it: the id must be in
@@ -1026,10 +1094,15 @@ export function createConversationGatewayHost(
     ...(registry.heldMessages
       ? { watchQueued: (key, listener) => watchHeld(registry.heldMessages!, key, listener) }
       : {}),
+    ...(registry.scheduledSends
+      ? { watchScheduled: (key, listener) => watchHeld(registry.scheduledSends!, key, listener) }
+      : {}),
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
+      if (command.kind === 'scheduleSend' || command.kind === 'sendScheduledNow' || command.kind === 'cancelScheduled')
+        return Promise.resolve(scheduledCommand(chat, deviceId, commandId, command))
       if (command.kind === 'cancelQueued')
         return Promise.resolve(
           held ? held.cancel(chat, command.queuedId) : { ok: false, message: 'This desktop holds no queued messages.' },

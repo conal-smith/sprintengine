@@ -219,6 +219,9 @@ function drivesChat(command: ConversationCommand): boolean {
     case 'send':
     case 'answerQuestion':
     case 'setModel':
+    // A message scheduled, or sent early, is a send all the same.
+    case 'scheduleSend':
+    case 'sendScheduledNow':
       return true
     case 'resolveApproval':
       return command.decision !== 'deny'
