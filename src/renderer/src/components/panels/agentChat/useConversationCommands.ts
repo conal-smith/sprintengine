@@ -75,11 +75,11 @@ function retainMainSubscription(): () => void {
   }
 }
 
-function request(cli: string, cwd: string, refresh: boolean): Promise<void> {
+function request(cli: string, cwd: string, refresh: boolean, source: ChatCommandSource = commandsApi()): Promise<void> {
   const key = keyOf(cli, cwd)
   const pending = inFlight.get(key)
   if (pending) return pending
-  const call = commandsApi().list
+  const call = source.list
   if (!call) return Promise.resolve()
   requestedAt.set(key, Date.now())
   const promise = call({ cli, cwd, ...(refresh ? { refresh: true } : {}) })
@@ -181,14 +181,17 @@ export type ConversationCommandsState = {
 /**
  * `discover: false` reads only what is already known — the cache and main's
  * pushes — and never asks main to list. A chat on another machine has no
- * folder here to probe; it shows a list only if one reaches it.
+ * folder here to probe; it shows a list only if one reaches it, or, with a
+ * `source` of its own (that machine, asked for the chat's folder there), once
+ * the menu opens and asks it: never as the chat mounts, since each ask may
+ * start the CLI over there.
  */
 export function useConversationCommands(
   cli: string | null,
   cwd: string | null,
-  options: { appCommands?: readonly ConversationCommand[]; discover?: boolean } = {},
+  options: { appCommands?: readonly ConversationCommand[]; discover?: boolean; source?: ChatCommandSource } = {},
 ): ConversationCommandsState {
-  const { appCommands, discover = true } = options
+  const { appCommands, discover = true, source } = options
   const key = cli && cwd ? keyOf(cli, cwd) : null
   const [, setVersion] = useState(0)
   useEffect(() => {
@@ -205,17 +208,17 @@ export function useConversationCommands(
     }
   }, [key])
   useEffect(() => {
-    if (!cli || !cwd || !discover || catalogCache.has(keyOf(cli, cwd))) return
+    if (!cli || !cwd || !discover || source || catalogCache.has(keyOf(cli, cwd))) return
     peek(cli, cwd)
-  }, [cli, cwd, discover])
+  }, [cli, cwd, discover, source])
   const catalog = key ? (catalogCache.get(key) ?? null) : null
   const loading = Boolean(key && inFlight.has(key) && !catalog?.fetchedAt)
   const reported = catalog?.commands
   const commands = useMemo(() => mergeConversationCommands(appCommands ?? [], reported ?? []), [appCommands, reported])
-  const latest = useRef({ cli, cwd, discover })
-  latest.current = { cli, cwd, discover }
+  const latest = useRef({ cli, cwd, discover, source })
+  latest.current = { cli, cwd, discover, source }
   const refreshIfStale = useCallback(() => {
-    const { cli: currentCli, cwd: currentCwd, discover: canDiscover } = latest.current
+    const { cli: currentCli, cwd: currentCwd, discover: canDiscover, source: from } = latest.current
     if (!currentCli || !currentCwd || !canDiscover) return
     const key = keyOf(currentCli, currentCwd)
     const known = catalogCache.get(key)
@@ -223,12 +226,12 @@ export function useConversationCommands(
     if (known && known.fetchedAt > 0 && !known.error && now - known.fetchedAt < COMMANDS_STALE_MS) return
     if (now - (requestedAt.get(key) ?? 0) < COMMANDS_RETRY_MS) return
     // `refresh` only over a list the CLI answered; an unanswered one is due anyway.
-    void request(currentCli, currentCwd, Boolean(known?.fetchedAt))
+    void request(currentCli, currentCwd, Boolean(known?.fetchedAt), from)
   }, [])
   const refresh = useCallback(() => {
-    const { cli: currentCli, cwd: currentCwd, discover: canDiscover } = latest.current
+    const { cli: currentCli, cwd: currentCwd, discover: canDiscover, source: from } = latest.current
     if (!currentCli || !currentCwd || !canDiscover) return
-    void request(currentCli, currentCwd, true)
+    void request(currentCli, currentCwd, true, from)
   }, [])
   return { commands, catalog, loading, refreshIfStale, refresh }
 }

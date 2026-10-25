@@ -65,6 +65,10 @@ test('a hello is welcomed with the grant, the Studio capabilities and the conver
   assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-message-images'))
   assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-message-files'))
   assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-image-downscale'))
+  // A send's mentions ride its validator here too; the folder reads are routes beside the tailnet's socket.
+  assert.ok(welcome.t === 'welcome' && welcome.conversation.capabilities.includes('conversation-send-mentions'))
+  assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-file-search'))
+  assert.ok(welcome.t === 'welcome' && !welcome.conversation.capabilities.includes('conversation-commands'))
   const info = await request(c, 'i1', 'server.info')
   assert.equal(info.ok && (info.result as { grant: { clientId: string } }).grant.clientId, 'reader')
 })

@@ -50,6 +50,10 @@ import {
   MESH_CONVERSATION_ATTACHMENT_CHANNEL,
   MESH_CONVERSATION_TURN_DIFF_CHANNEL,
   MESH_CONVERSATION_UNFOLLOW_CHANNEL,
+  MESH_CONVERSATION_FILE_SEARCH_CHANNEL,
+  MESH_CONVERSATION_COMMANDS_CHANNEL,
+  type MeshConversationFileSearchResult,
+  type MeshConversationCommandsResult,
   type MeshConversationCommand,
   type MeshConversationCommandResult,
   type MeshConversationFrame,
@@ -62,6 +66,8 @@ import {
   type MeshPullRequestStateResult,
 } from '../../shared/tailnet-mesh'
 import type { PullRequestCheckoutPin } from '../../shared/git/pull-request-create'
+import type { ConversationMentionRef } from '../../shared/conversation/mentions'
+import type { ConversationAttachedFile } from '../../shared/conversation/attachedFiles'
 import type {
   ConversationContextBreakdownResult,
   ConversationImageAttachment,
@@ -207,6 +213,8 @@ export const meshApi = {
     queue?: boolean
     skills?: string[]
     steer?: boolean
+    mentions?: ConversationMentionRef[]
+    files?: ConversationAttachedFile[]
   }): Promise<MeshConversationCommandResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_SEND_CHANNEL, {
       key: input.key,
@@ -215,6 +223,8 @@ export const meshApi = {
       ...(input.queue ? { queue: true } : {}),
       ...(input.skills?.length ? { skills: input.skills } : {}),
       ...(input.steer ? { steer: true } : {}),
+      ...(input.mentions?.length ? { mentions: input.mentions } : {}),
+      ...(input.files?.length ? { files: input.files } : {}),
     }) as Promise<MeshConversationCommandResult>,
   meshConversationCancelQueued: (input: { key: MeshConversationKey; queuedId: string }) =>
     command(input.key, { kind: 'cancelQueued', queuedId: input.queuedId }),
@@ -297,6 +307,19 @@ export const meshApi = {
     ref: string
   }): Promise<MeshConversationImageResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_ATTACHMENT_CHANNEL, input) as Promise<MeshConversationImageResult>,
+  meshConversationSearchFiles: (input: {
+    key: MeshConversationKey
+    query: string
+  }): Promise<MeshConversationFileSearchResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_FILE_SEARCH_CHANNEL, input) as Promise<MeshConversationFileSearchResult>,
+  meshConversationCommands: (input: {
+    key: MeshConversationKey
+    refresh?: boolean
+  }): Promise<MeshConversationCommandsResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_COMMANDS_CHANNEL, {
+      key: input.key,
+      ...(input.refresh ? { refresh: true } : {}),
+    }) as Promise<MeshConversationCommandsResult>,
   // A remote chat's Create PR: each step runs on the chat's machine.
   meshConversationPullRequestState: (input: { key: MeshConversationKey }): Promise<MeshPullRequestStateResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL, input) as Promise<MeshPullRequestStateResult>,
@@ -363,6 +386,8 @@ export const meshApi = {
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'
   | 'meshConversationAttachment'
+  | 'meshConversationSearchFiles'
+  | 'meshConversationCommands'
   | 'meshConversationPullRequestState'
   | 'meshConversationPullRequestDraft'
   | 'meshConversationPullRequestDraftCancel'

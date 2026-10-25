@@ -138,8 +138,8 @@ and adds, each behind its capability:
   listed thread's `capabilities.steer`), and is answered when that turn ends.
   With no turn running it is an ordinary send. A turn that cannot take it has
   the desktop hold it as a `queue` send is held, answered at once with a
-  `notice`; one with `uploadIds` or `skills`, which cannot be held, is refused
-  `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
+  `notice`; one with `uploadIds`, `skills` or `mentions`, which cannot be
+  held, is refused `busy` instead. Never beside `queue`. A desktop without it drops `steer`, so
   a send made while a turn runs is refused `busy` as before.
 - `conversation-stop-subagent`: `stopSubagent` stops one agent a chat spawned,
   named by the call that spawned it (`toolUseId`), where the chat's provider
@@ -191,6 +191,14 @@ requestId }` reads what fills the chat's context window from its live agent;
 A desktop without either read capability answers its frames `invalid_frame`
 under their `requestId`, as it answers `watchQueued`.
 
+- `conversation-send-mentions`: a `send` may name `mentions`
+  (`ConversationWireMention`: `path` relative to the chat's folder, `kind`,
+  `line?`, `endLine?`; at most `CONVERSATION_MAX_SEND_MENTIONS`), which the
+  desktop resolves against the chat's folder as its own composer's are. One
+  that is absolute, names a drive or climbs out with `..` refuses the frame
+  (`parseConversationWireMentions`). Never beside `queue`. A desktop without
+  it drops the member.
+
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the
 person sent as `{ id, mediaType, name?, byteLength, ref }`, and a desktop that
@@ -204,6 +212,19 @@ type, and a `send` names its `uploadId` in `uploadIds` beside any picture's.
 The desktop attaches it to the message by its path there, so the
 `user_message` lists it in `files` (`{ path }`). A client without it offers
 pictures only.
+
+`conversation-file-search` (`CONVERSATION_FILE_SEARCH_CAPABILITY`) and
+`conversation-commands` (`CONVERSATION_COMMANDS_CAPABILITY`) name no frame
+either: each is a GET beside the socket, under `conversation:read`, naming the
+chat by `workspaceId` and `agentId`. `GET /tailnet/v1/conversation-files`
+takes a `query` and answers the files and folders in the chat's folder whose
+names match, each by its path relative to that folder
+(`ConversationFileSearchAnswer`, read with `parseConversationFileSearchAnswer`);
+what a client picks goes back in a send's `mentions`. `GET
+/tailnet/v1/conversation-commands` answers the slash commands the chat's CLI
+runs there (`ConversationCommandsAnswer`, read with
+`parseConversationCommandsAnswer`), Studio's own never among them; `refresh=1`
+asks the CLI again and needs `conversation:operate`.
 
 `conversation-image-downscale` (`CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY`)
 names no frame either. A desktop that advertises it shrinks each picture

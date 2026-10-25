@@ -177,6 +177,8 @@ import type {
   MeshConversationKey,
   MeshConversationImageResult,
   MeshConversationListResult,
+  MeshConversationFileSearchResult,
+  MeshConversationCommandsResult,
 } from './tailnet-mesh'
 import type {
   ScheduledAgentDraft,
@@ -1081,6 +1083,10 @@ export type ElectronApi = {
     /** That machine's skill ids the chat runs with this message (`conversation-send-skills`). */
     skills?: string[]
     steer?: boolean
+    /** Files and folders of the chat's folder there, by their paths in it (`conversation-send-mentions`). */
+    mentions?: import('./conversation/mentions').ConversationMentionRef[]
+    /** Files on this computer; main puts each in that machine's store first (`conversation-message-files`). */
+    files?: import('./conversation/attachedFiles').ConversationAttachedFile[]
   }) => Promise<MeshConversationCommandResult>
   // Take back a message the machine holds for the turn's end, by its id there.
   meshConversationCancelQueued: (input: {
@@ -1176,6 +1182,17 @@ export type ElectronApi = {
   // the `ref` its message recorded, as a data URL. Needs
   // `conversation-message-images` there.
   meshConversationAttachment: (input: { key: MeshConversationKey; ref: string }) => Promise<MeshConversationImageResult>
+  // What a followed chat's composer reads of its folder over there: the files
+  // an @ may name (`conversation-file-search`) and its CLI's `/` list
+  // (`conversation-commands`).
+  meshConversationSearchFiles: (input: {
+    key: MeshConversationKey
+    query: string
+  }) => Promise<MeshConversationFileSearchResult>
+  meshConversationCommands: (input: {
+    key: MeshConversationKey
+    refresh?: boolean
+  }) => Promise<MeshConversationCommandsResult>
   // A paired machine's chat's Create PR (`chat-create-pull-request`), the
   // steps of the shell's own below, each run on that machine in the chat's
   // checkout there. A pull request it creates is recorded there as the chat's.

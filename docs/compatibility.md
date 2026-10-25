@@ -497,6 +497,29 @@ following another machine's chat refuses each there in words first. The
 Studio RPC advertises none of them: it forks by its own `conversation.fork`,
 whose new chat's record is the asking window's to write, and has no method for
 the other two.
+A paired desktop's composer reaches a chat's folder through three
+capabilities (2026-10-25). `conversation-send-mentions`: a `send` may name
+`mentions`, files and folders of the chat's folder by their paths relative to
+it (`{ path, kind: 'file' | 'folder', line?, endLine? }`, at most 50), which
+the desktop resolves as its own composer's chips are; an absolute path, a
+drive or a `..` segment is a bad frame, and `mentions` is never beside
+`queue`. `conversation-file-search`: `GET /tailnet/v1/conversation-files`
+with `workspaceId`, `agentId` and `query` (200 characters at most) answers
+`{ entries: [{ path, kind }], truncated }`, at most 50 matches, each relative
+to the chat's folder, on `conversation:read`. `conversation-commands`: `GET
+/tailnet/v1/conversation-commands` with `workspaceId` and `agentId` answers
+`{ cli, commands, fetchedAt, error? }`, the chat CLI's own commands without
+Studio's, on `conversation:read`; `refresh=1` asks the CLI again and needs
+`conversation:operate`. The two reads search and list only a folder on that
+computer (an SSH workspace's list is the one its sessions published, never a
+probe). All of it is additive: a desktop without them drops `mentions` and
+answers the routes 404, and a client sends or asks only where they are
+advertised (a desktop following another machine's chat refuses each there in
+words first). A paired desktop's files attached by path ride the existing
+`conversation-message-files` upload, which a desktop now sends as well as the
+phone. The Studio RPC advertises `conversation-send-mentions`, its
+`conversation.send` reading the lane's own validator, and not the two reads,
+which it has no method for.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

@@ -17,6 +17,8 @@ import {
   TAILNET_PAIR_REQUEST_PATH,
   TAILNET_CONVERSATION_PATH,
   TAILNET_CONVERSATION_IMAGE_PATH,
+  TAILNET_CONVERSATION_FILES_PATH,
+  TAILNET_CONVERSATION_COMMANDS_PATH,
   TAILNET_EVENTS_PATH,
   TAILNET_UPLOAD_PATH,
   TAILNET_WS_TICKET_PATH,
@@ -57,6 +59,8 @@ import { asRecord } from '../../../shared/records'
 const REQUEST_TIMEOUT_MS = 10_000
 /** One image going up to the upload route; see `uploadRemoteConversationImage`. */
 const UPLOAD_TIMEOUT_MS = 60_000
+/** One file going up, which may be five times a picture's ceiling. */
+const FILE_UPLOAD_TIMEOUT_MS = 5 * 60_000
 /** The upgrade handshake only. A change feed is idle most of its life and is never timed out. */
 const HANDSHAKE_TIMEOUT_MS = 10_000
 /** Enough for any control response; a body larger than this is not our listener answering. */
@@ -643,9 +647,19 @@ export async function uploadRemoteConversationImage(input: {
   name: string
   mediaType: string
   bytes: Buffer
+  /**
+   * A file of any type instead of a picture (`conversation-message-files`):
+   * kept by that machine where its own uploads are, and attached to the
+   * message by its path there.
+   */
+  kind?: 'file'
   timeoutMs?: number
 }): Promise<RemoteCallOutcome<{ uploadId: string }>> {
-  const query = new URLSearchParams({ sessionId: input.sessionId, name: input.name })
+  const query = new URLSearchParams({
+    sessionId: input.sessionId,
+    name: input.name,
+    ...(input.kind ? { kind: input.kind } : {}),
+  })
   let answer: JsonAnswer
   try {
     answer = await requestTailnetJson({
@@ -654,7 +668,7 @@ export async function uploadRemoteConversationImage(input: {
       path: `${TAILNET_UPLOAD_PATH}?${query.toString()}`,
       token: input.token,
       bytes: { data: input.bytes, contentType: input.mediaType },
-      timeoutMs: input.timeoutMs ?? UPLOAD_TIMEOUT_MS,
+      timeoutMs: input.timeoutMs ?? (input.kind === 'file' ? FILE_UPLOAD_TIMEOUT_MS : UPLOAD_TIMEOUT_MS),
     })
   } catch (error) {
     return { ok: false, code: 'unreachable', message: describeUnreachable(input.endpoint, error) }
@@ -664,6 +678,51 @@ export async function uploadRemoteConversationImage(input: {
   if (answer.status === 200 && typeof record?.uploadId === 'string' && record.uploadId)
     return { ok: true, value: { uploadId: record.uploadId } }
   const error = asRecord(record?.error)
+  return {
+    ok: false,
+    code: typeof error?.code === 'string' ? error.code : `http_${answer.status}`,
+    message: typeof error?.message === 'string' ? error.message : `That machine answered HTTP ${answer.status}.`,
+  }
+}
+
+/**
+ * What a paired machine's composer reads of one of its chats, answered in
+ * JSON beside its socket: the files a mention may name (`files`, by `query`)
+ * or the slash commands the chat's CLI runs (`commands`). The answer is the
+ * machine's word, for the caller to read member by member.
+ */
+export async function readRemoteConversationComposer(input: {
+  endpoint: TailnetEndpoint
+  token: string
+  read: 'files' | 'commands'
+  workspaceId: string
+  agentId: string
+  query?: string
+  refresh?: boolean
+  timeoutMs?: number
+}): Promise<RemoteCallOutcome<unknown>> {
+  const query = new URLSearchParams({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    ...(input.query !== undefined ? { query: input.query } : {}),
+    ...(input.refresh ? { refresh: '1' } : {}),
+  })
+  const path = input.read === 'files' ? TAILNET_CONVERSATION_FILES_PATH : TAILNET_CONVERSATION_COMMANDS_PATH
+  let answer: JsonAnswer
+  try {
+    answer = await requestTailnetJson({
+      endpoint: input.endpoint,
+      method: 'GET',
+      path: `${path}?${query.toString()}`,
+      token: input.token,
+      timeoutMs: input.timeoutMs,
+    })
+  } catch (error) {
+    return { ok: false, code: 'unreachable', message: describeUnreachable(input.endpoint, error) }
+  }
+  if (answer.status === 401) return { ok: false, code: 'unauthorized', message: UNAUTHORIZED_MESSAGE }
+  if (answer.status === 200) return { ok: true, value: answer.body }
+  const error = asRecord(asRecord(answer.body)?.error)
   return {
     ok: false,
     code: typeof error?.code === 'string' ? error.code : `http_${answer.status}`,

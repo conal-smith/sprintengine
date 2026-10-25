@@ -60,6 +60,21 @@
   desktop without a capability refuses `fork` as `unsupported_command` and the
   frames as `invalid_frame`. The pinned files are unchanged.
 
+- **A client's composer reaches the chat's folder on the desktop.**
+  `CONVERSATION_SEND_MENTIONS_CAPABILITY` (`conversation-send-mentions`): a
+  `send` may name `mentions` (`ConversationWireMention`, at most
+  `CONVERSATION_MAX_SEND_MENTIONS`), each by its path relative to the chat's
+  folder, which the desktop resolves as its own composer's chips are.
+  `parseConversationClientMessage` keeps them and refuses, as a bad frame, one
+  that is absolute, names a drive, climbs out with `..`, or rides beside
+  `queue`; `parseConversationWireMentions` reads a list alone.
+  `CONVERSATION_FILE_SEARCH_CAPABILITY` (`conversation-file-search`) and
+  `CONVERSATION_COMMANDS_CAPABILITY` (`conversation-commands`) name GETs
+  beside the socket, whose answers `parseConversationFileSearchAnswer` and
+  `parseConversationCommandsAnswer` read (composerReads.ts): the matches in
+  the chat's folder by relative path, and the chat CLI's slash commands
+  without Studio's. All additive; the pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the
@@ -97,6 +112,7 @@
   listed. `parseConversationServerFrame` keeps `highlight` when its star is a
   boolean or its colour one it knows, and `autoSettle` only when it is `true`.
   The pinned files are unchanged.
+
 - **A send says when it was written.** `composedAt` (epoch ms) and
   `confirmedStale` are optional members of a `send` command, beside any other.
   `isStaleConversationSend` says whether a desktop refuses one at a time: it
@@ -132,6 +148,7 @@
   before they were listed. `parseConversationServerFrame` keeps `changes` when
   every count is whole and not negative (`parseConversationWireChanges`), and
   `worktree` only when it is `true`. The pinned files are unchanged.
+
 - **A listed chat says what it still has working after its turn.**
   `backgroundWork` is an optional member of `ConversationThread`,
   `ConversationBackgroundWork` (`{ agents, monitors }`): the background agents
@@ -144,6 +161,7 @@
   `parseConversationServerFrame` keeps it when both counts are whole and one
   is above zero, and leaves it out otherwise (`parseConversationBackgroundWork`).
   The pinned files are unchanged.
+
 - **A session can have a goal.** `ConversationGoal` (`objective`, `status`)
   is a goal the agent keeps working toward by itself, and
   `ConversationGoalStatus` says where it stands. A `session_updated` event
@@ -160,6 +178,7 @@
   absent from a desktop built before they were listed;
   `parseConversationServerFrame` keeps each when it is a clock and leaves out
   anything else. The pinned files are unchanged.
+
 - **A message can carry files, not only pictures.**
   `CONVERSATION_MESSAGE_FILES_CAPABILITY` (`conversation-message-files`) names
   a desktop whose upload route takes `kind=file`: a file of any type, which a
@@ -293,6 +312,7 @@
   chats as well as ACP agents, which already sent them. Both are optional
   payload members, so a reader that does not know them skips them, and the
   wire validator passes them through. The pinned files are unchanged.
+
 - **A listed chat names its machine and its pull requests.** `host`
   (`ConversationWireHost`: `id`, `kind`, `label`, `color`) and `pullRequests`
   (`ConversationWirePullRequest`: `number`, `state`, `url`, `title`, at most
@@ -301,6 +321,7 @@
   on their own by `parseConversationWireHost` and
   `parseConversationWirePullRequests`. An unreadable one is left out and the
   row kept. The pinned files are unchanged.
+
 - **`turn_retrying`**, an event for a model call the provider will try
   again, with `ConversationTurnRetryingPayload` (`attempt`, `maxAttempts`,
   `retryInMs`, and the failure's `error` category and HTTP `status`). Until

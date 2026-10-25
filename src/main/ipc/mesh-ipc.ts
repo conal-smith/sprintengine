@@ -34,6 +34,8 @@ import {
   MESH_CONVERSATION_ATTACHMENT_CHANNEL,
   MESH_CONVERSATION_TURN_DIFF_CHANNEL,
   MESH_CONVERSATION_UNFOLLOW_CHANNEL,
+  MESH_CONVERSATION_FILE_SEARCH_CHANNEL,
+  MESH_CONVERSATION_COMMANDS_CHANNEL,
   type MeshConversationFrame,
 } from '../../shared/tailnet-mesh'
 import type { AutomationService } from '../automation/automation-service'
@@ -231,6 +233,8 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
       queue: record.queue,
       steer: record.steer,
       skills: record.skills,
+      mentions: record.mentions,
+      files: record.files,
     })
   })
   ipcMain.handle(MESH_CONVERSATION_TOOL_DETAIL_CHANNEL, (_event, input: unknown) => {
@@ -267,5 +271,14 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
   ipcMain.handle(MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input) ?? {}
     return service.mesh().conversationContextBreakdown({ key: record.key })
+  })
+  // What a followed chat's composer reads of its folder over there.
+  ipcMain.handle(MESH_CONVERSATION_FILE_SEARCH_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationSearchFiles({ key: record.key, query: record.query })
+  })
+  ipcMain.handle(MESH_CONVERSATION_COMMANDS_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationCommandList({ key: record.key, refresh: record.refresh })
   })
 }

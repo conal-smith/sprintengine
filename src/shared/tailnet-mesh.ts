@@ -1,4 +1,6 @@
 import type { ConversationWireCommand } from '../../packages/conversation-protocol/src'
+import type { ConversationFileSearchEntry } from '../../packages/conversation-protocol/src/composerReads'
+import type { ConversationCommand } from './conversation/commands'
 import type {
   ConversationForkCommand,
   ConversationHighlightColor,
@@ -507,6 +509,22 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * `.contextBreakdown`). False for a machine that does not, where none is
  * offered and the ring shows how full the window is alone.
  *
+ * `mentions`: the machine advertises `conversation-file-search` and
+ * `conversation-send-mentions` — the composer's @ searches one of its chats'
+ * folder there (`meshConversationSearchFiles`), and a message names what it
+ * picked by its path in that folder. False for a machine that does not, where
+ * the composer offers no @.
+ *
+ * `commands`: the machine advertises `conversation-commands` — the composer's
+ * `/` menu lists the commands a chat's CLI runs over there
+ * (`meshConversationCommands`). False for a machine that does not, where the
+ * menu holds this app's own commands.
+ *
+ * `messageFiles`: the machine advertises `conversation-message-files` and
+ * `upload` — a file of any type attached here goes up to it with the message,
+ * and the agent reads it there by its path. False for a machine that does not,
+ * where a file is typed as its path.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -534,6 +552,9 @@ export type MeshConversationListResult =
       fork?: boolean
       sideQuestions?: boolean
       contextBreakdown?: boolean
+      mentions?: boolean
+      commands?: boolean
+      messageFiles?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -561,6 +582,23 @@ export type MeshConversationCommand =
   | { kind: 'rewind'; turnSeq: number }
   | { kind: 'revert'; turnSeq: number; undo?: true; confirmed?: true; files?: string[] }
   | ConversationForkCommand
+
+/**
+ * The files and folders in a paired machine's chat folder that match a
+ * mention's query, by their paths relative to that folder
+ * (`conversation-file-search`).
+ */
+export type MeshConversationFileSearchResult =
+  | { ok: true; entries: ConversationFileSearchEntry[]; truncated: boolean }
+  | { ok: false; code: string; message: string }
+
+/**
+ * The slash commands a paired machine's chat CLI runs in the chat's folder
+ * there (`conversation-commands`), as that machine's own `/` menu lists them.
+ */
+export type MeshConversationCommandsResult =
+  | { ok: true; cli: string; commands: ConversationCommand[]; fetchedAt: number; error?: string }
+  | { ok: false; code: string; message: string }
 
 /**
  * `notice` qualifies an accepted command, e.g. that a model switch applies
@@ -672,3 +710,6 @@ export const MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL = 'mesh:conversation
 export const MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL = 'mesh:conversation-context-breakdown'
 export const MESH_CONVERSATION_TOOL_IMAGE_CHANNEL = 'mesh:conversation-tool-image'
 export const MESH_CONVERSATION_ATTACHMENT_CHANNEL = 'mesh:conversation-attachment'
+/** A paired machine's chat folder searched for a mention, and its CLI's `/` list. */
+export const MESH_CONVERSATION_FILE_SEARCH_CHANNEL = 'mesh:conversation-file-search'
+export const MESH_CONVERSATION_COMMANDS_CHANNEL = 'mesh:conversation-commands'

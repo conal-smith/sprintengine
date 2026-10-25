@@ -76,6 +76,7 @@ export type ServerDomainIpcDeps = {
     | 'usageLimitResumes'
     | 'scheduledMessages'
     | 'textGenerationSettings'
+    | 'conversationCommands'
   > & { hosts: HostRegistry; agentLaunchSettings: AgentLaunchSettingsStore }
   gateway: StudioGateway
   studioRpc: StudioRpcService
@@ -105,10 +106,8 @@ export function registerServerDomainIpc(registry: IpcRegistryLike, deps: ServerD
   registerMeshIpc(ipc, deps.gateway)
   registerWorkspaceBackupIpc(ipc, deps.workspaceBackup)
   registerCliModelDiscoveryIpc(ipc)
-  const conversationCommands = registerConversationCommandsIpc(ipc, {
-    userDataDir: dataDir(),
-    cliRuntimes: () => core.agentLaunchSettings.get().cliRuntimes,
-  })
+  // The core's own lists, which a paired desktop's `/` menu reads as well.
+  const conversationCommands = registerConversationCommandsIpc(ipc, { service: core.conversationCommands() })
   // The subscription usage limits the chats' agents report.
   registerUsageLimitsIpc(ipc, { userDataDir: dataDir() })
   // The chats a usage limit stopped, and the resume each can have when it resets.

@@ -107,13 +107,16 @@ async function mountRemote({
   steerSends = false,
   stopSubagents = false,
   handoff = false,
-  sendSkills = false,
   rewind = false,
   checkpointRevert = false,
   agentReads = {},
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
+  sendSkills = false,
+  mentions = false,
+  commands = false,
+  messageFiles = false,
 }: {
   access: 'read' | 'operate'
   permissionPreset?: MeshConversation['permissionPreset']
@@ -126,8 +129,6 @@ async function mountRemote({
   stopSubagents?: boolean
   /** The machine hands its chats off to a fresh session (`conversation-handoff`). */
   handoff?: boolean
-  /** The machine takes skills with a message (`conversation-send-skills`). */
-  sendSkills?: boolean
   /** The machine takes a chat back to before one of its messages (`conversation-rewind`). */
   rewind?: boolean
   /** The machine puts a turn's files back from its checkpoint (`conversation-checkpoint-revert`). */
@@ -144,6 +145,14 @@ async function mountRemote({
   listed?: Partial<Pick<MeshConversation, 'branch' | 'pullRequests' | 'changes' | 'worktree'>>
   /** The machine opens pull requests for its chats (`chat-create-pull-request`). */
   createPullRequest?: boolean
+  /** The machine takes its skills with a message and lists them (`conversation-send-skills`). */
+  sendSkills?: boolean
+  /** The machine searches a chat's folder and takes mentions (`conversation-file-search`, `conversation-send-mentions`). */
+  mentions?: boolean
+  /** The machine lists a chat CLI's slash commands (`conversation-commands`). */
+  commands?: boolean
+  /** The machine takes files with a message (`conversation-message-files`). */
+  messageFiles?: boolean
 }) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -158,8 +167,12 @@ async function mountRemote({
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     MutationObserver: dom.window.MutationObserver,
+    // jsdom has no CSS namespace; the skill type-ahead escapes a row's id with it.
+    CSS: { escape: (value: string) => value.replace(/["\\]/gu, '\\$&') },
     IS_REACT_ACT_ENVIRONMENT: true,
   }
+  // Nor does it scroll: the type-ahead keeps its highlighted row in view.
+  dom.window.HTMLElement.prototype.scrollIntoView = () => undefined
   Object.assign(globalThis, globals)
   const receivers: Array<(frame: MeshConversationFrame) => void> = []
   const followed: MeshConversationKey[] = []
@@ -189,11 +202,42 @@ async function mountRemote({
       steerSends,
       stopSubagents,
       handoff,
-      sendSkills,
       rewind,
       checkpointRevert,
       ...agentReads,
       createPullRequest,
+      sendSkills,
+      mentions,
+      commands,
+      messageFiles,
+    })),
+    // The composer's reads of the chat's folder over there.
+    meshConversationSearchFiles: vi.fn(async (_input: { key: MeshConversationKey; query: string }) => ({
+      ok: true,
+      entries: [{ path: 'docs/release-notes.md', kind: 'file' }],
+      truncated: false,
+    })),
+    meshConversationCommands: vi.fn(async (_input: { key: MeshConversationKey; refresh?: boolean }) => ({
+      ok: true,
+      cli: 'claude-code',
+      fetchedAt: 1_700_000_000_000,
+      commands: [{ name: 'review-pr', description: 'Review a pull request over there', source: 'custom' }],
+    })),
+    meshWorkspaceExtensions: vi.fn(async (_input: { connectionId: string; workspaceId: string; cli?: string }) => ({
+      ok: true,
+      extensions: {
+        skills: [
+          {
+            id: 'systematic-debugging',
+            name: 'systematic-debugging',
+            description: 'Find the root cause first.',
+            source: 'custom',
+            harnesses: [],
+            installState: 'installed',
+          },
+        ],
+        servers: [],
+      },
     })),
     // Create PR on the machine the chat runs on: each step answers as that
     // machine would, and a creation records the pull request there.
@@ -1470,5 +1514,123 @@ test('no Create PR for a machine that does not open pull requests, or a pairing 
     } finally {
       await chat.unmount()
     }
+  }
+})
+
+// ── The composer's reach into a chat's folder over there ────────────────────
+
+/** Past the mention search's debounce, with its answer in. */
+async function settleSearch(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  await chat.act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  })
+}
+
+test("an @ in a chat over there searches the chat's folder there, and the send names the pick", async () => {
+  const chat = await mountRemote({ access: 'operate', mentions: true })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('@release'))
+    await settleSearch(chat)
+    expect(chat.api.meshConversationSearchFiles).toHaveBeenLastCalledWith({ key, query: 'release' })
+    const option = Array.from(chat.document.querySelectorAll('[role="option"]')).find((row) =>
+      row.textContent?.includes('docs/release-notes.md'),
+    )
+    expect(option, 'the match over there is offered').toBeDefined()
+    await chat.act(async () => chat.enter())
+    expect(chat.host.querySelector('[aria-label="Remove docs/release-notes.md"]'), 'it waits as a chip').not.toBeNull()
+    await chat.act(async () => chat.type('Summarise this'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Summarise this',
+      mentions: [{ path: 'docs/release-notes.md', kind: 'file' }],
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that does not search its chats offers no @, and nothing is asked of it', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('@release'))
+    await settleSearch(chat)
+    expect(chat.api.meshConversationSearchFiles).not.toHaveBeenCalled()
+    expect(chat.document.querySelector('[aria-label="Mention a workspace file"]')).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('the `/` menu of a chat over there lists what its CLI runs there, asked once the menu opens', async () => {
+  const chat = await mountRemote({ access: 'operate', commands: true })
+  try {
+    await settleTurn(chat)
+    expect(chat.api.meshConversationCommands, 'nothing is asked as the chat opens').not.toHaveBeenCalled()
+    await chat.act(async () => chat.type('/rev'))
+    await settleSearch(chat)
+    expect(chat.api.meshConversationCommands).toHaveBeenCalledWith({ key })
+    expect(chat.document.body.textContent).toContain('review-pr')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test("a $ in a chat over there lists that machine's skills, and the send carries the pick", async () => {
+  const chat = await mountRemote({ access: 'operate', sendSkills: true })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => chat.type('$systematic'))
+    await settleSearch(chat)
+    expect(chat.api.meshWorkspaceExtensions).toHaveBeenCalledWith({
+      connectionId: key.connectionId,
+      workspaceId: key.workspaceId,
+    })
+    expect(chat.document.body.textContent).toContain('Find the root cause first.')
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => chat.type('Why does it flake?'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Why does it flake?',
+      skills: ['systematic-debugging'],
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a file dropped on a chat over there that takes files waits as a card, and goes up with the message', async () => {
+  const chat = await mountRemote({ access: 'operate', messageFiles: true })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => {
+      dropFiles(chat, [{ name: 'brief.pdf', type: 'application/pdf', path: '/Users/dev/Desktop/brief.pdf' }])
+    })
+    expect(chat.composer().textContent, 'the path is not typed into the message').not.toContain('/Users/dev')
+    await chat.act(async () => chat.type('Read the brief'))
+    await chat.act(async () => chat.enter())
+    expect(chat.api.meshConversationSend).toHaveBeenLastCalledWith({
+      key,
+      message: 'Read the brief',
+      files: [{ path: '/Users/dev/Desktop/brief.pdf' }],
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a machine that takes no files has a dropped file typed as its path, as before', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => {
+      dropFiles(chat, [{ name: 'brief.pdf', type: 'application/pdf', path: '/Users/dev/Desktop/brief.pdf' }])
+    })
+    expect(chat.composer().textContent).toContain('/Users/dev/Desktop/brief.pdf')
+  } finally {
+    await chat.unmount()
   }
 })
