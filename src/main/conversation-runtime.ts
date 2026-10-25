@@ -306,9 +306,13 @@ export type ConversationRuntimeOptions = {
   // (worktree-pool/chat-folder-guard.ts), so the agent never runs in a folder
   // that is gone or on someone else's branch. A refusal refuses the start or
   // the turn with its reason. Left out (a server with no pool), nothing is asked.
+  // `fresh`: a session start with no transcript yet, the chat's (or a new
+  // agent's) very first, when a project's checkout may be brought up to date
+  // before anything reads it (main-checkout-catch-up.ts).
   prepareChatFolder?: (input: {
     workspaceId: string
     workspaceRoot: string
+    fresh?: boolean
   }) => Promise<{ ok: true } | { ok: false; message: string }>
   // The platform this runtime runs on; tests stand in for another. Off
   // Windows a `wsl:` host id means nothing (a WSL server is handed the
@@ -683,10 +687,15 @@ export class ConversationRuntime {
     this.startingTranscripts.add(path)
     try {
       // The chat's worktree, given back while it sat idle, is brought back
-      // before anything is spawned in it.
+      // before anything is spawned in it; a new chat's checkout is brought up
+      // to date before its agent reads it.
       const folder = await this.prepareChatFolder({
         workspaceId: input.workspaceId.trim(),
         workspaceRoot: input.workspaceRoot,
+        fresh: !(await stat(path).then(
+          () => true,
+          () => false,
+        )),
       })
       if (!folder.ok) return { ok: false, message: folder.message }
       return (await this.adoptLiveSession(input, path)) ?? (await this.startSessionNow(input))
