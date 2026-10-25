@@ -159,7 +159,7 @@ export type WorktreePoolSlotView = {
   /**
    * Why the pool did not remove this idle slot when it last tried (over the
    * idle or disk limit, or asked to), as a phrase that follows "kept:":
-   * `has ignored files that may be someone’s work: .env`. Null when nothing
+   * `holds the history of a chat not settled`. Null when nothing
    * kept it.
    */
   kept: string | null

@@ -293,8 +293,8 @@ export function WorktreesSettingsTab({
           <p>
             The {totals.ready} ready worktree{totals.ready === 1 ? ' is' : 's are'} removed now
             {totals.bytes.ready ? `, freeing up to ${formatBytes(totals.bytes.ready)}` : ''}, except any holding a
-            chat&apos;s history or files that may be someone&apos;s work. Worktrees in use or holding changes stay. New
-            chats get a fresh worktree, with no dependencies installed.
+            chat&apos;s history. Worktrees in use or holding changes stay. New chats get a fresh worktree, with no
+            dependencies installed.
           </p>
         ),
         confirmLabel: 'Turn off and remove',

@@ -257,14 +257,10 @@ export async function judgeIdle(
     knownWorkspaceIds: ctx.deps.knownWorkspaceIds ?? null,
   })
   if (!ignored.ok) return no(`its ignored files could not be checked (${ignored.message})`)
-  if (ignored.paths.length > 0) {
-    const files = ignored.paths.filter((path) => !isChatTranscriptPath(path))
-    return no(
-      files.length > 0
-        ? `ignored files that may be someone’s work: ${files.slice(0, 3).join(', ')}`
-        : 'it holds the history of a chat that is not settled',
-    )
-  }
+  // Only a chat's history: the rest of a slot's ignored files are the pool's,
+  // which a lease hands on as they are and an eviction lets go
+  // (pool-eviction.ts `evictSlot`).
+  if (ignored.paths.some(isChatTranscriptPath)) return no('it holds the history of a chat that is not settled')
   return {
     ok: true,
     keeper: { branch, agentId: lease.agentId, workspaceId: lease.workspaceId, since: now },

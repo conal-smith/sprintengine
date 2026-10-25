@@ -89,40 +89,36 @@ export async function evictSlot(
         )
         return 'It has edits git status does not show, and is held in the pool now.'
       }
-      // Removing deletes the ignored files too, and the ones that may be
-      // someone's work are kept as the agent worktree cleanup keeps them:
-      // an edited `.env`, notes in an ignored folder (agent-worktree-keep-
-      // checks.ts). The slot stays idle; clearing its ignored files, which a
-      // person confirms, is the way to let them go.
-      // What the app and the agent CLIs wrote there themselves (transcripts,
-      // installed skills, the MCP config) and a linked `node_modules` are
-      // not: Settings ▸ Worktrees shows why a slot stays.
+      // Removing deletes the ignored files too. In a slot they are the
+      // pool's, not anyone's work: a lease hands an idle slot's ignored files
+      // to the next agent as they are, so keeping a slot for them only kept
+      // it from being removed, never from being reused. Build output and test
+      // artifacts no rule knows (`.e2e/`, `public/weather/`, `.expo/`) kept
+      // every used slot of a project, and its pool never shrank. They go with
+      // the slot, named in the log. (A worktree outside the pool still keeps
+      // them: agent-worktree-cleanup.ts, worktree-inventory.ts.)
       // The history of a chat that is not settled keeps its slot; a settled
       // chat counts as deleted (owner ruling 2026-10-08), so its history
       // goes with the slot and reopening it finds the slot gone.
       const ignored = await ignoredPathsAtRisk(pool.record.repoRoot, slot.path, ctx.git, {
         knownWorkspaceIds: ctx.deps.knownWorkspaceIds ?? null,
       })
-      if (!ignored.ok || ignored.paths.length > 0) {
-        if (!ignored.ok) {
-          await putBack('could not check its ignored files')
-          ctx.log(`${slot.path}: kept (could not check its ignored files: ${ignored.message})`)
-          return 'Could not check its ignored files, so it is kept.'
-        }
-        const chats = ignored.paths.filter(isChatTranscriptPath).length
-        const files = ignored.paths.filter((path) => !isChatTranscriptPath(path))
-        const more = files.length > 3 ? ` and ${files.length - 3} more` : ''
-        const listedPaths = `${files.slice(0, 3).join(', ')}${more}`
-        const reasons = [
-          chats > 0 ? `holds the history of ${chats === 1 ? 'a chat' : `${chats} chats`} not settled` : null,
-          files.length > 0 ? `has ignored files that may be someone’s work: ${listedPaths}` : null,
-        ].filter((reason): reason is string => reason !== null)
-        await putBack(reasons.join('; '))
+      if (!ignored.ok) {
+        await putBack('could not check its ignored files')
+        ctx.log(`${slot.path}: kept (could not check its ignored files: ${ignored.message})`)
+        return 'Could not check its ignored files, so it is kept.'
+      }
+      const chats = ignored.paths.filter(isChatTranscriptPath).length
+      if (chats > 0) {
+        const reason = `holds the history of ${chats === 1 ? 'a chat' : `${chats} chats`} not settled`
+        await putBack(reason)
         if (keptKey !== null) pool.keptVerdicts.set(slot.id, keptKey)
-        ctx.log(`${slot.path}: kept (${reasons.join('; ')})`)
-        return files.length > 0
-          ? `It has ignored files that may be someone’s work (${listedPaths}). Clear its ignored files first if they can go.`
-          : 'It holds the history of a chat that is not settled. Settle or delete the chat to let it go.'
+        ctx.log(`${slot.path}: kept (${reason})`)
+        return 'It holds the history of a chat that is not settled. Settle or delete the chat to let it go.'
+      }
+      if (ignored.paths.length > 0) {
+        const more = ignored.paths.length > 5 ? ` and ${ignored.paths.length - 5} more` : ''
+        ctx.log(`${slot.path}: its ignored files go with it: ${ignored.paths.slice(0, 5).join(', ')}${more}`)
       }
       // No --force: git checks cleanliness again at the moment of removal.
       // Only a tree with submodules, which plain `remove` always refuses, is
