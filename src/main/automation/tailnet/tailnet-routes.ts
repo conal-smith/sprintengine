@@ -204,6 +204,12 @@ export const TAILNET_CAPABILITIES = [
   // `setReasoningEffort` changes it on the chat's record, as this machine's
   // effort control does. CONVERSATION_REASONING_EFFORT_CAPABILITY.
   'conversation-reasoning-effort',
+  // A live chat's MCP servers from a paired machine (2026-10-25):
+  // `mcpServerAction` reconnects one or switches it on or off, where a listed
+  // chat names the actions its provider takes (`capabilities.mcpServerActions`).
+  // A sign-in stays here: the CLI waits for its callback on this machine.
+  // CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY.
+  'conversation-mcp-server-actions',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

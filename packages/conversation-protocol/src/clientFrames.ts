@@ -7,6 +7,7 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_SEND_SKILLS,
+  CONVERSATION_MCP_SERVER_ACTIONS,
   CONVERSATION_SEND_MODES,
   isConversationPermissionModeId,
   isConversationReasoningEffortId,
@@ -108,6 +109,21 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
             command: {
               kind: 'setReasoningEffort',
               ...(command.effort === undefined ? {} : { effort: command.effort as string }),
+            },
+          }
+        : null
+    }
+    if (command.kind === 'mcpServerAction') {
+      return id(value.commandId) &&
+        id(command.serverId) &&
+        CONVERSATION_MCP_SERVER_ACTIONS.includes(command.action as never)
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: {
+              kind: 'mcpServerAction',
+              serverId: command.serverId,
+              action: command.action as (typeof CONVERSATION_MCP_SERVER_ACTIONS)[number],
             },
           }
         : null
@@ -225,7 +241,8 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
     (rejection.commandKind === 'resolvePlan' ||
       rejection.commandKind === 'cancelQueued' ||
       rejection.commandKind === 'stopSubagent' ||
-      rejection.commandKind === 'setReasoningEffort')
+      rejection.commandKind === 'setReasoningEffort' ||
+      rejection.commandKind === 'mcpServerAction')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

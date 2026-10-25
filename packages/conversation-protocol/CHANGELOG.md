@@ -13,6 +13,20 @@
 
 ### Added
 
+- **A live chat's MCP servers can be reconnected and switched.**
+  `CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY`
+  (`conversation-mcp-server-actions`) names a desktop that takes the
+  `mcpServerAction` command (`serverId`, and an `action` of
+  `ConversationWireMcpServerAction`: `reconnect`, `enable` or `disable`,
+  listed as `CONVERSATION_MCP_SERVER_ACTIONS`) and lists the actions each
+  chat's provider takes as `capabilities.mcpServerActions`. A sign-in is not
+  one: the CLI waits for its callback on the desktop.
+  `parseConversationClientMessage` refuses an action it does not name, a
+  sign-in included, or one naming no server, as `invalid_frame`;
+  `parseConversationServerFrame` keeps the actions it can read. A desktop
+  without the capability refuses the kind as `unsupported_command`. The
+  pinned files are unchanged.
+
 - **A chat's reasoning effort can be read and set.**
   `CONVERSATION_REASONING_EFFORT_CAPABILITY` (`conversation-reasoning-effort`)
   names a desktop that lists each chat's provider levels as

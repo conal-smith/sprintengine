@@ -475,6 +475,19 @@ the kind as `unsupported_command` and lists neither member, and a client
 sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first, and offers no effort control). The
 Studio RPC does not advertise it, having no method for it.
+A live chat's MCP servers are the `conversation-mcp-server-actions` capability
+(2026-10-25): an `mcpServerAction` command names a server as the chat's CLI
+does (`serverId`) and an `action`, `reconnect`, `enable` or `disable`, and the
+desktop carries it out as the chat's own server rows do, through its runtime.
+Each listed chat names the actions its provider takes as
+`capabilities.mcpServerActions`, an optional array. It never resumes a chat at
+rest. A sign-in is not among the actions: the CLI waits for the sign-in's
+callback on the desktop itself, so one begun from another device could not be
+finished there, and the validator refuses it. All of it is additive: a
+desktop without the capability refuses the kind as `unsupported_command`, and
+a client sends it only where it is advertised (a desktop following another
+machine's chat refuses it there in words first). The Studio RPC does not
+advertise it, having no method for it.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

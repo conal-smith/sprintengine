@@ -18,6 +18,8 @@ import type {
   ConversationRewindInput,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationMcpServerActionInput,
+  ConversationMcpServerActionResult,
   ConversationRewindResult,
   ConversationSendTurnInput,
   ConversationSessionFrame,
@@ -220,6 +222,14 @@ export type ConversationTransport = {
    */
   stopSubagent?(input: ConversationStopSubagentInput): Promise<ConversationTransportResult>
   /**
+   * Reconnect, switch or sign in to one of a live chat's MCP servers, where
+   * the session lists the action (`capabilities.mcpServerActions`). A paired
+   * machine's chat has it too, its session listing an action only where that
+   * machine takes the command (`conversation-mcp-server-actions`), and never
+   * a sign-in, whose callback that machine's CLI waits for there.
+   */
+  mcpServerAction?(input: ConversationMcpServerActionInput): Promise<ConversationMcpServerActionResult>
+  /**
    * Ask a side question about the chat: answered from its context, added to
    * nothing, a running turn left as it was. Absent where the transport
    * cannot, as `stopSubagent` is. Offered only where the provider declares
@@ -374,6 +384,9 @@ export const localConversationTransport: ConversationTransport = {
   fork: (input) => localParts().fork(input),
   startSession: (input) => localParts().startSession(input),
   revert: (input) => localParts().revert(input),
+  // The IPC's, in a window on either implementation, as the composer's server
+  // rows have always asked it.
+  mcpServerAction: (input) => window.api.conversationSessionMcpAction(input),
   // Read off the implementation the window chose, so it is absent where that
   // one has no way to do it.
   get stopSubagent() {
@@ -484,6 +497,21 @@ export function createRemoteConversationTransport(input: {
     cancelQueued: async (held) =>
       commandResult(await window.api.meshConversationCancelQueued({ key, queuedId: held.queuedId })),
     interrupt: async () => commandResult(await window.api.meshConversationInterrupt({ key })),
+    // Offered only for an action the pane's session lists, which it does
+    // where the machine takes the command; a sign-in never is.
+    mcpServerAction: async (asked) => {
+      if (asked.action === 'sign-in')
+        return {
+          ok: false,
+          message: `Sign in to ${asked.serverId} on ${input.machineName}: its agent waits for the sign-in there.`,
+        }
+      const done = await window.api.meshConversationMcpServerAction({
+        key,
+        serverId: asked.serverId,
+        action: asked.action,
+      })
+      return done.ok ? { ok: true } : { ok: false, message: done.message }
+    },
     // Offered only where the machine takes it and lists the chat's provider
     // as able (the pane's session says `stopSubagent`).
     stopSubagent: async (input) =>

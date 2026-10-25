@@ -10,6 +10,8 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
+  CONVERSATION_MCP_SERVER_ACTIONS,
+  type ConversationWireMcpServerAction,
   isConversationPermissionModeId,
   isConversationReasoningEffortId,
   type ConversationQueuedFrame,
@@ -67,6 +69,13 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * that runs none. Absent means unknown.
      */
     reasoningEfforts?: string[]
+    /**
+     * What a device may do to the chat's MCP servers while it runs (an
+     * `mcpServerAction` command), from a desktop that advertises
+     * `conversation-mcp-server-actions`; empty for a provider that takes
+     * none. Absent means unknown.
+     */
+    mcpServerActions?: ConversationWireMcpServerAction[]
   }
   /**
    * The reasoning effort the chat runs at, one of its provider's
@@ -611,6 +620,13 @@ function thread(value: unknown): ConversationThread | null {
               : {}),
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
             ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
+            ...(Array.isArray(flags.mcpServerActions)
+              ? {
+                  mcpServerActions: flags.mcpServerActions.filter((action): action is ConversationWireMcpServerAction =>
+                    CONVERSATION_MCP_SERVER_ACTIONS.includes(action as never),
+                  ),
+                }
+              : {}),
             ...(Array.isArray(flags.reasoningEfforts)
               ? { reasoningEfforts: flags.reasoningEfforts.filter(isConversationReasoningEffortId) }
               : {}),

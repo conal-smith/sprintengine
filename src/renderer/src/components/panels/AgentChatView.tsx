@@ -3001,6 +3001,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     },
     [updateBinding, setDraftMetadata],
   )
+  const runMcpServerAction = transport.mcpServerAction
   const plusMenuSkills = useMemo(
     () =>
       supportsSkills
@@ -3018,14 +3019,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
             mcpPickable: false,
             // A chat on a paired machine lists that machine's.
             ...(transport.remoteExtensions ? { remote: transport.remoteExtensions } : {}),
-            // A live chat here can reconnect its servers, switch them, and
-            // sign in to one, as far as its CLI lets it.
-            ...(transport.kind === 'local' && sessionId && mcpServerActions?.length
+            // A live chat can reconnect its servers, switch them, and sign in
+            // to one, as far as its CLI lets it; one on a paired machine as
+            // far as that machine takes it, which its session says.
+            ...(runMcpServerAction && sessionId && mcpServerActions?.length
               ? {
                   mcpActions: {
                     available: mcpServerActions,
                     run: (serverId: string, action: ConversationMcpServerAction) =>
-                      window.api.conversationSessionMcpAction({ sessionId, serverId, action }),
+                      runMcpServerAction({ sessionId, serverId, action }),
                   },
                 }
               : {}),
@@ -3038,7 +3040,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       setAttachedSkills,
       chatCli,
       transport.remoteExtensions,
-      transport.kind,
+      runMcpServerAction,
       sessionId,
       mcpServerActions,
     ],

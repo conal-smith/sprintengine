@@ -92,6 +92,13 @@ export const CONVERSATION_SEND_MODE_CAPABILITY = 'conversation-send-mode' as con
  */
 export const CONVERSATION_REASONING_EFFORT_CAPABILITY = 'conversation-reasoning-effort' as const
 /**
+ * A live chat's MCP servers may be reconnected and switched on or off, as its
+ * composer's server rows do on the desktop: `mcpServerAction`, where a listed
+ * chat names the actions its provider takes (`capabilities.mcpServerActions`).
+ * A sign-in stays on the desktop, whose CLI waits for its callback there.
+ */
+export const CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY = 'conversation-mcp-server-actions' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -138,6 +145,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
   CONVERSATION_SEND_MODE_CAPABILITY,
   CONVERSATION_REASONING_EFFORT_CAPABILITY,
+  CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

@@ -80,6 +80,7 @@ const COMMAND_KINDS: Record<ConversationCommandKind, true> = {
   cancelQueued: true,
   stopSubagent: true,
   setReasoningEffort: true,
+  mcpServerAction: true,
 }
 
 /**

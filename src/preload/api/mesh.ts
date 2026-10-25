@@ -240,6 +240,11 @@ export const meshApi = {
     command(input.key, { kind: 'setModel', modelId: input.modelId }),
   meshConversationSetReasoningEffort: (input: { key: MeshConversationKey; effort?: string }) =>
     command(input.key, { kind: 'setReasoningEffort', ...(input.effort ? { effort: input.effort } : {}) }),
+  meshConversationMcpServerAction: (input: {
+    key: MeshConversationKey
+    serverId: string
+    action: 'reconnect' | 'enable' | 'disable'
+  }) => command(input.key, { kind: 'mcpServerAction', serverId: input.serverId, action: input.action }),
   meshConversationToolDetail: (input: {
     key: MeshConversationKey
     toolUseId: string
@@ -312,6 +317,7 @@ export const meshApi = {
   | 'meshConversationSetPermissionPreset'
   | 'meshConversationSetModel'
   | 'meshConversationSetReasoningEffort'
+  | 'meshConversationMcpServerAction'
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'

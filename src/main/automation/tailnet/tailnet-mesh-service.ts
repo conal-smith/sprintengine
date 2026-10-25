@@ -2222,6 +2222,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
           sendMode: tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mode'),
           reasoningEffort: tailnetPeerSupports(identity.value.capabilities, 'conversation-reasoning-effort'),
+          mcpServerActions: tailnetPeerSupports(identity.value.capabilities, 'conversation-mcp-server-actions'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2317,6 +2318,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_command',
           message: `${connection.machineName} cannot change a chat's reasoning effort from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'mcpServerAction') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-mcp-server-actions'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot reconnect or switch a chat's MCP servers from here yet. Update SprintEngine Studio there.`,
         }
     }
     const result = await remoteConversations.command(key, input.command)

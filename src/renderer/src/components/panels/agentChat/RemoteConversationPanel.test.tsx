@@ -109,6 +109,7 @@ async function mountRemote({
   stopSubagents = false,
   reasoningEffort = false,
   sendSkills = false,
+  mcpServerActions = false,
   extensions = { skills: [], servers: [] },
   capabilities = thread.capabilities,
   listed = {},
@@ -129,6 +130,8 @@ async function mountRemote({
   reasoningEffort?: boolean
   /** The machine takes its skills with a message (`conversation-send-skills`, `workspace-extensions`). */
   sendSkills?: boolean
+  /** The machine reconnects and switches a live chat's servers (`conversation-mcp-server-actions`). */
+  mcpServerActions?: boolean
   /** The skills and MCP servers the machine lists for the chat's project there. */
   extensions?: { skills: unknown[]; servers: unknown[] }
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
@@ -186,6 +189,7 @@ async function mountRemote({
       stopSubagents,
       reasoningEffort,
       sendSkills,
+      mcpServerActions,
       createPullRequest,
     })),
     meshWorkspaceExtensions: vi.fn(async () => ({ ok: true, extensions })),
@@ -264,6 +268,9 @@ async function mountRemote({
       ok: true,
     })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
+    meshConversationMcpServerAction: vi.fn(
+      async (_input: { key: MeshConversationKey; serverId: string; action: string }) => ({ ok: true }),
+    ),
     meshConversationSetReasoningEffort: vi.fn(async (_input: { key: MeshConversationKey; effort?: string }) => ({
       ok: true,
       notice: 'Reasoning effort applies from the next turn.',
@@ -946,6 +953,58 @@ test('a chat over there that takes that machine\'s skills lists them in the "+" 
     expect(chat.document.body.textContent).toContain('Review a change')
   } finally {
     await chat.unmount()
+  }
+})
+
+// A server the machine lists for the chat's CLI there, failed when its chat last said.
+const failedServer = { id: 'tracker', transport: 'http', scope: 'user', status: 'failed', error: 'timed out' }
+
+test('a server that failed over there is reconnected from its row, over the mesh, and read again', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    sendSkills: true,
+    mcpServerActions: true,
+    capabilities: { ...thread.capabilities!, mcpServerActions: ['reconnect', 'enable', 'disable'] },
+    extensions: { skills: [], servers: [failedServer] },
+  })
+  try {
+    expect(await openExtensions(chat, true)).toBe(true)
+    const reads = chat.api.meshWorkspaceExtensions.mock.calls.length
+    const reconnect = Array.from(chat.document.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === 'Reconnect',
+    )
+    expect(reconnect).toBeDefined()
+    await chat.act(async () => reconnect!.click())
+    expect(chat.api.meshConversationMcpServerAction).toHaveBeenCalledExactlyOnceWith({
+      key,
+      serverId: 'tracker',
+      action: 'reconnect',
+    })
+    expect(chat.api.meshWorkspaceExtensions.mock.calls.length).toBeGreaterThan(reads)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no server action where the machine does not take one, or lists the chat as taking none', async () => {
+  for (const options of [
+    { mcpServerActions: false, capabilities: { ...thread.capabilities!, mcpServerActions: ['reconnect' as const] } },
+    { mcpServerActions: true, capabilities: thread.capabilities },
+  ]) {
+    const chat = await mountRemote({
+      access: 'operate',
+      sendSkills: true,
+      extensions: { skills: [], servers: [failedServer] },
+      ...options,
+    })
+    try {
+      expect(await openExtensions(chat, true)).toBe(true)
+      expect(chat.document.body.textContent).toContain('tracker')
+      const buttons = Array.from(chat.document.querySelectorAll('button'))
+      expect(buttons.some((item) => item.textContent?.trim() === 'Reconnect')).toBe(false)
+    } finally {
+      await chat.unmount()
+    }
   }
 })
 

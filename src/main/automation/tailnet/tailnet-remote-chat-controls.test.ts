@@ -113,3 +113,19 @@ test("a machine that does not take a chat's effort is not asked to change it", a
     await machine.close()
   }
 })
+
+test("a machine that does not take a chat's server actions is not asked to reconnect one", async () => {
+  const machine = await pairedMachine(['conversations', 'conversation-steer-sends'])
+  try {
+    const before = machine.asked()
+    const done = await machine.mesh.conversationCommand({
+      key: machine.key,
+      command: { kind: 'mcpServerAction', serverId: 'github', action: 'reconnect' },
+    })
+    assert.ok(!done.ok && done.code === 'unsupported_command')
+    assert.ok(!done.ok && done.message.includes('Update SprintEngine Studio there'))
+    assert.equal(machine.asked(), before, 'nothing was sent over there')
+  } finally {
+    await machine.close()
+  }
+})

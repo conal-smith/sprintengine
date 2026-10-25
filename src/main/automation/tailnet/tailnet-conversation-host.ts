@@ -9,6 +9,7 @@ import {
   type ConversationWireHost,
   type ConversationWirePullRequest,
   type ConversationWireModels,
+  type ConversationWireMcpServerAction,
   isStaleConversationSend,
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
@@ -87,6 +88,12 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // none (`conversation-reasoning-effort`); a client offers its effort
         // control only where there are some.
         reasoningEfforts: [...(capabilities.reasoningEfforts ?? [])],
+        // What a device may do to the chat's servers while it runs
+        // (`conversation-mcp-server-actions`). Not a sign-in: the CLI waits
+        // for its callback on this machine, where no device could finish it.
+        mcpServerActions: (capabilities.mcpServerActions ?? []).filter(
+          (action): action is ConversationWireMcpServerAction => action !== 'sign-in',
+        ),
       }
     : undefined
 
@@ -1141,6 +1148,10 @@ export function createConversationGatewayHost(
           if (!resumed.ok) return resumed
           session = resumed.session
         }
+        // Its servers run with its agent, so a chat at rest is not resumed to
+        // reach them, as its own server rows offer nothing then either.
+        if (!session && command.kind === 'mcpServerAction')
+          return { ok: false, message: 'This chat has no agent running. Send it a message, then try again.' }
         if (!session) return { ok: false, message: 'Conversation is unavailable.' }
         switch (command.kind) {
           case 'send': {
@@ -1300,6 +1311,17 @@ export function createConversationGatewayHost(
           // finds it ended and is refused in words, which changes nothing.
           case 'stopSubagent':
             return runtime.stopSubagent({ sessionId: session.sessionId, toolUseId: command.toolUseId })
+          // As the chat's server row on this machine does it, refused for an
+          // action its provider does not take. Sent twice, a reconnect
+          // reconnects again and a switch finds the server where it left it.
+          case 'mcpServerAction': {
+            const done = await runtime.mcpServerAction({
+              sessionId: session.sessionId,
+              serverId: command.serverId,
+              action: command.action,
+            })
+            return done.ok ? { ok: true } : { ok: false, message: done.message }
+          }
           case 'resolveApproval':
             return api.resolveApproval({
               sessionId: session.sessionId,

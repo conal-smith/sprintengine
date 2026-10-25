@@ -159,6 +159,13 @@ and adds, each behind its capability:
   `setReasoningEffort` with an `effort` (or none, for the default) changes it
   from the next turn, kept on the chat as the desktop's own effort control
   keeps it. A desktop without it refuses the kind as `unsupported_command`.
+- `conversation-mcp-server-actions`: `mcpServerAction` with a `serverId` and an
+  `action` (`CONVERSATION_MCP_SERVER_ACTIONS`: `reconnect`, `enable`,
+  `disable`) does that to one of a live chat's MCP servers, as the desktop's
+  own server rows do, where a listed thread's `capabilities.mcpServerActions`
+  names the action. It never resumes a chat at rest. A sign-in is not among
+  them: the CLI waits for its callback on the desktop. A desktop without it
+  refuses the kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

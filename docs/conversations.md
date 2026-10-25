@@ -811,6 +811,14 @@ in the app's own process.
   `/effort` are offered as a local chat's are, reading the level the machine
   lists the chat at; a change is written to the chat's record over there,
   which every turn after runs at, whichever device sends it.
+- **Its MCP servers are reconnected and switched from here** (2026-10-25).
+  Where the machine advertises `conversation-mcp-server-actions` and lists the
+  chat's provider as taking the action, the "+" menu's server rows over a
+  live chat offer Reconnect and switching a server back on, as a local chat's
+  do, carried out over there, and the rows are read again after. A sign-in is
+  that machine's to finish, since its CLI waits for the sign-in there, so no
+  row offers it from here. The "+" lists that machine's skills and servers
+  where it takes skills with a message (`conversation-send-skills`).
 
 ### Terminals stay on the machine
 

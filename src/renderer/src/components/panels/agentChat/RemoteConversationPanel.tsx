@@ -95,6 +95,7 @@ function remoteConversationSession(
   sendMode: boolean,
   reasoningEffort: boolean,
   sendSkills: boolean,
+  mcpServerActions: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -157,6 +158,11 @@ function remoteConversationSession(
       stopSubagent: stopSubagents && capabilities?.stopSubagent === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
+      // What the "+" menu's server rows may do to the chat's servers over
+      // there while it runs, where the machine takes the command.
+      ...(mcpServerActions && capabilities?.mcpServerActions?.length
+        ? { mcpServerActions: capabilities.mcpServerActions }
+        : {}),
       // The CLI's own modes it runs beside them, offered in the same picker a
       // local chat's are, where the machine takes a switch to one.
       ...(cliPermissionModes && capabilities?.permissionModes ? { permissionModes: capabilities.permissionModes } : {}),
@@ -200,6 +206,8 @@ export default function RemoteConversationPanel({
   const [sendMode, setSendMode] = useState(false)
   // The machine lists its chats' reasoning effort and takes a change of it.
   const [reasoningEffort, setReasoningEffort] = useState(false)
+  // The machine reconnects and switches a live chat's MCP servers.
+  const [mcpServerActions, setMcpServerActions] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -320,6 +328,7 @@ export default function RemoteConversationPanel({
         setStopSubagents(result.stopSubagents === true)
         setSendMode(result.sendMode === true)
         setReasoningEffort(result.reasoningEffort === true)
+        setMcpServerActions(result.mcpServerActions === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -378,8 +387,19 @@ export default function RemoteConversationPanel({
         sendMode,
         reasoningEffort,
         sendSkills,
+        mcpServerActions,
       ),
-    [thread, key, modelSwitch, stopSubagents, cliPermissionModes, sendMode, reasoningEffort, sendSkills],
+    [
+      thread,
+      key,
+      modelSwitch,
+      stopSubagents,
+      cliPermissionModes,
+      sendMode,
+      reasoningEffort,
+      sendSkills,
+      mcpServerActions,
+    ],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

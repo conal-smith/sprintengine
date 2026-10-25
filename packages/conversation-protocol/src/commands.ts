@@ -79,6 +79,15 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   while a session is live, since the turn running keeps its own. Needs
  *   `conversation-reasoning-effort`; a desktop without it refuses the kind as
  *   `unsupported_command`.
+ * - `mcpServerAction` reconnects one of a live chat's MCP servers, or
+ *   switches one on or off, as its composer's server rows do on the desktop:
+ *   `serverId` names it as the chat's CLI does, and `action` is one of the
+ *   listed chat's `capabilities.mcpServerActions`. Never resumes a chat at
+ *   rest: its servers run with its agent. A sign-in is not among them: the
+ *   CLI waits for the sign-in's callback on the desktop itself, so one begun
+ *   from another device could not be finished there. Needs
+ *   `conversation-mcp-server-actions`; a desktop without it refuses the kind
+ *   as `unsupported_command`.
  * - `send` may say the `mode` the turn runs in, as the desktop's own chat
  *   sends one: `ask` answers without changing anything, `plan` has the agent
  *   plan and wait for the plan to be approved, where the chat's provider
@@ -118,8 +127,19 @@ export type ConversationCommand =
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
   | { kind: 'setReasoningEffort'; effort?: string }
+  | { kind: 'mcpServerAction'; serverId: string; action: ConversationWireMcpServerAction }
 
 export type ConversationCommandKind = ConversationCommand['kind']
+
+/** What a device may do to one of a live chat's MCP servers (`conversation-mcp-server-actions`). */
+export type ConversationWireMcpServerAction = 'reconnect' | 'enable' | 'disable'
+
+/** Every MCP server action a device may ask for. */
+export const CONVERSATION_MCP_SERVER_ACTIONS: readonly ConversationWireMcpServerAction[] = [
+  'reconnect',
+  'enable',
+  'disable',
+]
 
 /** The modes a `send` may name beside the default one (`conversation-send-mode`). */
 export type ConversationSendMode = 'plan' | 'ask'
@@ -165,6 +185,7 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'cancelQueued',
   'stopSubagent',
   'setReasoningEffort',
+  'mcpServerAction',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────

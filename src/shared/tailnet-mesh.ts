@@ -501,6 +501,11 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * does not, whose chats run at the effort kept for them there, unchangeable
  * from here.
  *
+ * `mcpServerActions`: the machine advertises `conversation-mcp-server-actions`
+ * — a live chat's MCP servers may be reconnected and switched on or off from
+ * here, where its listed `capabilities.mcpServerActions` names the action. A
+ * sign-in is that machine's to finish, and is never among them.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -525,6 +530,7 @@ export type MeshConversationListResult =
       stopSubagents?: boolean
       sendMode?: boolean
       reasoningEffort?: boolean
+      mcpServerActions?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -550,6 +556,7 @@ export type MeshConversationCommand =
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
   | { kind: 'setReasoningEffort'; effort?: string }
+  | { kind: 'mcpServerAction'; serverId: string; action: 'reconnect' | 'enable' | 'disable' }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }

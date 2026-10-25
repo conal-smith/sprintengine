@@ -1118,6 +1118,13 @@ export type ElectronApi = {
     key: MeshConversationKey
     effort?: string
   }) => Promise<MeshConversationCommandResult>
+  // Reconnect one of a live chat's MCP servers over there, or switch it on or
+  // off, as its server row there does. Needs `conversation-mcp-server-actions` there.
+  meshConversationMcpServerAction: (input: {
+    key: MeshConversationKey
+    serverId: string
+    action: 'reconnect' | 'enable' | 'disable'
+  }) => Promise<MeshConversationCommandResult>
   // Switch a paired machine's chat to another model of its CLI, from the
   // catalog that machine's list names. Needs `conversation-models` there.
   meshConversationSetModel: (input: {
