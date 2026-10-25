@@ -108,6 +108,8 @@ async function mountRemote({
   stopSubagents = false,
   handoff = false,
   sendSkills = false,
+  rewind = false,
+  checkpointRevert = false,
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -125,6 +127,10 @@ async function mountRemote({
   handoff?: boolean
   /** The machine takes skills with a message (`conversation-send-skills`). */
   sendSkills?: boolean
+  /** The machine takes a chat back to before one of its messages (`conversation-rewind`). */
+  rewind?: boolean
+  /** The machine puts a turn's files back from its checkpoint (`conversation-checkpoint-revert`). */
+  checkpointRevert?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
@@ -177,6 +183,8 @@ async function mountRemote({
       stopSubagents,
       handoff,
       sendSkills,
+      rewind,
+      checkpointRevert,
       createPullRequest,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
@@ -254,6 +262,26 @@ async function mountRemote({
     meshConversationStopSubagent: vi.fn(async (_input: { key: MeshConversationKey; toolUseId: string }) => ({
       ok: true,
     })),
+    meshConversationRewind: vi.fn(async (_input: { key: MeshConversationKey; turnSeq: number }) => ({ ok: true })),
+    // What the machine's checkout would put back, and then puts back.
+    meshConversationRevert: vi.fn(
+      async (input: {
+        key: MeshConversationKey
+        turnSeq: number
+        undo?: boolean
+        confirmed?: boolean
+        files?: string[]
+      }): Promise<
+        | { ok: true; data?: Record<string, unknown> }
+        | { ok: false; code: string; message: string; data?: Record<string, unknown> }
+      > => ({
+        ok: true,
+        data: {
+          files: [{ path: 'src/upload.ts', status: 'modified', addedLines: 1, removedLines: 1, binary: false }],
+          reverted: input.confirmed === true,
+        },
+      }),
+    ),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
       listedModel = input.modelId
@@ -267,19 +295,25 @@ async function mountRemote({
   const { act, createElement } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const { default: RemoteConversationPanel } = await import('./RemoteConversationPanel')
+  // Edit from here and Revert ask before they act, as the app's own root lets them.
+  const { ConfirmDialogProvider } = await import('../../ui/ConfirmDialog')
   const { EditorView } = await import('@codemirror/view')
   const host = dom.window.document.createElement('div')
   dom.window.document.body.appendChild(host)
   const root = createRoot(host)
   await act(async () =>
     root.render(
-      createElement(RemoteConversationPanel, {
-        workspaceId: 'local-workspace',
-        connectionId: key.connectionId,
-        machineName: 'mac-mini',
-        remoteWorkspaceId: key.workspaceId,
-        remoteAgentId: key.agentId,
-      }),
+      createElement(
+        ConfirmDialogProvider,
+        null,
+        createElement(RemoteConversationPanel, {
+          workspaceId: 'local-workspace',
+          connectionId: key.connectionId,
+          machineName: 'mac-mini',
+          remoteWorkspaceId: key.workspaceId,
+          remoteAgentId: key.agentId,
+        }),
+      ),
     ),
   )
   const earlier = event('user_message', { turnId: 'earlier', text: 'Bump the timeout' })
@@ -407,7 +441,8 @@ test('a conversation on a paired machine renders in the chat view and is driven 
     expect(chat.host.querySelector('[data-conversation-strip] [data-strip-branch]')).toBeNull()
     expect(chat.host.querySelector('[data-conversation-strip] [data-diff-stat-pill]')).toBeNull()
     // A turn's changes can be read, but its files are on the other machine's
-    // disk, so nothing offers to revert them.
+    // disk, and this machine does not say it reverts them itself, so nothing
+    // offers to.
     expect(chat.host.textContent).toContain('1 file changed')
     expect(chat.host.textContent).not.toContain('Revert to before this turn')
     // Its tree is listed, but the diff window and the editor open this disk's files.
@@ -770,6 +805,156 @@ async function settleTurn(chat: Awaited<ReturnType<typeof mountRemote>>) {
     chat.emit({ type: 'event', event: event('turn_completed', { turnId: 'a' }) })
   })
 }
+
+const dialog = (chat: Awaited<ReturnType<typeof mountRemote>>) =>
+  chat.document.querySelector<HTMLElement>('[role="dialog"]')
+const dialogButton = (chat: Awaited<ReturnType<typeof mountRemote>>, label: string) =>
+  Array.from(dialog(chat)?.querySelectorAll('button') ?? []).find((item) => item.textContent?.trim() === label)
+const buttons = (chat: Awaited<ReturnType<typeof mountRemote>>, label: string) =>
+  Array.from(chat.host.querySelectorAll('button')).filter((item) => item.textContent?.trim() === label)
+/** Waits out the reads a click starts before its dialog opens. */
+async function settle(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  for (let i = 0; i < 5; i++) await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+}
+
+test('Edit from here on a chat over there takes it back over there, and restores its files there when asked', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    rewind: true,
+    checkpointRevert: true,
+    capabilities: { ...thread.capabilities!, rewind: true },
+  })
+  try {
+    await settleTurn(chat)
+    // Each message offers it; the first is the one whose turn kept a checkpoint.
+    expect(buttons(chat, 'Edit from here')).toHaveLength(2)
+    await chat.act(async () => buttons(chat, 'Edit from here')[0]!.click())
+    await settle(chat)
+    // The files a restore would put back are listed by that machine first.
+    const preview = chat.api.meshConversationRevert.mock.calls[0]![0]
+    expect(preview).toEqual({ key, turnSeq: expect.any(Number) })
+    const restore = dialog(chat)!.querySelector<HTMLElement>('[role="checkbox"], input[type="checkbox"]')!
+    expect(dialog(chat)!.textContent).toContain('Also restore 1 file to before this message')
+    await chat.act(async () => restore.click())
+    expect(dialog(chat)!.textContent).toContain('src/upload.ts')
+    await chat.act(async () => dialogButton(chat, 'Edit from here')!.click())
+    await settle(chat)
+    expect(chat.api.meshConversationRewind).toHaveBeenCalledExactlyOnceWith({ key, turnSeq: preview.turnSeq })
+    expect(chat.api.meshConversationRevert).toHaveBeenLastCalledWith({
+      key,
+      turnSeq: preview.turnSeq,
+      confirmed: true,
+      files: ['src/upload.ts'],
+    })
+    // The message is back in the composer, to be edited and sent again.
+    expect(chat.draft()).toBe('Bump the timeout')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('Edit from here over there leaves the files alone where that machine does not restore them', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    rewind: true,
+    capabilities: { ...thread.capabilities!, rewind: true },
+  })
+  try {
+    await settleTurn(chat)
+    await chat.act(async () => buttons(chat, 'Edit from here')[0]!.click())
+    await settle(chat)
+    expect(chat.api.meshConversationRevert).not.toHaveBeenCalled()
+    expect(dialog(chat)!.textContent).toContain('Files are left as they are.')
+    await chat.act(async () => dialogButton(chat, 'Edit from here')!.click())
+    await settle(chat)
+    expect(chat.api.meshConversationRewind).toHaveBeenCalledOnce()
+    expect(chat.api.meshConversationRevert).not.toHaveBeenCalled()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Edit from here where the machine cannot go back, lists its chat as unable, or the pairing may only follow', async () => {
+  for (const options of [
+    { access: 'operate' as const, rewind: false, capabilities: { ...thread.capabilities!, rewind: true } },
+    { access: 'operate' as const, rewind: true, capabilities: { ...thread.capabilities!, rewind: false } },
+    { access: 'operate' as const, rewind: true, capabilities: thread.capabilities },
+    { access: 'read' as const, rewind: true, capabilities: { ...thread.capabilities!, rewind: true } },
+  ]) {
+    const chat = await mountRemote(options)
+    try {
+      await settleTurn(chat)
+      expect(chat.host.textContent).toContain('Bump the timeout')
+      expect(buttons(chat, 'Edit from here')).toHaveLength(0)
+    } finally {
+      await chat.unmount()
+    }
+  }
+})
+
+test('a turn over there is reverted by that machine, and files that moved are shown again before it acts', async () => {
+  const chat = await mountRemote({ access: 'operate', checkpointRevert: true })
+  try {
+    await settleTurn(chat)
+    chat.api.meshConversationRevert
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: {
+          files: [{ path: 'src/upload.ts', status: 'modified', addedLines: 1, removedLines: 1, binary: false }],
+          reverted: false,
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        ok: false,
+        code: 'unavailable',
+        message: 'The files to restore changed since they were shown. Review the new list and confirm again.',
+        data: { changed: true },
+      }))
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: {
+          files: [
+            { path: 'src/upload.ts', status: 'modified', addedLines: 1, removedLines: 1, binary: false },
+            { path: 'src/retry.ts', status: 'added', addedLines: 4, removedLines: 0, binary: false },
+          ],
+          reverted: false,
+        },
+      }))
+    const revert = buttons(chat, 'Revert to before this turn')
+    expect(revert.length).toBeGreaterThan(0)
+    await chat.act(async () => revert[0]!.click())
+    await settle(chat)
+    expect(dialog(chat)!.textContent).toContain('src/upload.ts')
+    await chat.act(async () => dialogButton(chat, 'Revert files')!.click())
+    await settle(chat)
+    // The list moved over there: the new one is shown, with why.
+    expect(dialog(chat)!.textContent).toContain('changed since they were shown')
+    expect(dialog(chat)!.textContent).toContain('src/retry.ts')
+    await chat.act(async () => dialogButton(chat, 'Revert files')!.click())
+    await settle(chat)
+    const turnSeq = chat.api.meshConversationRevert.mock.calls[0]![0].turnSeq
+    expect(chat.api.meshConversationRevert.mock.calls.map(([input]) => input)).toEqual([
+      { key, turnSeq },
+      { key, turnSeq, confirmed: true, files: ['src/upload.ts'] },
+      { key, turnSeq },
+      { key, turnSeq, confirmed: true, files: ['src/upload.ts', 'src/retry.ts'] },
+    ])
+    expect(dialog(chat)).toBeNull()
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a pairing that may only follow sees no Revert, even where the machine reverts', async () => {
+  const chat = await mountRemote({ access: 'read', checkpointRevert: true })
+  try {
+    await settleTurn(chat)
+    expect(chat.host.textContent).toContain('1 file changed')
+    expect(buttons(chat, 'Revert to before this turn')).toHaveLength(0)
+  } finally {
+    await chat.unmount()
+  }
+})
 
 /** A drop of files from the system, each with its path on this disk. */
 function dropFiles(

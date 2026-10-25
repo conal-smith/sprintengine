@@ -55,9 +55,9 @@ const UPLOAD_TTL_MS = 60 * 60_000
 const MAX_UPLOAD_REFS = 256
 const MAX_DEVICE_UPLOAD_REFS = 32
 const MAX_SPENT_UPLOAD_REFS = 256
-// Handoffs remembered by the device's command, so one sent again after a
-// dropped connection is answered as the first was.
-const MAX_HANDOFF_RECEIPTS = 64
+// Rewinds, confirmed reverts and handoffs remembered by the device's command,
+// so one sent again after a dropped connection is answered as the first was.
+const MAX_COMMAND_RECEIPTS = 64
 /**
  * Where a step's picture is, once found, is kept this long and for this many
  * steps. Finding it scans the transcript back to the step, and a phone
@@ -89,6 +89,10 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // Whether the chat can be handed off to a fresh session
         // (`conversation-handoff`); a client offers Handoff only where it can.
         handoff: capabilities.handoff === true,
+        // Whether the chat can go back to before one of its messages
+        // (`conversation-rewind`); a client offers Edit from here only where
+        // it can.
+        rewind: capabilities.rewind === true,
       }
     : undefined
 
@@ -240,6 +244,8 @@ export type ConversationGatewayCommandResult = {
   /** With `busy`: when trying again can succeed. */
   retryAfterMs?: number
   notice?: string
+  /** What a command that answers more than yes or no says, as its `commandResult`'s `data` (a `revert`'s files). */
+  data?: Record<string, unknown>
 }
 
 /** A count or a time in milliseconds as the wire carries it: a whole number, never below zero. */
@@ -611,29 +617,57 @@ export function createConversationGatewayHost(
   // gone; a retry of that same command is answered from the runtime's receipt
   // and does not need them again.
   const spent = new Map<string, { deviceId: string; commandId: string }>()
-  const handoffs = new Map<string, Promise<ConversationGatewayCommandResult>>()
-  // Handed off under the device's own command: a repeat after a dropped
-  // connection is the same handoff, not a second one refused as already done.
-  const handoff = (key: ConversationKey, deviceId: string, commandId: string) => {
+  const receipts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  // Carried out under the device's own command: a repeat after a dropped
+  // connection is the same rewind, revert or handoff, answered as the first
+  // was. Run again, a rewind would no longer find the message it went back
+  // before, a revert would find its own work done and refuse it as files that
+  // moved, and a handoff would be refused as one already made.
+  const receipted = (
+    key: ConversationKey,
+    deviceId: string,
+    commandId: string,
+    run: () => Promise<ConversationGatewayCommandResult>,
+  ): Promise<ConversationGatewayCommandResult> => {
     const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
-    let handing = handoffs.get(receipt)
-    if (!handing) {
-      handing = runtime.handoffConversation({ key }).then(
-        (result): ConversationGatewayCommandResult =>
-          result.ok ? { ok: true } : { ok: false, message: result.message },
-        (error: unknown): ConversationGatewayCommandResult => ({
-          ok: false,
-          message: error instanceof Error ? error.message : 'The chat was not handed off.',
-        }),
-      )
-      handoffs.set(receipt, handing)
-      while (handoffs.size > MAX_HANDOFF_RECEIPTS) handoffs.delete(handoffs.keys().next().value!)
+    let running = receipts.get(receipt)
+    if (!running) {
+      running = run().catch((error: unknown): ConversationGatewayCommandResult => ({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The conversation could not do that.',
+      }))
+      receipts.set(receipt, running)
+      while (receipts.size > MAX_COMMAND_RECEIPTS) receipts.delete(receipts.keys().next().value!)
       // A refusal is not kept: the person may try again once the turn is over.
-      void handing.then((result) => {
-        if (!result.ok) handoffs.delete(receipt)
+      void running.then((result) => {
+        if (!result.ok) receipts.delete(receipt)
       })
     }
-    return handing
+    return running
+  }
+  // A turn's files put back, or only listed, as this machine's own Revert
+  // does. The paths are the checkout's own, relative to it, which the socket
+  // keeps them as.
+  const revert = async (
+    key: ConversationKey,
+    command: Extract<ConversationCommand, { kind: 'revert' }>,
+  ): Promise<ConversationGatewayCommandResult> => {
+    const result = await api.revertToTurn({
+      key,
+      turnSeq: command.turnSeq,
+      ...(command.undo ? { undo: true } : {}),
+      ...(command.confirmed ? { confirmed: true, files: command.files ?? [] } : {}),
+    })
+    if (!result.ok)
+      return { ok: false, message: result.message, ...(result.changed ? { data: { changed: true } } : {}) }
+    return {
+      ok: true,
+      data: {
+        files: result.files,
+        reverted: result.reverted,
+        ...(result.kept?.length ? { kept: result.kept } : {}),
+      },
+    }
   }
   const starting = new Map<string, ReturnType<ConversationBackend['startSession']>>()
   const sending = new Map<
@@ -1064,6 +1098,28 @@ export function createConversationGatewayHost(
         return Promise.resolve(
           held ? held.cancel(chat, command.queuedId) : { ok: false, message: 'This desktop holds no queued messages.' },
         )
+      // As this machine's own Edit from here and Revert: the runtime refuses
+      // either in words while a turn runs, and neither needs a live session,
+      // so neither resumes a chat at rest: after a rewind, the next message,
+      // from either machine, starts from where the chat went back to.
+      if (command.kind === 'rewind')
+        return receipted(key, deviceId, commandId, async () => {
+          const rewound = await api.rewindToTurn({ key, turnSeq: command.turnSeq })
+          return rewound.ok ? { ok: true } : { ok: false, message: rewound.message }
+        })
+      // A preview changes no file, and is run again for each ask.
+      if (command.kind === 'revert')
+        return command.confirmed
+          ? receipted(key, deviceId, commandId, () => revert(key, command))
+          : revert(key, command)
+      // As this machine's own Handoff, which needs no live session either: it
+      // lets the session go. The file it writes stays here, so only whether it
+      // went is said.
+      if (command.kind === 'handoff')
+        return receipted(key, deviceId, commandId, async () => {
+          const handed = await runtime.handoffConversation({ key })
+          return handed.ok ? { ok: true } : { ok: false, message: handed.message }
+        })
       // A message written long ago that the person has not confirmed is not
       // held either: held now, it would go the moment the chat is free, which
       // is the late send the refusal is for. The runtime asks the same of a
@@ -1122,11 +1178,6 @@ export function createConversationGatewayHost(
                 .map((entry) => entry.sessionId)
             : [],
         )
-        // As this machine's own Handoff: the runtime refuses it in words while
-        // anything in the chat runs, and it needs no live session, since it
-        // lets the session go. Never a resume: a chat at rest is handed off
-        // from its transcript.
-        if (command.kind === 'handoff') return handoff(key, deviceId, commandId)
         let session = sessionFor(key)
         // A send, or a preset switch, reaches a conversation with no live
         // session by resuming it; the switch then applies to that session.

@@ -455,6 +455,25 @@ once the turn is over. All of it is additive: a desktop without the
 capability refuses the kind as `unsupported_command`, and a desktop following
 another machine's chat refuses it there in words first. The Studio RPC
 advertises it too, through the `conversation.handoff` method it already had.
+Edit from here and Revert from a paired device are the `conversation-rewind`
+and `conversation-checkpoint-revert` capabilities (2026-10-25). A `rewind`
+command takes a chat back to before the user message at `turnSeq`, as the
+desktop's own Edit from here does, and each listed chat says whether its
+provider can as `capabilities.rewind`, an optional boolean. A `revert`
+command puts a turn's files back from its checkpoint in the desktop's own
+checkout (`undo` for the last revert's undo): without `confirmed` it only
+lists the files, and `confirmed` it acts on exactly the `files` that list
+named, refusing when they moved. Its answer rides on the `commandResult` as
+`data`, a new optional member under the full contract that an older client
+drops: the files (paths relative to the desktop's checkout), whether they
+were reverted, the ignored new files it `kept`, or `changed`. The desktop
+answers a repeat of a rewind or a confirmed revert under the same command id
+with the first answer, and keeps no refusal. All of it is additive: a
+desktop without either capability refuses the kind as
+`unsupported_command`, and a desktop following another machine's chat
+refuses it there in words first. The Studio RPC advertises both too: its
+`conversation.rewind` and `conversation.revert` methods, an owner's, reach
+the same runtime.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

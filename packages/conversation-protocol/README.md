@@ -152,6 +152,22 @@ and adds, each behind its capability:
   lets the provider session go, and the next message starts a new one pointed
   at the file. Refused while anything in the chat is running. A desktop
   without it refuses the kind as `unsupported_command`.
+- `conversation-rewind`: `rewind` takes a chat back to before the user message
+  at `turnSeq`, where the chat's provider can (a listed thread's
+  `capabilities.rewind`): that message and every turn after it leave the
+  agent's context and the transcript's view, and the files stay as they are.
+  A repeat under the same `commandId` is answered as the first was. A desktop
+  without it refuses the kind as `unsupported_command`.
+- `conversation-checkpoint-revert`: `revert` puts a turn's files back from its
+  checkpoint in the desktop's checkout, for a listed thread with
+  `capabilities.checkpoints` (`undo`: as they were before that turn's last
+  revert). Unconfirmed it lists the files it would touch; `confirmed`, it acts
+  on exactly the `files` that list named and refuses when the list moved. The
+  answer rides on the `commandResult` as `data`
+  (`ConversationRevertAnswer`, read with `parseConversationRevertAnswer`): the
+  files, whether they were reverted, the ignored new files it `kept`, or
+  `changed`. Its paths are relative to the desktop's checkout. A desktop
+  without it refuses the kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

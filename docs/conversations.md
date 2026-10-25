@@ -802,6 +802,16 @@ in the app's own process.
   the next message from either machine starts the new session there. A repeat
   of the same command after a dropped connection is the same handoff. A
   machine without the capability offers Compact alone.
+- **Edit from here and Revert work over there too** (owner report
+  2026-10-25). Where the machine advertises `conversation-rewind` and lists
+  the chat's provider as able (`capabilities.rewind`), each message offers
+  Edit from here, as a local chat's does: the chat goes back over there and
+  the message returns to this composer. Where it advertises
+  `conversation-checkpoint-revert`, a turn with a checkpoint offers Revert to
+  before this turn and Undo revert, and Edit from here offers to restore the
+  files too: that machine lists the files and puts them back in its own
+  checkout, so the paths in the dialog name its disk, not this one. A pairing
+  that may only follow is offered neither.
 
 ### Terminals stay on the machine
 

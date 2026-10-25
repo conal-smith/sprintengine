@@ -93,6 +93,7 @@ function remoteConversationSession(
   stopSubagents: boolean,
   handoff: boolean,
   sendSkills: boolean,
+  rewind: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -143,6 +144,10 @@ function remoteConversationSession(
       // Whether the chat can be handed off to a fresh session over there: the
       // machine takes the command and lists the chat's provider as able.
       handoff: handoff && capabilities?.handoff === true,
+      // Whether the chat can go back to before one of its messages over there
+      // (Edit from here): the machine takes the command and lists the chat's
+      // provider as able.
+      rewind: rewind && capabilities?.rewind === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
     },
@@ -181,6 +186,10 @@ export default function RemoteConversationPanel({
   const [stopSubagents, setStopSubagents] = useState(false)
   // The machine hands one of its chats off to a fresh session.
   const [handoff, setHandoff] = useState(false)
+  // The machine takes one of its chats back to before a message, and puts a
+  // turn's files back from its checkpoint, in its own checkout.
+  const [rewind, setRewind] = useState(false)
+  const [checkpointRevert, setCheckpointRevert] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -207,6 +216,8 @@ export default function RemoteConversationPanel({
   hostPullRequestsRef.current = hostPullRequests
   const steerSendsRef = useRef(steerSends)
   steerSendsRef.current = steerSends
+  const checkpointRevertRef = useRef(checkpointRevert)
+  checkpointRevertRef.current = checkpointRevert
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -245,6 +256,7 @@ export default function RemoteConversationPanel({
           skills: sendSkillsRef.current,
           steer: steerSendsRef.current,
           hostPullRequests: hostPullRequestsRef.current,
+          checkpointRevert: checkpointRevertRef.current,
         }
       },
       ...(setModel
@@ -287,6 +299,8 @@ export default function RemoteConversationPanel({
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
         setHandoff(result.handoff === true)
+        setRewind(result.rewind === true)
+        setCheckpointRevert(result.checkpointRevert === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -325,8 +339,8 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, handoff, sendSkills),
-    [thread, key, modelSwitch, stopSubagents, handoff, sendSkills],
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, handoff, sendSkills, rewind),
+    [thread, key, modelSwitch, stopSubagents, handoff, sendSkills, rewind],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

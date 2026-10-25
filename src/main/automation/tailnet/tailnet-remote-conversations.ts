@@ -717,7 +717,11 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
             follow.access = 'operate'
             emit(follow, linkFrame(follow))
           }
-          command.resolve({ ok: true, ...(frame.notice ? { notice: frame.notice } : {}) })
+          command.resolve({
+            ok: true,
+            ...(frame.notice ? { notice: frame.notice } : {}),
+            ...(frame.data ? { data: frame.data } : {}),
+          })
           return
         }
         if (frame.code === 'conversation_operate_required') {
@@ -728,6 +732,8 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
           ok: false,
           code: frame.code ?? 'unavailable',
           message: frame.message ?? commandRefusal(frame.code, machineName(follow)),
+          // A revert refused because its files moved says so here.
+          ...(frame.data ? { data: frame.data } : {}),
         })
         return
       }

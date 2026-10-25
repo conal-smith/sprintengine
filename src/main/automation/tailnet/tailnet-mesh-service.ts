@@ -2225,6 +2225,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
           handoff: tailnetPeerSupports(identity.value.capabilities, 'conversation-handoff'),
+          rewind: tailnetPeerSupports(identity.value.capabilities, 'conversation-rewind'),
+          checkpointRevert: tailnetPeerSupports(identity.value.capabilities, 'conversation-checkpoint-revert'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2362,10 +2364,30 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           message: `${connection.machineName} cannot hand a chat off from here yet. Update SprintEngine Studio there.`,
         }
     }
+    if (command?.kind === 'rewind') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-rewind'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot edit an earlier message from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'revert') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-checkpoint-revert'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot restore a turn's files from here yet. Update SprintEngine Studio there.`,
+        }
+    }
     const result = await remoteConversations.command(key, input.command)
     // A command carried out (a model switched, a preset changed) changes
-    // what the list says, and the list is re-read straight after it.
-    if (result.ok) forgetSharedReads(key.connectionId, 'conversations')
+    // what the list says, and the list is re-read straight after it. A
+    // revert's preview carries nothing out.
+    if (result.ok && !(command?.kind === 'revert' && command.confirmed !== true))
+      forgetSharedReads(key.connectionId, 'conversations')
     return result
   }
 

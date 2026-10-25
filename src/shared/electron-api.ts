@@ -1095,6 +1095,22 @@ export type ElectronApi = {
   // Hand a chat over there off to a fresh session, as its Handoff does there.
   // Needs `conversation-handoff` there.
   meshConversationHandoff: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
+  // Take a chat over there back to before the message at `turnSeq`, as its
+  // Edit from here does there. Needs `conversation-rewind` there.
+  meshConversationRewind: (input: {
+    key: MeshConversationKey
+    turnSeq: number
+  }) => Promise<MeshConversationCommandResult>
+  // List, or with `confirmed` put back, the files of a turn over there from its
+  // checkpoint, in that machine's checkout; the answer is the result's `data`.
+  // Needs `conversation-checkpoint-revert` there.
+  meshConversationRevert: (input: {
+    key: MeshConversationKey
+    turnSeq: number
+    undo?: boolean
+    confirmed?: boolean
+    files?: string[]
+  }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string

@@ -24,6 +24,22 @@
   a boolean. A desktop without the capability refuses the kind as
   `unsupported_command`. The pinned files are unchanged.
 
+- **A chat can go back to an earlier message, and a turn's files can be put
+  back, from a paired device.** `CONVERSATION_REWIND_CAPABILITY`
+  (`conversation-rewind`) names a desktop that takes the `rewind` command
+  (`turnSeq`: the user message to go back before) as its Edit from here does;
+  a listed `ConversationThread` says which chats can, as
+  `capabilities.rewind`. `CONVERSATION_CHECKPOINT_REVERT_CAPABILITY`
+  (`conversation-checkpoint-revert`) names one that takes `revert`
+  (`turnSeq`, `undo`, `confirmed`, `files`) as its Revert does, previewing
+  without `confirmed`. A command's result may now carry `data`
+  (`ConversationCommandResultFrame`), which `parseConversationServerFrame`
+  keeps when it is an object; a `revert`'s is a `ConversationRevertAnswer`,
+  read with `parseConversationRevertAnswer`. `parseConversationClientMessage`
+  keeps a `rewind` or `revert` in its documented shape and refuses any other
+  as `invalid_frame`. A desktop without either capability refuses the kind
+  as `unsupported_command`. The pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the

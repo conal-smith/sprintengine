@@ -198,6 +198,16 @@ export const TAILNET_CAPABILITIES = [
   // own Handoff does here (2026-10-25): `handoff`, where a listed chat says
   // its provider can (`capabilities.handoff`). CONVERSATION_HANDOFF_CAPABILITY.
   'conversation-handoff',
+  // A chat may be taken back to before one of its messages from a paired
+  // machine, as Edit from here does here (2026-10-25): `rewind`, where a
+  // listed chat says its provider can (`capabilities.rewind`).
+  // CONVERSATION_REWIND_CAPABILITY.
+  'conversation-rewind',
+  // A turn's files may be put back from its checkpoint from a paired machine,
+  // as Revert and Undo revert do here (2026-10-25): `revert` lists the files
+  // and then acts on exactly those, in this machine's checkout, for a listed
+  // chat with `capabilities.checkpoints`. CONVERSATION_CHECKPOINT_REVERT_CAPABILITY.
+  'conversation-checkpoint-revert',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

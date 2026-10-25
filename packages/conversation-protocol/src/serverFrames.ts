@@ -10,9 +10,12 @@ import {
 } from './index.js'
 import {
   CONVERSATION_MAX_QUEUED_MESSAGES,
+  CONVERSATION_MAX_REVERT_PATH_CHARS,
   isConversationPermissionModeId,
   type ConversationQueuedFrame,
   type ConversationQueuedMessage,
+  type ConversationRevertAnswer,
+  type ConversationRevertFile,
 } from './commands.js'
 
 // The client half of the frame contract: what a desktop or phone following a
@@ -66,6 +69,12 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * Absent means unknown.
      */
     handoff?: boolean
+    /**
+     * The chat's provider can go back to before one of its messages (a
+     * `rewind` command), from a desktop that advertises `conversation-rewind`.
+     * Absent means unknown.
+     */
+    rewind?: boolean
   }
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
@@ -319,7 +328,11 @@ export function parseConversationWirePullRequests(value: unknown): ConversationW
 
 /** A server frame after validation: events and pages are typed, everything else as the protocol declares it. */
 export type ConversationParsedServerFrame =
-  | Exclude<ConversationServerFrame, { type: 'event' } | { type: 'snapshot' } | { type: 'sessions' }>
+  | Exclude<
+      ConversationServerFrame,
+      { type: 'event' } | { type: 'snapshot' } | { type: 'sessions' } | { type: 'commandResult' }
+    >
+  | ConversationCommandResultFrame
   | { type: 'sessions'; requestId: string; sessions: ConversationThread[] }
   | { type: 'event'; event: ConversationWireEvent }
   | {
@@ -331,6 +344,16 @@ export type ConversationParsedServerFrame =
       key?: ConversationWireKey
     }
   | ConversationQueuedFrame
+
+/**
+ * A command's result under the full contract: a command that answers more
+ * than yes or no carries what it says in `data`, as its own doc says (a
+ * `revert`'s `ConversationRevertAnswer`), accepted or refused. A client
+ * built before it drops the member and reads the result as it always has.
+ */
+export type ConversationCommandResultFrame = Extract<ConversationServerFrame, { type: 'commandResult' }> & {
+  data?: Record<string, unknown>
+}
 
 const SERVER_FRAME_TYPES = new Set([
   'sessions',
@@ -603,6 +626,7 @@ function thread(value: unknown): ConversationThread | null {
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
             ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
             ...(typeof flags.handoff === 'boolean' ? { handoff: flags.handoff } : {}),
+            ...(typeof flags.rewind === 'boolean' ? { rewind: flags.rewind } : {}),
           },
         }
       : {}),
@@ -725,6 +749,8 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
             ...(frame.ok === true && typeof frame.notice === 'string' && frame.notice.length <= 2_000
               ? { notice: frame.notice }
               : {}),
+            // Read by the command it answers (`parseConversationRevertAnswer`).
+            ...(record(frame.data) ? { data: frame.data } : {}),
             ...retry(frame),
           }
         : null
@@ -758,4 +784,42 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
     default:
       return null
   }
+}
+
+const REVERT_FILE_STATUSES = new Set<ConversationRevertFile['status']>(['added', 'modified', 'deleted'])
+
+/**
+ * A `revert`'s answer (`ConversationRevertAnswer`), from its `commandResult`'s
+ * `data`: null when it is absent or not in the documented shape. A file this
+ * client cannot read makes the whole answer unreadable rather than a shorter
+ * list, since a confirmed revert must name every path the desktop listed.
+ */
+export function parseConversationRevertAnswer(value: unknown): ConversationRevertAnswer | null {
+  if (!record(value)) return null
+  if (value.changed === true) return { changed: true }
+  if (typeof value.reverted !== 'boolean' || !Array.isArray(value.files)) return null
+  const files: ConversationRevertFile[] = []
+  for (const file of value.files) {
+    if (
+      !record(file) ||
+      !text(file.path, CONVERSATION_MAX_REVERT_PATH_CHARS) ||
+      !file.path ||
+      !REVERT_FILE_STATUSES.has(file.status as ConversationRevertFile['status']) ||
+      !integer(file.addedLines) ||
+      !integer(file.removedLines) ||
+      typeof file.binary !== 'boolean'
+    )
+      return null
+    files.push({
+      path: file.path,
+      status: file.status as ConversationRevertFile['status'],
+      addedLines: file.addedLines,
+      removedLines: file.removedLines,
+      binary: file.binary,
+    })
+  }
+  const kept = Array.isArray(value.kept)
+    ? value.kept.filter((path): path is string => text(path, CONVERSATION_MAX_REVERT_PATH_CHARS) && path.length > 0)
+    : []
+  return { files, reverted: value.reverted, ...(kept.length ? { kept } : {}) }
 }

@@ -216,6 +216,21 @@ export const meshApi = {
   meshConversationStopSubagent: (input: { key: MeshConversationKey; toolUseId: string }) =>
     command(input.key, { kind: 'stopSubagent', toolUseId: input.toolUseId }),
   meshConversationHandoff: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'handoff' }),
+  meshConversationRewind: (input: { key: MeshConversationKey; turnSeq: number }) =>
+    command(input.key, { kind: 'rewind', turnSeq: input.turnSeq }),
+  meshConversationRevert: (input: {
+    key: MeshConversationKey
+    turnSeq: number
+    undo?: boolean
+    confirmed?: boolean
+    files?: string[]
+  }) =>
+    command(input.key, {
+      kind: 'revert',
+      turnSeq: input.turnSeq,
+      ...(input.undo ? { undo: true } : {}),
+      ...(input.confirmed ? { confirmed: true, files: input.files ?? [] } : {}),
+    }),
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -303,6 +318,8 @@ export const meshApi = {
   | 'meshConversationInterrupt'
   | 'meshConversationStopSubagent'
   | 'meshConversationHandoff'
+  | 'meshConversationRewind'
+  | 'meshConversationRevert'
   | 'meshConversationResolveApproval'
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'

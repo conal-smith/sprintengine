@@ -6,6 +6,8 @@ import {
   type ConversationFrameRejection,
 } from './index.js'
 import {
+  CONVERSATION_MAX_REVERT_FILES,
+  CONVERSATION_MAX_REVERT_PATH_CHARS,
   CONVERSATION_MAX_SEND_SKILLS,
   isConversationPermissionModeId,
   type ConversationCommand,
@@ -33,6 +35,19 @@ function record(value: unknown): value is Record<string, unknown> {
 const SKILL_ID = /^[\w.-]{1,200}(?::[\w.-]{1,200})?$/
 function id(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 200
+}
+// A user message's `seq`: the first event of a chat is 1.
+function turnSeq(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+}
+function revertPaths(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= CONVERSATION_MAX_REVERT_FILES &&
+    value.every(
+      (path) => typeof path === 'string' && path.length > 0 && path.length <= CONVERSATION_MAX_REVERT_PATH_CHARS,
+    )
+  )
 }
 
 // A question's text is its answer's key, because the CLI reads the answers
@@ -114,6 +129,29 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
     }
     if (command.kind === 'handoff') {
       return id(value.commandId) ? { type: 'command', commandId: value.commandId, command: { kind: 'handoff' } } : null
+    }
+    if (command.kind === 'rewind') {
+      return id(value.commandId) && turnSeq(command.turnSeq)
+        ? { type: 'command', commandId: value.commandId, command: { kind: 'rewind', turnSeq: command.turnSeq } }
+        : null
+    }
+    // The paths a confirmed revert acts on are the ones its preview listed,
+    // and a preview names none.
+    if (command.kind === 'revert') {
+      const { undo, confirmed, files } = command
+      if (!id(value.commandId) || !turnSeq(command.turnSeq)) return null
+      if ((undo !== undefined && undo !== true) || (confirmed !== undefined && confirmed !== true)) return null
+      if (confirmed === true ? !revertPaths(files) : files !== undefined) return null
+      return {
+        type: 'command',
+        commandId: value.commandId,
+        command: {
+          kind: 'revert',
+          turnSeq: command.turnSeq,
+          ...(undo === true ? { undo: true as const } : {}),
+          ...(confirmed === true ? { confirmed: true as const, files: [...(files as string[])] } : {}),
+        },
+      }
     }
     // A steer is read as the send it rides on, and is never one held for
     // later: the two ask for opposite things.
@@ -204,7 +242,9 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
     (rejection.commandKind === 'resolvePlan' ||
       rejection.commandKind === 'cancelQueued' ||
       rejection.commandKind === 'stopSubagent' ||
-      rejection.commandKind === 'handoff')
+      rejection.commandKind === 'handoff' ||
+      rejection.commandKind === 'rewind' ||
+      rejection.commandKind === 'revert')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

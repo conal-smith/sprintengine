@@ -85,6 +85,20 @@ export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent
  */
 export const CONVERSATION_HANDOFF_CAPABILITY = 'conversation-handoff' as const
 /**
+ * A chat may be taken back to before one of its messages, as its Edit from
+ * here does on the desktop: `rewind` names the message by its `seq`, and the
+ * desktop drops it and every turn after it from the agent's context. A listed
+ * chat says whether its provider can (`capabilities.rewind`).
+ */
+export const CONVERSATION_REWIND_CAPABILITY = 'conversation-rewind' as const
+/**
+ * A turn's files may be put back from its checkpoint, as its Revert and Undo
+ * revert do on the desktop: `revert` answers with the files it would touch,
+ * then acts on exactly those once confirmed, in the desktop's own checkout.
+ * Offered for a listed chat with `capabilities.checkpoints`.
+ */
+export const CONVERSATION_CHECKPOINT_REVERT_CAPABILITY = 'conversation-checkpoint-revert' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -130,6 +144,8 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
   CONVERSATION_HANDOFF_CAPABILITY,
+  CONVERSATION_REWIND_CAPABILITY,
+  CONVERSATION_CHECKPOINT_REVERT_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

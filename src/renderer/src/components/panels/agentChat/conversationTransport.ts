@@ -38,6 +38,7 @@ import type {
   ConversationTurnDiffInput,
   ConversationTurnDiffResult,
 } from '../../../../../shared/conversation-runtime'
+import { parseConversationRevertAnswer } from '../../../../../../packages/conversation-protocol/src/public'
 import type {
   MeshConversationAccess,
   MeshConversationCommandResult,
@@ -54,8 +55,9 @@ import type {
 //
 // What a transport cannot do is said by its capabilities, not inferred from a
 // provider id: a remote device may not choose a permanent approval rule or a
-// bypass preset, cannot revert a checkpoint on the other machine's disk, and
-// has none of this machine's skills, files or history index to offer.
+// bypass preset, reverts a checkpoint on the other machine's disk only where
+// that machine does it, and has none of this machine's skills, files or
+// history index to offer.
 //
 // A conversation on this machine is reached one of two ways, chosen once per
 // window (`window.api.studioChatTransport`): the conversation IPC, or the
@@ -70,7 +72,11 @@ export type ConversationTransportCapabilities = {
   startSession: boolean
   /** Offer "always allow" rules, which outlive the conversation. */
   permanentApprovals: boolean
-  /** Revert a turn's files from its checkpoint. */
+  /**
+   * Revert a turn's files from its checkpoint. A paired machine's chat does,
+   * in that machine's checkout, where it advertises doing so
+   * (`conversation-checkpoint-revert`).
+   */
   checkpointRevert: boolean
   /**
    * Pick another model of the chat's CLI: before the first turn, and — where
@@ -174,8 +180,9 @@ export type ConversationTransport = {
   attachment?(input: ConversationAttachmentInput): Promise<ConversationAttachmentResult>
   /**
    * Take the conversation back to before one of its user messages ("Edit
-   * from here"). Absent where the transport cannot; offered only where the
-   * provider declares `rewind` as well.
+   * from here"). A paired machine's chat has it too, and its session declares
+   * `rewind` only where that machine takes the command (`conversation-rewind`).
+   * Offered only where the session declares `rewind` as well.
    */
   rewind?(input: ConversationRewindInput): Promise<ConversationRewindResult>
   /**
@@ -202,7 +209,7 @@ export type ConversationTransport = {
   toolImage?(input: { toolUseId: string }): Promise<ConversationToolImageResult>
   /** Start the chat's provider session here. Present where `capabilities.startSession` is. */
   startSession?(input: ConversationStartSessionInput): Promise<ConversationStartSessionResult>
-  /** Revert a turn's files from its checkpoint, or preview that. Present where `capabilities.checkpointRevert` is. */
+  /** Revert a turn's files from its checkpoint, or preview that. Used where `capabilities.checkpointRevert` is. */
   revert?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   /**
    * Stop one running agent the chat spawned, by its lane, leaving the chat and
@@ -420,6 +427,8 @@ export function createRemoteConversationTransport(input: {
       operate: input.access === 'operate',
       startSession: false,
       permanentApprovals: false,
+      // Turned on from the machine's list, when it reverts a turn's files
+      // itself (`conversation-checkpoint-revert`): the checkpoint is on its disk.
       checkpointRevert: false,
       modelSwitch: false,
       composerContext: false,
@@ -484,6 +493,29 @@ export function createRemoteConversationTransport(input: {
     handoff: async () => {
       const handed = await window.api.meshConversationHandoff({ key })
       return handed.ok ? { ok: true, path: '' } : { ok: false, message: handed.message }
+    },
+    // Offered only where the machine takes it and lists the chat's provider
+    // as able (the pane's session says `rewind`).
+    rewind: async (turn) => {
+      const rewound = await window.api.meshConversationRewind({ key, turnSeq: turn.turnSeq })
+      return rewound.ok ? { ok: true } : { ok: false, message: rewound.message }
+    },
+    // Used only where the machine reverts files itself (the pane turns
+    // `checkpointRevert` on). The paths are that machine's checkout's, shown
+    // in the dialog and sent back as they came, never looked for here.
+    revert: async (turn) => {
+      const result = await window.api.meshConversationRevert({
+        key,
+        turnSeq: turn.turnSeq,
+        ...(turn.undo ? { undo: true } : {}),
+        ...(turn.confirmed ? { confirmed: true, files: turn.files ?? [] } : {}),
+      })
+      const answer = parseConversationRevertAnswer(result.data)
+      if (!result.ok)
+        return { ok: false, message: result.message, ...(answer && 'changed' in answer ? { changed: true } : {}) }
+      if (!answer || 'changed' in answer)
+        return { ok: false, message: `${input.machineName} answered with files this build cannot read.` }
+      return { ok: true, ...answer }
     },
     respond: async (response) => {
       if (response.answers && response.approved)

@@ -41,8 +41,11 @@ type RevertTurnActionProps = {
 
 export function RevertTurnAction(props: RevertTurnActionProps) {
   // Reverting rewrites the files of the machine the checkpoint is on; a
-  // transport for a conversation on another machine does not offer it.
-  return useConversationTransport().capabilities.checkpointRevert ? <RevertTurnButton {...props} /> : null
+  // transport for a conversation on another machine offers it only where that
+  // machine does the reverting itself, and a pairing that may only follow the
+  // conversation there is not offered it.
+  const { checkpointRevert, operate } = useConversationTransport().capabilities
+  return checkpointRevert && operate ? <RevertTurnButton {...props} /> : null
 }
 
 function RevertTurnButton({
