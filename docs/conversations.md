@@ -625,7 +625,10 @@ additions.
   the desktop's own "finished while you were away" mark too. New chat
   covering a window's chat counts as nobody looking at it, as a door does,
   so it is not stamped; unlike a door it is not leaving the chat, whose "New"
-  divider holds and whose Mark unread waits until the person moves on.
+  divider holds and whose Mark unread waits until the person moves on. A
+  desktop following a paired machine's chat draws the same "New" divider,
+  read from that machine's `lastVisitedAt` as its list gave it before the
+  opening's first visit.
 - **`conversation.mark_unread`** `{ workspaceId }` (2026-10-07, on a desktop
   that advertises `chat-mark-unread`) moves the chat's `lastVisitedAt`
   **back**, to its latest finish less a millisecond, and answers

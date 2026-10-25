@@ -1626,6 +1626,11 @@ function WorkspaceSidebar({
         stamp: () => {
           void visit({ connectionId: origin.connectionId, workspaceId: chatWorkspaceId }).catch(() => undefined)
         },
+        // The "New" divider weighs the machine's visit clock, as its list said
+        // it before this opening's first stamp, against the replies that
+        // machine timed.
+        opened: () => noteChatOpened(workspace.id, row.lastVisitedAt, Date.now()),
+        left: () => noteChatLeft(workspace.id),
       }
     }
     // The chat's latest finish this window knows of: its agents' terminals

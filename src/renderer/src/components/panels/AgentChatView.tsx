@@ -804,9 +804,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   }, [projection.activeTurn, turnRequestedAt, pending])
   // The "New" divider: where the replies the reader has not seen begin, as
   // they stood when the chat was opened (`unreadDivider.ts`). A chat followed
-  // from another machine keeps its visit clock there, so only one here has a
-  // divider.
-  const opening = useChatOpening(transport.kind === 'local' ? workspaceId : null)
+  // from another machine keeps its visit clock there, and its opening is said
+  // with that machine's clock as its list read it (the sidebar's visit
+  // target), so it has a divider as one here does.
+  const opening = useChatOpening(workspaceId)
   const unreadRowId = useMemo(
     () => (opening ? unreadDividerRowId(timelineRows, opening, { historyAbove: hasMore }) : null),
     [timelineRows, opening, hasMore],
