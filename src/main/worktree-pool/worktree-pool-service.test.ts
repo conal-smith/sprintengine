@@ -710,33 +710,33 @@ test('removing an idle slot with edits hidden from git status holds it instead',
   assert.equal((await slotAt(harness, 'app-01')).state, 'held')
 })
 
-test('an idle slot with ignored files that may be work is not removed until a person clears them', async () => {
+test('an idle slot’s ignored files are the pool’s: they never keep it from being removed', async () => {
+  // Test and build output no rule knows, and an `.env` the agent wrote: a
+  // lease would hand every one of them to the next agent as it is.
+  await appendFile(join(repo, '.git', 'info', 'exclude'), '.e2e/\npublic/weather/\n')
   const harness = makeService()
   const first = await lease(harness, 'first')
-  await mkdir(join(first.path, 'node_modules', 'pkg'), { recursive: true })
-  await writeFile(join(first.path, 'node_modules', 'pkg', 'index.js'), 'x\n')
-  // An `.env` the agent wrote, which no `.worktreeinclude` copy accounts for.
-  await writeFile(join(first.path, '.env'), 'TOKEN=edited\n')
+  const second = await lease(harness, 'second')
+  for (const leased of [first, second]) {
+    await mkdir(join(leased.path, '.e2e', 'run-1'), { recursive: true })
+    await writeFile(join(leased.path, '.e2e', 'run-1', 'trace.zip'), 'x\n')
+    await mkdir(join(leased.path, 'public', 'weather'), { recursive: true })
+    await writeFile(join(leased.path, 'public', 'weather', 'tiles.json'), '{}\n')
+    await writeFile(join(leased.path, '.env'), 'TOKEN=edited\n')
+  }
   await returnAll(harness)
-  const kept = await harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
-  assert.equal(kept.ok, false)
-  assert.match(kept.message ?? '', /\.env/)
-  assert.equal(await exists(first.path), true)
-  assert.equal((await slotAt(harness, 'app-01')).state, 'idle')
-  // The idle limit leaves it too, and Settings says why.
-  await harness.service.updateSettings({ keepIdle: 0 })
-  const idle = await slotAt(harness, 'app-01')
-  assert.equal(idle.state, 'idle')
-  assert.match(idle.kept ?? '', /^has ignored files .*\.env/)
 
-  await harness.service.action({ kind: 'clear-ignored', repoRoot: repo, slotId: 'app-01' })
-  assert.equal((await slotAt(harness, 'app-01')).kept, null)
   const removed = await harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
-  assert.equal(removed.ok, true)
+  assert.equal(removed.ok, true, removed.ok ? '' : removed.message)
   assert.equal(await exists(first.path), false)
+  // The idle limit takes them too: the pool shrinks to what it keeps.
+  await harness.service.updateSettings({ keepIdle: 0 })
+  assert.equal(await exists(second.path), false)
+  assert.deepEqual((await snapshot(harness)).slots, [])
 })
 
-test('an idle slot kept for its ignored files is not checked again until it is used or the chats change', async () => {
+test('an idle slot kept for a chat’s history is not checked again until it is used or the chats change', async () => {
+  await appendFile(join(repo, '.git', 'info', 'exclude'), '.sprintengine/\n')
   let calls = 0
   const counting: SlotGitRunner = (cwd, args, options) => {
     calls += 1
@@ -745,17 +745,19 @@ test('an idle slot kept for its ignored files is not checked again until it is u
   let chats = ['chat-1']
   const harness = makeService({ git: counting, knownWorkspaceIds: () => chats })
   const first = await lease(harness, 'first')
-  await writeFile(join(first.path, '.env'), 'TOKEN=edited\n')
+  const history = join(first.path, '.sprintengine', 'conversations', 'chat-1')
+  await mkdir(history, { recursive: true })
+  await writeFile(join(history, 'agent-1.jsonl'), '{}\n')
   await returnAll(harness)
   await harness.service.updateSettings({ keepIdle: 0 })
-  assert.match((await slotAt(harness, 'app-01')).kept ?? '', /\.env/)
+  assert.match((await slotAt(harness, 'app-01')).kept ?? '', /history of a chat/)
 
   const before = calls
   await harness.service.updateSettings({ keepIdle: 0, maxSlots: 8 })
   assert.equal(calls, before, 'the same verdict, with no git asked again')
 
-  // A chat deleted since: checked again (and kept again, for its .env).
-  chats = []
+  // Another chat on record since: checked again (and kept again, for chat-1's history).
+  chats = ['chat-1', 'chat-2']
   await harness.service.updateSettings({ keepIdle: 0, maxSlots: 6 })
   assert.ok(calls > before)
   assert.equal((await slotAt(harness, 'app-01')).state, 'idle')
@@ -853,7 +855,7 @@ test('with the chats on record unknown, a slot holding any chat’s history is k
   assert.equal(await exists(join(history, 'agent-1.jsonl')), true)
 })
 
-test('a skill folder the app did not install keeps an idle slot', async () => {
+test('a skill folder the app did not install goes with its idle slot, as every ignored file does', async () => {
   await appendFile(join(repo, '.git', 'info', 'exclude'), '.claude/\n')
   const harness = makeService()
   const first = await lease(harness, 'first')
@@ -861,8 +863,7 @@ test('a skill folder the app did not install keeps an idle slot', async () => {
   await writeFile(join(first.path, '.claude', 'skills', 'mine', 'SKILL.md'), '# my own skill\n')
   await returnAll(harness)
   await harness.service.updateSettings({ keepIdle: 0 })
-  assert.equal(await exists(first.path), true)
-  assert.match((await slotAt(harness, 'app-01')).kept ?? '', /\.claude\//)
+  assert.equal(await exists(first.path), false)
 })
 
 test('an ignored file where the new base adds a tracked one holds the slot rather than being overwritten', async () => {
@@ -2116,6 +2117,54 @@ test('a full pool gives back a clean, idle chat’s slot to lease, keeping the c
   assert.deepEqual(harness.givenBack, [first.path], 'its chat is told, so opening it brings the worktree back')
   assert.equal(await git(second.path, 'branch', '--show-current'), 'agent/second', 'the other chat is untouched')
   assert.equal((await snapshot(harness)).slots.length, 2, 'the pool is still within its limit')
+})
+
+test('a full pool takes back slots an agent leased for itself and is done with, whatever build output they hold', async () => {
+  // An agent fanning work out leased every slot, and each branch merged; the
+  // agent's chat lives on. Their test and build output kept every one.
+  await appendFile(join(repo, '.git', 'info', 'exclude'), '.e2e/\ntest-results/\n')
+  const harness = makeService({ chats: [] })
+  await harness.service.updateSettings({ maxSlots: 2 })
+  const leases = []
+  for (const name of ['first', 'second']) {
+    const leased = await harness.service.lease({
+      repoRoot: repo,
+      name,
+      owner: 'agent-1',
+      agentId: 'agent-1',
+      workspaceId: 'ws-1',
+    })
+    assert.ok(leased.ok)
+    await mkdir(join(leased.path, '.e2e'), { recursive: true })
+    await writeFile(join(leased.path, '.e2e', 'report.html'), '<p>ok</p>\n')
+    await mkdir(join(leased.path, 'test-results'), { recursive: true })
+    await writeFile(join(leased.path, 'test-results', 'trace.zip'), 'x\n')
+    leases.push(leased)
+  }
+  harness.chats!.push({
+    workspaceId: 'ws-1',
+    folderPath: repo,
+    branch: null,
+    otherPaths: [],
+    open: false,
+    lastActiveAt: null,
+  })
+  harness.clock.offset += 2 * HOUR
+
+  const next = await harness.service.lease({ repoRoot: repo, name: 'next' })
+  assert.equal(next.ok, true, next.ok ? '' : next.message)
+  assert.equal((await snapshot(harness)).slots.length, 2, 'the pool is still within its limit')
+  assert.equal(await exists(leases[0]!.path), false, 'the least recently used one went to make room')
+  assert.ok(await git(repo, 'rev-parse', '--verify', 'agent/first'), 'its branch is kept')
+
+  // The cleanup's sweep gives the other back once it has sat for the idle period.
+  const agents = { agentIds: new Set(['agent-1']), agentKeys: new Set([agentLeaseKey('ws-1', 'agent-1')]) }
+  const swept = await sweep(harness, [repo], 3, agents)
+  assert.deepEqual(
+    swept.filter((entry) => entry.branch === 'agent/second').map((entry) => entry.verdict),
+    ['returned'],
+  )
+  assert.equal(await exists(leases[1]!.path), false)
 })
 
 test('a full pool refuses only when no slot can be given back, naming each slot and what holds it', async () => {

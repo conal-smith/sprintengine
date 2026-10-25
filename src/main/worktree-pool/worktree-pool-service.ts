@@ -96,7 +96,9 @@ export type { PoolChat } from './pool-idle'
  * - It never runs `clean -x`: ignored files (installed dependencies, build
  *   caches, a copied `.env`) are what makes a reused slot worth having. An
  *   ignored file where the new base adds a tracked one holds the slot instead
- *   of being overwritten.
+ *   of being overwritten. They are the pool's, though, not anyone's work: a
+ *   slot removed (over the idle, slot or disk limit, or for room) takes them
+ *   with it. Only the history of a chat that is not settled keeps a slot.
  *
  * ## Concurrency
  *
