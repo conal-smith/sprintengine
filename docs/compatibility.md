@@ -493,6 +493,14 @@ Snooze and Auto-settle for a machine's chats only where it is advertised, an
 older machine answers the tools "Unknown tool", and an older client ignores
 the members. The pinned phone files are unchanged. The Studio RPC does not
 advertise it, having no method for them.
+A paired desktop's chat management beyond the marks (2026-10-25) is a
+capability per part, each naming gateway tools listed to paired devices only,
+without the `conversation-` prefix: `chat-rename` (`conversation.rename`,
+on `conversation:operate`). The list result a desktop's window reads names
+which a machine takes as `manage` (`{ rename }`), an optional member a window
+from before it ignores. All of it is additive: a client offers each item for a
+machine's chats only where it is advertised, and an older machine answers the
+tools "Unknown tool". The Studio RPC does not advertise them.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.

@@ -701,6 +701,21 @@ desktop doing the asking, and are not offered for a chat no window there has
 open. A machine without the capability answers the tools "Unknown tool", and
 its chats offer none of the four.
 
+Beyond its marks, a paired desktop manages a chat here as it manages one of
+its own, each part on a capability of its own (2026-10-25). Each is a gateway
+tool listed to paired devices only, on `conversation:operate` and audited; a
+client offers the item for a machine's chats only where it is advertised, and
+an older machine answers the tool "Unknown tool":
+
+- **`conversation.rename`** `{ workspaceId, name }` (`chat-rename`) names the
+  chat as the desktop's own Rename does: locked against the titler, so its
+  messages never rename it again, and stamped now. Every device lists it by
+  the new name (`chatTitle`), and a paired desktop's row opened from the chat
+  takes it too. A name of 1 to 500 characters; the name it already has
+  changes nothing. Offered on a chat no window there has open as well as on
+  one it does; without the capability a row opened there is renamed on that
+  computer alone.
+
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:
 **`conversation.pull_request_state`** `{ workspaceId, agentId }` answers

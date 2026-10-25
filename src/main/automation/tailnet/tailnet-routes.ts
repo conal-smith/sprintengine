@@ -256,6 +256,15 @@ export const TAILNET_CAPABILITIES = [
   // desktop asking prices them itself. A client that does not see it says
   // the machine's Studio needs updating rather than asking.
   'usage-report',
+  // ── A paired desktop's chat management (2026-10-25) ──
+  // What a paired desktop's menus ask of a chat here beyond its marks. Each
+  // names gateway tools served to paired devices only; a client that does not
+  // see one offers the item for this machine's chats on that computer alone,
+  // or not at all, and an older machine answers the tool "Unknown tool".
+  //
+  // Rename: `conversation.rename` names the chat on this machine, so every
+  // device lists it by the new name (the list's `chatTitle`).
+  'chat-rename',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

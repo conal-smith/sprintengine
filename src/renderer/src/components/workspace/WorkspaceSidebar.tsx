@@ -120,6 +120,7 @@ import {
   withRemoteChatMarks,
   type PendingRemoteMarks,
   type RemoteChatMarks,
+  type RemoteChatPending,
   type RemoteConversation,
   type RemoteSessionOpenSpec,
   type RemoteWindowPlace,
@@ -958,6 +959,10 @@ function WorkspaceSidebar({
   const [contextMenu, setContextMenu] = useState<{ workspaceId: WorkspaceId; x: number; y: number } | null>(null)
   // The menu of a chat on a paired machine that no window here holds, by its row's key.
   const [remoteMenu, setRemoteMenu] = useState<{ key: string; x: number; y: number } | null>(null)
+  // A paired machine's chat no window here holds, being renamed in its row
+  // (`chat-rename`): its key there, and what has been typed.
+  const [renamingRemote, setRenamingRemote] = useState<{ key: string; value: string } | null>(null)
+  const remoteRenameInputRef = useRef<HTMLInputElement>(null)
   const [folderMenu, setFolderMenu] = useState<{ folderKey: string; x: number; y: number } | null>(null)
   const [pendingTypeAction, setPendingTypeAction] = useState<{
     workspaceId: WorkspaceId
@@ -1492,7 +1497,8 @@ function WorkspaceSidebar({
     (
       target: { connectionId: string; workspaceId: string; title: string },
       change: MeshConversationChange,
-      marks?: Partial<RemoteChatMarks>,
+      marks?: RemoteChatPending,
+      onTaken?: () => void,
     ) => {
       const call = window.api?.meshChangeConversation
       if (typeof call !== 'function') return
@@ -1526,6 +1532,7 @@ function WorkspaceSidebar({
             return
           }
           if (marks) settlePending(true)
+          onTaken?.()
           // Read again, so the list that says the change is what replaces it.
           refreshRemote(target.connectionId)
         })
@@ -1703,6 +1710,34 @@ function WorkspaceSidebar({
       },
       conversation,
     }
+  }
+
+  // Rename on a paired machine's chat, open here or not, where that machine
+  // keeps its chats' names for every device (`chat-rename`): the name is
+  // asked of it, drawn at once and held until its list says it, and a
+  // refusal puts the old name back with the machine's own words. A row
+  // opened here takes the name too, once the machine has it, so the rest of
+  // this window names it the same way.
+  const remoteRenameTargetOf = (workspace: Workspace) => {
+    const origin = workspace.remoteOrigin
+    const conversation = origin ? remoteConversationByWorkspace.get(workspace.id) : undefined
+    if (!origin || !conversation?.manage.rename) return null
+    return {
+      connectionId: origin.connectionId,
+      workspaceId: remoteOriginChatWorkspaceId(origin),
+      title: conversation.title,
+    }
+  }
+  const renameRemoteChat = (
+    target: { connectionId: string; workspaceId: string; title: string },
+    typed: string,
+    openedHere?: WorkspaceId,
+  ) => {
+    const name = typed.trim()
+    if (!name || name === target.title) return
+    changeRemoteChat(target, { kind: 'rename', name }, { chatTitle: name }, () => {
+      if (openedHere) renameWorkspace(openedHere, name)
+    })
   }
 
   // A row opened from a paired machine's chat is settled by that machine,
@@ -2257,10 +2292,36 @@ function WorkspaceSidebar({
     return () => window.removeEventListener('keydown', onKey)
   }, [activeWorkspaceId, renamingId, workspaceById, startRename])
 
+  // A row opened from a paired machine that keeps its chats' names is
+  // renamed there (`renameRemoteChat`); any other is renamed here.
+  const renameRemoteRef = useRef<(workspaceId: WorkspaceId, name: string) => boolean>(() => false)
+  renameRemoteRef.current = (workspaceId, name) => {
+    const workspace = workspaceById.get(workspaceId)
+    const target = workspace ? remoteRenameTargetOf(workspace) : null
+    if (!target) return false
+    renameRemoteChat(target, name, workspaceId)
+    return true
+  }
   const commitRename = useCallback(() => {
-    if (renamingId) renameWorkspace(renamingId, renameValue)
+    if (renamingId && !renameRemoteRef.current(renamingId, renameValue)) renameWorkspace(renamingId, renameValue)
     setRenamingId(null)
   }, [renamingId, renameValue, renameWorkspace])
+  // A paired machine's chat no window here holds, renamed from its row.
+  const commitRemoteRename = () => {
+    const renaming = renamingRemote
+    setRenamingRemote(null)
+    const conversation = renaming ? unattachedRemote.find((candidate) => candidate.key === renaming.key) : undefined
+    if (!renaming || !conversation?.manage.rename) return
+    renameRemoteChat(
+      { connectionId: conversation.connectionId, workspaceId: conversation.workspaceId, title: conversation.title },
+      renaming.value,
+    )
+  }
+  useEffect(() => {
+    if (!renamingRemote?.key) return
+    remoteRenameInputRef.current?.focus()
+    remoteRenameInputRef.current?.select()
+  }, [renamingRemote?.key])
 
   const runWorkspaceTypeRowAction = useCallback(
     async (workspaceId: WorkspaceId, action: WorkspaceTypeRowAction) => {
@@ -2885,12 +2946,33 @@ function WorkspaceSidebar({
               <StarGlyph filled className="icon-xs shrink-0 text-[color:var(--tone-warn)]" label="Starred" />
             ) : null}
             {/* Weight marks a running turn, or one that wants you, the way
-                `workspaceRowEmphasis` weights a local row. */}
-            <TruncatedText
-              as="span"
-              text={conversation.title}
-              className={`min-w-0 flex-1 ${working || needsAttention || unseenDone ? 'font-semibold' : ''}`}
-            />
+                `workspaceRowEmphasis` weights a local row. Renamed in place,
+                as a local row is, where its machine keeps the name. */}
+            {renamingRemote?.key === conversation.key ? (
+              <Input
+                ref={remoteRenameInputRef}
+                size="none"
+                fullWidth={false}
+                aria-label={`Rename ${conversation.title}`}
+                value={renamingRemote.value}
+                onChange={(event) => setRenamingRemote({ key: conversation.key, value: event.target.value })}
+                onBlur={commitRemoteRename}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  if (isImeKey(event)) return
+                  if (event.key === 'Enter') commitRemoteRename()
+                  if (event.key === 'Escape') setRenamingRemote(null)
+                  event.stopPropagation()
+                }}
+                className="min-w-0 flex-1 px-1.5 py-0 text-heading"
+              />
+            ) : (
+              <TruncatedText
+                as="span"
+                text={conversation.title}
+                className={`min-w-0 flex-1 ${working || needsAttention || unseenDone ? 'font-semibold' : ''}`}
+              />
+            )}
             <span className="sr-only"> (on {conversation.machineName}, not open here)</span>
             {asleepUntil !== null ? <span className="sr-only"> (snoozed)</span> : null}
             {needsAttention ? <span className="sr-only"> (needs your input)</span> : null}
@@ -3648,6 +3730,7 @@ function WorkspaceSidebar({
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? remoteMarksTargetOf(workspace) !== null : false
           })()}
+          remoteManage={remoteConversationByWorkspace.get(contextMenu.workspaceId)?.manage}
           autoCompact={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
             return workspace ? autoCompactSwitchOf(workspace, autoCompactByDefault) : null
@@ -3852,6 +3935,7 @@ function WorkspaceSidebar({
                 machineName={conversation.machineName}
                 canSettle={conversation.agents[0]?.lifecycle === true}
                 marks={conversation.rowMenu}
+                manage={conversation.manage}
                 canMarkUnread={canMarkRemoteConversationUnread(conversation, now)}
                 isDetachedWindow={isDetachedWindow}
                 workspaceId={conversation.workspaceId}
@@ -3870,7 +3954,8 @@ function WorkspaceSidebar({
                     return
                   }
                   setRemoteMenu(null)
-                  if (action === 'open') onOpenRemoteSession?.(openSpecOfConversation(conversation))
+                  if (action === 'rename') setRenamingRemote({ key: conversation.key, value: conversation.title })
+                  else if (action === 'open') onOpenRemoteSession?.(openSpecOfConversation(conversation))
                   else if (action === 'toggle-settle') settleRemoteConversation(conversation)
                   else if (action === 'mark-unread') changeRemoteChat(target, { kind: 'mark-unread' })
                   else if (action === 'copy-link') {
@@ -5164,5 +5249,7 @@ function remoteChangeRefusedTitle(change: MeshConversationChange, title: string)
       return `Auto-settle was not changed for ${title}`
     case 'mark-unread':
       return 'Not marked unread'
+    case 'rename':
+      return `${title} was not renamed`
   }
 }

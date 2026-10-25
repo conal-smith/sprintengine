@@ -595,6 +595,9 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       workspaceSyncService.updateWorkspaceFields(workspaceId, patch, actor),
     rewindVisit: (workspaceId, lastVisitedAt, actor) =>
       workspaceSyncService.rewindVisit(workspaceId, lastVisitedAt, actor),
+    // A person's name, as a window's Rename writes one: locked, and stamped now.
+    renameWorkspace: (workspaceId, name, actor) =>
+      workspaceSyncService.renameWorkspace(workspaceId, name, true, actor, Date.now()),
     isWorking: (workspaceId) => {
       const listed = conversations.listSessions({ workspaceId })
       if (listed.ok && listed.sessions.some(conversationSessionWorking)) return true

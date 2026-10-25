@@ -39,6 +39,7 @@ import {
   type MeshConversationFrame,
   type MeshConversationImageResult,
   type MeshConversationListResult,
+  type MeshConversationManage,
 } from '../../../shared/tailnet-mesh'
 import type {
   ConversationImageAttachment,
@@ -2219,6 +2220,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
+          manage: chatManageOf(identity.value.capabilities),
         }
       : listed
   }
@@ -2889,7 +2891,7 @@ function readCreatePullRequestOutcome(value: Record<string, unknown>): MeshPullR
 export function rowMenuCallOf(change: unknown): {
   tool: string
   args: Record<string, unknown>
-  capability: 'chat-row-menu' | 'chat-mark-unread'
+  capability: 'chat-row-menu' | 'chat-mark-unread' | ChatManageCapability
   /** What is asked, for a machine that cannot be: "snooze its chats". */
   ask: string
 } | null {
@@ -2929,6 +2931,35 @@ export function rowMenuCallOf(change: unknown): {
         args: {},
         capability: 'chat-mark-unread',
         ask: 'mark its chats unread',
+      }
+    default:
+      return chatManageCallOf(value)
+  }
+}
+
+// ── A paired desktop's chat management ─────────────────────────────────
+//
+// The changes a chat's menus ask of the machine it runs on beyond its marks,
+// each over a gateway tool of its own capability, asked as the row menu's are.
+
+type ChatManageCapability = 'chat-rename'
+
+/** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
+export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
+  return {
+    rename: tailnetPeerSupports(capabilities, 'chat-rename'),
+  }
+}
+
+function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof rowMenuCallOf> {
+  switch (value.kind) {
+    case 'rename':
+      if (typeof value.name !== 'string' || !value.name.trim()) return null
+      return {
+        tool: 'conversation.rename',
+        args: { name: value.name.trim() },
+        capability: 'chat-rename',
+        ask: 'rename its chats',
       }
     default:
       return null

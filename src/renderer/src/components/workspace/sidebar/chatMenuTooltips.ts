@@ -13,8 +13,17 @@
 import type { HighlightColor } from '../../../types/workspace'
 import { getHighlightSwatch } from '../../../utils/highlight'
 import { hostPlatform } from '../../../clientCapabilities'
+import type { MeshConversationManage } from '../../../../../shared/tailnet-mesh'
 
-export type ChatMenuPlace = { kind: 'local' } | { kind: 'remote'; machineName: string; marks: boolean }
+export type ChatMenuPlace =
+  | { kind: 'local' }
+  | {
+      kind: 'remote'
+      machineName: string
+      marks: boolean
+      /** What of the chat's management its machine takes from here; none when absent. */
+      manage?: MeshConversationManage
+    }
 
 const LOCAL: ChatMenuPlace = { kind: 'local' }
 
@@ -45,7 +54,9 @@ export const chatMenuTooltips = {
   rename: (where: ChatMenuPlace = LOCAL) =>
     where.kind === 'local'
       ? 'Rename this chat.'
-      : `Rename this chat on this computer. ${where.machineName} keeps its own name for it.`,
+      : where.manage?.rename
+        ? `Rename this chat on ${where.machineName}, and on every device that follows it.`
+        : `Rename this chat on this computer. ${where.machineName} keeps its own name for it.`,
   newChat: (projectless: boolean) =>
     projectless
       ? 'Start a new chat that has no project, in a folder of its own.'

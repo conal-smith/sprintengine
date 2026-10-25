@@ -8,6 +8,7 @@ import {
   type MeshConnection,
   type MeshConversation,
   type MeshConversationAccess,
+  type MeshConversationManage,
   type MeshMachineReachability,
 } from '../../../../../shared/tailnet-mesh'
 import type {
@@ -62,6 +63,17 @@ export type RemoteBrowseEntry = {
   rowMenu?: boolean
   /** The machine advertises `chat-mark-unread`. Absent before a list. */
   markUnread?: boolean
+  /** What of its chats' management the machine takes from here, as its newest list said. Absent before a list. */
+  manage?: MeshConversationManage
+}
+
+/** No chat management from here: a machine before it, or a pairing that may only follow. */
+export const NO_CHAT_MANAGE: MeshConversationManage = { rename: false }
+
+/** What of a machine's chats' management this pairing may ask for: what it takes, where the pairing may drive. */
+export function remoteManageWritable(entry: RemoteBrowseEntry | undefined): MeshConversationManage {
+  if (!entry?.manage || entry.access !== 'operate') return NO_CHAT_MANAGE
+  return { ...NO_CHAT_MANAGE, ...entry.manage }
 }
 
 /**
@@ -78,7 +90,7 @@ export function remoteMarkUnreadWritable(entry: RemoteBrowseEntry | undefined): 
 }
 
 /** What a machine's row menu may do from here, for each of its chats. */
-type RemoteRowWrites = { lifecycle: boolean; rowMenu: boolean; markUnread: boolean }
+type RemoteRowWrites = { lifecycle: boolean; rowMenu: boolean; markUnread: boolean; manage: MeshConversationManage }
 
 /**
  * Whether this pairing may write a machine's chats' rest and read state:
@@ -178,6 +190,8 @@ export type RemoteSessionRow = {
   rowMenu: boolean
   /** Its machine takes Mark unread from here (`remoteMarkUnreadWritable`). */
   markUnread: boolean
+  /** What of the chat's management its machine takes from here (`remoteManageWritable`). */
+  manage: MeshConversationManage
 }
 
 /** One paired machine's sub-group in the band. */
@@ -239,6 +253,8 @@ export type RemoteConversation = {
   rowMenu: boolean
   /** Its machine takes Mark unread from here. */
   markUnread: boolean
+  /** What of the chat's management its machine takes from here (`RemoteSessionRow.manage`). */
+  manage: MeshConversationManage
 }
 
 /**
@@ -439,6 +455,7 @@ function remoteChatRowOf(
     autoSettle: conversation.autoSettle === true,
     rowMenu: writes.rowMenu,
     markUnread: writes.markUnread,
+    manage: writes.manage,
   }
 }
 
@@ -528,6 +545,7 @@ export function buildRemoteBand(input: {
         lifecycle: remoteLifecycleWritable(entry),
         rowMenu: remoteRowMenuWritable(entry),
         markUnread: remoteMarkUnreadWritable(entry),
+        manage: remoteManageWritable(entry),
       }
       const listed = (entry?.conversations ?? [])
         .filter((conversation) => !resting.has(conversation.workspaceId))
@@ -629,6 +647,7 @@ export function conversationsOf(group: RemoteMachineGroup): RemoteConversation[]
       autoSettle: lead.autoSettle,
       rowMenu: lead.rowMenu,
       markUnread: lead.markUnread,
+      manage: lead.manage,
     }
   })
 }
@@ -979,12 +998,15 @@ export function followedRemoteRestsToKeep(
 /** The marks a chat's row wears from its machine's list. */
 export type RemoteChatMarks = Pick<RemoteSessionRow, 'highlight' | 'snoozedUntil' | 'autoSettle'>
 
+/** What a change asked of a paired machine draws at once: its marks, or its name (`chat-rename`). */
+export type RemoteChatPending = Partial<RemoteChatMarks & Pick<RemoteSessionRow, 'chatTitle'>>
+
 /** A change asked of a paired machine and not yet read back off its list. */
 export type PendingRemoteMarks = {
   connectionId: string
   /** The chat's id on that machine. */
   workspaceId: string
-  marks: Partial<RemoteChatMarks>
+  marks: RemoteChatPending
   /** When the machine said it took them; null while it has not answered. */
   takenAt: number | null
 }
@@ -1040,10 +1062,12 @@ export function remoteConversationAsleep(conversation: Pick<RemoteConversation, 
 
 /** Whether two readings of a chat carry the same marks for a row opened here. */
 export function sameRemoteChatMarks(
-  a: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle'>,
-  b: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle'>,
+  a: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle' | 'title' | 'manage'>,
+  b: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle' | 'title' | 'manage'>,
 ): boolean {
   return (
+    a.manage?.rename === b.manage?.rename &&
+    (!a.manage?.rename || a.title === b.title) &&
     a.rowMenu === b.rowMenu &&
     a.snoozedUntil === b.snoozedUntil &&
     a.autoSettle === b.autoSettle &&
@@ -1059,7 +1083,9 @@ export function sameRemoteChatMarks(
  * machine that does not keep them is its own record, as before.
  */
 export function withRemoteChatMarks(workspace: Workspace, conversation: RemoteConversation): Workspace {
-  if (!conversation.rowMenu) return workspace
+  const named = withRemoteChatName(workspace, conversation)
+  if (!conversation.rowMenu) return named
+  workspace = named
   const highlight = conversation.highlight ?? undefined
   const autoSettleEnabled = conversation.autoSettle ? true : null
   const same =
@@ -1069,6 +1095,18 @@ export function withRemoteChatMarks(workspace: Workspace, conversation: RemoteCo
     (workspace.autoSettleEnabled === true) === conversation.autoSettle
   if (same) return workspace
   return { ...workspace, highlight, snoozedUntil: conversation.snoozedUntil, autoSettleEnabled }
+}
+
+/**
+ * A row opened here from a paired machine's chat, named as that machine
+ * names the chat, where the machine keeps the name for every device
+ * (`chat-rename`): a rename from any of them is the row's name here too. A
+ * row from a machine that does not keep it is named here, as before.
+ */
+export function withRemoteChatName(workspace: Workspace, conversation: RemoteConversation): Workspace {
+  if (!conversation.manage?.rename || !conversation.title.trim() || workspace.name === conversation.title)
+    return workspace
+  return { ...workspace, name: conversation.title }
 }
 
 /**

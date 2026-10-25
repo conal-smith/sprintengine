@@ -5,7 +5,7 @@ import {
   type McpToolRegistration,
 } from '../../shared/modules/mcp-tools'
 import type { WorkspaceRegistryActor } from '../../shared/workspace-registry'
-import type { ConversationLifecycle } from './conversation-lifecycle'
+import { MAX_CHAT_NAME_LENGTH, type ConversationLifecycle } from './conversation-lifecycle'
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
 import {
   CONVERSATION_HIGHLIGHT_COLORS as HIGHLIGHT_COLORS,
@@ -45,6 +45,13 @@ export const CONVERSATION_MUTATION_TOOL_NAMES: readonly string[] = [
   'conversation.auto_settle',
 ]
 
+/**
+ * A paired desktop's chat management on a chat here, beyond the row menu's
+ * marks: each writes this machine's record of the chat, so each needs
+ * `conversation:operate` and is audited with the device that asked.
+ */
+export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = ['conversation.rename']
+
 const EFFORT_ID = /^[a-z0-9_-]{1,40}$/i
 // A skill's directory name, as the chat runtime accepts one (conversation-skills.ts).
 const SKILL_ID = /^[\w.-]{1,200}(?::[\w.-]{1,200})?$/
@@ -55,7 +62,9 @@ export type ConversationToolsDeps = {
   /** The calling agent's own preset, which a chat it starts may not exceed (launch-permission-cap.ts). */
   resolveAgentPermissionPreset: AgentPermissionResolver
   /** A chat's rest and visit clock, written to the desktop's own record (conversation-lifecycle.ts). */
-  lifecycle: Pick<ConversationLifecycle, 'settle' | 'visit' | 'markUnread' | 'snooze' | 'highlight' | 'setAutoSettle'>
+  lifecycle: Pick<ConversationLifecycle, 'settle' | 'visit' | 'markUnread' | 'snooze' | 'highlight' | 'setAutoSettle'> &
+    // A paired desktop's chat management; absent where nothing can carry it out.
+    Partial<Pick<ConversationLifecycle, 'rename'>>
   /**
    * Remember that the calling agent started this chat, so the caller is told
    * when its turn ends or it waits on someone (agent-launch-notices.ts).
@@ -512,6 +521,37 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         const set = deps.lifecycle.setAutoSettle(args.workspaceId.trim(), args.enabled, lifecycleActor(context))
         if (!set.ok) return toolError(set.code, set.message)
         return toolSuccess(set)
+      },
+    },
+    // ── A paired desktop's chat management ──────────────────────────────
+    //
+    // What a paired desktop's menus ask of a chat here beyond its marks:
+    // served to paired devices only (`servedOnlyToPairedDevices`), since an
+    // agent here has its own ways to each.
+    {
+      name: 'conversation.rename',
+      description:
+        "Rename a chat on this machine, as its row menu's Rename does: every device lists it by the new name, " +
+        'and the name is kept, never replaced by one taken from its messages. Renaming a chat to the name it has ' +
+        'changes nothing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId, from the conversation list." },
+          name: { type: 'string', description: `The chat's new name, 1 to ${MAX_CHAT_NAME_LENGTH} characters.` },
+        },
+        required: ['workspaceId', 'name'],
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        if (typeof args.name !== 'string') return toolError('invalid_arguments', '"name" must be a string.')
+        if (!deps.lifecycle.rename) return toolError('unavailable', 'This machine cannot rename its chats from here.')
+        const renamed = deps.lifecycle.rename(args.workspaceId.trim(), args.name, lifecycleActor(context))
+        if (!renamed.ok) return toolError(renamed.code, renamed.message)
+        return toolSuccess(renamed)
       },
     },
   ]

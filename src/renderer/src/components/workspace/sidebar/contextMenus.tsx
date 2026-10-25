@@ -31,6 +31,7 @@ import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { clientSupports } from '../../../clientCapabilities'
 import { cliForConversationProvider } from '../../../../../shared/conversation-harness'
 import { chatMenuTooltips as tips, type ChatMenuPlace } from './chatMenuTooltips'
+import type { MeshConversationManage } from '../../../../../shared/tailnet-mesh'
 
 export function sidebarWorkspaceOf(workspace: Workspace): {
   id: string
@@ -287,6 +288,7 @@ export function WorkspaceContextMenu({
   now,
   working,
   remoteMarks = false,
+  remoteManage,
   autoCompact = null,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
@@ -311,6 +313,8 @@ export function WorkspaceContextMenu({
    * that machine's, and `workspace` carries them as that machine lists them.
    */
   remoteMarks?: boolean
+  /** What of a paired machine's chat's management its machine takes from here (`MeshConversationManage`). */
+  remoteManage?: MeshConversationManage
   /**
    * The Auto compact switch for a chat here (see `ChatRestAndMarkItems`);
    * null leaves it off the menu.
@@ -363,7 +367,12 @@ export function WorkspaceContextMenu({
   // are that machine's, offered where it takes them.
   const remote = Boolean(workspace.remoteOrigin)
   const where: ChatMenuPlace = workspace.remoteOrigin
-    ? { kind: 'remote', machineName: workspace.remoteOrigin.machineName, marks: remoteMarks }
+    ? {
+        kind: 'remote',
+        machineName: workspace.remoteOrigin.machineName,
+        marks: remoteMarks,
+        ...(remoteManage ? { manage: remoteManage } : {}),
+      }
     : { kind: 'local' }
   // Reveal is shown off, and says why, for a folder this computer cannot
   // show: one on the paired machine the chat runs on, or one gone from disk.
@@ -495,7 +504,14 @@ export function WorkspaceContextMenu({
 }
 
 export type RemoteConversationMenuAction =
-  'open' | 'mark-unread' | 'copy-link' | 'move-to-new-window' | 'move-to-main-window' | ChatMarkAction
+  | 'open'
+  | 'mark-unread'
+  | 'copy-link'
+  | 'move-to-new-window'
+  | 'move-to-main-window'
+  | ChatMarkAction
+  // ── A paired desktop's chat management ──
+  | 'rename'
 
 /**
  * The link to a chat: by its id on the machine it runs on, so the same link
@@ -511,9 +527,10 @@ export function chatLinkIdOf(workspace: Pick<Workspace, 'id' | 'remoteOrigin'>):
 // state (`chat-mark-unread`) are offered where the machine takes them; an
 // older machine's chat offers what it can, as a local menu hides what does
 // not apply. Reveal folder is shown off, saying why: the folder is on the
-// other machine's disk. Left out because they are about a workspace here,
-// which this row does not have until it is opened: Rename, New chat in
-// project, the workspace type's own actions, and Close workspace.
+// other machine's disk. Rename is offered where the machine keeps the name
+// (`chat-rename`). Left out because they are about a workspace here, which
+// this row does not have until it is opened: the workspace type's own
+// actions, and Close workspace.
 export function RemoteConversationContextMenu({
   x,
   y,
@@ -521,6 +538,7 @@ export function RemoteConversationContextMenu({
   machineName,
   canSettle,
   marks,
+  manage,
   canMarkUnread,
   isDetachedWindow,
   workspaceId,
@@ -542,6 +560,8 @@ export function RemoteConversationContextMenu({
   canSettle: boolean
   /** The machine takes the row menu's Star, Highlight color, Snooze and Auto-settle (`chat-row-menu`). */
   marks: boolean
+  /** What of the chat's management the machine takes from here; none when absent. */
+  manage?: MeshConversationManage
   /** Its agent finished something nobody has been marked as missing, and the machine takes Mark unread. */
   canMarkUnread: boolean
   isDetachedWindow: boolean
@@ -561,7 +581,7 @@ export function RemoteConversationContextMenu({
 }) {
   const canCopyLink = clientSupports('deep-links') && chatLinkFor(workspaceId) !== null
   const snoozed = isSnoozedWorkspace({ snoozedUntil }, now)
-  const where: ChatMenuPlace = { kind: 'remote', machineName, marks }
+  const where: ChatMenuPlace = { kind: 'remote', machineName, marks, ...(manage ? { manage } : {}) }
   return (
     <ContextMenu
       x={x}
@@ -576,6 +596,11 @@ export function RemoteConversationContextMenu({
       {canMarkUnread ? (
         <ChatMenuItem tooltip={tips.markUnread(where)} onClick={() => onSelect('mark-unread')}>
           Mark unread
+        </ChatMenuItem>
+      ) : null}
+      {manage?.rename ? (
+        <ChatMenuItem tooltip={tips.rename(where)} onClick={() => onSelect('rename')}>
+          Rename
         </ChatMenuItem>
       ) : null}
       {/* Off, and saying why: the folder is on the other machine's disk. */}

@@ -226,6 +226,23 @@ export type MeshConversationChange =
   | { kind: 'highlight'; starred?: boolean; color?: ConversationHighlightColor | null }
   | { kind: 'auto-settle'; enabled: boolean }
   | { kind: 'mark-unread' }
+  | MeshConversationManageChange
+
+/**
+ * A chat's management from a paired desktop, beyond its marks, each where
+ * the machine advertises its capability (`MeshConversationManage`): Rename
+ * (`chat-rename`).
+ */
+export type MeshConversationManageChange = { kind: 'rename'; name: string }
+
+/**
+ * Which of a chat's management a paired machine takes from here, by the
+ * capability each needs there. `rename`: `chat-rename`, the chat renamed
+ * there, so every device lists it by the new name.
+ */
+export type MeshConversationManage = {
+  rename: boolean
+}
 
 /** That machine took the change, or why not. `row_menu_unsupported` is a machine without the tool. */
 export type MeshChangeConversationResult =
@@ -505,6 +522,8 @@ export type MeshConversationListResult =
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
+      /** What of its chats' management the machine takes from here; absent from a build before it. */
+      manage?: MeshConversationManage
     }
   | { ok: false; code: string; message: string }
 
