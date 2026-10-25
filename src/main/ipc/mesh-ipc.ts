@@ -6,6 +6,7 @@ import {
   MESH_SETTLE_CONVERSATION_CHANNEL,
   MESH_VISIT_CONVERSATION_CHANNEL,
   MESH_CHANGE_CONVERSATION_CHANNEL,
+  MESH_CONVERSATION_DELETE_PLAN_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -140,6 +141,11 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
       workspaceId: record.workspaceId,
       change: record.change,
     })
+  })
+  // A paired desktop's chat management: what a Delete there would do.
+  ipcMain.handle(MESH_CONVERSATION_DELETE_PLAN_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationDeletePlan({ connectionId: record.connectionId, workspaceId: record.workspaceId })
   })
   ipcMain.handle(MESH_WORKSPACE_CHECKOUT_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input)

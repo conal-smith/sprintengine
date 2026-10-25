@@ -297,6 +297,7 @@ export function WorkspaceContextMenu({
   watchedPullRequestNumber = null,
   schedule = null,
   canDelete = false,
+  remoteDelete = false,
   onClose,
   onSelect,
   onPickColor,
@@ -339,11 +340,17 @@ export function WorkspaceContextMenu({
   schedule?: { paused: boolean } | null
   /**
    * The window can delete settled chats (a confirm dialog and main's delete
-   * are there). Delete is offered only on a settled chat of this computer:
-   * Settle is how a chat is put away, and deleting is for one already put
-   * away. A paired machine's settled chat has no row here.
+   * are there). Delete is offered only on a settled chat: Settle is how a
+   * chat is put away, and deleting is for one already put away. A paired
+   * machine's is offered where that machine deletes its chats from here
+   * (`remoteDelete`).
    */
   canDelete?: boolean
+  /**
+   * A paired machine's settled chat, whose machine deletes its chats from
+   * here (`chat-delete`): Delete deletes it there, then this computer's record.
+   */
+  remoteDelete?: boolean
   onClose: () => void
   onSelect: (action: ContextMenuAction) => void
   onPickColor: (color: HighlightColor) => void
@@ -500,10 +507,10 @@ export function WorkspaceContextMenu({
           ))}
         </>
       ) : null}
-      {canDelete && settled && !remote ? (
+      {canDelete && settled && (!remote || remoteDelete) ? (
         <>
           <MenuDivider />
-          <ChatMenuItem variant="danger" tooltip={tips.deleteSettled()} onClick={() => onSelect('delete-settled')}>
+          <ChatMenuItem variant="danger" tooltip={tips.deleteSettled(where)} onClick={() => onSelect('delete-settled')}>
             Delete chat…
           </ChatMenuItem>
         </>

@@ -275,6 +275,11 @@ export const TAILNET_CAPABILITIES = [
   // it is watched (`watch`), so a paired desktop offers Stop watching where
   // this machine's own menu and strip do.
   'chat-unwatch-pull-request',
+  // Delete: `conversation.delete_plan` says what deleting a settled chat here
+  // would do (its worktrees by name and branch, never a path), and
+  // `conversation.delete` deletes it as this machine's own Delete does. A
+  // paired desktop's Delete on a settled chat it opened from here asks both.
+  'chat-delete',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

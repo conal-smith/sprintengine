@@ -92,6 +92,8 @@ export type StudioGatewayOptions = Pick<
    * and leaves it out.
    */
   linkLaunchedAgent?: ConversationToolsDeps['linkLaunchedAgent']
+  /** Deleting a settled chat for a paired desktop; absent where this process has no worktree pool. */
+  settledChatDeletion?: ConversationToolsDeps['settledChatDeletion']
 }
 
 export type StudioGateway = ReturnType<typeof createStudioGateway>
@@ -115,6 +117,9 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
       resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
       lifecycle: core.conversationLifecycle,
       ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
+      // A paired desktop's Delete on a settled chat here: this process's own
+      // deletion where it has one (the desktop in process), none elsewhere.
+      ...(options.settledChatDeletion ? { settledChatDeletion: options.settledChatDeletion } : {}),
       // A paired desktop's Stop watching on a chat here.
       pullRequestWatches: {
         watchedOf: async (key) => {

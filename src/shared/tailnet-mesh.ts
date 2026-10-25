@@ -7,6 +7,7 @@ import type {
 import type { ConversationSessionFrame } from './conversation-runtime'
 import { conversationPhaseWorking, phaseWithBackgroundWork } from './conversation/phase'
 import type { RepositoryIdentity } from './repository-identity'
+import type { SettledChatWorktreePlan } from './ipc/settled-chats'
 import type { TailnetRemoteStatus, TailnetScope } from './tailnet'
 
 // The Mesh: another machine's Studio, mounted in this one.
@@ -232,13 +233,15 @@ export type MeshConversationChange =
  * A chat's management from a paired desktop, beyond its marks, each where
  * the machine advertises its capability (`MeshConversationManage`): Rename
  * (`chat-rename`), Auto compact (`chat-auto-compact`) and Stop watching
- * (`chat-unwatch-pull-request`).
+ * (`chat-unwatch-pull-request`) and Delete (`chat-delete`).
  */
 export type MeshConversationManageChange =
   | { kind: 'rename'; name: string }
   | { kind: 'auto-compact'; enabled: boolean }
   /** One agent's watch of a pull request, by its address; every watch the agent has without one. */
   | { kind: 'unwatch-pull-request'; agentId: string; url?: string }
+  /** A settled chat deleted there for good (`chat-delete`), after its plan was said. */
+  | { kind: 'delete' }
 
 /**
  * Which of a chat's management a paired machine takes from here, by the
@@ -247,13 +250,35 @@ export type MeshConversationManageChange =
  * `chat-auto-compact`, the chat's Auto compact switched there, the machine
  * that runs it compacting it by itself. `unwatchPullRequest`:
  * `chat-unwatch-pull-request`, a watch of the chat's pull request ended
- * there, where its listed pull request says it is watched.
+ * there, where its listed pull request says it is watched. `deleteSettled`:
+ * `chat-delete`, a settled chat deleted there for good, its plan read first
+ * (`meshConversationDeletePlan`).
  */
 export type MeshConversationManage = {
   rename: boolean
   autoCompact: boolean
   unwatchPullRequest: boolean
+  deleteSettled: boolean
 }
+
+/**
+ * What deleting a settled chat on a paired machine would do, as that machine
+ * plans it (`conversation.delete_plan`): each worktree it owns by its name and
+ * branch, never a path there, and `refused` while it cannot be deleted. `gone`
+ * is a chat that machine no longer has. `delete_unsupported` is a machine
+ * without `chat-delete`.
+ */
+export type MeshConversationDeletePlanResult =
+  | {
+      ok: true
+      workspaceId: string
+      gone?: true
+      refused?: string
+      worktrees: Array<Omit<SettledChatWorktreePlan, 'path'>>
+    }
+  | { ok: false; code: string; message: string }
+
+export const MESH_CONVERSATION_DELETE_PLAN_CHANNEL = 'mesh:conversation-delete-plan'
 
 /** That machine took the change, or why not. `row_menu_unsupported` is a machine without the tool. */
 export type MeshChangeConversationResult =

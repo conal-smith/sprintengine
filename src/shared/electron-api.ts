@@ -158,6 +158,7 @@ import type {
   MeshNewChatWorktree,
   MeshSettleConversationResult,
   MeshChangeConversationResult,
+  MeshConversationDeletePlanResult,
   MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
@@ -1022,6 +1023,11 @@ export type ElectronApi = {
     workspaceId: string
     change: MeshConversationChange
   }) => Promise<MeshChangeConversationResult>
+  /** What deleting a settled chat on a paired machine would do, as that machine plans it (`chat-delete` there). */
+  meshConversationDeletePlan: (input: {
+    connectionId: string
+    workspaceId: string
+  }) => Promise<MeshConversationDeletePlanResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */

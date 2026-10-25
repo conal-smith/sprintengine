@@ -736,6 +736,20 @@ an older machine answers the tool "Unknown tool":
   request says while it is watched as `watch` (what it waits on, as the
   desktop's own strip says it), so a paired desktop's strip and menus say it
   too and offer Stop watching where the desktop's own do.
+- **`conversation.delete_plan`** `{ workspaceId }` and
+  **`conversation.delete`** `{ workspaceId }` (`chat-delete`) are Delete on a
+  settled chat, as the desktop's own Delete runs it: the plan says what would
+  go, each worktree the chat owns by its name and branch (never a path), with
+  `refused` while the chat is not settled or an agent in it works; the delete
+  takes its history, its record and the worktree it owns, never one with
+  uncommitted changes, and keeps the branch. There is no undo. A chat already
+  gone answers `gone: true` to both, so a delete sent twice does no harm. The
+  plan is a read on `conversation:read`; the delete needs
+  `conversation:operate` and is audited. A paired desktop offers Delete on a
+  settled chat it opened from here, asks the plan, says it in its
+  confirmation, and once this desktop has deleted the chat removes its own
+  record of it. A desktop whose Studio server runs in a process of its own
+  refuses both as `unavailable`.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:

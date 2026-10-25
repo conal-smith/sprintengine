@@ -92,6 +92,8 @@ const PAIRED_DEVICE_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'conversation.rename',
   'conversation.auto_compact',
   'conversation.pull_request_unwatch',
+  'conversation.delete_plan',
+  'conversation.delete',
 ])
 
 export function servedOnlyToPairedDevices(toolName: string): boolean {

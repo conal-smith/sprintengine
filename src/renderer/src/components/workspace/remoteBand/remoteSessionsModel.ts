@@ -68,7 +68,12 @@ export type RemoteBrowseEntry = {
 }
 
 /** No chat management from here: a machine before it, or a pairing that may only follow. */
-export const NO_CHAT_MANAGE: MeshConversationManage = { rename: false, autoCompact: false, unwatchPullRequest: false }
+export const NO_CHAT_MANAGE: MeshConversationManage = {
+  rename: false,
+  autoCompact: false,
+  unwatchPullRequest: false,
+  deleteSettled: false,
+}
 
 /** What of a machine's chats' management this pairing may ask for: what it takes, where the pairing may drive. */
 export function remoteManageWritable(entry: RemoteBrowseEntry | undefined): MeshConversationManage {

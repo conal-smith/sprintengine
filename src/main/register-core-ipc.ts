@@ -43,11 +43,7 @@ import { createFolderOpenIpcDependencies, registerFolderOpenIpc } from './ipc/fo
 import { registerGitIpc } from './ipc/git-ipc'
 import { registerWorktreePoolIpc } from './ipc/worktree-pool-ipc'
 import { registerSettledChatsIpc } from './ipc/settled-chats-ipc'
-import { createSettledChatDeletion } from './settled-chat-deletion'
-import { createSettledChatWorktreeOps } from './settled-chat-worktrees'
-import { createWorktreeInventory } from './worktree-pool/worktree-inventory'
-import { removeConversationStorage } from './conversation-persistence'
-import { removeGitWorktree } from './git'
+import { createAppSettledChatDeletion } from './settled-chat-deletion-app'
 import { registerDesignSystemIpc } from './ipc/design-system-ipc'
 import { registerMcpIpc } from './ipc/mcp-ipc'
 import { registerMemoryActivityIpc } from './ipc/memory-activity-ipc'
@@ -282,27 +278,7 @@ export function registerCoreIpc(
   })
   // Deleting a settled chat: its history, its record, and the worktree it owns
   // (given back to the pool, or removed as Settings ▸ Worktrees removes one).
-  registerSettledChatsIpc(
-    ipcMain,
-    createSettledChatDeletion({
-      listChats: () => services.workspaceSyncService.getSnapshot().state.workspaces,
-      removeChat: (workspaceId) => services.workspaceSyncService.removeWorkspace(workspaceId, 'ui'),
-      conversations: services.conversations,
-      removeConversationStorage,
-      worktrees: createSettledChatWorktreeOps({
-        pool: services.worktreePool,
-        inventory: createWorktreeInventory({
-          pool: services.worktreePool,
-          livePaths: services.liveWorkPaths,
-          knownWorkspaceIds: () => chatIdsOnRecord(services.workspaceSyncService.getSnapshot().state.workspaces),
-          removeWorktree: removeGitWorktree,
-        }),
-      }),
-      log: (message) => {
-        void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Delete settled chat', message })
-      },
-    }),
-  )
+  registerSettledChatsIpc(ipcMain, createAppSettledChatDeletion(services))
   registerVersionControlIpc(machineIpc)
   registerMenuDialogIpc(ipcMain)
   registerProjectlessChatsIpc(ipcMain)

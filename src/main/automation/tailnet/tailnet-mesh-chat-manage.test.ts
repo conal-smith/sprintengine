@@ -156,6 +156,63 @@ test('Stop watching is the machine’s own conversation.pull_request_unwatch, by
   }
 })
 
+test('Delete reads the machine’s plan, kept to what this build reads, and deletes there', async () => {
+  const machine = await pairedMachine(['conversations', 'chat-delete'], (call) =>
+    call.name === 'conversation.delete_plan'
+      ? success({
+          ok: true,
+          workspaceId: call.arguments.workspaceId,
+          worktrees: [
+            {
+              name: 'chat-k',
+              branch: 'agent/chat-k',
+              pooled: true,
+              fate: 'keep',
+              keptBecause: 'changes',
+              changedPaths: 3,
+            },
+            { name: 7, fate: 'remove' },
+          ],
+        })
+      : success({ ok: true, workspaceId: call.arguments.workspaceId, worktrees: [] }),
+  )
+  const older = await pairedMachine(['conversations'], () => assert.fail('nothing is asked'))
+  try {
+    const plan = await machine.mesh.conversationDeletePlan({ connectionId: machine.connectionId, workspaceId: 'ws-1' })
+    assert.deepEqual(plan, {
+      ok: true,
+      workspaceId: 'ws-1',
+      worktrees: [
+        {
+          name: 'chat-k',
+          branch: 'agent/chat-k',
+          pooled: true,
+          changedPaths: 3,
+          unpushedCommits: null,
+          fate: 'keep',
+          keptBecause: 'changes',
+        },
+      ],
+    })
+    const deleted = await machine.mesh.changeConversation({
+      connectionId: machine.connectionId,
+      workspaceId: 'ws-1',
+      change: { kind: 'delete' },
+    })
+    assert.deepEqual(deleted, { ok: true, workspaceId: 'ws-1' })
+    assert.deepEqual(
+      machine.toolCalls.map((call) => call.name),
+      ['conversation.delete_plan', 'conversation.delete'],
+    )
+    const refused = await older.mesh.conversationDeletePlan({ connectionId: older.connectionId, workspaceId: 'ws-1' })
+    assert.equal(!refused.ok && refused.code, 'delete_unsupported')
+    assert.match(!refused.ok ? refused.message : '', /Update SprintEngine Studio there/)
+  } finally {
+    await machine.close()
+    await older.close()
+  }
+})
+
 test('a machine without chat-rename is not asked, and says so in words', async () => {
   const machine = await pairedMachine(['conversations', 'chat-row-menu'], () => assert.fail('nothing is asked'))
   try {
@@ -192,10 +249,11 @@ test('a machine from before conversation.rename answers "Unknown tool", read as 
 })
 
 test('the list says which of the management a machine takes, by its capabilities', () => {
-  const none = { rename: false, autoCompact: false, unwatchPullRequest: false }
+  const none = { rename: false, autoCompact: false, unwatchPullRequest: false, deleteSettled: false }
   assert.deepEqual(chatManageOf(undefined), none)
   assert.deepEqual(chatManageOf(['conversations']), none)
   assert.deepEqual(chatManageOf(['conversations', 'chat-rename']), { ...none, rename: true })
   assert.deepEqual(chatManageOf(['chat-auto-compact']), { ...none, autoCompact: true })
   assert.deepEqual(chatManageOf(['chat-unwatch-pull-request']), { ...none, unwatchPullRequest: true })
+  assert.deepEqual(chatManageOf(['chat-delete']), { ...none, deleteSettled: true })
 })

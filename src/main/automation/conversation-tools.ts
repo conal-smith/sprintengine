@@ -13,6 +13,11 @@ import {
 } from '../../../packages/conversation-protocol/src/public'
 import type { ConversationLaunchService } from '../conversation-launch-service'
 import type { WorktreeDependencyInstallView } from '../../shared/ipc/worktree-pool'
+import type {
+  SettledChatDeletionOutcome,
+  SettledChatDeletionPlan,
+  SettledChatWorktreePlan,
+} from '../../shared/ipc/settled-chats'
 import {
   launchingAgentOf,
   NOT_TOLD_NOT_AN_AGENT,
@@ -54,6 +59,7 @@ export const CHAT_MANAGE_MUTATION_TOOL_NAMES: readonly string[] = [
   'conversation.rename',
   'conversation.auto_compact',
   'conversation.pull_request_unwatch',
+  'conversation.delete',
 ]
 
 const EFFORT_ID = /^[a-z0-9_-]{1,40}$/i
@@ -87,6 +93,27 @@ export type ConversationToolsDeps = {
     /** Stop one; whether a watch of this chat's was stopped. */
     unwatch(key: { workspaceId: string; agentId: string }, url: string): boolean | Promise<boolean>
   }
+  /**
+   * Deleting a settled chat as this machine's own Delete does
+   * (settled-chat-deletion-app.ts), for a paired desktop's Delete; null or
+   * absent where this process cannot (a Studio server out of process, which
+   * has no worktree pool of its own).
+   */
+  settledChatDeletion?: () => ChatDeletion | null
+}
+
+/** What `conversation.delete` and its plan ask of this machine's deletion. */
+export type ChatDeletion = {
+  plan(workspaceIds: readonly string[]): Promise<SettledChatDeletionPlan[]>
+  delete(workspaceIds: readonly string[]): Promise<SettledChatDeletionOutcome[]>
+  /** Whether this machine has a record of the chat at all. */
+  has(workspaceId: string): boolean
+}
+
+/** A worktree as a paired device is told of it: by its name and branch, with no path on this machine. */
+function worktreeProjection(worktree: SettledChatWorktreePlan): Omit<SettledChatWorktreePlan, 'path'> {
+  const { path: _path, repoRoot: _root, ...told } = worktree as SettledChatWorktreePlan & { repoRoot?: unknown }
+  return told
 }
 
 /**
@@ -630,6 +657,70 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         const stopped: string[] = []
         for (const url of urls) if (await watches.unwatch(key, url)) stopped.push(url)
         return toolSuccess({ ok: true, ...key, stopped: stopped.length, pullRequests: stopped })
+      },
+    },
+    {
+      name: 'conversation.delete_plan',
+      description:
+        'What deleting a settled chat on this machine would do, as its Delete asks before it deletes: whether it ' +
+        'can be deleted now (`refused` says why not: it is not settled, or an agent in it is working), and each ' +
+        'worktree the chat owns, by its name and branch, and whether it goes or is kept. Changes nothing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId on this machine." },
+        },
+        required: ['workspaceId'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        const deletion = deps.settledChatDeletion?.()
+        if (!deletion) return toolError('unavailable', 'This machine cannot delete its chats from here.')
+        const workspaceId = args.workspaceId.trim()
+        if (!deletion.has(workspaceId)) return toolSuccess({ ok: true, workspaceId, gone: true, worktrees: [] })
+        const [plan] = await deletion.plan([workspaceId])
+        return toolSuccess({
+          ok: true,
+          workspaceId,
+          worktrees: (plan?.worktrees ?? []).map(worktreeProjection),
+          ...(plan?.refused ? { refused: plan.refused } : {}),
+        })
+      },
+    },
+    {
+      name: 'conversation.delete',
+      description:
+        'Delete a settled chat on this machine for good, as its Delete does: its history, its record, and the ' +
+        'worktree it owns (back to the pool, or removed, never one with uncommitted changes; its branch is kept). ' +
+        'Refused while the chat is not settled or an agent in it is working. A chat already gone answers ' +
+        'gone: true. There is no undo; ask conversation.delete_plan first and say what goes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: { type: 'string', description: "The chat's workspaceId on this machine." },
+        },
+        required: ['workspaceId'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
+          return toolError('invalid_arguments', '"workspaceId" is required.')
+        }
+        const deletion = deps.settledChatDeletion?.()
+        if (!deletion) return toolError('unavailable', 'This machine cannot delete its chats from here.')
+        const workspaceId = args.workspaceId.trim()
+        // Asked again after it went through: it is gone, as was asked.
+        if (!deletion.has(workspaceId)) return toolSuccess({ ok: true, workspaceId, gone: true, worktrees: [] })
+        const [outcome] = await deletion.delete([workspaceId])
+        if (!outcome?.ok) return toolError('refused', outcome?.message ?? 'The chat was not deleted.')
+        return toolSuccess({
+          ok: true,
+          workspaceId,
+          worktrees: outcome.worktrees.map(({ path: _path, ...told }) => told),
+        })
       },
     },
   ]

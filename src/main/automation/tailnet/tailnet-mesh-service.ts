@@ -40,7 +40,9 @@ import {
   type MeshConversationImageResult,
   type MeshConversationListResult,
   type MeshConversationManage,
+  type MeshConversationDeletePlanResult,
 } from '../../../shared/tailnet-mesh'
+import type { SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
 import type {
   ConversationImageAttachment,
   ConversationPageResult,
@@ -310,6 +312,11 @@ export type TailnetMeshService = {
     workspaceId?: unknown
     change?: unknown
   }): Promise<MeshChangeConversationResult>
+  /** What deleting a settled chat on a paired machine would do, as it plans it (`chat-delete`). */
+  conversationDeletePlan(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+  }): Promise<MeshConversationDeletePlanResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -2170,6 +2177,40 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return { ok: true, workspaceId }
   }
 
+  // ── A paired desktop's chat management: what a menu reads first ───────
+  //
+  // Asked as a change is: a machine that has said it lacks the capability is
+  // not, and one from before the tool answers "Unknown tool", read the same.
+  async function conversationDeletePlan(input: {
+    connectionId: unknown
+    workspaceId?: unknown
+  }): Promise<MeshConversationDeletePlanResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const workspaceId = input.workspaceId
+    if (typeof workspaceId !== 'string' || !workspaceId) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the remote chat.' }
+    }
+    const unsupported = {
+      ok: false as const,
+      code: 'delete_unsupported',
+      message: `${connection.machineName} cannot delete its chats from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'chat-delete')) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'conversation.delete_plan',
+      args: { workspaceId },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return deletePlanOf(workspaceId, answer.value)
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2444,6 +2485,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     settleConversation,
     visitConversation,
     changeConversation,
+    conversationDeletePlan,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -2942,7 +2984,7 @@ export function rowMenuCallOf(change: unknown): {
 // The changes a chat's menus ask of the machine it runs on beyond its marks,
 // each over a gateway tool of its own capability, asked as the row menu's are.
 
-type ChatManageCapability = 'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request'
+type ChatManageCapability = 'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request' | 'chat-delete'
 
 /** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
 export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
@@ -2950,6 +2992,41 @@ export function chatManageOf(capabilities: readonly string[] | null | undefined)
     rename: tailnetPeerSupports(capabilities, 'chat-rename'),
     autoCompact: tailnetPeerSupports(capabilities, 'chat-auto-compact'),
     unwatchPullRequest: tailnetPeerSupports(capabilities, 'chat-unwatch-pull-request'),
+    deleteSettled: tailnetPeerSupports(capabilities, 'chat-delete'),
+  }
+}
+
+const PLAN_FATES = new Set(['remove', 'keep'])
+const KEPT_BECAUSE = new Set(['changes', 'shared', 'not-made-here', 'other-machine', 'unreadable'])
+
+/** A machine's delete plan as it answered, kept to what this build reads; null members are left as null. */
+export function deletePlanOf(workspaceId: string, value: Record<string, unknown>): MeshConversationDeletePlanResult {
+  const count = (entry: unknown) =>
+    typeof entry === 'number' && Number.isSafeInteger(entry) && entry >= 0 ? entry : null
+  const worktrees = (Array.isArray(value.worktrees) ? value.worktrees : []).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const worktree = entry as Record<string, unknown>
+    if (typeof worktree.name !== 'string' || !PLAN_FATES.has(worktree.fate as string)) return []
+    return [
+      {
+        name: worktree.name,
+        branch: typeof worktree.branch === 'string' ? worktree.branch : null,
+        pooled: worktree.pooled === true,
+        changedPaths: count(worktree.changedPaths),
+        unpushedCommits: count(worktree.unpushedCommits),
+        fate: worktree.fate as 'remove' | 'keep',
+        ...(KEPT_BECAUSE.has(worktree.keptBecause as string)
+          ? { keptBecause: worktree.keptBecause as Omit<SettledChatWorktreePlan, 'path'>['keptBecause'] }
+          : {}),
+      },
+    ]
+  })
+  return {
+    ok: true,
+    workspaceId,
+    ...(value.gone === true ? { gone: true as const } : {}),
+    ...(typeof value.refused === 'string' && value.refused ? { refused: value.refused } : {}),
+    worktrees,
   }
 }
 
@@ -2980,6 +3057,8 @@ function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof row
         capability: 'chat-unwatch-pull-request',
         ask: "stop watching its chats' pull requests",
       }
+    case 'delete':
+      return { tool: 'conversation.delete', args: {}, capability: 'chat-delete', ask: 'delete its chats' }
     default:
       return null
   }

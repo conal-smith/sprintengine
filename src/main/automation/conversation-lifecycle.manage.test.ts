@@ -95,7 +95,12 @@ test('the management tools are a paired device’s, and not listed to an agent h
 })
 
 test('each is an audited mutation needing conversation:operate', () => {
-  for (const name of ['conversation.rename', 'conversation.auto_compact', 'conversation.pull_request_unwatch'])
+  for (const name of [
+    'conversation.rename',
+    'conversation.auto_compact',
+    'conversation.pull_request_unwatch',
+    'conversation.delete',
+  ])
     assert.ok(CHAT_MANAGE_MUTATION_TOOL_NAMES.includes(name), name)
   for (const name of CHAT_MANAGE_MUTATION_TOOL_NAMES) {
     assert.equal(isStudioGatewayMutation(name), true, name)
@@ -165,4 +170,62 @@ test('a listed pull request carries its watch', () => {
     },
   ])
   assert.deepEqual(listed?.watch, { since: 5, waitingOn: 'checks' })
+})
+
+test('Delete plans and deletes a settled chat as this machine’s own Delete, with no path of this machine’s', async () => {
+  const present = new Set(['ws-1'])
+  const deleted: string[][] = []
+  const worktree = {
+    path: '/Users/dev/.sprintengine-worktrees/app/chat-k',
+    repoRoot: '/Users/dev/app',
+    name: 'chat-k',
+    branch: 'agent/chat-k',
+    pooled: false,
+    changedPaths: 0,
+    unpushedCommits: 1,
+    fate: 'remove' as const,
+  }
+  const tools = createConversationTools({
+    launch: async () => assert.fail('no chat is started here'),
+    resolveAgentPermissionPreset: () => 'bypass',
+    lifecycle: {} as never,
+    settledChatDeletion: () => ({
+      plan: async (ids) => ids.map((workspaceId) => ({ workspaceId, remoteMachine: null, worktrees: [worktree] })),
+      delete: async (ids) => {
+        deleted.push([...ids])
+        for (const id of ids) present.delete(id)
+        return ids.map((workspaceId) => ({
+          workspaceId,
+          ok: true as const,
+          worktrees: [{ path: worktree.path, name: 'chat-k', branch: 'agent/chat-k', result: 'removed' as const }],
+        }))
+      },
+      has: (workspaceId) => present.has(workspaceId),
+    }),
+  })
+  const tool = (name: string) => tools.find((candidate) => candidate.name === name)!
+  const plan = await tool('conversation.delete_plan').handler({ workspaceId: 'ws-1' }, TAILNET)
+  assert.deepEqual(plan.structuredContent, {
+    ok: true,
+    workspaceId: 'ws-1',
+    worktrees: [
+      { name: 'chat-k', branch: 'agent/chat-k', pooled: false, changedPaths: 0, unpushedCommits: 1, fate: 'remove' },
+    ],
+  })
+  const gone = await tool('conversation.delete').handler({ workspaceId: 'ws-1' }, TAILNET)
+  assert.deepEqual(gone.structuredContent, {
+    ok: true,
+    workspaceId: 'ws-1',
+    worktrees: [{ name: 'chat-k', branch: 'agent/chat-k', result: 'removed' }],
+  })
+  // Sent again, it is gone, as was asked, and nothing more is deleted.
+  const again = await tool('conversation.delete').handler({ workspaceId: 'ws-1' }, TAILNET)
+  assert.equal((again.structuredContent as { gone?: boolean }).gone, true)
+  assert.deepEqual(deleted, [['ws-1']])
+})
+
+test('Delete is refused in words where this process cannot delete', async () => {
+  const { tool } = fixture()
+  const refused = await tool('conversation.delete').handler({ workspaceId: 'ws-1' }, TAILNET)
+  assert.equal(errorCode(refused), 'unavailable')
 })

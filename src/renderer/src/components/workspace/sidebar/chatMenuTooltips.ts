@@ -127,6 +127,8 @@ export const chatMenuTooltips = {
       : `Tint this chat's row ${getHighlightSwatch(color).label.toLowerCase()}.`) + markKept(where),
   typeAction: (label: string) => `${label}: an action this chat's workspace type adds.`,
   // Settings ▸ Settled chats deletes the same way (useDeleteSettledChats).
-  deleteSettled: () =>
-    'Delete this settled chat and its history for good. Its worktree is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.',
+  deleteSettled: (where: ChatMenuPlace = LOCAL) =>
+    where.kind === 'remote'
+      ? `Delete this settled chat and its history on ${where.machineName} for good, for every device that follows it, and this computer's record of it. Its worktree there is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.`
+      : 'Delete this settled chat and its history for good. Its worktree is removed or goes back to the pool unless it has uncommitted changes, and its branch is kept. You confirm first.',
 } as const

@@ -119,6 +119,7 @@ import {
   withPendingRemoteMarks,
   withRemoteChatMarks,
   remoteWatchedPullRequest,
+  remoteManageWritable,
   type PendingRemoteMarks,
   type RemoteChatMarks,
   type RemoteChatPending,
@@ -332,6 +333,12 @@ type WorkspaceSidebarProps = {
    * Absent, the row menu offers no Delete.
    */
   onDeleteSettledChat?: (workspaceId: string) => void
+  /**
+   * Delete a paired machine's settled chat there, after asking, and then this
+   * computer's record of it (`chat-delete` there). Absent, such a chat's menu
+   * offers no Delete.
+   */
+  onDeleteSettledChatThere?: (workspaceId: string) => void
   onSetSidebarCollapsed: (collapsed: boolean) => void
   // Persisted expanded width (px) and its setter, for drag-to-resize.
   sidebarWidth: number
@@ -423,6 +430,7 @@ function WorkspaceSidebar({
   onNewChatOnMachine,
   onRevealFolder,
   onDeleteSettledChat,
+  onDeleteSettledChatThere,
   onSetSidebarCollapsed,
   sidebarWidth,
   onSetSidebarWidth,
@@ -3800,6 +3808,16 @@ function WorkspaceSidebar({
             return agent ? { paused: agent.pausedAt !== undefined } : null
           })()}
           canDelete={onDeleteSettledChat !== undefined}
+          remoteDelete={(() => {
+            // A settled chat is off its machine's list, so the machine's own
+            // word on what it takes is read off its newest list instead.
+            const origin = workspaceById.get(contextMenu.workspaceId)?.remoteOrigin
+            return Boolean(
+              origin &&
+              onDeleteSettledChatThere &&
+              remoteManageWritable(remoteBrowses.get(origin.connectionId)).deleteSettled,
+            )
+          })()}
           onClose={() => setContextMenu(null)}
           onSelect={(action) => {
             const workspace =
@@ -3810,7 +3828,8 @@ function WorkspaceSidebar({
             }
             if (action === 'delete-settled') {
               setContextMenu(null)
-              onDeleteSettledChat?.(workspace.id)
+              if (workspace.remoteOrigin) onDeleteSettledChatThere?.(workspace.id)
+              else onDeleteSettledChat?.(workspace.id)
               return
             }
             // A paired machine's chat that keeps its marks there: they are
@@ -5364,5 +5383,7 @@ function remoteChangeRefusedTitle(change: MeshConversationChange, title: string)
       return `Auto compact was not changed for ${title}`
     case 'unwatch-pull-request':
       return `${title}'s pull request is still watched`
+    case 'delete':
+      return `${title} was not deleted`
   }
 }
