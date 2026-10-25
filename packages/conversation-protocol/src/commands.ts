@@ -230,8 +230,7 @@ export type ConversationRevertFile = {
  * new list and asks again.
  */
 export type ConversationRevertAnswer =
-  | { files: ConversationRevertFile[]; reverted: boolean; kept?: string[] }
-  | { changed: true }
+  { files: ConversationRevertFile[]; reverted: boolean; kept?: string[] } | { changed: true }
 
 /** What a device may do to one of a live chat's MCP servers (`conversation-mcp-server-actions`). */
 export type ConversationWireMcpServerAction = 'reconnect' | 'enable' | 'disable'
