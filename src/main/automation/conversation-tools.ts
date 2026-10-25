@@ -6,6 +6,7 @@ import {
 } from '../../shared/modules/mcp-tools'
 import type { WorkspaceRegistryActor } from '../../shared/workspace-registry'
 import { MAX_CHAT_NAME_LENGTH, type ConversationLifecycle } from './conversation-lifecycle'
+import { CHAT_SEARCH_MAX_QUERY, type ChatSearchAnswer } from './conversation-search'
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
 import {
   CONVERSATION_HIGHLIGHT_COLORS as HIGHLIGHT_COLORS,
@@ -100,6 +101,8 @@ export type ConversationToolsDeps = {
    * has no worktree pool of its own).
    */
   settledChatDeletion?: () => ChatDeletion | null
+  /** What was said in this machine's chats, for a paired desktop's palette (conversation-search.ts). */
+  searchChats?: (query: string) => Promise<ChatSearchAnswer>
 }
 
 /** What `conversation.delete` and its plan ask of this machine's deletion. */
@@ -721,6 +724,30 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
           workspaceId,
           worktrees: outcome.worktrees.map(({ path: _path, ...told }) => told),
         })
+      },
+    },
+    {
+      name: 'conversation.search',
+      description:
+        "Search what was said in this machine's chats, as its own palette does: the chats its sidebar lists, most " +
+        'recently spoken in first, one entry per chat with a match, carrying its matching messages (`seq` names ' +
+        'each in its transcript, `from` who said it) and how many there were. At most 50 chats and 20 matches ' +
+        'each; `truncated` says the answer stopped early. Two characters at least.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: `What to find, 2 to ${CHAT_SEARCH_MAX_QUERY} characters.` },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const query = typeof args.query === 'string' ? args.query.trim() : ''
+        if (query.length < 2 || query.length > CHAT_SEARCH_MAX_QUERY) {
+          return toolError('invalid_arguments', `"query" must be 2 to ${CHAT_SEARCH_MAX_QUERY} characters.`)
+        }
+        if (!deps.searchChats) return toolError('unavailable', 'This machine cannot search its chats from here.')
+        return toolSuccess({ ok: true, ...(await deps.searchChats(query)) })
       },
     },
   ]

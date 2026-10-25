@@ -837,6 +837,10 @@
       "sha256": "75064ce1a5a283409a6aecdd884ea0c1d0ae91d5564ed2a18b3b5a0567caa804"
     },
     {
+      "name": "conversation.search",
+      "sha256": "b00c23e3089e8e40ba81f7034cf7a6eb714989266de51da6700fe063ed34f869"
+    },
+    {
       "name": "conversation.pull_request_state",
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },

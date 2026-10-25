@@ -126,6 +126,7 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'mesh:conversation-unfollow': {},
   'mesh:change-conversation': {},
   'mesh:conversation-delete-plan': {},
+  'mesh:conversation-search': {},
   'mesh:create-conversation': {},
   'mesh:forget': {},
   'mesh:get-live-state': { retry: 'once' },

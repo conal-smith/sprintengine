@@ -8,6 +8,7 @@ import {
   MESH_VISIT_CONVERSATION_CHANNEL,
   MESH_CHANGE_CONVERSATION_CHANNEL,
   MESH_CONVERSATION_DELETE_PLAN_CHANNEL,
+  MESH_CONVERSATION_SEARCH_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -25,6 +26,7 @@ import {
   type MeshSettleConversationResult,
   type MeshChangeConversationResult,
   type MeshConversationDeletePlanResult,
+  type MeshConversationSearchResult,
   type MeshConversationChange,
   type MeshVisitConversationResult,
   type MeshWorkspaceCheckoutResult,
@@ -141,6 +143,8 @@ export const meshApi = {
     workspaceId: string
   }): Promise<MeshConversationDeletePlanResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_DELETE_PLAN_CHANNEL, input) as Promise<MeshConversationDeletePlanResult>,
+  meshConversationSearch: (input: { connectionId: string; query: string }): Promise<MeshConversationSearchResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_SEARCH_CHANNEL, input) as Promise<MeshConversationSearchResult>,
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string): Promise<MeshWorkspaceCheckoutResult> =>
     ipcRenderer.invoke(MESH_WORKSPACE_CHECKOUT_CHANNEL, {
       connectionId,
@@ -292,6 +296,7 @@ export const meshApi = {
   | 'meshVisitConversation'
   | 'meshChangeConversation'
   | 'meshConversationDeletePlan'
+  | 'meshConversationSearch'
   | 'meshWorkspaceCheckout'
   | 'meshWorkspaceExtensions'
   | 'meshGetLiveState'

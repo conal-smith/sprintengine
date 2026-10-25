@@ -41,6 +41,7 @@ import {
   type MeshConversationListResult,
   type MeshConversationManage,
   type MeshConversationDeletePlanResult,
+  type MeshConversationSearchResult,
 } from '../../../shared/tailnet-mesh'
 import type { SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
 import type {
@@ -317,6 +318,8 @@ export type TailnetMeshService = {
     connectionId: unknown
     workspaceId?: unknown
   }): Promise<MeshConversationDeletePlanResult>
+  /** What was said in a paired machine's chats, as its own palette finds it (`chat-search`). */
+  conversationSearch(input: { connectionId: unknown; query?: unknown }): Promise<MeshConversationSearchResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -2211,6 +2214,36 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return deletePlanOf(workspaceId, answer.value)
   }
 
+  async function conversationSearch(input: {
+    connectionId: unknown
+    query?: unknown
+  }): Promise<MeshConversationSearchResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const query = typeof input.query === 'string' ? input.query.trim() : ''
+    if (query.length < 2 || query.length > 200) {
+      return { ok: false, code: 'invalid_arguments', message: 'Search for 2 to 200 characters.' }
+    }
+    const unsupported = {
+      ok: false as const,
+      code: 'search_unsupported',
+      message: `${connection.machineName} cannot search its chats from here yet. Update SprintEngine Studio there to do it from here.`,
+    }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'chat-search')) return unsupported
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'conversation.search',
+      args: { query },
+    })
+    if (!answer.ok) {
+      if (answer.code === 'rpc_error' && /Unknown tool/u.test(answer.message)) return unsupported
+      return { ok: false, code: answer.code, message: answer.message }
+    }
+    return searchAnswerOf(answer.value)
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2486,6 +2519,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     visitConversation,
     changeConversation,
     conversationDeletePlan,
+    conversationSearch,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -2984,7 +3018,8 @@ export function rowMenuCallOf(change: unknown): {
 // The changes a chat's menus ask of the machine it runs on beyond its marks,
 // each over a gateway tool of its own capability, asked as the row menu's are.
 
-type ChatManageCapability = 'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request' | 'chat-delete'
+type ChatManageCapability =
+  'chat-rename' | 'chat-auto-compact' | 'chat-unwatch-pull-request' | 'chat-delete' | 'chat-search'
 
 /** Whether a machine serves each of the chat management changes, as a listed chat's menus read it. */
 export function chatManageOf(capabilities: readonly string[] | null | undefined): MeshConversationManage {
@@ -2993,6 +3028,7 @@ export function chatManageOf(capabilities: readonly string[] | null | undefined)
     autoCompact: tailnetPeerSupports(capabilities, 'chat-auto-compact'),
     unwatchPullRequest: tailnetPeerSupports(capabilities, 'chat-unwatch-pull-request'),
     deleteSettled: tailnetPeerSupports(capabilities, 'chat-delete'),
+    search: tailnetPeerSupports(capabilities, 'chat-search'),
   }
 }
 
@@ -3028,6 +3064,43 @@ export function deletePlanOf(workspaceId: string, value: Record<string, unknown>
     ...(typeof value.refused === 'string' && value.refused ? { refused: value.refused } : {}),
     worktrees,
   }
+}
+
+const HIT_FROM = new Set(['person', 'agent', 'studio'])
+
+/** A machine's search answer, kept to the chats and matches this build can read. */
+export function searchAnswerOf(value: Record<string, unknown>): MeshConversationSearchResult {
+  const chats = (Array.isArray(value.chats) ? value.chats : []).slice(0, 50).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const chat = entry as Record<string, unknown>
+    if (typeof chat.workspaceId !== 'string' || !chat.workspaceId) return []
+    const hits = (Array.isArray(chat.hits) ? chat.hits : []).slice(0, 20).flatMap((hit) => {
+      if (!hit || typeof hit !== 'object') return []
+      const found = hit as Record<string, unknown>
+      if (typeof found.agentId !== 'string' || !found.agentId) return []
+      if (typeof found.seq !== 'number' || !Number.isSafeInteger(found.seq)) return []
+      if (typeof found.snippet !== 'string') return []
+      return [
+        {
+          agentId: found.agentId,
+          seq: found.seq,
+          snippet: found.snippet.slice(0, 1_000),
+          ...(HIT_FROM.has(found.from as string) ? { from: found.from as 'person' | 'agent' | 'studio' } : {}),
+        },
+      ]
+    })
+    if (hits.length === 0) return []
+    const count = typeof chat.count === 'number' && Number.isSafeInteger(chat.count) ? chat.count : hits.length
+    return [
+      {
+        workspaceId: chat.workspaceId,
+        chatTitle: typeof chat.chatTitle === 'string' && chat.chatTitle.trim() ? chat.chatTitle : 'Chat',
+        hits,
+        count: Math.max(count, hits.length),
+      },
+    ]
+  })
+  return { ok: true, chats, truncated: value.truncated === true }
 }
 
 function chatManageCallOf(value: Record<string, unknown>): ReturnType<typeof rowMenuCallOf> {

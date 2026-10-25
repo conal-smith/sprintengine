@@ -73,6 +73,7 @@ export const NO_CHAT_MANAGE: MeshConversationManage = {
   autoCompact: false,
   unwatchPullRequest: false,
   deleteSettled: false,
+  search: false,
 }
 
 /** What of a machine's chats' management this pairing may ask for: what it takes, where the pairing may drive. */

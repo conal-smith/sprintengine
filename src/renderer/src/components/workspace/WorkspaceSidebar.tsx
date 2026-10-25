@@ -93,6 +93,7 @@ import { distroOfHostId, isWslHostId } from '../../../../shared/execution-host'
 import { useStableCallback } from '../../hooks/useStableCallback'
 import { useRemoteSessions } from './remoteBand/useRemoteSessions'
 import { publishRemoteChatLinkTargets } from './remoteBand/remoteChatLinks'
+import { publishRemoteSearchMachines } from './remoteBand/remoteChatSearch'
 import {
   attachedConversations,
   buildRemoteBand,
@@ -1328,6 +1329,20 @@ function WorkspaceSidebar({
   )
   // What a link to one of their chats opens (`remoteChatLinks.ts`).
   useEffect(() => publishRemoteChatLinkTargets(remoteGroups), [remoteGroups])
+  // …and which of them the palette may search, off the tailnet none
+  // (`remoteChatSearch.ts`). A search is a read, so a pairing that may only
+  // follow their chats may search them too.
+  useEffect(
+    () =>
+      publishRemoteSearchMachines(
+        remoteLink === 'down'
+          ? []
+          : remotePresence.mesh
+              .filter((connection) => remoteBrowses.get(connection.id)?.manage?.search === true)
+              .map((connection) => ({ connectionId: connection.id, machineName: connection.machineName })),
+      ),
+    [remotePresence.mesh, remoteBrowses, remoteLink],
+  )
   useEffect(() => {
     if (pendingRemoteMarks.size === 0) return
     const kept = new Map(

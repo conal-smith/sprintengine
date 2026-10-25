@@ -141,6 +141,7 @@ import { obtainNewChatWorktree, prepareNewChatWorktree, takeReadyNewChatWorktree
 import type { AgentState } from '../../../../shared/agent-state'
 import { openChatLink } from './manager/chatLinkOpener'
 import { remoteChatLinkTarget } from './remoteBand/remoteChatLinks'
+import { registerRemoteChatOpener } from './remoteBand/remoteChatSearch'
 import { setAppCommandRunner } from '../../commands/appCommandRunner'
 import {
   markLaunchedAgentProjected,
@@ -3827,8 +3828,10 @@ export default function WorkspaceManager() {
   // next time it reads the machine.
   // `place` is the row menu's Move to New Window or Move to Main Window: the
   // chat opens in that window, as a local chat is moved to it.
+  // Answers the workspace here whose pane follows the chat, or null when none
+  // could be made.
   const openRemoteSession = useCallback(
-    (spec: RemoteSessionOpenSpec, place?: RemoteWindowPlace): void => {
+    (spec: RemoteSessionOpenSpec, place?: RemoteWindowPlace): string | null => {
       if (spec.attachedWorkspaceId) {
         if (place === 'new-window') void moveWorkspaceToNewWindow(spec.attachedWorkspaceId)
         else if (place === 'main-window') moveWorkspaceToPrimaryWindow(spec.attachedWorkspaceId)
@@ -3836,7 +3839,7 @@ export default function WorkspaceManager() {
           setNewChatPanelState(null)
           setActiveWorkspaceForWindow(workspaceWindowId, spec.attachedWorkspaceId)
         }
-        return
+        return spec.attachedWorkspaceId
       }
       if (!place) setNewChatPanelState(null)
       if (!SOLO_CHAT_TEMPLATE) {
@@ -3845,7 +3848,7 @@ export default function WorkspaceManager() {
           title: `Could not open ${spec.title} from ${spec.machineName}`,
           description: 'The Solo layout template is missing.',
         })
-        return
+        return null
       }
       const workspaceId = addWorkspace(SOLO_CHAT_TEMPLATE, {
         // The CHAT's name over there, not the agent's (owner, 2026-09-13). This
@@ -3883,6 +3886,7 @@ export default function WorkspaceManager() {
         },
       })
       if (place === 'new-window') void moveWorkspaceToNewWindow(workspaceId)
+      return workspaceId
     },
     [
       addWorkspace,
@@ -4889,6 +4893,23 @@ export default function WorkspaceManager() {
       unsubscribe?.()
     }
   }, [workspaceWindowId, moveWorkspaceToWindow, sidebarSelectWorkspace, openRemoteSession])
+  // A match the palette found in a paired machine's chat opens it here as
+  // its sidebar row opens it, on the agent the match is in
+  // (`remoteChatSearch.ts`).
+  useEffect(
+    () =>
+      registerRemoteChatOpener((target) => {
+        const spec = remoteChatLinkTarget(target.workspaceId)
+        if (!spec || spec.connectionId !== target.connectionId) return null
+        if (spec.attachedWorkspaceId || spec.conversation.agentId === target.agentId) return openRemoteSession(spec)
+        return openRemoteSession({
+          ...spec,
+          conversation: { workspaceId: target.workspaceId, agentId: target.agentId },
+          sessionId: meshConversationSessionId(target.workspaceId, target.agentId),
+        })
+      }),
+    [openRemoteSession],
+  )
   const sidebarMoveToNewWindow = useStableCallback(
     (id: WorkspaceId, placement: Parameters<typeof moveWorkspaceToNewWindow>[1]) =>
       void moveWorkspaceToNewWindow(id, placement),

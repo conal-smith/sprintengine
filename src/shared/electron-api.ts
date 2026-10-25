@@ -159,6 +159,7 @@ import type {
   MeshSettleConversationResult,
   MeshChangeConversationResult,
   MeshConversationDeletePlanResult,
+  MeshConversationSearchResult,
   MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
@@ -1028,6 +1029,8 @@ export type ElectronApi = {
     connectionId: string
     workspaceId: string
   }) => Promise<MeshConversationDeletePlanResult>
+  /** What was said in a paired machine's chats, as its own palette finds it (`chat-search` there). */
+  meshConversationSearch: (input: { connectionId: string; query: string }) => Promise<MeshConversationSearchResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */

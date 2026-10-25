@@ -750,6 +750,18 @@ an older machine answers the tool "Unknown tool":
   confirmation, and once this desktop has deleted the chat removes its own
   record of it. A desktop whose Studio server runs in a process of its own
   refuses both as `unavailable`.
+- **`conversation.search`** `{ query }` (`chat-search`) finds what was said in
+  the desktop's chats as its own palette does: the chats its sidebar lists,
+  most recently spoken in first, each through the runtime's transcript search.
+  It answers `{ chats: [{ workspaceId, chatTitle, hits, count }], truncated }`,
+  each hit an `agentId`, the `seq` of its message, a `snippet` and who said it
+  (`from`), at most 50 chats and 20 hits each, and `truncated` once it stopped
+  early, at that limit or after eight seconds. A query is 2 to 200
+  characters. It is a read, on `conversation:read`. A paired desktop's palette
+  asks each machine that advertises it beside its own search, lists one row
+  per chat with the machine's name, and opens a row as the chat's sidebar row
+  opens it, landing on the matching message as a match in one of its own
+  chats does.
 
 On a desktop that advertises `chat-create-pull-request` (2026-10-18), a
 paired desktop's Create PR runs there too, in the chat's own checkout:

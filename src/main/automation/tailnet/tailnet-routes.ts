@@ -280,6 +280,10 @@ export const TAILNET_CAPABILITIES = [
   // `conversation.delete` deletes it as this machine's own Delete does. A
   // paired desktop's Delete on a settled chat it opened from here asks both.
   'chat-delete',
+  // Search: `conversation.search` finds what was said in the chats here, as
+  // this machine's own palette does, so a paired desktop's palette lists them
+  // beside its own and opens a match at its message.
+  'chat-search',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

@@ -213,6 +213,48 @@ test('Delete reads the machine’s plan, kept to what this build reads, and dele
   }
 })
 
+test('Search asks the machine once, and keeps what this build can read of its answer', async () => {
+  const machine = await pairedMachine(['conversations', 'chat-search'], () =>
+    success({
+      ok: true,
+      chats: [
+        {
+          workspaceId: 'ws-1',
+          chatTitle: 'Parser review',
+          hits: [{ agentId: 'agent-1', seq: 4, snippet: 'the parser', from: 'person' }, { agentId: 'agent-1' }],
+          count: 3,
+        },
+        { workspaceId: 'ws-2', chatTitle: 'Nothing readable', hits: [{ seq: 'x' }] },
+      ],
+      truncated: true,
+    }),
+  )
+  const older = await pairedMachine(['conversations'], () => assert.fail('nothing is asked'))
+  try {
+    const found = await machine.mesh.conversationSearch({ connectionId: machine.connectionId, query: ' parser ' })
+    assert.deepEqual(found, {
+      ok: true,
+      chats: [
+        {
+          workspaceId: 'ws-1',
+          chatTitle: 'Parser review',
+          hits: [{ agentId: 'agent-1', seq: 4, snippet: 'the parser', from: 'person' }],
+          count: 3,
+        },
+      ],
+      truncated: true,
+    })
+    assert.deepEqual(machine.toolCalls, [{ name: 'conversation.search', arguments: { query: 'parser' } }])
+    const short = await machine.mesh.conversationSearch({ connectionId: machine.connectionId, query: 'p' })
+    assert.equal(!short.ok && short.code, 'invalid_arguments')
+    const refused = await older.mesh.conversationSearch({ connectionId: older.connectionId, query: 'parser' })
+    assert.equal(!refused.ok && refused.code, 'search_unsupported')
+  } finally {
+    await machine.close()
+    await older.close()
+  }
+})
+
 test('a machine without chat-rename is not asked, and says so in words', async () => {
   const machine = await pairedMachine(['conversations', 'chat-row-menu'], () => assert.fail('nothing is asked'))
   try {
@@ -249,11 +291,12 @@ test('a machine from before conversation.rename answers "Unknown tool", read as 
 })
 
 test('the list says which of the management a machine takes, by its capabilities', () => {
-  const none = { rename: false, autoCompact: false, unwatchPullRequest: false, deleteSettled: false }
+  const none = { rename: false, autoCompact: false, unwatchPullRequest: false, deleteSettled: false, search: false }
   assert.deepEqual(chatManageOf(undefined), none)
   assert.deepEqual(chatManageOf(['conversations']), none)
   assert.deepEqual(chatManageOf(['conversations', 'chat-rename']), { ...none, rename: true })
   assert.deepEqual(chatManageOf(['chat-auto-compact']), { ...none, autoCompact: true })
   assert.deepEqual(chatManageOf(['chat-unwatch-pull-request']), { ...none, unwatchPullRequest: true })
   assert.deepEqual(chatManageOf(['chat-delete']), { ...none, deleteSettled: true })
+  assert.deepEqual(chatManageOf(['chat-search']), { ...none, search: true })
 })

@@ -7,6 +7,7 @@ import {
   MESH_VISIT_CONVERSATION_CHANNEL,
   MESH_CHANGE_CONVERSATION_CHANNEL,
   MESH_CONVERSATION_DELETE_PLAN_CHANNEL,
+  MESH_CONVERSATION_SEARCH_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -146,6 +147,11 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
   ipcMain.handle(MESH_CONVERSATION_DELETE_PLAN_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input) ?? {}
     return service.mesh().conversationDeletePlan({ connectionId: record.connectionId, workspaceId: record.workspaceId })
+  })
+  // …and what was said in its chats, for the palette.
+  ipcMain.handle(MESH_CONVERSATION_SEARCH_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service.mesh().conversationSearch({ connectionId: record.connectionId, query: record.query })
   })
   ipcMain.handle(MESH_WORKSPACE_CHECKOUT_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input)

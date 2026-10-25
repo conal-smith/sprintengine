@@ -2,6 +2,8 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
 import type { ConversationEventType } from '../../shared/conversation-runtime'
 import { createAutomationService } from '../../main/automation/automation-service'
 import { createConversationTools, type ConversationToolsDeps } from '../../main/automation/conversation-tools'
+import { searchChatsHere } from '../../main/automation/conversation-search'
+import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../shared/workspace-lifecycle'
 import {
   chatCheckoutFromRegistry,
   createConversationPullRequestTools,
@@ -120,6 +122,22 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
       // A paired desktop's Delete on a settled chat here: this process's own
       // deletion where it has one (the desktop in process), none elsewhere.
       ...(options.settledChatDeletion ? { settledChatDeletion: options.settledChatDeletion } : {}),
+      // A paired desktop's palette, finding what was said in the chats here:
+      // the ones this sidebar lists, most recently spoken in first.
+      searchChats: (query) =>
+        searchChatsHere(query, {
+          chats: () =>
+            core.workspaceRegistry
+              .getRecords()
+              .filter((record) => record.folderPath && !record.remoteOrigin && !isSettledWorkspace(record))
+              .sort((a, b) => workspaceLastUserMessageAt(b) - workspaceLastUserMessageAt(a))
+              .map((record) => ({
+                workspaceId: record.id,
+                workspaceRoot: record.folderPath!,
+                chatTitle: record.name,
+              })),
+          search: (input) => core.conversations.searchThreads(input),
+        }),
       // A paired desktop's Stop watching on a chat here.
       pullRequestWatches: {
         watchedOf: async (key) => {

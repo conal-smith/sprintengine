@@ -259,7 +259,30 @@ export type MeshConversationManage = {
   autoCompact: boolean
   unwatchPullRequest: boolean
   deleteSettled: boolean
+  /** `chat-search`: what was said in the machine's chats is found from here (`meshConversationSearch`). */
+  search: boolean
 }
+
+/**
+ * What was said in a paired machine's chats (`conversation.search`): one entry
+ * per chat with a match, by its id there, carrying its matching messages and
+ * how many there were. `truncated` is an answer that stopped early.
+ * `search_unsupported` is a machine without `chat-search`.
+ */
+export type MeshConversationSearchResult =
+  | {
+      ok: true
+      chats: Array<{
+        workspaceId: string
+        chatTitle: string
+        hits: Array<{ agentId: string; seq: number; snippet: string; from?: 'person' | 'agent' | 'studio' }>
+        count: number
+      }>
+      truncated: boolean
+    }
+  | { ok: false; code: string; message: string }
+
+export const MESH_CONVERSATION_SEARCH_CHANNEL = 'mesh:conversation-search'
 
 /**
  * What deleting a settled chat on a paired machine would do, as that machine

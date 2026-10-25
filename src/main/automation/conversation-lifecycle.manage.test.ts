@@ -90,8 +90,17 @@ test('Rename refuses an empty or overlong name, and a chat this machine does not
 test('the management tools are a paired device’s, and not listed to an agent here', () => {
   const { tools } = fixture()
   const names = (context: McpConnectionContext) => gatewayToolsForCaller(tools, context).map((tool) => tool.name)
-  assert.ok(names(TAILNET).includes('conversation.rename'))
-  assert.ok(!names(LOCAL).includes('conversation.rename'))
+  for (const name of [
+    'conversation.rename',
+    'conversation.auto_compact',
+    'conversation.pull_request_unwatch',
+    'conversation.delete_plan',
+    'conversation.delete',
+    'conversation.search',
+  ]) {
+    assert.ok(names(TAILNET).includes(name), name)
+    assert.ok(!names(LOCAL).includes(name), name)
+  }
 })
 
 test('each is an audited mutation needing conversation:operate', () => {
