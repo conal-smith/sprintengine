@@ -146,6 +146,28 @@ and adds, each behind its capability:
   can (a listed thread's `capabilities.stopSubagent`), and leaves the chat,
   its turn and its other agents running. A desktop without it refuses the
   kind as `unsupported_command`.
+- `conversation-fork`: `fork` starts a new chat beside this one, under the id
+  the client names (`newAgentId`), holding it through the reply of `turnId`
+  (`side: 'assistant'`) or up to the message at `turnSeq` (`side: 'user'`),
+  where the chat's provider can (a listed thread's `capabilities.fork`). The
+  desktop names it and lists it with the chat's workspace. The same command
+  id sent again is the same fork. A desktop without it refuses the kind as
+  `unsupported_command`.
+- `conversation-side-questions`: `{ type: 'askSideQuestion', requestId,
+questionId, question, history? }` asks the chat's agent about the chat and
+  adds the exchange to nothing; the `result`'s `data` is
+  `{ answer }` (`parseConversationSideQuestionAnswer`). It needs
+  `conversation:operate`. `{ type: 'cancelSideQuestion', requestId,
+questionId }` calls one off. A listed thread says which chats can
+  (`capabilities.sideQuestion`).
+- `conversation-context-breakdown`: `{ type: 'getContextBreakdown',
+requestId }` reads what fills the chat's context window from its live agent;
+  the `result`'s `data` is `{ breakdown, stale? }`
+  (`parseConversationContextBreakdownAnswer`). A listed thread says which
+  chats can (`capabilities.contextBreakdown`).
+
+A desktop without either read capability answers its frames `invalid_frame`
+under their `requestId`, as it answers `watchQueued`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

@@ -8,7 +8,8 @@ import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { useToastStore } from '../../../store/toastStore'
 import { addAgentTabAfter, registerModel, unregisterModel } from '../../../utils/modelRegistry'
 import { composerDraftStore } from './draftStore'
-import { forkChat, forkName, forkedAgentPatch, takeForkedAttachments } from './forkFromHere'
+import { forkChat, forkRemoteChat, takeForkedAttachments } from './forkFromHere'
+import { forkName, forkedAgentPatch } from '../../../../../shared/conversation/fork'
 
 const WS = 'fork-from-here-ws'
 const root = '/Users/dev/app-worktree'
@@ -233,4 +234,152 @@ test('a side question carried on in a new chat forks at the newest reply, with t
     skillIds: [],
     files: [],
   })
+})
+
+// A chat followed from a paired machine: the fork is made over there, and a
+// pane onto it opens here in the tab after this chat's.
+const REMOTE_WS = 'fork-from-here-remote-ws'
+const remoteOrigin = {
+  connectionId: 'connection',
+  machineName: 'mac-mini',
+  workspaceId: 'remote-workspace',
+  workspaceName: 'studio',
+  workspaceRoot: '/Users/other/studio',
+  sessionId: 'conversation:remote-workspace:remote-agent',
+  repository: null,
+  checkout: { mode: 'current' as const, branch: 'main', worktreePath: null },
+}
+const meshTab = (remoteAgentId: string, name: string) => ({
+  type: 'tab',
+  id: `mesh-conversation:connection:remote-workspace:${remoteAgentId}`,
+  name,
+  component: 'mesh-conversation',
+  config: { connectionId: 'connection', machineName: 'mac-mini', remoteWorkspaceId: 'remote-workspace', remoteAgentId },
+})
+
+function remoteSetup(options: { mounted?: boolean; listedTitle?: string } = {}) {
+  const t = setup()
+  useWorkspaceStore.setState({
+    workspaces: [{ id: REMOTE_WS, name: 'Atlas', agents: {}, remoteOrigin } as unknown as Workspace],
+  })
+  const model = Model.fromJson({
+    global: {},
+    borders: [],
+    layout: {
+      type: 'row',
+      children: [{ type: 'tabset', children: [meshTab('remote-agent', 'Atlas'), meshTab('remote-other', 'Iris')] }],
+    },
+  })
+  if (options.mounted !== false) registerModel(REMOTE_WS, model)
+  const listed = vi.fn(async (_connectionId: string) => ({
+    ok: true,
+    conversations: [
+      {
+        workspaceId: 'remote-workspace',
+        agentId: forks.at(-1)?.newAgentId,
+        title: options.listedTitle ?? 'Atlas (fork 2)',
+      },
+    ],
+  }))
+  Object.assign(globalThis.window as object, { api: { meshConversationList: listed } })
+  const forks: ConversationForkInput[] = []
+  const transport = {
+    machineName: 'mac-mini',
+    remoteExtensions: { connectionId: 'connection', workspaceId: 'remote-workspace' },
+    fork: async (input: ConversationForkInput) => {
+      forks.push(input)
+      return { ok: true as const }
+    },
+  }
+  return { ...t, model, forks, transport, listed }
+}
+
+const meshTabsOf = (model: Model) => {
+  const tabset = model.getRootRow()!.getChildren()[0] as TabSetNode
+  return {
+    agents: tabset
+      .getChildren()
+      .map((tab) => ((tab as TabNode).getConfig() as { remoteAgentId: string }).remoteAgentId),
+    names: tabset.getChildren().map((tab) => (tab as TabNode).getName()),
+    selected: tabset.getSelected(),
+  }
+}
+
+test('a chat on a paired machine forks over there, and the fork opens here in the tab after it, named as it is there', async () => {
+  const t = remoteSetup()
+  try {
+    await forkRemoteChat({
+      transport: t.transport,
+      workspaceId: REMOTE_WS,
+      agentId: 'remote-agent',
+      providerId: 'claude-agent',
+      name: 'Atlas',
+      target: {
+        side: 'user',
+        turnSeq: 4,
+        draft: { text: 'try again', skillIds: [], mentions: [], files: ['/Users/other/studio/spec.pdf'] },
+      },
+    })
+    expect(t.forks).toHaveLength(1)
+    const [asked] = t.forks
+    // Named by the chat's ids over there, and with no title: that machine names it.
+    expect(asked).toMatchObject({
+      side: 'user',
+      turnSeq: 4,
+      key: { workspaceId: 'remote-workspace', agentId: 'remote-agent' },
+    })
+    expect(asked).not.toHaveProperty('title')
+    expect(asked.newAgentId).toMatch(/^conversation-claude-agent-/)
+    expect(t.listed).toHaveBeenCalledWith('connection')
+
+    const tabs = meshTabsOf(t.model)
+    expect(tabs.agents).toEqual(['remote-agent', asked.newAgentId, 'remote-other'])
+    expect(tabs.names[1]).toBe('Atlas (fork 2)')
+    expect(tabs.selected).toBe(1)
+    // No record here: the chat lives over there.
+    expect(useWorkspaceStore.getState().workspaces[0]!.agents).toEqual({})
+    // The message waits in the fork's composer, without the files: their paths are on that machine.
+    const draft = composerDraftStore().getState().read(REMOTE_WS, asked.newAgentId)
+    expect(draft?.text).toBe('try again')
+    expect(draft?.files ?? []).toEqual([])
+    expect(useToastStore.getState().toasts.at(-1)?.title).toContain('on mac-mini')
+  } finally {
+    unregisterModel(REMOTE_WS)
+  }
+})
+
+test('a remote fork whose chat has no pane mounted here opens as a chat of its own onto that machine', async () => {
+  const t = remoteSetup({ mounted: false })
+  const added = vi.fn((_template: unknown, _options: unknown) => 'forked-workspace')
+  const addWorkspace = useWorkspaceStore.getState().addWorkspace
+  useWorkspaceStore.setState({ addWorkspace: added as never })
+  try {
+    await forkRemoteChat({
+      transport: t.transport,
+      workspaceId: REMOTE_WS,
+      agentId: 'remote-agent',
+      providerId: 'claude-agent',
+      name: 'Atlas',
+      target: { side: 'assistant', turnId: 'turn_1', draft: { text: 'and the docs?' } },
+    })
+    const forkId = t.forks[0]!.newAgentId
+    expect(added).toHaveBeenCalledOnce()
+    expect(added.mock.calls[0]![1]).toMatchObject({
+      name: 'Atlas (fork 2)',
+      folderPath: null,
+      remoteOrigin: { ...remoteOrigin, sessionId: `conversation:remote-workspace:${forkId}` },
+      seedAgent: {
+        meshConversation: {
+          connectionId: 'connection',
+          machineName: 'mac-mini',
+          remoteWorkspaceId: 'remote-workspace',
+          remoteAgentId: forkId,
+          title: 'Atlas (fork 2)',
+        },
+      },
+    })
+    expect(composerDraftStore().getState().read('forked-workspace', forkId)?.text).toBe('and the docs?')
+  } finally {
+    useWorkspaceStore.setState({ addWorkspace })
+  }
 })

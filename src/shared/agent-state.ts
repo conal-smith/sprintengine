@@ -280,6 +280,24 @@ export function defaultAgentExecution(): AgentExecution {
   return { mode: 'current_workspace', worktreeId: null, cwd: null }
 }
 
+// The agent-state fields that make a fresh agent a conversation-runtime agent.
+// Shared by the spawn action, a fork (a window's own and one a paired device
+// asks for, which main writes) and their tests, so the routing contract cannot
+// drift: `runtimeKind`/`conversation` opt into AgentChatView, and the `cli*`
+// fields are cleared so no terminal session is ever started for this agent.
+export function conversationAgentRuntimePatch(providerId: string, modelId: string): Partial<AgentState> {
+  return {
+    runtimeKind: 'conversation',
+    conversation: { providerId, modelId },
+    cli: undefined,
+    cliStartupPrompt: undefined,
+    cliStartRequested: false,
+    cliHasLaunched: false,
+    cliResumeAvailable: false,
+    cliSessionId: undefined,
+  }
+}
+
 export function defaultAgent(id: AgentId, name = id): AgentState {
   return {
     id,

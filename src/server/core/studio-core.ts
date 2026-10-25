@@ -2,7 +2,7 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
-import { conversationWorkingRoot } from '../../shared/agent-state'
+import { conversationWorkingRoot, defaultAgent } from '../../shared/agent-state'
 import { getWorkspaceChangeSummary } from '../../main/workspace-change-summary'
 import { isMachinePath } from '../../shared/machine-paths'
 import { isWorkspaceTombstoned } from '../../shared/workspace-registry'
@@ -62,6 +62,7 @@ import {
   onlyOwnChatTurn,
 } from '../../main/automation/conversation-lifecycle'
 import { conversationSessionWorking, terminalAgentWorking } from '../../shared/conversation/phase'
+import { forkedAgentPatch, forkName } from '../../shared/conversation/fork'
 import type { ConversationMessageOrigin, ConversationSessionSummary } from '../../shared/conversation-runtime'
 import { installedStudioPlatform, installStudioPlatform, type StudioPlatform } from '../platform/platform'
 import type { StudioPaths } from '../platform/studio-paths'
@@ -700,6 +701,31 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         // here, among the scheduled messages below, and sent from here when the
         // turn ends: the machine that typed it may sleep or close meanwhile.
         heldMessages: studioHeldMessages(() => scheduledMessages),
+        // A fork a paired machine asked for joins the chat's workspace as a
+        // window's Fork from here adds one (forkFromHere.tsx): named after the
+        // chat beside the workspace's others, the chat's twin in its engine,
+        // folder and choices, written through the same bus.
+        forks: {
+          name: (chat, newAgentId) => {
+            const record = workspaceRegistry.getRecord(chat.workspaceId)
+            const parent = record?.agents[chat.agentId]
+            if (!record || !parent?.conversation) return { ok: false, message: 'This chat cannot be forked here.' }
+            if (record.agents[newAgentId]) return { ok: false, message: 'That chat id is taken in this workspace.' }
+            const taken = Object.values(record.agents).map((agent) => agent.name)
+            return { ok: true, name: forkName(parent.name || 'Chat', taken) }
+          },
+          add: (chat, newAgentId, name) => {
+            const parent = workspaceRegistry.getRecord(chat.workspaceId)?.agents[chat.agentId]
+            if (!parent?.conversation) return { ok: false, message: 'The chat it was forked from is gone.' }
+            const written = workspaceSyncService.updateWorkspaceAgent(
+              chat.workspaceId,
+              newAgentId,
+              { ...defaultAgent(newAgentId, name), ...forkedAgentPatch(parent, name) },
+              'system',
+            )
+            return written.ok ? { ok: true } : { ok: false, message: written.message }
+          },
+        },
       },
     )
 

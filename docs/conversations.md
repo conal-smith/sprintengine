@@ -139,8 +139,9 @@ Both chats work in the same files, and nothing is restored: a fork made after
 the agent changed files sees them changed. The forked turns' changed-files
 cards and Revert stay with the original chat, whose checkpoints they are.
 
-The fork is offered while the chat is idle, on this machine (a paired
-machine's chat is not forked from here), wherever the runtime can be forked:
+The fork is offered while the chat is idle, wherever the runtime can be
+forked (a paired machine's chat is forked over there, by that machine, and
+opens here as a pane onto it; see "Following from another desktop" below):
 
 | Runtime                           | How the fork continues                                                                                                                                                                      |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,8 +180,9 @@ It is Claude Code's own `/btw`, asked over the SDK (`askSideQuestion`), and is
 offered for Claude chats on this machine, a WSL server's or an SSH machine's.
 A Claude Code that has no side questions says so in the drawer. Its cost joins
 the session's running total, so the chat's next turn reports it; Claude Code
-writes no request for it to its session log. Codex, the ACP runtimes and a
-paired machine's chat do not offer it, and there `/btw` goes to the CLI as
+writes no request for it to its session log. A paired machine's
+Claude chat offers it too, asked of its agent over there (2026-10-25). Codex
+and the ACP runtimes do not offer it, and there `/btw` goes to the CLI as
 before.
 
 ## Installed CLI providers
@@ -794,6 +796,27 @@ in the app's own process.
   offers "Stop this agent", as a local chat's do, and it stops that agent
   alone over there. The machine's turn Stop spares a Claude chat's agents, so
   this is how one is stopped from here.
+- **Fork from here, side questions and the context ring work over there**
+  (owner ask 2026-10-25: every feature of a local chat in a remote one). Each
+  is offered where the machine advertises it and lists the chat's provider as
+  able. Fork from here (`conversation-fork`, `capabilities.fork`) is made by
+  that machine as its own would be: the new chat joins the chat's workspace
+  there, named after it beside that workspace's other chats, and is written to
+  its records so every window there lists it. Here it opens as a pane onto that
+  machine in the tab after this chat's; a message forked before waits in its
+  composer, without the files it attached, whose paths are on that machine. A
+  repeat of the same command after a dropped connection is the same fork, and
+  a chat at rest is forked from its transcript without being resumed. A side
+  question (`conversation-side-questions`, `capabilities.sideQuestion`) is
+  asked of the chat's agent over there, resuming a chat at rest as a send
+  would, and needs a pairing that may drive; closing the drawer, or the
+  connection dropping, calls it off there. Continue in a new chat forks over
+  there as Fork from here does. The context ring
+  (`conversation-context-breakdown`, `capabilities.contextBreakdown`) opens
+  what fills the window, read from the agent over there; a chat with no live
+  session there says there is no agent to ask yet, as a local one does. A
+  machine without a capability offers none of it, and the ring shows how full
+  the window is alone.
 
 ### Terminals stay on the machine
 

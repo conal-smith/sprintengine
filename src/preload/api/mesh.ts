@@ -32,7 +32,9 @@ import {
   type MeshPairResult,
   type MeshRequestPairingResult,
   meshConversationFrameChannel,
+  MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_COMMAND_CHANNEL,
+  MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
   MESH_CONVERSATION_EARLIER_CHANNEL,
   MESH_CONVERSATION_FOLLOW_CHANNEL,
   MESH_CONVERSATION_LIST_CHANNEL,
@@ -42,6 +44,7 @@ import {
   MESH_CONVERSATION_PULL_REQUEST_PUSH_CHANNEL,
   MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL,
   MESH_CONVERSATION_SEND_CHANNEL,
+  MESH_CONVERSATION_SIDE_QUESTION_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
   MESH_CONVERSATION_TURN_DIFF_CHANNEL,
@@ -59,8 +62,11 @@ import {
 } from '../../shared/tailnet-mesh'
 import type { PullRequestCheckoutPin } from '../../shared/git/pull-request-create'
 import type {
+  ConversationContextBreakdownResult,
   ConversationImageAttachment,
   ConversationPageResult,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationToolDetailResult,
   ConversationTurnDiffResult,
 } from '../../shared/conversation-runtime'
@@ -214,6 +220,31 @@ export const meshApi = {
   meshConversationInterrupt: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'interrupt' }),
   meshConversationStopSubagent: (input: { key: MeshConversationKey; toolUseId: string }) =>
     command(input.key, { kind: 'stopSubagent', toolUseId: input.toolUseId }),
+  meshConversationFork: (input: {
+    key: MeshConversationKey
+    fork: Extract<MeshConversationCommand, { kind: 'fork' }>
+  }) => command(input.key, input.fork),
+  meshConversationSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+    question: string
+    history?: ConversationSideQuestionExchange[]
+  }): Promise<ConversationSideQuestionResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_SIDE_QUESTION_CHANNEL, input) as Promise<ConversationSideQuestionResult>,
+  meshConversationCancelSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+  }): Promise<{ ok: true } | { ok: false; message: string }> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_CANCEL_SIDE_QUESTION_CHANNEL, input) as Promise<
+      { ok: true } | { ok: false; message: string }
+    >,
+  meshConversationContextBreakdown: (input: {
+    key: MeshConversationKey
+  }): Promise<ConversationContextBreakdownResult> =>
+    ipcRenderer.invoke(
+      MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
+      input,
+    ) as Promise<ConversationContextBreakdownResult>,
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -295,6 +326,10 @@ export const meshApi = {
   | 'meshConversationCancelQueued'
   | 'meshConversationInterrupt'
   | 'meshConversationStopSubagent'
+  | 'meshConversationFork'
+  | 'meshConversationSideQuestion'
+  | 'meshConversationCancelSideQuestion'
+  | 'meshConversationContextBreakdown'
   | 'meshConversationResolveApproval'
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'

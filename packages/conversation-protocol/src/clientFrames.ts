@@ -12,6 +12,12 @@ import {
   type ConversationWatchQueuedRequest,
 } from './commands.js'
 import type { ConversationHelloRequest } from './handshake.js'
+import {
+  parseConversationSideQuestionRequest,
+  type ConversationAskSideQuestionRequest,
+  type ConversationCancelSideQuestionRequest,
+  type ConversationContextBreakdownRequest,
+} from './agentReads.js'
 
 // The server half of the full contract: what a desktop accepts from a client.
 // `parseConversationClientFrame` (index.ts) is the lane as it first shipped
@@ -25,6 +31,9 @@ export type ConversationClientMessage =
   | { type: 'command'; commandId: string; command: ConversationCommand }
   | ConversationHelloRequest
   | ConversationWatchQueuedRequest
+  | ConversationAskSideQuestionRequest
+  | ConversationCancelSideQuestionRequest
+  | ConversationContextBreakdownRequest
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -71,6 +80,11 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
   }
   if (value.type === 'watchQueued')
     return id(value.requestId) ? { type: 'watchQueued', requestId: value.requestId } : null
+  // Reads that ask the chat's agent (agentReads.ts).
+  if (value.type === 'askSideQuestion' || value.type === 'cancelSideQuestion')
+    return parseConversationSideQuestionRequest(value)
+  if (value.type === 'getContextBreakdown')
+    return id(value.requestId) ? { type: 'getContextBreakdown', requestId: value.requestId } : null
   if (value.type === 'command' && record(value.command)) {
     const command = value.command
     // When the message was written, and whether the person confirmed one
@@ -110,6 +124,24 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
             commandId: value.commandId,
             command: { kind: 'stopSubagent', toolUseId: command.toolUseId },
           }
+        : null
+    }
+    if (command.kind === 'fork') {
+      if (!id(value.commandId) || !id(command.newAgentId)) return null
+      const base = { kind: 'fork' as const, newAgentId: command.newAgentId }
+      if (command.side === 'assistant')
+        return id(command.turnId)
+          ? {
+              type: 'command',
+              commandId: value.commandId,
+              command: { ...base, side: 'assistant', turnId: command.turnId },
+            }
+          : null
+      return command.side === 'user' &&
+        typeof command.turnSeq === 'number' &&
+        Number.isSafeInteger(command.turnSeq) &&
+        command.turnSeq >= 1
+        ? { type: 'command', commandId: value.commandId, command: { ...base, side: 'user', turnSeq: command.turnSeq } }
         : null
     }
     // A steer is read as the send it rides on, and is never one held for
@@ -200,7 +232,8 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
   return rejection.code === 'unsupported_command' &&
     (rejection.commandKind === 'resolvePlan' ||
       rejection.commandKind === 'cancelQueued' ||
-      rejection.commandKind === 'stopSubagent')
+      rejection.commandKind === 'stopSubagent' ||
+      rejection.commandKind === 'fork')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

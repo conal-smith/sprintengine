@@ -171,6 +171,7 @@ import type {
   MeshPairResult,
   MeshRequestPairingResult,
   TailnetForgetMachineResult,
+  MeshConversationCommand,
   MeshConversationCommandResult,
   MeshConversationFrame,
   MeshConversationKey,
@@ -211,6 +212,7 @@ import type {
   ConversationCancelSideQuestionInput,
   ConversationContextBreakdownInput,
   ConversationContextBreakdownResult,
+  ConversationSideQuestionExchange,
   ConversationSideQuestionInput,
   ConversationSideQuestionResult,
   ConversationMcpServerActionResult,
@@ -1092,6 +1094,29 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationCommandResult>
+  // Fork a chat over there, as its Fork from here does there: the new chat,
+  // named by `fork.newAgentId`, joins that machine's workspace beside it.
+  // Needs `conversation-fork` there.
+  meshConversationFork: (input: {
+    key: MeshConversationKey
+    fork: Extract<MeshConversationCommand, { kind: 'fork' }>
+  }) => Promise<MeshConversationCommandResult>
+  // A side question asked of a chat's agent over there, under this window's
+  // own `requestId` for it, and calling one off. Needs
+  // `conversation-side-questions` there.
+  meshConversationSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+    question: string
+    history?: ConversationSideQuestionExchange[]
+  }) => Promise<ConversationSideQuestionResult>
+  meshConversationCancelSideQuestion: (input: {
+    key: MeshConversationKey
+    requestId: string
+  }) => Promise<{ ok: true } | { ok: false; message: string }>
+  // What fills a chat's context window, as its agent over there measures it.
+  // Needs `conversation-context-breakdown` there.
+  meshConversationContextBreakdown: (input: { key: MeshConversationKey }) => Promise<ConversationContextBreakdownResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string

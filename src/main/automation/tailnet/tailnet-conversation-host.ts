@@ -3,6 +3,7 @@ import {
   CONVERSATION_MAX_REPLY_PREVIEW,
   parseConversationWireHighlight,
   type ConversationCommand,
+  type ConversationForkCommand,
   type ConversationQueuedMessage,
   type ConversationThread,
   type ConversationWireErrorCode,
@@ -16,6 +17,7 @@ import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroun
 import { conversationPhaseWorking, conversationSummaryPhase } from '../../../shared/conversation/phase'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../../shared/workspace-lifecycle'
 import type {
+  ConversationContextBreakdownResult,
   ConversationKey,
   ConversationImageAttachment,
   ConversationMessageOrigin,
@@ -23,6 +25,8 @@ import type {
   ConversationSessionActionResult,
   ConversationSessionFrame,
   ConversationSessionSummary,
+  ConversationSideQuestionExchange,
+  ConversationSideQuestionResult,
   ConversationSubscribeInput,
 } from '../../../shared/conversation-runtime'
 import type { ConversationBackend } from '../../../server/core/conversation-backend'
@@ -55,6 +59,11 @@ const UPLOAD_TTL_MS = 60 * 60_000
 const MAX_UPLOAD_REFS = 256
 const MAX_DEVICE_UPLOAD_REFS = 32
 const MAX_SPENT_UPLOAD_REFS = 256
+// Forks remembered by the device's command, so one sent again after a dropped
+// connection is answered as the first was rather than refused as taken.
+const MAX_FORK_RECEIPTS = 64
+// A fork's id names its transcript's folder: letters, digits, `.`, `_`, `-`.
+const FORK_AGENT_ID = /^[A-Za-z0-9][\w.-]{0,199}$/u
 /**
  * Where a step's picture is, once found, is kept this long and for this many
  * steps. Finding it scans the transcript back to the step, and a phone
@@ -83,6 +92,13 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // (`conversation-stop-subagent`); a client offers an agent's Stop only
         // where it can.
         stopSubagent: capabilities.stopSubagent === true,
+        // Whether the chat can be forked (`conversation-fork`), a side question
+        // asked of it (`conversation-side-questions`), and its agent asked what
+        // fills its window (`conversation-context-breakdown`); a client offers
+        // each only where it can.
+        fork: capabilities.fork === true,
+        sideQuestion: capabilities.sideQuestion === true,
+        contextBreakdown: capabilities.contextBreakdown === true,
       }
     : undefined
 
@@ -178,6 +194,27 @@ export type ConversationGatewayHost = {
     key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
     listener: (messages: ConversationQueuedMessage[]) => void,
   ): () => void
+  /**
+   * A side question about a chat (`conversation-side-questions`), asked of its
+   * agent and added to nothing, under the device's own `questionId`. A chat
+   * at rest is resumed for it, as a send resumes one. Absent on a host that
+   * cannot ask one.
+   */
+  askSideQuestion?(
+    key: ConversationKey,
+    deviceId: string,
+    questionId: string,
+    question: string,
+    history: ConversationSideQuestionExchange[],
+  ): Promise<ConversationSideQuestionResult>
+  /** Call off a side question the device asked and is still being answered. */
+  cancelSideQuestion?(deviceId: string, questionId: string): Promise<{ ok: true } | { ok: false; message: string }>
+  /**
+   * What fills a chat's context window, as its live session's agent measures it
+   * (`conversation-context-breakdown`). A chat with no live session is not
+   * started for it: the read says there is no agent to ask yet.
+   */
+  contextBreakdown?(key: ConversationKey): Promise<ConversationContextBreakdownResult>
   /**
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
@@ -478,6 +515,18 @@ export type ConversationRegistryLink = {
    * folder, its session's, or one of these, and from nowhere else.
    */
   imageRoots?: () => readonly string[]
+  /**
+   * Where a fork a paired device asked for joins this desktop's records, as a
+   * window's Fork from here adds one (`conversation-fork`): `name` says what
+   * the fork of a chat is called beside the workspace's others, refusing an
+   * id the workspace holds already, and `add` writes its agent record, the
+   * chat's twin under that name. Absent, a fork is refused: one with no
+   * record would be a transcript no window here lists.
+   */
+  forks?: {
+    name(chat: ChatOf, newAgentId: string): { ok: true; name: string } | { ok: false; message: string }
+    add(chat: ChatOf, newAgentId: string, name: string): { ok: true } | { ok: false; message: string }
+  }
 }
 
 type ChatOf = { workspaceId: string; agentId: string }
@@ -689,6 +738,58 @@ export function createConversationGatewayHost(
       if (starting.get(id) === request) starting.delete(id)
     }
   }
+  // "Fork from here" for a paired device, as a window here forks: the runtime
+  // writes the fork's transcript beside this chat's, then the fork joins the
+  // workspace's records as this chat's twin under its own name, so every
+  // window here lists it and the device can follow it by the id it chose.
+  // Never a resume: a fork is cut from the transcript, and a provider that
+  // branches only a live session (an ACP agent) hands the fork the
+  // conversation as text instead. Held under the device's own command, so a
+  // repeat after a dropped connection is the same fork; a refusal is not
+  // kept, since the person may try again once the turn is over.
+  const forkReceipts = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  const fork = (
+    key: ConversationKey,
+    deviceId: string,
+    commandId: string,
+    command: ConversationForkCommand,
+  ): Promise<ConversationGatewayCommandResult> => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    const kept = forkReceipts.get(receipt)
+    if (kept) return kept
+    const forking = (async (): Promise<ConversationGatewayCommandResult> => {
+      const records = registry.forks
+      if (!records) return { ok: false, message: 'This desktop cannot add a forked chat.' }
+      if (!FORK_AGENT_ID.test(command.newAgentId) || command.newAgentId === key.agentId)
+        return { ok: false, message: 'The new chat needs an id of its own.' }
+      const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
+      const named = records.name(chat, command.newAgentId)
+      if (!named.ok) return named
+      const forked = await runtime.forkAtTurn({
+        key,
+        newAgentId: command.newAgentId,
+        title: named.name,
+        ...(command.side === 'user'
+          ? { side: 'user' as const, turnSeq: command.turnSeq }
+          : { side: 'assistant' as const, turnId: command.turnId }),
+      })
+      if (!forked.ok) return { ok: false, message: forked.message }
+      return records.add(chat, command.newAgentId, named.name)
+    })().catch((error: unknown): ConversationGatewayCommandResult => ({
+      ok: false,
+      message: error instanceof Error ? error.message : 'The conversation could not be forked.',
+    }))
+    forkReceipts.set(receipt, forking)
+    while (forkReceipts.size > MAX_FORK_RECEIPTS) forkReceipts.delete(forkReceipts.keys().next().value!)
+    void forking.then((result) => {
+      if (!result.ok && forkReceipts.get(receipt) === forking) forkReceipts.delete(receipt)
+    })
+    return forking
+  }
+  // Side questions a device asked, by its own id for each: where each went,
+  // so it can be called off there, or that it was called off before its
+  // session had started, so it is never asked.
+  const sideQuestions = new Map<string, { sessionId: string; requestId: string } | { calledOff: boolean }>()
   // A switch within the chat's own CLI, to a model this machine's picker
   // offers for it. Checked here, before the runtime sees it: the id must be in
   // the catalog (or be the CLI's own default), and the provider must take a
@@ -1026,8 +1127,54 @@ export function createConversationGatewayHost(
     ...(registry.heldMessages
       ? { watchQueued: (key, listener) => watchHeld(registry.heldMessages!, key, listener) }
       : {}),
+    // As the chat view's /btw asks one: of the chat's session, started first
+    // when there is none, as a send would start it, and kept out of the chat.
+    async askSideQuestion(key, deviceId, questionId, question, history) {
+      const asked = JSON.stringify([deviceId, questionId])
+      if (sideQuestions.has(asked)) return { ok: false, message: 'That side question is already being answered.' }
+      const pending = { calledOff: false }
+      sideQuestions.set(asked, pending)
+      const cancelled = { ok: false, cancelled: true, message: 'The side question was called off.' } as const
+      try {
+        const started = await ensureSession(key)
+        if (pending.calledOff) return cancelled
+        if (!started.ok) return { ok: false, message: started.message }
+        const requestId = randomUUID()
+        sideQuestions.set(asked, { sessionId: started.session.sessionId, requestId })
+        return await runtime.askSideQuestion({
+          sessionId: started.session.sessionId,
+          requestId,
+          question,
+          ...(history.length ? { history } : {}),
+        })
+      } finally {
+        sideQuestions.delete(asked)
+      }
+    },
+    async cancelSideQuestion(deviceId, questionId) {
+      const asked = sideQuestions.get(JSON.stringify([deviceId, questionId]))
+      if (!asked) return { ok: false, message: 'That side question is not being answered.' }
+      if ('calledOff' in asked) {
+        asked.calledOff = true
+        return { ok: true }
+      }
+      return runtime.cancelSideQuestion(asked)
+    },
+    // Asked of the live session's agent only: opening the ring is not a
+    // reason to start one, here any more than in a window.
+    async contextBreakdown(key) {
+      const live = sessionFor(key)
+      if (!live)
+        return {
+          ok: false,
+          reason: 'not-running',
+          message: 'The agent is not running for this chat now. Send a message and it can say what fills the window.',
+        }
+      return runtime.readContextBreakdown({ sessionId: live.sessionId })
+    },
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
+      if (command.kind === 'fork') return fork(key, deviceId, commandId, command)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
       if (command.kind === 'cancelQueued')

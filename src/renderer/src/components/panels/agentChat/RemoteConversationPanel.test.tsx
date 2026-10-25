@@ -106,6 +106,7 @@ async function mountRemote({
   queuedSends = false,
   steerSends = false,
   stopSubagents = false,
+  agentReads = {},
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -119,6 +120,12 @@ async function mountRemote({
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
   stopSubagents?: boolean
+  /**
+   * The machine forks its chats, answers side questions about them and says
+   * what fills their windows (`conversation-fork`, `conversation-side-questions`,
+   * `conversation-context-breakdown`).
+   */
+  agentReads?: { fork?: boolean; sideQuestions?: boolean; contextBreakdown?: boolean }
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
@@ -169,6 +176,7 @@ async function mountRemote({
       queuedSends,
       steerSends,
       stopSubagents,
+      ...agentReads,
       createPullRequest,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
@@ -244,6 +252,38 @@ async function mountRemote({
     meshConversationInterrupt: vi.fn(async () => ({ ok: true })),
     meshConversationStopSubagent: vi.fn(async (_input: { key: MeshConversationKey; toolUseId: string }) => ({
       ok: true,
+    })),
+    meshConversationFork: vi.fn(
+      async (_input: { key: MeshConversationKey; fork: Record<string, unknown> }): Promise<{ ok: true }> => ({
+        ok: true,
+      }),
+    ),
+    meshConversationSideQuestion: vi.fn(
+      async (_input: { key: MeshConversationKey; requestId: string; question: string }) => ({
+        ok: true,
+        answer: 'In src/upload.test.ts.',
+      }),
+    ),
+    meshConversationCancelSideQuestion: vi.fn(async () => ({ ok: true })),
+    meshConversationContextBreakdown: vi.fn(async (_input: { key: MeshConversationKey }) => ({
+      ok: true,
+      breakdown: {
+        model: 'opus',
+        usedTokens: 76_000,
+        windowTokens: 200_000,
+        categories: [
+          { name: 'MCP tools', tokens: 20_000, kind: 'used' },
+          { name: 'Messages', tokens: 56_000, kind: 'used' },
+          { name: 'Free space', tokens: 124_000, kind: 'free' },
+        ],
+        mcpServers: [{ name: 'linear', tokens: 20_000, tools: [] }],
+        skills: [],
+        memoryFiles: [],
+        agents: [],
+        autoCompactAt: null,
+        estimated: true,
+        measuredAt: 0,
+      },
     })),
     meshConversationSetPermissionPreset: vi.fn(async () => ({ ok: true })),
     meshConversationSetModel: vi.fn(async (input: { key: MeshConversationKey; modelId: string }) => {
@@ -643,6 +683,88 @@ test('a pairing that may only follow sees no Stop on an agent', async () => {
     expect(agentStops(chat)).toHaveLength(0)
   } finally {
     await chat.unmount()
+  }
+})
+
+const allAgentReads = { fork: true, sideQuestions: true, contextBreakdown: true }
+const ableChat = { ...thread.capabilities!, fork: true, sideQuestion: true, contextBreakdown: true }
+
+test('Fork from here on a chat over there forks it there, by its ids there', async () => {
+  const chat = await mountRemote({ access: 'operate', agentReads: allAgentReads, capabilities: ableChat })
+  try {
+    await settleTurn(chat)
+    const forks = Array.from(chat.host.querySelectorAll('button')).filter(
+      (button) => button.textContent?.trim() === 'Fork from here',
+    )
+    expect(forks.length, 'offered on the replies and the messages').toBeGreaterThan(0)
+    await chat.act(async () => forks.at(-1)!.click())
+    expect(chat.api.meshConversationFork).toHaveBeenCalledOnce()
+    const [asked] = chat.api.meshConversationFork.mock.calls[0]!
+    expect(asked.key).toEqual(key)
+    expect(asked.fork).toMatchObject({ kind: 'fork', side: 'assistant', turnId: 'a' })
+    expect(String(asked.fork.newAgentId)).toMatch(/^conversation-claude-agent-/)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('/btw in a chat over there is asked of its agent there, and the chat is sent nothing', async () => {
+  const chat = await mountRemote({ access: 'operate', agentReads: allAgentReads, capabilities: ableChat })
+  try {
+    await chat.act(async () => chat.type('/btw which file flakes?'))
+    await chat.act(async () => chat.enter())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.api.meshConversationSideQuestion).toHaveBeenCalledOnce()
+    expect(chat.api.meshConversationSideQuestion.mock.calls[0]![0]).toMatchObject({
+      key,
+      question: 'which file flakes?',
+    })
+    expect(chat.api.meshConversationSend).not.toHaveBeenCalled()
+    expect(chat.document.body.textContent).toContain('In src/upload.test.ts.')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test("the ring of a chat over there opens what fills its window, read from that machine's agent", async () => {
+  const chat = await mountRemote({ access: 'operate', agentReads: allAgentReads, capabilities: ableChat })
+  try {
+    await chat.act(async () =>
+      chat.emit({ type: 'event', event: event('usage_updated', { contextWindow: 200_000, contextUsed: 76_000 }) }),
+    )
+    const ring = () => chat.host.querySelector<HTMLButtonElement>('[data-strip-context] [data-strip-context-button]')!
+    await chat.act(async () => ring().click())
+    await chat.act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(chat.api.meshConversationContextBreakdown).toHaveBeenCalledExactlyOnceWith({ key })
+    const panel = chat.document.querySelector('[data-context-breakdown]')
+    expect(panel?.querySelector('[data-context-heaviest="mcp"]')?.textContent).toContain('linear')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('none of the three where the machine does not take them, or lists its chat as unable', async () => {
+  for (const options of [
+    { agentReads: {}, capabilities: ableChat },
+    { agentReads: allAgentReads, capabilities: thread.capabilities },
+  ]) {
+    const chat = await mountRemote({ access: 'operate', ...options })
+    try {
+      await settleTurn(chat)
+      expect(chat.button('Fork from here')).toBeUndefined()
+      await chat.act(async () =>
+        chat.emit({ type: 'event', event: event('usage_updated', { contextWindow: 200_000, contextUsed: 76_000 }) }),
+      )
+      await chat.act(async () =>
+        chat.host.querySelector<HTMLButtonElement>('[data-strip-context] [data-strip-context-button]')?.click(),
+      )
+      expect(chat.api.meshConversationContextBreakdown).not.toHaveBeenCalled()
+      await chat.act(async () => chat.type('/btw which file flakes?'))
+      await chat.act(async () => chat.enter())
+      expect(chat.api.meshConversationSideQuestion).not.toHaveBeenCalled()
+    } finally {
+      await chat.unmount()
+    }
   }
 })
 

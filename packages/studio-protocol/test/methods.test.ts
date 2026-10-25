@@ -41,7 +41,13 @@ test('every mutation is a method that carries a commandId, and every reader is n
 
 test('every conversation command kind has its method, so the socket drives a chat as fully as the tailnet', () => {
   const carried = new Set<string>(Object.values(STUDIO_COMMAND_METHODS))
-  for (const kind of CONVERSATION_COMMAND_KINDS) assert.ok(carried.has(kind), kind)
+  // A kind the socket carries by a method of its own shape rather than the
+  // lane's command: a fork here is the window's, which writes the new chat's
+  // record itself, where the lane's host writes it for a paired device.
+  const ownMethods: Record<string, StudioMethod> = { fork: 'conversation.fork' }
+  for (const kind of CONVERSATION_COMMAND_KINDS)
+    if (ownMethods[kind]) assert.ok(isStudioMethod(ownMethods[kind]), kind)
+    else assert.ok(carried.has(kind), kind)
   for (const method of Object.keys(STUDIO_COMMAND_METHODS))
     assert.equal(STUDIO_METHODS[method as StudioMethod].mutation, true)
 })

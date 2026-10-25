@@ -194,6 +194,22 @@ export const TAILNET_CAPABILITIES = [
   // at a time, so a paired machine needs its own Stop for each.
   // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
   'conversation-stop-subagent',
+  // A chat forked from a paired machine, as Fork from here forks one here
+  // (2026-10-25): `fork` names the point and the new chat's id, and the fork
+  // joins the chat's workspace on this machine. A listed chat says whether
+  // its provider can (`capabilities.fork`). CONVERSATION_FORK_CAPABILITY.
+  'conversation-fork',
+  // A side question about a chat, as the composer's /btw asks one here
+  // (2026-10-25): `askSideQuestion` is answered from the chat's context and
+  // added to nothing, `cancelSideQuestion` calls one off, and a listed chat
+  // says whether its provider can (`capabilities.sideQuestion`).
+  // CONVERSATION_SIDE_QUESTIONS_CAPABILITY.
+  'conversation-side-questions',
+  // What fills a chat's context window, as the ring opens it here
+  // (2026-10-25): `getContextBreakdown` asks the chat's live agent, and a
+  // listed chat says whether its provider can (`capabilities.contextBreakdown`).
+  // CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY.
+  'conversation-context-breakdown',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

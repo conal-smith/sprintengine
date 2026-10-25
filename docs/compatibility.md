@@ -444,6 +444,29 @@ sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first). The Studio RPC advertises it too: its
 `conversation.stopSubagent` method, an owner's for now, reads the lane's own
 validator and reaches the same host.
+A chat forked, asked a side question, or asked what fills its window from a
+paired device is three capabilities (2026-10-25), each additive.
+`conversation-fork`: a `fork` command names the new chat's id (`newAgentId`,
+the client's, so it can follow the fork once answered) and the point
+(`side: 'assistant'` with `turnId`, or `side: 'user'` with `turnSeq`), and the
+desktop forks the chat as its own Fork from here does, writing the fork's
+agent record into the chat's workspace; the same command id sent again is
+answered as the first was, a refusal is not kept, and an id the workspace
+holds is refused. `conversation-side-questions`: `askSideQuestion` (`requestId`,
+the client's `questionId`, `question`, optional `history`) is answered by a
+`result` whose `data` is `{ answer }`, needs `conversation:operate`, and
+`cancelSideQuestion` (`requestId`, `questionId`) calls one off; one still out
+when the socket closes is called off. `conversation-context-breakdown`:
+`getContextBreakdown` (`requestId`) is answered by a `result` whose `data` is
+`{ breakdown, stale? }`, read from the chat's live session only. Each listed
+chat says whether its provider can as `capabilities.fork`,
+`capabilities.sideQuestion` and `capabilities.contextBreakdown`, optional
+booleans. A desktop without them refuses `fork` as `unsupported_command` and
+the three frames as `invalid_frame` under their request ids, and a desktop
+following another machine's chat refuses each there in words first. The
+Studio RPC advertises none of them: it forks by its own `conversation.fork`,
+whose new chat's record is the asking window's to write, and has no method for
+the other two.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

@@ -85,12 +85,17 @@ function remoteConversationEngine(thread: MeshConversation | null, modelSwitch: 
   }
 }
 
+/** What the machine says it does for its chats beyond the turn: forks, side questions, the window's breakdown. */
+type RemoteAgentReads = { fork: boolean; sideQuestions: boolean; contextBreakdown: boolean }
+const NO_AGENT_READS: RemoteAgentReads = { fork: false, sideQuestions: false, contextBreakdown: false }
+
 /** The session a remote row stands for, as the chat view reads one: what that machine said it can do. */
 function remoteConversationSession(
   thread: MeshConversation | null,
   key: MeshConversationKey,
   modelSwitch: boolean,
   stopSubagents: boolean,
+  agentReads: RemoteAgentReads,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -136,6 +141,12 @@ function remoteConversationSession(
       // The machine's turn Stop spares such a chat's agents, so this is the
       // only Stop an agent has from here.
       stopSubagent: stopSubagents && capabilities?.stopSubagent === true,
+      // Fork from here, a side question, and what fills the window: each
+      // where the machine takes it and lists the chat's provider as able. A
+      // fork is made over there and opens here as a pane of its own.
+      fork: agentReads.fork && capabilities?.fork === true,
+      sideQuestion: agentReads.sideQuestions && capabilities?.sideQuestion === true,
+      contextBreakdown: agentReads.contextBreakdown && capabilities?.contextBreakdown === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
     },
@@ -172,6 +183,9 @@ export default function RemoteConversationPanel({
   const [steerSends, setSteerSends] = useState(false)
   // The machine stops one agent of one of its chats by itself.
   const [stopSubagents, setStopSubagents] = useState(false)
+  // The machine forks its chats, answers a side question about one, and says
+  // what fills one's window.
+  const [agentReads, setAgentReads] = useState<RemoteAgentReads>(NO_AGENT_READS)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -277,6 +291,18 @@ export default function RemoteConversationPanel({
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
+        setAgentReads((current) => {
+          const next = {
+            fork: result.fork === true,
+            sideQuestions: result.sideQuestions === true,
+            contextBreakdown: result.contextBreakdown === true,
+          }
+          return current.fork === next.fork &&
+            current.sideQuestions === next.sideQuestions &&
+            current.contextBreakdown === next.contextBreakdown
+            ? current
+            : next
+        })
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -315,8 +341,8 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
-    [thread, key, modelSwitch, stopSubagents],
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, agentReads),
+    [thread, key, modelSwitch, stopSubagents, agentReads],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

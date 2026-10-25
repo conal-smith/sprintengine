@@ -53,7 +53,11 @@ import type {
  * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
  * `conversation-queued-sends`, whose `queued` frames its conversation topic
- * does not carry.
+ * does not carry. Nor the lane's fork, side questions and context breakdown
+ * (`conversation-fork`, `conversation-side-questions`,
+ * `conversation-context-breakdown`): this socket forks by its own
+ * `conversation.fork`, which leaves the new chat's record to the window that
+ * asked, and has no method for the other two.
  */
 export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPABILITIES.filter(
   (capability) =>
@@ -63,7 +67,10 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-image-downscale' &&
     capability !== 'conversation-hello' &&
     capability !== 'conversation-lifecycle' &&
-    capability !== 'conversation-queued-sends',
+    capability !== 'conversation-queued-sends' &&
+    capability !== 'conversation-fork' &&
+    capability !== 'conversation-side-questions' &&
+    capability !== 'conversation-context-breakdown',
 )
 
 export type StudioRpcServerOptions = {

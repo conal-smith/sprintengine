@@ -60,6 +60,23 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * `conversation-stop-subagent`. Absent means unknown.
      */
     stopSubagent?: boolean
+    /**
+     * The chat's provider can be forked (a `fork` command), from a desktop
+     * that advertises `conversation-fork`. Absent means unknown.
+     */
+    fork?: boolean
+    /**
+     * The chat's provider answers a side question (`askSideQuestion`), from a
+     * desktop that advertises `conversation-side-questions`. Absent means
+     * unknown.
+     */
+    sideQuestion?: boolean
+    /**
+     * The chat's agent says what fills its context window
+     * (`getContextBreakdown`), from a desktop that advertises
+     * `conversation-context-breakdown`. Absent means unknown.
+     */
+    contextBreakdown?: boolean
   }
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
@@ -596,6 +613,9 @@ function thread(value: unknown): ConversationThread | null {
               : {}),
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
             ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
+            ...(typeof flags.fork === 'boolean' ? { fork: flags.fork } : {}),
+            ...(typeof flags.sideQuestion === 'boolean' ? { sideQuestion: flags.sideQuestion } : {}),
+            ...(typeof flags.contextBreakdown === 'boolean' ? { contextBreakdown: flags.contextBreakdown } : {}),
           },
         }
       : {}),

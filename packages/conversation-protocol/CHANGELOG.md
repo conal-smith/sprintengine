@@ -13,6 +13,26 @@
 
 ### Added
 
+- **A paired device can fork a chat, ask it a side question, and read what
+  fills its window.** Three capabilities, each with a listed
+  `ConversationThread` flag saying which chats can:
+  `CONVERSATION_FORK_CAPABILITY` (`conversation-fork`, `capabilities.fork`)
+  names a desktop that takes the `fork` command (`ConversationForkCommand`:
+  `newAgentId` and `side: 'assistant'` with `turnId`, or `side: 'user'` with
+  `turnSeq`); `CONVERSATION_SIDE_QUESTIONS_CAPABILITY`
+  (`conversation-side-questions`, `capabilities.sideQuestion`) one that
+  answers `askSideQuestion` and `cancelSideQuestion`; and
+  `CONVERSATION_CONTEXT_BREAKDOWN_CAPABILITY`
+  (`conversation-context-breakdown`, `capabilities.contextBreakdown`) one
+  that answers `getContextBreakdown`. The frames, their answers and their
+  readers (`parseConversationSideQuestionAnswer`,
+  `parseConversationContextBreakdownAnswer`) live in a new file,
+  `agentReads.ts`. `parseConversationClientMessage` keeps each well-formed
+  frame and refuses a malformed one as `invalid_frame`;
+  `parseConversationServerFrame` keeps each flag when it is a boolean. A
+  desktop without a capability refuses `fork` as `unsupported_command` and the
+  frames as `invalid_frame`. The pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the
