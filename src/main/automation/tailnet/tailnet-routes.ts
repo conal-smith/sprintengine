@@ -268,6 +268,23 @@ export const TAILNET_CAPABILITIES = [
   // session does, and the next message starts it again on the same
   // conversation. CONVERSATION_RESTART_SESSION_CAPABILITY.
   'conversation-restart-session',
+  // A message may be scheduled into a chat here for a time (2026-10-25), as
+  // this machine's own composer schedules one: `scheduleSend` keeps it among
+  // this machine's scheduled messages, which send it then whether or not the
+  // machine that scheduled it is awake; `sendScheduledNow` and
+  // `cancelScheduled` send one early or delete it; and `watchScheduled` has
+  // the socket say what is scheduled for the chat it follows, in `scheduled`
+  // frames. A client offers no Schedule for a machine without it.
+  // CONVERSATION_SCHEDULED_SENDS_CAPABILITY.
+  'conversation-scheduled-sends',
+  // This machine's usage limits for a paired machine's chat strip and tray
+  // (2026-10-25): `watchUsageLimits` has the socket say, in `usageLimits`
+  // frames, every plan's windows as this machine's agents reported them and
+  // the notice a limit left on the followed chat's turn; `usageLimitResume`
+  // schedules, cancels, dismisses or retries the resume this machine sends it
+  // when the limit resets. A client draws neither for a machine without it.
+  // CONVERSATION_USAGE_LIMITS_CAPABILITY.
+  'conversation-usage-limits',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

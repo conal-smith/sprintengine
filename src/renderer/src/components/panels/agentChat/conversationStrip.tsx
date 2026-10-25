@@ -14,7 +14,7 @@ import { PullRequestStripButton, stripPullRequestCopy } from '../../workspace/Pu
 import { CreatePullRequestControl, pullRequestSlotChoice } from './createPullRequest'
 import type { PullRequestHost } from './pullRequestHost'
 import { fitComposerStrip, fullComposerStripFit, sameComposerStripFit, type ComposerStripFit } from './composerStripFit'
-import type { UsageLimitSnapshot } from '../../../../../shared/usage-limits'
+import type { UsageLimitSnapshot, UsageLimitsState } from '../../../../../shared/usage-limits'
 import { UsageLimitsStripButton } from './usageLimits'
 import { ContextStripButton, type ContextBreakdownSource } from './ContextBreakdown'
 
@@ -98,6 +98,7 @@ export function ConversationComposerStrip({
   createPullRequest = null,
   localServers = null,
   usageLimits = null,
+  usageLimitsElsewhere,
   now = Date.now(),
 }: {
   machine: ConversationStripMachine | null
@@ -133,12 +134,20 @@ export function ConversationComposerStrip({
   localServers?: {
     workspaceId: string
     servers: readonly StudioLocalServer[]
+    /** The paired machine they run on, for a chat there: read-only, and opened from here only where they reach. */
+    elsewhere?: { machineName: string }
   } | null
   /**
    * The subscription usage limits of the agent this chat runs on, when it has
    * reported some. Null draws nothing. Like the ring, it never leaves the line.
    */
   usageLimits?: UsageLimitSnapshot | null
+  /**
+   * The machine `usageLimits` was read on, for a chat that runs on a paired
+   * one, with every plan it read: its list opens from the mark. Absent, they
+   * are this computer's.
+   */
+  usageLimitsElsewhere?: { machineName: string; state: UsageLimitsState }
   /** The clock the pull request's age is read against; a test pins it. */
   now?: number
 }): React.JSX.Element | null {
@@ -395,7 +404,11 @@ export function ConversationComposerStrip({
       ) : null}
       {serversText !== null && localServers ? (
         <span ref={serversRef} className="ml-auto inline-flex shrink-0" data-strip-local-servers-slot="">
-          <LocalServersStripButton workspaceId={localServers.workspaceId} servers={localServers.servers} />
+          <LocalServersStripButton
+            workspaceId={localServers.workspaceId}
+            servers={localServers.servers}
+            {...(localServers.elsewhere ? { elsewhere: localServers.elsewhere } : {})}
+          />
         </span>
       ) : null}
       {pullRequestText !== null ? (
@@ -427,7 +440,10 @@ export function ConversationComposerStrip({
           className={`${pullRequestText !== null || serversText !== null ? '' : 'ml-auto '}inline-flex shrink-0`}
           data-strip-usage-limits-slot=""
         >
-          <UsageLimitsStripButton snapshot={usageLimits} />
+          <UsageLimitsStripButton
+            snapshot={usageLimits}
+            {...(usageLimitsElsewhere ? { elsewhere: usageLimitsElsewhere } : {})}
+          />
         </span>
       ) : null}
       {percentage !== null && context ? (

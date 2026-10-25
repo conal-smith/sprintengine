@@ -10,10 +10,14 @@ import {
   type ConversationFileSearchAnswer,
   type ConversationFileSearchEntry,
   type ConversationQueuedMessage,
+  type ConversationScheduledMessage,
   type ConversationThread,
+  type ConversationUsageLimitResumeAction,
+  type ConversationUsageLimitsFrame,
   type ConversationWireErrorCode,
   type ConversationWireHost,
   type ConversationWirePullRequest,
+  type ConversationWireLocalServer,
   type ConversationWireModels,
   type ConversationWireMcpServerAction,
   isStaleConversationSend,
@@ -272,6 +276,25 @@ export type ConversationGatewayHost = {
    */
   listCommands?(key: ConversationKey, refresh: boolean): Promise<ConversationComposerRead<ConversationCommandsAnswer>>
   /**
+   * Follow what this desktop has scheduled into a chat for a time: told now,
+   * and again whenever it changes. Absent on a host that schedules nothing
+   * (one built without `scheduledSends`); returns what stops the following.
+   */
+  watchScheduled?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (messages: ConversationScheduledMessage[]) => void,
+  ): () => void
+  /**
+   * Follow what this desktop knows of its agents' usage limits, for a chat:
+   * each plan's windows and the notice a limit left on the chat's turn. Told
+   * now, and again whenever it reads differently. Absent on a host built
+   * without `usageLimits`; returns what stops the following.
+   */
+  watchUsageLimits?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (state: ConversationUsageLimitsState) => void,
+  ): () => void
+  /**
    * Carry out one command under its client's id. `fingerprint`, where the
    * client's door computes one, is kept with the command's receipt: the same
    * id for a different command is then refused (`command_id_conflict`).
@@ -357,6 +380,9 @@ function wholeNumbers(thread: ConversationThread): ConversationThread {
   }
 }
 
+/** Answers to Send now and Delete on a scheduled message, and to a resume's, kept for a command sent again. */
+const MAX_ANSWER_RECEIPTS = 256
+
 /** How long a send turned away behind another send to the same chat waits before trying again. */
 const SEND_BUSY_RETRY_MS = 1_000
 
@@ -378,6 +404,13 @@ export type ConversationListMarks = {
   pullRequestsOf?: (
     keys: Array<{ workspaceId: string; agentId: string }>,
   ) => Promise<Map<string, ConversationWirePullRequest[]>>
+  /**
+   * The local servers the record holds for these chats, keyed
+   * `workspaceId:agentId`, as last checked: a chat with none is left out.
+   */
+  localServersOf?: (
+    keys: Array<{ workspaceId: string; agentId: string }>,
+  ) => Promise<Map<string, ConversationWireLocalServer[]>>
   /** This machine's own kind and colour. */
   selfMachine?: () => { kind: string; color: string }
   /**
@@ -572,6 +605,18 @@ export type ConversationRegistryLink = {
    */
   heldMessages?: ConversationHeldMessages
   /**
+   * Where a message a paired machine scheduled into a chat for a time is
+   * kept, and sent from when it comes due (`conversation-scheduled-sends`).
+   * Absent, the commands are refused in words.
+   */
+  scheduledSends?: ConversationScheduledSends
+  /**
+   * What this desktop knows of its agents' usage limits, and the resume it
+   * sends a chat a limit stopped (`conversation-usage-limits`). Absent, the
+   * command is refused in words and nothing is watched.
+   */
+  usageLimits?: ConversationUsageLimits
+  /**
    * Studio's own folders of pictures (what chats sent, the pictures their steps
    * returned, pasted images). A step's picture is served from the chat's
    * folder, its session's, or one of these, and from nowhere else.
@@ -635,6 +680,50 @@ export type ConversationHeldMessages = {
 }
 
 /**
+ * The messages this desktop has scheduled into its chats for a time, as a
+ * paired machine schedules, sends early and deletes them: the scheduled
+ * messages keep them (scheduled-messages.ts, `scheduleFrom`), beside the ones
+ * scheduled here, and send them when they come due, so the machine that
+ * scheduled one may sleep or close meanwhile. A message held for a turn's end
+ * is `heldMessages`'s, and is in none of these.
+ */
+export type ConversationScheduledSends = {
+  /** Keep `text` for the chat until `sendAt`. `source` names the command it came in on: the same one twice is kept once. */
+  schedule(chat: ChatOf, text: string, sendAt: number, source: string): { ok: true } | { ok: false; message: string }
+  /** Send one at once, a refused one again; refused once it is no longer scheduled. */
+  sendNow(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
+  /** Delete one; refused once it is on its way into the chat, or no longer scheduled. */
+  cancel(chat: ChatOf, id: string): { ok: true } | { ok: false; message: string }
+  /** What the chat has scheduled now, soonest first. */
+  list(chat: ChatOf): ConversationScheduledMessage[]
+  /** Something scheduled changed, for some chat. */
+  onChanged(listener: () => void): () => void
+}
+
+/** A `usageLimits` frame without its type and key: what a host says of one chat. */
+export type ConversationUsageLimitsState = Omit<ConversationUsageLimitsFrame, 'type' | 'key'>
+
+/**
+ * This desktop's usage limits, as a paired machine's strip and tray draw them
+ * for one of its chats: the limits its agents reported here
+ * (usage-limits/store.ts), and the resume it sends a chat a limit stopped
+ * (usage-limits/resume.ts), which a paired machine schedules, cancels,
+ * dismisses or retries as this desktop's own tray row does.
+ */
+export type ConversationUsageLimits = {
+  /** What there is to say for the chat now. */
+  list(chat: ChatOf): ConversationUsageLimitsState
+  /** Act on the chat's notice; `always` also switches on resuming every chat a limit stops. */
+  update(
+    chat: ChatOf,
+    action: ConversationUsageLimitResumeAction,
+    always: boolean,
+  ): { ok: true } | { ok: false; message: string }
+  /** The limits or a notice changed. */
+  onChanged(listener: () => void): () => void
+}
+
+/**
  * Both IPC and the network wrap this one session API; only root resolution
  * differs. `defaultPermissionPreset` answers for a conversation this app has
  * not run since it started: the preset its agent record holds, else the app's
@@ -658,10 +747,10 @@ export type AgentChoicePatch = {
  * them: every chat's changes arrive on the one channel, and a follower is told
  * only when its own chat's list reads differently.
  */
-function watchHeld(
-  held: ConversationHeldMessages,
+function watchHeld<Said>(
+  held: { list(chat: ChatOf): Said; onChanged(listener: () => void): () => void },
   chat: ChatOf,
-  listener: (messages: ConversationQueuedMessage[]) => void,
+  listener: (said: Said) => void,
 ): () => void {
   const key = { workspaceId: chat.workspaceId, agentId: chat.agentId }
   let last: string | null = null
@@ -1001,6 +1090,43 @@ export function createConversationGatewayHost(
   // so it can be called off there, or that it was called off before its
   // session had started, so it is never asked.
   const sideQuestions = new Map<string, { sessionId: string; requestId: string } | { calledOff: boolean }>()
+  // Send now and Delete on a message a paired machine scheduled, and what it
+  // did to a usage limit's resume, answered as they were the first time when
+  // the same command comes again (a device that lost the answer offers it
+  // again under its id): the message is gone by then, or the resume already
+  // sent, and a second answer saying so would read as a failure.
+  const answers = new Map<string, ConversationGatewayCommandResult>()
+  const once = (
+    deviceId: string,
+    commandId: string,
+    run: () => ConversationGatewayCommandResult,
+  ): ConversationGatewayCommandResult => {
+    const id = JSON.stringify([deviceId, commandId])
+    const answered = answers.get(id)
+    if (answered) return answered
+    const result = run()
+    answers.set(id, result)
+    while (answers.size > MAX_ANSWER_RECEIPTS) answers.delete(answers.keys().next().value!)
+    return result
+  }
+  const scheduledCommand = (
+    chat: ChatOf,
+    deviceId: string,
+    commandId: string,
+    command: Extract<ConversationCommand, { kind: 'scheduleSend' | 'sendScheduledNow' | 'cancelScheduled' }>,
+  ): ConversationGatewayCommandResult => {
+    const scheduled = registry.scheduledSends
+    if (!scheduled) return { ok: false, message: 'This desktop does not schedule messages from another device.' }
+    // Kept under the device's own command, so a repeat after a dropped
+    // connection, or after a restart, schedules it once.
+    const source = JSON.stringify([deviceId, commandId])
+    if (command.kind === 'scheduleSend') return scheduled.schedule(chat, command.message, command.sendAt, source)
+    return once(deviceId, commandId, () =>
+      command.kind === 'sendScheduledNow'
+        ? scheduled.sendNow(chat, command.scheduledId)
+        : scheduled.cancel(chat, command.scheduledId),
+    )
+  }
   // A switch within the chat's own CLI, to a model this machine's picker
   // offers for it. Checked here, before the runtime sees it: the id must be in
   // the catalog (or be the CLI's own default), and the provider must take a
@@ -1072,7 +1198,14 @@ export function createConversationGatewayHost(
   // record for the whole list. A failed read leaves the rows without them, as
   // from a desktop that never listed them: the list itself still answers.
   const withMarks = async (listed: ConversationThread[]): Promise<ConversationThread[]> => {
-    if (!marks.machineOf && !marks.machineReader && !marks.pullRequestsOf && !marks.branchesOf && !marks.checkoutsOf)
+    if (
+      !marks.machineOf &&
+      !marks.machineReader &&
+      !marks.pullRequestsOf &&
+      !marks.localServersOf &&
+      !marks.branchesOf &&
+      !marks.checkoutsOf
+    )
       return listed
     const machines = new Map<string, ConversationWireHost | null>()
     let read: ((workspaceId: string) => ConversationWireHost | null) | undefined
@@ -1100,6 +1233,12 @@ export function createConversationGatewayHost(
         .pullRequestsOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId })))
         .catch(() => null)
     }
+    let localServers: Map<string, ConversationWireLocalServer[]> | null = null
+    if (marks.localServersOf && listed.length > 0) {
+      localServers = await marks
+        .localServersOf(listed.map((thread) => ({ workspaceId: thread.workspaceId, agentId: thread.agentId })))
+        .catch(() => null)
+    }
     let branches: Map<string, string> | null = null
     if (marks.branchesOf && listed.length > 0) {
       branches = await marks.branchesOf([...new Set(listed.map((thread) => thread.workspaceId))]).catch(() => null)
@@ -1120,6 +1259,7 @@ export function createConversationGatewayHost(
       const host = machineOf(thread.workspaceId)
       const branch = branches?.get(thread.workspaceId)
       const checkout = checkouts?.get(`${thread.workspaceId}:${thread.agentId}`)
+      const servers = localServers?.get(`${thread.workspaceId}:${thread.agentId}`)
       return {
         ...thread,
         ...(host ? { host } : {}),
@@ -1127,6 +1267,7 @@ export function createConversationGatewayHost(
         ...(checkout?.changes ? { changes: checkout.changes } : {}),
         ...(checkout?.worktree ? { worktree: true } : {}),
         ...(pullRequests ? { pullRequests: pullRequests.get(`${thread.workspaceId}:${thread.agentId}`) ?? [] } : {}),
+        ...(servers?.length ? { localServers: servers } : {}),
       }
     })
   }
@@ -1478,6 +1619,12 @@ export function createConversationGatewayHost(
         }
       return runtime.readContextBreakdown({ sessionId: live.sessionId })
     },
+    ...(registry.scheduledSends
+      ? { watchScheduled: (key, listener) => watchHeld(registry.scheduledSends!, key, listener) }
+      : {}),
+    ...(registry.usageLimits
+      ? { watchUsageLimits: (key, listener) => watchHeld(registry.usageLimits!, key, listener) }
+      : {}),
     command(key, deviceId, commandId, command, fingerprint) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)
       if (command.kind === 'fork') return fork(key, deviceId, commandId, command)
@@ -1485,6 +1632,16 @@ export function createConversationGatewayHost(
       if (command.kind === 'restartSession') return restartSession(key, deviceId, commandId)
       const held = registry.heldMessages
       const chat = { workspaceId: key.workspaceId, agentId: key.agentId }
+      if (command.kind === 'scheduleSend' || command.kind === 'sendScheduledNow' || command.kind === 'cancelScheduled')
+        return Promise.resolve(scheduledCommand(chat, deviceId, commandId, command))
+      if (command.kind === 'usageLimitResume')
+        return Promise.resolve(
+          once(deviceId, commandId, () =>
+            registry.usageLimits
+              ? registry.usageLimits.update(chat, command.action, command.always === true)
+              : { ok: false, message: 'This desktop does not resume chats from another device.' },
+          ),
+        )
       if (command.kind === 'cancelQueued')
         return Promise.resolve(
           held ? held.cancel(chat, command.queuedId) : { ok: false, message: 'This desktop holds no queued messages.' },

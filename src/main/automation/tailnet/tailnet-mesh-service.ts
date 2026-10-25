@@ -2311,6 +2311,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           sendMode: tailnetPeerSupports(identity.value.capabilities, 'conversation-send-mode'),
           reasoningEffort: tailnetPeerSupports(identity.value.capabilities, 'conversation-reasoning-effort'),
           mcpServerActions: tailnetPeerSupports(identity.value.capabilities, 'conversation-mcp-server-actions'),
+          scheduledSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-scheduled-sends'),
+          usageLimits: tailnetPeerSupports(identity.value.capabilities, 'conversation-usage-limits'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2513,6 +2515,28 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_command',
           message: `${connection.machineName} cannot restart a chat's agent from here yet. Restart it there, or update SprintEngine Studio there.`,
+        }
+    }
+    if (
+      command?.kind === 'scheduleSend' ||
+      command?.kind === 'sendScheduledNow' ||
+      command?.kind === 'cancelScheduled'
+    ) {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-scheduled-sends'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot schedule messages from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'usageLimitResume') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-usage-limits'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot resume its chats from here yet. Update SprintEngine Studio there.`,
         }
     }
     const result = await remoteConversations.command(key, input.command)

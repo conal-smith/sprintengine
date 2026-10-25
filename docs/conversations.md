@@ -550,6 +550,17 @@ machine?: { kind: string; color: string }
   listing never runs `gh`, so a phone refreshing its list costs no request to
   GitHub. The record is kept current when a chat's turn ends and on its slow
   poll, and the change feed says when the list moved.
+- **`localServers`** (2026-10-25) is what the desktop's local server record
+  holds for the chat (`localServers.list`): each server its agents linked
+  (`id`, `url`, `title`, `port`, and `state`: `running`, `stopped` or
+  `starting`, as the desktop's own checks last found it), at most
+  `CONVERSATION_MAX_LOCAL_SERVERS` (20), and absent for a chat with none. The
+  command and folder that start one stay on the desktop. A server starting or
+  stopping is pushed on the change feed. A second desktop following the chat
+  draws them on its strip as that machine's, read-only: one whose address
+  reaches it (a tailnet name, the machine's own address) opens there, and one
+  on that machine's loopback says it is on that machine, its link still to
+  copy.
 - **`machine`** is how the phone draws the desktop itself: the kind and colour
   a second desktop gives it by default when it pairs by this machine's host
   name, with any override kept under `local` in the launch settings'
@@ -891,6 +902,25 @@ conversation-files`, on `conversation:read`), the picker ranks the matches
   the slash commands read again. It is refused while the agent works, as a
   local chat's is. A machine without the capability is not asked, and the
   toast says to restart it there.
+- **A scheduled message is the other machine's to send** (2026-10-25). Where
+  the machine advertises `conversation-scheduled-sends`, the "+"'s Schedule is
+  offered as on a local chat, and the message goes to that machine at once
+  (`scheduleSend`): it keeps it among its own scheduled messages, shows it in
+  the chat's own tray there, and sends it at its time whether or not this
+  machine is awake. The tray here draws what that machine says it keeps
+  (`watchScheduled`, `scheduled` frames), and its Send now, Retry, Delete and
+  Edit ask that machine; Edit deletes it there and puts it back in this
+  composer, still set for its time. A machine without the capability, and a
+  pairing that may only follow, offer no Schedule.
+- **Its usage limits are the other machine's** (2026-10-25). Where the machine
+  advertises `conversation-usage-limits`, the strip under the composer draws
+  the chat's plan as that machine's agents reported it, and the mark's list
+  every plan there, named as that machine's; the tray draws the notice a usage
+  limit left on the chat's turn there, with Resume at reset, Always resume at
+  reset, Cancel, Retry and Dismiss asking that machine, which sends the
+  resume (`watchUsageLimits`, `usageLimits` frames, `usageLimitResume`). A
+  pairing that may only follow sees the notice without its buttons; a machine
+  without the capability draws neither, as before.
 
 ### Terminals stay on the machine
 

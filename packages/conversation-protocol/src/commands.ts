@@ -149,6 +149,26 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   Needs `conversation-send-mode`; a desktop without it drops the member and
  *   runs the turn in the default mode, which may change what an `ask` would
  *   not, so a client sends one only where it is advertised.
+ * - `scheduleSend` has the desktop keep a message and send it into the chat
+ *   at `sendAt` (epoch ms, the desktop's clock), as its own composer's
+ *   Schedule does, whether or not the client is still awake then; answered
+ *   once it is kept. Its words alone, as a held message is. One that comes
+ *   due while a turn runs waits for the turn to end. `sendScheduledNow` sends
+ *   one at once (a refused one again: Retry), and `cancelScheduled` deletes
+ *   one, which is how a client takes one back to edit it. Both name the
+ *   message by the `id` its `scheduled` frame gave, and are refused for one
+ *   that is no longer scheduled. Needs `conversation-scheduled-sends`; a
+ *   desktop without it refuses each kind as `unsupported_command`.
+ * - `usageLimitResume` answers the chat's usage-limit notice (a
+ *   `usageLimits` frame's `notice`), as the desktop's own tray row does:
+ *   `schedule` has the desktop send the chat a short "carry on" once the
+ *   limit resets (`always` switches that on for every chat a limit stops
+ *   there, as the row's "Always resume at reset" does), `cancel` takes it
+ *   back and keeps the notice, `dismiss` puts the notice away with whatever
+ *   it had scheduled, and `retry` sends a resume the chat refused again.
+ *   Answered `ok` for a chat with no notice, which there is nothing to do
+ *   for. Needs `conversation-usage-limits`; a desktop without it refuses the
+ *   kind as `unsupported_command`.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -197,6 +217,10 @@ export type ConversationCommand =
   | { kind: 'setReasoningEffort'; effort?: string }
   | { kind: 'mcpServerAction'; serverId: string; action: ConversationWireMcpServerAction }
   | { kind: 'restartSession' }
+  | { kind: 'scheduleSend'; message: string; sendAt: number }
+  | { kind: 'sendScheduledNow'; scheduledId: string }
+  | { kind: 'cancelScheduled'; scheduledId: string }
+  | { kind: 'usageLimitResume'; action: ConversationUsageLimitResumeAction; always?: true }
 
 /** Where a `fork` cuts the chat: after a reply's turn, or before one of the person's messages. */
 export type ConversationForkCommand = { kind: 'fork'; newAgentId: string } & (
@@ -292,6 +316,10 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'setReasoningEffort',
   'mcpServerAction',
   'restartSession',
+  'scheduleSend',
+  'sendScheduledNow',
+  'cancelScheduled',
+  'usageLimitResume',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────
@@ -335,6 +363,142 @@ export type ConversationQueuedFrame = {
   key: ConversationWireKey
   messages: ConversationQueuedMessage[]
 }
+
+// ── Messages scheduled for a time ───────────────────────────────────────────
+//
+// A message a person scheduled into a chat for a time they picked
+// (`conversation-scheduled-sends`), kept and sent by the desktop the chat runs
+// on, as a message scheduled from its own composer is. A client asks with
+// `watchScheduled` once it follows the chat, and is sent a `scheduled` frame
+// then and whenever the chat's scheduled messages change. A message the
+// desktop holds for the turn's end (`queued`) is in neither: its `queued`
+// frame names it.
+
+/** One message the desktop keeps for a chat until its time. */
+export type ConversationScheduledMessage = {
+  id: string
+  text: string
+  /** When it goes out (epoch ms, the desktop's clock). */
+  sendAt: number
+  /** When it was scheduled (epoch ms). */
+  createdAt: number
+  /** It came due while the chat was working, and goes when the turn ends (epoch ms it came due). */
+  waitingSince?: number
+  /** It is on its way into the chat now. */
+  sending?: true
+  /**
+   * It went out and the chat refused it, in the chat's words. It stays,
+   * saying so, until it is sent again or deleted.
+   */
+  failure?: string
+}
+
+/** The most scheduled messages a `scheduled` frame names for one chat. */
+export const CONVERSATION_MAX_SCHEDULED_MESSAGES = 50
+
+/**
+ * Ask the desktop to say what it has scheduled into the chat this socket
+ * follows: answered by a `result` under `requestId`, then a `scheduled` frame
+ * now and on every change, until the socket follows another chat or closes.
+ * Sent again after each subscription's fence. A desktop without
+ * `conversation-scheduled-sends` answers it `ok: false` with `invalid_frame`.
+ */
+export type ConversationWatchScheduledRequest = { type: 'watchScheduled'; requestId: string }
+
+/** What the desktop has scheduled into `key`, soonest first, whole each time: empty once nothing is. */
+export type ConversationScheduledFrame = {
+  type: 'scheduled'
+  key: ConversationWireKey
+  messages: ConversationScheduledMessage[]
+}
+
+// ── Usage limits ────────────────────────────────────────────────────────────
+//
+// What the desktop the chat runs on knows of its agents' subscription limits
+// (`conversation-usage-limits`): the five-hour session window and the weekly
+// ones, as the agent CLIs reported them there, and, for the chat followed, the
+// notice a usage limit left when it stopped the chat's turn, with the resume
+// the desktop can send it once the limit resets. They are that desktop's to
+// say: its agents report them, and it sends the resume. A client asks with
+// `watchUsageLimits` once it follows the chat, and is sent a `usageLimits`
+// frame then and whenever any of it changes.
+
+/** What `usageLimitResume` does with the chat's notice. */
+export type ConversationUsageLimitResumeAction = 'schedule' | 'cancel' | 'dismiss' | 'retry'
+
+export const CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS: readonly ConversationUsageLimitResumeAction[] = [
+  'schedule',
+  'cancel',
+  'dismiss',
+  'retry',
+]
+
+/** A chat's turn a usage limit stopped, and the resume the desktop can send it. */
+export type ConversationUsageLimitNotice = {
+  /** The plan's owner: `claude` or `codex` today; a newer desktop may name another. */
+  provider: string
+  /** Which of the plan's limits ran out; null when the agent did not say. */
+  limit: 'session' | 'weekly' | null
+  /** When the limit lifts (epoch ms), or null when nothing said. */
+  resetsAt: number | null
+  /** When the turn was stopped. */
+  hitAt: number
+  /** When the resume goes out (epoch ms), or null while none is scheduled. */
+  resumeAt: number | null
+  /** The resume went out and the chat refused it, in the chat's words; it waits on Retry or Dismiss. */
+  failure?: string
+}
+
+/** One of a plan's windows, as the agent last reported it. */
+export type ConversationUsageLimitWindow = {
+  /** Stable across readings: `five_hour`, `seven_day`, `codex:primary`. */
+  id: string
+  label: string
+  /** 0..100, or null when the agent said where the window stands but not how full it is. */
+  usedPercent: number | null
+  resetsAt: number | null
+  durationMs?: number
+  /** `model` for a window that meters one model's use rather than the account's. */
+  scope?: 'model'
+  status: 'allowed' | 'warning' | 'rejected'
+  observedAt: number
+}
+
+/** One plan's windows. Only a subscription's: a plan billed by use has none. */
+export type ConversationUsageLimitSnapshot = {
+  provider: string
+  plan?: string
+  windows: ConversationUsageLimitWindow[]
+  observedAt: number
+}
+
+/**
+ * Ask the desktop to say what it knows of the usage limits, for the chat this
+ * socket follows: answered by a `result` under `requestId`, then a
+ * `usageLimits` frame now and on every change, until the socket follows
+ * another chat or closes. Sent again after each subscription's fence. A
+ * desktop without `conversation-usage-limits` answers it `ok: false` with
+ * `invalid_frame`.
+ */
+export type ConversationWatchUsageLimitsRequest = { type: 'watchUsageLimits'; requestId: string }
+
+/**
+ * The desktop's usage limits, whole each time: the chat's `notice` (null for
+ * a chat no limit has stopped), whether it resumes every such chat by itself
+ * (`autoResume`), and each plan's windows (`limits`, empty before any agent
+ * there has reported).
+ */
+export type ConversationUsageLimitsFrame = {
+  type: 'usageLimits'
+  key: ConversationWireKey
+  notice: ConversationUsageLimitNotice | null
+  autoResume: boolean
+  limits: ConversationUsageLimitSnapshot[]
+}
+
+/** The most plans, and windows of one plan, a `usageLimits` frame names. */
+export const CONVERSATION_MAX_USAGE_LIMIT_PLANS = 8
+export const CONVERSATION_MAX_USAGE_LIMIT_WINDOWS = 16
 
 /**
  * What starting a conversation takes. A transport adds what it carries

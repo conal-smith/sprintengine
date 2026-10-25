@@ -58,6 +58,7 @@ import {
   type MeshConversationCommandResult,
   type MeshConversationFrame,
   type MeshConversationKey,
+  type MeshUsageLimitResumeAction,
   type MeshConversationImageResult,
   type MeshConversationListResult,
   type MeshPullRequestCreateResult,
@@ -274,6 +275,18 @@ export const meshApi = {
       MESH_CONVERSATION_CONTEXT_BREAKDOWN_CHANNEL,
       input,
     ) as Promise<ConversationContextBreakdownResult>,
+  meshConversationScheduleSend: (input: { key: MeshConversationKey; message: string; sendAt: number }) =>
+    command(input.key, { kind: 'scheduleSend', message: input.message, sendAt: input.sendAt }),
+  meshConversationSendScheduledNow: (input: { key: MeshConversationKey; scheduledId: string }) =>
+    command(input.key, { kind: 'sendScheduledNow', scheduledId: input.scheduledId }),
+  meshConversationCancelScheduled: (input: { key: MeshConversationKey; scheduledId: string }) =>
+    command(input.key, { kind: 'cancelScheduled', scheduledId: input.scheduledId }),
+  meshConversationUsageLimitResume: (input: {
+    key: MeshConversationKey
+    action: MeshUsageLimitResumeAction
+    always?: boolean
+  }) =>
+    command(input.key, { kind: 'usageLimitResume', action: input.action, ...(input.always ? { always: true } : {}) }),
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -397,6 +410,10 @@ export const meshApi = {
   | 'meshConversationSideQuestion'
   | 'meshConversationCancelSideQuestion'
   | 'meshConversationContextBreakdown'
+  | 'meshConversationScheduleSend'
+  | 'meshConversationSendScheduledNow'
+  | 'meshConversationCancelScheduled'
+  | 'meshConversationUsageLimitResume'
   | 'meshConversationResolveApproval'
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'

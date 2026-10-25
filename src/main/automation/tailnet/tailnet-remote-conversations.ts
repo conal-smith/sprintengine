@@ -18,6 +18,8 @@ import {
 } from '../../../../packages/conversation-protocol/src/clientFrames'
 import {
   CONVERSATION_QUEUED_SENDS_CAPABILITY,
+  CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
+  CONVERSATION_USAGE_LIMITS_CAPABILITY,
   conversationPeerSupports,
 } from '../../../../packages/conversation-protocol/src/handshake'
 import {
@@ -49,6 +51,8 @@ import type {
   MeshConversationListResult,
   MeshLinkState,
   MeshQueuedMessage,
+  MeshScheduledMessage,
+  MeshConversationUsageLimits,
 } from '../../../shared/tailnet-mesh'
 import { asRecord } from '../../../shared/records'
 import type { RemoteConversationCache, RemoteConversationCacheRecord } from './tailnet-remote-conversation-cache'
@@ -255,6 +259,10 @@ type Follow = {
    * the link is down, since the machine holds them all the same.
    */
   queued: MeshQueuedMessage[] | null
+  /** What the machine last said it has scheduled into the conversation, for a window that joins later. */
+  scheduled: MeshScheduledMessage[] | null
+  /** What the machine last said of its usage limits for the conversation, for a window that joins later. */
+  usageLimits: MeshConversationUsageLimits | null
 }
 type SnapshotFrame = Extract<ConversationParsedServerFrame, { type: 'snapshot' }>
 
@@ -610,7 +618,11 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
     // A snapshot, fence or event for another conversation is never applied
     // to this one's copy: its cursor would be a cursor into the wrong log.
     const named =
-      frame.type === 'snapshot' || frame.type === 'synchronized' || frame.type === 'queued'
+      frame.type === 'snapshot' ||
+      frame.type === 'synchronized' ||
+      frame.type === 'queued' ||
+      frame.type === 'scheduled' ||
+      frame.type === 'usageLimits'
         ? frame.key
         : frame.type === 'event'
           ? { workspaceId: frame.event.workspaceId, agentId: frame.event.agentId }
@@ -706,11 +718,29 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
         for (const waiter of follow.waiters.splice(0)) waiter(true)
         for (const command of follow.commands.values()) if (!command.sent) dispatch(follow, command)
         watchQueued(follow)
+        watchScheduled(follow)
+        watchUsageLimits(follow)
         return
       }
       case 'queued': {
         follow.queued = frame.messages
         emit(follow, { type: 'queued', messages: frame.messages })
+        return
+      }
+      case 'scheduled': {
+        follow.scheduled = frame.messages
+        emit(follow, { type: 'scheduled', messages: frame.messages })
+        return
+      }
+      case 'usageLimits': {
+        const said: MeshConversationUsageLimits = {
+          type: 'usageLimits',
+          notice: frame.notice,
+          autoResume: frame.autoResume,
+          limits: frame.limits,
+        }
+        follow.usageLimits = said
+        emit(follow, said)
         return
       }
       case 'subscribeFailed': {
@@ -876,6 +906,26 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
     send(follow, { type: 'watchQueued', requestId: `queued-${++follow.requestSequence}` })
   }
 
+  /**
+   * Ask the machine to say what it has scheduled into this conversation,
+   * after each fence, as `watchQueued` asks what it holds. Never of a machine
+   * that said what it serves and left `conversation-scheduled-sends` out;
+   * one that has not said answers a request it does not know with a refusal
+   * nobody waits on.
+   */
+  function watchScheduled(follow: Follow): void {
+    const capabilities = options.capabilitiesOf?.(follow.key.connectionId)
+    if (capabilities && !conversationPeerSupports(capabilities, CONVERSATION_SCHEDULED_SENDS_CAPABILITY)) return
+    send(follow, { type: 'watchScheduled', requestId: `scheduled-${++follow.requestSequence}` })
+  }
+
+  /** Ask the machine what it knows of its usage limits, after each fence, as `watchScheduled` asks. */
+  function watchUsageLimits(follow: Follow): void {
+    const capabilities = options.capabilitiesOf?.(follow.key.connectionId)
+    if (capabilities && !conversationPeerSupports(capabilities, CONVERSATION_USAGE_LIMITS_CAPABILITY)) return
+    send(follow, { type: 'watchUsageLimits', requestId: `usage-${++follow.requestSequence}` })
+  }
+
   function dispatch(follow: Follow, command: PendingCommand): void {
     if (!follow.synchronized) return
     command.sent = send(follow, command.frame)
@@ -993,6 +1043,8 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
           saveTimer: null,
           dirty: false,
           queued: null,
+          scheduled: null,
+          usageLimits: null,
         }
         created.loaded = options.cache.load(key).then(
           (record) => {
@@ -1038,6 +1090,8 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
       // A second window on the conversation is told what the machine holds,
       // as the first was.
       if (joined.queued) input.emit({ type: 'queued', messages: joined.queued })
+      if (joined.scheduled) input.emit({ type: 'scheduled', messages: joined.scheduled })
+      if (joined.usageLimits) input.emit(joined.usageLimits)
       return { ok: true }
     },
 

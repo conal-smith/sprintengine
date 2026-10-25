@@ -328,6 +328,12 @@ its pull requests (`pullRequests`) and the desktop's own kind and colour
 (`machine` on `identity`) are optional members with no capability: an older
 phone ignores them, and a phone reads their absence as a desktop that does not
 send them (`docs/conversations.md`, "Machines and pull requests in the list").
+A listed chat's `localServers` (2026-10-25: `{ id, url, title, port, state }`,
+the servers its agents linked, as the desktop last checked them, never the
+command or folder that starts one) is another, listed only for a chat that has
+some; a server starting or stopping is a change-feed push of its own. A
+desktop following another machine's chat draws them read-only, and opens one
+only where its address reaches it.
 A listed chat's `backgroundWork` (2026-10-17: `{ agents, monitors }`, the
 background agents still running and the monitors that will wake its agent) is
 another, beside a `phase` left as the turn's own: the desktop's sidebar counts
@@ -581,6 +587,43 @@ another machine's chat refuses it there in words first, saying to restart it
 on that machine. The Studio RPC advertises it too: its
 `conversation.restartSession` method, an owner's for now, reads the lane's own
 validator and reaches the same host.
+A message scheduled for a time is the `conversation-scheduled-sends`
+capability (2026-10-25): `scheduleSend` (`message`, `sendAt` in epoch ms on the
+desktop's clock) has the desktop keep it among its own scheduled messages and
+send it then, as one scheduled in its own composer, answered once it is kept;
+`sendScheduledNow` and `cancelScheduled` (`scheduledId`) send one at once (a
+refused one again) or delete it; and `{ type: 'watchScheduled', requestId }`
+has the desktop send a `scheduled` frame (`ConversationScheduledFrame`: the
+chat's `key` and its scheduled `messages`, soonest first, whole each time) now
+and whenever they change. A message held for a turn's end is in its `queued`
+frame, never in this one. The same `scheduleSend` offered again under its id
+is kept once, across a restart too (its command joins the `sources` the held
+messages keep), and a repeated Send now or Delete is answered as the first
+was. All of it is additive: a desktop without the capability refuses the
+three kinds as `unsupported_command` and `watchScheduled` as `invalid_frame`,
+and a client sends them only where it is advertised (a desktop following
+another machine's chat refuses them there in words first). The Studio RPC
+carries the three as owners' methods (`conversation.scheduleSend`,
+`conversation.sendScheduledNow`, `conversation.cancelScheduled`), as it carries
+`conversation.cancelQueued`, but does not advertise the capability: its
+conversation topic carries no `scheduled` frames.
+A desktop's usage limits are the `conversation-usage-limits` capability
+(2026-10-25): `{ type: 'watchUsageLimits', requestId }` has it send a
+`usageLimits` frame (`ConversationUsageLimitsFrame`: the chat's `key`, the
+`notice` a usage limit left on that chat's turn or null, `autoResume`, and
+`limits`, each plan's windows as its agents reported them, without billing)
+now and whenever any of it changes; and `usageLimitResume` (`action`:
+`schedule`, `cancel`, `dismiss` or `retry`; `always` beside `schedule`
+switches the desktop's resume on for every chat a limit stops) acts on the
+notice as the desktop's own tray row does. A repeat under the same id is
+answered as the first was. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command` and the request as
+`invalid_frame`, and a client asks only where it is advertised. A provider
+or a plan name a client does not know passes the validator, for a newer
+desktop to add one; the desktop client leaves such a plan out. The Studio
+RPC carries the command as an owner's method, `conversation.usageLimitResume`,
+but does not advertise the capability: its conversation topic carries no
+`usageLimits` frames.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

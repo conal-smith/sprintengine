@@ -175,6 +175,7 @@ import type {
   MeshConversationCommandResult,
   MeshConversationFrame,
   MeshConversationKey,
+  MeshUsageLimitResumeAction,
   MeshConversationImageResult,
   MeshConversationListResult,
   MeshConversationFileSearchResult,
@@ -1144,6 +1145,30 @@ export type ElectronApi = {
   // What fills a chat's context window, as its agent over there measures it.
   // Needs `conversation-context-breakdown` there.
   meshConversationContextBreakdown: (input: { key: MeshConversationKey }) => Promise<ConversationContextBreakdownResult>
+  // Schedule a message into a chat over there for a time, kept and sent by
+  // that machine; send one it keeps now, or delete one. Needs
+  // `conversation-scheduled-sends` there.
+  meshConversationScheduleSend: (input: {
+    key: MeshConversationKey
+    message: string
+    sendAt: number
+  }) => Promise<MeshConversationCommandResult>
+  meshConversationSendScheduledNow: (input: {
+    key: MeshConversationKey
+    scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
+  meshConversationCancelScheduled: (input: {
+    key: MeshConversationKey
+    scheduledId: string
+  }) => Promise<MeshConversationCommandResult>
+  // Act on a chat over there that a usage limit stopped: schedule its resume
+  // for the reset (`always`: for every such chat there), cancel, dismiss or
+  // retry it. Needs `conversation-usage-limits` there.
+  meshConversationUsageLimitResume: (input: {
+    key: MeshConversationKey
+    action: MeshUsageLimitResumeAction
+    always?: boolean
+  }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string

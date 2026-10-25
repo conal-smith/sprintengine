@@ -224,6 +224,23 @@ under their `requestId`, as it answers `watchQueued`.
   same conversation. Refused while the agent works; answered with a `notice`,
   and nothing done, for a chat with no agent running. A desktop without it
   refuses the kind as `unsupported_command`.
+- `conversation-scheduled-sends`: `scheduleSend` with a `message` and a
+  `sendAt` (epoch ms) has the desktop keep the message and send it then,
+  answered once it is kept; `sendScheduledNow` and `cancelScheduled` with a
+  `scheduledId` send one at once or delete it; and
+  `{ type: 'watchScheduled', requestId }` has the desktop send a `scheduled`
+  frame (`ConversationScheduledFrame`: the chat's `key` and its scheduled
+  `messages`, soonest first, whole each time) now and whenever they change. A
+  desktop without it refuses the three kinds as `unsupported_command` and
+  `watchScheduled` as `invalid_frame`.
+- `conversation-usage-limits`: `{ type: 'watchUsageLimits', requestId }` has
+  the desktop send a `usageLimits` frame (`ConversationUsageLimitsFrame`: the
+  chat's `key`, the `notice` a usage limit left on its turn or null,
+  `autoResume`, and each plan's windows in `limits`) now and whenever any of
+  it changes; `usageLimitResume` with an `action` (`schedule`, `cancel`,
+  `dismiss`, `retry`; `always` beside `schedule`) acts on the notice. A
+  desktop without it refuses the kind as `unsupported_command` and
+  `watchUsageLimits` as `invalid_frame`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

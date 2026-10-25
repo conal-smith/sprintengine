@@ -10,6 +10,7 @@ import {
   type ConversationRequestDecision,
   type ConversationThread,
   type ConversationWireMcpServerAction,
+  type ConversationUsageLimitResumeAction,
   type ConversationWirePage,
   type ConversationWirePermissionPreset,
 } from './conversation.js'
@@ -193,6 +194,31 @@ type StudioConversationMethodMap = {
    * running. An owner's only for now.
    */
   'conversation.restartSession': { params: Addressed<object>; result: StudioCommandAnswer }
+  /**
+   * Has the desktop keep a message and send it into the chat at `sendAt`
+   * (the conversation lane's `scheduleSend`), answered once it is kept; and
+   * sends one it keeps now, or deletes it, by its `id`
+   * (`sendScheduledNow`, `cancelScheduled`). Owners' only, as
+   * `conversation.cancelQueued` is: this socket's conversation topic names no
+   * scheduled message, so nothing else could address one.
+   */
+  'conversation.scheduleSend': {
+    params: Addressed<{ message: string; sendAt: number }>
+    result: StudioCommandAnswer
+  }
+  'conversation.sendScheduledNow': { params: Addressed<{ scheduledId: string }>; result: StudioCommandAnswer }
+  'conversation.cancelScheduled': { params: Addressed<{ scheduledId: string }>; result: StudioCommandAnswer }
+  /**
+   * Acts on the notice a usage limit left on the chat's turn (the
+   * conversation lane's `usageLimitResume`): schedules the resume the desktop
+   * sends once the limit resets (`always`: for every chat a limit stops),
+   * cancels, dismisses or retries it. An owner's only: this socket's
+   * conversation topic names no notice.
+   */
+  'conversation.usageLimitResume': {
+    params: Addressed<{ action: ConversationUsageLimitResumeAction; always?: true }>
+    result: StudioCommandAnswer
+  }
   /** Ends the chat's live session. Idempotent by nature: stopping a stopped chat answers ok. */
   'conversation.stop': { params: Addressed<object>; result: StudioCommandAnswer }
   'conversation.loadEarlier': {
@@ -245,6 +271,10 @@ export const STUDIO_METHODS: { readonly [M in StudioMethod]: StudioMethodSpec } 
   'conversation.setReasoningEffort': { ...operate, owner: true },
   'conversation.mcpServerAction': { ...operate, owner: true },
   'conversation.restartSession': { ...operate, owner: true },
+  'conversation.scheduleSend': { ...operate, owner: true },
+  'conversation.sendScheduledNow': { ...operate, owner: true },
+  'conversation.cancelScheduled': { ...operate, owner: true },
+  'conversation.usageLimitResume': { ...operate, owner: true },
   'conversation.stop': operate,
   'conversation.loadEarlier': read(),
   'conversation.toolDetail': read(),
@@ -311,6 +341,10 @@ export const STUDIO_COMMAND_METHODS = {
   'conversation.setReasoningEffort': 'setReasoningEffort',
   'conversation.mcpServerAction': 'mcpServerAction',
   'conversation.restartSession': 'restartSession',
+  'conversation.scheduleSend': 'scheduleSend',
+  'conversation.sendScheduledNow': 'sendScheduledNow',
+  'conversation.cancelScheduled': 'cancelScheduled',
+  'conversation.usageLimitResume': 'usageLimitResume',
 } as const satisfies Partial<Record<StudioMethod, ConversationCommand['kind']>>
 
 export type StudioCommandMethod = keyof typeof STUDIO_COMMAND_METHODS

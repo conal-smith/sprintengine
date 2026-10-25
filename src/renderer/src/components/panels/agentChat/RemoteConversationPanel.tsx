@@ -3,12 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationSessionSummary } from '../../../../../shared/conversation-runtime'
 import { meshConversationSessionId } from '../../../../../shared/tailnet-mesh'
 import type { BranchPullRequest } from '../../../../../shared/git/pull-request'
+import type { StudioLocalServer } from '../../../../../../packages/studio-protocol/src/public'
 import type {
   MeshConversation,
   MeshConversationAccess,
   MeshConversationKey,
   MeshConversationLink,
   MeshQueuedMessage,
+  MeshScheduledMessage,
+  MeshConversationUsageLimits,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
 import {
@@ -18,6 +21,7 @@ import {
 import { ConversationChatBody } from '../AgentChatView'
 import { remoteFileCountsOf } from '../../workspace/terminalLines'
 import { ChatViewErrorBoundary } from './ChatViewErrorBoundary'
+import { hostUsageLimitsOf } from './hostUsageLimits'
 import { publishRemoteChat } from './remoteChatRegistry'
 import type { ChatBinding, ChatAgentFields } from './chatBinding'
 import type { ChatReadiness } from './chatStates'
@@ -41,6 +45,7 @@ import {
 // link that is reconnecting keeps the transcript on screen and says so.
 
 const NO_PULL_REQUESTS: readonly BranchPullRequest[] = []
+const NO_LOCAL_SERVERS: readonly StudioLocalServer[] = []
 
 type Props = {
   /** The workspace here that holds this pane. */
@@ -260,6 +265,14 @@ export default function RemoteConversationPanel({
   // The machine reconnects and switches a live chat's MCP servers.
   const [mcpServerActions, setMcpServerActions] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
+  // The machine keeps a message scheduled here for a time and sends it then;
+  // and what it keeps for this chat, as it last said.
+  const [scheduledSends, setScheduledSends] = useState(false)
+  const [hostScheduled, setHostScheduled] = useState<MeshScheduledMessage[]>([])
+  // The machine says what it knows of its agents' usage limits, and what it
+  // last said of them for this chat.
+  const [usageLimits, setUsageLimits] = useState(false)
+  const [hostUsage, setHostUsage] = useState<MeshConversationUsageLimits | null>(null)
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
   // chip names what the machine says the chat is now on.
@@ -293,6 +306,10 @@ export default function RemoteConversationPanel({
   messageFilesRef.current = messageFiles
   const commandListRef = useRef(commandList)
   commandListRef.current = commandList
+  const scheduledSendsRef = useRef(scheduledSends)
+  scheduledSendsRef.current = scheduledSends
+  const usageLimitsRef = useRef(usageLimits)
+  usageLimitsRef.current = usageLimits
   const threadRef = useRef(thread)
   threadRef.current = thread
   const transport = useMemo(() => {
@@ -302,6 +319,8 @@ export default function RemoteConversationPanel({
       access: null,
       onLink: setLink,
       onQueued: setHostQueued,
+      onScheduled: setHostScheduled,
+      onUsageLimits: setHostUsage,
       // A pull request Create PR opened there is in the machine's list now:
       // read it again, so the strip says "Open PR #N" without waiting for the
       // sidebar's next read.
@@ -336,6 +355,8 @@ export default function RemoteConversationPanel({
           mentions: composerMentionsRef.current,
           attachFiles: messageFilesRef.current,
           commandList: commandListRef.current,
+          hostSchedule: scheduledSendsRef.current,
+          hostUsageLimits: usageLimitsRef.current,
         }
       },
       ...(setModel
@@ -410,6 +431,8 @@ export default function RemoteConversationPanel({
         setSendMode(result.sendMode === true)
         setReasoningEffort(result.reasoningEffort === true)
         setMcpServerActions(result.mcpServerActions === true)
+        setScheduledSends(result.scheduledSends === true)
+        setUsageLimits(result.usageLimits === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -442,7 +465,7 @@ export default function RemoteConversationPanel({
           : rest
       })
   }, [])
-  // The branch, changed files and pull requests the strip under the composer draws, from
+  // The branch, changed files, pull requests and local servers the strip under the composer draws, from
   // the newest list either this pane or the sidebar read: the sidebar reads
   // the machine again whenever it says its chats changed, so a pull request
   // the agent opens mid-conversation reaches the strip without a reopen.
@@ -454,8 +477,13 @@ export default function RemoteConversationPanel({
       worktree: facts?.worktree ?? false,
       files: remoteFileCountsOf(facts?.changes ?? null, pullRequests)?.files ?? null,
       pullRequests,
+      localServers: facts?.localServers ?? NO_LOCAL_SERVERS,
     }
   }, [facts])
+  const hostUsageLimits = useMemo(
+    () => (usageLimits && hostUsage ? hostUsageLimitsOf(machineName, hostUsage) : null),
+    [usageLimits, hostUsage, machineName],
+  )
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
     () =>
@@ -508,9 +536,26 @@ export default function RemoteConversationPanel({
       // machine again; a third line saying both was the same fact once more.
       ...(engine ? { engine } : {}),
       hostQueue: { machineName, messages: hostQueued },
+      ...(scheduledSends ? { hostSchedule: { machineName, messages: hostScheduled } } : {}),
+      ...(hostUsageLimits ? { hostUsageLimits } : {}),
       listed,
     }),
-    [fields, displayTitle, thread, update, connectionId, readiness, session, engine, machineName, hostQueued, listed],
+    [
+      fields,
+      displayTitle,
+      thread,
+      update,
+      connectionId,
+      readiness,
+      session,
+      engine,
+      machineName,
+      hostQueued,
+      scheduledSends,
+      hostScheduled,
+      hostUsageLimits,
+      listed,
+    ],
   )
 
   // The Agents tab beside it reads the chat through this transport, as it

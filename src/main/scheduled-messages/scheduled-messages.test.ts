@@ -430,3 +430,65 @@ test('a command held while the file is read, and already in it, is the file’s 
     ['Keep this.'],
   )
 })
+
+test('a message a paired machine scheduled goes at its time from here, and the same command twice is scheduled once', async () => {
+  const h = harness()
+  await started(h)
+  const at = h.now() + HOUR
+  assert.deepEqual(h.scheduled.scheduleFrom(CHAT, '  Start the migration.  ', at, 'device-1:cmd-1'), {
+    ok: true,
+    id: 'sm-1',
+  })
+  assert.deepEqual(h.scheduled.scheduleFrom(CHAT, 'Start the migration.', at, 'device-1:cmd-1'), {
+    ok: true,
+    id: 'sm-1',
+  })
+  const [message] = h.scheduled.state().messages
+  assert.equal(h.scheduled.state().messages.length, 1)
+  assert.equal(message?.text, 'Start the migration.')
+  assert.equal(message?.sendAt, at)
+  assert.equal(message?.queued, undefined, 'set for a time, not for the turn')
+  assert.equal('sources' in message!, false, 'the commands it came in on stay out of the state')
+  await h.advance(HOUR - MINUTE)
+  assert.equal(h.sent.length, 0)
+  await h.advance(MINUTE)
+  assert.deepEqual(
+    h.sent.map((entry) => [entry.chat, entry.text]),
+    [[CHAT, 'Start the migration.']],
+  )
+  // Sent and gone: the same command arriving again is the same message.
+  assert.deepEqual(h.scheduled.scheduleFrom(CHAT, 'Start the migration.', at, 'device-1:cmd-1'), {
+    ok: true,
+    id: 'sm-1',
+  })
+  assert.deepEqual(h.scheduled.state().messages, [])
+})
+
+test('a scheduled message from a paired machine is refused for a chat that is gone, with no words, or with no time', async () => {
+  const h = harness()
+  await started(h)
+  assert.equal(h.scheduled.scheduleFrom(CHAT, '   ', h.now() + HOUR, 'device-1:cmd-1').ok, false)
+  assert.equal(h.scheduled.scheduleFrom(CHAT, 'Later.', Number.NaN, 'device-1:cmd-2').ok, false)
+  h.chats.clear()
+  assert.equal(h.scheduled.scheduleFrom(CHAT, 'Later.', h.now() + HOUR, 'device-1:cmd-3').ok, false)
+  assert.deepEqual(h.scheduled.state().messages, [])
+})
+
+test('a scheduled message from a paired machine outlives a restart, and its command is still known', async () => {
+  const storage = memoryStorage()
+  const first = harness({ storage })
+  await started(first)
+  first.scheduled.scheduleFrom(CHAT, 'Tomorrow.', first.now() + 12 * HOUR, 'device-1:cmd-1')
+  await first.scheduled.dispose()
+  const second = harness({ storage, now: first.now() })
+  await second.scheduled.start()
+  assert.deepEqual(
+    second.scheduled.state().messages.map((message) => message.text),
+    ['Tomorrow.'],
+  )
+  assert.deepEqual(second.scheduled.scheduleFrom(CHAT, 'Tomorrow.', first.now(), 'device-1:cmd-1'), {
+    ok: true,
+    id: 'sm-1',
+  })
+  assert.equal(second.scheduled.state().messages.length, 1)
+})

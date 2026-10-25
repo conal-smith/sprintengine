@@ -11,11 +11,15 @@ import {
   CONVERSATION_MAX_SEND_SKILLS,
   CONVERSATION_MCP_SERVER_ACTIONS,
   CONVERSATION_SEND_MODES,
+  CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS,
   isConversationPermissionModeId,
   parseConversationWireMentions,
   isConversationReasoningEffortId,
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
+  type ConversationWatchScheduledRequest,
+  type ConversationWatchUsageLimitsRequest,
+  type ConversationUsageLimitResumeAction,
 } from './commands.js'
 import type { ConversationHelloRequest } from './handshake.js'
 import {
@@ -40,6 +44,8 @@ export type ConversationClientMessage =
   | ConversationAskSideQuestionRequest
   | ConversationCancelSideQuestionRequest
   | ConversationContextBreakdownRequest
+  | ConversationWatchScheduledRequest
+  | ConversationWatchUsageLimitsRequest
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -104,6 +110,10 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
     return parseConversationSideQuestionRequest(value)
   if (value.type === 'getContextBreakdown')
     return id(value.requestId) ? { type: 'getContextBreakdown', requestId: value.requestId } : null
+  if (value.type === 'watchScheduled')
+    return id(value.requestId) ? { type: 'watchScheduled', requestId: value.requestId } : null
+  if (value.type === 'watchUsageLimits')
+    return id(value.requestId) ? { type: 'watchUsageLimits', requestId: value.requestId } : null
   if (value.type === 'command' && record(value.command)) {
     const command = value.command
     // When the message was written, and whether the person confirmed one
@@ -231,6 +241,40 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
         ? { type: 'command', commandId: value.commandId, command: { ...base, side: 'user', turnSeq: command.turnSeq } }
         : null
     }
+    // A scheduled message is its words and its time, nothing else: what a
+    // send stages beside its words is the moment's, and would be gone by then.
+    if (command.kind === 'scheduleSend') {
+      const { message, sendAt } = command
+      return id(value.commandId) &&
+        typeof message === 'string' &&
+        message.trim() !== '' &&
+        message.length <= CONVERSATION_MAX_MESSAGE_CHARS &&
+        typeof sendAt === 'number' &&
+        Number.isSafeInteger(sendAt) &&
+        sendAt > 0
+        ? { type: 'command', commandId: value.commandId, command: { kind: 'scheduleSend', message, sendAt } }
+        : null
+    }
+    if (command.kind === 'sendScheduledNow' || command.kind === 'cancelScheduled') {
+      return id(value.commandId) && id(command.scheduledId)
+        ? {
+            type: 'command',
+            commandId: value.commandId,
+            command: { kind: command.kind, scheduledId: command.scheduledId },
+          }
+        : null
+    }
+    if (command.kind === 'usageLimitResume') {
+      const action = command.action as ConversationUsageLimitResumeAction
+      if (!id(value.commandId) || !CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS.includes(action)) return null
+      // "Always" is a way to schedule, and only that.
+      if (command.always !== undefined && (command.always !== true || action !== 'schedule')) return null
+      return {
+        type: 'command',
+        commandId: value.commandId,
+        command: { kind: 'usageLimitResume', action, ...(command.always === true ? { always: true } : {}) },
+      }
+    }
     // A steer is read as the send it rides on, and is never one held for
     // later: the two ask for opposite things.
     if (command.kind === 'send' && command.steer !== undefined) {
@@ -335,7 +379,11 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
       rejection.commandKind === 'fork' ||
       rejection.commandKind === 'setReasoningEffort' ||
       rejection.commandKind === 'mcpServerAction' ||
-      rejection.commandKind === 'restartSession')
+      rejection.commandKind === 'restartSession' ||
+      rejection.commandKind === 'scheduleSend' ||
+      rejection.commandKind === 'sendScheduledNow' ||
+      rejection.commandKind === 'cancelScheduled' ||
+      rejection.commandKind === 'usageLimitResume')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

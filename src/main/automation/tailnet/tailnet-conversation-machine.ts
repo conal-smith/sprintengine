@@ -12,6 +12,9 @@
 // folder's first list runs one git to find where its HEAD lives, and every
 // list after that only looks at the file.
 //
+// The local servers a chat's agents linked come from the local server record,
+// with the state its own checks last found; listing them checks nothing.
+//
 // The files a live chat's checkout carries are the one count that runs git:
 // they come from the shared change-summary reading the sidebar's own lines
 // take, which holds each checkout's answer for a few seconds and queues its
@@ -19,14 +22,17 @@
 // draws a line only for one.
 
 import {
+  CONVERSATION_MAX_LOCAL_SERVERS,
   CONVERSATION_MAX_PULL_REQUESTS,
   type ConversationThread,
   type ConversationWireChanges,
   type ConversationWireHost,
+  type ConversationWireLocalServer,
   type ConversationWirePullRequest,
 } from '../../../../packages/conversation-protocol/src/serverFrames'
 import type { WorkspaceChangeSummary } from '../../../shared/ipc/git'
 import type { StudioPullRequest } from '../../../../packages/studio-protocol/src/pull-requests'
+import type { StudioLocalServer } from '../../../../packages/studio-protocol/src/local-servers'
 import { mapWithLimit } from '../../../shared/concurrency'
 import { executionHostLabel, isWslHostId, LOCAL_HOST_ID, workspaceHostIdOf } from '../../../shared/execution-host'
 import {
@@ -142,6 +148,21 @@ export function conversationPullRequestsOf(found: readonly StudioPullRequest[]):
     state: entry.state,
     url: entry.url,
     title: entry.title,
+  }))
+}
+
+/**
+ * The record's local servers in the list's shape, at most
+ * `CONVERSATION_MAX_LOCAL_SERVERS`: what a paired machine's strip draws and
+ * opens, never the command that starts one or the folder it runs in.
+ */
+export function conversationLocalServersOf(found: readonly StudioLocalServer[]): ConversationWireLocalServer[] {
+  return found.slice(0, CONVERSATION_MAX_LOCAL_SERVERS).map((server) => ({
+    id: server.id,
+    url: server.url,
+    title: server.title,
+    port: server.port,
+    state: server.state,
   }))
 }
 

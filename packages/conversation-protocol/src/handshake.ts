@@ -127,6 +127,24 @@ export const CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY = 'conversation-mcp-serv
  */
 export const CONVERSATION_RESTART_SESSION_CAPABILITY = 'conversation-restart-session' as const
 /**
+ * A message may be scheduled into a chat for a time, as the desktop's own
+ * composer schedules one: `scheduleSend` has the desktop keep it and send it
+ * then, `sendScheduledNow` and `cancelScheduled` send one at once or delete
+ * it, and `watchScheduled` has the desktop say what it has scheduled for the
+ * chat followed, in `scheduled` frames. The desktop sends it, so the device
+ * that scheduled it may sleep or close meanwhile.
+ */
+export const CONVERSATION_SCHEDULED_SENDS_CAPABILITY = 'conversation-scheduled-sends' as const
+/**
+ * The desktop says what it knows of its agents' subscription limits, as its
+ * own composer strip and tray draw them: `watchUsageLimits` has it send
+ * `usageLimits` frames for the chat followed (each plan's windows, and the
+ * notice a usage limit left on the chat's turn), and `usageLimitResume`
+ * schedules, cancels, dismisses or retries the resume it sends the chat once
+ * the limit resets. They are read and sent over there, where the agents run.
+ */
+export const CONVERSATION_USAGE_LIMITS_CAPABILITY = 'conversation-usage-limits' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -233,6 +251,8 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_REASONING_EFFORT_CAPABILITY,
   CONVERSATION_MCP_SERVER_ACTIONS_CAPABILITY,
   CONVERSATION_RESTART_SESSION_CAPABILITY,
+  CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
+  CONVERSATION_USAGE_LIMITS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

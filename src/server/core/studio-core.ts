@@ -29,6 +29,7 @@ import {
   conversationCheckoutsOf,
   conversationHostOf,
   conversationPullRequestsOf,
+  conversationLocalServersOf,
   tailnetSelfMachine,
   type ConversationMachineContext,
 } from '../../main/automation/tailnet/tailnet-conversation-machine'
@@ -85,9 +86,9 @@ import {
 import type { WslServers } from '../wsl/desktop-wsl-servers'
 import type { StudioRole } from './data-dir'
 import { takeDataDir } from './take-data-dir'
-import { createStudioUsageLimitResumes } from './studio-usage-limit-resumes'
+import { createStudioUsageLimitResumes, studioConversationUsageLimits } from './studio-usage-limit-resumes'
 import { studioPullRequestWakes } from './studio-pull-request-wakes'
-import { createStudioScheduledMessages, studioHeldMessages } from './studio-scheduled-messages'
+import { createStudioScheduledMessages, studioHeldMessages, studioScheduledSends } from './studio-scheduled-messages'
 import { createStudioAutoCompact } from './studio-auto-compact'
 
 // The Studio core: the services the server owns (studio-server design, section
@@ -566,6 +567,17 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         ]),
       )
     },
+    // The local servers the chats' agents linked, as the record last checked
+    // them: what a paired machine's strip draws under the chat.
+    localServersOf: async (keys: Array<{ workspaceId: string; agentId: string }>) => {
+      const found = await localServers.list({ conversations: keys })
+      return new Map(
+        found.conversations.map((entry) => [
+          `${entry.workspaceId}:${entry.agentId}`,
+          conversationLocalServersOf(entry.servers),
+        ]),
+      )
+    },
     selfMachine: () => tailnetSelfMachine(machineContext()),
     // Only a folder on this computer: one on an SSH machine is that
     // machine's path, and this disk has nothing to read at it.
@@ -782,6 +794,13 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
             ...(input.refresh ? { refresh: true } : {}),
             ...(workspaceRegistry.getRecord(input.workspaceId)?.environment ? { probe: false as const } : {}),
           }),
+        // A message a paired machine scheduled into a chat here for a time is
+        // kept among the same scheduled messages, and sent from here then.
+        scheduledSends: studioScheduledSends(() => scheduledMessages),
+        // What this machine's agents reported of their plans' limits, and the
+        // resume it sends a chat a limit stopped, for a paired machine's strip
+        // and tray.
+        usageLimits: studioConversationUsageLimits(() => usageLimitResumes),
       },
     )
 

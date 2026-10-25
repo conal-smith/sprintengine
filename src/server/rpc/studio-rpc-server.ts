@@ -52,8 +52,10 @@ import type {
  * `hello` frame on it, which here is the connection's own handshake —
  * `conversation-lifecycle`, whose
  * settle and visit are gateway tools this socket has no method for, and
- * `conversation-queued-sends`, whose `queued` frames its conversation topic
- * does not carry. Nor the lane's fork, side questions and context breakdown
+ * `conversation-queued-sends`, `conversation-scheduled-sends` and
+ * `conversation-usage-limits`, whose `queued`, `scheduled` and `usageLimits`
+ * frames its conversation topic does not carry.
+ * Nor the lane's fork, side questions and context breakdown
  * (`conversation-fork`, `conversation-side-questions`,
  * `conversation-context-breakdown`): this socket forks by its own
  * `conversation.fork`, which leaves the new chat's record to the window that
@@ -78,7 +80,9 @@ export const STUDIO_RPC_CONVERSATION_CAPABILITIES: string[] = CONVERSATION_CAPAB
     capability !== 'conversation-side-questions' &&
     capability !== 'conversation-context-breakdown' &&
     capability !== 'conversation-file-search' &&
-    capability !== 'conversation-commands',
+    capability !== 'conversation-commands' &&
+    capability !== 'conversation-scheduled-sends' &&
+    capability !== 'conversation-usage-limits',
 )
 
 export type StudioRpcServerOptions = {

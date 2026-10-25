@@ -120,6 +120,45 @@
   desktop without the capability drops the member. The pinned files are
   unchanged.
 
+- **A listed chat names its agents' local servers.** `localServers` is an
+  optional member of `ConversationThread` (`ConversationWireLocalServer`:
+  `id`, `url`, `title`, `port`, `state`), at most
+  `CONVERSATION_MAX_LOCAL_SERVERS`, absent for a chat with none and from a
+  desktop built before it was listed. `parseConversationWireLocalServers`
+  reads it, dropping a server it cannot read (one whose address is not
+  http(s), whose port is not one), and the row keeps the rest. No
+  capability. The pinned files are unchanged.
+
+- **A desktop says what it knows of its agents' usage limits.**
+  `CONVERSATION_USAGE_LIMITS_CAPABILITY` (`conversation-usage-limits`) names a
+  desktop that answers `ConversationWatchUsageLimitsRequest`
+  (`watchUsageLimits`) with `ConversationUsageLimitsFrame`s (`usageLimits`: the
+  followed chat's `ConversationUsageLimitNotice` or null, `autoResume`, and
+  each plan's `ConversationUsageLimitSnapshot`, at most
+  `CONVERSATION_MAX_USAGE_LIMIT_PLANS` of
+  `CONVERSATION_MAX_USAGE_LIMIT_WINDOWS` windows each), now and on every
+  change, and takes `usageLimitResume` (`action`, one of
+  `CONVERSATION_USAGE_LIMIT_RESUME_ACTIONS`, and `always` beside `schedule`).
+  `parseConversationUsageLimitNotice` and
+  `parseConversationUsageLimitSnapshots` read the frame's members;
+  `parseConversationClientMessage` refuses a malformed resume as
+  `invalid_frame`. A desktop without the capability refuses the kind as
+  `unsupported_command`. The pinned files are unchanged.
+
+- **A message can be scheduled into a chat for a time.**
+  `CONVERSATION_SCHEDULED_SENDS_CAPABILITY` (`conversation-scheduled-sends`)
+  names a desktop that takes `scheduleSend` (`message`, `sendAt`), keeps the
+  message and sends it then, and takes `sendScheduledNow` and
+  `cancelScheduled` (`scheduledId`) to send one at once or delete it.
+  `ConversationWatchScheduledRequest` (`watchScheduled`) has it send
+  `ConversationScheduledFrame`s (`scheduled`: the chat's `key` and its
+  `ConversationScheduledMessage`s, at most
+  `CONVERSATION_MAX_SCHEDULED_MESSAGES`) now and on every change.
+  `parseConversationClientMessage` keeps each and refuses a malformed one as
+  `invalid_frame`; `parseConversationServerFrame` reads the frame, skipping a
+  message it cannot read. A desktop without the capability refuses the kinds
+  as `unsupported_command`. The pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the
