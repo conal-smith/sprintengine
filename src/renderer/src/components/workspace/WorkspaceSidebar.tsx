@@ -320,6 +320,12 @@ type WorkspaceSidebarProps = {
   // Scope a new chat to a specific project folder (workspace-row context menu).
   // The panel owns the agent/engine choice — the sidebar only opens it.
   onNewChatInFolder: (folderPath: string) => void
+  /**
+   * Open New chat on a paired machine's project: the project the chat
+   * `workspaceId` there stands in. Absent, a paired machine's chats and
+   * projects offer no New chat in project.
+   */
+  onNewChatOnMachine?: (target: { connectionId: string; workspaceId: string }) => void
   onRevealFolder: (folderPath: string) => void
   /**
    * Delete a settled chat for good, after asking (`useDeleteSettledChats`).
@@ -414,6 +420,7 @@ function WorkspaceSidebar({
   openScheduledAgentId = null,
   newChatOpen = false,
   onNewChatInFolder,
+  onNewChatOnMachine,
   onRevealFolder,
   onDeleteSettledChat,
   onSetSidebarCollapsed,
@@ -1728,6 +1735,28 @@ function WorkspaceSidebar({
       workspaceId: remoteOriginChatWorkspaceId(origin),
       title: conversation.title,
     }
+  }
+  // New chat in project on a paired machine's project: opened on that
+  // machine, where this pairing may start a chat there (`conversation.create`
+  // on `conversation:operate`). The project is the one the chat stands in.
+  const remoteNewChatTargetOf = (
+    connectionId: string | undefined,
+    workspaceId: string | undefined,
+  ): { connectionId: string; workspaceId: string } | null => {
+    if (!onNewChatOnMachine || !connectionId || !workspaceId) return null
+    return remoteBrowses.get(connectionId)?.access === 'operate' ? { connectionId, workspaceId } : null
+  }
+  const remoteNewChatOfWorkspace = (workspace: Workspace) =>
+    workspace.remoteOrigin
+      ? remoteNewChatTargetOf(workspace.remoteOrigin.connectionId, remoteOriginChatWorkspaceId(workspace.remoteOrigin))
+      : null
+  // A header founded by a paired machine's chats: the first of them names the project there.
+  const remoteNewChatOfGroup = (group: FolderGroup | undefined) => {
+    if (!group?.remote) return null
+    const row = group.remoteRows[0]
+    if (row) return remoteNewChatTargetOf(row.connectionId, row.workspaceId)
+    const opened = group.workspaces.find((workspace) => workspace.remoteOrigin)
+    return opened ? remoteNewChatOfWorkspace(opened) : null
   }
   const renameRemoteChat = (
     target: { connectionId: string; workspaceId: string; title: string },
@@ -3740,6 +3769,10 @@ function WorkspaceSidebar({
             return workspace ? remoteMarksTargetOf(workspace) !== null : false
           })()}
           remoteManage={remoteConversationByWorkspace.get(contextMenu.workspaceId)?.manage}
+          remoteNewChat={(() => {
+            const workspace = workspaceById.get(contextMenu.workspaceId)
+            return workspace ? remoteNewChatOfWorkspace(workspace) !== null : false
+          })()}
           autoCompact={(() => {
             const workspace = workspaceById.get(contextMenu.workspaceId)
             // A paired machine's chat wears that machine's switch, where it takes it from here.
@@ -3867,6 +3900,12 @@ function WorkspaceSidebar({
             // it was cut from, not the worktree itself. One rule decides both
             // whether the item is offered and where it goes.
             const newChatTarget = newChatProjectTarget(workspace)
+            const remoteNewChat = remoteNewChatOfWorkspace(workspace)
+            if (action === 'new-chat' && remoteNewChat) {
+              onNewChatOnMachine?.(remoteNewChat)
+              setContextMenu(null)
+              return
+            }
             if (action === 'new-chat' && newChatTarget) {
               onNewChatInFolder(newChatTarget)
               setContextMenu(null)
@@ -3987,6 +4026,7 @@ function WorkspaceSidebar({
                 manage={conversation.manage}
                 autoCompact={conversation.autoCompact}
                 watchedPullRequestNumber={remoteWatchedPullRequest(conversation)?.number ?? null}
+                canNewChat={remoteNewChatTargetOf(conversation.connectionId, conversation.workspaceId) !== null}
                 canMarkUnread={canMarkRemoteConversationUnread(conversation, now)}
                 isDetachedWindow={isDetachedWindow}
                 workspaceId={conversation.workspaceId}
@@ -4010,7 +4050,10 @@ function WorkspaceSidebar({
                   }
                   setRemoteMenu(null)
                   if (action === 'rename') setRenamingRemote({ key: conversation.key, value: conversation.title })
-                  else if (action === 'stop-watching') {
+                  else if (action === 'new-chat') {
+                    const project = remoteNewChatTargetOf(conversation.connectionId, conversation.workspaceId)
+                    if (project) onNewChatOnMachine?.(project)
+                  } else if (action === 'stop-watching') {
                     const watched = remoteWatchedPullRequest(conversation)
                     if (watched)
                       changeRemoteChat(target, {
@@ -4043,6 +4086,7 @@ function WorkspaceSidebar({
           x={folderMenu.x}
           y={folderMenu.y}
           group={groups.find((g) => g.key === folderMenu.folderKey) ?? null}
+          remoteNewChat={remoteNewChatOfGroup(groups.find((g) => g.key === folderMenu.folderKey)) !== null}
           projectColorKey={projectKeyOf(folderMenu.folderKey)}
           projectColorSettled={projectKeySettled(folderMenu.folderKey)}
           projectColor={projectColors[projectKeyOf(folderMenu.folderKey) ?? ''] ?? null}
@@ -4057,7 +4101,9 @@ function WorkspaceSidebar({
             const group = groups.find((g) => g.key === folderMenu.folderKey)
             setFolderMenu(null)
             if (!group) return
-            if (action === 'new-chat' && group.fullPath && !group.missing) {
+            const remoteNewChat = remoteNewChatOfGroup(group)
+            if (action === 'new-chat' && remoteNewChat) onNewChatOnMachine?.(remoteNewChat)
+            else if (action === 'new-chat' && group.fullPath && !group.missing) {
               onNewChatInFolder(group.fullPath)
             }
             if (action === 'reveal' && group.fullPath) onRevealFolder(group.fullPath)

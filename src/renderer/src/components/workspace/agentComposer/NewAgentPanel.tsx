@@ -293,6 +293,13 @@ export type NewAgentPanelProps = {
    */
   onLaunchRemote?: (launch: RemoteNewChatLaunch) => Promise<void>
   /**
+   * Open on a paired machine's project (a remote chat's or project's "New chat
+   * in project"): that machine is picked, and the project its chat
+   * `workspaceId` stands in, as a person would pick them. Applied once, as the
+   * remembered machine is; absent, the door opens as it always does.
+   */
+  remoteProject?: { connectionId: string; workspaceId: string } | null
+  /**
    * Door-only: clone a repository for the project selector's Import-from-Git
    * source. The HOST runs the clone so a finish after the selector closed
    * still adopts the project; absent, the panel clones for itself.
@@ -444,6 +451,7 @@ export default function NewAgentPanel({
   onClose,
   showCloseButton = false,
   onLaunchRemote,
+  remoteProject = null,
   onCloneProject,
   draftKey,
   initialMode = 'chat',
@@ -710,6 +718,7 @@ export default function NewAgentPanel({
   const remoteCapable = Boolean(onLaunchRemote)
   // The remembered machine is applied once, when the list first arrives.
   const rememberedApplied = React.useRef(false)
+  const seededProjectRef = React.useRef(remoteProject)
   React.useEffect(() => {
     if (!remoteCapable) return
     let cancelled = false
@@ -722,10 +731,14 @@ export default function NewAgentPanel({
           setRemoteMachines(sorted)
           if (!rememberedApplied.current) {
             rememberedApplied.current = true
+            // A paired machine's project asked for leads the remembered machine.
+            const seeded = seededProjectRef.current
+              ? sorted.find((machine) => machine.id === seededProjectRef.current?.connectionId)
+              : null
             const remembered = rememberedMachine.machineId
               ? sorted.find((machine) => machine.id === rememberedMachine.machineId)
               : null
-            if (remembered) pickRemoteMachineRef.current(remembered)
+            if (seeded ?? remembered) pickRemoteMachineRef.current((seeded ?? remembered)!)
           }
         })
         .catch(() => {})
@@ -907,13 +920,19 @@ export default function NewAgentPanel({
         // keeps the project.
         const copy = machineCopyOf(browse, keep ?? activeIdentityRef.current)
         const kept = copy ? remoteProjectOfWorkspace(projects, browse.workspaces, copy.id) : null
+        // The project a paired machine's "New chat in project" asked for.
+        const seed = seededProjectRef.current
+        const seeded =
+          seed?.connectionId === connection.id
+            ? remoteProjectOfWorkspace(projects, browse.workspaces, seed.workspaceId)
+            : null
         return {
           ...current,
           capabilities: browse.capabilities ?? null,
           workspaces: browse.workspaces,
           projects,
           // A choice already made meanwhile is never overwritten by a late answer.
-          picked: current.picked ?? kept ?? (projects.length === 1 ? projects[0]! : null),
+          picked: current.picked ?? seeded ?? kept ?? (projects.length === 1 ? projects[0]! : null),
         }
       })
     })

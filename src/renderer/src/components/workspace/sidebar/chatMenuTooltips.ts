@@ -57,10 +57,12 @@ export const chatMenuTooltips = {
       : where.manage?.rename
         ? `Rename this chat on ${where.machineName}, and on every device that follows it.`
         : `Rename this chat on this computer. ${where.machineName} keeps its own name for it.`,
-  newChat: (projectless: boolean) =>
+  newChat: (projectless: boolean, where: ChatMenuPlace = LOCAL) =>
     projectless
       ? 'Start a new chat that has no project, in a folder of its own.'
-      : "Start a new chat in this chat's project.",
+      : where.kind === 'remote'
+        ? `Start a new chat in this chat's project on ${where.machineName}, where it runs.`
+        : "Start a new chat in this chat's project.",
   reveal: () => `Show this chat's folder in ${fileManager()}.`,
   /** Why Reveal folder is off: the folder is on another machine, or gone. */
   revealUnavailable: (where: ChatMenuPlace) =>

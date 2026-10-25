@@ -10,7 +10,8 @@ test('WorkspaceSidebar.remoteManage', async () => {
   // machine takes each part (`MeshConversationManage`), open here or not:
   // Rename renames it there, so every device lists it by the new name; Auto
   // compact is switched there, by the machine that compacts it; Stop
-  // watching ends that machine's watch of the chat's pull request.
+  // watching ends that machine's watch of the chat's pull request; New chat
+  // in project opens New chat on that machine, in the chat's project there.
 
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url: 'http://localhost',
@@ -158,6 +159,7 @@ test('WorkspaceSidebar.remoteManage', async () => {
   type SidebarProps = Parameters<typeof WorkspaceSidebar>[0]
   const noop = () => {}
   const renamed: Array<{ id: string; name: string }> = []
+  const newChats: unknown[] = []
   useWorkspaceStore.setState({
     renameWorkspace: (id: string, name: string) => renamed.push({ id, name }),
   } as never)
@@ -198,6 +200,7 @@ test('WorkspaceSidebar.remoteManage', async () => {
     onForgetFolder: noop,
     onNewChat: noop,
     onNewChatInFolder: noop,
+    onNewChatOnMachine: (target: unknown) => newChats.push(target),
     onRevealFolder: noop,
     onSetSidebarCollapsed: noop,
     sidebarWidth: 260,
@@ -345,6 +348,24 @@ test('WorkspaceSidebar.remoteManage', async () => {
       workspaceId: 'rw4',
       change: { kind: 'unwatch-pull-request', agentId: 'agent-1', url: 'https://github.com/acme/parser/pull/8' },
     })
+
+    // ── New chat in project ──
+    await escape()
+    const newChatMenu = await openMenuOn(remoteRowOf('Parser, reviewed'))
+    await click(newChatMenu, 'New chat in project')
+    assert.deepEqual(newChats.at(-1), { connectionId: 'c1', workspaceId: 'rw1' })
+    const followedNewChat = await openMenuOn(followedRow())
+    await click(followedNewChat, 'New chat in project')
+    assert.deepEqual(newChats.at(-1), { connectionId: 'c1', workspaceId: 'rw4' })
+    // …and the project's own header, founded here by that machine's chats.
+    const headerActions = container.querySelector<HTMLElement>('[aria-label="Folder actions: parser"]')
+    assert.ok(headerActions, 'the project there has a header here')
+    await act(async () => {
+      headerActions.click()
+    })
+    await click(menu()!, 'New chat in project')
+    assert.equal(newChats.length, 3)
+    assert.equal((newChats.at(-1) as { connectionId: string }).connectionId, 'c1')
   } finally {
     act(() => {
       root.unmount()

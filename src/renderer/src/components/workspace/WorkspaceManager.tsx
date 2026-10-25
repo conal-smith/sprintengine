@@ -712,6 +712,9 @@ export default function WorkspaceManager() {
     mode?: NewAgentPanelMode
     // Opened on a scheduled agent's card: the panel edits that one.
     editingScheduledAgentId?: string | null
+    // Opened on a paired machine's project ("New chat in project" on its chat
+    // or header): the panel starts on that machine and project.
+    remoteProject?: { connectionId: string; workspaceId: string } | null
   } | null>(null)
   const scheduledAgents = useScheduledAgents()
   const newChatPanelOpen = newChatPanelState !== null
@@ -4819,6 +4822,12 @@ export default function WorkspaceManager() {
     })
   })
   const sidebarNewChatInFolder = useStableCallback((folderPath: string) => openNewChatPanel(folderPath))
+  // A paired machine's project: the panel opens as for any project, then
+  // picks that machine and project itself (`NewAgentPanel.remoteProject`).
+  const sidebarNewChatOnMachine = useStableCallback((remoteProject: { connectionId: string; workspaceId: string }) => {
+    openNewChatPanel(null)
+    setNewChatPanelState((prev) => (prev ? { ...prev, remoteProject } : prev))
+  })
   const sidebarShowMenu = useStableCallback(
     (event: React.MouseEvent<HTMLButtonElement>, label: (typeof MENU_BAR_ITEMS)[number]) =>
       void handleShowMenubarMenu(event, label),
@@ -5012,6 +5021,7 @@ export default function WorkspaceManager() {
             openScheduledAgentId={newChatPanelState?.editingScheduledAgentId ?? null}
             newChatOpen={newChatPanelState !== null}
             onNewChatInFolder={sidebarNewChatInFolder}
+            onNewChatOnMachine={sidebarNewChatOnMachine}
             onRevealFolder={sidebarRevealFolder}
             onDeleteSettledChat={sidebarDeleteSettledChat}
             onSetSidebarCollapsed={setSidebarCollapsed}
@@ -5203,7 +5213,8 @@ export default function WorkspaceManager() {
                         open panel must remount; keyed on identity, so removing
                         the chip never does. */}
                             <NewAgentPanel
-                              key={`${newChatPanelState.connector?.id ?? 'plain'}:${newChatPanelState.forcedSelection?.kind ?? 'remembered'}:${newChatPanelState.mode ?? 'chat'}:${newChatPanelState.editingScheduledAgentId ?? ''}`}
+                              key={`${newChatPanelState.connector?.id ?? 'plain'}:${newChatPanelState.forcedSelection?.kind ?? 'remembered'}:${newChatPanelState.mode ?? 'chat'}:${newChatPanelState.editingScheduledAgentId ?? ''}:${newChatPanelState.remoteProject ? `${newChatPanelState.remoteProject.connectionId}/${newChatPanelState.remoteProject.workspaceId}` : ''}`}
+                              remoteProject={newChatPanelState.remoteProject ?? null}
                               initialMcpServers={newChatPanelState.connector ? [newChatPanelState.connector] : null}
                               workspaceId={windowActiveWorkspaceId ?? ''}
                               conversationWorkspaceSupported={conversationSpawnEnabled}

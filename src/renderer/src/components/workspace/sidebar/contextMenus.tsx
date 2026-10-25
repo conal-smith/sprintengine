@@ -291,6 +291,7 @@ export function WorkspaceContextMenu({
   working,
   remoteMarks = false,
   remoteManage,
+  remoteNewChat = false,
   autoCompact = null,
   canMarkUnread = false,
   watchedPullRequestNumber = null,
@@ -317,6 +318,8 @@ export function WorkspaceContextMenu({
   remoteMarks?: boolean
   /** What of a paired machine's chat's management its machine takes from here (`MeshConversationManage`). */
   remoteManage?: MeshConversationManage
+  /** A paired machine's chat whose machine this pairing may start a chat on: New chat in project opens there. */
+  remoteNewChat?: boolean
   /**
    * The Auto compact switch for a chat here (see `ChatRestAndMarkItems`);
    * null leaves it off the menu.
@@ -408,6 +411,10 @@ export function WorkspaceContextMenu({
           onClick={() => onSelect('new-chat')}
         >
           {isProjectlessChatsRoot(newChatTarget) ? 'New chat without a project' : 'New chat in project'}
+        </ChatMenuItem>
+      ) : remote && remoteNewChat ? (
+        <ChatMenuItem tooltip={tips.newChat(false, where)} onClick={() => onSelect('new-chat')}>
+          New chat in project
         </ChatMenuItem>
       ) : null}
       {folderPathExists ? (
@@ -516,6 +523,7 @@ export type RemoteConversationMenuAction =
   | 'rename'
   | 'toggle-auto-compact'
   | 'stop-watching'
+  | 'new-chat'
 
 /**
  * The link to a chat: by its id on the machine it runs on, so the same link
@@ -532,9 +540,10 @@ export function chatLinkIdOf(workspace: Pick<Workspace, 'id' | 'remoteOrigin'>):
 // older machine's chat offers what it can, as a local menu hides what does
 // not apply. Reveal folder is shown off, saying why: the folder is on the
 // other machine's disk. Rename is offered where the machine keeps the name
-// (`chat-rename`). Left out because they are about a workspace here, which
-// this row does not have until it is opened: the workspace type's own
-// actions, and Close workspace.
+// (`chat-rename`), and New chat in project where this pairing may start a
+// chat there, opening New chat on that machine and project. Left out because
+// they are about a workspace here, which this row does not have until it is
+// opened: the workspace type's own actions, and Close workspace.
 export function RemoteConversationContextMenu({
   x,
   y,
@@ -545,6 +554,7 @@ export function RemoteConversationContextMenu({
   manage,
   autoCompact = null,
   watchedPullRequestNumber = null,
+  canNewChat = false,
   canMarkUnread,
   isDetachedWindow,
   workspaceId,
@@ -572,6 +582,8 @@ export function RemoteConversationContextMenu({
   autoCompact?: { on: boolean; claude: boolean } | null
   /** The pull request its machine watches for it, by number, where the machine takes Stop watching from here. */
   watchedPullRequestNumber?: number | null
+  /** This pairing may start a chat on the machine: New chat in project opens there, in this chat's project. */
+  canNewChat?: boolean
   /** Its agent finished something nobody has been marked as missing, and the machine takes Mark unread. */
   canMarkUnread: boolean
   isDetachedWindow: boolean
@@ -611,6 +623,11 @@ export function RemoteConversationContextMenu({
       {manage?.rename ? (
         <ChatMenuItem tooltip={tips.rename(where)} onClick={() => onSelect('rename')}>
           Rename
+        </ChatMenuItem>
+      ) : null}
+      {canNewChat ? (
+        <ChatMenuItem tooltip={tips.newChat(false, where)} onClick={() => onSelect('new-chat')}>
+          New chat in project
         </ChatMenuItem>
       ) : null}
       {/* Off, and saying why: the folder is on the other machine's disk. */}
@@ -688,6 +705,7 @@ export function FolderContextMenu({
   x,
   y,
   group,
+  remoteNewChat = false,
   projectColorKey: colorKey,
   projectColorSettled,
   projectColor,
@@ -699,6 +717,11 @@ export function FolderContextMenu({
   x: number
   y: number
   group: FolderGroup | null
+  /**
+   * A header of a paired machine's project, on a machine this pairing may
+   * start a chat on: New chat in project opens New chat there.
+   */
+  remoteNewChat?: boolean
   /** The project this header names, or null when it is not a project. */
   projectColorKey: string | null
   /** Whether that key is the project's FINAL one — see `canPickColor` below. */
@@ -715,7 +738,7 @@ export function FolderContextMenu({
   if (!group) return null
   const canReveal = Boolean(group.fullPath) && !group.missing
   const canForget = Boolean(group.fullPath)
-  const canCreateWorkspace = Boolean(group.fullPath) && !group.missing
+  const canCreateWorkspace = (Boolean(group.fullPath) && !group.missing) || (Boolean(group.remote) && remoteNewChat)
   // "Changed by you" (decision 5) — but only where there is a project to
   // change, and only once we know which project it IS. The "No folder" bucket
   // is not a project, and a remote group's root lives on another machine with
