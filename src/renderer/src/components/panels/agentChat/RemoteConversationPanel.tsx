@@ -91,6 +91,8 @@ function remoteConversationSession(
   key: MeshConversationKey,
   modelSwitch: boolean,
   stopSubagents: boolean,
+  handoff: boolean,
+  sendSkills: boolean,
 ): ConversationSessionSummary {
   const capabilities = thread?.capabilities
   return {
@@ -117,7 +119,9 @@ function remoteConversationSession(
       // machine's upload store, as the phone does, and the send names them.
       planMode: false,
       images: capabilities?.images === true,
-      skills: 'none',
+      // Skills ride a message to a machine that takes them, which resolves
+      // them against its own folder and delivers them as its runtime does.
+      skills: sendSkills ? 'context' : 'none',
       reasoningEfforts: null,
       interrupt: capabilities?.interrupt ?? true,
       resume: false,
@@ -136,6 +140,9 @@ function remoteConversationSession(
       // The machine's turn Stop spares such a chat's agents, so this is the
       // only Stop an agent has from here.
       stopSubagent: stopSubagents && capabilities?.stopSubagent === true,
+      // Whether the chat can be handed off to a fresh session over there: the
+      // machine takes the command and lists the chat's provider as able.
+      handoff: handoff && capabilities?.handoff === true,
       // The presets the chat's provider over there can run, where its list names them.
       ...(capabilities?.permissionPresets ? { permissionPresets: capabilities.permissionPresets } : {}),
     },
@@ -172,6 +179,8 @@ export default function RemoteConversationPanel({
   const [steerSends, setSteerSends] = useState(false)
   // The machine stops one agent of one of its chats by itself.
   const [stopSubagents, setStopSubagents] = useState(false)
+  // The machine hands one of its chats off to a fresh session.
+  const [handoff, setHandoff] = useState(false)
   const [hostQueued, setHostQueued] = useState<MeshQueuedMessage[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
@@ -277,6 +286,7 @@ export default function RemoteConversationPanel({
         setHostPullRequests(result.createPullRequest === true)
         setSteerSends(result.steerSends === true)
         setStopSubagents(result.stopSubagents === true)
+        setHandoff(result.handoff === true)
         setThread(
           result.conversations.find(
             (entry) => entry.workspaceId === remoteWorkspaceId && entry.agentId === remoteAgentId,
@@ -315,8 +325,8 @@ export default function RemoteConversationPanel({
   }, [facts])
   const displayTitle = thread?.title || title || 'Conversation'
   const session = useMemo(
-    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents),
-    [thread, key, modelSwitch, stopSubagents],
+    () => remoteConversationSession(thread, key, modelSwitch, stopSubagents, handoff, sendSkills),
+    [thread, key, modelSwitch, stopSubagents, handoff, sendSkills],
   )
   const engine = useMemo(() => remoteConversationEngine(thread, modelSwitch), [thread, modelSwitch])
   const readiness = useMemo(() => remoteConversationReadiness(link, access, machineName), [link, access, machineName])

@@ -518,7 +518,10 @@ export function fetchRemoteConversationImage(input: {
   token: string
   workspaceId: string
   agentId: string
-  toolUseId: string
+  // A step's picture by its call, or a sent one by the `ref` its message
+  // recorded (`conversation-message-images`).
+  toolUseId?: string
+  attachment?: string
   timeoutMs?: number
   maxBytes?: number
 }): Promise<RemoteCallOutcome<{ mediaType: ConversationImageMediaType; bytes: Buffer }>> {
@@ -527,7 +530,7 @@ export function fetchRemoteConversationImage(input: {
   const query = new URLSearchParams({
     workspaceId: input.workspaceId,
     agentId: input.agentId,
-    toolUseId: input.toolUseId,
+    ...(input.attachment !== undefined ? { attachment: input.attachment } : { toolUseId: input.toolUseId ?? '' }),
   })
   return new Promise((resolve) => {
     let settled = false

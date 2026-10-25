@@ -55,6 +55,9 @@ const UPLOAD_TTL_MS = 60 * 60_000
 const MAX_UPLOAD_REFS = 256
 const MAX_DEVICE_UPLOAD_REFS = 32
 const MAX_SPENT_UPLOAD_REFS = 256
+// Handoffs remembered by the device's command, so one sent again after a
+// dropped connection is answered as the first was.
+const MAX_HANDOFF_RECEIPTS = 64
 /**
  * Where a step's picture is, once found, is kept this long and for this many
  * steps. Finding it scans the transcript back to the step, and a phone
@@ -83,6 +86,9 @@ const wireCapabilities = (capabilities: ConversationSessionSummary['capabilities
         // (`conversation-stop-subagent`); a client offers an agent's Stop only
         // where it can.
         stopSubagent: capabilities.stopSubagent === true,
+        // Whether the chat can be handed off to a fresh session
+        // (`conversation-handoff`); a client offers Handoff only where it can.
+        handoff: capabilities.handoff === true,
       }
     : undefined
 
@@ -605,6 +611,30 @@ export function createConversationGatewayHost(
   // gone; a retry of that same command is answered from the runtime's receipt
   // and does not need them again.
   const spent = new Map<string, { deviceId: string; commandId: string }>()
+  const handoffs = new Map<string, Promise<ConversationGatewayCommandResult>>()
+  // Handed off under the device's own command: a repeat after a dropped
+  // connection is the same handoff, not a second one refused as already done.
+  const handoff = (key: ConversationKey, deviceId: string, commandId: string) => {
+    const receipt = JSON.stringify([deviceId, commandId, key.workspaceId, key.agentId])
+    let handing = handoffs.get(receipt)
+    if (!handing) {
+      handing = runtime.handoffConversation({ key }).then(
+        (result): ConversationGatewayCommandResult =>
+          result.ok ? { ok: true } : { ok: false, message: result.message },
+        (error: unknown): ConversationGatewayCommandResult => ({
+          ok: false,
+          message: error instanceof Error ? error.message : 'The chat was not handed off.',
+        }),
+      )
+      handoffs.set(receipt, handing)
+      while (handoffs.size > MAX_HANDOFF_RECEIPTS) handoffs.delete(handoffs.keys().next().value!)
+      // A refusal is not kept: the person may try again once the turn is over.
+      void handing.then((result) => {
+        if (!result.ok) handoffs.delete(receipt)
+      })
+    }
+    return handing
+  }
   const starting = new Map<string, ReturnType<ConversationBackend['startSession']>>()
   const sending = new Map<
     string,
@@ -1092,6 +1122,11 @@ export function createConversationGatewayHost(
                 .map((entry) => entry.sessionId)
             : [],
         )
+        // As this machine's own Handoff: the runtime refuses it in words while
+        // anything in the chat runs, and it needs no live session, since it
+        // lets the session go. Never a resume: a chat at rest is handed off
+        // from its transcript.
+        if (command.kind === 'handoff') return handoff(key, deviceId, commandId)
         let session = sessionFor(key)
         // A send, or a preset switch, reaches a conversation with no live
         // session by resuming it; the switch then applies to that session.

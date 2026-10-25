@@ -194,6 +194,10 @@ export const TAILNET_CAPABILITIES = [
   // at a time, so a paired machine needs its own Stop for each.
   // CONVERSATION_STOP_SUBAGENT_CAPABILITY.
   'conversation-stop-subagent',
+  // A chat may be handed off to a fresh session from a paired machine, as its
+  // own Handoff does here (2026-10-25): `handoff`, where a listed chat says
+  // its provider can (`capabilities.handoff`). CONVERSATION_HANDOFF_CAPABILITY.
+  'conversation-handoff',
   // A phone's New chat as this machine's own (2026-10-05). They name gateway
   // tools' arguments and answers, not the conversation lane, so they carry no
   // `conversation-` prefix and are not the protocol package's to list:

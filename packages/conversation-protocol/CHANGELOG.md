@@ -13,6 +13,17 @@
 
 ### Added
 
+- **A paired device can hand a chat off.** `CONVERSATION_HANDOFF_CAPABILITY`
+  (`conversation-handoff`) names a desktop that takes the `handoff` command
+  and hands the chat off to a fresh session as its own Handoff does: the
+  chat's messages written to a file there, the provider session let go, and
+  the next message pointing a new one at the file. A listed
+  `ConversationThread` says which chats can, as `capabilities.handoff`.
+  `parseConversationClientMessage` keeps a `handoff` that carries a command
+  id; `parseConversationServerFrame` keeps `capabilities.handoff` when it is
+  a boolean. A desktop without the capability refuses the kind as
+  `unsupported_command`. The pinned files are unchanged.
+
 - **One agent a chat spawned can be stopped by itself.**
   `CONVERSATION_STOP_SUBAGENT_CAPABILITY` (`conversation-stop-subagent`)
   names a desktop that takes the `stopSubagent` command (`toolUseId`: the

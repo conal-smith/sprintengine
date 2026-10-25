@@ -112,6 +112,9 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
           }
         : null
     }
+    if (command.kind === 'handoff') {
+      return id(value.commandId) ? { type: 'command', commandId: value.commandId, command: { kind: 'handoff' } } : null
+    }
     // A steer is read as the send it rides on, and is never one held for
     // later: the two ask for opposite things.
     if (command.kind === 'send' && command.steer !== undefined) {
@@ -200,7 +203,8 @@ export function explainRejectedConversationMessage(value: unknown): Conversation
   return rejection.code === 'unsupported_command' &&
     (rejection.commandKind === 'resolvePlan' ||
       rejection.commandKind === 'cancelQueued' ||
-      rejection.commandKind === 'stopSubagent')
+      rejection.commandKind === 'stopSubagent' ||
+      rejection.commandKind === 'handoff')
     ? { ...rejection, code: 'invalid_frame', message: 'Unsupported conversation frame.' }
     : rejection
 }

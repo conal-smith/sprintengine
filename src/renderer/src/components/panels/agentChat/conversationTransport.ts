@@ -166,9 +166,10 @@ export type ConversationTransport = {
   /** Take back a message that machine holds, by its id there. */
   cancelQueued?(input: { queuedId: string }): Promise<ConversationTransportResult>
   /**
-   * A sent image by the reference its `user_message` recorded. Absent for a
-   * remote conversation: the images are in the other machine's store, so a
-   * bubble there shows its images only while the send that carried them is live.
+   * A sent image by the reference its `user_message` recorded. A remote
+   * conversation's are in the other machine's store, and are asked of it
+   * (`conversation-message-images`); a machine that does not serve them
+   * answers that it cannot, and the bubble says the image is over there.
    */
   attachment?(input: ConversationAttachmentInput): Promise<ConversationAttachmentResult>
   /**
@@ -179,8 +180,10 @@ export type ConversationTransport = {
   rewind?(input: ConversationRewindInput): Promise<ConversationRewindResult>
   /**
    * Hand the chat off to a fresh session pointed at a file of its messages,
-   * instead of compacting it. Absent where the transport cannot; offered only
-   * where the provider declares `handoff` as well.
+   * instead of compacting it. A paired machine's chat has it too, and its
+   * session declares `handoff` only where that machine takes the command
+   * (`conversation-handoff`). Offered only where the session declares
+   * `handoff` as well.
    */
   handoff?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   /**
@@ -475,6 +478,13 @@ export function createRemoteConversationTransport(input: {
     // as able (the pane's session says `stopSubagent`).
     stopSubagent: async (input) =>
       commandResult(await window.api.meshConversationStopSubagent({ key, toolUseId: input.toolUseId })),
+    // Offered only where the machine takes it and lists the chat's provider as
+    // able (the pane's session says `handoff`). The file is written over
+    // there, so its path means nothing here.
+    handoff: async () => {
+      const handed = await window.api.meshConversationHandoff({ key })
+      return handed.ok ? { ok: true, path: '' } : { ok: false, message: handed.message }
+    },
     respond: async (response) => {
       if (response.answers && response.approved)
         return commandResult(
@@ -502,6 +512,13 @@ export function createRemoteConversationTransport(input: {
       return result.ok
         ? { ok: true, src: result.dataUrl }
         : { ok: false, unsupported: result.code === 'images_unsupported', message: result.message }
+    },
+    attachment: async (stored) => {
+      const result = await window.api.meshConversationAttachment({ key, ref: stored.ref })
+      const picture = result.ok ? /^data:([^;,]+);base64,(.*)$/su.exec(result.dataUrl) : null
+      return picture
+        ? { ok: true, mediaType: picture[1]!, dataBase64: picture[2]! }
+        : { ok: false, message: result.ok ? 'The picture could not be read.' : result.message }
     },
     // A chat followed from a paired machine still reads this window's Studio
     // for providers, files, plans and command lists, as it always has.

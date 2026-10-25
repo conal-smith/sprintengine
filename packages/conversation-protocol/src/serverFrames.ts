@@ -60,6 +60,12 @@ export type ConversationThread = Omit<ConversationWireThread, 'capabilities'> & 
      * `conversation-stop-subagent`. Absent means unknown.
      */
     stopSubagent?: boolean
+    /**
+     * The chat's provider hands a chat off to a fresh session (a `handoff`
+     * command), from a desktop that advertises `conversation-handoff`.
+     * Absent means unknown.
+     */
+    handoff?: boolean
   }
   /**
    * The machine the chat runs on. Absent from a desktop built before it was
@@ -596,6 +602,7 @@ function thread(value: unknown): ConversationThread | null {
               : {}),
             ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
             ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
+            ...(typeof flags.handoff === 'boolean' ? { handoff: flags.handoff } : {}),
           },
         }
       : {}),

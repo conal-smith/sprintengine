@@ -106,6 +106,8 @@ async function mountRemote({
   queuedSends = false,
   steerSends = false,
   stopSubagents = false,
+  handoff = false,
+  sendSkills = false,
   capabilities = thread.capabilities,
   listed = {},
   createPullRequest = false,
@@ -119,6 +121,10 @@ async function mountRemote({
   steerSends?: boolean
   /** The machine stops one agent of a chat by itself (`conversation-stop-subagent`). */
   stopSubagents?: boolean
+  /** The machine hands its chats off to a fresh session (`conversation-handoff`). */
+  handoff?: boolean
+  /** The machine takes skills with a message (`conversation-send-skills`). */
+  sendSkills?: boolean
   /** What the machine lists the chat as able to do; null for a chat at rest there, listed with no session. */
   capabilities?: MeshConversation['capabilities'] | null
   /** More of what the machine lists about the chat: its branch, changed files, worktree and pull requests. */
@@ -169,6 +175,8 @@ async function mountRemote({
       queuedSends,
       steerSends,
       stopSubagents,
+      handoff,
+      sendSkills,
       createPullRequest,
     })),
     // Create PR on the machine the chat runs on: each step answers as that
@@ -242,6 +250,7 @@ async function mountRemote({
     })),
     meshConversationResolveApproval: vi.fn(async () => ({ ok: true })),
     meshConversationInterrupt: vi.fn(async () => ({ ok: true })),
+    meshConversationHandoff: vi.fn(async (_input: { key: MeshConversationKey }) => ({ ok: true as const })),
     meshConversationStopSubagent: vi.fn(async (_input: { key: MeshConversationKey; toolUseId: string }) => ({
       ok: true,
     })),
@@ -409,6 +418,40 @@ test('a conversation on a paired machine renders in the chat view and is driven 
     // a picker showing a guess would be worse than none.
     expect(chat.host.textContent).not.toContain('Bypass permissions')
     expect(chat.host.textContent).not.toContain('CLI default')
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('an approval over there can be allowed for the rest of the conversation, never for good', async () => {
+  const chat = await mountRemote({ access: 'operate' })
+  try {
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('approval_resolved', { requestId: 'approval-1', approved: true }) })
+      chat.emit({
+        type: 'event',
+        event: event('approval_requested', {
+          turnId: 'a',
+          requestId: 'approval-2',
+          action: 'Bash',
+          summary: 'git status',
+          input: { command: 'git status' },
+          // The folder the request runs in on that machine.
+          cwd: '/Users/conal/project',
+        }),
+      })
+    })
+    await chat.act(async () =>
+      chat.host.querySelector<HTMLButtonElement>('button[aria-label="Remember permission"]')!.click(),
+    )
+    const rows = Array.from(chat.document.querySelectorAll<HTMLElement>('[data-menu-item="true"]'))
+    expect(rows.map((row) => row.textContent?.trim())).toEqual(['Allow "git status …" for this conversation'])
+    await chat.act(async () => rows[0]!.click())
+    expect(chat.api.meshConversationResolveApproval).toHaveBeenCalledWith({
+      key,
+      requestId: 'approval-2',
+      decision: 'conversation',
+    })
   } finally {
     await chat.unmount()
   }
@@ -643,6 +686,80 @@ test('a pairing that may only follow sees no Stop on an agent', async () => {
     expect(agentStops(chat)).toHaveLength(0)
   } finally {
     await chat.unmount()
+  }
+})
+
+/** What the composer's "+" offers, by each row's words. */
+async function optionsMenu(chat: Awaited<ReturnType<typeof mountRemote>>): Promise<string[]> {
+  const plus = chat.host.querySelector<HTMLButtonElement>('button[aria-label="Options"]')
+  expect(plus, 'the composer has its "+"').not.toBeNull()
+  await chat.act(async () => plus!.click())
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-menu-item="true"]')).map(
+    (row) => row.textContent?.trim() ?? '',
+  )
+}
+
+test('a chat over there offers that machine\'s skills from the "+", where it takes them with a message', async () => {
+  const takes = await mountRemote({ access: 'operate', sendSkills: true })
+  try {
+    expect((await optionsMenu(takes)).some((row) => row.startsWith('Skills'))).toBe(true)
+  } finally {
+    await takes.unmount()
+  }
+  const older = await mountRemote({ access: 'operate', sendSkills: false })
+  try {
+    expect((await optionsMenu(older)).some((row) => row.startsWith('Skills'))).toBe(false)
+  } finally {
+    await older.unmount()
+  }
+})
+
+/** The chat's cache went cold long ago, with the whole conversation to re-read. */
+async function coldCache(chat: Awaited<ReturnType<typeof mountRemote>>) {
+  await settleTurn(chat)
+  await chat.act(async () => {
+    chat.emit({
+      type: 'event',
+      event: event('usage_updated', { promptCache: { ttl: '5m', cached: true, recacheTokens: 221_000 } }),
+    })
+  })
+}
+const handoffButton = (chat: Awaited<ReturnType<typeof mountRemote>>) =>
+  Array.from(chat.host.querySelectorAll<HTMLButtonElement>('button')).find(
+    (button) => button.textContent?.trim() === 'Handoff',
+  )
+
+test('a cold chat over there offers Handoff, which that machine carries out', async () => {
+  const chat = await mountRemote({
+    access: 'operate',
+    handoff: true,
+    capabilities: { ...thread.capabilities!, handoff: true },
+  })
+  try {
+    await coldCache(chat)
+    const button = handoffButton(chat)
+    expect(button, 'the cache notice leads with Handoff').toBeDefined()
+    await chat.act(async () => button!.click())
+    expect(chat.api.meshConversationHandoff).toHaveBeenCalledExactlyOnceWith({ key })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('no Handoff where the machine cannot hand a chat off, lists its chat as unable, or the pairing only follows', async () => {
+  for (const options of [
+    { access: 'operate' as const, handoff: false, capabilities: { ...thread.capabilities!, handoff: true } },
+    { access: 'operate' as const, handoff: true, capabilities: { ...thread.capabilities!, handoff: false } },
+    { access: 'operate' as const, handoff: true, capabilities: thread.capabilities },
+    { access: 'read' as const, handoff: true, capabilities: { ...thread.capabilities!, handoff: true } },
+  ]) {
+    const chat = await mountRemote(options)
+    try {
+      await coldCache(chat)
+      expect(handoffButton(chat)).toBeUndefined()
+    } finally {
+      await chat.unmount()
+    }
   }
 })
 

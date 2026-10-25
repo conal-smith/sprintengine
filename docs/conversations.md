@@ -794,6 +794,14 @@ in the app's own process.
   offers "Stop this agent", as a local chat's do, and it stops that agent
   alone over there. The machine's turn Stop spares a Claude chat's agents, so
   this is how one is stopped from here.
+- **Handoff works over there too** (owner report 2026-10-25). Where the
+  machine advertises `conversation-handoff` and lists the chat's provider as
+  able (`capabilities.handoff`), a cold chat's cache notice leads with
+  Handoff, as a local chat's does, and the machine hands the chat off: the
+  file of its messages is written on that machine, beside the transcript, and
+  the next message from either machine starts the new session there. A repeat
+  of the same command after a dropped connection is the same handoff. A
+  machine without the capability offers Compact alone.
 
 ### Terminals stay on the machine
 

@@ -146,6 +146,12 @@ and adds, each behind its capability:
   can (a listed thread's `capabilities.stopSubagent`), and leaves the chat,
   its turn and its other agents running. A desktop without it refuses the
   kind as `unsupported_command`.
+- `conversation-handoff`: `handoff` hands a chat off to a fresh session
+  instead of compacting it, where the chat's provider can (a listed thread's
+  `capabilities.handoff`): the desktop writes the chat's messages to a file,
+  lets the provider session go, and the next message starts a new one pointed
+  at the file. Refused while anything in the chat is running. A desktop
+  without it refuses the kind as `unsupported_command`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

@@ -77,6 +77,14 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as
  */
 export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent' as const
 /**
+ * A chat may be handed off to a fresh session instead of compacted, as its
+ * Handoff does on the desktop: `handoff` writes the chat's messages to a file
+ * there and lets the provider session go, and the next message starts a new
+ * one pointed at the file. A listed chat says whether its provider can
+ * (`capabilities.handoff`).
+ */
+export const CONVERSATION_HANDOFF_CAPABILITY = 'conversation-handoff' as const
+/**
  * The pictures a person sent with a message are served beside the step
  * pictures `conversation-images` names: `GET conversation-image` takes
  * `attachment`, the `ref` a `user_message`'s `attachments` entry records,
@@ -121,6 +129,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_MESSAGE_FILES_CAPABILITY,
   CONVERSATION_IMAGE_DOWNSCALE_CAPABILITY,
   CONVERSATION_STOP_SUBAGENT_CAPABILITY,
+  CONVERSATION_HANDOFF_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

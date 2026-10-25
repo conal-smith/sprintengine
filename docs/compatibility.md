@@ -444,6 +444,17 @@ sends it only where it is advertised (a desktop following another machine's
 chat refuses it there in words first). The Studio RPC advertises it too: its
 `conversation.stopSubagent` method, an owner's for now, reads the lane's own
 validator and reaches the same host.
+A chat handed off from a paired device is the `conversation-handoff`
+capability (2026-10-25): a `handoff` command, carrying nothing but its command
+id, hands the chat off to a fresh session as the desktop's own Handoff does,
+the file of its messages written on the desktop and its path kept there. Each
+listed chat says whether its provider can as `capabilities.handoff`, an
+optional boolean. The desktop answers a repeat of the same command id with
+the first answer, and keeps no refusal, so a press refused mid-turn may go
+once the turn is over. All of it is additive: a desktop without the
+capability refuses the kind as `unsupported_command`, and a desktop following
+another machine's chat refuses it there in words first. The Studio RPC
+advertises it too, through the `conversation.handoff` method it already had.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

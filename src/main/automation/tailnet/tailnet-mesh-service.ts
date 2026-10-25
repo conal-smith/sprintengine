@@ -38,6 +38,7 @@ import {
   type MeshConversationCommandResult,
   type MeshConversationFrame,
   type MeshConversationImageResult,
+  type MeshConversationKey,
   type MeshConversationListResult,
 } from '../../../shared/tailnet-mesh'
 import type {
@@ -418,6 +419,13 @@ export type TailnetMeshService = {
    * last handshake did not name `conversation-images`.
    */
   conversationToolImage(input: { key: unknown; toolUseId: unknown }): Promise<MeshConversationImageResult>
+  /**
+   * A picture the person sent with a message of a followed conversation, by
+   * the `ref` its `user_message` recorded, fetched from the machine it runs
+   * on. Refused without asking for a machine whose last handshake did not
+   * name `conversation-message-images`.
+   */
+  conversationAttachment(input: { key: unknown; ref: unknown }): Promise<MeshConversationImageResult>
   shutdown(): void
 }
 
@@ -2216,6 +2224,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'workspace-extensions'),
           steerSends: tailnetPeerSupports(identity.value.capabilities, 'conversation-steer-sends'),
           stopSubagents: tailnetPeerSupports(identity.value.capabilities, 'conversation-stop-subagent'),
+          handoff: tailnetPeerSupports(identity.value.capabilities, 'conversation-handoff'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2245,7 +2254,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   async function fetchPicture(
     connection: StoredMeshConnection,
     key: { workspaceId: string; agentId: string },
-    toolUseId: string,
+    picture: { toolUseId: string } | { attachment: string },
     unsupported: string,
   ): Promise<MeshConversationImageResult> {
     const fetched = await fetchRemoteConversationImage({
@@ -2253,7 +2262,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       token: connection.deviceToken,
       workspaceId: key.workspaceId,
       agentId: key.agentId,
-      toolUseId,
+      ...picture,
     })
     if (!fetched.ok) {
       if (fetched.code === 'unauthorized')
@@ -2267,6 +2276,59 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       ok: true,
       dataUrl: `data:${fetched.value.mediaType};base64,${fetched.value.bytes.toString('base64')}`,
     }
+  }
+
+  // A picture of a followed conversation, kept once fetched: a step's (by
+  // its call) or one the person sent (by its message's `ref`), each behind
+  // the capability that serves it.
+  async function keptPicture(
+    key: MeshConversationKey,
+    picture: { toolUseId: string } | { attachment: string },
+    capability: 'conversation-images' | 'conversation-message-images',
+  ): Promise<MeshConversationImageResult> {
+    const connection = connectionFor(key.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    // A machine that said what it can do and left this out cannot serve it.
+    // One that has not said yet is asked, and answers for itself.
+    const unsupported = `This picture is on ${connection.machineName}, which does not share pictures yet.`
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, capability))
+      return { ok: false, code: 'images_unsupported', message: unsupported }
+    const id = JSON.stringify([
+      connection.id,
+      key.workspaceId,
+      key.agentId,
+      'attachment' in picture ? `attachment:${picture.attachment}` : picture.toolUseId,
+    ])
+    const kept = pictures.get(id)
+    if (kept) {
+      // The most recently shown stays longest.
+      pictures.delete(id)
+      pictures.set(id, kept)
+      return kept.result
+    }
+    const entry: KeptPicture = {
+      connectionId: connection.id,
+      result: fetchPicture(connection, key, picture, unsupported),
+      chars: 0,
+    }
+    pictures.set(id, entry)
+    void entry.result.then((answer) => {
+      if (pictures.get(id) !== entry) return
+      // Only a picture is kept: a failure may be gone on the next look.
+      if (!answer.ok) {
+        pictures.delete(id)
+        return
+      }
+      entry.chars = answer.dataUrl.length
+      pictureChars += entry.chars
+      for (const [oldest, older] of pictures) {
+        if (pictureChars <= MAX_PICTURE_CHARS || older === entry) break
+        pictures.delete(oldest)
+        pictureChars -= older.chars
+      }
+    })
+    return entry.result
   }
 
   async function conversationCommand(input: {
@@ -2289,6 +2351,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           ok: false,
           code: 'unsupported_command',
           message: `${connection.machineName} cannot stop one agent from here yet. Update SprintEngine Studio there.`,
+        }
+    }
+    if (command?.kind === 'handoff') {
+      const connection = connectionFor(key.connectionId)
+      if (connection && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'conversation-handoff'))
+        return {
+          ok: false,
+          code: 'unsupported_command',
+          message: `${connection.machineName} cannot hand a chat off from here yet. Update SprintEngine Studio there.`,
         }
     }
     const result = await remoteConversations.command(key, input.command)
@@ -2569,44 +2640,14 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       const key = meshConversationKeyOf(input.key)
       if (!key || typeof input.toolUseId !== 'string' || !input.toolUseId || input.toolUseId.length > 200)
         return { ok: false, code: 'invalid_arguments', message: 'Name the conversation and the tool call.' }
-      const connection = connectionFor(key.connectionId)
-      if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
-      // A machine that said what it can do and left this out cannot serve it.
-      // One that has not said yet is asked, and answers for itself.
-      const unsupported = `This picture is on ${connection.machineName}, which does not share pictures yet.`
-      const capabilities = peerCapabilities.get(connection.id)
-      if (capabilities && !tailnetPeerSupports(capabilities, 'conversation-images'))
-        return { ok: false, code: 'images_unsupported', message: unsupported }
-      const id = JSON.stringify([connection.id, key.workspaceId, key.agentId, input.toolUseId])
-      const kept = pictures.get(id)
-      if (kept) {
-        // The most recently shown stays longest.
-        pictures.delete(id)
-        pictures.set(id, kept)
-        return kept.result
-      }
-      const entry: KeptPicture = {
-        connectionId: connection.id,
-        result: fetchPicture(connection, key, input.toolUseId, unsupported),
-        chars: 0,
-      }
-      pictures.set(id, entry)
-      void entry.result.then((answer) => {
-        if (pictures.get(id) !== entry) return
-        // Only a picture is kept: a failure may be gone on the next look.
-        if (!answer.ok) {
-          pictures.delete(id)
-          return
-        }
-        entry.chars = answer.dataUrl.length
-        pictureChars += entry.chars
-        for (const [oldest, older] of pictures) {
-          if (pictureChars <= MAX_PICTURE_CHARS || older === entry) break
-          pictures.delete(oldest)
-          pictureChars -= older.chars
-        }
-      })
-      return entry.result
+      return keptPicture(key, { toolUseId: input.toolUseId }, 'conversation-images')
+    },
+
+    async conversationAttachment(input): Promise<MeshConversationImageResult> {
+      const key = meshConversationKeyOf(input.key)
+      if (!key || typeof input.ref !== 'string' || !input.ref || input.ref.length > 400)
+        return { ok: false, code: 'invalid_arguments', message: 'Name the conversation and the picture.' }
+      return keptPicture(key, { attachment: input.ref }, 'conversation-message-images')
     },
 
     async conversationTurnDiff(input): Promise<ConversationTurnDiffResult> {

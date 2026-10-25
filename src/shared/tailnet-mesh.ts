@@ -481,6 +481,11 @@ export type MeshConversationFrame = ConversationSessionFrame | MeshConversationL
  * that chat's provider can (its listed `capabilities.stopSubagent`). False for
  * a machine that does not, where an agent's lane offers no Stop.
  *
+ * `handoff`: the machine advertises `conversation-handoff` — a chat of its own
+ * may be handed off to a fresh session from here, where that chat's provider
+ * can (its listed `capabilities.handoff`). False for a machine that does not,
+ * where the cache notice offers Compact alone.
+ *
  * `createPullRequest`: the machine advertises `chat-create-pull-request` — a
  * chat of its own offers Create PR here, every step run over there.
  *
@@ -502,6 +507,7 @@ export type MeshConversationListResult =
       sendSkills?: boolean
       steerSends?: boolean
       stopSubagents?: boolean
+      handoff?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean
@@ -524,6 +530,7 @@ export type MeshConversationCommand =
   | { kind: 'send'; message: string; queue: true }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'handoff' }
 
 /** `notice` qualifies an accepted command, e.g. that a model switch applies from the next turn. */
 export type MeshConversationCommandResult = { ok: true; notice?: string } | { ok: false; code: string; message: string }
@@ -591,3 +598,4 @@ export const MESH_CONVERSATION_SEND_CHANNEL = 'mesh:conversation-send'
 export const MESH_CONVERSATION_TOOL_DETAIL_CHANNEL = 'mesh:conversation-tool-detail'
 export const MESH_CONVERSATION_TURN_DIFF_CHANNEL = 'mesh:conversation-turn-diff'
 export const MESH_CONVERSATION_TOOL_IMAGE_CHANNEL = 'mesh:conversation-tool-image'
+export const MESH_CONVERSATION_ATTACHMENT_CHANNEL = 'mesh:conversation-attachment'

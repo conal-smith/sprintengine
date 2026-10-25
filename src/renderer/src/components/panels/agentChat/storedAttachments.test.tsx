@@ -23,6 +23,13 @@ test('a replayed bubble reads its images back by reference, and says so when one
           ? { ok: true, mediaType: 'image/png', dataBase64: 'Zm9v' }
           : { ok: false, message: 'That attachment is no longer on this machine.' }
       },
+      // The machine a remote chat runs on serves its own, as a data URL.
+      meshConversationAttachment: async ({ ref }: { ref: string }) => {
+        reads.push(`remote:${ref}`)
+        return ref.endsWith('kept.png')
+          ? { ok: true, dataUrl: 'data:image/png;base64,YmF6' }
+          : { ok: false, code: 'images_unsupported', message: 'This picture is on mac-mini.' }
+      },
     },
   })
   const { act } = await import('react')
@@ -58,7 +65,8 @@ test('a replayed bubble reads its images back by reference, and says so when one
     })
     expect(reads.filter((ref) => ref === kept.ref)).toHaveLength(1)
 
-    // A conversation on another machine keeps its images there: nothing is read here.
+    // A conversation on another machine keeps its images there, and they are
+    // asked of it, never read from this machine's store.
     const remote = createRemoteConversationTransport({
       key: { connectionId: 'mac-mini', workspaceId: 'w', agentId: 'a' },
       machineName: 'mac-mini',
@@ -71,9 +79,19 @@ test('a replayed bubble reads its images back by reference, and says so when one
         </ConversationTransportProvider>,
       )
     })
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,YmF6')
+    expect(reads).toContain('remote:f/remote-kept.png')
+    expect(reads).not.toContain('f/remote-kept.png')
+    // One that machine cannot serve still says an image was sent.
+    await act(async () => {
+      root.render(
+        <ConversationTransportProvider value={remote}>
+          <StoredAttachmentThumbnail attachment={{ ...kept, ref: 'f/remote-old.png' }} className="h-16 w-16" />
+        </ConversationTransportProvider>,
+      )
+    })
     expect(host.querySelector('img')).toBeNull()
     expect(host.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('cat.png, not available')
-    expect(reads).not.toContain('f/remote-kept.png')
   } finally {
     await act(async () => root.unmount())
     dom.window.close()

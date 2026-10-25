@@ -44,6 +44,7 @@ import {
   MESH_CONVERSATION_SEND_CHANNEL,
   MESH_CONVERSATION_TOOL_DETAIL_CHANNEL,
   MESH_CONVERSATION_TOOL_IMAGE_CHANNEL,
+  MESH_CONVERSATION_ATTACHMENT_CHANNEL,
   MESH_CONVERSATION_TURN_DIFF_CHANNEL,
   MESH_CONVERSATION_UNFOLLOW_CHANNEL,
   type MeshConversationCommand,
@@ -214,6 +215,7 @@ export const meshApi = {
   meshConversationInterrupt: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'interrupt' }),
   meshConversationStopSubagent: (input: { key: MeshConversationKey; toolUseId: string }) =>
     command(input.key, { kind: 'stopSubagent', toolUseId: input.toolUseId }),
+  meshConversationHandoff: (input: { key: MeshConversationKey }) => command(input.key, { kind: 'handoff' }),
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -244,6 +246,11 @@ export const meshApi = {
     toolUseId: string
   }): Promise<MeshConversationImageResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_TOOL_IMAGE_CHANNEL, input) as Promise<MeshConversationImageResult>,
+  meshConversationAttachment: (input: {
+    key: MeshConversationKey
+    ref: string
+  }): Promise<MeshConversationImageResult> =>
+    ipcRenderer.invoke(MESH_CONVERSATION_ATTACHMENT_CHANNEL, input) as Promise<MeshConversationImageResult>,
   // A remote chat's Create PR: each step runs on the chat's machine.
   meshConversationPullRequestState: (input: { key: MeshConversationKey }): Promise<MeshPullRequestStateResult> =>
     ipcRenderer.invoke(MESH_CONVERSATION_PULL_REQUEST_STATE_CHANNEL, input) as Promise<MeshPullRequestStateResult>,
@@ -295,6 +302,7 @@ export const meshApi = {
   | 'meshConversationCancelQueued'
   | 'meshConversationInterrupt'
   | 'meshConversationStopSubagent'
+  | 'meshConversationHandoff'
   | 'meshConversationResolveApproval'
   | 'meshConversationAnswerQuestion'
   | 'meshConversationSetPermissionPreset'
@@ -302,6 +310,7 @@ export const meshApi = {
   | 'meshConversationToolDetail'
   | 'meshConversationTurnDiff'
   | 'meshConversationToolImage'
+  | 'meshConversationAttachment'
   | 'meshConversationPullRequestState'
   | 'meshConversationPullRequestDraft'
   | 'meshConversationPullRequestDraftCancel'

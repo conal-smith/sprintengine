@@ -13,7 +13,9 @@ import { createMockConversationProvider } from '../../providers/mock-conversatio
 import { createConversationGatewayHost } from './tailnet-conversation-host'
 import { createTailnetDeviceStore } from './tailnet-devices'
 import { createTailnetGatewayServer, type TailnetGatewayServer } from './tailnet-gateway-server'
+import { createTailnetMeshService } from './tailnet-mesh-service'
 import { createTailnetPeerResolver } from './tailnet-peer-identity'
+import { pairingUrl } from './tailnet-service'
 import {
   TAILNET_CAPABILITIES,
   TAILNET_CONVERSATION_IMAGE_PATH,
@@ -42,6 +44,7 @@ let server: TailnetGatewayServer
 let port: number
 let reader: string
 let noConversations: string
+let devices: ReturnType<typeof createTailnetDeviceStore>
 /** What each sent picture was recorded as, by the name it was sent under. */
 const refs = new Map<string, string>()
 
@@ -95,7 +98,7 @@ beforeAll(async () => {
   }
   assert.equal(refs.size, 4, 'every sent picture was kept')
 
-  const devices = createTailnetDeviceStore({ resolveUserDataDir: () => devicesDir })
+  devices = createTailnetDeviceStore({ resolveUserDataDir: () => devicesDir })
   server = createTailnetGatewayServer({
     bindAddress: '127.0.0.1',
     port: 0,
@@ -238,4 +241,31 @@ test('a device without a conversation grant is told which scope it lacks', async
   const answer = await get(sentPath(refs.get('IMG_0001.png')!), { token: noConversations })
   assert.equal(answer.status, 403)
   assert.equal(errorOf(answer).code, 'tailnet_scope_required')
+})
+
+// ── A paired desktop showing a remote chat's sent pictures ──────────────────
+
+test('a paired desktop fetches a sent picture by its ref, as a data URL, and is told when one is not there', async () => {
+  const meshDir = mkdtempSync(join(tmpdir(), 'conversation-message-images-mesh-'))
+  const mesh = createTailnetMeshService({
+    resolveUserDataDir: () => meshDir,
+    resolveDeviceName: () => 'dev-macbook-air',
+    resolvePeerName: async () => null,
+  })
+  try {
+    const offer = devices.offerPairing({ scopes: ['conversation:read'] })
+    const paired = await mesh.pair({ pairingUrl: pairingUrl('127.0.0.1', port, offer.token) })
+    assert.ok(paired.ok, paired.ok ? '' : paired.message)
+    const key = { connectionId: paired.connection.id, workspaceId, agentId }
+    const photo = await mesh.conversationAttachment({ key, ref: refs.get('IMG_0001.png')! })
+    assert.deepEqual(photo, { ok: true, dataUrl: `data:image/png;base64,${PNG.toString('base64')}` })
+    // Another chat's picture is not this chat's to show.
+    const elsewhere = await mesh.conversationAttachment({ key, ref: refs.get('IMG_0004.png')! })
+    assert.equal(!elsewhere.ok && elsewhere.code, 'unknown_image')
+    const invalid = await mesh.conversationAttachment({ key, ref: '' })
+    assert.equal(!invalid.ok && invalid.code, 'invalid_arguments')
+  } finally {
+    mesh.shutdown()
+    rmSync(meshDir, { recursive: true, force: true })
+  }
 })

@@ -1092,6 +1092,9 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationCommandResult>
+  // Hand a chat over there off to a fresh session, as its Handoff does there.
+  // Needs `conversation-handoff` there.
+  meshConversationHandoff: (input: { key: MeshConversationKey }) => Promise<MeshConversationCommandResult>
   meshConversationResolveApproval: (input: {
     key: MeshConversationKey
     requestId: string
@@ -1128,6 +1131,10 @@ export type ElectronApi = {
     key: MeshConversationKey
     toolUseId: string
   }) => Promise<MeshConversationImageResult>
+  // A picture the person sent with a message of a paired machine's chat, by
+  // the `ref` its message recorded, as a data URL. Needs
+  // `conversation-message-images` there.
+  meshConversationAttachment: (input: { key: MeshConversationKey; ref: string }) => Promise<MeshConversationImageResult>
   // A paired machine's chat's Create PR (`chat-create-pull-request`), the
   // steps of the shell's own below, each run on that machine in the chat's
   // checkout there. A pull request it creates is recorded there as the chat's.

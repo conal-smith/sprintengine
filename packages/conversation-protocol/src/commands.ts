@@ -70,6 +70,15 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   a chat whose provider cannot stop one by itself (the listed chat's
  *   `capabilities.stopSubagent`). Needs `conversation-stop-subagent`; a
  *   desktop without it refuses the kind as `unsupported_command`.
+ * - `handoff` hands the chat off to a fresh session instead of compacting it,
+ *   as its own Handoff does on the desktop: the chat's messages are written to
+ *   a file on the desktop, the provider session is let go, and the next
+ *   message starts a new one pointed at the file (a `context_handed_off`
+ *   event records it). Refused while a turn runs, a request waits on the
+ *   person, or the chat has an agent, a shell or a monitor running, and for a
+ *   chat whose provider cannot (the listed chat's `capabilities.handoff`).
+ *   Never resumes a chat at rest. Needs `conversation-handoff`; a desktop
+ *   without it refuses the kind as `unsupported_command`.
  * - `send` may say when the person wrote it, `composedAt` (epoch ms, the
  *   client's clock), beside any of the above. A desktop refuses one written
  *   more than `CONVERSATION_STALE_SEND_MS` ago as `stale`, recording nothing,
@@ -97,6 +106,7 @@ export type ConversationCommand =
   | { kind: 'resolvePlan'; requestId: string; decision: ConversationPlanDecision }
   | { kind: 'cancelQueued'; queuedId: string }
   | { kind: 'stopSubagent'; toolUseId: string }
+  | { kind: 'handoff' }
 
 export type ConversationCommandKind = ConversationCommand['kind']
 
@@ -137,6 +147,7 @@ export const CONVERSATION_COMMAND_KINDS: readonly ConversationCommandKind[] = [
   'setModel',
   'cancelQueued',
   'stopSubagent',
+  'handoff',
 ]
 
 // ── Messages the desktop holds ──────────────────────────────────────────────
