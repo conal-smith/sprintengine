@@ -37,7 +37,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at GitHub's [report abuse](https://github.com/contact/report-abuse) form, which delivers the report privately to GitHub and to the maintainers of this repository. There is no published contact email for this project; for matters that do not need to stay private you may instead open an issue on the [issue tracker](https://github.com/sprintengine/studio/issues). All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at GitHub's [report abuse](https://github.com/contact/report-abuse) form, which delivers the report privately to GitHub and to the maintainers of this repository. There is no published contact email for this project; for matters that do not need to stay private you may instead open an issue on the [issue tracker](https://github.com/conal-smith/sprintengine/issues). All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

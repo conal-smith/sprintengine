@@ -9,10 +9,10 @@
   "homepage": "https://sprintengine.ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sprintengine/studio.git"
+    "url": "git+https://github.com/conal-smith/sprintengine.git"
   },
   "bugs": {
-    "url": "https://github.com/sprintengine/studio/issues"
+    "url": "https://github.com/conal-smith/sprintengine/issues"
   },
   "engines": {
     "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
@@ -279,8 +279,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "sprintengine",
-      "repo": "studio",
+      "owner": "conal-smith",
+      "repo": "sprintengine",
       "releaseType": "release"
     },
     "protocols": [
