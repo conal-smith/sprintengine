@@ -13,7 +13,14 @@ function harness(
     logs: '/Users/dev/Library/Logs/Studio',
   }
   const windows: FakeWindow[] = []
-  const banners: Array<{ title: string; body?: string; closed: boolean; shown: boolean; click?: () => void }> = []
+  const banners: Array<{
+    title: string
+    body?: string
+    timeoutType?: string
+    closed: boolean
+    shown: boolean
+    click?: () => void
+  }> = []
   // A keychain whose ciphertext is not the plaintext, as the real one's is not.
   const scramble = (bytes: Buffer): Buffer => Buffer.from(bytes.map((byte) => byte ^ 0x5a))
   const safeStorage = {
@@ -28,8 +35,14 @@ function harness(
     static isSupported(): boolean {
       return options.notifications ?? true
     }
-    constructor(init: { title?: string; body?: string }) {
-      this.record = { title: init.title ?? '', body: init.body, closed: false, shown: false }
+    constructor(init: { title?: string; body?: string; timeoutType?: string }) {
+      this.record = {
+        title: init.title ?? '',
+        body: init.body,
+        timeoutType: init.timeoutType,
+        closed: false,
+        shown: false,
+      }
       banners.push(this.record)
     }
     on(event: string, listener: () => void) {
@@ -135,4 +148,18 @@ test('a notice with the same key replaces the banner, and a click runs its actio
   const unsupported = harness({ notifications: false })
   unsupported.platform.notifier.notify({ key: 'pair', title: 'Waiting' })
   assert.equal(unsupported.banners.length, 0)
+})
+
+test('on Windows a notice that opens something stays up until it is clicked or dismissed', () => {
+  const windows = harness({ platform: 'win32' })
+  windows.platform.notifier.notify({ key: 'done', title: 'Finished', onActivate: () => {} })
+  windows.platform.notifier.notify({ key: 'info', title: 'Paired' })
+  assert.deepEqual(
+    windows.banners.map((banner) => banner.timeoutType),
+    ['never', undefined],
+  )
+
+  const mac = harness({ platform: 'darwin' })
+  mac.platform.notifier.notify({ key: 'done', title: 'Finished', onActivate: () => {} })
+  assert.equal(mac.banners[0].timeoutType, undefined)
 })
