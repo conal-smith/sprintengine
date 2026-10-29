@@ -73,7 +73,9 @@ function classifyText(prompt: string, askpassPrompt: string): ClassifiedPrompt {
   if (/^\([^()\s]+@[^()\s]+\) /u.test(text)) return { kind: 'remote', text }
   const authenticity = /^The authenticity of host '([^']+)' can't be established\./u.exec(text)
   if (authenticity) {
-    const key = /^(\S+) key fingerprint is (SHA256:[A-Za-z0-9+/=]+)\.?$/mu.exec(text)
+    // OpenSSH 10.0 writes "… key fingerprint is SHA256:….", the build Ubuntu
+    // 26.04 ships "… key fingerprint is: SHA256:…" with no full stop.
+    const key = /^(\S+) key fingerprint is:? (SHA256:[A-Za-z0-9+/=]+)\.?$/mu.exec(text)
     if (key && /Are you sure you want to continue connecting \(yes\/no(\/\[fingerprint\])?\)\?$/u.test(text))
       return { kind: 'host-key', text, hostKey: { host: authenticity[1]!, keyType: key[1]!, fingerprint: key[2]! } }
   }
