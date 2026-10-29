@@ -251,6 +251,7 @@ test('tailnet-pairing-roundtrip', async () => {
         'chat-delete',
         'chat-search',
         'approval-rules',
+        'scheduled-agents',
       ])
 
       // The pairing is real only if the token it produced actually drives tools.
@@ -441,6 +442,7 @@ test('tailnet-pairing-roundtrip', async () => {
         'chat-delete',
         'chat-search',
         'approval-rules',
+        'scheduled-agents',
       ])
 
       const scanned = parsePairingUrl(harness.service.offerPairing().pairingUrl ?? '')

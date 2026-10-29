@@ -17,6 +17,8 @@ import type {
 import type { ConversationSessionFrame } from './conversation-runtime'
 import { conversationPhaseWorking, phaseWithBackgroundWork } from './conversation/phase'
 import type { RepositoryIdentity } from './repository-identity'
+import type { CliPermissionPreset } from './cli-permission-preset'
+import type { ScheduledAgentView, ScheduledAgentsPause } from './scheduled-agents'
 import type { SettledChatWorktreePlan } from './ipc/settled-chats'
 import type { TailnetRemoteStatus, TailnetScope } from './tailnet'
 
@@ -318,6 +320,52 @@ export type MeshRevokeApprovalRuleResult = { ok: true; ruleId: string } | { ok: 
 
 export const MESH_APPROVAL_RULES_CHANNEL = 'mesh:approval-rules'
 export const MESH_REVOKE_APPROVAL_RULE_CHANNEL = 'mesh:revoke-approval-rule'
+
+/**
+ * A paired machine's scheduled agents (`schedule.list`, `workspace:read`),
+ * each as that machine's own Scheduled section reads it, and whether every one
+ * of them is paused. `canCreate` is whether that machine takes a New chat's
+ * schedule from here (`scheduled-agents`); one that does not is still listed
+ * and controlled.
+ */
+export type MeshScheduledAgentsResult =
+  | { ok: true; agents: ScheduledAgentView[]; pausedAll: ScheduledAgentsPause | null; canCreate: boolean }
+  | { ok: false; code: string; message: string }
+
+/** Run now, pause, resume or close one of them there (`workspace:operate`). */
+export type MeshScheduledAgentAction = 'run' | 'pause' | 'resume' | 'delete'
+
+export type MeshScheduledAgentActionResult =
+  { ok: true; id: string; action: MeshScheduledAgentAction } | { ok: false; code: string; message: string }
+
+/**
+ * A scheduled agent made on a paired machine from this New chat
+ * (`schedule.create`): the project there by one of its workspaces, and what
+ * this door would have scheduled here. `worktreeName` null runs in the
+ * project's checkout; empty has a worktree named for it there.
+ */
+export type MeshCreateScheduledAgentInput = {
+  connectionId: string
+  workspaceId: string
+  prompt: string
+  cron: string
+  timezone: string
+  /** One run, at this instant (epoch ms), instead of the cron's repeats. */
+  once?: number
+  cli: string
+  model?: string | null
+  permissionPreset?: CliPermissionPreset | null
+  worktreeName?: string | null
+  skills?: string[]
+  mcpServers?: string[]
+}
+
+export type MeshCreateScheduledAgentResult =
+  { ok: true; agent: ScheduledAgentView } | { ok: false; code: string; message: string }
+
+export const MESH_SCHEDULED_AGENTS_CHANNEL = 'mesh:scheduled-agents'
+export const MESH_SCHEDULED_AGENT_ACTION_CHANNEL = 'mesh:scheduled-agent-action'
+export const MESH_CREATE_SCHEDULED_AGENT_CHANNEL = 'mesh:create-scheduled-agent'
 
 /**
  * What deleting a settled chat on a paired machine would do, as that machine

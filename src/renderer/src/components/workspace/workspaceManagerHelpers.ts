@@ -12,6 +12,7 @@ import { sortWorkspacesByUserMessage, workspaceLastUserMessageAt } from '../../u
 import { workspaceProjectRoot } from '../../utils/workspaceWorktree'
 import { deriveWorkspaceDisplayActivity, isLiveTerminal } from '../../hooks/useTerminalSessions'
 import type { Workspace } from '../../types/workspace'
+import { remoteOriginChatWorkspaceId } from './remoteBand/remoteSessionsModel'
 import type { SessionGroup, SessionItem } from './WorkspaceActions'
 import type { ConversationSessionStatus, ConversationSessionSummary } from '../../../../shared/conversation-runtime'
 
@@ -498,4 +499,24 @@ export function newChatInheritedScope(
   const inherited = parkedFolder ?? (active ? workspaceProjectRootOf(active) : null)
   if (!inherited) return null
   return projectlessScopeOf(inherited) ?? workspaceProjectRootOf({ folderPath: inherited }) ?? inherited
+}
+
+/**
+ * The paired machine's project a plain New chat opens on, when the open chat
+ * runs on one. That chat's row here has no folder — its project is a folder on
+ * the other machine, kept in `remoteOrigin` — so `newChatInheritedScope` finds
+ * nothing, and the door used to open on the machine with its project unpicked.
+ * The open chat's own id seats the pick: the panel resolves it to the project
+ * that chat stands in. A folder handed in on purpose, or a parked draft scoped
+ * to a project here, is a local choice and wins.
+ */
+export function newChatInheritedRemoteProject(
+  explicit: string | null | undefined,
+  parkedFolder: string | null | undefined,
+  active: Pick<Workspace, 'remoteOrigin'> | null | undefined,
+): { connectionId: string; workspaceId: string } | null {
+  if (explicit !== undefined || parkedFolder) return null
+  const origin = active?.remoteOrigin
+  if (!origin) return null
+  return { connectionId: origin.connectionId, workspaceId: remoteOriginChatWorkspaceId(origin) }
 }

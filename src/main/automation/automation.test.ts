@@ -2407,6 +2407,29 @@ test('automation', async () => {
     assert.equal(fromTree.hostId, 'wsl:Ubuntu')
     assert.equal((fromTree.schedule as { timezone: string }).timezone, 'UTC')
 
+    // A paired device's New chat names the schedule, a one-time instant and
+    // the worktree's name, as this machine's own door does.
+    await tool(tools, 'schedule.create').handler({
+      workspaceId: 'ws-1',
+      prompt: 'Check the deploy',
+      cron: '30 15 7 10 *',
+      timezone: 'UTC',
+      once: '2026-10-07T15:30:00.000Z',
+      name: 'Deploy check',
+      worktreeName: 'deploy-check',
+    })
+    const fromDevice = calls.created[2] as Record<string, unknown>
+    assert.equal(fromDevice.name, 'Deploy check')
+    assert.equal((fromDevice.schedule as { once: number }).once, Date.parse('2026-10-07T15:30:00.000Z'))
+    assert.deepEqual(fromDevice.worktree, { name: 'deploy-check' })
+    const badOnce = await tool(tools, 'schedule.create').handler({
+      workspaceId: 'ws-1',
+      prompt: 'x',
+      cron: '0 9 * * *',
+      once: 'next tuesday',
+    })
+    assert.equal((badOnce.structuredContent as { error: { code: string } }).error.code, 'invalid_arguments')
+
     const ran = await tool(tools, 'schedule.run').handler({ id: 'sa-1' })
     assert.deepEqual(ran.structuredContent, { workspaceId: 'ws-run' })
     assert.deepEqual(calls.ran, ['sa-1'])

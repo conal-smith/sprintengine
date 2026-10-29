@@ -22,6 +22,7 @@
     "src/api/conversationLaunch.ts",
     "src/api/conversationImages.ts",
     "src/api/conversationLifecycle.ts",
+    "src/api/scheduledAgents.ts",
     "src/api/tailnetWorkspaces.ts",
     "src/components/document/htmlSandbox.ts",
     "src/components/document/tableLayout.ts",

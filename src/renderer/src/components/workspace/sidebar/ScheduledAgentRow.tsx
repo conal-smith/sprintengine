@@ -10,7 +10,7 @@ import {
   type ScheduledAgentView,
 } from '../../../../../shared/scheduled-agents'
 import { pausedSinceWords } from '../../../utils/scheduledAgentsPause'
-import { ProjectLine, type FlatProjectLine } from './rowParts'
+import { ProjectLine, type FlatProjectLine, type RowMachine } from './rowParts'
 import { SELECTED_ROW_ACCENT, SELECTION_EDGE_CLASS } from './rowStyle'
 
 const MINUTE_MS = 60_000
@@ -82,6 +82,10 @@ type ScheduledAgentRowAction = 'open' | 'run-now' | 'toggle-pause' | 'close'
  * and × to close it, which stops the schedule for good. The same are on its
  * right-click menu, with Run now.
  *
+ * A schedule on a paired machine wears that machine's mark on its project
+ * line, as its runs' chats do. It has no editor here, so opening it opens its
+ * menu: Run now, Pause or Resume, and Close, each asked of that machine.
+ *
  * Paused — on its own, or with every other — the row is quiet: its title and
  * mark in muted ink, the pause mark for the clock, and "Paused" in the seat
  * where the next run would be. Paused on its own, the status line says since
@@ -91,6 +95,7 @@ export function ScheduledAgentRow({
   agent,
   now,
   project,
+  machine = null,
   runInProgress,
   selected,
   pausedAll = false,
@@ -103,14 +108,18 @@ export function ScheduledAgentRow({
   now: number
   /** The project each run starts in, drawn as the All chats rows draw theirs. */
   project: FlatProjectLine
+  /** The paired machine it runs on; null for a schedule on this computer. */
+  machine?: RowMachine | null
   /** Its latest run's chat is working, or waiting on the person; null otherwise. */
   runInProgress: 'working' | 'needs-input' | null
   /** Open in the door this window is showing. */
   selected: boolean
   /** Every scheduled agent is paused at once: this one too, whatever its own state. */
   pausedAll?: boolean
-  onOpen: () => void
-  onClose: () => void
+  /** Open its editor. Absent (a paired machine's), opening it opens its menu. */
+  onOpen?: () => void
+  /** Close it for good. Absent, neither the row nor its menu offers it. */
+  onClose?: () => void
   /** Pause it, or resume it when it is paused. Absent, the row offers neither. */
   onTogglePause?: () => void
   /** Start a run now, paused or not. Absent, its menu does not offer it. */
@@ -132,10 +141,22 @@ export function ScheduledAgentRow({
     : 'Pause — no runs at its times until resumed; a run already going carries on'
   const select = (action: ScheduledAgentRowAction) => {
     setMenu(null)
-    if (action === 'open') onOpen()
+    if (action === 'open') onOpen?.()
     else if (action === 'run-now') onRunNow?.()
     else if (action === 'toggle-pause') onTogglePause?.()
-    else onClose()
+    else onClose?.()
+  }
+  const rowRef = React.useRef<HTMLDivElement>(null)
+  // A row with no editor opens its menu where it stands.
+  const open = () => {
+    if (onOpen) {
+      onOpen()
+      return
+    }
+    // A pairing that may only read has nothing to offer.
+    if (!onRunNow && !onTogglePause && !onClose) return
+    const box = rowRef.current?.getBoundingClientRect()
+    setMenu({ x: box ? box.left + 24 : 0, y: box ? box.bottom : 0 })
   }
 
   const seat = (
@@ -175,40 +196,43 @@ export function ScheduledAgentRow({
             </IconButton>
           </Tooltip>
         ) : null}
-        <Tooltip content="Close — stops the schedule">
-          <IconButton
-            tone="quiet"
-            aria-label={`Close scheduled agent: ${title}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onClose()
-            }}
-          >
-            <svg className="icon-xs" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-              <path
-                d="M3.25 3.25L10.75 10.75M10.75 3.25L3.25 10.75"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-              />
-            </svg>
-          </IconButton>
-        </Tooltip>
+        {onClose ? (
+          <Tooltip content="Close — stops the schedule">
+            <IconButton
+              tone="quiet"
+              aria-label={`Close scheduled agent: ${title}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onClose()
+              }}
+            >
+              <svg className="icon-xs" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path
+                  d="M3.25 3.25L10.75 10.75M10.75 3.25L3.25 10.75"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </IconButton>
+          </Tooltip>
+        ) : null}
       </span>
     </span>
   )
 
   return (
     <div
+      ref={rowRef}
       role="treeitem"
       tabIndex={-1}
       aria-current={selected ? 'true' : undefined}
-      aria-label={`Scheduled agent: ${title}, in ${project.name}. ${words}.${
+      aria-label={`Scheduled agent: ${title}, in ${project.name}${machine ? ` on ${machine.name}` : ''}. ${words}.${
         status.text === words ? '' : ` ${status.text}.`
       }${paused && !ownPause ? ' Paused with every scheduled agent.' : ''}`}
       data-scheduled-agent={agent.id}
       data-paused={paused ? 'true' : undefined}
-      onClick={onOpen}
+      onClick={open}
       onContextMenu={(event) => {
         event.preventDefault()
         setMenu({ x: event.clientX, y: event.clientY })
@@ -216,7 +240,7 @@ export function ScheduledAgentRow({
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          onOpen()
+          open()
         }
       }}
       // The All chats card's own box — the same inset, rail, radius and
@@ -230,7 +254,9 @@ export function ScheduledAgentRow({
             : 'border-l-transparent text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]'
       }`}
     >
-      <ProjectLine project={project}>{seat}</ProjectLine>
+      <ProjectLine project={project} machine={machine}>
+        {seat}
+      </ProjectLine>
       <div className="flex min-w-0 items-center gap-1.5">
         {/* The schedule's clock in the accent while it runs on its times; the
             pause mark in quiet ink while it does not. */}
@@ -258,7 +284,7 @@ export function ScheduledAgentRow({
           onClose={() => setMenu(null)}
           surfaceClassName="min-w-[220px]"
         >
-          <MenuItem onClick={() => select('open')}>Open</MenuItem>
+          {onOpen ? <MenuItem onClick={() => select('open')}>Open</MenuItem> : null}
           {/* Asked for, so it runs paused or not. */}
           {onRunNow ? <MenuItem onClick={() => select('run-now')}>Run now</MenuItem> : null}
           {onTogglePause ? (
@@ -270,10 +296,14 @@ export function ScheduledAgentRow({
               {ownPause ? 'Resume schedule' : 'Pause schedule'}
             </MenuItem>
           ) : null}
-          <MenuDivider />
-          <MenuItem variant="danger" onClick={() => select('close')}>
-            Close schedule
-          </MenuItem>
+          {onClose ? (
+            <>
+              <MenuDivider />
+              <MenuItem variant="danger" onClick={() => select('close')}>
+                Close schedule
+              </MenuItem>
+            </>
+          ) : null}
         </ContextMenu>
       ) : null}
     </div>

@@ -2554,6 +2554,17 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           type: 'boolean',
           description: 'Run each time in a fresh git worktree rather than the project checkout.',
         },
+        worktreeName: {
+          type: 'string',
+          description: "What each run's worktree and its branch are named from; implies `worktree`.",
+        },
+        once: {
+          type: 'string',
+          description:
+            'Run once, at this ISO 8601 instant, instead of repeating; `cron` is then ignored. ' +
+            'A one-time schedule closes once its chat has started.',
+        },
+        name: { type: 'string', description: "The scheduled agent's title; its prompt's first line when omitted." },
         skills: { type: 'array', items: { type: 'string' }, description: 'Skill ids attached to each run.' },
         mcpServers: { type: 'array', items: { type: 'string' }, description: 'Installed MCP server ids.' },
       },
@@ -2594,7 +2605,15 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         Array.isArray(value)
           ? value.filter((id): id is string => typeof id === 'string').map((id) => ({ id, name: id }))
           : []
+      // A one-time schedule from a paired device's New chat, or an agent's
+      // "remind me at three": the instant, which the service holds to the future.
+      const once = typeof args.once === 'string' && args.once.trim() ? Date.parse(args.once) : undefined
+      if (once !== undefined && !Number.isFinite(once)) {
+        return failure('invalid_arguments', '"once" must be an ISO 8601 instant, such as 2026-10-07T15:30:00Z.')
+      }
+      const worktreeName = typeof args.worktreeName === 'string' ? args.worktreeName.trim() : ''
       const created = await service.create({
+        ...(typeof args.name === 'string' ? { name: args.name } : {}),
         prompt: args.prompt,
         schedule: {
           cron: args.cron,
@@ -2602,6 +2621,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
             typeof args.timezone === 'string' && args.timezone.trim()
               ? args.timezone
               : Intl.DateTimeFormat().resolvedOptions().timeZone,
+          ...(once !== undefined ? { once } : {}),
         },
         // A workspace on a worktree schedules into its project, not into that
         // one worktree: each run makes its own.
@@ -2612,7 +2632,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         permissionPreset: capped.permissionPreset,
         skills: strings(args.skills),
         mcpServers: strings(args.mcpServers),
-        worktree: args.worktree === true ? { name: '' } : null,
+        worktree: args.worktree === true || worktreeName ? { name: worktreeName } : null,
       })
       if (!created.ok) return failure('scheduled_agent_invalid', created.message)
       return success({ scheduledAgent: scheduledAgentForCaller(created.agent) })

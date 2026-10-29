@@ -11,6 +11,9 @@ import {
   MESH_CONVERSATION_SEARCH_CHANNEL,
   MESH_APPROVAL_RULES_CHANNEL,
   MESH_REVOKE_APPROVAL_RULE_CHANNEL,
+  MESH_SCHEDULED_AGENTS_CHANNEL,
+  MESH_SCHEDULED_AGENT_ACTION_CHANNEL,
+  MESH_CREATE_SCHEDULED_AGENT_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -31,6 +34,11 @@ import {
   type MeshConversationSearchResult,
   type MeshApprovalRulesResult,
   type MeshRevokeApprovalRuleResult,
+  type MeshCreateScheduledAgentInput,
+  type MeshCreateScheduledAgentResult,
+  type MeshScheduledAgentAction,
+  type MeshScheduledAgentActionResult,
+  type MeshScheduledAgentsResult,
   type MeshConversationChange,
   type MeshVisitConversationResult,
   type MeshWorkspaceCheckoutResult,
@@ -167,6 +175,16 @@ export const meshApi = {
     ipcRenderer.invoke(MESH_APPROVAL_RULES_CHANNEL, input) as Promise<MeshApprovalRulesResult>,
   meshRevokeApprovalRule: (input: { connectionId: string; ruleId: string }): Promise<MeshRevokeApprovalRuleResult> =>
     ipcRenderer.invoke(MESH_REVOKE_APPROVAL_RULE_CHANNEL, input) as Promise<MeshRevokeApprovalRuleResult>,
+  meshScheduledAgents: (input: { connectionId: string }): Promise<MeshScheduledAgentsResult> =>
+    ipcRenderer.invoke(MESH_SCHEDULED_AGENTS_CHANNEL, input) as Promise<MeshScheduledAgentsResult>,
+  meshScheduledAgentAction: (input: {
+    connectionId: string
+    id: string
+    action: MeshScheduledAgentAction
+  }): Promise<MeshScheduledAgentActionResult> =>
+    ipcRenderer.invoke(MESH_SCHEDULED_AGENT_ACTION_CHANNEL, input) as Promise<MeshScheduledAgentActionResult>,
+  meshCreateScheduledAgent: (input: MeshCreateScheduledAgentInput): Promise<MeshCreateScheduledAgentResult> =>
+    ipcRenderer.invoke(MESH_CREATE_SCHEDULED_AGENT_CHANNEL, input) as Promise<MeshCreateScheduledAgentResult>,
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string): Promise<MeshWorkspaceCheckoutResult> =>
     ipcRenderer.invoke(MESH_WORKSPACE_CHECKOUT_CHANNEL, {
       connectionId,
@@ -415,6 +433,9 @@ export const meshApi = {
   | 'meshConversationSearch'
   | 'meshApprovalRules'
   | 'meshRevokeApprovalRule'
+  | 'meshScheduledAgents'
+  | 'meshScheduledAgentAction'
+  | 'meshCreateScheduledAgent'
   | 'meshWorkspaceCheckout'
   | 'meshWorkspaceExtensions'
   | 'meshGetLiveState'

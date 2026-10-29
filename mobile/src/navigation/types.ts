@@ -58,6 +58,12 @@ export type HomeStackParamList = {
   Desktop: { deviceId: string };
   /** Dev servers the paired desktops publish on the tailnet. */
   Web: undefined;
+  /** The scheduled agents on every paired desktop, with Run now, Pause, Resume and Close. */
+  Scheduled: undefined;
+  /** Step one of a new scheduled agent: the project it runs in, as New chat's step one. */
+  ScheduleChooseProject: undefined;
+  /** Step two: its prompt and when it runs. */
+  NewSchedule: { deviceId: string; workspaceId: string; projectName: string; desktopName: string };
   Appearance: undefined;
   Pairing: undefined;
 };

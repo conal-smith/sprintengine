@@ -214,6 +214,7 @@ import {
   getSessionItems,
   getWorkspaceActivity,
   newChatInheritedScope,
+  newChatInheritedRemoteProject,
   newChatProjectOptionsOf,
   showsNoWorkspaceState,
   type WorkspaceActivity,
@@ -2985,6 +2986,7 @@ export default function WorkspaceManager() {
   // auto-open may do. The panel simply waits under whatever is open.
   const activeFolderPath = activeWorkspace?.folderPath ?? null
   const activeWorktreeRepoRoot = activeWorkspace?.worktree?.repoRoot ?? null
+  const activeRemoteOrigin = activeWorkspace?.remoteOrigin ?? null
   const presentNewChatPanel = useCallback(
     (
       folderPath?: string | null,
@@ -3006,14 +3008,19 @@ export default function WorkspaceManager() {
         worktree: activeWorktreeRepoRoot ? { repoRoot: activeWorktreeRepoRoot } : null,
       })
       rescopeNewChatDraft(workspaceWindowId, resolved)
+      // A chat on a paired machine hands on its project over there instead.
+      const remoteProject = newChatInheritedRemoteProject(folderPath, parked?.folderPath, {
+        remoteOrigin: activeRemoteOrigin,
+      })
       setNewChatPanelState({
         folderPath: resolved,
         folderLabel: resolved ? newChatFolderLabel(resolved) : null,
         connector: connector ?? null,
         forcedSelection,
+        ...(remoteProject ? { remoteProject } : {}),
       })
     },
-    [activeFolderPath, activeWorktreeRepoRoot, workspaceWindowId],
+    [activeFolderPath, activeRemoteOrigin, activeWorktreeRepoRoot, workspaceWindowId],
   )
   presentNewChatPanelRef.current = presentNewChatPanel
   const openNewChatPanel = useCallback(

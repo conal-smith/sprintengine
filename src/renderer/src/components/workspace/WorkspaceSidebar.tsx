@@ -143,6 +143,11 @@ import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
 import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
+import {
+  remoteScheduleActionWords,
+  useRemoteScheduledAgents,
+  type RemoteScheduledMachine,
+} from './sidebar/useRemoteScheduledAgents'
 import { PauseAllScheduledAgentsControl, ScheduledAgentsPausedNotice } from './sidebar/ScheduledPauseControls'
 import { setScheduledAgentPaused } from '../../utils/scheduledAgentsPause'
 import { isScheduledRunChat, scheduledAgentRunInProgress } from '../../utils/scheduledAgentRuns'
@@ -1329,6 +1334,37 @@ function WorkspaceSidebar({
   )
   // What a link to one of their chats opens (`remoteChatLinks.ts`).
   useEffect(() => publishRemoteChatLinkTargets(remoteGroups), [remoteGroups])
+  // Each paired machine's scheduled agents, beside this computer's in the
+  // Scheduled section: they run there, by its scheduler, and are driven from
+  // here. Off with this computer's module, as the section is.
+  const remoteScheduled = useRemoteScheduledAgents({
+    enabled: scheduledAgentsEnabled && remoteLink !== 'down',
+    connections: remotePresence.mesh,
+    browses: remoteBrowses,
+  })
+  const refreshRemoteScheduled = remoteScheduled.refresh
+  const actOnRemoteScheduled = useCallback(
+    (machine: RemoteScheduledMachine, agent: ScheduledAgentView, action: 'run' | 'pause' | 'resume' | 'delete') => {
+      void window.api
+        .meshScheduledAgentAction({ connectionId: machine.connectionId, id: agent.id, action })
+        .then((result) => {
+          const titles = { run: 'Started', pause: 'Paused', resume: 'Resumed', delete: 'Scheduled agent closed' }
+          const failed = { run: 'Did not run', pause: 'Not paused', resume: 'Not resumed', delete: 'Not closed' }
+          showToast(
+            result.ok
+              ? {
+                  tone: action === 'run' ? 'good' : 'neutral',
+                  title: titles[action],
+                  description: remoteScheduleActionWords(action, machine.machineName),
+                }
+              : { tone: 'error', title: failed[action], description: result.message },
+          )
+          refreshRemoteScheduled(machine.connectionId)
+        })
+        .catch(() => {})
+    },
+    [refreshRemoteScheduled],
+  )
   // …and which of them the palette may search, off the tailnet none
   // (`remoteChatSearch.ts`). A search is a read, so a pairing that may only
   // follow their chats may search them too.
@@ -3174,13 +3210,14 @@ function WorkspaceSidebar({
   // until resumed); while it holds, a line under the fold says so with Resume,
   // folded or not, since it is about every schedule and not about a row.
   const renderScheduledSection = () => {
-    if (scheduledAgents.length === 0) return null
+    const remoteCount = remoteScheduled.machines.reduce((count, machine) => count + machine.agents.length, 0)
+    if (scheduledAgents.length === 0 && remoteCount === 0) return null
     const expanded = expandedShelves[SCHEDULED_SHELF_KEY] !== false
     return (
       <section role="group" className="relative pt-1" aria-label="Scheduled agents">
         <ShelfFoldRow
           label="Scheduled"
-          count={scheduledAgents.length}
+          count={scheduledAgents.length + remoteCount}
           expanded={expanded}
           flush
           controlsId={SCHEDULED_SHELF_ID}
@@ -3205,6 +3242,38 @@ function WorkspaceSidebar({
                   onRunNow={() => runScheduledAgentNow(agent)}
                 />
               ))
+            : null}
+          {/* A paired machine's, after this computer's: the same row with that
+              machine's mark, driven over there. The pause of them all is that
+              machine's, said on each of its rows. */}
+          {expanded
+            ? remoteScheduled.machines.flatMap((machine) =>
+                machine.agents.map((agent) => (
+                  <ScheduledAgentRow
+                    key={`scheduled-${machine.connectionId}-${agent.id}`}
+                    agent={agent}
+                    now={now}
+                    project={{
+                      name: agent.folderPath ? folderDisplayName(agent.folderPath) : machine.machineName,
+                      folderPath: agent.folderPath || null,
+                      color: null,
+                      unfiled: false,
+                    }}
+                    machine={{ ref: { kind: 'paired', name: machine.machineName }, name: machine.machineName }}
+                    runInProgress={null}
+                    selected={false}
+                    pausedAll={machine.pausedAll !== null}
+                    {...(machine.operable
+                      ? {
+                          onClose: () => actOnRemoteScheduled(machine, agent, 'delete'),
+                          onTogglePause: () =>
+                            actOnRemoteScheduled(machine, agent, agent.pausedAt === undefined ? 'pause' : 'resume'),
+                          onRunNow: () => actOnRemoteScheduled(machine, agent, 'run'),
+                        }
+                      : {})}
+                  />
+                )),
+              )
             : null}
         </div>
       </section>

@@ -10,6 +10,9 @@ import {
   MESH_CONVERSATION_SEARCH_CHANNEL,
   MESH_APPROVAL_RULES_CHANNEL,
   MESH_REVOKE_APPROVAL_RULE_CHANNEL,
+  MESH_SCHEDULED_AGENTS_CHANNEL,
+  MESH_SCHEDULED_AGENT_ACTION_CHANNEL,
+  MESH_CREATE_SCHEDULED_AGENT_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -169,6 +172,19 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
     const record = asRecord(input) ?? {}
     return service.mesh().revokeApprovalRule({ connectionId: record.connectionId, ruleId: record.ruleId })
   })
+  // …and its scheduled agents, for the sidebar's Scheduled section and New chat.
+  ipcMain.handle(MESH_SCHEDULED_AGENTS_CHANNEL, (_event, input: unknown) =>
+    service.mesh().scheduledAgents({ connectionId: asRecord(input)?.connectionId }),
+  )
+  ipcMain.handle(MESH_SCHEDULED_AGENT_ACTION_CHANNEL, (_event, input: unknown) => {
+    const record = asRecord(input) ?? {}
+    return service
+      .mesh()
+      .scheduledAgentAction({ connectionId: record.connectionId, id: record.id, action: record.action })
+  })
+  ipcMain.handle(MESH_CREATE_SCHEDULED_AGENT_CHANNEL, (_event, input: unknown) =>
+    service.mesh().createScheduledAgent(asRecord(input) ?? {}),
+  )
   ipcMain.handle(MESH_WORKSPACE_CHECKOUT_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input)
     return service.mesh().workspaceCheckout(record?.connectionId, record?.workspaceId)
