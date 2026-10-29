@@ -39,9 +39,30 @@ export function filesFromDataTransfer(data: DataTransfer | null): File[] {
   return files
 }
 
+/**
+ * A camera's raw DNG original. Its media type is not to be trusted: the system
+ * labels one `image/tiff`, `image/png` or `image/jpeg` depending on where it
+ * came from, and sent as that kind of image its raw bytes fail to decode. It is
+ * a file, attached by its path, whatever it is labelled.
+ */
+export function isDngFile(file: Pick<File, 'name' | 'type'>): boolean {
+  const mediaType = file.type.split(';', 1)[0]?.trim().toLowerCase()
+  return (
+    file.name.toLowerCase().endsWith('.dng') ||
+    mediaType === 'image/dng' ||
+    mediaType === 'image/x-dng' ||
+    mediaType === 'image/x-adobe-dng'
+  )
+}
+
+/** Whether a file is sent as an image: an attachable type, and not a raw original wearing one. */
+function isAttachableImageFile(file: File): boolean {
+  return (ATTACHABLE_IMAGE_TYPES as readonly string[]).includes(file.type) && !isDngFile(file)
+}
+
 /** The image files in a paste or drop, filtered to the types agents accept. */
 export function imageFilesFromDataTransfer(data: DataTransfer | null): File[] {
-  return filesFromDataTransfer(data).filter((file) => (ATTACHABLE_IMAGE_TYPES as readonly string[]).includes(file.type))
+  return filesFromDataTransfer(data).filter(isAttachableImageFile)
 }
 
 /**
@@ -107,7 +128,7 @@ export function sortDroppedFiles(data: DataTransfer, sorting: FileSorting): Drop
 export function sortFiles(files: Iterable<File>, { attachImages, attachByPath }: FileSorting): DroppedFiles {
   const sorted: DroppedFiles = { paths: [], files: [], images: [], pathless: [] }
   for (const file of files) {
-    if (attachImages && (ATTACHABLE_IMAGE_TYPES as readonly string[]).includes(file.type)) {
+    if (attachImages && isAttachableImageFile(file)) {
       sorted.images.push(file)
       continue
     }

@@ -9,6 +9,7 @@ import {
   scaledImageDimensions,
 } from '../../../../../shared/conversation-attachments'
 import type { ConversationImageAttachment } from '../../../../../shared/conversation-runtime'
+import { isDngFile } from '../../../utils/imageFileTransfer'
 
 // ── Image attachments (D3/1774) ─────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ export function formatAttachmentBytes(bytes: number): string {
 // knowable before the file is read; the byte ceiling is only decidable after
 // downscaling, so it is checked there instead of here.
 export function attachmentRejection(file: { name?: string; type: string }, currentCount: number): string | null {
-  if (!isAttachableImageType(file.type)) {
+  if (!isAttachableImageType(file.type) || isDngFile({ name: file.name ?? '', type: file.type })) {
     const named = file.name ? `${file.name} is not` : 'That file is not'
     return `${named} an image Claude can read. Attach a PNG, JPEG, WebP, or GIF.`
   }

@@ -187,6 +187,20 @@ test('a file from the system is attached by path, an image attaches as an image 
     })
     assert.deepEqual(attached, ['/Users/dev/Desktop/Q3 budget.xlsx', '/Users/dev/Desktop/shot.png'])
 
+    // A raw DNG original is a file whatever type it is labelled with: sent as
+    // the PNG or JPEG it claims to be, its bytes would not decode.
+    const raws = ['image/png', 'image/jpeg', 'image/tiff', ''].map((type) => ({ name: 'photo.DNG', type }) as File)
+    raws.forEach((raw) => paths.set(raw, '/Users/dev/Desktop/photo.DNG'))
+    assert.deepEqual(sortFiles(raws, { attachImages: true, attachByPath: true }), {
+      paths: [],
+      files: raws.map(() => '/Users/dev/Desktop/photo.DNG'),
+      images: [],
+      pathless: [],
+    })
+    const exported = { name: 'export.dng.png', type: 'image/png' } as File
+    assert.deepEqual(sortFiles([exported], { attachImages: true, attachByPath: true }).images, [exported])
+    attached.length = 2
+
     // Where files are typed as paths (a chat on another machine), a file is its
     // typed path, and main is not told about a file no card will show.
     assert.deepEqual(sortFiles([sheet, shot, web], { attachImages: true, attachByPath: false }), {
