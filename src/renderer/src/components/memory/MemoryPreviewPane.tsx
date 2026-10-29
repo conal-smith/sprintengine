@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { focusOrAddFileTab } from '../../utils/modelRegistry'
 import { renderMarkdown } from '../../utils/markdown'
+import { maskMarkdownFrontmatter } from '../../utils/markdownFrontmatter'
 import { bucketForNode, colorForBucket } from './MemoryGraphCanvas'
 import { Tooltip } from '../ui/Tooltip'
 import { ChipButton, CloseIconButton, GhostButton, InlineNotice, PanelHeader } from '../ui'
@@ -142,7 +143,7 @@ export default function MemoryPreviewPane({ workspaceId, node, preview, nodes, e
             {preview.message}
           </InlineNotice>
         ) : preview.previewKind === 'markdown' ? (
-          <article className="memory-markdown">{renderMarkdown(preview.content)}</article>
+          <article className="memory-markdown">{renderMarkdown(maskMarkdownFrontmatter(preview.content))}</article>
         ) : preview.previewKind === 'text' ? (
           <pre className="m-0 overflow-x-auto rounded-sm border border-[color:var(--border-default)] bg-[color:var(--bg-app)] p-4 font-mono text-meta leading-5 text-[color:var(--text-default)]">
             {preview.content}

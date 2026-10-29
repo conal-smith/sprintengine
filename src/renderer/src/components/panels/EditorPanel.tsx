@@ -6,6 +6,7 @@ import { getGitEntry, normalizePathKey, useGitStatus } from '../../hooks/useGitS
 import { useAgentFileTrail } from './useAgentFileTrail'
 import { getGitLineChanges, type GitLineChange } from '../../utils/gitDiff'
 import { renderMarkdown } from '../../utils/markdown'
+import { maskMarkdownFrontmatter } from '../../utils/markdownFrontmatter'
 import { isImageFile } from '../../utils/files'
 import { workspaceWorkingRoot } from '../../utils/workspaceWorktree'
 import { basename, isPathOrChild, trimPath } from '../../utils/paths'
@@ -193,7 +194,10 @@ export default function EditorPanel({ workspaceId, filePath }: Props) {
   // for anything else (a git status refresh, a menu opening) does not parse
   // and lay out the whole document again.
   const markdownPreview = useMemo(
-    () => (showPreview ? renderMarkdown(activeContent, { lineChanges: previewGitLineChanges }) : null),
+    () =>
+      showPreview
+        ? renderMarkdown(maskMarkdownFrontmatter(activeContent), { lineChanges: previewGitLineChanges })
+        : null,
     [activeContent, previewGitLineChanges, showPreview],
   )
 
