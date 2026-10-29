@@ -8,7 +8,7 @@ import type {
   ConversationMcpServer,
   ConversationPermissionPreset,
 } from '../../shared/conversation-runtime'
-import { VISUALS_INSTRUCTION } from '../../shared/host-context/document'
+import { VISUALS_INSTRUCTION } from './visuals-guidance'
 import { CLAUDE_AGENT_PROVIDER_ID, createClaudeAgentProvider } from './claude-agent-provider'
 import type { MockAdapterTurnInput } from './conversation-provider-adapter'
 

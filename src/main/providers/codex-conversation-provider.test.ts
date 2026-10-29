@@ -24,7 +24,7 @@ import { resolveGatewayLaunchToken } from '../../server/core/gateway-launch-toke
 import { conversationCommandsFor } from '../conversation-commands/registry'
 import { onUsageLimitHit, usageLimitsStore, usageRateLimit } from '../usage-limits/store'
 import type { UsageLimitHit } from '../../shared/usage-limits'
-import { VISUALS_INSTRUCTION } from '../../shared/host-context/document'
+import { VISUALS_INSTRUCTION } from './visuals-guidance'
 
 function fixture(
   setup: {

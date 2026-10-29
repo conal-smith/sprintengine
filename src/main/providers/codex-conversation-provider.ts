@@ -72,7 +72,7 @@ import {
 } from './cli-host-child'
 import { studioGatewayForChat, withStudioGateway, type StudioMcpServerResolver } from './studio-gateway-entry'
 import { GATEWAY_WORKTREE_LEASE_TOOLS, isInGitCheckout, worktreeLeaseInstruction } from './worktree-lease-guidance'
-import { VISUALS_INSTRUCTION } from '../../shared/host-context/document'
+import { VISUALS_INSTRUCTION } from './visuals-guidance'
 import { studioPlatform } from '../../server/platform/platform'
 import { usageLimitsStore } from '../usage-limits/store'
 import { codexBillingOf, codexRateLimitUpdates, isCodexUsageLimitError } from '../usage-limits/sources'

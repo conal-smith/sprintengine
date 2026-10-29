@@ -53,7 +53,7 @@ export const VISUAL_EMPTY = 'the visual has nothing to draw'
 /**
  * The names a visual colours and sets type with, and the semantic token each
  * is read from. Short, because an agent writes them; the agent instructions
- * (`VISUALS_INSTRUCTION`) name the same set.
+ * (`VISUALS_INSTRUCTION`, `main/providers/visuals-guidance.ts`) name the same set.
  */
 export const VISUAL_VARIABLES: Readonly<Record<string, string>> = {
   '--fg': '--sem-color-text-default',

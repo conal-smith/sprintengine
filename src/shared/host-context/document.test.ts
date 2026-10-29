@@ -8,7 +8,6 @@ import {
   HOST_CONTEXT_OPEN_TAG,
   CURSOR_HOST_CONTEXT_PLUGIN_NAME,
   EDITOR_TOOLS_HOST_CONTEXT_SECTION,
-  VISUALS_INSTRUCTION,
   buildCursorHostContextPluginManifest,
   buildCursorHostContextRuleFile,
   buildHostContextDocument,
@@ -133,30 +132,4 @@ test('an agent bound to a workspace is told when to open files instead of pastin
   assert.ok(EDITOR_TOOLS_HOST_CONTEXT_SECTION.split('\n').length <= 4)
   // A launch without the tools says nothing new.
   assert.equal(buildHostContextDocument({ editorTools: false }), null)
-})
-
-test('a session read in the chat is told, plainly, to show a chart as a visual block', () => {
-  const doc = buildHostContextDocument({ visuals: true })
-  assert.ok(doc)
-  assert.equal(doc.split('\n')[0], HOST_CONTEXT_BOUNDARY_LINE)
-  assert.ok(doc.includes(`## Visuals\n\n${VISUALS_INSTRUCTION}`))
-  // Drawn when it helps, not only when asked, and only in the fence the chat draws.
-  assert.match(VISUALS_INSTRUCTION, /```visual/)
-  assert.match(VISUALS_INSTRUCTION, /even if not asked/)
-  // What keeps it inert and in the window's colours.
-  assert.match(VISUALS_INSTRUCTION, /No scripts/)
-  assert.match(VISUALS_INSTRUCTION, /no remote images, fonts or CSS/)
-  for (const variable of ['--chart-1', '--chart-8', '--fg', '--fg-muted', '--border'])
-    assert.ok(VISUALS_INSTRUCTION.includes(`var(${variable})`), variable)
-  assert.match(VISUALS_INSTRUCTION, /fixed pixel height/)
-  assert.match(VISUALS_INSTRUCTION, /No vh units/)
-  assert.match(VISUALS_INSTRUCTION, /title and a one-line caption/)
-  assert.match(VISUALS_INSTRUCTION, /Do not restate/)
-  // Short on purpose: it goes with every chat.
-  assert.ok(VISUALS_INSTRUCTION.length < 1000)
-  // After the other sections, and absent from a launch read in a terminal.
-  const both = buildHostContextDocument({ editorTools: true, visuals: true }) as string
-  assert.ok(both.indexOf('## Showing files and diffs') < both.indexOf('## Visuals'))
-  assert.ok(!(buildHostContextDocument({ editorTools: true }) as string).includes('## Visuals'))
-  assert.equal(buildHostContextDocument({ visuals: false }), null)
 })

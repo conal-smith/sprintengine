@@ -51,7 +51,7 @@ import { isWindowsPath, toWslPath } from '../../shared/host-paths'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, MCP_SECRET_ENV_PREFIX } from '../../shared/studio-env'
 import { inferConversationToolKind } from '../../shared/conversation/toolKind'
-import { VISUALS_INSTRUCTION } from '../../shared/host-context/document'
+import { VISUALS_INSTRUCTION } from './visuals-guidance'
 import {
   CLAUDE_WORKTREE_LEASE_TOOLS,
   isInGitCheckout,
