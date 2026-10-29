@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import type { WorkspacePaneTab } from '../../../../types/workspace'
 import { renderMarkdown } from '../../../../utils/markdown'
+import { maskMarkdownFrontmatter } from '../../../../utils/markdownFrontmatter'
 import { basename } from '../../../../utils/paths'
 import { CopyGlyphButton, InlineNotice, PanelHeader, Spinner } from '../../../ui'
 
@@ -72,7 +73,7 @@ export function DocumentTab({ tab, active }: DocumentTabProps) {
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 pt-6 [scrollbar-gutter:stable]">
           <div className="mx-auto max-w-4xl">
             {current.content.length <= MARKDOWN_PREVIEW_MAX_CHARS ? (
-              renderMarkdown(current.content)
+              renderMarkdown(maskMarkdownFrontmatter(current.content))
             ) : (
               <pre className="whitespace-pre-wrap break-words font-mono text-body leading-5 text-[color:var(--text-default)]">
                 {current.content}

@@ -1294,6 +1294,11 @@ test('AgentChatView', async () => {
     'a nameless clipboard item still gets a readable refusal',
   )
   assert.match(
+    attachmentRejection({ name: 'photo.DNG', type: 'image/png' }, 0) ?? '',
+    /photo\.DNG is not an image/,
+    'a raw DNG labelled as a PNG is refused rather than sent as one',
+  )
+  assert.match(
     attachmentRejection({ name: 'ok.png', type: 'image/png' }, MAX_ATTACHMENTS_PER_TURN) ?? '',
     new RegExp(`at most ${MAX_ATTACHMENTS_PER_TURN} images`),
     'the per-turn cap is reported, not silently enforced',

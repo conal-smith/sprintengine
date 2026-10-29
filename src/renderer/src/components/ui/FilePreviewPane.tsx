@@ -3,6 +3,7 @@ import { Tooltip } from './Tooltip'
 import { CloseIconButton, GhostButton, IconButton } from './Buttons'
 import { PanelHeader } from './PanelHeader'
 import { renderMarkdown } from '../../utils/markdown'
+import { maskMarkdownFrontmatter } from '../../utils/markdownFrontmatter'
 
 // FilePreviewPane — canonical inline file/artifact preview surface.
 // Renders a Back affordance, the filename, an optional "Open in editor"
@@ -100,7 +101,7 @@ export function FilePreviewPane({ title, path, content, onBack, onPopOut, onClos
       ) : (
         <div className="flex-1 overflow-auto px-5 py-4 text-body leading-6 text-[color:var(--text-default)]">
           {renderAsMarkdown ? (
-            <div className="markdown-body">{renderMarkdown(content)}</div>
+            <div className="markdown-body">{renderMarkdown(maskMarkdownFrontmatter(content))}</div>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-body leading-5 text-[color:var(--text-default)]">
               {content}

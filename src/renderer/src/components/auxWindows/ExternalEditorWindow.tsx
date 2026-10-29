@@ -14,6 +14,7 @@ import type { EditorRange } from '../../../../shared/editor-reveal'
 import { remeasureMonacoFontsOnLoad, useCodeFontFamily } from '../../utils/fonts'
 import { useMonacoBaseTheme } from '../../hooks/useAppTheme'
 import { renderMarkdown } from '../../utils/markdown'
+import { maskMarkdownFrontmatter } from '../../utils/markdownFrontmatter'
 import { configureMonacoLanguages } from '../../utils/patchLanguage'
 import { TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET } from '../workspace/AppTitleBar'
 import { WindowCloseButton } from '../workspace/WindowControls'
@@ -873,7 +874,7 @@ function renderBody(
   if (showPreview) {
     return (
       <div className="h-full overflow-y-auto bg-[color:var(--bg-app)] px-8 pb-8 pt-8 [scrollbar-gutter:stable]">
-        <div className="mx-auto max-w-4xl">{renderMarkdown(buffer.value)}</div>
+        <div className="mx-auto max-w-4xl">{renderMarkdown(maskMarkdownFrontmatter(buffer.value))}</div>
       </div>
     )
   }

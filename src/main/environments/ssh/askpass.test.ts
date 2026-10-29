@@ -26,14 +26,23 @@ ED25519 key fingerprint is SHA256:fjpaS/7fJJzetL6Tkqbs/dUSrDlQ7ZOeBJ9UImHlsGc.
 This key is not known by any other names.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? `
 
+// The same question from the OpenSSH that Ubuntu 26.04 ships: a colon after
+// "is" and no full stop after the fingerprint.
+const HOST_KEY_COLON = `The authenticity of host '[127.0.0.1]:32768 ([127.0.0.1]:32768)' can't be established.
+ED25519 key fingerprint is: SHA256:fjpaS/7fJJzetL6Tkqbs/dUSrDlQ7ZOeBJ9UImHlsGc
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])?`
+
 test("prompts are told apart by ssh's own words; the remote's text never passes for one", () => {
-  const hostKey = classifyPrompt(HOST_KEY)
-  assert.equal(hostKey.kind, 'host-key')
-  assert.deepEqual(hostKey.hostKey, {
-    host: '[127.0.0.1]:32768 ([127.0.0.1]:32768)',
-    keyType: 'ED25519',
-    fingerprint: 'SHA256:fjpaS/7fJJzetL6Tkqbs/dUSrDlQ7ZOeBJ9UImHlsGc',
-  })
+  for (const prompt of [HOST_KEY, HOST_KEY_COLON]) {
+    const hostKey = classifyPrompt(prompt)
+    assert.equal(hostKey.kind, 'host-key')
+    assert.deepEqual(hostKey.hostKey, {
+      host: '[127.0.0.1]:32768 ([127.0.0.1]:32768)',
+      keyType: 'ED25519',
+      fingerprint: 'SHA256:fjpaS/7fJJzetL6Tkqbs/dUSrDlQ7ZOeBJ9UImHlsGc',
+    })
+  }
   assert.equal(classifyPrompt("Enter passphrase for key '/Users/dev/.ssh/id_ed25519': ").kind, 'passphrase')
   // ssh truncates a long key path; the shape is enough.
   assert.equal(classifyPrompt("Enter passphrase for key '/Users/dev/.ssh/a-very-long-na…': ").kind, 'passphrase')
@@ -175,7 +184,8 @@ test.skipIf(!DOCKER_TESTS)(
       const refused = await session()
       assert.equal(refused.code, 255)
       assert.match(refused.stderr, /Host key verification failed/u)
-      assert.equal(asked[0]?.kind, 'host-key')
+      // The prompt rides in the message, so a client whose wording moved says what it asked.
+      assert.equal(asked[0]?.kind, 'host-key', `ssh asked: ${JSON.stringify(asked[0]?.text)}`)
       assert.match(asked[0]!.hostKey!.fingerprint, /^SHA256:/u)
       let knownHosts = ''
       try {

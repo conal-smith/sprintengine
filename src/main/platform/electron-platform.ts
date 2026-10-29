@@ -71,7 +71,16 @@ export function createElectronPlatform(deps: ElectronPlatformDeps): StudioPlatfo
       notify(notice) {
         if (!deps.Notification.isSupported()) return
         shown.get(notice.key)?.close()
-        const banner = new deps.Notification({ title: notice.title, body: notice.body, silent: notice.silent ?? false })
+        // Windows drops a click on a toast once it has timed out into
+        // Notification Center, so a notice that opens something stays on
+        // screen there until it is clicked or dismissed.
+        const holdsForClick = Boolean(notice.onActivate) && (deps.platform ?? process.platform) === 'win32'
+        const banner = new deps.Notification({
+          title: notice.title,
+          body: notice.body,
+          silent: notice.silent ?? false,
+          ...(holdsForClick ? { timeoutType: 'never' as const } : {}),
+        })
         if (notice.onActivate) banner.on('click', notice.onActivate)
         banner.on('close', () => {
           if (shown.get(notice.key) === banner) shown.delete(notice.key)

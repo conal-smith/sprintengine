@@ -408,6 +408,15 @@ function alertKind(node: MarkdownNode): MarkdownAlertKind | null {
 // wrap, or it would push the line past the pane.
 const SHORT_TOKEN_LENGTH = 32
 
+// A browser's word selection stops at hyphens, dots and slashes, so a
+// double-click on `migration-gate --dry-run` took one fragment of it. Inline
+// code is one token to copy, so a double-click takes the whole span; code in a
+// block keeps the browser's word selection.
+function selectInlineCode(event: React.MouseEvent<HTMLElement>): void {
+  if (event.currentTarget.closest('pre')) return
+  window.getSelection()?.selectAllChildren(event.currentTarget)
+}
+
 function isShortToken(children: React.ReactNode): boolean {
   return typeof children === 'string' && children.length <= SHORT_TOKEN_LENGTH && !children.includes('\n')
 }
@@ -708,7 +717,10 @@ function markdownComponents(options: MarkdownRenderOptions): Components {
       options.math && typeof children === 'string' && className?.split(' ').includes('math-inline') ? (
         <InlineMath tex={children} codeClassName={scale.code} />
       ) : (
-        <code className={joinClasses(className, scale.code, chat && isShortToken(children) && 'whitespace-nowrap')}>
+        <code
+          className={joinClasses(className, scale.code, chat && isShortToken(children) && 'whitespace-nowrap')}
+          onDoubleClick={selectInlineCode}
+        >
           <InlineCode>{children}</InlineCode>
         </code>
       ),

@@ -9,6 +9,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -314,9 +315,11 @@ test("the probe finds a gh a package manager put off the plain ssh PATH, and gh 
   // ship one in /usr/bin), as the plain ssh PATH.
   const system = join(home, 'system-bin')
   mkdirSync(system)
+  // A link already made counts even when it dangles: an image whose /usr/bin
+  // holds a broken symlink lists the same name again under /bin.
   for (const dir of ['/usr/bin', '/bin']) {
     for (const name of readdirSync(dir)) {
-      if (name === 'gh' || existsSync(join(system, name))) continue
+      if (name === 'gh' || lstatSync(join(system, name), { throwIfNoEntry: false })) continue
       symlinkSync(join(dir, name), join(system, name))
     }
   }
