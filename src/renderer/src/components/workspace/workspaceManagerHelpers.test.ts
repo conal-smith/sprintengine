@@ -575,7 +575,7 @@ test('New chat opens on the project an open worktree chat was cut from, never th
   assert.equal(newChatInheritedScope('/Users/dev/site', null, slot), '/Users/dev/site')
 })
 
-test('New chat over a paired machine\'s chat opens on that chat\'s project there', () => {
+test("New chat over a paired machine's chat opens on that chat's project there", () => {
   const remote = {
     folderPath: null,
     remoteOrigin: {

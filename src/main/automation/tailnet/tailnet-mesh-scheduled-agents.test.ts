@@ -77,7 +77,6 @@ const success = (structured: Record<string, unknown>) => ({
   result: { content: [{ type: 'text', text: '' }], structuredContent: structured },
 })
 
-
 const listed = {
   id: 'sa-1',
   name: 'Morning triage',

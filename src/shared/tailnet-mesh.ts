@@ -336,8 +336,7 @@ export type MeshScheduledAgentsResult =
 export type MeshScheduledAgentAction = 'run' | 'pause' | 'resume' | 'delete'
 
 export type MeshScheduledAgentActionResult =
-  | { ok: true; id: string; action: MeshScheduledAgentAction }
-  | { ok: false; code: string; message: string }
+  { ok: true; id: string; action: MeshScheduledAgentAction } | { ok: false; code: string; message: string }
 
 /**
  * A scheduled agent made on a paired machine from this New chat
@@ -362,8 +361,7 @@ export type MeshCreateScheduledAgentInput = {
 }
 
 export type MeshCreateScheduledAgentResult =
-  | { ok: true; agent: ScheduledAgentView }
-  | { ok: false; code: string; message: string }
+  { ok: true; agent: ScheduledAgentView } | { ok: false; code: string; message: string }
 
 export const MESH_SCHEDULED_AGENTS_CHANNEL = 'mesh:scheduled-agents'
 export const MESH_SCHEDULED_AGENT_ACTION_CHANNEL = 'mesh:scheduled-agent-action'

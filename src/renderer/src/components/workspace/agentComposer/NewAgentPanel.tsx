@@ -776,8 +776,7 @@ export default function NewAgentPanel({
   // new scheduled agent may be made on a paired machine, run there by its
   // scheduler; one being edited stays on the machine it was saved on.
   const remoteSchedulable = scheduled && editing === null
-  const remoteChosenAway =
-    !remoteSelectable || selection.kind !== 'conversation' || (chatOnly && !remoteSchedulable)
+  const remoteChosenAway = !remoteSelectable || selection.kind !== 'conversation' || (chatOnly && !remoteSchedulable)
   React.useEffect(() => {
     if (remoteChosenAway) setRemoteTarget(null)
   }, [remoteChosenAway])

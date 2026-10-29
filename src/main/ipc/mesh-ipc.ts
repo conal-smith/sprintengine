@@ -178,7 +178,9 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
   )
   ipcMain.handle(MESH_SCHEDULED_AGENT_ACTION_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input) ?? {}
-    return service.mesh().scheduledAgentAction({ connectionId: record.connectionId, id: record.id, action: record.action })
+    return service
+      .mesh()
+      .scheduledAgentAction({ connectionId: record.connectionId, id: record.id, action: record.action })
   })
   ipcMain.handle(MESH_CREATE_SCHEDULED_AGENT_CHANNEL, (_event, input: unknown) =>
     service.mesh().createScheduledAgent(asRecord(input) ?? {}),

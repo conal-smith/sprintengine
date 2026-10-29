@@ -2448,7 +2448,11 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     const cron = text(input.cron)
     const cli = text(input.cli)
     if (!workspaceId || !prompt || !cron || !cli) {
-      return { ok: false, code: 'invalid_arguments', message: 'A schedule needs a project, a prompt, a time and a CLI.' }
+      return {
+        ok: false,
+        code: 'invalid_arguments',
+        message: 'A schedule needs a project, a prompt, a time and a CLI.',
+      }
     }
     const ids = (value: unknown) =>
       Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : []
@@ -2480,7 +2484,11 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     const agent = scheduledAgentViewOf(answer.value.scheduledAgent)
     return agent
       ? { ok: true, agent }
-      : { ok: false, code: 'unreadable_result', message: 'That machine scheduled it, in a shape this build cannot read.' }
+      : {
+          ok: false,
+          code: 'unreadable_result',
+          message: 'That machine scheduled it, in a shape this build cannot read.',
+        }
   }
 
   function getLiveState(): MeshLiveState {
@@ -3796,11 +3804,13 @@ function attachmentsOf(value: unknown): Array<{ id: string; name: string }> {
 export function scheduledAgentViewOf(value: unknown): ScheduledAgentView | null {
   if (!value || typeof value !== 'object') return null
   const agent = value as Record<string, unknown>
-  const schedule = agent.schedule && typeof agent.schedule === 'object' ? (agent.schedule as Record<string, unknown>) : null
+  const schedule =
+    agent.schedule && typeof agent.schedule === 'object' ? (agent.schedule as Record<string, unknown>) : null
   if (typeof agent.id !== 'string' || !agent.id || typeof agent.prompt !== 'string') return null
   if (!schedule || typeof schedule.cron !== 'string') return null
   const once = instantOf(schedule.once)
-  const lastRunRecord = agent.lastRun && typeof agent.lastRun === 'object' ? (agent.lastRun as Record<string, unknown>) : null
+  const lastRunRecord =
+    agent.lastRun && typeof agent.lastRun === 'object' ? (agent.lastRun as Record<string, unknown>) : null
   const lastRunAt = instantOf(lastRunRecord?.at)
   let lastRun: ScheduledAgentLastRun | null = null
   if (lastRunRecord && lastRunAt !== null) {
@@ -3861,7 +3871,8 @@ export function scheduledAgentsOf(value: Record<string, unknown>): {
   const agents = (Array.isArray(value.scheduledAgents) ? value.scheduledAgents : [])
     .slice(0, 500)
     .flatMap((entry) => scheduledAgentViewOf(entry) ?? [])
-  const pause = value.pausedAll && typeof value.pausedAll === 'object' ? (value.pausedAll as Record<string, unknown>) : null
+  const pause =
+    value.pausedAll && typeof value.pausedAll === 'object' ? (value.pausedAll as Record<string, unknown>) : null
   const since = instantOf(pause?.since)
   return { ok: true, agents, pausedAll: pause && since !== null ? { since, until: instantOf(pause.until) } : null }
 }
