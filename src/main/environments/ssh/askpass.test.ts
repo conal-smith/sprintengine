@@ -175,7 +175,8 @@ test.skipIf(!DOCKER_TESTS)(
       const refused = await session()
       assert.equal(refused.code, 255)
       assert.match(refused.stderr, /Host key verification failed/u)
-      assert.equal(asked[0]?.kind, 'host-key')
+      // The prompt rides in the message, so a client whose wording moved says what it asked.
+      assert.equal(asked[0]?.kind, 'host-key', `ssh asked: ${JSON.stringify(asked[0]?.text)}`)
       assert.match(asked[0]!.hostKey!.fingerprint, /^SHA256:/u)
       let knownHosts = ''
       try {
