@@ -72,6 +72,7 @@ import {
 } from './cli-host-child'
 import { studioGatewayForChat, withStudioGateway, type StudioMcpServerResolver } from './studio-gateway-entry'
 import { GATEWAY_WORKTREE_LEASE_TOOLS, isInGitCheckout, worktreeLeaseInstruction } from './worktree-lease-guidance'
+import { VISUALS_INSTRUCTION } from '../../shared/host-context/document'
 import { studioPlatform } from '../../server/platform/platform'
 import { usageLimitsStore } from '../usage-limits/store'
 import { codexBillingOf, codexRateLimitUpdates, isCodexUsageLimitError } from '../usage-limits/sources'
@@ -1353,12 +1354,11 @@ export function createCodexConversationProvider(
                 sandbox: policy.sandbox,
               }
             : {}),
-          ...(leasesWorktrees
-            ? await codexDeveloperInstructions(
-                transport,
-                state.input.workspaceRoot === undefined ? undefined : hostCwd(state.input.workspaceRoot, wsl),
-              )
-            : {}),
+          ...(await codexDeveloperInstructions(
+            transport,
+            state.input.workspaceRoot === undefined ? undefined : hostCwd(state.input.workspaceRoot, wsl),
+            leasesWorktrees,
+          )),
         }
         let resumeLost = false
         let forkLost = false
@@ -1934,18 +1934,22 @@ export async function probeCodexConversationCommands(
 }
 
 /**
- * Studio's worktree line, as the thread's developer instructions (taken by
- * `thread/start`, `thread/resume` and `thread/fork` alike). A thread's own
- * replace the `developer_instructions` the person set in their config rather
- * than adding to them, so theirs are read first and kept ahead of Studio's.
- * A Codex that cannot say what they are is given nothing, rather than having
- * them overwritten.
+ * Studio's lines, as the thread's developer instructions (taken by
+ * `thread/start`, `thread/resume` and `thread/fork` alike): how to show a
+ * chart in the chat, which every thread is told, and the worktree line, for
+ * a chat that can lease. A thread's own replace the `developer_instructions`
+ * the person set in their config rather than adding to them, so theirs are
+ * read first and kept ahead of Studio's. A Codex that cannot say what they
+ * are is given nothing, rather than having them overwritten.
  */
 async function codexDeveloperInstructions(
   transport: Pick<CodexRpcTransport, 'request'>,
   cwd: string | undefined,
+  leasesWorktrees: boolean,
 ): Promise<{ developerInstructions?: string }> {
-  const line = worktreeLeaseInstruction(GATEWAY_WORKTREE_LEASE_TOOLS)
+  const line = [leasesWorktrees ? worktreeLeaseInstruction(GATEWAY_WORKTREE_LEASE_TOOLS) : '', VISUALS_INSTRUCTION]
+    .filter(Boolean)
+    .join('\n\n')
   try {
     const answer = record(await transport.request('config/read', { ...(cwd ? { cwd } : {}) }))
     const own = text(record(answer.config).developer_instructions).trim()

@@ -74,8 +74,11 @@ function hasRemoteCss(text: string): boolean {
   return REMOTE_CSS.test(text)
 }
 
-/** CSS, or a value in an attribute, with every fetch in it made inert. */
-function withoutRemoteCss(css: string): string {
+/**
+ * CSS, or a value in an attribute, with every fetch in it made inert. Also what
+ * a reply's ```visual block is held to (`visualDocument.ts`).
+ */
+export function withoutRemoteCss(css: string): string {
   const decoded = decodeCssEscapes(css)
   if (!hasRemoteCss(decoded)) return css
   return decoded.replace(REMOTE_CSS, (found) => (found.startsWith('@') ? '' : 'none'))

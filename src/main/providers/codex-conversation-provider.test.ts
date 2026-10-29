@@ -24,6 +24,7 @@ import { resolveGatewayLaunchToken } from '../../server/core/gateway-launch-toke
 import { conversationCommandsFor } from '../conversation-commands/registry'
 import { onUsageLimitHit, usageLimitsStore, usageRateLimit } from '../usage-limits/store'
 import type { UsageLimitHit } from '../../shared/usage-limits'
+import { VISUALS_INSTRUCTION } from '../../shared/host-context/document'
 
 function fixture(
   setup: {
@@ -233,11 +234,12 @@ test('streams text and command output, preserves nonzero exit as an ordinary too
   ])
   // The subscription's limits are asked for as the app-server starts, and the
   // thread is started without waiting for the answer.
-  expect(f.calls.map((call) => call.method).slice(0, 5)).toEqual([
+  expect(f.calls.map((call) => call.method).slice(0, 6)).toEqual([
     'initialize',
     'initialized',
     'account/read',
     'account/rateLimits/read',
+    'config/read',
     'thread/start',
   ])
   // `none` sends no override anywhere: Codex runs on its own configured default.
@@ -2006,7 +2008,7 @@ test('a Codex chat with the gateway in a git checkout starts its thread told to 
     await runTurn(f, [])
     expect(f.calls.find((call) => call.method === 'config/read')?.params).toEqual({ cwd: root })
     expect(f.calls.find((call) => call.method === 'thread/start')?.params).toMatchObject({
-      developerInstructions: LEASE_LINE,
+      developerInstructions: `${LEASE_LINE}\n\n${VISUALS_INSTRUCTION}`,
     })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -2023,7 +2025,7 @@ test("a Codex chat keeps the person's own developer instructions ahead of Studio
     f.input.workspaceRoot = root
     await runTurn(f, [])
     expect(f.calls.find((call) => call.method === 'thread/start')?.params).toMatchObject({
-      developerInstructions: `Answer in British English.\n\n${LEASE_LINE}`,
+      developerInstructions: `Answer in British English.\n\n${LEASE_LINE}\n\n${VISUALS_INSTRUCTION}`,
     })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -2056,8 +2058,10 @@ test('a Codex chat without the gateway, or outside a git checkout, is told nothi
     const outside = fixture({ resolveStudioMcpServer: async () => GATEWAY })
     await runTurn(outside, [])
     for (const f of [withoutGateway, outside]) {
-      expect(f.calls.map((call) => call.method)).not.toContain('config/read')
-      expect(f.calls.find((call) => call.method === 'thread/start')?.params).not.toHaveProperty('developerInstructions')
+      // Only how to show a chart, which every chat is told.
+      expect(f.calls.find((call) => call.method === 'thread/start')?.params).toMatchObject({
+        developerInstructions: VISUALS_INSTRUCTION,
+      })
     }
   } finally {
     await rm(root, { recursive: true, force: true })

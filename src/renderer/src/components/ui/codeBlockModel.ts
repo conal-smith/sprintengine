@@ -92,6 +92,9 @@ const LANGUAGES: Record<string, LanguageEntry> = {
   make: { name: 'Makefile', kind: 'config' },
   mermaid: { name: 'Mermaid' },
   mmd: { name: 'Mermaid' },
+  // A chart or table a reply draws, written as HTML: its source reads as HTML.
+  visual: { name: 'Visual', kind: 'html', highlight: 'html' },
+  'studio-visual': { name: 'Visual', kind: 'html', highlight: 'html' },
   math: { name: 'Math' },
   latex: { name: 'LaTeX' },
   tex: { name: 'TeX' },
