@@ -8,6 +8,7 @@ import {
   deriveSessionStatus,
   getSessionItems,
   groupSessionItems,
+  newChatInheritedRemoteProject,
   newChatInheritedScope,
   newChatProjectOptionsOf,
   sessionsAttentionTone,
@@ -572,4 +573,36 @@ test('New chat opens on the project an open worktree chat was cut from, never th
   assert.equal(newChatInheritedScope(undefined, null, null), null)
   assert.equal(newChatInheritedScope(null, '/Users/dev/app', plain), null)
   assert.equal(newChatInheritedScope('/Users/dev/site', null, slot), '/Users/dev/site')
+})
+
+test('New chat over a paired machine\'s chat opens on that chat\'s project there', () => {
+  const remote = {
+    folderPath: null,
+    remoteOrigin: {
+      connectionId: 'conn-mac-mini',
+      machineName: 'mac-mini',
+      workspaceId: 'ws-project-seat',
+      workspaceName: 'app',
+      workspaceRoot: '/Users/dev/app',
+      sessionId: 'conversation:ws-chat-7:agent-1',
+    },
+  } as unknown as Workspace
+  // The chat's own id over there, read off its session, seats the pick.
+  assert.deepEqual(newChatInheritedRemoteProject(undefined, null, remote), {
+    connectionId: 'conn-mac-mini',
+    workspaceId: 'ws-chat-7',
+  })
+  // A row born before the session id was stamped falls back to its workspace.
+  const legacy = {
+    remoteOrigin: { ...remote.remoteOrigin!, sessionId: undefined },
+  } as unknown as Workspace
+  assert.deepEqual(newChatInheritedRemoteProject(undefined, null, legacy), {
+    connectionId: 'conn-mac-mini',
+    workspaceId: 'ws-project-seat',
+  })
+  // A local chat, a folder handed in on purpose, or a draft parked on a local project hand on nothing.
+  assert.equal(newChatInheritedRemoteProject(undefined, null, { folderPath: '/Users/dev/app' } as Workspace), null)
+  assert.equal(newChatInheritedRemoteProject(null, null, remote), null)
+  assert.equal(newChatInheritedRemoteProject('/Users/dev/site', null, remote), null)
+  assert.equal(newChatInheritedRemoteProject(undefined, '/Users/dev/site', remote), null)
 })
