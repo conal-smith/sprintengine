@@ -90,11 +90,13 @@ export function SettingsRoute({
   onOpenDesktops,
   onOpenAppearance,
   onOpenWeb,
+  onOpenScheduled,
 }: {
   onBack?: () => void;
   onOpenDesktops: () => void;
   onOpenAppearance: () => void;
   onOpenWeb?: () => void;
+  onOpenScheduled?: () => void;
 }) {
   // The web count is read from the snapshot, so it is read while this is open.
   const { sessions, snapshot, isFleetRefreshing, refreshFleet } = useSnapshot();
@@ -118,6 +120,7 @@ export function SettingsRoute({
       onOpenAppearance={onOpenAppearance}
       onOpenDesktops={onOpenDesktops}
       onOpenWeb={onOpenWeb}
+      onOpenScheduled={onOpenScheduled}
       onRefreshFleet={refreshFleet}
       sessions={sessions}
       steerFollowUps={followUpBehavior === "steer"}

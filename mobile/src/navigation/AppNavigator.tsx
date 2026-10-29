@@ -46,6 +46,8 @@ import { ConversationFileDiffScreen } from "../features/conversations/Conversati
 import { NewChatScreen } from "../features/conversations/NewChatScreen";
 import { routesAfterNewChat } from "../features/conversations/launchLogic";
 import { openWebTarget, WebTargetsScreen } from "../features/web/WebTargetsScreen";
+import { NewScheduleScreen } from "../features/scheduled/NewScheduleScreen";
+import { ScheduledAgentsScreen } from "../features/scheduled/ScheduledAgentsScreen";
 import { readWebTargets } from "../features/web/webTargetsLogic";
 import { stackScreenOptions } from "./navigationTheme";
 import { PairingRoute, SettingsRoute } from "./routes";
@@ -242,6 +244,34 @@ export function AppNavigator() {
             onOpenAppearance={() => navigation.navigate("Appearance")}
             onOpenDesktops={() => navigation.navigate("Desktop", { deviceId: "" })}
             onOpenWeb={() => navigation.navigate("Web")}
+            onOpenScheduled={() => navigation.navigate("Scheduled")}
+          />
+        )}
+      </HomeStack.Screen>
+      <HomeStack.Screen name="Scheduled" options={{ headerShown: false }}>
+        {({ navigation }) => (
+          <ScheduledAgentsScreen
+            onBack={() => navigation.goBack()}
+            onNew={() => navigation.navigate("ScheduleChooseProject")}
+            sessions={sessions}
+          />
+        )}
+      </HomeStack.Screen>
+      <HomeStack.Screen name="ScheduleChooseProject">
+        {({ navigation }) => (
+          <ChooseProjectScreen onBack={() => navigation.goBack()} onChoose={(choice) => navigation.navigate("NewSchedule", choice)} />
+        )}
+      </HomeStack.Screen>
+      <HomeStack.Screen name="NewSchedule">
+        {({ navigation, route }) => (
+          <NewScheduleScreen
+            desktopName={route.params.desktopName}
+            onCancel={() => navigation.goBack()}
+            // Back past the project chooser to the list, which reads again.
+            onScheduled={() => navigation.navigate("Scheduled")}
+            projectName={route.params.projectName}
+            session={sessions.find((candidate) => candidate.deviceId === route.params.deviceId) ?? null}
+            workspaceId={route.params.workspaceId}
           />
         )}
       </HomeStack.Screen>

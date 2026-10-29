@@ -29,6 +29,8 @@ interface SettingsScreenProps {
   /** Absent in the signed-out gate stack, which has no snapshot and no Web screen. */
   onOpenWeb?: () => void;
   webTargetCount?: number;
+  /** The scheduled agents on the paired desktops. Absent where the stack has no screen for them. */
+  onOpenScheduled?: () => void;
   /** Home's chats under their projects, rather than newest first. */
   groupChatsByProject: boolean;
   onGroupChatsByProjectChange: (enabled: boolean) => void;
@@ -62,6 +64,7 @@ export function SettingsScreen({
   onOpenAppearance,
   onOpenWeb,
   webTargetCount,
+  onOpenScheduled,
   groupChatsByProject,
   onGroupChatsByProjectChange,
   steerFollowUps,
@@ -92,6 +95,15 @@ export function SettingsScreen({
             onPress={onOpenWeb}
             title="Web"
             value={String(webTargetCount ?? 0)}
+          />
+        ) : null}
+        {onOpenScheduled ? (
+          <SettingsRow
+            accessibilityHint="Agents a desktop starts on a schedule, and their controls."
+            chevron
+            icon={<RemoteMachineGlyph size={iconSize.md} />}
+            onPress={onOpenScheduled}
+            title="Scheduled agents"
           />
         ) : null}
 
