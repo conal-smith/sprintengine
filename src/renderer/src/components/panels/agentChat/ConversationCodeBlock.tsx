@@ -5,6 +5,7 @@ import { useConversationLinkContext, type ConversationLinkContext } from './conv
 import { useConversationTransport } from './conversationTransport'
 import { clientSupports } from '../../../clientCapabilities'
 import { useDiagramDrawing } from './conversationDiagram'
+import { useVisualDrawing } from './conversationVisual'
 
 // How long a new terminal's shell gets to show it takes a bracketed paste:
 // long enough for rc files that load a prompt framework, short enough that a
@@ -154,9 +155,12 @@ export function ConversationCodeBlock(props: CodeBlockProps) {
 }
 
 // A code block in an agent's reply, which also draws a ```mermaid block as
-// its diagram once the block is complete (`conversationDiagram.tsx`).
+// its diagram once the block is complete (`conversationDiagram.tsx`), and a
+// ```visual block as its chart or table (`conversationVisual.tsx`).
 export function ConversationReplyCodeBlock(props: CodeBlockProps) {
   const diagram = useDiagramDrawing(props.code, props.language, props.streaming)
+  // At most one of the two answers for a block; the other is empty.
+  const visual = useVisualDrawing(props.code, props.language, props.streaming)
   // The diagram's action joins the caller's rather than replacing them.
   const actions =
     props.actions && diagram.actions ? (
@@ -167,5 +171,5 @@ export function ConversationReplyCodeBlock(props: CodeBlockProps) {
     ) : (
       (props.actions ?? diagram.actions)
     )
-  return <CodeBlock {...props} {...diagram} actions={actions} onPasteInTerminal={usePasteInTerminal()} />
+  return <CodeBlock {...props} {...diagram} {...visual} actions={actions} onPasteInTerminal={usePasteInTerminal()} />
 }

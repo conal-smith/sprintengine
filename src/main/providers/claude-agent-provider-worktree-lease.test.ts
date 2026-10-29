@@ -8,6 +8,7 @@ import type {
   ConversationMcpServer,
   ConversationPermissionPreset,
 } from '../../shared/conversation-runtime'
+import { VISUALS_INSTRUCTION } from './visuals-guidance'
 import { CLAUDE_AGENT_PROVIDER_ID, createClaudeAgentProvider } from './claude-agent-provider'
 import type { MockAdapterTurnInput } from './conversation-provider-adapter'
 
@@ -144,11 +145,12 @@ test('a chat with the gateway in a git checkout is told to lease, before the pro
   expect(append).toMatch(
     /^To work in a separate git worktree, call the SprintEngine Studio tool `mcp__sprintengine-studio__worktree_lease`/u,
   )
+  expect(append).toContain(`\n\n${VISUALS_INSTRUCTION}\n\n`)
   expect(append).toContain('(project instructions):\n\nRun npm test before you commit.')
   await adapter.disposeAll()
 })
 
-test('a chat without the gateway, or outside a git checkout, is told nothing and runs git worktree add', async () => {
+test('a chat without the gateway, or outside a git checkout, is told nothing of worktrees and runs git worktree add', async () => {
   for (const [gateway, git] of [
     [null, true],
     [GATEWAY, false],
@@ -156,7 +158,8 @@ test('a chat without the gateway, or outside a git checkout, is told nothing and
     const root = await folder({ git })
     const { adapter, run, systemPrompt, answers } = harness(gateway, root)
     const events = await run('git worktree add ../app-fix')
-    expect(systemPrompt().append).toBeUndefined()
+    // Only how to show a chart, which every chat is told.
+    expect(systemPrompt().append).toBe(VISUALS_INSTRUCTION)
     expect(answers[0]?.hookSpecificOutput?.permissionDecision).toBeUndefined()
     expect(outputStatus(events)).toBe('ok')
     await adapter.disposeAll()

@@ -51,6 +51,7 @@ import { isWindowsPath, toWslPath } from '../../shared/host-paths'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
 import { AGENT_IDENTITY_ENV_KEYS, MCP_CHANNEL_TOKEN_ENV, MCP_SECRET_ENV_PREFIX } from '../../shared/studio-env'
 import { inferConversationToolKind } from '../../shared/conversation/toolKind'
+import { VISUALS_INSTRUCTION } from './visuals-guidance'
 import {
   CLAUDE_WORKTREE_LEASE_TOOLS,
   isInGitCheckout,
@@ -1073,9 +1074,14 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     // Only a chat that has the gateway has the pool's tools, and only one in a
     // git checkout has a repository to lease a worktree of.
     const leasesWorktrees = Boolean(studioGateway) && (await isInGitCheckout(state.workspaceRoot))
-    // Studio's own line first, so a project's instructions after it have the
-    // last word on how that project wants its worktrees made.
-    const systemAppend = [leasesWorktrees ? worktreeLeaseInstruction(CLAUDE_WORKTREE_LEASE_TOOLS) : '', instructions]
+    // Studio's own lines first, so a project's instructions after them have
+    // the last word on how that project wants its worktrees made. Every chat
+    // is told how to show a chart: its replies are drawn by the app.
+    const systemAppend = [
+      leasesWorktrees ? worktreeLeaseInstruction(CLAUDE_WORKTREE_LEASE_TOOLS) : '',
+      VISUALS_INSTRUCTION,
+      instructions,
+    ]
       .filter(Boolean)
       .join('\n\n')
     await swept
