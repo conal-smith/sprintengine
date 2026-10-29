@@ -302,7 +302,7 @@
     },
     {
       "name": "schedule.create",
-      "sha256": "0b3111a7a0681a93f82f07146b81d3f65b2e79bc377803eb373839ebb39b18c9"
+      "sha256": "4954e763ba14ca5d9b0143144ac2b68499e5040a48ddfc1c084babb0fd1aaafd"
     },
     {
       "name": "schedule.delete",
@@ -692,7 +692,7 @@
     },
     {
       "name": "schedule.create",
-      "sha256": "0b3111a7a0681a93f82f07146b81d3f65b2e79bc377803eb373839ebb39b18c9"
+      "sha256": "4954e763ba14ca5d9b0143144ac2b68499e5040a48ddfc1c084babb0fd1aaafd"
     },
     {
       "name": "schedule.delete",
