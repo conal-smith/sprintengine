@@ -15,7 +15,7 @@ works too. Odd-numbered releases (23, 25) are short-lived and are left out of
 the fix is to switch to 22 or 24 rather than to widen the range.
 
 ```
-git clone https://github.com/sprintengine/studio.git
+git clone https://github.com/conal-smith/sprintengine.git
 cd studio
 npm ci
 npm run dev

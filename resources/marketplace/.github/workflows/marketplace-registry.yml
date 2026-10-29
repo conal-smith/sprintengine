@@ -35,7 +35,7 @@ jobs:
       - name: Checkout SprintEngine validation tooling
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.SPRINTENGINE_APP_REPOSITORY || vars.SPRINTENGINE_APP_REPOSITORY || 'sprintengine/studio' }}
+          repository: ${{ vars.SPRINTENGINE_APP_REPOSITORY || vars.SPRINTENGINE_APP_REPOSITORY || 'conal-smith/sprintengine' }}
           ref: ${{ vars.SPRINTENGINE_APP_REF || vars.SPRINTENGINE_APP_REF || 'main' }}
           path: sprintengine
 

@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/sprintengine/studio/security/advisories/new
+    url: https://github.com/conal-smith/sprintengine/security/advisories/new
     about: Privately, never as a public issue. SECURITY.md says what to include.
