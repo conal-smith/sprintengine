@@ -160,7 +160,7 @@ enough — see [docs/plugin-authors/README.md](docs/plugin-authors/README.md).
 You need **Node 22** (there is a `.nvmrc`) and npm.
 
 ```
-git clone https://github.com/sprintengine/studio.git
+git clone https://github.com/conal-smith/sprintengine.git
 cd studio
 npm ci
 npm run dev

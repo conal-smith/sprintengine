@@ -6,7 +6,7 @@ Please report security vulnerabilities privately, not as a public issue.
 
 Use GitHub's private vulnerability reporting on this repository:
 
-<https://github.com/sprintengine/studio/security/advisories/new>
+<https://github.com/conal-smith/sprintengine/security/advisories/new>
 
 That form is the only channel for security reports. There is no security
 mailing address for this project, so please do not send reports by email.
