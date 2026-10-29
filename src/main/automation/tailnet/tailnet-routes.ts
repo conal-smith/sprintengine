@@ -396,6 +396,15 @@ export const TAILNET_CAPABILITIES = [
   // a path), and `conversation.approval_rule_revoke` revokes one, so a paired
   // desktop's Settings lists them beside its own.
   'approval-rules',
+  // A paired device's Scheduled section (2026-10-29): `schedule.list` and
+  // `schedule.run`, `schedule.pause`, `schedule.resume` and `schedule.delete`
+  // were always served on `workspace:*`; this names `schedule.create` taking
+  // `name`, `once` (a one-time instant) and `worktreeName`, so a paired
+  // desktop's or phone's New chat can schedule here what it schedules on its
+  // own machine. A client that does not see it lists this machine's
+  // schedules and controls them, but makes none here: an older handler
+  // refuses the new arguments.
+  'scheduled-agents',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

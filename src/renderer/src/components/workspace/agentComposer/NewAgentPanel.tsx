@@ -112,6 +112,7 @@ import {
   type MachineBrowseEntry,
 } from './newChatMachines'
 import { RemoteProjectPicker, type RemoteTargetState } from './RemoteProjectPicker'
+import { announceRemoteScheduledChange } from '../sidebar/useRemoteScheduledAgents'
 import { ComposerStrip } from './ComposerStrip'
 import { FrontTruncatedText } from '../../ui/FrontTruncatedText'
 import { ScheduledRuns } from './schedule/ScheduledRuns'
@@ -771,8 +772,12 @@ export default function NewAgentPanel({
   React.useEffect(() => {
     if (chatOnly && composer.selection.kind !== 'conversation') composer.setSelection({ kind: 'conversation' })
   }, [composer, chatOnly])
-  // An extension is made on this computer: the scaffold writes to its disk.
-  const remoteChosenAway = !remoteSelectable || selection.kind !== 'conversation' || chatOnly
+  // An extension is made on this computer: the scaffold writes to its disk. A
+  // new scheduled agent may be made on a paired machine, run there by its
+  // scheduler; one being edited stays on the machine it was saved on.
+  const remoteSchedulable = scheduled && editing === null
+  const remoteChosenAway =
+    !remoteSelectable || selection.kind !== 'conversation' || (chatOnly && !remoteSchedulable)
   React.useEffect(() => {
     if (remoteChosenAway) setRemoteTarget(null)
   }, [remoteChosenAway])
@@ -1522,8 +1527,92 @@ export default function NewAgentPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId])
 
+  // A scheduled agent on a paired machine: its project there, and its
+  // scheduler, which starts each run whether or not this computer is awake.
+  const scheduleRemote = async (text: string, target: RemoteTargetState) => {
+    const picked = target.picked
+    if (!picked) {
+      showToast({
+        tone: 'warn',
+        title: 'Choose a project',
+        description: `A scheduled agent starts its chats in a project on ${target.connection.machineName}.`,
+      })
+      return
+    }
+    if (target.capabilities && !target.capabilities.includes('scheduled-agents')) {
+      showToast({
+        tone: 'warn',
+        title: 'Not scheduled',
+        description: `${target.connection.machineName} cannot take a schedule from here yet. Update SprintEngine Studio there to schedule agents on it.`,
+      })
+      return
+    }
+    // Pictures and files staged here are files on this computer, which a run
+    // over there could not open.
+    if (images.length > 0 || files.length > 0) {
+      showToast({
+        tone: 'warn',
+        title: 'Not scheduled',
+        description: `A schedule on ${target.connection.machineName} starts from its prompt alone; remove the attachments.`,
+      })
+      return
+    }
+    const body = text.trim()
+    if (!body) {
+      showToast({
+        tone: 'warn',
+        title: 'Say what it should do',
+        description: 'Each run starts with this prompt, so a scheduled agent needs one.',
+      })
+      promptRef.current?.focus()
+      return
+    }
+    if (once !== null && once <= Date.now()) {
+      showToast({ tone: 'warn', title: 'Pick a time ahead', description: 'That time has already passed.' })
+      return
+    }
+    const confirm = buildLaunchConfirm(selection)
+    if (confirm.kind !== 'conversation' || !confirm.cli) return
+    setScheduleBusy(true)
+    try {
+      const result = await window.api.meshCreateScheduledAgent({
+        connectionId: target.connection.id,
+        workspaceId: picked.workspaceId,
+        prompt: body,
+        cron,
+        timezone: scheduleTimezone,
+        ...(once !== null ? { once } : {}),
+        cli: confirm.cli,
+        model: confirm.model ?? null,
+        permissionPreset: effectivePreset,
+        worktreeName: confirm.worktree ? confirm.worktree.name : null,
+        skills: (confirm.skills ?? []).map((skill) => skill.id),
+        mcpServers: composer.mcpServers.map((server) => server.id),
+      })
+      if (!result.ok) {
+        showToast({ tone: 'error', title: 'Not scheduled', description: result.message })
+        return
+      }
+      if (once === null) rememberSchedule(cron)
+      announceRemoteScheduledChange(target.connection.id)
+      onScheduled?.(result.agent)
+    } catch (error) {
+      showToast({
+        tone: 'error',
+        title: 'Not scheduled',
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setScheduleBusy(false)
+    }
+  }
+
   const schedule = async (text: string) => {
     if (!canLaunch || scheduleBusy) return
+    if (remoteTarget && !editing) {
+      await scheduleRemote(text, remoteTarget)
+      return
+    }
     const folder = workspaceRoot?.trim()
     if (!folder) {
       showToast({
@@ -2614,10 +2703,9 @@ export default function NewAgentPanel({
                 there is another machine to pick. */}
             {machinePickerShown ? (
               <MachineScopePicker
-                // A scheduled agent runs on this computer or one of its WSL
-                // distributions: the scheduler is this computer's, and a paired
-                // machine's chat would need its own.
-                machines={remoteSelectable && !chatOnly ? remoteMachines : []}
+                // A new scheduled agent may run on a paired machine, by that
+                // machine's scheduler; an extension is made on this computer.
+                machines={remoteSelectable && (!chatOnly || remoteSchedulable) ? remoteMachines : []}
                 selected={remoteTarget?.connection ?? null}
                 onSelect={(connection) => {
                   pickSsh(null)

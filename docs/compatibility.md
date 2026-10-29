@@ -725,6 +725,15 @@ desktop's window reads names which a machine takes as `manage`
 from before it ignores. All of it is additive: a client offers each item for a
 machine's chats only where it is advertised, and an older machine answers the
 tools "Unknown tool". The Studio RPC does not advertise them.
+A paired device's Scheduled section (2026-10-29) is `scheduled-agents`. The
+`schedule.*` gateway tools were already served on `workspace:read` and
+`workspace:operate`; the capability names `schedule.create` taking `name`,
+`once` (an ISO 8601 instant for a one-time schedule) and `worktreeName`. A
+client lists a machine's schedules and runs, pauses, resumes and closes them
+wherever `schedule.list` answers, and schedules a new one there only where
+the capability is advertised: the gateway refuses arguments a tool does not
+declare, so an older machine refuses the create rather than making a
+different schedule. It is additive, and the Studio RPC does not advertise it.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.

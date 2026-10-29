@@ -47,8 +47,14 @@ import {
   type MeshConversationSearchResult,
   type MeshApprovalRulesResult,
   type MeshRevokeApprovalRuleResult,
+  type MeshCreateScheduledAgentInput,
+  type MeshCreateScheduledAgentResult,
+  type MeshScheduledAgentAction,
+  type MeshScheduledAgentActionResult,
+  type MeshScheduledAgentsResult,
 } from '../../../shared/tailnet-mesh'
 import type { SettledChatWorktreePlan } from '../../../shared/ipc/settled-chats'
+import type { ScheduledAgentLastRun, ScheduledAgentView, ScheduledAgentsPause } from '../../../shared/scheduled-agents'
 import type {
   ConversationContextBreakdownResult,
   ConversationImageAttachment,
@@ -349,6 +355,16 @@ export type TailnetMeshService = {
   approvalRules(input: { connectionId: unknown }): Promise<MeshApprovalRulesResult>
   /** Revoke one of them there (`approval-rules`, on `conversation:operate`). */
   revokeApprovalRule(input: { connectionId: unknown; ruleId?: unknown }): Promise<MeshRevokeApprovalRuleResult>
+  /** A paired machine's scheduled agents, and whether it takes a schedule from here (`scheduled-agents`). */
+  scheduledAgents(input: { connectionId: unknown }): Promise<MeshScheduledAgentsResult>
+  /** Run now, pause, resume or close one of them there (`workspace:operate`). */
+  scheduledAgentAction(input: {
+    connectionId: unknown
+    id?: unknown
+    action?: unknown
+  }): Promise<MeshScheduledAgentActionResult>
+  /** Schedule an agent there, in one of its projects (`scheduled-agents`). */
+  createScheduledAgent(input: Partial<MeshCreateScheduledAgentInput>): Promise<MeshCreateScheduledAgentResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -2371,6 +2387,102 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     return answer.ok ? { ok: true, ruleId: input.ruleId } : answer
   }
 
+  // A paired machine's scheduled agents, on the `schedule.*` tools it always
+  // served to paired devices: listed and controlled from any build that
+  // answers them, scheduled from here only where it says `scheduled-agents`.
+  async function scheduledAgents(input: { connectionId: unknown }): Promise<MeshScheduledAgentsResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'schedule.list',
+    })
+    if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
+    const capabilities = peerCapabilities.get(connection.id)
+    return { ...scheduledAgentsOf(answer.value), canCreate: tailnetPeerSupports(capabilities, 'scheduled-agents') }
+  }
+
+  async function scheduledAgentAction(input: {
+    connectionId: unknown
+    id?: unknown
+    action?: unknown
+  }): Promise<MeshScheduledAgentActionResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    if (typeof input.id !== 'string' || !input.id) {
+      return { ok: false, code: 'invalid_arguments', message: 'Name the scheduled agent.' }
+    }
+    const action = SCHEDULED_AGENT_ACTIONS.has(input.action as MeshScheduledAgentAction)
+      ? (input.action as MeshScheduledAgentAction)
+      : null
+    if (!action) return { ok: false, code: 'invalid_arguments', message: 'Run, pause, resume or delete it.' }
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: `schedule.${action}`,
+      args: { id: input.id },
+      // A run waits on the chat starting over there, a CLI and all.
+      ...(action === 'run' ? { timeoutMs: 60_000 } : {}),
+    })
+    if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
+    return { ok: true, id: input.id, action }
+  }
+
+  async function createScheduledAgent(
+    input: Partial<MeshCreateScheduledAgentInput>,
+  ): Promise<MeshCreateScheduledAgentResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'scheduled-agents')) {
+      return {
+        ok: false,
+        code: 'scheduled_agents_unsupported',
+        message: `${connection.machineName} cannot take a schedule from here yet. Update SprintEngine Studio there to schedule agents on it.`,
+      }
+    }
+    const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null)
+    const workspaceId = text(input.workspaceId)
+    const prompt = text(input.prompt)
+    const cron = text(input.cron)
+    const cli = text(input.cli)
+    if (!workspaceId || !prompt || !cron || !cli) {
+      return { ok: false, code: 'invalid_arguments', message: 'A schedule needs a project, a prompt, a time and a CLI.' }
+    }
+    const ids = (value: unknown) =>
+      Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : []
+    const preset = input.permissionPreset ? parseCliPermissionPreset(input.permissionPreset) : null
+    const once = typeof input.once === 'number' && Number.isFinite(input.once) ? input.once : null
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'schedule.create',
+      args: {
+        workspaceId,
+        prompt,
+        cron,
+        ...(text(input.timezone) ? { timezone: text(input.timezone) } : {}),
+        ...(once !== null ? { once: new Date(once).toISOString() } : {}),
+        cli,
+        ...(text(input.model) ? { model: text(input.model) } : {}),
+        ...(preset ? { permissionPreset: preset } : {}),
+        ...(typeof input.worktreeName === 'string'
+          ? input.worktreeName.trim()
+            ? { worktreeName: input.worktreeName.trim() }
+            : { worktree: true }
+          : {}),
+        ...(ids(input.skills).length > 0 ? { skills: ids(input.skills) } : {}),
+        ...(ids(input.mcpServers).length > 0 ? { mcpServers: ids(input.mcpServers) } : {}),
+      },
+    })
+    if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
+    const agent = scheduledAgentViewOf(answer.value.scheduledAgent)
+    return agent
+      ? { ok: true, agent }
+      : { ok: false, code: 'unreadable_result', message: 'That machine scheduled it, in a shape this build cannot read.' }
+  }
+
   function getLiveState(): MeshLiveState {
     return {
       revision,
@@ -2959,6 +3071,9 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     conversationSearch,
     approvalRules,
     revokeApprovalRule,
+    scheduledAgents,
+    scheduledAgentAction,
+    createScheduledAgent,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -3652,6 +3767,103 @@ export function approvalRulesOf(value: Record<string, unknown>): MeshApprovalRul
     ]
   })
   return { ok: true, rules }
+}
+
+const SCHEDULED_AGENT_ACTIONS: ReadonlySet<MeshScheduledAgentAction> = new Set(['run', 'pause', 'resume', 'delete'])
+
+/** An ISO instant (or epoch ms) as epoch ms; null for anything else. */
+function instantOf(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || !value) return null
+  const at = Date.parse(value)
+  return Number.isFinite(at) ? at : null
+}
+
+function attachmentsOf(value: unknown): Array<{ id: string; name: string }> {
+  return (Array.isArray(value) ? value : []).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const attachment = entry as Record<string, unknown>
+    if (typeof attachment.id !== 'string' || !attachment.id) return []
+    return [{ id: attachment.id, name: typeof attachment.name === 'string' ? attachment.name : attachment.id }]
+  })
+}
+
+/**
+ * One scheduled agent as a paired machine's `schedule.list` serves it, back in
+ * the shape this machine's own list has: its instants were sent as ISO
+ * strings. Null for one without what a row needs — an id, a prompt, a cron.
+ */
+export function scheduledAgentViewOf(value: unknown): ScheduledAgentView | null {
+  if (!value || typeof value !== 'object') return null
+  const agent = value as Record<string, unknown>
+  const schedule = agent.schedule && typeof agent.schedule === 'object' ? (agent.schedule as Record<string, unknown>) : null
+  if (typeof agent.id !== 'string' || !agent.id || typeof agent.prompt !== 'string') return null
+  if (!schedule || typeof schedule.cron !== 'string') return null
+  const once = instantOf(schedule.once)
+  const lastRunRecord = agent.lastRun && typeof agent.lastRun === 'object' ? (agent.lastRun as Record<string, unknown>) : null
+  const lastRunAt = instantOf(lastRunRecord?.at)
+  let lastRun: ScheduledAgentLastRun | null = null
+  if (lastRunRecord && lastRunAt !== null) {
+    if (lastRunRecord.ok === true && typeof lastRunRecord.workspaceId === 'string') {
+      lastRun = {
+        at: lastRunAt,
+        ok: true,
+        workspaceId: lastRunRecord.workspaceId,
+        ...(typeof lastRunRecord.agentId === 'string' ? { agentId: lastRunRecord.agentId } : {}),
+      }
+    } else if (lastRunRecord.ok === false) {
+      lastRun = {
+        at: lastRunAt,
+        ok: false,
+        message: typeof lastRunRecord.message === 'string' ? lastRunRecord.message : 'The run did not start.',
+      }
+    }
+  }
+  const pausedAt = instantOf(agent.pausedAt)
+  const text = (entry: unknown) => (typeof entry === 'string' && entry ? entry : undefined)
+  return {
+    id: agent.id,
+    ...(text(agent.name) ? { name: text(agent.name) } : {}),
+    prompt: agent.prompt,
+    schedule: {
+      cron: schedule.cron,
+      timezone: typeof schedule.timezone === 'string' ? schedule.timezone : 'UTC',
+      ...(once !== null ? { once } : {}),
+    },
+    folderPath: typeof agent.folderPath === 'string' ? agent.folderPath : '',
+    // A machine there (one of its WSL distributions) names nothing here.
+    hostId: null,
+    cli: typeof agent.cli === 'string' ? agent.cli : '',
+    cliModel: text(agent.cliModel) ?? null,
+    permissionPreset: agent.permissionPreset ? parseCliPermissionPreset(agent.permissionPreset) : null,
+    skills: attachmentsOf(agent.skills),
+    mcpServers: attachmentsOf(agent.mcpServers),
+    worktree:
+      agent.worktree && typeof agent.worktree === 'object'
+        ? { name: text((agent.worktree as Record<string, unknown>).name) ?? '' }
+        : null,
+    ownerModuleId: text(agent.ownerModuleId) ?? null,
+    createdAt: instantOf(agent.createdAt) ?? 0,
+    updatedAt: instantOf(agent.updatedAt) ?? 0,
+    lastRun,
+    lastFailureSeenAt: instantOf(agent.lastFailureSeenAt),
+    ...(pausedAt !== null ? { pausedAt } : {}),
+    nextRunAt: instantOf(agent.nextRunAt),
+  }
+}
+
+/** A paired machine's `schedule.list` answer, kept to the rows this build can read. */
+export function scheduledAgentsOf(value: Record<string, unknown>): {
+  ok: true
+  agents: ScheduledAgentView[]
+  pausedAll: ScheduledAgentsPause | null
+} {
+  const agents = (Array.isArray(value.scheduledAgents) ? value.scheduledAgents : [])
+    .slice(0, 500)
+    .flatMap((entry) => scheduledAgentViewOf(entry) ?? [])
+  const pause = value.pausedAll && typeof value.pausedAll === 'object' ? (value.pausedAll as Record<string, unknown>) : null
+  const since = instantOf(pause?.since)
+  return { ok: true, agents, pausedAll: pause && since !== null ? { since, until: instantOf(pause.until) } : null }
 }
 
 const HIT_FROM = new Set(['person', 'agent', 'studio'])

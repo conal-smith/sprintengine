@@ -162,6 +162,11 @@ import type {
   MeshConversationSearchResult,
   MeshApprovalRulesResult,
   MeshRevokeApprovalRuleResult,
+  MeshCreateScheduledAgentInput,
+  MeshCreateScheduledAgentResult,
+  MeshScheduledAgentAction,
+  MeshScheduledAgentActionResult,
+  MeshScheduledAgentsResult,
   MeshConversationChange,
   MeshVisitConversationResult,
   MeshWorkspaceCheckoutResult,
@@ -1042,6 +1047,16 @@ export type ElectronApi = {
   meshApprovalRules: (input: { connectionId: string }) => Promise<MeshApprovalRulesResult>
   /** Revoke one of them there. */
   meshRevokeApprovalRule: (input: { connectionId: string; ruleId: string }) => Promise<MeshRevokeApprovalRuleResult>
+  /** A paired machine's scheduled agents (`schedule.list` there), and whether it takes one from here. */
+  meshScheduledAgents: (input: { connectionId: string }) => Promise<MeshScheduledAgentsResult>
+  /** Run now, pause, resume or close one of them there. */
+  meshScheduledAgentAction: (input: {
+    connectionId: string
+    id: string
+    action: MeshScheduledAgentAction
+  }) => Promise<MeshScheduledAgentActionResult>
+  /** Schedule an agent on a paired machine, in one of its projects (`scheduled-agents` there). */
+  meshCreateScheduledAgent: (input: MeshCreateScheduledAgentInput) => Promise<MeshCreateScheduledAgentResult>
   /** A remote workspace's checkout facts — branch, trunk, branches, worktrees — for the launch panel's checkout · branch segments. */
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string) => Promise<MeshWorkspaceCheckoutResult>
   /** A remote project's skills and, for a CLI, its MCP servers with their connection, for the composer's picker. */
