@@ -105,12 +105,17 @@ export function skillSearchEmptyLine(query: string): string {
 
 export const POPULAR_REPOS_EMPTY_LINE = 'GitHub returned no repositories tagged as skill collections.'
 
-/** Star counts sit in a dense row, so the long ones fold: 52,341 → 52k. */
+/**
+ * Star counts sit in a dense row, so the long ones fold: 52,341 → 52k. Never a
+ * trailing ".0" (1,000 → 1k, 9,960 → 10k), and a count that would round to
+ * 1000k reads as 1M.
+ */
 export function formatStars(stars: number): string {
   if (!Number.isFinite(stars) || stars < 0) return ''
-  if (stars < 1000) return String(Math.round(stars))
-  const thousands = stars / 1000
-  return thousands < 10 ? `${thousands.toFixed(1)}k` : `${Math.round(thousands)}k`
+  const count = Math.round(stars)
+  if (count < 1000) return String(count)
+  const [scaled, unit] = count < 999_500 ? [count / 1000, 'k'] : [count / 1_000_000, 'M']
+  return `${scaled < 10 ? scaled.toFixed(1).replace(/\.0$/, '') : Math.round(scaled)}${unit}`
 }
 
 /** Repositories already in the source list, matched the way GitHub matches them. */
