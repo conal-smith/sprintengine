@@ -195,6 +195,9 @@ async function resolveDefaultRef(
 }
 
 /** Some local or remote branch holds `head`, so removing a detached worktree loses none of its commits. */
+/** What the report says of an agent worktree whose folder was already gone when the cleanup came to it. */
+const MISSING_FOLDER_DETAIL = 'its folder was already gone; git no longer holds its branch'
+
 async function headOnSomeRef(
   cwd: string,
   head: string,
@@ -342,7 +345,36 @@ export async function cleanupAgentWorktrees(
       continue
     }
     if (worktree.prunable || !(await exists(worktree.path))) {
-      record({ ...base, verdict: 'missing' })
+      // Its folder is gone, so nothing in it can be lost; only git's note of
+      // it is left, and while that stands its branch reads as checked out and
+      // the branch tidy below never takes it. An agent worktree's note goes,
+      // unless its detached HEAD holds commits no branch has: that note is the
+      // last thing reaching them. Any other worktree's folder may be on a
+      // volume that is not mounted, and its note is left alone.
+      const forgettable =
+        agent && (Boolean(worktree.branch) || !worktree.head || (await headOnSomeRef(root, worktree.head, runGit)))
+      if (!forgettable) {
+        record({ ...base, verdict: 'missing' })
+        continue
+      }
+      if (dryRun) {
+        record({ ...base, verdict: 'removed', detail: MISSING_FOLDER_DETAIL })
+        continue
+      }
+      const forgotten = await withWorktreeRegistryLock(root, async () => {
+        if (worktree.locked) {
+          const unlocked = await runGit(root, ['worktree', 'unlock', worktree.path])
+          if (!unlocked.ok) return unlocked
+        }
+        // `remove` on a folder that is gone drops git's note of it alone,
+        // where `prune` would drop every other missing worktree's as well.
+        return runGit(root, ['worktree', 'remove', '--force', worktree.path])
+      })
+      record(
+        forgotten.ok
+          ? { ...base, verdict: 'removed', detail: MISSING_FOLDER_DETAIL }
+          : { ...base, verdict: 'missing', detail: forgotten.message ?? 'git could not forget it' },
+      )
       continue
     }
     const writtenAt = await lastWrittenAt(worktree.path)
