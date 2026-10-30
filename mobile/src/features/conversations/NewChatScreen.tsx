@@ -781,6 +781,8 @@ export function NewChatScreen({
             picker={{
               cli: selection.cli ?? "claude-code",
               label: modelLabel,
+              // A tag shares the row: the mark alone, the tag keeping its words.
+              compact: scheduled !== null || presetMeta !== null,
               accessibilityLabel: [
                 `Agent and model, ${provider && selection.model !== null ? `${provider.label} ${modelText}` : modelText}`,
                 windowLabel ? `${windowLabel} context` : null,

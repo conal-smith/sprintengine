@@ -969,6 +969,8 @@ export function ConversationScreen({
       ? {
           cli: chatCli,
           label: pickerLabel,
+          // The send time's tag shares the row: the mark alone.
+          compact: sendAt !== null,
           accessibilityLabel: [
             `Model, ${pickerLabel}${model && !model.editable ? ", set when the chat started" : ""}`,
             preset ? `access ${permissionLabel(preset)}` : null,

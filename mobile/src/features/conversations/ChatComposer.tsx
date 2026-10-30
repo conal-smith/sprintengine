@@ -116,6 +116,12 @@ export function ChatComposer({
     accessibilityLabel: string;
     onPress?: () => void;
     disabled?: boolean;
+    /**
+     * The CLI's mark and the chevron alone, the model's name left to the
+     * accessible label: while a tag shares the row, a name cut down to "O…"
+     * says nothing and takes the tag's room.
+     */
+    compact?: boolean;
   } | null;
   dictation: { state: DictationState; onToggle: () => void; disabled: boolean };
   /** `followUp`: what a send mid-turn does, drawn on the send; a long press does the other. */
@@ -232,12 +238,14 @@ export function ChatComposer({
               disabled={!picker.onPress || picker.disabled}
               hitSlop={touchSlop(CONTROL_SIZE)}
               onPress={picker.onPress}
-              style={({ pressed }) => [styles.picker, pressed ? styles.pressed : null]}
+              style={({ pressed }) => [styles.picker, picker.compact ? styles.pickerCompact : null, pressed ? styles.pressed : null]}
             >
-              <CliLogo cli={picker.cli} size={iconSize.xs} />
-              <Text numberOfLines={1} style={[styles.pickerText, picker.disabled ? styles.pickerOff : null]}>
-                {picker.label}
-              </Text>
+              <CliLogo cli={picker.cli} size={picker.compact ? iconSize.sm : iconSize.xs} />
+              {picker.compact ? null : (
+                <Text numberOfLines={1} style={[styles.pickerText, picker.disabled ? styles.pickerOff : null]}>
+                  {picker.label}
+                </Text>
+              )}
               {picker.onPress ? <ChevronIcon direction="down" size={iconSize.xs - 2} tone="textSubtle" /> : null}
             </Pressable>
           ) : null}
@@ -501,6 +509,11 @@ const createStyles = ({ colors }: Theme) =>
       borderRadius: radius.chip,
       flexShrink: 1,
       minWidth: 0,
+    },
+    // The mark and chevron only: it keeps its size, and the tag gives way.
+    pickerCompact: {
+      flexShrink: 0,
+      gap: space["2xs"],
     },
     pickerText: {
       ...typography.meta,
