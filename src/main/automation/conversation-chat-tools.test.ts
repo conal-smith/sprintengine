@@ -10,10 +10,10 @@ import type { ConversationGatewayCommandResult } from './tailnet/tailnet-convers
 import { localOnlyGatewayToolReason } from './tailnet/tailnet-scopes'
 import {
   CHAT_WAIT_DEFAULT_MS,
-  chatMessagesOf,
   createConversationChatTools,
   type ConversationChatControl,
 } from './conversation-chat-tools'
+import { chatMessagesOf } from './conversation-chat-read'
 
 // One chat's agent driving another chat on this machine: it sends through the
 // chat's normal send path, reads the words alone inside a budget, waits on the

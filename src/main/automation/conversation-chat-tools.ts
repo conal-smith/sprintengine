@@ -18,8 +18,6 @@ import {
   type ConversationPhase,
 } from '../../shared/conversation/phase'
 import type { ConversationCommand } from '../../../packages/conversation-protocol/src/public'
-import { buildChatExportDocument } from '../chat-export/chat-export-document'
-import { writeExportMessageMarkdown } from '../chat-export/chat-export-markdown'
 import type { ConversationGatewayCommandResult } from './tailnet/tailnet-conversation-host'
 import { launchPermissionCeiling, refuseDrivingLooserChat, type AgentPermissionResolver } from './launch-permission-cap'
 
@@ -206,49 +204,6 @@ function tailOf(text: string, chars: number): string {
   return newline >= 0 && newline < chars / 4 ? cut.slice(newline + 1) : cut
 }
 
-/**
- * The words of a page of a chat, oldest first, inside `maxChars`: the newest
- * messages are kept whole while they fit, then the one that does not is cut
- * to its end, and older ones are left out and counted.
- */
-export function chatMessagesOf(
-  events: readonly ConversationEvent[],
-  maxChars: number,
-): { messages: Array<{ from: 'person' | 'agent'; at?: number; text: string; cut?: true }>; omitted: number } {
-  const document = buildChatExportDocument(
-    { events, attachments: new Map() },
-    {
-      title: '',
-      project: null,
-      engine: null,
-      model: null,
-      workspaceRoot: null,
-      exportedAt: 0,
-      locale: 'en-US',
-      timeZone: 'UTC',
-      messagesOnly: true,
-    },
-  )
-  const all = document.messages.map((message) => ({
-    from: message.kind === 'user' ? ('person' as const) : ('agent' as const),
-    ...(message.at !== undefined ? { at: message.at } : {}),
-    text: writeExportMessageMarkdown(message).trim(),
-  }))
-  const kept: Array<{ from: 'person' | 'agent'; at?: number; text: string; cut?: true }> = []
-  let budget = maxChars
-  for (let index = all.length - 1; index >= 0; index -= 1) {
-    const message = all[index]!
-    if (message.text.length <= budget) {
-      kept.unshift(message)
-      budget -= message.text.length
-      continue
-    }
-    if (budget >= 200 || kept.length === 0) kept.unshift({ ...message, text: tailOf(message.text, budget), cut: true })
-    return { messages: kept, omitted: index + (kept[0]?.cut ? 0 : 1) }
-  }
-  return { messages: kept, omitted: 0 }
-}
-
 function boundedInteger(value: unknown, fallback: number, min: number, max: number): number | null {
   if (value === undefined) return fallback
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) return null
@@ -374,6 +329,9 @@ export function createConversationChatTools(deps: ConversationChatToolsDeps): Mc
         const { target } = resolved
         const page = await chats.readPage(target.key, { turns, ...(before >= 0 ? { before } : {}) })
         if (!page.ok) return toolError('unavailable', page.message)
+        // Loaded with the read: the export's Markdown parser is not part of
+        // every process that serves these tools (the server bundle's start).
+        const { chatMessagesOf } = await import('./conversation-chat-read')
         const { messages, omitted } = chatMessagesOf(page.events, maxChars)
         return toolSuccess({
           ok: true,
