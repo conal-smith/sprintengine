@@ -229,6 +229,14 @@ export interface ConversationThread extends ConversationKey {
    */
   visitRewoundAt?: number;
   /**
+   * When the chat wakes, from a desktop that lists it: present only while
+   * the chat is snoozed and the time is still ahead. A snoozed chat leaves the
+   * list for its Snoozed shelf until then, as it does in the desktop's
+   * sidebar. Written with `conversation.snooze`, on a desktop that advertises
+   * `chat-row-menu`.
+   */
+  snoozedUntil?: number;
+  /**
    * What the chat still has working after its turn ended, from a desktop that
    * lists it: the agents it launched in the background that still run, and
    * the monitors that will wake its agent. The desktop's sidebar counts such
@@ -482,6 +490,7 @@ function threadWithCatalog(value: ConversationThread): ConversationThread {
     lastTurnEndedAt,
     lastVisitedAt,
     visitRewoundAt,
+    snoozedUntil,
     backgroundWork,
     ...rest
   } = value as ConversationThread & {
@@ -495,6 +504,7 @@ function threadWithCatalog(value: ConversationThread): ConversationThread {
     lastTurnEndedAt?: unknown;
     lastVisitedAt?: unknown;
     visitRewoundAt?: unknown;
+    snoozedUntil?: unknown;
     backgroundWork?: unknown;
   };
   const background = parseConversationBackgroundWork(backgroundWork);
@@ -504,6 +514,7 @@ function threadWithCatalog(value: ConversationThread): ConversationThread {
     lastTurnEndedAt,
     lastVisitedAt,
     visitRewoundAt,
+    snoozedUntil,
   });
   const machine = parseConversationHost(host);
   const prs = parseConversationPullRequests(pullRequests);
@@ -551,7 +562,7 @@ export function parseConversationBackgroundWork(value: unknown): ConversationBac
 
 type ConversationLifecycleFields = Pick<
   ConversationThread,
-  "chatTitle" | "lastUserMessageAt" | "lastTurnEndedAt" | "lastVisitedAt" | "visitRewoundAt"
+  "chatTitle" | "lastUserMessageAt" | "lastTurnEndedAt" | "lastVisitedAt" | "visitRewoundAt" | "snoozedUntil"
 >;
 
 /**
@@ -564,7 +575,13 @@ type ConversationLifecycleFields = Pick<
 export function parseConversationLifecycle(value: Record<string, unknown>): ConversationLifecycleFields {
   const out: ConversationLifecycleFields = {};
   if (typeof value.chatTitle === "string" && value.chatTitle.trim()) out.chatTitle = value.chatTitle.trim();
-  for (const field of ["lastUserMessageAt", "lastTurnEndedAt", "lastVisitedAt", "visitRewoundAt"] as const) {
+  for (const field of [
+    "lastUserMessageAt",
+    "lastTurnEndedAt",
+    "lastVisitedAt",
+    "visitRewoundAt",
+    "snoozedUntil",
+  ] as const) {
     if (nonnegative(value[field])) out[field] = value[field];
   }
   return out;
