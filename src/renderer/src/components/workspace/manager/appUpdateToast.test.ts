@@ -16,7 +16,9 @@ const {
   APP_UPDATE_OUTCOME_TOAST_ID,
   APP_UPDATE_TOAST_ID,
   createAppUpdateToastDriver,
+  downloadAppUpdate,
   resetAppUpdateToastForTests,
+  restartToUpdateFromToast,
   showAppUpdateOutcomeToast,
   showAppUpdateReadyToast,
 } = await import('./appUpdateToast')
@@ -24,6 +26,7 @@ const {
 const anyGlobal = globalThis as unknown as { window?: unknown }
 let installs = 0
 let downloads = 0
+let notesOpened = 0
 let answer: () => Promise<AppUpdateCheckResult>
 let downloadAnswer: () => Promise<AppUpdateCheckResult>
 // What the toast looked like at the moment main was asked to install.
@@ -58,6 +61,7 @@ function state(patch: Partial<AppUpdateState>): AppUpdateState {
 beforeEach(() => {
   installs = 0
   downloads = 0
+  notesOpened = 0
   answer = () => ok()
   downloadAnswer = () => ok('Update ready to install.')
   toastWhenMainWasAsked = undefined
@@ -74,6 +78,10 @@ beforeEach(() => {
       updateDownload: () => {
         downloads += 1
         return downloadAnswer()
+      },
+      updateOpenReleaseNotes: () => {
+        notesOpened += 1
+        return Promise.resolve({ opened: true, url: 'https://example.com/notes' })
       },
     },
   }
@@ -106,46 +114,13 @@ async function settle(): Promise<void> {
   for (let pass = 0; pass < 5; pass += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-test('a found update is offered once, with Download, and nothing downloads until pressed', async () => {
+// A found update and its download are the rail glyph's to show
+// (AppUpdateRailButton, owner ruling 2026-10-30): no toast, no bell row.
+test('a found update raises no toast, and its download runs quietly', () => {
   const drive = createAppUpdateToastDriver()
   drive(state({ status: 'checking' }))
   drive(state({ status: 'available', updateVersion: '0.7.0' }))
-  assert.equal(toast()?.title, 'SprintEngine Studio 0.7.0 is available')
-  assert.equal(toast()?.autoDismissMs, false)
-  assert.deepEqual(actions(), [
-    { id: 'later', label: 'Later', primary: false, busy: false },
-    { id: 'download', label: 'Download', primary: true, busy: false },
-  ])
-  assert.equal(downloads, 0)
-  assert.deepEqual(
-    diagnostics.published.map(({ title }) => title),
-    ['SprintEngine Studio 0.7.0 is available'],
-  )
-
-  // The hourly check finds the same version again: not a second toast.
-  press('later')
-  drive(state({ status: 'checking' }))
-  drive(state({ status: 'available', updateVersion: '0.7.0' }))
   assert.equal(toast(), undefined)
-})
-
-test('with automatic download on, the found update is not offered; its ready toast follows', () => {
-  const drive = createAppUpdateToastDriver()
-  drive(state({ status: 'available', updateVersion: '0.7.0', autoDownload: true }))
-  assert.equal(toast(), undefined)
-  drive(state({ status: 'downloading', updateVersion: '0.7.0', autoDownload: true }))
-  assert.equal(toast(), undefined, 'a download nobody pressed for runs quietly')
-  drive(state({ status: 'downloaded', updateVersion: '0.7.0', downloaded: true, autoDownload: true }))
-  assert.equal(toast()?.title, 'SprintEngine Studio 0.7.0 is ready')
-})
-
-test('Download shows the download’s progress on the same toast, then the restart question', async () => {
-  const drive = createAppUpdateToastDriver()
-  drive(state({ status: 'available', updateVersion: '0.7.0' }))
-  press('download')
-  assert.equal(downloads, 1)
-  assert.equal(toast()?.title, 'Downloading SprintEngine Studio 0.7.0')
-  assert.equal(toast()?.actions, undefined)
   drive(
     state({
       status: 'downloading',
@@ -153,54 +128,70 @@ test('Download shows the download’s progress on the same toast, then the resta
       progress: { percent: 41.6, transferred: 1, total: 1, bytesPerSecond: 1 },
     }),
   )
-  assert.equal(toast()?.description, '42% downloaded')
+  assert.equal(toast(), undefined)
+  assert.equal(downloads, 0, 'nothing downloads until the glyph is pressed')
+  assert.deepEqual(diagnostics.published, [])
+})
+
+test('the download landing says so once, points at the rail, and files a bell row', () => {
+  const drive = createAppUpdateToastDriver()
+  drive(state({ status: 'downloading', updateVersion: '0.7.0' }))
   drive(state({ status: 'downloaded', updateVersion: '0.7.0', downloaded: true }))
-  assert.equal(toast()?.title, 'SprintEngine Studio 0.7.0 is ready')
-})
-
-test('a download that fails says why and offers to try again', async () => {
-  downloadAnswer = () => Promise.resolve({ ok: false, state: {} as AppUpdateState, message: 'socket hang up' })
-  createAppUpdateToastDriver()(state({ status: 'available', updateVersion: '0.7.0' }))
-  press('download')
-  await settle()
-  assert.equal(toast()?.tone, 'warn')
-  assert.equal(toast()?.description, 'socket hang up')
-  press('download')
-  assert.equal(downloads, 2)
-})
-
-test('a downloaded update asks to restart, stays until answered, and files a bell row', () => {
-  showAppUpdateReadyToast({ updateVersion: '0.5.3' })
-  const shown = toast()
-  assert.ok(shown)
-  assert.equal(shown.title, 'SprintEngine Studio 0.5.3 is ready')
-  assert.equal(shown.description, 'Restart now to update, or it installs the next time you quit.')
-  assert.equal(shown.autoDismissMs, false)
-  assert.deepEqual(actions(), [
-    { id: 'later', label: 'Later', primary: false, busy: false },
-    { id: 'restart', label: 'Restart to update', primary: true, busy: false },
-  ])
+  assert.equal(toast()?.tone, 'good')
+  assert.equal(toast()?.title, 'Update downloaded')
+  assert.equal(
+    toast()?.description,
+    'SprintEngine Studio 0.7.0 is ready. Restart from the update button on the rail to install it.',
+  )
+  assert.notEqual(toast()?.autoDismissMs, false, 'the lit glyph keeps saying it; the toast is news')
   assert.deepEqual(
     diagnostics.published.map(({ title, source }) => ({ title, source })),
-    [{ title: 'SprintEngine Studio 0.5.3 is ready', source: 'update' }],
+    [{ title: 'SprintEngine Studio 0.7.0 is ready', source: 'update' }],
   )
-})
 
-test('an update that needs an administrator says Windows will ask, and does not promise an install at quit', () => {
-  showAppUpdateReadyToast({ updateVersion: '0.7.0', installRequiresAdmin: true })
-  assert.equal(toast()?.description, 'Restart to update. Windows will ask for administrator permission.')
-})
-
-test('Later dismisses the toast and installs nothing now', () => {
-  showAppUpdateReadyToast({ updateVersion: '0.5.3' })
-  press('later')
+  // The hourly check comes and goes over the same download: not a second toast.
+  useToastStore.setState({ toasts: [] })
+  drive(state({ status: 'checking', updateVersion: '0.7.0', downloaded: true }))
+  drive(state({ status: 'downloaded', updateVersion: '0.7.0', downloaded: true }))
   assert.equal(toast(), undefined)
+})
+
+test('with automatic download on, the landing is announced the same way', () => {
+  const drive = createAppUpdateToastDriver()
+  drive(state({ status: 'available', updateVersion: '0.7.0', autoDownload: true }))
+  drive(state({ status: 'downloading', updateVersion: '0.7.0', autoDownload: true }))
+  assert.equal(toast(), undefined)
+  drive(state({ status: 'downloaded', updateVersion: '0.7.0', downloaded: true, autoDownload: true }))
+  assert.equal(toast()?.title, 'Update downloaded')
+})
+
+test('the downloaded toast opens the release notes when there are some', () => {
+  showAppUpdateReadyToast({ updateVersion: '0.7.0', releaseNotesUrl: null })
+  assert.equal(actions(), undefined, 'no notes, no button')
+  showAppUpdateReadyToast({ updateVersion: '0.7.0', releaseNotesUrl: 'https://example.com/notes' })
+  assert.deepEqual(actions(), [{ id: 'release-notes', label: 'Release notes', primary: false, busy: false }])
+  press('release-notes')
+  assert.equal(notesOpened, 1)
   assert.equal(installs, 0)
 })
 
+test('a download that fails says why; the glyph is the retry', async () => {
+  downloadAnswer = () => Promise.resolve({ ok: false, state: {} as AppUpdateState, message: 'socket hang up' })
+  await downloadAppUpdate('0.7.0')
+  assert.equal(downloads, 1)
+  assert.equal(toast()?.tone, 'warn')
+  assert.equal(toast()?.title, 'The update did not download')
+  assert.equal(toast()?.description, 'socket hang up')
+})
+
+test('a download that works says nothing until it lands', async () => {
+  await downloadAppUpdate('0.7.0')
+  assert.equal(downloads, 1)
+  assert.equal(toast(), undefined)
+})
+
 test('Restart to update shows the press at once, before main is asked, with the button busy', async () => {
-  showAppUpdateReadyToast({ updateVersion: '0.5.3' })
-  press('restart')
+  const restarting = restartToUpdateFromToast({ installRequiresAdmin: false })
   // Synchronously, before main has been asked anything.
   assert.equal(installs, 0)
   assert.equal(toast()?.title, 'Installing update')
@@ -208,6 +199,7 @@ test('Restart to update shows the press at once, before main is asked, with the 
   assert.deepEqual(actions(), [{ id: 'restart', label: 'Restarting…', primary: true, busy: true }])
   // A second press on the busy button does nothing.
   press('restart')
+  await restarting
   await settle()
   assert.equal(installs, 1)
   assert.equal(toastWhenMainWasAsked?.title, 'Installing update', 'main was asked only after the toast said so')
@@ -220,9 +212,7 @@ test('a restart main refuses turns into a warning that says why, and can be pres
       state: {} as AppUpdateState,
       message: 'Windows did not get administrator permission, so the update was not installed.',
     })
-  showAppUpdateReadyToast({ updateVersion: null, installRequiresAdmin: true })
-  assert.equal(toast()?.title, 'SprintEngine Studio update is ready')
-  press('restart')
+  void restartToUpdateFromToast({ installRequiresAdmin: true })
   assert.equal(toast()?.description, 'Windows will ask for administrator permission, then Studio restarts.')
   await settle()
   assert.equal(toast()?.tone, 'warn')
@@ -233,13 +223,11 @@ test('a restart main refuses turns into a warning that says why, and can be pres
   assert.equal(installs, 2)
 })
 
-test('the start after an update says how it went, beside any offer', () => {
+test('the start after an update says how it went', () => {
   const outcome = () => useToastStore.getState().toasts.find((entry) => entry.id === APP_UPDATE_OUTCOME_TOAST_ID)
-  createAppUpdateToastDriver()(state({ status: 'available', updateVersion: '0.8.0' }))
   showAppUpdateOutcomeToast({ kind: 'updated', version: '0.7.0', fromVersion: '0.6.0', message: null })
   assert.equal(outcome()?.tone, 'good')
   assert.equal(outcome()?.title, 'Updated to SprintEngine Studio 0.7.0')
-  assert.equal(toast()?.title, 'SprintEngine Studio 0.8.0 is available', 'the offer is still there')
   showAppUpdateOutcomeToast({
     kind: 'failed',
     version: '0.7.0',
@@ -251,11 +239,11 @@ test('the start after an update says how it went, beside any offer', () => {
   assert.equal(outcome()?.description, 'The installer did not finish, so SprintEngine Studio is still on 0.6.0.')
 })
 
-test('a refused install going back to downloaded is not announced as ready again', async () => {
+test('a refused install going back to downloaded is not announced again', async () => {
   answer = () => Promise.resolve({ ok: false, state: {} as AppUpdateState, message: 'Declined.' })
   const drive = createAppUpdateToastDriver()
   drive(state({ status: 'downloaded', updateVersion: '0.7.0', downloaded: true }))
-  press('restart')
+  void restartToUpdateFromToast()
   // Main's state pushes arrive before its answer does.
   drive(state({ status: 'installing', updateVersion: '0.7.0', downloaded: true }))
   drive(state({ status: 'downloaded', updateVersion: '0.7.0', downloaded: true, errorMessage: 'Declined.' }))
@@ -269,31 +257,18 @@ test('a refused install going back to downloaded is not announced as ready again
   )
 })
 
-// Later and Dismiss are "not now" for this version at this step, and clear its
-// Settings badges (owner ruling 2026-09-25); the downloading toast's Dismiss
-// only hides it.
-test('Later on the offer dismisses the offer; Later on ready dismisses ready', () => {
-  useNotificationStore.setState({ dismissedUpdates: [] })
-  const drive = createAppUpdateToastDriver()
-  drive(state({ status: 'available', updateVersion: '0.7.0' }))
-  press('later')
-  assert.deepEqual(useNotificationStore.getState().dismissedUpdates, ['app@0.7.0:offer'])
-
-  drive(state({ status: 'downloaded', downloaded: true, updateVersion: '0.7.0' }))
-  press('later')
-  assert.deepEqual(useNotificationStore.getState().dismissedUpdates, ['app@0.7.0:offer', 'app@0.7.0:ready'])
-})
-
-test('the toast’s Dismiss says "not now" at the question steps, and not while downloading', async () => {
+// Dismissing the downloaded toast and Later on a refusal are "not now" for this
+// version at this step, and clear its Settings badge (owner ruling 2026-09-25).
+test('dismissing the downloaded toast, or Later on a refusal, says "not now" to ready', async () => {
   useNotificationStore.setState({ dismissedUpdates: [] })
   showAppUpdateReadyToast({ updateVersion: '0.7.0' })
   toast()?.onDismissPressed?.()
   assert.deepEqual(useNotificationStore.getState().dismissedUpdates, ['app@0.7.0:ready'])
 
   useNotificationStore.setState({ dismissedUpdates: [] })
-  const drive = createAppUpdateToastDriver()
-  drive(state({ status: 'available', updateVersion: '0.8.0' }))
-  press('download')
-  await settle()
-  assert.equal(toast()?.onDismissPressed, undefined, 'the download the person asked for is not waved off')
+  answer = () => Promise.resolve({ ok: false, state: {} as AppUpdateState, message: 'Declined.' })
+  await restartToUpdateFromToast()
+  press('later')
+  assert.equal(toast(), undefined)
+  assert.deepEqual(useNotificationStore.getState().dismissedUpdates, ['app@0.7.0:ready'])
 })

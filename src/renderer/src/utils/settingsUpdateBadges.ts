@@ -2,7 +2,8 @@
 // a newer release, and a newer SprintEngine Studio, each point the person at the
 // place that installs it — and they point there from wherever the person is.
 //
-//   Settings rail glyph   every outstanding update, CLI and app together
+//   Settings rail glyph   the CLI updates (the app's own has the rail's
+//                         update glyph, owner ruling 2026-10-30)
 //   Settings ▸ General    the app update
 //   Settings ▸ Agents     the CLI updates
 //   machine switcher      the CLI updates on that machine
@@ -173,10 +174,11 @@ export function settingsUpdateBadges(input: {
   const general: SettingsUpdateBadge | null = input.appUpdate
     ? { count: 1, tone: UPDATE_TONE, label: `General: ${appDetail.toLowerCase()}`, detail: appDetail }
     : null
-  const total = cliCount + (input.appUpdate ? 1 : 0)
-  const totalDetail = plural(total, 'update available', 'updates available')
+  // The gear counts the CLIs only: the app's own update lights the rail's
+  // update glyph right beside it, and one release is not two pieces of news.
+  const railDetail = plural(cliCount, 'update available', 'updates available')
   return {
-    rail: total > 0 ? { count: total, tone: UPDATE_TONE, label: totalDetail, detail: totalDetail } : null,
+    rail: cliCount > 0 ? { count: cliCount, tone: UPDATE_TONE, label: railDetail, detail: railDetail } : null,
     general,
     agents,
     machines,

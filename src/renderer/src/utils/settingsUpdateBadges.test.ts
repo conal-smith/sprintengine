@@ -226,14 +226,10 @@ test('one derivation feeds the gear, General, Agents, the switcher and the rows'
     'once it is on disk, General says it is ready',
   )
   assert.equal(both.agents?.detail, '1 CLI update available')
-  assert.equal(both.rail?.count, 2, 'the gear counts the app and the CLIs together')
+  assert.equal(both.rail?.count, 1, 'the gear counts the CLIs; the app has its own glyph on the rail')
 
   const appOnly = settingsUpdateBadges({ cliUpdates: [], appUpdate: { version: '0.7.0' } })
-  assert.deepEqual(appOnly.rail, {
-    count: 1,
-    tone: 'accent',
-    label: '1 update available',
-    detail: '1 update available',
-  })
+  assert.equal(appOnly.rail, null, 'the app update lights the rail’s update glyph, not the gear')
+  assert.equal(appOnly.general?.count, 1, 'General still says it')
   assert.equal(appOnly.agents, null)
 })
