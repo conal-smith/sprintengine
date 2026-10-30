@@ -333,7 +333,7 @@ export function NewChatScreen({
       busy: picking,
       files: !!session && declaresMessageFiles(session),
     },
-    schedule: scheduleOffered ? { on: scheduled !== null, busy: picking } : null,
+    schedule: scheduleOffered ? { on: scheduled !== null, busy: picking, repeats: true } : null,
   });
 
   // The "+"'s Schedule: on, it opens on a one-time run at the next whole hour
