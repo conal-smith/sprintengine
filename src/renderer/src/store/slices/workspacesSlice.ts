@@ -1012,7 +1012,7 @@ export function createWorkspacesSlice(
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws) return
-        patch = settled ? settleWorkspacePatch(ws, Date.now(), 'settled') : wakeWorkspacePatch('active')
+        patch = settled ? settleWorkspacePatch(ws, Date.now(), 'settled') : wakeWorkspacePatch('active', ws, Date.now())
         Object.assign(ws, patch)
       })
       // A hand gesture is this window's to report, whichever window routes the row.
@@ -1152,7 +1152,7 @@ export function createWorkspacesSlice(
           },
         })
         if (decision === 'none') continue
-        const patch = decision === 'settle' ? settleWorkspacePatch(ws, now, null) : wakeWorkspacePatch(null)
+        const patch = decision === 'settle' ? settleWorkspacePatch(ws, now, null) : wakeWorkspacePatch(null, ws, now)
         patches.push([ws.id, patch])
         if (decision === 'settle') settledIds.push(ws.id)
       }
@@ -1195,8 +1195,9 @@ export function createWorkspacesSlice(
         const syncClock = synced === undefined || lastInputAt - synced >= WORKSPACE_ACTIVITY_CLOCK_SYNC_MS
         const speaks = thisWindowSpeaksFor(state, id)
         if (isSettledWorkspace(ws) || ws.settledOverride != null) {
-          Object.assign(ws, wakeWorkspacePatch(null))
-          if (speaks) patch = { ...wakeWorkspacePatch(null), lastTerminalActivityAt: lastInputAt }
+          const wake = wakeWorkspacePatch(null, ws, lastInputAt)
+          Object.assign(ws, wake)
+          if (speaks) patch = { ...wake, lastTerminalActivityAt: lastInputAt }
         } else if (syncClock && speaks) {
           patch = { lastTerminalActivityAt: lastInputAt }
         }
@@ -1235,8 +1236,9 @@ export function createWorkspacesSlice(
           // The wake lands locally whichever window saw the message; only the
           // window that speaks for the row tells main, exactly as the
           // keystroke path does.
-          Object.assign(ws, wakeWorkspacePatch(null))
-          if (speaks) patch = { ...wakeWorkspacePatch(null), lastUserMessageAt: at }
+          const wake = wakeWorkspacePatch(null, ws, at)
+          Object.assign(ws, wake)
+          if (speaks) patch = { ...wake, lastUserMessageAt: at }
         } else if (speaks) {
           patch = { lastUserMessageAt: at }
         }

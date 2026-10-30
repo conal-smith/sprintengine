@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { LayoutTemplate, Workspace, WorkspaceWindowState } from '../../types/workspace'
 import { getEditorBuffer } from '../../utils/editorBuffers'
 import { useWorkspaceStore } from '../workspaceStore'
+import { isSnoozedWorkspace } from '../../utils/workspaceSnooze'
 import { applySoloChatSeed, normalizeWorkspaceMode, workspaceFolderKey } from './workspacesSlice'
 import { test } from 'vitest'
 
@@ -1364,13 +1365,19 @@ test('workspacesSlice', async () => {
     assert.equal(row().snoozedUntil, wakeAt, 'a window that does not hold the chat leaves its snooze alone')
     useWorkspaceStore.getState().setActiveWorkspace(snoozeId)
 
-    // Rest supersedes sleep: settling a sleeping row tombstones the snooze, so
-    // it cannot expire into a Woke mark on a row nobody woke.
+    // Rest supersedes sleep, but a Settle made by mistake on a sleeping row is
+    // undone with its snooze: the stamp is kept under the rest, and Un-settle
+    // puts the chat back to sleep where it was.
+    useWorkspaceStore.getState().setActiveWorkspaceForWindow(windowId, otherId)
     useWorkspaceStore.getState().setWorkspaceSnoozed(snoozeId, wakeAt)
     useWorkspaceStore.getState().setWorkspaceSettled(snoozeId, true)
     assert.equal(typeof row().settledAt, 'number', 'Settle stamps rest')
-    assert.equal(row().snoozedUntil ?? null, null, 'and clears the sleep underneath it')
+    assert.equal(row().snoozedUntil, wakeAt, 'and keeps the snooze underneath it')
+    assert.equal(isSnoozedWorkspace(row(), Date.now()), false, 'a resting row is not asleep')
     useWorkspaceStore.getState().setWorkspaceSettled(snoozeId, false)
+    assert.equal(row().settledAt ?? null, null, 'Un-settle brings it back')
+    assert.equal(isSnoozedWorkspace(row(), Date.now()), true, 'asleep again, until the same wake time')
+    useWorkspaceStore.getState().setWorkspaceSnoozed(snoozeId, null)
 
     useWorkspaceStore.getState().setWorkspaceSnoozed('no-such-workspace', wakeAt)
   }
