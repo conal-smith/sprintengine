@@ -40,8 +40,10 @@ truncates the title, not the fact.
   and it is one drawing shared by the reasoning selector and the
   permission-preset menu, so the two menus cannot disagree about what
   "default" looks like.
-- **`NightlyBuildChip`** (2026-09-22) — the second shipped instance, reading
-  "Nightly", beside the wordmark. See *Nightly identity* under Usage.
+- **`NightlyBuildChip`** (2026-09-22, retired 2026-10-30) — read "Nightly"
+  beside the wordmark until the wordmark left the sidebar's chrome row. A
+  nightly build now says so with the brand mark's night tile instead; see
+  *Nightly identity* under Usage.
 
 ## States
 
@@ -91,22 +93,24 @@ stable. The renderer never parses the version to decide.
   is the one surface that shows the mark outside the icon, because it *is* the
   launch of the icon's application; product UI still never does. The plate is
   generated (`scripts/brand/night-sky.js`) rather than painted.
-- **In the window, this chip**, beside the wordmark in the sidebar's chrome
-  row. The chip rather than a badge, because being a nightly is a fact that
-  does not change while the window is open, and it takes no tone for the same
-  reason. It is the **first thing to drop** when the row narrows — its
-  container-query step is the wordmark's plus its own width — so it never
-  costs the row the mark or a control. Its tooltip names the version and the
+- **In the window, the brand mark's night tile** (owner ruling 2026-10-30).
+  The application icon's "se" at the foot of the app rail, below Settings
+  (`brand/RailBrandMark.tsx`), sits on a small rounded tile of the nightly
+  icon's own night ground; a stable build's "se" stands on the rail with no
+  ground at all. This is no longer a micro chip — the chip retired with the
+  wordmark it rode beside. The mark's tooltip names the version and the
   channel the build now follows; that detail also lives in Settings, so the
   tooltip is a convenience and not the only place a screen-reader user can
   find it.
 
 No new token was needed. The night sky's palette belongs to the plate's
-generator, as every backdrop's palette belongs to its plate; nothing in the
-product paints a night-sky colour as a surface.
+generator, as every backdrop's palette belongs to its plate, and the rail
+tile's few fixed colours are sampled from the nightly icon
+(`.brand-night-tile`, assets/index.css); nothing else in the product paints a
+night-sky colour as a surface.
 
-A stable build draws none of this: no chip, the herbarium plate, and a splash
-URL with no query at all.
+A stable build draws none of this: no night tile, the herbarium plate, and a
+splash URL with no query at all.
 
 ## Accessibility
 
@@ -136,7 +140,6 @@ kit's barrel** (`ui/index.ts`): `agentSpawnShared` imports it directly and must
 stay clear of the kit's component graph, so a second copy of the drawing never
 appears on the spawn path.
 
-`NightlyBuildChip` lives with the wordmark in
-`src/renderer/src/components/brand/NightlyBuildChip.tsx` and renders through
-the same `MicroChip`; it is the one instance that reads state (the build
-identity main reports), which is why it sits outside the kit.
+`DefaultChip` is the one shipped instance today. The retired
+`NightlyBuildChip` was the one that read state (the build identity main
+reports); that reading now lives in `brand/RailBrandMark.tsx`.

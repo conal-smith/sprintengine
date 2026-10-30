@@ -8,8 +8,7 @@ import { LoadingOverlay } from './LoadingOverlay'
 //
 // This used to render the `SprintEngineSpinner` brand mark: a hex-gradient glyph
 // tuned for dark, so every light theme got a washed grey mark — and it was the
-// application icon, which the wordmark records as being for the icon and
-// nothing else. The spinner spec names one working mark and the overlay for
+// application icon. The spinner spec names one working mark and the overlay for
 // panel scale; a loader is not a place for the brand (ruled 2026-09-02).
 export function SuspenseFallback({ label = 'Loading' }: { label?: string }) {
   return (

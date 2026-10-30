@@ -2,12 +2,9 @@
 // to the very top of the window, so the
 // window's leftmost controls live here rather than in a full-width title bar.
 //
-// ONE 36px row (owner, 2026-07-30: one chrome row per content region). Window
-// affordances and product affordances share it rather than stacking into two
-// bands — the two-row version read as the mark sitting *below* the top bar
-// instead of in it:
+// ONE 36px row (owner, 2026-07-30: one chrome row per content region):
 //
-//   [traffic-light reserve | app-menu] wordmark [Nightly] ··· back forward search collapse
+//   [traffic-light reserve | app-menu] ··· back forward search collapse
 //
 // The row is an `app-drag` region; every interactive control opts back out with
 // `app-no-drag`. On macOS its leftmost slice is reserved for the native traffic
@@ -16,28 +13,24 @@
 // controls (min/max/close) are NOT here on win/linux — they pin to the window's
 // top-right corner over the content, since the aside can own that corner.
 //
-// Because one row has to hold both, width is contended: below the width that
-// fits the mark it is the mark that drops (a `@container` query on the row, see
-// `wordmarkVisibility`), never one of the four controls.
+// No brand here (owner ruling 2026-10-30): the "sprintengine" wordmark and the
+// Nightly chip beside it moved to the foot of the app rail as the icon's "se"
+// (brand/RailBrandMark), so the row is only the window's own controls.
 //
 // This row is chrome, not rail content (item 1991): WorkspaceSidebar mounts it
 // above both the workspaces rail and a door's context rail, and outside the
 // tree's scroll container — so a drill-in that swaps the rail underneath leaves
 // the row untouched, and the row never scrolls away. Collapsed, the whole
-// sidebar is hidden and the expand control moves to WorkspaceHeader's launcher;
-// there is no wordmark and no glyph standing in for it there.
+// sidebar is hidden and the expand control moves to WorkspaceHeader's launcher.
 
 import React from 'react'
-import SprintEngineWordmark from '../brand/SprintEngineWordmark'
-import { NightlyBuildChip } from '../brand/NightlyBuildChip'
-import { GhostButton, IconButton, MenuItem, Popover, Tooltip } from '../ui'
+import { IconButton, MenuItem, Popover, Tooltip } from '../ui'
 import { MENU_LIST_CLASS } from '../ui/menuClasses'
 import { APP_RAIL_WIDTH, TRAFFIC_LIGHT_RESERVE } from './AppRail'
 
 // The row's icon buttons are the kit's `IconButton` at its default `sm` step —
 // `size.control.xs`, the system's icon-button step (principles.md, "Space and
-// size"), and with four of them sharing the row with the wordmark it is also
-// the only step that fits.
+// size").
 //
 // The ink is a TONE, never a className: `subtle` is this row's pair
 // (`--text-subtle` at rest lifting to `--bg-hover` + `--text-default`), and
@@ -53,7 +46,6 @@ type SidebarChromeProps<MenuItem extends string> = {
   onNavigateBack: () => void
   onNavigateForward: () => void
   onOpenSearch: () => void
-  onNewChat: () => void
   // Win/linux only: the app menu, rendered as a single hamburger at all widths
   // (the inline File/Edit/… label bar is dropped here — the ~sidebar-width strip
   // has no room for it). macOS passes an empty list; those menus are the native
@@ -103,35 +95,6 @@ function SearchButton({ onOpen }: { onOpen: () => void }) {
           <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </IconButton>
-    </Tooltip>
-  )
-}
-
-// The wordmark IS the New chat button — the row spends no width on a second
-// control for the app's most common action, and the mark gets a reason to be
-// clickable beyond decoration. Its accessible name is the action, not the brand:
-// a screen-reader user needs to know what the control does, and the product name
-// is not information they are missing.
-//
-// `visibility` is a container query, not a prop: the sidebar is drag-resized, so
-// the mark has to appear and disappear as the column crosses the width that fits
-// it — continuously, without a re-render per pointer-move.
-function BrandButton({ onNewChat, visibility }: { onNewChat: () => void; visibility: string }) {
-  return (
-    <Tooltip content="New chat" placement="bottom">
-      {/* The labelled ghost at `xs`: `h-control-xs px-2`, the transparent
-          ground and the `--bg-hover` lift, exactly what this row spelled. The
-          tone's ink never reaches the mark — the wordmark paints its own two
-          colours — so the button is the ground and the mark is the label. */}
-      <GhostButton size="xs" onClick={onNewChat} aria-label="New chat" className={`app-no-drag ${visibility}`}>
-        {/* `material-brand-wash`: under the tinted window material the mark
-            sits in a faint, heavily feathered wash of its own two inks — the
-            foreground behind "sprint", the accent behind "engine"
-            (assets/index.css). It rides on the mark rather than the button so
-            it follows the mark wherever the traffic-light inset puts it and
-            disappears with it at narrow widths. */}
-        <SprintEngineWordmark className="material-brand-wash" />
-      </GhostButton>
     </Tooltip>
   )
 }
@@ -227,7 +190,6 @@ export function SidebarChrome<MenuItem extends string>({
   onNavigateBack,
   onNavigateForward,
   onOpenSearch,
-  onNewChat,
   menuItems,
   onShowMenu,
 }: SidebarChromeProps<MenuItem>) {
@@ -241,47 +203,13 @@ export function SidebarChrome<MenuItem extends string>({
   // inset. In fullscreen the lights are hidden and the inset collapses.
   const trafficLightInset = isMac && !isFullScreen ? TRAFFIC_LIGHT_RESERVE - APP_RAIL_WIDTH : 0
 
-  // The width at which the wordmark still fits beside everything the row must
-  // keep. Below it the mark drops out and the four controls stay — the sidebar is
-  // drag-resizable down to SIDEBAR_MIN_WIDTH (200), and one row cannot hold all
-  // five at that width.
-  //
-  // The row is: [leading] + mark 100 + (4 × 26 controls + 3 × 2 gaps + 8 pad) 118.
-  // Leading is the 34px app-menu cluster on win/linux (4 pad + 30 button), the
-  // 22px traffic-light remainder on macOS (78 − the 56px rail), or nothing on
-  // macOS in fullscreen.
-  //
-  // Literal class strings, never interpolated: Tailwind generates a container
-  // query only from a variant it can see in the source text.
-  const wordmarkVisibility =
-    trafficLightInset > 0
-      ? 'hidden @[240px]:inline-flex' // 22 + 100 + 118
-      : isMac
-        ? 'hidden @[218px]:inline-flex' // 0 + 100 + 118
-        : 'hidden @[252px]:inline-flex' // 34 + 100 + 118
-  // A nightly build's chip rides beside the mark and is the first thing to go:
-  // each step is the mark's plus the chip's 48 (the micro chip's "Nightly",
-  // its padding and hairline). The GhostButton's own trailing padding is the
-  // gap between the two, so the chip adds no margin of its own.
-  const nightlyChipVisibility =
-    trafficLightInset > 0
-      ? 'hidden @[288px]:inline-flex' // 240 + 48
-      : isMac
-        ? 'hidden @[266px]:inline-flex' // 218 + 48
-        : 'hidden @[300px]:inline-flex' // 252 + 48
-
   return (
     // ONE row (owner, 2026-07-30): one chrome row per content region. Height-
     // locked to WorkspaceHeader's 36px so the two halves of the split chrome meet
     // at the same line across the column seam, and no divider under it — the rail
     // below owns the single "the list starts here" rule (principles.md,
     // Composition).
-    //
-    // `@container` so the wordmark can drop out below the width that fits it
-    // (owner, 2026-07-30: at narrow widths the mark is the thing to lose, not a
-    // control). The four icon buttons are the row's floor — they are the
-    // functional controls and never drop.
-    <div className="chrome-bar @container app-drag flex h-[36px] shrink-0 items-center">
+    <div className="chrome-bar app-drag flex h-[36px] shrink-0 items-center">
       {trafficLightInset > 0 ? (
         <div aria-hidden="true" className="shrink-0" style={{ width: trafficLightInset }} />
       ) : null}
@@ -291,13 +219,8 @@ export function SidebarChrome<MenuItem extends string>({
           <AppMenuButton menuItems={menuItems} onShowMenu={onShowMenu} />
         </div>
       ) : null}
-      <BrandButton onNewChat={onNewChat} visibility={wordmarkVisibility} />
-      {/* Outside the button: the button's name is its action (New chat), and
-          the chip is a fact about the build, not part of that action. */}
-      <NightlyBuildChip className={nightlyChipVisibility} />
-      {/* Every control at the `control-xs` step, not the labelled-control step:
-          four icon buttons plus the wordmark plus the reserve is what the row has
-          to hold, and the wider step does not fit beside the mark. */}
+      {/* Every control at the `control-xs` step, the system's icon-button
+          step, pinned to the row's trailing edge. */}
       <div className="ml-auto flex shrink-0 items-center gap-0.5 pr-2">
         <NavHistoryButton direction="back" onClick={onNavigateBack} />
         <NavHistoryButton direction="forward" onClick={onNavigateForward} />
