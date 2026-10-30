@@ -195,15 +195,21 @@ test("a picture over 5 MB is refused before upload, unless the desktop sizes pic
   assert.equal(readPickedImage(photo, twelveMegabytes).ok, false);
 });
 
-test("New's + ends with Schedule, which waits on nothing but the attachments", () => {
-  const rows = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false }, schedule: { busy: false } });
-  assert.deepEqual(rows.at(-1), { kind: "schedule", label: "Schedule", disabledReason: null });
+test("New's + ends with the Schedule switch, which takes words alone", () => {
+  const rows = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false }, schedule: { on: false, busy: false } });
+  assert.deepEqual(rows.at(-1), { kind: "schedule", label: "Schedule", on: false, disabledReason: null });
   assert.equal(composerOptionsLabel(rows), "Attach or schedule");
-  const holding = composerOptions({ startAs: phone, attach: { held: 1, max: 4, busy: false }, schedule: { busy: false } });
+  const holding = composerOptions({ startAs: phone, attach: { held: 1, max: 4, busy: false }, schedule: { on: false, busy: false } });
   assert.equal(holding.at(-1).disabledReason, "Each run starts from words alone: remove the attachments to schedule it.");
-  const adding = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: true }, schedule: { busy: true } });
+  const adding = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: true }, schedule: { on: false, busy: true } });
   assert.equal(adding.at(-1).disabledReason, "Wait for the last attachment.");
-  const alone = composerOptions({ startAs: phone, attach: null, schedule: { busy: false } });
+  // On, it can always be turned off, and nothing can be attached meanwhile.
+  const on = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false, files: true }, schedule: { on: true, busy: false } });
+  assert.deepEqual(on.at(-1), { kind: "schedule", label: "Schedule", on: true, disabledReason: null });
+  for (const row of on.filter((entry) => entry.kind === "attach")) {
+    assert.equal(row.disabledReason, "A scheduled run starts from words alone.");
+  }
+  const alone = composerOptions({ startAs: phone, attach: null, schedule: { on: false, busy: false } });
   assert.equal(composerHasOptions(alone), true);
   assert.equal(composerOptionsLabel(alone), "Schedule");
   assert.equal(

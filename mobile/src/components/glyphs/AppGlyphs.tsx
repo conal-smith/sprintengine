@@ -106,9 +106,9 @@ export function BellIcon({ tone, size = iconSize.md, label }: AppGlyphProps) {
  * A clock face — a scheduled agent, a time still to come. Copied from the
  * desktop's `ScheduleGlyph`, so a schedule wears the same mark on both.
  */
-export function ScheduleIcon({ tone, size = iconSize.md, label }: AppGlyphProps) {
+export function ScheduleIcon({ tone, size = iconSize.md, label, ink }: AppGlyphProps) {
   return (
-    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone)} size={size} label={label}>
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone, ink)} size={size} label={label}>
       <Circle cx="8" cy="8" r="5.6" stroke="currentColor" strokeWidth={STROKE} />
       <Path d="M8 4.9V8l2.1 1.4" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" strokeLinejoin="round" />
     </GlyphFrame>

@@ -10,6 +10,7 @@ import {
   ExpandIcon,
   FileTypeGlyph,
   PlusIcon,
+  ScheduleIcon,
   iconSize,
 } from "../../components/glyphs";
 import { IconButton } from "../../components/IconButton";
@@ -41,6 +42,8 @@ type ComposerAction = {
   disabled: boolean;
   onPress: () => void;
   followUp?: "queue" | "steer";
+  /** New is scheduling: the send wears the schedule's clock, as the desktop's says Schedule. */
+  schedule?: boolean;
   hint?: string;
   onLongPress?: () => void;
 };
@@ -289,6 +292,7 @@ export function ChatComposer({
 
 function actionGlyph(action: ComposerAction, color: string) {
   if (action.kind === "stop") return <StopGlyph color={color} size={iconSize.sm} />;
+  if (action.schedule) return <ScheduleIcon ink={color} size={iconSize.sm} />;
   if (action.followUp === "steer") return <SteerGlyph color={color} size={iconSize.sm} />;
   if (action.followUp === "queue") return <QueueGlyph color={color} size={iconSize.sm} />;
   return <SendGlyph color={color} size={iconSize.sm} />;
