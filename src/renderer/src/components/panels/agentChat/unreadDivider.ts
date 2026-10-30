@@ -6,7 +6,7 @@
 // sidebar moves forward while the chat is in front (`useVisitStamp`). Opening
 // a chat moves it at once, so the clock as it stood just before is taken here
 // first (`noteChatOpened`) and held until the person leaves the chat. It is
-// said as the chat is made active (`setActiveWorkspace`), before anything is
+// said as the chat is made active (`noteWorkspaceOpening`), before anything is
 // drawn, so a chat whose transcript is already loaded mounts its list at the
 // divider; the visit stamp says it again, to the same effect, for a chat that
 // came in front any other way. The divider is placed against that

@@ -2258,7 +2258,7 @@ function WorkspaceSidebar({
   // Asleep RIGHT NOW: the wake time is still ahead, and that is the whole test
   // — nothing brings a row back early. Reading a chat never sends it to sleep,
   // the same exemption `isShelved` gives the row you are in, though in
-  // practice opening one already spent its snooze (`setActiveWorkspace`), so
+  // practice opening one already spent its snooze (`spendSnoozeOnOpening`), so
   // this is the belt to that braces.
   const isAsleep = useCallback(
     (workspace: Workspace) => workspace.id !== activeWorkspaceId && isSnoozedWorkspace(workspace, now),

@@ -1341,6 +1341,29 @@ test('workspacesSlice', async () => {
     assert.equal(row().snoozedUntil ?? null, null, 'opening a sleeping chat wakes it')
     assert.equal(useWorkspaceStore.getState().activeWorkspaceId, snoozeId, 'and it is the active chat')
 
+    // Every other door into a chat opens it the same way: a row click, a
+    // notification's Reveal, Back and Forward and the number keys all point a
+    // window at it, and a sleeping chat opened through one used to drop back
+    // into the shelf once left, still asleep.
+    const windowId = useWorkspaceStore.getState().primaryWorkspaceWindowId
+    const otherId = useWorkspaceStore.getState().addWorkspace(standardTemplate, { name: 'Elsewhere' })
+    useWorkspaceStore.getState().setActiveWorkspaceForWindow(windowId, otherId)
+    useWorkspaceStore.getState().setWorkspaceSnoozed(snoozeId, wakeAt)
+    useWorkspaceStore.getState().setActiveWorkspaceForWindow(windowId, snoozeId)
+    assert.equal(useWorkspaceStore.getState().activeWorkspaceId, snoozeId, 'the window opens the sleeping chat')
+    assert.equal(row().snoozedUntil ?? null, null, 'and opening it through the window wakes it')
+    // …and a woken one: its Woke mark is the record's expired stamp, and a
+    // chat reached by the number keys has been opened as surely as one clicked.
+    useWorkspaceStore.getState().setActiveWorkspaceForWindow(windowId, otherId)
+    useWorkspaceStore.getState().setWorkspaceSnoozed(snoozeId, Date.now() - HOUR)
+    useWorkspaceStore.getState().setActiveWorkspaceForWindow(windowId, snoozeId)
+    assert.equal(row().snoozedUntil ?? null, null, 'opening a woken chat clears its Woke mark')
+    // A window that does not hold the chat opens nothing, and spends nothing.
+    useWorkspaceStore.getState().setWorkspaceSnoozed(snoozeId, wakeAt)
+    useWorkspaceStore.getState().setActiveWorkspaceForWindow('no-such-window', snoozeId)
+    assert.equal(row().snoozedUntil, wakeAt, 'a window that does not hold the chat leaves its snooze alone')
+    useWorkspaceStore.getState().setActiveWorkspace(snoozeId)
+
     // Rest supersedes sleep: settling a sleeping row tombstones the snooze, so
     // it cannot expire into a Woke mark on a row nobody woke.
     useWorkspaceStore.getState().setWorkspaceSnoozed(snoozeId, wakeAt)
