@@ -103,11 +103,12 @@ export function scanForPrintable(text: string, from = 0): { printable: boolean; 
       const kind = text[index + 1]
       if (kind === undefined) return { printable: false, resumeAt: index }
       if (kind === '[') {
-        // CSI: parameters and intermediates, then one final byte in 0x40–0x7e.
+        // CSI: parameters and intermediates, then one final byte in 0x40–0x7e,
+        // unless CAN or SUB cancels it first.
         let cursor = index + 2
         while (cursor < length) {
           const byte = text.charCodeAt(cursor)
-          if (byte >= 0x40 && byte <= 0x7e) break
+          if ((byte >= 0x40 && byte <= 0x7e) || byte === 0x18 || byte === 0x1a) break
           cursor += 1
         }
         if (cursor >= length) return { printable: false, resumeAt: index }
@@ -115,10 +116,16 @@ export function scanForPrintable(text: string, from = 0): { printable: boolean; 
         continue
       }
       if (kind === ']' || kind === 'P' || kind === '_' || kind === '^' || kind === 'X') {
-        // OSC / DCS / APC / PM / SOS: a string ended by BEL or ST (ESC \).
+        // OSC / DCS / APC / PM / SOS: a string ended by BEL or ST (ESC \), or
+        // cancelled by CAN or SUB, after which the text is painted again.
         const bell = text.indexOf('\x07', index + 2)
         const st = text.indexOf('\x1b\\', index + 2)
-        const ends = [bell === -1 ? -1 : bell + 1, st === -1 ? -1 : st + 2].filter((end) => end > 0)
+        const cancel = text.slice(index + 2).search(/[\x18\x1a]/)
+        const ends = [
+          bell === -1 ? -1 : bell + 1,
+          st === -1 ? -1 : st + 2,
+          cancel === -1 ? -1 : index + 2 + cancel + 1,
+        ].filter((end) => end > 0)
         if (ends.length === 0) return { printable: false, resumeAt: index }
         index = Math.min(...ends)
         continue

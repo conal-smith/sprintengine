@@ -130,6 +130,14 @@ function withoutUnfinishedEscape(
 /** How far back from the end an unfinished sequence is looked for; an OSC hyperlink is the longest in practice. */
 const UNFINISHED_ESCAPE_WINDOW = 4 * 1024
 
+/** CAN and SUB abort an escape sequence wherever they land in it. */
+function isSequenceCancel(code: number): boolean {
+  return code === 0x18 || code === 0x1a
+}
+
+/** What ends a string sequence short of an ST: BEL, CAN or SUB. */
+const STRING_SEQUENCE_END = /[\x07\x18\x1a]/
+
 /** How many characters at the end of `text` are an escape sequence not yet finished; 0 when it ends on a whole one. */
 export function unfinishedEscapeLength(text: string): number {
   const escape = text.lastIndexOf('\x1b')
@@ -138,17 +146,20 @@ export function unfinishedEscapeLength(text: string): number {
   const kind = text[escape + 1]
   if (kind === undefined) return unfinished
   if (kind === '[') {
-    // CSI: parameters and intermediates, then one final byte in 0x40–0x7e.
+    // CSI: parameters and intermediates, then one final byte in 0x40–0x7e,
+    // unless CAN or SUB cancels it first.
     for (let index = escape + 2; index < text.length; index += 1) {
       const code = text.charCodeAt(index)
-      if (code >= 0x40 && code <= 0x7e) return 0
+      if ((code >= 0x40 && code <= 0x7e) || isSequenceCancel(code)) return 0
     }
     return unfinished
   }
   if (kind === ']' || kind === 'P' || kind === '_' || kind === '^' || kind === 'X') {
-    // OSC / DCS / APC / PM / SOS end with BEL or ST (`ESC \`). An ST would be
-    // the last ESC itself, so only a BEL can have finished this one.
-    return text.indexOf('\x07', escape + 2) === -1 ? unfinished : 0
+    // OSC / DCS / APC / PM / SOS end with BEL or ST (`ESC \`), or are
+    // cancelled by CAN or SUB. An ST would be the last ESC itself, so only a
+    // BEL or a cancel can have finished this one; without the cancel, every
+    // byte after a cancelled title was held back until the window ran out.
+    return STRING_SEQUENCE_END.test(text.slice(escape + 2)) ? 0 : unfinished
   }
   if (kind >= ' ' && kind <= '/') {
     // Intermediate bytes (`ESC ( B` selects a character set) run until a final byte.
