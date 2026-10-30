@@ -121,15 +121,20 @@ export function webSessionCookieName(environmentId: string): string {
 /** A browser's name from its user agent, which the person can change. */
 export function browserNameFromUserAgent(userAgent: string | null | undefined): string {
   const agent = userAgent ?? ''
-  const browser = /Edg\//u.test(agent)
+  // Phone builds name themselves apart from the desktop token (`EdgA/`,
+  // `EdgiOS/`, `FxiOS/`, `CriOS/`, `OPiOS/`) and still carry Chrome's or
+  // Safari's, so each is checked before the engine it reports alongside.
+  const browser = /Edg(?:e|A|iOS)?\//u.test(agent)
     ? 'Edge'
-    : /Firefox\//u.test(agent)
-      ? 'Firefox'
-      : /Chrome\//u.test(agent)
-        ? 'Chrome'
-        : /Safari\//u.test(agent)
-          ? 'Safari'
-          : 'Browser'
+    : /OPR\/|OPiOS\//u.test(agent)
+      ? 'Opera'
+      : /Firefox\/|FxiOS\//u.test(agent)
+        ? 'Firefox'
+        : /Chrome\/|CriOS\//u.test(agent)
+          ? 'Chrome'
+          : /Safari\//u.test(agent)
+            ? 'Safari'
+            : 'Browser'
   const os = /iPhone|iPad/u.test(agent)
     ? 'iOS'
     : /Android/u.test(agent)
