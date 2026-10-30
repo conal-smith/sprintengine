@@ -230,6 +230,49 @@ test('a one-time schedule runs once at its time, and never again', async () => {
   assert.equal(runs.length, 1)
 })
 
+test('a one-time schedule that comes due while a Run now of it is still working runs once that chat rests', async () => {
+  const time = fakeTime(NOW)
+  const at = Date.UTC(2026, 8, 30, 15, 30)
+  // Run now, earlier: its chat is still at work when the schedule's time comes.
+  let agents = [
+    agent({
+      schedule: { cron: cronForInstant(at, 'UTC'), timezone: 'UTC', once: at },
+      lastRun: { at: NOW, ok: true, workspaceId: 'w-run-now' },
+    }),
+  ]
+  let working = true
+  const runs: number[] = []
+  const skipped: string[] = []
+  const scheduler = createScheduledAgentsScheduler({
+    list: () => agents,
+    run: async () => {
+      runs.push(time.now())
+      return { at: time.now(), ok: true, workspaceId: 'w-timed' }
+    },
+    recordRun: async (_id, run) => {
+      agents = agents.map((entry) => ({ ...entry, lastRun: run }))
+    },
+    isRunWorking: () => working,
+    onSkipped: (entry, reason) => skipped.push(`${entry.id}:${reason}`),
+    now: time.now,
+    setTimer: time.setTimer,
+    clearTimer: time.clearTimer,
+  })
+  scheduler.start()
+  await time.advanceTo(at)
+  assert.deepEqual(runs, [], 'not beside the chat still doing its job')
+  assert.deepEqual(skipped, [], 'a one-time schedule waits: skipping it would be never')
+  assert.notEqual(time.armedAt(), null, 'it is looked at again')
+  await time.advanceTo(time.armedAt()!)
+  assert.deepEqual(runs, [], 'still working')
+  working = false
+  const next = time.armedAt()!
+  await time.advanceTo(next)
+  assert.deepEqual(runs, [next], 'it runs once the chat before it rests, without a restart')
+  await time.advanceTo(next + 24 * 60 * 60 * 1000)
+  assert.equal(runs.length, 1, 'and once only')
+})
+
 test('a one-time schedule whose time passed while the app was closed runs once it is open', async () => {
   const time = fakeTime(NOW)
   const at = NOW - 60 * 60 * 1000

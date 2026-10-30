@@ -18,6 +18,10 @@
 // is one message the person asked to have sent, and late is closer to that
 // than never, so one whose time passed while the app was closed runs once the
 // app is open. It runs once — the scheduler never arms it again after firing.
+// For the same reason a one-time schedule is never skipped: one that comes due
+// while a run of it is still starting or working (a Run now pressed before its
+// time) waits, and is looked at again every little while until that run's chat
+// rests, then runs.
 //
 // A paused schedule — paused on its own (`pausedAt`), or with all the others
 // (`pausedAll`) — has no due time. Its timer is let go of when the pause comes,
@@ -48,6 +52,8 @@ import {
 // a long sleep moves what "the soonest run" means, and setTimeout's own limit
 // is about 24.8 days.
 const MAX_TIMER_MS = 60 * 60 * 1000
+// How often a one-time schedule waiting on its earlier run is looked at again.
+const ONCE_WAIT_MS = 30 * 1000
 
 /**
  * Why a run did not start at all: it was never tried, so it is not a failed
@@ -200,6 +206,17 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
     }
   }
 
+  /**
+   * A one-time schedule refused because a run of it is still starting or
+   * working is due again shortly, not never: the entry is its own until the
+   * schedule is changed, paused or closed, and reconcile replaces it then.
+   */
+  const waitOnEarlierRun = (id: string, entry: NonNullable<ReturnType<typeof dueAt.get>>): void => {
+    if (!running || dueAt.get(id) !== entry || entry.at !== null) return
+    entry.at = now() + ONCE_WAIT_MS
+    arm()
+  }
+
   function tick(): void {
     timer = null
     if (!running) return
@@ -211,13 +228,15 @@ export function createScheduledAgentsScheduler(deps: ScheduledAgentsSchedulerDep
       if (!entry || entry.at === null || entry.at > at) continue
       // The next time counts from now, so every time missed in a long sleep
       // collapses into the one run below. A one-time schedule has no next.
-      entry.at = agent.schedule.once !== undefined ? null : dueFor(agent, at)
+      const once = agent.schedule.once !== undefined
+      entry.at = once ? null : dueFor(agent, at)
       // Nobody awaits a timed run: whatever goes wrong around it is logged,
       // never left as an unhandled rejection.
       void fire(agent)
         .then((fired) => {
-          if (!fired.ok && fired.refused !== 'unknown' && fired.refused !== 'stopped')
-            deps.onSkipped?.(agent, fired.refused)
+          if (fired.ok || fired.refused === 'unknown' || fired.refused === 'stopped') return
+          if (once) waitOnEarlierRun(agent.id, entry)
+          else deps.onSkipped?.(agent, fired.refused)
         })
         .catch((error: unknown) => deps.log?.(`A scheduled agent's run went wrong: ${describe(error)}`))
     }
