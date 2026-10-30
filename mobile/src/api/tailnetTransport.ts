@@ -156,6 +156,15 @@ export function declaresQueuedSends(session: { tailnetCapabilities?: string[] })
 }
 
 /**
+ * Whether the desktop said it keeps a message scheduled into a chat and sends
+ * it at its time (`conversation-scheduled-sends`). Absence is a NO: the chat's
+ * "+" offers no Schedule, since an older desktop refuses the commands.
+ */
+export function declaresScheduledSends(session: { tailnetCapabilities?: string[] }): boolean {
+  return session.tailnetCapabilities?.includes("conversation-scheduled-sends") ?? false;
+}
+
+/**
  * Whether the desktop answers a conversation socket's `hello`
  * (`conversation-hello`) with its protocol version and capabilities. It is
  * the cheapest frame a socket can ask about, so a chat probes with it where

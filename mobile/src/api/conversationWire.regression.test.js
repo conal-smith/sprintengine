@@ -316,3 +316,34 @@ test("a steer carries its words alone, and is refused before the outbox otherwis
   assert.match(conversationSendProblem("c2", { kind: "send", message: "x", steer: true, queue: true }), /words alone/);
   assert.match(conversationSendProblem("c3", { kind: "send", message: "x", steer: true, uploadIds: [] }), /words alone/);
 });
+
+test("a scheduled frame is read entry by entry, with what each says of its send", () => {
+  const key = { workspaceId: "ws", agentId: "agent" };
+  const good = (id, extra = {}) => ({ id, text: "Ping the release", sendAt: 2_000, createdAt: 1_000, ...extra });
+  const frame = parseConversationFrame(
+    JSON.stringify({
+      type: "scheduled",
+      key,
+      messages: [
+        good("a"),
+        good("b", { waitingSince: 1_500, sending: true, failure: "The chat is archived." }),
+        { id: "c", text: "no time", createdAt: 1 },
+        good("d", { sending: "yes", failure: "x".repeat(2_001) }),
+      ],
+    }),
+  );
+  assert.equal(frame.type, "scheduled");
+  assert.deepEqual(frame.key, key);
+  assert.deepEqual(
+    frame.messages.map((message) => message.id),
+    ["a", "b", "d"],
+    "one without a send time is skipped, the rest kept",
+  );
+  assert.deepEqual(frame.messages[1], good("b", { waitingSince: 1_500, sending: true, failure: "The chat is archived." }));
+  assert.deepEqual(frame.messages[2], good("d"), "a non-true sending and an over-long refusal are dropped");
+  const many = parseConversationFrame(
+    JSON.stringify({ type: "scheduled", key, messages: Array.from({ length: 60 }, (_, index) => good(`m${index}`)) }),
+  );
+  assert.equal(many.messages.length, 50);
+  assert.equal(parseConversationFrame(JSON.stringify({ type: "scheduled", messages: [] })), null, "a list must name its chat");
+});

@@ -255,6 +255,12 @@ export interface ConversationApi {
        * capability still goes.
        */
       queuedSends?: boolean;
+      /**
+       * The desktop advertises `conversation-scheduled-sends`: the stream
+       * asks it to say what it keeps scheduled into the chat
+       * (`watchScheduled`) after every fence.
+       */
+      scheduledSends?: boolean;
     },
   ): ConversationStream;
   uploadImage(input: {
@@ -363,6 +369,7 @@ export function createTailnetConversationsApi(input: {
       let heard = false;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       const queuedSends = options?.queuedSends === true;
+      const scheduledSends = options?.scheduledSends === true;
       // Sends this phone holds until the turn ends, in the order written.
       const outbox = new Map<
         string,
@@ -699,7 +706,8 @@ export function createTailnetConversationsApi(input: {
             if (
               (unassembled.type === "snapshot" ||
                 unassembled.type === "synchronized" ||
-                unassembled.type === "queued") &&
+                unassembled.type === "queued" ||
+                unassembled.type === "scheduled") &&
               unassembled.key &&
               (unassembled.key.workspaceId !== key.workspaceId ||
                 unassembled.key.agentId !== key.agentId)
@@ -821,6 +829,8 @@ export function createTailnetConversationsApi(input: {
               // this phone was away.
               if (queuedSends)
                 send({ type: "watchQueued", requestId: identifier() });
+              if (scheduledSends)
+                send({ type: "watchScheduled", requestId: identifier() });
             }
             if (
               frame.type === "commandResult" &&
