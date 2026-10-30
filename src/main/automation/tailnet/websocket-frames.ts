@@ -1,3 +1,4 @@
+import { isUtf8 } from 'buffer'
 import { createHash, randomBytes } from 'crypto'
 
 // A minimal RFC 6455 codec: handshake accept key, frame decode, frame encode.
@@ -14,9 +15,15 @@ import { createHash, randomBytes } from 'crypto'
 // What is deliberately NOT implemented, because no client of this transport
 // uses it and a half-implementation would be worse than an explicit refusal:
 // - extensions (`permessage-deflate` and friends) are never negotiated;
-// - fragmented messages across continuation frames are refused, not buffered;
 // - binary frames are refused (the payload here is JSON-RPC text).
-// Each refusal closes the connection with a protocol-error close code.
+// Each refusal closes the connection with a close code that says why.
+//
+// A text message in fragments (RFC 6455 §5.4) is gathered and read whole:
+// the spec lets any client or intermediary split a message, and a server
+// that closed on one would drop a peer that did nothing wrong. The size cap
+// is the message's, not each fragment's, and control frames may arrive
+// between fragments. Text is checked to be UTF-8 once whole (a fragment may
+// end mid-character), and a message that is not closes with 1007.
 
 const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
@@ -25,6 +32,7 @@ export const WEBSOCKET_CLOSE_NORMAL = 1000
 export const WEBSOCKET_CLOSE_GOING_AWAY = 1001
 const WEBSOCKET_CLOSE_PROTOCOL_ERROR = 1002
 const WEBSOCKET_CLOSE_UNSUPPORTED_DATA = 1003
+const WEBSOCKET_CLOSE_INVALID_PAYLOAD = 1007
 const WEBSOCKET_CLOSE_MESSAGE_TOO_BIG = 1009
 /** Private-range code for a device whose access was revoked mid-stream. */
 export const WEBSOCKET_CLOSE_REVOKED = 4401
@@ -103,7 +111,8 @@ export function createWebSocketFrameDecoder(
    * Text messages over `maxMessageBytes` but no larger than this are skipped
    * and reported as `oversized` instead of failing the connection, for a
    * transport that answers them with a typed refusal. Beyond it, or with no
-   * value, an oversized message still closes the socket.
+   * value, an oversized message still closes the socket. A fragmented message
+   * is measured by all its fragments, and reported once its last one ends.
    */
   skipOversizedTextUpTo = 0,
 ): WebSocketFrameDecoder {
@@ -117,6 +126,10 @@ export function createWebSocketFrameDecoder(
   let waiting: Buffer[] = []
   let waitingBytes = 0
   let needed = 0
+  // A fragmented text message still arriving: its fragments' payloads, or,
+  // once it is over the cap and being skipped, only its first bytes.
+  let message: { bytes: number; parts: Buffer[]; skipped: boolean; prefix: Buffer } | null = null
+  const fail = (code: number, reason: string): WebSocketDecodeResult => ({ kind: 'error', code, reason })
 
   return {
     push(chunk: Buffer): WebSocketDecodeResult {
@@ -179,6 +192,73 @@ export function createWebSocketFrameDecoder(
           length = Number(extended)
           offset += 8
         }
+        const control = opcode >= 0x8
+        if (opcode !== 0x0 && opcode !== 0x1 && opcode !== 0x8 && opcode !== 0x9 && opcode !== 0xa) {
+          return fail(
+            WEBSOCKET_CLOSE_UNSUPPORTED_DATA,
+            `Opcode 0x${opcode.toString(16)} is not supported; this transport carries JSON-RPC text frames.`,
+          )
+        }
+        if (control && !fin) return fail(WEBSOCKET_CLOSE_PROTOCOL_ERROR, 'Control frames must not be fragmented.')
+        if (opcode === 0x0 && !message)
+          return fail(WEBSOCKET_CLOSE_PROTOCOL_ERROR, 'A continuation frame arrived with no message to continue.')
+        if (opcode === 0x1 && message)
+          return fail(WEBSOCKET_CLOSE_PROTOCOL_ERROR, 'A new message began before the fragmented one ended.')
+        const maskLength = masked ? 4 : 0
+
+        if (opcode === 0x0 || (opcode === 0x1 && !fin)) {
+          // One fragment of a text message (RFC 6455 §5.4).
+          const total = (message?.bytes ?? 0) + length
+          if (total > hardLimit) {
+            return fail(WEBSOCKET_CLOSE_MESSAGE_TOO_BIG, `Message exceeds the ${maxMessageBytes}-byte limit.`)
+          }
+          const gathering = message ?? { bytes: 0, parts: [], skipped: false, prefix: Buffer.alloc(0) }
+          if (total > maxMessageBytes) {
+            // Over the cap, within what may be skipped: keep the first bytes
+            // for the refusal, and discard the rest as it streams in.
+            if (!gathering.skipped) {
+              gathering.prefix = Buffer.concat(gathering.parts).subarray(0, OVERSIZED_PREFIX_BYTES)
+              gathering.parts = []
+              gathering.skipped = true
+            }
+            const kept = Math.min(length, OVERSIZED_PREFIX_BYTES - gathering.prefix.length)
+            if (buffer.length < offset + maskLength + kept) return { kind: 'frames', frames }
+            if (kept > 0) {
+              const mask = masked ? buffer.subarray(offset, offset + 4) : null
+              const more = Buffer.from(buffer.subarray(offset + maskLength, offset + maskLength + kept))
+              if (mask) for (let index = 0; index < more.length; index += 1) more[index] ^= mask[index % 4]
+              gathering.prefix = Buffer.concat([gathering.prefix, more])
+            }
+            gathering.bytes = total
+            buffer = buffer.subarray(offset + maskLength)
+            skipping = length
+            if (fin) {
+              frames.push({ kind: 'oversized', bytes: total, prefix: gathering.prefix.toString('utf8') })
+              message = null
+            } else message = gathering
+            continue
+          }
+          if (buffer.length < offset + maskLength + length) {
+            needed = offset + maskLength + length
+            return { kind: 'frames', frames }
+          }
+          const mask = masked ? buffer.subarray(offset, offset + 4) : null
+          const part = Buffer.from(buffer.subarray(offset + maskLength, offset + maskLength + length))
+          if (mask) for (let index = 0; index < part.length; index += 1) part[index] ^= mask[index % 4]
+          buffer = buffer.subarray(offset + maskLength + length)
+          gathering.parts.push(part)
+          gathering.bytes = total
+          if (!fin) {
+            message = gathering
+            continue
+          }
+          message = null
+          const whole = Buffer.concat(gathering.parts)
+          if (!isUtf8(whole)) return fail(WEBSOCKET_CLOSE_INVALID_PAYLOAD, 'Text messages must be valid UTF-8.')
+          frames.push({ kind: 'text', text: whole.toString('utf8') })
+          continue
+        }
+
         if (length > maxMessageBytes && !(opcode === 0x1 && fin && length <= skipOversizedTextUpTo)) {
           return {
             kind: 'error',
@@ -193,7 +273,6 @@ export function createWebSocketFrameDecoder(
             reason: 'Control frame exceeds the 125-byte limit.',
           }
         }
-        const maskLength = masked ? 4 : 0
         if (length > maxMessageBytes) {
           // Keep the first bytes, discard the rest as it streams in: a message
           // this size is never buffered whole.
@@ -218,16 +297,9 @@ export function createWebSocketFrameDecoder(
         if (mask) for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4]
         buffer = buffer.subarray(offset + length)
 
-        if (opcode === 0x0 || !fin) {
-          return {
-            kind: 'error',
-            code: WEBSOCKET_CLOSE_PROTOCOL_ERROR,
-            reason:
-              'Fragmented messages are not supported on this transport; send each JSON-RPC message as one final frame.',
-          }
-        }
         switch (opcode) {
           case 0x1:
+            if (!isUtf8(payload)) return fail(WEBSOCKET_CLOSE_INVALID_PAYLOAD, 'Text messages must be valid UTF-8.')
             frames.push({ kind: 'text', text: payload.toString('utf8') })
             break
           case 0x8:
@@ -245,12 +317,7 @@ export function createWebSocketFrameDecoder(
           case 0xa:
             frames.push({ kind: 'pong' })
             break
-          default:
-            return {
-              kind: 'error',
-              code: WEBSOCKET_CLOSE_UNSUPPORTED_DATA,
-              reason: `Opcode 0x${opcode.toString(16)} is not supported; this transport carries JSON-RPC text frames.`,
-            }
+          // Every other opcode was refused above, from its header.
         }
       }
     },

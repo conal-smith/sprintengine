@@ -43,8 +43,6 @@ export type WebPairRequest = {
   requestId: string
   name: string
   route: 'loopback' | 'tailnet'
-  /** The tailnet account asking, from the serve this server set up (6.6); absent otherwise. */
-  tailnetLogin?: string
   createdAt: string
   expiresAt: string
 }
