@@ -448,3 +448,15 @@ test('a worktree chat with no folder yet files under the project its marker name
   assert.equal(workspaceProjectRoot({ folderPath: null, worktree: { branch: 'agent/x' } }), null)
   assert.equal(workspaceProjectRoot({ folderPath: null, worktree: { repoRoot: '  ' } }), null)
 })
+
+test('a repository at a filesystem root gets an absolute container of its own', () => {
+  // The root itself: an absolute container no other repository's can be.
+  assert.equal(worktreeContainerPath('/'), '/.sprintengine-worktrees/(root)')
+  assert.equal(repoRootFromWorktreePath(`${worktreeContainerPath('/')}/fix-x`), '/')
+  // A drive root: no drive letter as a folder name.
+  assert.equal(worktreeContainerPath('C:\\'), 'C:/.sprintengine-worktrees/(root)')
+  assert.equal(repoRootFromWorktreePath(`${worktreeContainerPath('C:\\')}/fix-x`), 'C:/')
+  // Everything else is as it was.
+  assert.equal(worktreeContainerPath('/Users/dev/app'), '/Users/dev/.sprintengine-worktrees/app')
+  assert.equal(worktreeContainerPath('C:\\code\\app'), 'C:\\code\\.sprintengine-worktrees\\app')
+})

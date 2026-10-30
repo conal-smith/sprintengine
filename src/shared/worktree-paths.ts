@@ -19,6 +19,12 @@ import { worktreeBranchName } from './worktree-branch'
  */
 export const WORKTREE_CONTAINER_DIR = '.sprintengine-worktrees'
 
+/** The `<repo>` segment of the container for a repository at a filesystem root; see {@link worktreeContainerPath}. */
+export const ROOT_REPOSITORY_SEGMENT = '(root)'
+
+/** A Windows drive root once its trailing separator is trimmed: `C:`. */
+const DRIVE_ROOT = /^[A-Za-z]:$/
+
 /**
  * Container directory a repo's worktrees live under:
  * `<repo-parent>/.sprintengine-worktrees/<repo>`. Single source of truth for the
@@ -26,6 +32,12 @@ export const WORKTREE_CONTAINER_DIR = '.sprintengine-worktrees'
  * agent-at-spawn worktrees.
  */
 export function worktreeContainerPath(repoRoot: string): string {
+  const trimmed = trimPath(repoRoot)
+  // A repository that IS a filesystem root has no folder beside it: its
+  // container sits under the root itself, named so it cannot be read as
+  // another repository's, and so the inverse can give the root back.
+  if (trimmed === '' && repoRoot.length > 0) return `/${WORKTREE_CONTAINER_DIR}/${ROOT_REPOSITORY_SEGMENT}`
+  if (DRIVE_ROOT.test(trimmed)) return pathJoin(trimmed, WORKTREE_CONTAINER_DIR, ROOT_REPOSITORY_SEGMENT)
   return pathJoin(parentPath(repoRoot), WORKTREE_CONTAINER_DIR, basename(repoRoot))
 }
 
@@ -51,7 +63,14 @@ export function repoRootFromWorktreePath(pathValue: string): string | null {
   // Nothing before the marker means no parent to rebuild from; fewer than three
   // segments from it means no `<repo>` plus at least one slug segment.
   if (marker < 1 || segments.length - marker < 3) return null
-  return [...segments.slice(0, marker), segments[marker + 1]].join(pathSeparatorFor(pathValue))
+  const separator = pathSeparatorFor(pathValue)
+  // The container of a repository at a filesystem root gives back that root:
+  // `/`, or the drive it is on.
+  const head = segments[0] ?? ''
+  if (marker === 1 && segments[2] === ROOT_REPOSITORY_SEGMENT && (head === '' || DRIVE_ROOT.test(head))) {
+    return `${head}${separator}`
+  }
+  return [...segments.slice(0, marker), segments[marker + 1]].join(separator)
 }
 
 /**
