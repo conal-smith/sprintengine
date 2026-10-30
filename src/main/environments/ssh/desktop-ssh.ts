@@ -89,8 +89,8 @@ export function createDesktopSsh(deps: {
   app.on('before-quit', () => void panePartitions.shutdown())
   app.on('before-quit', () => sshEnvironments.shutdown())
   void app.whenReady().then(() => {
-    // Asleep or on another network, a session's socket is dead: restart now
-    // rather than wait out the keepalive (phase 8 spec, 7).
+    // Asleep or on another network, a session's socket may be dead: ask it
+    // now rather than wait out the keepalive (phase 8 spec, 7).
     const wake = () => sshEnvironments.wake()
     powerMonitor.on('resume', wake)
     powerMonitor.on('unlock-screen', wake)

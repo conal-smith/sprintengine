@@ -621,7 +621,7 @@ export class SshEnvironments {
     return { ok: true, text: redactDiagnostics(lines.join('\n'), probe?.user || null) }
   }
 
-  /** The computer woke or its network changed: every live or reconnecting session starts again now. */
+  /** The computer woke or its network changed: every live session is checked, every reconnecting one tries now. */
   wake(): void {
     for (const machine of this.machines.values()) machine.wake()
   }
