@@ -98,17 +98,18 @@ test('browser-manager', async () => {
     assert.equal(applyGuestWebPreferences({}, { partition: BROWSER_PARTITION }, PICKER), true)
   })
 
-  run('guest policy: only the shipped picker preload survives, and it alone turns context isolation off', () => {
+  run('guest policy: only the shipped picker preload survives, and every guest is context-isolated', () => {
     const withPicker: Record<string, unknown> = {
       preload: '/app/out/preload/../preload/browser-guest.js',
-      contextIsolation: true,
+      contextIsolation: false,
     }
     assert.equal(
       applyGuestWebPreferences(withPicker, { partition: BROWSER_PARTITION, src: 'http://localhost:5173/' }, PICKER),
       true,
     )
     assert.equal(withPicker.preload, PICKER)
-    assert.equal(withPicker.contextIsolation, false)
+    // The picker's preload holds `ipcRenderer`; the page must never share its world.
+    assert.equal(withPicker.contextIsolation, true)
 
     const foreign: Record<string, unknown> = { preload: '/tmp/evil.js', contextIsolation: false }
     assert.equal(

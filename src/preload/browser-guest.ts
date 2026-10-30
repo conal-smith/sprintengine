@@ -1,4 +1,4 @@
-import { ipcRenderer } from 'electron'
+import { ipcRenderer, webFrame } from 'electron'
 import {
   BROWSER_MAX_OUTER_HTML,
   BROWSER_PICK_CANCELLED_CHANNEL,
@@ -8,12 +8,16 @@ import {
   type BrowserPickTheme,
   type BrowserPickedElement,
 } from '../shared/browser'
+import { readReactContext } from './browser-guest-react'
 
 // The browser guest's preload (browser-pane epic): the element picker. It
-// runs sandboxed (no Node) in the page's own world so it can read React's
-// fiber off DOM nodes, and it puts NOTHING on `window` — every reference,
-// `ipcRenderer` included, stays in this closure. The host renderer starts and
-// stops it over the webview channel; a pick is reported back the same way.
+// runs sandboxed (no Node) in an isolated world, so the page shares its DOM
+// but none of its objects: `ipcRenderer` and everything else here are out of
+// the page's reach, whatever the page does to its own globals. The one thing
+// only the page's world can see, the React fiber on a DOM node, is read there
+// by a short script that answers with plain data (browser-guest-react.ts).
+// The host renderer starts and stops the picker over the webview channel; a
+// pick is reported back the same way.
 
 const STYLE_KEYS = [
   'display',
@@ -65,56 +69,9 @@ function selectorFor(element: Element): string {
   return parts.join(' > ')
 }
 
-// `_debugSource` is React 16–18's dev-only source location. React 19 removed
-// it (the info moved to the component stack), so `source` is null on a React
-// 19 dev server — expected, not a bug to chase.
-type Fiber = {
-  type?: unknown
-  return?: Fiber | null
-  _debugSource?: { fileName?: string; lineNumber?: number; columnNumber?: number } | null
-  _debugOwner?: Fiber | null
-}
-
-function fiberOf(element: Element): Fiber | null {
-  for (const key of Object.keys(element)) {
-    if (key.startsWith('__reactFiber$')) return (element as unknown as Record<string, Fiber>)[key] ?? null
-  }
-  return null
-}
-
-function componentName(type: unknown): string | null {
-  if (typeof type === 'function') {
-    const fn = type as { displayName?: string; name?: string }
-    return fn.displayName || fn.name || null
-  }
-  if (type && typeof type === 'object') {
-    const wrapped = type as { displayName?: string; render?: { displayName?: string; name?: string }; type?: unknown }
-    if (wrapped.displayName) return wrapped.displayName
-    if (wrapped.render) return wrapped.render.displayName || wrapped.render.name || null
-    if (wrapped.type) return componentName(wrapped.type)
-  }
-  return null
-}
-
-function reactContext(element: Element): { components: string[]; source: string | null } {
-  const components: string[] = []
-  let source: string | null = null
-  let fiber = fiberOf(element)
-  let hops = 0
-  while (fiber && hops < 40 && components.length < 3) {
-    const name = componentName(fiber.type)
-    if (name) components.push(name)
-    const debug = fiber._debugSource
-    if (!source && debug?.fileName) {
-      source = `${debug.fileName}${debug.lineNumber ? `:${debug.lineNumber}` : ''}${debug.columnNumber ? `:${debug.columnNumber}` : ''}`
-    }
-    fiber = fiber.return ?? null
-    hops += 1
-  }
-  return { components, source }
-}
-
-function serialize(element: Element): BrowserPickedElement {
+// What a pick reports, but for its React context: read synchronously, while
+// the element is still where the person clicked it.
+function describe(element: Element): Omit<BrowserPickedElement, 'components' | 'source'> {
   const rect = element.getBoundingClientRect()
   const computed = getComputedStyle(element)
   const styles: Record<string, string> = {}
@@ -122,7 +79,6 @@ function serialize(element: Element): BrowserPickedElement {
     const value = computed.getPropertyValue(key)
     if (value) styles[key] = value
   }
-  const { components, source } = reactContext(element)
   return {
     url: location.href,
     title: document.title,
@@ -133,9 +89,15 @@ function serialize(element: Element): BrowserPickedElement {
     rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
     viewport: { width: window.innerWidth, height: window.innerHeight },
     styles,
-    components,
-    source,
   }
+}
+
+const runInPageWorld = (code: string): Promise<unknown> => webFrame.executeJavaScript(code)
+
+async function serialize(element: Element): Promise<BrowserPickedElement> {
+  const described = describe(element)
+  const { components, source } = await readReactContext(element, runInPageWorld, crypto.randomUUID())
+  return { ...described, components, source }
 }
 
 function ensureOverlay(): { host: HTMLElement; box: HTMLElement; chip: HTMLElement } {
@@ -205,9 +167,11 @@ function onClick(event: MouseEvent): void {
   event.stopPropagation()
   const picked = elementAt(event) ?? target
   if (!picked) return
+  // Described before the picker comes down, as the element was clicked; its
+  // React context arrives a moment later, from the page's world.
   const payload = serialize(picked)
   stop()
-  ipcRenderer.sendToHost(BROWSER_PICKED_CHANNEL, payload)
+  void payload.then((reported) => ipcRenderer.sendToHost(BROWSER_PICKED_CHANNEL, reported))
 }
 
 function swallow(event: Event): void {

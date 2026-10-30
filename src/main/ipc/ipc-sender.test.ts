@@ -8,7 +8,8 @@ vi.mock('electron', () => ({
   },
 }))
 
-const { assertAppSender, isAppRendererUrl, isAppSender } = await import('./ipc-sender')
+const { assertAppSender, isAppDocumentUrl, isAppRendererUrl, isAppSender, isAppWindowSender } =
+  await import('./ipc-sender')
 
 const PACKAGED_URL =
   'file:///Applications/SprintEngine%20Studio.app/Contents/Resources/app.asar/out/renderer/index.html'
@@ -51,4 +52,37 @@ test('under the dev server only its origin is the app', () => {
   assert.equal(isAppRendererUrl('http://localhost:5174/'), false)
   // A file: page is not the app while a dev server is serving it.
   assert.equal(isAppRendererUrl(PACKAGED_URL), false)
+})
+
+test("every one of the app's own windows passes the floor every handler stands on", () => {
+  for (const document of ['index.html?windowId=primary', 'splash.html?channel=nightly', 'canvas-worker.html']) {
+    assert.equal(isAppWindowSender(event(PACKAGED_URL.replace('index.html', document))), true, document)
+  }
+  assert.equal(
+    isAppDocumentUrl('file:///C:/Program%20Files/SprintEngine/resources/app.asar/out/renderer/index.html'),
+    true,
+  )
+})
+
+test('a webview guest, a subframe or a page on the web is below the floor', () => {
+  // A webview guest whose page somehow reached its preload's ipcRenderer.
+  assert.equal(isAppWindowSender(event('https://example.com/', { inWindow: false })), false)
+  assert.equal(isAppWindowSender(event(PACKAGED_URL, { inWindow: false })), false)
+  assert.equal(isAppWindowSender(event(PACKAGED_URL, { parent: {} })), false)
+  assert.equal(isAppWindowSender(event(PACKAGED_URL, { frame: false })), false)
+  assert.equal(isAppWindowSender(event('https://example.com/renderer/index.html')), false)
+  // Another local file, even one beside the app's documents.
+  assert.equal(isAppDocumentUrl(PACKAGED_URL.replace('index.html', 'evil.html')), false)
+  assert.equal(isAppDocumentUrl('file:///Users/dev/Downloads/index.html'), false)
+  assert.equal(isAppWindowSender(undefined), false)
+})
+
+test("under the dev server the app's documents are its origin's", () => {
+  process.env['ELECTRON_RENDERER_URL'] = 'http://localhost:5173'
+  assert.equal(isAppDocumentUrl('http://localhost:5173/?windowId=primary'), true)
+  assert.equal(isAppDocumentUrl('http://localhost:5173/splash.html?channel=nightly'), true)
+  assert.equal(isAppDocumentUrl('http://localhost:5173/canvas-worker.html'), true)
+  assert.equal(isAppDocumentUrl('http://localhost:5173/other.html'), false)
+  assert.equal(isAppDocumentUrl('http://localhost:5174/'), false)
+  assert.equal(isAppDocumentUrl(PACKAGED_URL), false)
 })
