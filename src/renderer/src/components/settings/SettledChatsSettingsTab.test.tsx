@@ -139,7 +139,7 @@ test('with nothing settled, the page says how a chat gets here', async () => {
   await render()
   expect(rows()).toHaveLength(0)
   expect(host.textContent).toContain('No settled chats.')
-  expect(host.textContent).toContain('three days without activity')
+  expect(host.textContent).toContain('3 days without activity')
 })
 
 test('the list keeps its identity through a write to another workspace', async () => {

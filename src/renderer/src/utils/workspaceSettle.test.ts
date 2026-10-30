@@ -3,6 +3,7 @@ import type { Workspace } from '../types/workspace'
 import { getRendererHost } from '../modules'
 import {
   WORKSPACE_AUTO_SETTLE_AFTER_MS,
+  normalizeAutoSettleAfterDays,
   decideWorkspaceSettlement,
   isSettledWorkspace,
   settleWorkspacePatch,
@@ -432,4 +433,27 @@ test('a snooze still ahead survives a Settle and comes back with Un-settle', () 
   // A Woke mark (a snooze already run out) is tombstoned by the Settle, as before.
   const woke = settleWorkspacePatch(snoozable({ snoozedUntil: NOW - HOUR }), NOW, 'settled')
   assert.equal(woke.snoozedUntil, null)
+})
+
+test('the idle rule waits the quiet days the person chose, within a day and ninety', () => {
+  const NOW = 1_000_000_000_000
+  const DAY = 24 * 60 * 60 * 1000
+  const quiet = (days: number) =>
+    ({
+      id: 'w',
+      name: 'w',
+      mode: 'standard',
+      createdAt: NOW - days * DAY,
+      lastTerminalActivityAt: null,
+      autoSettleEnabled: true,
+    }) as unknown as Workspace
+  assert.equal(shouldAutoSettleWorkspace(quiet(1), NOW, { afterDays: 1 }), true, 'a day, chosen')
+  assert.equal(shouldAutoSettleWorkspace(quiet(2), NOW), false, 'three by default')
+  assert.equal(shouldAutoSettleWorkspace(quiet(10), NOW, { afterDays: 14 }), false, 'fourteen chosen: not yet')
+  assert.equal(shouldAutoSettleWorkspace(quiet(14), NOW, { afterDays: 14 }), true)
+  assert.equal(normalizeAutoSettleAfterDays(0), 1)
+  assert.equal(normalizeAutoSettleAfterDays(400), 90)
+  assert.equal(normalizeAutoSettleAfterDays(6.6), 7)
+  assert.equal(normalizeAutoSettleAfterDays('7'), 3, 'not a number: the default')
+  assert.equal(normalizeAutoSettleAfterDays(undefined), 3)
 })

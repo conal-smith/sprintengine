@@ -13,7 +13,8 @@ import {
 } from '../../../utils/workspaceSnooze'
 import { newChatProjectTarget, type FolderGroup } from './folderGroups'
 import { isStarred } from '../../../utils/highlight'
-import { isSettledWorkspace } from '../../../utils/workspaceSettle'
+import { isSettledWorkspace, normalizeAutoSettleAfterDays } from '../../../utils/workspaceSettle'
+import { useWorkspaceStore } from '../../../store/workspaceStore'
 import {
   ContextMenu,
   MenuItem,
@@ -77,6 +78,17 @@ export function autoCompactSwitchOf(
   }
 }
 
+/**
+ * Whether a row's name can be written again by a model: a chat here, with a
+ * conversation in it to title from. A paired machine's chat is named there.
+ */
+export function canRegenerateTitleOf(workspace: Workspace): boolean {
+  if (workspace.remoteOrigin) return false
+  return Object.values(workspace.agents ?? {}).some(
+    (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+  )
+}
+
 /** What the rest-and-marks half of a chat's menu dispatches, on a row here or a paired machine's. */
 export type ChatMarkAction =
   | 'toggle-star'
@@ -107,6 +119,7 @@ export type ContextMenuAction =
   | 'mark-unread'
   | 'stop-watching'
   | 'rename'
+  | 'regenerate-title'
   | 'new-chat'
   | 'reveal'
   | 'copy-link'
@@ -171,6 +184,8 @@ function ChatRestAndMarkItems({
   onSelect: (action: ChatMarkAction | 'toggle-auto-compact') => void
   onPickColor: (color: HighlightColor) => void
 }) {
+  // The quiet days a chat here settles after (Settings ▸ Settled chats).
+  const autoSettleDays = useWorkspaceStore((s) => s.appSettings.autoSettleAfterDays)
   return (
     <>
       <ChatMenuItem
@@ -238,14 +253,17 @@ function ChatRestAndMarkItems({
           ))}
         </MenuFlyoutItem>
       ) : null}
-      {/* Whether this chat settles by itself: after three quiet days, or when
+      {/* Whether this chat settles by itself: after its quiet days, or when
           its pull requests land. Off unless switched on here. A standing
           setting, so a switch row that stays open to show it flip, like Star. */}
       {autoSettle !== null ? (
         <ChatMenuItem
           checked={autoSettle}
           trailing={<SwitchGlyph checked={autoSettle} />}
-          tooltip={tips.autoSettle(where)}
+          tooltip={tips.autoSettle(
+            where,
+            where.kind === 'local' ? normalizeAutoSettleAfterDays(autoSettleDays) : undefined,
+          )}
           onClick={() => onSelect('toggle-auto-settle')}
         >
           Auto-settle
@@ -412,6 +430,11 @@ export function WorkspaceContextMenu({
       <ChatMenuItem tooltip={tips.rename(where)} onClick={() => onSelect('rename')} shortcut="F2">
         Rename
       </ChatMenuItem>
+      {canRegenerateTitleOf(workspace) ? (
+        <ChatMenuItem tooltip={tips.regenerateTitle()} onClick={() => onSelect('regenerate-title')}>
+          Regenerate title
+        </ChatMenuItem>
+      ) : null}
       {canNewChatInProject ? (
         <ChatMenuItem
           tooltip={tips.newChat(isProjectlessChatsRoot(newChatTarget))}

@@ -50,7 +50,12 @@ import { labelForCliRuntime } from './newWorkspace/cliRuntimeOptions'
 import CliIcon from '../CliIcon'
 import { selectModuleEnabled } from '../../modules'
 import { getHighlightSwatch, isStarred } from '../../utils/highlight'
-import type { FolderOpenTargetAvailability, FolderOpenTargetId } from '../../../../shared/folder-open-targets'
+import {
+  folderOpenTargetOpensOverSsh,
+  type FolderOpenTargetAvailability,
+  type FolderOpenTargetId,
+} from '../../../../shared/folder-open-targets'
+import { isMachinePath } from '../../../../shared/machine-paths'
 import {
   availableFolderOpenTargets,
   folderOpenTargetLabel,
@@ -222,7 +227,13 @@ export function useFolderOpenTargets(workspaceId: string | null, openPath: strin
     }
   }, [probe])
 
-  const available = React.useMemo(() => availableFolderOpenTargets(availability), [availability])
+  // A folder on an SSH machine opens only in an editor that reaches it over
+  // SSH itself; the file manager here has nothing to show.
+  const onMachine = isMachinePath(openPath)
+  const available = React.useMemo(() => {
+    const here = availableFolderOpenTargets(availability)
+    return onMachine ? here.filter(folderOpenTargetOpensOverSsh) : here
+  }, [availability, onMachine])
   const primaryTarget = resolveFolderOpenPrimary(available, lastTarget)
 
   const showFailure = React.useCallback(

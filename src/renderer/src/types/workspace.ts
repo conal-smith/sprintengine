@@ -477,6 +477,8 @@ export type AppSettings = {
    * long the chat itself has been quiet. Settle on merge is separate.
    */
   keepChatsWithOpenPullRequest: boolean
+  /** How many quiet days settle a chat with Auto-settle on (Settings ▸ Settled chats), 1 to 90. */
+  autoSettleAfterDays: number
   /**
    * Float the pane's browser over the workspace when an agent opens or drives
    * a page while the pane is closed, so the person sees what it is doing

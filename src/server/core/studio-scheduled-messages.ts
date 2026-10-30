@@ -20,6 +20,7 @@ import {
   type ScheduledMessages,
   type ScheduledMessagesStorage,
 } from '../../main/scheduled-messages/scheduled-messages'
+import { usageRateLimit } from '../../main/usage-limits/store'
 import {
   holdTailnetUpload,
   releaseTailnetUpload,
@@ -91,6 +92,7 @@ export function createStudioScheduledMessages(deps: StudioScheduledMessagesDeps)
       return listed.ok ? listed.sessions : []
     },
     onConversationEvent: (listener) => deps.conversations.onEvent(listener),
+    rateLimit: (provider, now) => usageRateLimit(provider, now),
     chatExists: ({ workspaceId, agentId }) => {
       const record = deps.workspaceRecord(workspaceId)
       return Boolean(record && Object.hasOwn(record.agents, agentId))

@@ -1,12 +1,18 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 
 import type { WorkspaceId } from '../../types/workspace'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { showToast } from '../../store/toastStore'
 import { formatRelativeMsAgo } from '../../utils/relativeTime'
-import { Checkbox, EmptyState, GhostButton, OutlineButton, Tooltip } from '../ui'
+import { Checkbox, EmptyState, GhostButton, Input, OutlineButton, Tooltip } from '../ui'
 import { DangerButton } from '../ui/Buttons'
-import { SettingCard, SettingToggle, SettingsPageHeader } from './SettingsAtoms'
+import { SettingCard, SettingToggle, SettingsPageHeader, SettingsRow } from './SettingsAtoms'
+import { isImeKey } from '../../utils/imeKey'
+import {
+  MAX_AUTO_SETTLE_AFTER_DAYS,
+  MIN_AUTO_SETTLE_AFTER_DAYS,
+  normalizeAutoSettleAfterDays,
+} from '../../utils/workspaceSettle'
 import { createSettledChatsSelector, type SettledChatEntry } from './settledChatsModel'
 import { remoteOriginChatWorkspaceId } from '../workspace/remoteBand/remoteSessionsModel'
 import { useStableCallback } from '../../hooks/useStableCallback'
@@ -31,6 +37,53 @@ const SETTLED_PAGE = 100
  * takes every settled chat, the ones folded under "Show more" included, and
  * the confirmation counts them.
  */
+/**
+ * How many quiet days settle a chat with Auto-settle on. Typed, and kept on
+ * leaving the field or Enter; a blank entry goes back to what is kept, and an
+ * out-of-range one to the nearest day in range.
+ */
+function AutoSettleDaysRow() {
+  const days = normalizeAutoSettleAfterDays(useWorkspaceStore((s) => s.appSettings.autoSettleAfterDays))
+  const setDays = useWorkspaceStore((s) => s.setAutoSettleAfterDays)
+  const [draft, setDraft] = useState(String(days))
+  useEffect(() => setDraft(String(days)), [days])
+  const commit = () => {
+    const parsed = draft.trim() === '' ? NaN : Number(draft)
+    const next = Number.isFinite(parsed) ? normalizeAutoSettleAfterDays(parsed) : days
+    setDays(next)
+    setDraft(String(next))
+  }
+  return (
+    <SettingsRow
+      label="Settle after quiet days"
+      help={`For chats with Auto-settle switched on from their menu: how many days without activity settle one, from ${MIN_AUTO_SETTLE_AFTER_DAYS} to ${MAX_AUTO_SETTLE_AFTER_DAYS}.`}
+      htmlFor="auto-settle-after-days"
+    >
+      <Input
+        id="auto-settle-after-days"
+        type="number"
+        inputMode="numeric"
+        min={MIN_AUTO_SETTLE_AFTER_DAYS}
+        max={MAX_AUTO_SETTLE_AFTER_DAYS}
+        step={1}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (isImeKey(event)) return
+          if (event.key === 'Enter') event.currentTarget.blur()
+        }}
+        size="md"
+        variant="well"
+        fullWidth={false}
+        className="w-20 text-right tabular-nums"
+      />
+    </SettingsRow>
+  )
+}
+
+const quietDays = (days: number): string => (days === 1 ? 'a day' : `${days} days`)
+
 export function SettledChatsSettingsTab({
   onOpenChat,
 }: {
@@ -43,6 +96,7 @@ export function SettledChatsSettingsTab({
   const setSettleOnMerge = useWorkspaceStore((s) => s.setSettleOnPullRequestMerge)
   const keepWithOpenPr = useWorkspaceStore((s) => s.appSettings.keepChatsWithOpenPullRequest)
   const setKeepWithOpenPr = useWorkspaceStore((s) => s.setKeepChatsWithOpenPullRequest)
+  const autoSettleDays = normalizeAutoSettleAfterDays(useWorkspaceStore((s) => s.appSettings.autoSettleAfterDays))
   const autoCompact = useWorkspaceStore((s) => s.appSettings.autoCompactChats)
   const setAutoCompact = useWorkspaceStore((s) => s.setAutoCompactChats)
   // One clock for the visit: "settled 3d ago" does not need to tick while the
@@ -111,6 +165,7 @@ export function SettledChatsSettingsTab({
     <div role="tabpanel" id="settings-panel-settled-chats" aria-labelledby="settings-tab-settled-chats">
       <SettingsPageHeader title="Settled chats" meta={chats.length > 0 ? `${chats.length}` : undefined} />
       <SettingCard className="mb-5">
+        <AutoSettleDaysRow />
         <SettingToggle
           label="Settle when its pull requests merge"
           description="For chats with Auto-settle switched on from their menu: once every pull request is merged or closed, and at least one merged, the chat settles. Not if you wrote to it after the merge, and never while an agent in it is working. A settled chat's worktree is removed once its work is merged and clean, and checked out again from its branch when you come back."
@@ -119,7 +174,7 @@ export function SettledChatsSettingsTab({
         />
         <SettingToggle
           label="Keep chats with an open pull request"
-          description="For chats with Auto-settle switched on from their menu: a chat whose pull request is still open, waiting on review or still a draft, does not settle after three days without activity. Settling when its pull requests merge is the setting above."
+          description={`For chats with Auto-settle switched on from their menu: a chat whose pull request is still open, waiting on review or still a draft, does not settle after ${quietDays(autoSettleDays)} without activity. Settling when its pull requests merge is the setting above.`}
           enabled={keepWithOpenPr}
           onChange={setKeepWithOpenPr}
         />
@@ -134,7 +189,7 @@ export function SettledChatsSettingsTab({
         <EmptyState
           density="list"
           title="No settled chats."
-          body="A chat settles when you settle it from its menu. Switch on Auto-settle there and it also settles after three days without activity, or when its pull requests merge."
+          body={`A chat settles when you settle it from its menu. Switch on Auto-settle there and it also settles after ${quietDays(autoSettleDays)} without activity, or when its pull requests merge.`}
         />
       ) : (
         <>

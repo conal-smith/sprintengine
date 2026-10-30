@@ -28,7 +28,14 @@ import type {
   WorkspaceHighlight,
   McpServerConfig,
 } from '../types/workspace'
-import type { AppTheme, ChatWidth, ClockFormat, ReplyStreaming, WindowMaterial } from '../types/appTheme'
+import type {
+  AppTheme,
+  ChatWidth,
+  ClockFormat,
+  ReplyStreaming,
+  ResolvedAppTheme,
+  WindowMaterial,
+} from '../types/appTheme'
 import { noteLaunchedAgentArrived, type LaunchedAgentProjection } from '../utils/launchedAgentProjection'
 import type { DiscoveredCliModelCatalog } from '../../../shared/cli-model-catalog'
 import type { FolderOpenTargetId } from '../../../shared/folder-open-targets'
@@ -323,6 +330,7 @@ export interface WorkspaceStore
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
   setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
+  setAutoSettleAfterDays: (days: number) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   /** What Enter does in a chat whose agent is working: queue the message, or steer the turn with it. */
   setFollowUpBehavior: (behavior: FollowUpBehavior) => void
@@ -342,6 +350,7 @@ export interface WorkspaceStore
   agentConfigAdoptionResult: AgentConfigAdoptionResult | null
   setAgentConfigAdoptionResult: (result: AgentConfigAdoptionResult | null) => void
   setAppearanceTheme: (theme: AppTheme) => void
+  setAppearanceSystemTheme: (side: 'light' | 'dark', theme: ResolvedAppTheme) => void
   setAppearanceWindowMaterial: (material: WindowMaterial) => void
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void

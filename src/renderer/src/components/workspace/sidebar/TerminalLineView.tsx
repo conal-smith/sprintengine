@@ -40,8 +40,11 @@ export function TerminalLineView({
   dim = false,
   rowOwnsStatus = false,
   onOpenDiff,
+  workspaceId,
 }: {
   line: TerminalLine
+  /** The chat whose browser pane the pull request mark opens in; absent, the system browser. */
+  workspaceId?: string
   now: number
   seatOverlay?: React.ReactNode
   /** More than one line on the row: a waiting line wears the warn dot so the gold surface says WHICH. */
@@ -169,7 +172,7 @@ export function TerminalLineView({
           when the conversation has no pull request, and the ±lines then slide
           left exactly as they always did — there is no "unknown" mark and no
           placeholder (decision 3). */}
-      <PullRequestMark pullRequests={line.pullRequests} dim={dim} />
+      <PullRequestMark pullRequests={line.pullRequests} dim={dim} workspaceId={workspaceId} />
       {hasDiff ? (
         // Beside the branch, not at the far edge: the two are one fact —
         // "this branch, this much changed" — and the trailing seat is spoken

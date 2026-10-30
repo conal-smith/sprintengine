@@ -142,6 +142,7 @@ import { isSnoozedWorkspace, resolveSnoozePresets, snoozeWakeLabel, workspaceWok
 import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
 import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
+import { regenerateStoreWorkspaceTitle } from '../../store/generatedWorkspaceTitle'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
 import {
   remoteScheduleActionWords,
@@ -4055,6 +4056,15 @@ function WorkspaceSidebar({
               setContextMenu(null)
               return
             }
+            if (action === 'regenerate-title') {
+              setContextMenu(null)
+              const before = workspace.name
+              void regenerateStoreWorkspaceTitle(workspace.id).then((result) => {
+                if (!result.ok)
+                  showToast({ tone: 'error', title: `${before} was not renamed`, description: result.message })
+              })
+              return
+            }
             if (action === 'stop-watching' && workspace.remoteOrigin) {
               const conversation = remoteConversationByWorkspace.get(workspace.id)
               const watched = conversation ? remoteWatchedPullRequest(conversation) : null
@@ -5361,7 +5371,11 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
               the checkout's present state and not anything this chat did
               (the-diff-an-agent-made, decision 9) — the pull request is the
               one fact that is still this conversation's. */}
-          <PullRequestMark pullRequests={rowOnlyPullRequests} dim={emphasis === 'quiet'} />
+          <PullRequestMark
+            pullRequests={rowOnlyPullRequests}
+            dim={emphasis === 'quiet'}
+            workspaceId={workspace.remoteOrigin ? undefined : workspace.id}
+          />
           <PullRequestWatchWords pullRequests={rowOnlyPullRequests} dim={emphasis === 'quiet'} />
           {flatProject ? null : statusSeat}
         </div>
@@ -5385,6 +5399,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             seatOverlay={index === 0 && !flatProject ? rowActionsOverlay : undefined}
             disambiguate={rowLines.lines.length > 1}
             dim={emphasis === 'quiet'}
+            workspaceId={workspace.remoteOrigin ? undefined : workspace.id}
             rowOwnsStatus={flatProject !== null}
             onOpenDiff={
               lineAgentId
@@ -5427,7 +5442,11 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
                 )}
               </span>
             </Tooltip>
-            <PullRequestMark pullRequests={chatLinePullRequestsOf(session.agentId)} dim={emphasis === 'quiet'} />
+            <PullRequestMark
+              pullRequests={chatLinePullRequestsOf(session.agentId)}
+              dim={emphasis === 'quiet'}
+              workspaceId={workspace.remoteOrigin ? undefined : workspace.id}
+            />
             {/* Between its turns, a chat babysitting its pull request says
                 what the pull request waits on; while its agent works, the
                 line says what the agent is doing, as any chat line does. */}

@@ -1149,6 +1149,7 @@ export function createWorkspacesSlice(
             pullRequestsUnread: pullRequestsByWorkspaceId === undefined,
             settleOnMerge: current.appSettings.settleOnPullRequestMerge,
             keepWithOpenPullRequest: current.appSettings.keepChatsWithOpenPullRequest,
+            afterDays: current.appSettings.autoSettleAfterDays,
           },
         })
         if (decision === 'none') continue

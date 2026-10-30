@@ -15,6 +15,7 @@ import { keepStderrInLogsDir, stdioChannel } from './bootstrap/stdio'
 import { startDetached } from './bootstrap/detached-start'
 import type { ServerBoot } from './bootstrap/envelope'
 import { readWebRunFile } from './web/web-run-file'
+import { runTriage, TRIAGE_AGENTS, type TriageAgent } from './triage'
 import { normalizeOrigin } from './web/web-origins'
 import { checkTailscaleServePort, DEFAULT_TAILSCALE_SERVE_PORT } from './web/web-tailscale-serve'
 import {
@@ -41,6 +42,7 @@ import {
 //   node out/server/server.cjs pair [--data-dir <dir>] [--origin <url>]
 //   node out/server/server.cjs embed --workspace <id> --agent <id> [--frame-origin <url>]… [--ttl-hours <n>]
 //   node out/server/server.cjs embed --list | --revoke <embed id>
+//   node out/server/server.cjs triage [--agent claude|codex] [--logs-dir <dir>] [--print]
 //
 // `--web` turns on the web client's listener on a loopback port (phase 9),
 // off by default. `pair` asks the server running on a data directory for a
@@ -107,6 +109,13 @@ Usage: studio-server embed --workspace <id> --agent <id> [--frame-origin <url>].
   Print a link that shows one conversation, read-only, in another page's iframe;
   list the embeds the server holds; or revoke one, which closes it at once.
 
+Usage: studio-server triage [--agent claude|codex] [--logs-dir <dir>] [--print]
+
+  Gather Studio's diagnostics log, its version and this computer's OS, with the
+  home folder and secrets taken out, and start Claude Code (or Codex) in this
+  terminal with a prompt to work out what is wrong with the install. --print
+  prints the prompt instead. Nothing is sent anywhere but to that agent.
+
 Usage: studio-server start --detach --data-dir <dir> [options]
 
   Start a server that outlives this command (an SSH machine's managed server),
@@ -169,6 +178,22 @@ type Command =
       channel: 'latest' | 'nightly'
     }
   | { kind: 'serve'; options: StudioServerOptions; stdio: boolean }
+  | { kind: 'triage'; agent: TriageAgent; print: boolean; logsDir: string | null; serverLogsDir: string }
+
+function parseTriage(
+  values: { agent?: string; print?: boolean; 'logs-dir'?: string },
+  env: NodeJS.ProcessEnv,
+): Extract<Command, { kind: 'triage' }> {
+  const agent = values.agent ?? 'claude'
+  if (!TRIAGE_AGENTS.includes(agent as TriageAgent)) throw new Error('triage --agent takes claude or codex.')
+  return {
+    kind: 'triage',
+    agent: agent as TriageAgent,
+    print: values.print === true,
+    logsDir: values['logs-dir'] ? resolve(values['logs-dir']) : null,
+    serverLogsDir: defaultServerLocations({ env }).logsDir,
+  }
+}
 
 export function parseServerArgs(argv: string[], env = process.env): Command {
   const { values, positionals } = parseArgs({
@@ -205,6 +230,7 @@ export function parseServerArgs(argv: string[], env = process.env): Command {
       'ttl-hours': { type: 'string' },
       list: { type: 'boolean' },
       revoke: { type: 'string' },
+      print: { type: 'boolean' },
     },
   })
   if (values.version) return { kind: 'version' }
@@ -222,6 +248,8 @@ export function parseServerArgs(argv: string[], env = process.env): Command {
   for (const name of ['detach', 'idle-ms', 'keep-running', 'started-by-b64', 'replace', 'channel'] as const) {
     if (values[name] !== undefined) throw new Error(`--${name} goes with start --detach.`)
   }
+  if (command === 'triage' && rest.length === 0) return parseTriage(values, env)
+  if (values.print !== undefined) throw new Error('--print goes with triage.')
   if ((command !== 'serve' && command !== 'pair' && command !== 'embed') || rest.length > 0)
     throw new Error(`Unknown command: ${positionals.join(' ')}`)
   if (values.packaged && !values['resources-dir']) throw new Error('--packaged needs --resources-dir.')
@@ -496,6 +524,12 @@ async function main(argv: string[]): Promise<number> {
     return 0
   }
   if (command.kind === 'bootstrap') return serveOverStdio()
+  if (command.kind === 'triage')
+    return runTriage({
+      ...command,
+      studioVersion: versionFrom(defaultAppRoot()),
+      write: (text) => process.stdout.write(text),
+    })
   if (command.kind === 'pair') return pairBrowser(command.dataDir, command.origin)
   if (command.kind === 'embed') return mintEmbed(command)
   if (command.kind === 'embed-list' || command.kind === 'embed-revoke') return manageEmbeds(command)

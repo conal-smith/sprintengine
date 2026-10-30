@@ -14,6 +14,7 @@
 import { parseMachinePath } from '../../../../shared/machine-paths'
 import { workspaceHostIdOf } from '../../../../shared/execution-host'
 import { withoutStudioNoticePrefix } from '../../../../shared/studio-notice'
+import { limitResetSendAt } from '../../../../shared/scheduled-messages'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -151,7 +152,7 @@ import {
   type ScheduledMessageView,
 } from './agentChat/scheduledMessages'
 import { canScheduleMessages, updateScheduledMessage } from '../../store/scheduledMessagesStore'
-import { SendTimeTag } from '../workspace/agentComposer/schedule/SendTimeEditor'
+import { SendTimeTag, type SendAtLimitReset } from '../workspace/agentComposer/schedule/SendTimeEditor'
 import { defaultSendAt } from '../workspace/agentComposer/schedule/sendTime'
 import { selectUsageLimitSnapshot, usageLimitProviderOf } from '../../store/usageLimitsStore'
 import { studioAppCommands, useConversationCommands } from './agentChat/useConversationCommands'
@@ -3729,6 +3730,35 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     attachments.length > 0 || draftMetadata.files.length > 0
       ? 'A scheduled message carries text only — remove the pictures and files first'
       : null
+  // "When my limit resets": offered for a chat on this machine whose provider
+  // meters its use and has said when a window resets. Main keeps the provider
+  // with the message and asks the limit again when its time comes.
+  const scheduleLimitProvider =
+    transport.kind !== 'remote' && !stripFacts.machine ? usageLimitProviderOf(conversation?.providerId) : null
+  const scheduleLimitSnapshot = useUsageLimitSnapshot(sendAt !== null ? scheduleLimitProvider : null)
+  const [sendAtLimit, setSendAtLimit] = useState(false)
+  const limitResetAt = limitResetSendAt(scheduleLimitSnapshot, Date.now())
+  const sendAtLimitReset = useMemo<SendAtLimitReset | null>(
+    () =>
+      limitResetAt !== null
+        ? {
+            at: limitResetAt,
+            on: sendAtLimit,
+            onPick: () => {
+              setSendAt(limitResetAt)
+              setSendAtLimit(true)
+            },
+          }
+        : null,
+    [limitResetAt, sendAtLimit],
+  )
+  const pickSendAt = useCallback((at: number) => {
+    setSendAtLimit(false)
+    setSendAt(at)
+  }, [])
+  useEffect(() => {
+    if (sendAt === null) setSendAtLimit(false)
+  }, [sendAt])
   const scheduleOption = useMemo(
     () =>
       scheduleOffered
@@ -3819,7 +3849,15 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         return
       }
     } else {
-      const scheduled = await updateScheduledMessage({ kind: 'schedule', workspaceId, agentId, text, sendAt })
+      const untilLimitReset = sendAtLimit && scheduleLimitProvider ? scheduleLimitProvider : undefined
+      const scheduled = await updateScheduledMessage({
+        kind: 'schedule',
+        workspaceId,
+        agentId,
+        text,
+        sendAt,
+        ...(untilLimitReset ? { untilLimitReset } : {}),
+      })
       if (!scheduled) {
         setActionError('The message could not be scheduled.')
         return
@@ -4640,7 +4678,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                 ) : null}
                 {/* The tags: when the message is to go, then each skill attached to the next turn. */}
                 {sendAt !== null ? (
-                  <SendTimeTag at={sendAt} onChange={setSendAt} onRemove={() => setSendAt(null)} />
+                  <SendTimeTag
+                    at={sendAt}
+                    onChange={pickSendAt}
+                    onRemove={() => setSendAt(null)}
+                    limitReset={sendAtLimitReset}
+                  />
                 ) : null}
                 {supportsSkills
                   ? attachedSkills.map((skill) => (

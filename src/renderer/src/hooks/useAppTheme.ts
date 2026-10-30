@@ -10,6 +10,7 @@ import {
   effectiveWindowMaterial,
   LIGHT_SURFACE_THEMES,
   normalizeChatContrast,
+  resolveAppTheme,
   type AppearanceSettings,
   type AppTheme,
   type ChatWidth,
@@ -29,9 +30,19 @@ function prefersLight(): boolean {
   return window.matchMedia(LIGHT_MEDIA_QUERY).matches
 }
 
+// Under `system`, the theme the person chose for the side the OS is on, read
+// off the store as it is now: the hooks below re-run on a change to either
+// choice (`useSystemThemes`).
 function resolveTheme(theme: AppTheme): ResolvedAppTheme {
-  if (theme === 'system') return prefersLight() ? 'light' : 'dark'
-  return theme
+  if (theme !== 'system') return theme
+  return resolveAppTheme(theme, prefersLight(), useWorkspaceStore.getState().appSettings.appearance)
+}
+
+/** The pair `system` resolves to, as one value a hook's dependencies can carry. */
+function useSystemThemes(): string {
+  return useWorkspaceStore(
+    (s) => `${s.appSettings.appearance.systemLightTheme} ${s.appSettings.appearance.systemDarkTheme}`,
+  )
 }
 
 // Writes the two appearance attributes <html> carries. `data-theme` selects the
@@ -150,6 +161,7 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
   const chatWidth = useWorkspaceStore((s) => s.appSettings.appearance.chatWidth)
   const interfaceFont = useWorkspaceStore((s) => s.appSettings.appearance.interfaceFont)
   const codeFont = useWorkspaceStore((s) => s.appSettings.appearance.codeFont)
+  const systemThemes = useSystemThemes()
 
   useEffect(() => {
     applyWindowMaterial(windowMaterial, mirrorToMain)
@@ -198,7 +210,7 @@ export function useAppTheme({ mirrorToMain = true }: { mirrorToMain?: boolean } 
     // Safari < 14 fallback.
     media.addListener(onChange)
     return () => media.removeListener(onChange)
-  }, [mirrorToMain, theme])
+  }, [mirrorToMain, theme, systemThemes])
 }
 
 // The two hook-free halves of `useResolvedColorScheme`, for readers that are
@@ -232,6 +244,7 @@ export function subscribeSystemColorScheme(onChange: () => void): () => void {
 // must pick a matching base theme read this instead of the raw preference.
 export function useResolvedColorScheme(): ColorScheme {
   const theme = useWorkspaceStore((s) => s.appSettings.appearance.theme)
+  const systemThemes = useSystemThemes()
   const [scheme, setScheme] = useState<ColorScheme>(() => colorSchemeForResolvedTheme(resolveTheme(theme)))
 
   useEffect(() => {
@@ -250,7 +263,7 @@ export function useResolvedColorScheme(): ColorScheme {
     // Safari < 14 fallback.
     media.addListener(onChange)
     return () => media.removeListener(onChange)
-  }, [theme])
+  }, [theme, systemThemes])
 
   return scheme
 }
@@ -263,6 +276,7 @@ export function useResolvedColorScheme(): ColorScheme {
 // returns the full id instead of collapsing to a scheme.
 export function useResolvedTheme(): ResolvedAppTheme {
   const theme = useWorkspaceStore((s) => s.appSettings.appearance.theme)
+  const systemThemes = useSystemThemes()
   const [resolved, setResolved] = useState<ResolvedAppTheme>(() => resolveTheme(theme))
 
   useEffect(() => {
@@ -281,7 +295,7 @@ export function useResolvedTheme(): ResolvedAppTheme {
     // Safari < 14 fallback.
     media.addListener(onChange)
     return () => media.removeListener(onChange)
-  }, [theme])
+  }, [theme, systemThemes])
 
   return resolved
 }

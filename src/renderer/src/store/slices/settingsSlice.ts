@@ -1,4 +1,5 @@
 import { isFolderOpenTargetId } from '../../../../shared/folder-open-targets'
+import { DEFAULT_AUTO_SETTLE_AFTER_DAYS, normalizeAutoSettleAfterDays } from '../../utils/workspaceSettle'
 import type { ExecutionHostId, ExecutionHostSettings } from '../../../../shared/execution-host'
 import {
   normalizeAgentLaunchHosts,
@@ -54,6 +55,9 @@ import {
   DEFAULT_CHAT_CONTRAST,
   DEFAULT_CHAT_WIDTH,
   isAppTheme,
+  DEFAULT_SYSTEM_DARK_THEME,
+  DEFAULT_SYSTEM_LIGHT_THEME,
+  normalizeSystemTheme,
   isChatWidth,
   isClockFormat,
   isReplyStreaming,
@@ -67,6 +71,7 @@ import {
   type ChatWidth,
   type ClockFormat,
   type ReplyStreaming,
+  type ResolvedAppTheme,
   type WindowMaterial,
 } from '../../types/appTheme'
 import { normalizeModuleOverrides } from '../../../../shared/modules/manifest'
@@ -109,6 +114,8 @@ let lastAgentsMachineRequestId = 0
 export function defaultAppearanceSettings(): AppearanceSettings {
   return {
     theme: 'system',
+    systemLightTheme: DEFAULT_SYSTEM_LIGHT_THEME,
+    systemDarkTheme: DEFAULT_SYSTEM_DARK_THEME,
     windowMaterial: 'glass',
     chatContrast: DEFAULT_CHAT_CONTRAST,
     chatWidth: DEFAULT_CHAT_WIDTH,
@@ -127,6 +134,9 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
   const candidate = value as Partial<AppearanceSettings>
   return {
     theme: isAppTheme(candidate.theme) ? candidate.theme : defaults.theme,
+    // Absent before the pair existed: `system` resolved to Light and Dark.
+    systemLightTheme: normalizeSystemTheme(candidate.systemLightTheme, 'light'),
+    systemDarkTheme: normalizeSystemTheme(candidate.systemDarkTheme, 'dark'),
     windowMaterial: isWindowMaterial(candidate.windowMaterial) ? candidate.windowMaterial : defaults.windowMaterial,
     // Both chat fields arrived after the envelope's other appearance fields, so
     // a stored appearance without them is an older profile, not a corrupt one:
@@ -714,6 +724,7 @@ export const defaultAppSettings = (): AppSettings => ({
   terminalKeepRecentAlive: DEFAULT_TERMINAL_KEEP_RECENT_ALIVE,
   settleOnPullRequestMerge: true,
   keepChatsWithOpenPullRequest: true,
+  autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   browserAutoFloatAgentPreview: true,
   // A message sent mid-turn waits for the turn, as every one did before the
   // choice: a steer is something a person asks for.
@@ -812,6 +823,8 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     // Only an explicit stored `false` lets the idle rule settle a chat whose
     // pull request is still open: a profile from before the setting keeps them.
     keepChatsWithOpenPullRequest: settings?.keepChatsWithOpenPullRequest !== false,
+    // Absent before the setting existed: the three days it always was.
+    autoSettleAfterDays: normalizeAutoSettleAfterDays(settings?.autoSettleAfterDays),
     // Only an explicit stored `false` turns the player off: it is the
     // feature's default, and an unreadable value should not hide an agent.
     browserAutoFloatAgentPreview: settings?.browserAutoFloatAgentPreview !== false,
@@ -1117,12 +1130,15 @@ export interface SettingsSliceActions {
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
   setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
+  setAutoSettleAfterDays: (days: number) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
   setKeepRunningInBackground: (enabled: boolean) => void
   setTelemetryEnabled: (enabled: boolean) => void
   setAppearanceTheme: (theme: AppTheme) => void
+  /** The theme `system` uses on one side of the OS's light/dark switch. */
+  setAppearanceSystemTheme: (side: 'light' | 'dark', theme: ResolvedAppTheme) => void
   setAppearanceWindowMaterial: (material: WindowMaterial) => void
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void
@@ -1787,6 +1803,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.keepChatsWithOpenPullRequest = enabled === true
       }),
 
+    setAutoSettleAfterDays: (days) =>
+      set((state) => {
+        state.appSettings.autoSettleAfterDays = normalizeAutoSettleAfterDays(days)
+      }),
+
     setBrowserAutoFloatAgentPreview: (enabled) =>
       set((state) => {
         state.appSettings.browserAutoFloatAgentPreview = enabled === true
@@ -1817,6 +1838,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
           theme,
+        })
+      }),
+
+    setAppearanceSystemTheme: (side, theme) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          [side === 'light' ? 'systemLightTheme' : 'systemDarkTheme']: theme,
         })
       }),
 
