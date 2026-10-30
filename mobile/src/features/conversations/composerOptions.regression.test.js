@@ -197,7 +197,7 @@ test("a picture over 5 MB is refused before upload, unless the desktop sizes pic
 
 test("New's + ends with the Schedule switch, which takes words alone", () => {
   const rows = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false }, schedule: { on: false, busy: false } });
-  assert.deepEqual(rows.at(-1), { kind: "schedule", label: "Schedule", on: false, disabledReason: null });
+  assert.deepEqual(rows.at(-1), { kind: "schedule", label: "Schedule", on: false, repeats: false, disabledReason: null });
   assert.equal(composerOptionsLabel(rows), "Attach or schedule");
   const holding = composerOptions({ startAs: phone, attach: { held: 1, max: 4, busy: false }, schedule: { on: false, busy: false } });
   assert.equal(holding.at(-1).disabledReason, "Each run starts from words alone: remove the attachments to schedule it.");
@@ -205,10 +205,15 @@ test("New's + ends with the Schedule switch, which takes words alone", () => {
   assert.equal(adding.at(-1).disabledReason, "Wait for the last attachment.");
   // On, it can always be turned off, and nothing can be attached meanwhile.
   const on = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false, files: true }, schedule: { on: true, busy: false } });
-  assert.deepEqual(on.at(-1), { kind: "schedule", label: "Schedule", on: true, disabledReason: null });
+  assert.deepEqual(on.at(-1), { kind: "schedule", label: "Schedule", on: true, repeats: false, disabledReason: null });
   for (const row of on.filter((entry) => entry.kind === "attach")) {
     assert.equal(row.disabledReason, "A scheduled run starts from words alone.");
   }
+  assert.equal(
+    composerOptions({ startAs: phone, attach: null, schedule: { on: false, busy: false, repeats: true } })[0].repeats,
+    true,
+    "New's schedule may repeat; a chat's message goes once",
+  );
   const alone = composerOptions({ startAs: phone, attach: null, schedule: { on: false, busy: false } });
   assert.equal(composerHasOptions(alone), true);
   assert.equal(composerOptionsLabel(alone), "Schedule");

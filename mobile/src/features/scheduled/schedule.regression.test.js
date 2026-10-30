@@ -90,3 +90,14 @@ test("the day steps, never back past today, and is said as the desktop says it",
   assert.equal(sendTimeFromNow(noon, now), "in 2h");
   assert.equal(sendTimeFromNow(now - 1, now), null);
 });
+
+test("a scheduled message's row says when it goes, as the desktop's does", () => {
+  const { scheduledMessageStatus } = require(path.join(buildRoot, "src/features/scheduled/scheduledMessages.js"));
+  const now = new Date(2026, 9, 30, 10, 0).getTime();
+  const at = new Date(2026, 9, 30, 15, 0).getTime();
+  assert.equal(scheduledMessageStatus({ sendAt: at }, now), "Sends Today 3:00 PM");
+  assert.equal(scheduledMessageStatus({ sendAt: at, sending: true }, now), "Sending…");
+  assert.equal(scheduledMessageStatus({ sendAt: at, waitingSince: now }, now), "Sends when this turn ends");
+  assert.equal(scheduledMessageStatus({ sendAt: at, failure: "The chat is archived." }, now), "Couldn't send: the chat is archived.");
+  assert.equal(scheduledMessageStatus({ sendAt: at, failure: " " }, now), "Couldn't send: the chat refused it.");
+});

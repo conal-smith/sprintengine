@@ -132,6 +132,17 @@ Scheduled list opens: every paired desktop's schedules, also reached from the
 home screen's clock button and Settings → Scheduled agents, whose **+** opens
 New already scheduling.
 
+A chat's "+" has **Schedule** too, where the desktop advertises
+`conversation-scheduled-sends`, as the desktop's chat composer does: the send
+time is a tag beside the "+" with the one-time picker behind it, and Send hands
+the words to the desktop (`scheduleSend`), which sends them into the chat at
+that time whether or not the phone is awake. Words alone, as a held message is.
+The chat's scheduled messages are listed in the composer tray from the
+desktop's `scheduled` frames (asked for with `watchScheduled` after every
+fence): "Sends Today 3:00 PM", "Sending…", "Sends when this turn ends" or why
+the chat refused it, each with Send now (Retry), Edit (back into the composer,
+still set for its time) and Delete.
+
 Worktree is on when New opens, as on the desktop: the chat starts in a
 worktree of its own, cut from the desktop's worktree pool on the project's
 main checkout's branch, which the strip names ("from main"). Tap it for "No

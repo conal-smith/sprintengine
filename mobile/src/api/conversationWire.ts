@@ -79,6 +79,18 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = "conversation-steer-sends";
  * turn Stop spares the agents, so this is the only way to stop one from here.
  */
 export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = "conversation-stop-subagent";
+/**
+ * The capability a desktop declares when it keeps a message scheduled into a
+ * chat for a time and sends it then, whether or not the phone is awake:
+ * `scheduleSend` hands it one, `sendScheduledNow` and `cancelScheduled` send
+ * one at once or take it back, and `watchScheduled` has it say what it keeps
+ * for the chat the socket follows, in `scheduled` frames. Absent, the phone
+ * offers no Schedule in a chat: an older desktop refuses each kind as
+ * `unsupported_command`.
+ */
+export const CONVERSATION_SCHEDULED_SENDS_CAPABILITY = "conversation-scheduled-sends";
+/** The most scheduled messages a desktop names for one chat in a `scheduled` frame. */
+export const CONVERSATION_MAX_SCHEDULED_MESSAGES = 50;
 /** The most messages a desktop holds for one chat; it lists no more in a `queued` frame. */
 export const CONVERSATION_MAX_QUEUED_MESSAGES = 20;
 /** The longest refusal a held message carries; a longer one is dropped, the message kept. */
@@ -96,6 +108,26 @@ export interface ConversationQueuedMessage {
   /** When the desktop first held it, on its clock (epoch ms). */
   createdAt: number;
   /** The chat refused it when its turn came, in the chat's words. It waits on the person until taken back. */
+  failure?: string;
+}
+
+/**
+ * One message the desktop keeps for a chat until its time
+ * (`conversation-scheduled-sends`), by the `id` `sendScheduledNow` and
+ * `cancelScheduled` name it by.
+ */
+export interface ConversationScheduledMessage {
+  id: string;
+  text: string;
+  /** When it goes out, on the desktop's clock (epoch ms). */
+  sendAt: number;
+  /** When it was scheduled (epoch ms). */
+  createdAt: number;
+  /** It came due while the chat was working, and goes when the turn ends (epoch ms it came due). */
+  waitingSince?: number;
+  /** It is on its way into the chat now. */
+  sending?: true;
+  /** It went out and the chat refused it, in the chat's words; it waits on Retry or Delete. */
   failure?: string;
 }
 
@@ -264,6 +296,8 @@ export type ConversationClientFrame =
   | { type: "getTurnDiff"; requestId: string; turnSeq: number; path?: string }
   /** Needs `conversation-queued-sends`: sent after each subscription's fence. */
   | { type: "watchQueued"; requestId: string }
+  /** Needs `conversation-scheduled-sends`: sent after each subscription's fence. */
+  | { type: "watchScheduled"; requestId: string }
   | { type: "command"; commandId: string; command: ConversationCommand };
 export type ConversationCommand =
   /**
@@ -297,6 +331,17 @@ export type ConversationCommand =
     }
   /** Needs `conversation-queued-sends`: takes back a held message, refused once it is on its way. */
   | { kind: "cancelQueued"; queuedId: string }
+  /**
+   * Needs `conversation-scheduled-sends`: the desktop keeps the words and
+   * sends them into the chat at `sendAt` (epoch ms), answering once it keeps
+   * them. Words alone, as a held message is. One that comes due mid-turn
+   * waits for the turn to end.
+   */
+  | { kind: "scheduleSend"; message: string; sendAt: number }
+  /** Needs `conversation-scheduled-sends`: sends one now (Retry for one the chat refused). */
+  | { kind: "sendScheduledNow"; scheduledId: string }
+  /** Needs `conversation-scheduled-sends`: takes one back, to delete it or to edit it. */
+  | { kind: "cancelScheduled"; scheduledId: string }
   /** Needs `conversation-stop-subagent`: stops one agent by the call that spawned it, the chat going on. */
   | { kind: "stopSubagent"; toolUseId: string }
   | { kind: "interrupt" }
@@ -374,7 +419,9 @@ export type ConversationServerFrame =
     }
   | { type: "error"; code: string; message: string; retryAfterMs?: number }
   /** What the desktop holds for `key`, whole each time; an empty list once nothing is. */
-  | { type: "queued"; key: ConversationKey; messages: ConversationQueuedMessage[] };
+  | { type: "queued"; key: ConversationKey; messages: ConversationQueuedMessage[] }
+  /** What the desktop keeps scheduled into `key`, soonest first, whole each time; empty once nothing is. */
+  | { type: "scheduled"; key: ConversationKey; messages: ConversationScheduledMessage[] };
 
 const MAX_WIRE_TEXT = 256 * 1024;
 const MAX_REASSEMBLED_BYTES = 32 * 1024 * 1024;
@@ -708,6 +755,14 @@ export function parseConversationFrame(
             messages: parseQueuedMessages(frame.messages),
           }
         : null;
+    case "scheduled":
+      return wireKey(frame.key) && Array.isArray(frame.messages)
+        ? {
+            type: "scheduled",
+            key: { workspaceId: frame.key.workspaceId, agentId: frame.key.agentId },
+            messages: parseScheduledMessages(frame.messages),
+          }
+        : null;
     default:
       return null;
   }
@@ -738,6 +793,42 @@ export function parseQueuedMessages(value: readonly unknown[]): ConversationQueu
       id: entry.id,
       text: entry.text,
       createdAt: entry.createdAt,
+      ...(typeof entry.failure === "string" && entry.failure.length <= MAX_QUEUED_FAILURE_CHARS
+        ? { failure: entry.failure }
+        : {}),
+    });
+  }
+  return messages;
+}
+
+/**
+ * A `scheduled` frame's messages, each read on its own as `queued`'s are, so
+ * one this build cannot read does not hide the rest, and no more than the
+ * desktop's fifty. `sending` is kept only as `true`, and a refusal longer
+ * than 2,000 characters is dropped with the message kept.
+ */
+export function parseScheduledMessages(value: readonly unknown[]): ConversationScheduledMessage[] {
+  const messages: ConversationScheduledMessage[] = [];
+  for (const entry of value) {
+    if (messages.length >= CONVERSATION_MAX_SCHEDULED_MESSAGES) break;
+    if (
+      !record(entry) ||
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      entry.id.length > 200 ||
+      typeof entry.text !== "string" ||
+      entry.text.length > CONVERSATION_MAX_MESSAGE_CHARS ||
+      !nonnegative(entry.sendAt) ||
+      !nonnegative(entry.createdAt)
+    )
+      continue;
+    messages.push({
+      id: entry.id,
+      text: entry.text,
+      sendAt: entry.sendAt,
+      createdAt: entry.createdAt,
+      ...(nonnegative(entry.waitingSince) ? { waitingSince: entry.waitingSince } : {}),
+      ...(entry.sending === true ? { sending: true as const } : {}),
       ...(typeof entry.failure === "string" && entry.failure.length <= MAX_QUEUED_FAILURE_CHARS
         ? { failure: entry.failure }
         : {}),
