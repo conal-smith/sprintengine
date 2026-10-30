@@ -103,6 +103,7 @@ function harness(
     chats?: ConversationSessionSummary[]
     limits?: Map<string, { limited: boolean; resetsAt: number | null }>
     settled?: Set<string>
+    storage?: { read(): Promise<string | null>; write(body: string): Promise<void> }
   } = {},
 ) {
   let clock = 10_000
@@ -155,6 +156,7 @@ function harness(
     usageLimit: (provider) => limits.get(provider) ?? { limited: false, resetsAt: null },
     onUsageLimitsChanged: (listener) => void usageListeners.push(listener),
     isSettled: (workspaceId) => options.settled?.has(workspaceId) ?? false,
+    ...(options.storage ? { storage: options.storage } : {}),
     now: () => clock,
   })
   const setPhase = (sessionId: string, phase: AgentPhase) => {
@@ -711,4 +713,133 @@ test('a notice keeps names to one printable line', () => {
   ])
   assert.doesNotMatch(text, /[\u0000-\u001f]/u)
   assert.match(text, /Agent Scout \[201~ rm -rf, which you launched/u)
+})
+
+/** A data directory's file, as a stand-in: what one run writes, the next reads. */
+function memoryStorage() {
+  let body: string | null = null
+  return {
+    read: async () => body,
+    write: async (next: string) => {
+      body = next
+    },
+    body: () => body,
+  }
+}
+
+test('a notice queued for a busy parent when the app quit is typed after the restart, once', async () => {
+  const storage = memoryStorage()
+  const before = harness({ storage })
+  before.setPhase('session-lead', 'thinking')
+  before.notices.link({ parent: LEAD, child: SCOUT })
+  before.notices.onAgentPhase(scoutTurnEnd())
+  await settle()
+  assert.equal(before.notices.pendingCount(LEAD), 1)
+  await before.notices.freeze()
+  // The quit closes the parent: that is not the parent going away.
+  before.notices.onAgentSessionExit({
+    system: 'manual',
+    workspaceRoot: '/Users/dev/project',
+    workspaceId: 'ws-1',
+    agentId: 'agent-lead',
+    executionId: 'session-lead',
+    exitCode: 0,
+  })
+  await settle()
+
+  const after = harness({ storage })
+  await after.notices.restore()
+  assert.equal(after.notices.pendingCount(LEAD), 1)
+  after.notices.onAgentPhase(leadTurnEnd())
+  await settle()
+  assert.equal(after.pasted().length, 1)
+  assert.match(after.pasted()[0].data, /Agent Scout, which you launched, finished its turn/u)
+  after.notices.onAgentPhase(leadTurnEnd())
+  await settle()
+  assert.equal(after.pasted().length, 1, 'told once')
+})
+
+test('a child still at work when the app quit is reported stopped to its parent after the restart', async () => {
+  const storage = memoryStorage()
+  const before = harness({ storage })
+  before.notices.link({ parent: LEAD, child: SCOUT })
+  before.notices.onAgentPhase(phaseEvent({ agentId: 'agent-scout', executionId: 'session-scout', phase: 'thinking' }))
+  await before.notices.freeze()
+
+  const after = harness({ storage })
+  await after.notices.restore()
+  after.notices.onAgentPhase(leadTurnEnd())
+  await settle()
+  assert.equal(after.pasted().length, 1)
+  assert.match(after.pasted()[0].data, /Agent Scout, which you launched, stopped: its session ended/u)
+})
+
+test('a parent brought back from before a restart waits for its session instead of being dropped', async () => {
+  const storage = memoryStorage()
+  const before = harness({ storage })
+  before.setPhase('session-lead', 'thinking')
+  before.notices.link({ parent: LEAD, child: SCOUT })
+  before.notices.onAgentPhase(scoutTurnEnd())
+  await before.notices.freeze()
+
+  // After the restart the parent is not running until the person brings it back.
+  const after = harness({ storage, terminals: [terminal({ sessionId: 'session-scout', agentId: 'agent-scout' })] })
+  await after.notices.restore()
+  after.notices.onAgentPhase(scoutTurnEnd({ previousPhase: 'thinking' }))
+  await settle()
+  assert.equal(after.notices.pendingCount(LEAD), 1, 'kept while its parent is away')
+  after.terminals.push(terminal({ sessionId: 'session-lead-2' }))
+  after.notices.onAgentPhase(
+    phaseEvent({ agentId: 'agent-lead', executionId: 'session-lead-2', phase: 'idle', turnEnd: true }),
+  )
+  await settle()
+  assert.equal(after.pasted().length, 1)
+  assert.equal(after.writes[0].sessionId, 'session-lead-2')
+})
+
+test('what was kept more than two days before the restart is not brought back', async () => {
+  const storage = memoryStorage()
+  const before = harness({ storage })
+  before.setPhase('session-lead', 'thinking')
+  before.notices.link({ parent: LEAD, child: SCOUT })
+  before.notices.onAgentPhase(scoutTurnEnd())
+  await before.notices.freeze()
+
+  const after = harness({ storage })
+  after.advance(2 * 24 * 60 * 60_000 + 1)
+  await after.notices.restore()
+  assert.equal(after.notices.pendingCount(LEAD), 0)
+  assert.equal(after.notices.linkCount(), 0)
+})
+
+test('a file that is not one this build wrote brings nothing back', async () => {
+  for (const body of [
+    '',
+    'not json',
+    '{"version":99,"parents":[],"children":[]}',
+    '{"version":1,"parents":[{"agentId":7}]}',
+  ]) {
+    const h = harness({ storage: { read: async () => body, write: async () => undefined } })
+    await h.notices.restore()
+    assert.equal(h.notices.pendingCount(LEAD), 0)
+    assert.equal(h.notices.linkCount(), 0)
+  }
+})
+
+test('two live sessions claiming the parent hold its notice rather than drop it', async () => {
+  const h = harness()
+  h.notices.link({ parent: LEAD, child: SCOUT })
+  h.terminals.push(terminal({ sessionId: 'session-lead-2' }))
+  h.notices.onAgentPhase(scoutTurnEnd())
+  await settle()
+  assert.equal(h.pasted().length, 0, 'not typed into either')
+  assert.equal(h.notices.pendingCount(LEAD), 1, 'and not dropped')
+  assert.equal(h.notices.linkCount(), 1)
+  h.terminals.splice(
+    h.terminals.findIndex((session) => session.sessionId === 'session-lead-2'),
+    1,
+  )
+  h.notices.onAgentPhase(leadTurnEnd())
+  await settle()
+  assert.equal(h.pasted().length, 1)
 })

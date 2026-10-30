@@ -11,6 +11,7 @@ import {
   ScheduledAgentsServiceToken,
 } from '../module-host/service-tokens'
 import type { CapabilityModule } from '../module-host/load-modules'
+import { createScheduledPromptImages } from '../scheduled-agents/prompt-images'
 import { isRunChatWorking, runScheduledAgent } from '../scheduled-agents/runner'
 import { createScheduledRunOutcomes } from '../scheduled-agents/run-outcomes'
 import { createScheduledAgentsScheduler } from '../scheduled-agents/scheduler'
@@ -166,7 +167,11 @@ export function createScheduledAgentsModule(
             signal,
           ),
       })
-      const scheduledAgents = createScheduledAgentsService({ store, scheduler })
+      const scheduledAgents = createScheduledAgentsService({
+        store,
+        scheduler,
+        promptImages: createScheduledPromptImages({ dataDir: platform.paths.dataDir() }),
+      })
       service = scheduledAgents
       host.provideService(ScheduledAgentsServiceToken, () => scheduledAgents)
       host.provideService(ScheduledAgentsModuleServiceToken, () =>

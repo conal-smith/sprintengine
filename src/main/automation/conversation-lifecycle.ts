@@ -210,7 +210,7 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
         code: 'working',
         message: 'An agent in this chat is still working, or waiting on an answer. Settle it once it has finished.',
       }
-    const patch = settled ? settleWorkspacePatch(record, now(), 'settled') : wakeWorkspacePatch('active')
+    const patch = settled ? settleWorkspacePatch(record, now(), 'settled') : wakeWorkspacePatch('active', record, now())
     const failed = write(workspaceId, patch, actor)
     if (failed) return failed
     if (settled) dropPending(workspaceId)
@@ -390,7 +390,7 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     if (!record) return
     if (typeof record.lastUserMessageAt === 'number' && record.lastUserMessageAt >= at) return
     const waking = isSettledWorkspace(record) || record.settledOverride != null
-    write(workspaceId, { ...(waking ? wakeWorkspacePatch(null) : {}), lastUserMessageAt: at }, actor)
+    write(workspaceId, { ...(waking ? wakeWorkspacePatch(null, record, now()) : {}), lastUserMessageAt: at }, actor)
   }
 
   function dropPending(workspaceId: string): void {

@@ -28,7 +28,6 @@ import {
   type WebSocketPeer,
 } from './web-socket'
 import { resolveStaticFile, serveStaticFile, type WebStaticRoot } from './web-static'
-import { tailnetIdentityOf } from './web-tailscale-serve'
 import type { WebUploads } from './web-uploads'
 
 // The web listener: the Studio server's HTTP door for browsers (phase 9 spec,
@@ -113,8 +112,9 @@ export type WebListener = {
   /**
    * Add the HTTPS origin `tailscale serve` publishes this listener at, once
    * this server has set serve up itself: it becomes one of the listener's
-   * origins, and a request to it may say who is asking with serve's identity
-   * headers.
+   * origins. Serve's identity headers are not read from it: this listener is
+   * on loopback, where any local program can send serve's name in `Host` and
+   * any login it likes beside it.
    */
   addTailscaleServeOrigin(origin: string): void
 }
@@ -148,8 +148,6 @@ export function createWebListener(options: WebListenerOptions): WebListener {
   })
 
   let publicOrigins: readonly string[] = options.publicOrigins
-  // The hosts of the serve this server set up, whose identity headers are believed.
-  const serveHosts: string[] = []
 
   const policy = (): WebOriginPolicy => ({
     port: boundPort ?? options.port,
@@ -271,7 +269,6 @@ export function createWebListener(options: WebListenerOptions): WebListener {
         name,
         userAgent: request.headers['user-agent'] ?? null,
         route: routeOf(host, policy()),
-        tailnetLogin: tailnetIdentityOf(request.headers, host, serveHosts)?.login ?? null,
       })
       sendJson(response, created.ok ? 200 : 429, created)
       return
@@ -567,8 +564,6 @@ export function createWebListener(options: WebListenerOptions): WebListener {
       const normalized = normalizeOrigin(origin)
       if (!normalized?.startsWith('https://')) throw new Error(`Not an HTTPS origin: ${origin}`)
       if (!publicOrigins.includes(normalized)) publicOrigins = [...publicOrigins, normalized]
-      const host = new URL(normalized).host.toLowerCase()
-      if (!serveHosts.includes(host)) serveHosts.push(host)
     },
     pairingUrl(origin) {
       const base = origin ?? `http://127.0.0.1:${boundPort ?? options.port}`

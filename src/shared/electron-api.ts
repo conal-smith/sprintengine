@@ -1905,7 +1905,8 @@ export type ElectronApi = {
   cliInstallMethods: (cli: AgentCli, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallMethodInfo[]>
   cliInstall: (input: CliInstallInput, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallResult>
   cliUpdate: (cli: AgentCli, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallResult>
-  onCliInstallOutput: (cli: AgentCli, cb: (chunk: string) => void) => () => void
+  /** An install's or update's output, for the CLI on the machine `hostId` names (absent: this one). */
+  onCliInstallOutput: (cli: AgentCli, cb: (chunk: string) => void, hostId?: string) => () => void
   // Model discovery (src/shared/ipc/cli-model-discovery.ts): ask the installed
   // CLIs which models they accept. `discover` answers per CLI, skipping any that
   // are fresh, absent or unprobeable; `changed` pushes every catalog a probe

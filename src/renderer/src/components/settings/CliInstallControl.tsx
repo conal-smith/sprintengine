@@ -220,9 +220,13 @@ export function CliInstallControl({
     setInstalling(true)
     setInstallError(null)
     setLog('')
-    const unsubscribe = window.api.onCliInstallOutput(cli, (chunk) => {
-      if (mountedRef.current) setLog((prev) => prev + chunk)
-    })
+    const unsubscribe = window.api.onCliInstallOutput(
+      cli,
+      (chunk) => {
+        if (mountedRef.current) setLog((prev) => prev + chunk)
+      },
+      hostId,
+    )
     try {
       const result = await window.api.cliInstall(
         { cli, methodId: chosen.id },

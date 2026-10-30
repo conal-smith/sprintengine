@@ -31,17 +31,19 @@ export function wakeSnoozedWorkspacePatch(): WorkspaceFieldsPatch {
  * clock with the decision makes main at least as current as the decision.
  */
 export function settleWorkspacePatch(
-  workspace: Pick<Workspace, 'lastTerminalActivityAt'>,
+  workspace: Pick<Workspace, 'lastTerminalActivityAt' | 'snoozedUntil'>,
   now: number,
   override: 'settled' | null,
 ): WorkspaceFieldsPatch {
   return {
-    // Rest supersedes sleep (snooze, 2026-09-10). A settled row is out of the
-    // list for good reasons of its own, so a snooze underneath it would do
-    // nothing visible and then expire into a Woke mark on a row nobody woke.
-    // Cleared HERE rather than at each call site so the sweep, the row menu and
-    // the hover tick cannot disagree about it.
-    ...wakeSnoozedWorkspacePatch(),
+    // Rest supersedes sleep (snooze, 2026-09-10): a settled row is out of the
+    // list for good reasons of its own, and is never read as asleep
+    // (`isSnoozedWorkspace`). A snooze still ahead is KEPT underneath it,
+    // though, so a Settle made by mistake on a sleeping chat gives the snooze
+    // back when it is undone (`wakeWorkspacePatch`); clearing it here lost it
+    // for good. One already run out is the Woke mark, which the chat has
+    // left behind by resting, and goes here, so no un-settle can bring it back.
+    ...(snoozeStillAhead(workspace, now) ? {} : wakeSnoozedWorkspacePatch()),
     settledAt: now,
     settledOverride: override,
     ...(typeof workspace.lastTerminalActivityAt === 'number'
@@ -50,8 +52,37 @@ export function settleWorkspacePatch(
   }
 }
 
-export function wakeWorkspacePatch(override: 'active' | null): WorkspaceFieldsPatch {
-  return { settledAt: null, settledOverride: override }
+/**
+ * Brings a resting row back. `'active'` is the person's Un-settle, which
+ * hands back a snooze the Settle kept and that is still ahead: the chat goes
+ * back to sleeping where it was. `null` is new activity (a keystroke, a
+ * message, an agent working), which is the chat coming back NOW, so a kept
+ * snooze ends with the rest. A snooze that ran out while the row rested is
+ * cleared either way: nobody saw it wake, so it must not come back wearing a
+ * Woke mark.
+ */
+export function wakeWorkspacePatch(
+  override: 'active' | null,
+  workspace: Pick<Workspace, 'settledAt' | 'snoozedUntil'>,
+  now: number,
+): WorkspaceFieldsPatch {
+  // Only a snooze a Settle kept is this patch's to touch. A row that is not
+  // resting (one whose hand decision a keystroke spends) keeps its own.
+  const keptBySettle = isSettledWorkspace(workspace) && typeof workspace.snoozedUntil === 'number'
+  const keepsSnooze = override === 'active' && snoozeStillAhead(workspace, now)
+  return {
+    settledAt: null,
+    settledOverride: override,
+    ...(keptBySettle && !keepsSnooze ? wakeSnoozedWorkspacePatch() : {}),
+  }
+}
+
+function snoozeStillAhead(workspace: Pick<Workspace, 'snoozedUntil'>, now: number): boolean {
+  return (
+    typeof workspace.snoozedUntil === 'number' &&
+    Number.isFinite(workspace.snoozedUntil) &&
+    workspace.snoozedUntil > now
+  )
 }
 
 /**

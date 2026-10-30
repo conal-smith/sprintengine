@@ -4,7 +4,7 @@ import { afterEach, expect, test } from 'vitest'
 import type { ConversationEvent } from '../../shared/conversation-runtime'
 import type { UsageLimitHit } from '../../shared/usage-limits'
 import { useClaudeUsageLimitPrefixes } from '../usage-limits/sources'
-import { onUsageLimitHit, usageLimitsStore, usageRateLimit } from '../usage-limits/store'
+import { onUsageLimitHit, resetUsageLimitsStore, usageLimitsStore, usageRateLimit } from '../usage-limits/store'
 import { CLAUDE_AGENT_PROVIDER_ID, createClaudeAgentProvider, mapSdkMessage } from './claude-agent-provider'
 import type { MockAdapterTurnInput } from './conversation-provider-adapter'
 
@@ -85,7 +85,7 @@ let stopHits: (() => void) | null = null
 afterEach(() => {
   stopHits?.()
   stopHits = null
-  usageLimitsStore().noteBilling('claude', 'api')
+  resetUsageLimitsStore()
 })
 
 function collectHits(): UsageLimitHit[] {
@@ -295,9 +295,7 @@ function accountHarness(account: Record<string, unknown>) {
   }
 }
 
-test('a session on a cloud provider bills no plan, and the subscription reading is forgotten', async () => {
-  usageLimitsStore().noteWindows('claude', [{ id: 'five_hour', usedPercent: 40, status: 'allowed' }])
-  expect(claudeSnapshot()).toBeDefined()
+test('a session on a cloud provider bills no plan', async () => {
   const bedrock = accountHarness({ apiProvider: 'bedrock' })
   await bedrock.firstTurn()
   expect(claudeSnapshot()).toBeUndefined()
@@ -308,5 +306,17 @@ test('a session on a cloud provider bills no plan, and the subscription reading 
   await max.firstTurn()
   usageLimitsStore().noteWindows('claude', [{ id: 'five_hour', usedPercent: 40, status: 'allowed' }])
   expect(claudeSnapshot()).toMatchObject({ billing: 'subscription', plan: 'max' })
+  await max.adapter.disposeAll()
+})
+
+test('a chat on a cloud provider leaves the reading of a subscription chat beside it', async () => {
+  const max = accountHarness({ apiProvider: 'firstParty', subscriptionType: 'max' })
+  await max.firstTurn()
+  usageLimitsStore().noteWindows('claude', [{ id: 'five_hour', usedPercent: 40, status: 'allowed' }])
+  const bedrock = accountHarness({ apiProvider: 'bedrock' })
+  await bedrock.firstTurn()
+  expect(claudeSnapshot()).toMatchObject({ billing: 'subscription', plan: 'max' })
+  expect(claudeSnapshot()?.windows.map((window) => window.usedPercent)).toEqual([40])
+  await bedrock.adapter.disposeAll()
   await max.adapter.disposeAll()
 })
