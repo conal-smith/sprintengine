@@ -31,7 +31,13 @@
  * couple of minutes is a `gh` process each, on battery, for nothing: the
  * delay stretches to {@link PR_WATCH_UNFOCUSED_MS}. A window coming back to
  * the front probes each watched key once, shortly (spread over
- * {@link PR_WATCH_FOCUS_SPREAD_MS}), and the two-minute schedule resumes. A
+ * {@link PR_WATCH_FOCUS_SPREAD_MS}), and the two-minute schedule resumes.
+ * Focus flaps — switching to an editor and back, or from one app window to
+ * another, is a blur and a focus a moment apart — so the window has to stay in
+ * front for {@link PR_WATCH_FOCUS_SETTLE_MS} before anything is probed, and a
+ * key probed (or armed) inside {@link PR_WATCH_FOCUS_FRESH_MS} keeps the
+ * schedule it has: its state is as fresh as the prompt probe would make it,
+ * and each one is a GitHub API call. A
  * headless owner, which no window ever focuses, still self-heals, on the
  * longer delay. A key its consumer says keeps its pace (`keepsPace`) does not
  * stretch: an agent waiting to be woken about its pull request is looking
@@ -65,6 +71,12 @@ export const PR_WATCH_UNFOCUSED_MS = 10 * 60_000
 
 /** A window coming back to the front probes each watched key within this, spread so they do not fire together. */
 export const PR_WATCH_FOCUS_SPREAD_MS = 10_000
+
+/** How long a window has to stay in front before its return probes anything; see the header. */
+export const PR_WATCH_FOCUS_SETTLE_MS = 1_500
+
+/** A key probed or armed this recently is not probed again because a window came back; see the header. */
+export const PR_WATCH_FOCUS_FRESH_MS = 60_000
 
 /** Each delay is multiplied by 1 ± this, so simultaneously-armed keys desynchronize. */
 export const PR_WATCH_JITTER_RATIO = 0.2
@@ -141,7 +153,8 @@ export type PullRequestWatchPoller = {
   dispose(): void
 }
 
-type PollEntry = { attempt: number; handle: unknown | null }
+/** `freshAt`: when this key was armed or last probed, whichever is later. */
+type PollEntry = { attempt: number; handle: unknown | null; freshAt: number }
 
 export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): PullRequestWatchPoller {
   const backoff = deps.backoff ?? PR_WATCH_BACKOFF
@@ -193,19 +206,34 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
     }, delay)
   }
 
-  // A window back at the front: each key waiting out the long, unfocused
-  // delay is probed once, shortly, and the short schedule resumes after it.
-  // A key whose probe is in flight reschedules itself when it lands.
-  const stopFollowingFocus = deps.focus?.onFocusChange((nowFocused) => {
-    if (!nowFocused || disposed) return
+  // A window back at the front, and staying there: each key not read inside
+  // the fresh window is probed once, shortly, and the short schedule resumes
+  // after it. A key whose probe is in flight reschedules itself when it lands.
+  let focusSettle: unknown = null
+  function probeOnReturn(): void {
+    focusSettle = null
+    if (disposed || !focused()) return
+    const at = now()
     for (const [key, entry] of entries) {
       if (entry.handle === null) continue
+      if (at - entry.freshAt < PR_WATCH_FOCUS_FRESH_MS) continue
       timers.clearTimeout(entry.handle)
       schedule(key, Math.round(random() * PR_WATCH_FOCUS_SPREAD_MS))
     }
+  }
+  const stopFollowingFocus = deps.focus?.onFocusChange((nowFocused) => {
+    if (disposed) return
+    if (!nowFocused) {
+      // Gone again before it settled: a flap, not a return.
+      if (focusSettle !== null) timers.clearTimeout(focusSettle)
+      focusSettle = null
+      return
+    }
+    if (focusSettle === null) focusSettle = timers.setTimeout(probeOnReturn, PR_WATCH_FOCUS_SETTLE_MS)
   })
 
   async function probeThenReschedule(key: string, armed: PollEntry): Promise<void> {
+    armed.freshAt = now()
     try {
       await deps.probe(key)
     } catch {
@@ -238,7 +266,7 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
 
   function arm(key: string): void {
     if (entries.has(key) || disposed) return
-    const entry: PollEntry = { attempt: 0, handle: null }
+    const entry: PollEntry = { attempt: 0, handle: null, freshAt: now() }
     entries.set(key, entry)
     schedule(key)
   }
@@ -311,6 +339,8 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
     dispose() {
       disposed = true
       stopFollowingFocus?.()
+      if (focusSettle !== null) timers.clearTimeout(focusSettle)
+      focusSettle = null
       for (const key of [...entries.keys()]) disarm(key)
       for (const handle of trailingEvaluations.values()) timers.clearTimeout(handle)
       trailingEvaluations.clear()

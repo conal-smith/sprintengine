@@ -533,3 +533,34 @@ test('a watch that stopped on its own says why, and how to start it again', () =
   )
   assert.doesNotMatch(composePullRequestWake([wake({ stop: 'unreadable' })]), /I'll keep watching/)
 })
+
+test('a review left only on lines is told with what it said there, and reading those lines is not an edit', () => {
+  const review = {
+    id: 'PRR_lines',
+    kind: 'review' as const,
+    author: 'review-bot',
+    body: '',
+    verdict: 'commented' as const,
+    url: 'https://github.com/acme/app/pull/234',
+    at: STARTED + 60_000,
+    own: false,
+  }
+  const first = evaluatePullRequestWatch(primed(), read({ remarks: [review] }))
+  const told = first.news.find((item) => item.kind === 'remark')
+  assert.ok(told && told.kind === 'remark')
+  assert.equal(told.body, '', 'its line comments could not be read this time')
+
+  const withLines = evaluatePullRequestWatch(
+    first.state,
+    read({ remarks: [{ ...review, inline: 'src/app.ts:12: Off by one' }] }),
+  )
+  assert.deepEqual(kinds(withLines), [], 'the same review, read with its lines: nothing new was said')
+
+  const fresh = evaluatePullRequestWatch(
+    primed(),
+    read({ remarks: [{ ...review, inline: 'src/app.ts:12: Off by one' }] }),
+  )
+  const said = fresh.news.find((item) => item.kind === 'remark')
+  assert.ok(said && said.kind === 'remark')
+  assert.equal(said.body, 'src/app.ts:12: Off by one')
+})

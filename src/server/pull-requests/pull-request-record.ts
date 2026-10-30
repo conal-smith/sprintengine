@@ -69,7 +69,10 @@ import {
 } from '../../shared/git/pull-request'
 import { isRecord } from '../../shared/records'
 import { writeFileAtomically } from '../../main/config-file-write'
-import { readPullRequestState as readPullRequestStateDefault } from '../../main/github/branch-pull-request'
+import {
+  readPullRequestState as readPullRequestStateDefault,
+  readRateLimitReset as readRateLimitResetDefault,
+} from '../../main/github/branch-pull-request'
 import { readPullRequestWatch as readPullRequestWatchDefault } from '../../main/github/pull-request-watch-read'
 import {
   createPullRequestWatchPoller,
@@ -105,6 +108,18 @@ export const GH_MISSING_HOLD_MS = 5 * 60_000
 
 /** How long an unsettled read holds before the same pull request is asked about again. */
 export const READ_RETRY_AFTER_FAILURE_MS = 10_000
+
+/**
+ * A rate limit holds every read on that host, not just the one refused: each
+ * other pull request's read would be refused the same way, and calls made
+ * while a secondary limit holds can lengthen it. The hold lasts until the
+ * spent quota resets (`readRateLimitReset`), within these bounds, or for the
+ * fallback when the reset cannot be read or no quota is spent (a secondary
+ * limit, which says no reset).
+ */
+export const RATE_LIMIT_FALLBACK_HOLD_MS = 5 * 60_000
+export const RATE_LIMIT_MIN_HOLD_MS = 30_000
+export const RATE_LIMIT_MAX_HOLD_MS = 65 * 60_000
 
 /**
  * How old a state reading may be before a refresh re-reads it (decision 9).
@@ -153,6 +168,7 @@ export type PullRequestRecordOptions = {
   reads?: {
     readPullRequestState?: typeof readPullRequestStateDefault
     readPullRequestWatch?: typeof readPullRequestWatchDefault
+    readRateLimitReset?: typeof readRateLimitResetDefault
   }
   /** A list changed; see `PullRequestRecordChange`. */
   onRecordChanged?: (change: PullRequestRecordChange) => void
@@ -253,6 +269,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   const now = options.now ?? (() => Date.now())
   const readState = options.reads?.readPullRequestState ?? readPullRequestStateDefault
   const readWatch = options.reads?.readPullRequestWatch ?? readPullRequestWatchDefault
+  const readRateLimitReset = options.reads?.readRateLimitReset ?? readRateLimitResetDefault
   const timers: WatchPollerTimers = options.timers ?? {
     setTimeout: (handler, ms) => {
       const handle = setTimeout(handler, ms)
@@ -292,6 +309,12 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   /** A watch's first read, waiting on a state read already out; settled by `flush`. */
   const firstReads = new Set<Promise<void>>()
   let ghMissingUntil = 0
+  /** Host → until when every read on it waits out a rate limit; see RATE_LIMIT_FALLBACK_HOLD_MS. */
+  const rateLimitedUntil = new Map<string, number>()
+  /** Review id → its line comments, read once per run for every watched pull request (`readPullRequestWatch`). */
+  const inlineCache = new Map<string, string>()
+  /** Host → its reset lookup in flight; settled by `flush`. */
+  const rateLimitLookups = new Map<string, Promise<void>>()
   let load: Promise<void> | null = null
   let writes: Promise<unknown> = Promise.resolve()
   let dirty = false
@@ -318,8 +341,29 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     }
   }
 
-  function mayAsk(): boolean {
-    return !disposed && now() >= ghMissingUntil
+  function mayAsk(url: string): boolean {
+    if (disposed || now() < ghMissingUntil) return false
+    const until = rateLimitedUntil.get(hostOf(url))
+    return until === undefined || now() >= until
+  }
+
+  // The first refusal starts the fallback hold at once, so the reads already
+  // queued behind it do not each spend a call learning the same; the reset
+  // lookup then moves it to when the quota is actually back.
+  function noteRateLimited(url: string): void {
+    const host = hostOf(url)
+    if ((rateLimitedUntil.get(host) ?? 0) > now()) return
+    rateLimitedUntil.set(host, now() + RATE_LIMIT_FALLBACK_HOLD_MS)
+    if (rateLimitLookups.has(host)) return
+    const lookup = readRateLimitReset(host)
+      .then((resetAt) => {
+        if (disposed || resetAt === null) return
+        const hold = Math.min(Math.max(resetAt - now(), RATE_LIMIT_MIN_HOLD_MS), RATE_LIMIT_MAX_HOLD_MS)
+        rateLimitedUntil.set(host, now() + hold)
+      })
+      .catch((error) => warn('could not read when the rate limit resets', error))
+      .finally(() => rateLimitLookups.delete(host))
+    rateLimitLookups.set(host, lookup)
   }
 
   // Every GitHub pull request still OPEN is watched, each stopping on its own
@@ -613,21 +657,22 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     // `gh` once per open pull request, for ever, learning nothing.
     const hold = refreshHolds.get(url)
     if (hold && !hold.settled && now() - hold.at < READ_RETRY_AFTER_FAILURE_MS) return
-    if (!mayAsk()) return
+    if (!mayAsk(url)) return
     // A watched pull request is read with everything its agent may need to
     // hear, and that one read answers its state too.
     const watched = watches.has(url)
     const read = (async () => {
       const outcome = await withReadSlot(() =>
-        !mayAsk()
+        !mayAsk(url)
           ? Promise.resolve({ settled: false, reason: 'bad-request' } as const)
           : watched
-            ? readWatch(url, { now })
+            ? readWatch(url, { now }, { inlineSince: watches.get(url)?.startedAt ?? now(), inlineCache })
             : readState(url, { now }),
       )
       if (disposed) return
       if (!outcome.settled) {
         if (outcome.reason === 'gh-missing') ghMissingUntil = now() + GH_MISSING_HOLD_MS
+        if (outcome.reason === 'rate-limited') noteRateLimited(url)
         refreshHolds.set(url, { at: now(), settled: false })
         if (watched) noteWatchReadFailed(url, outcome.reason)
         return
@@ -906,8 +951,14 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     },
     async flush() {
       for (let pass = 0; pass < 8; pass += 1) {
-        await Promise.allSettled([load ?? Promise.resolve(), writes, ...refreshesInFlight.values(), ...firstReads])
-        if (refreshesInFlight.size === 0 && firstReads.size === 0) {
+        await Promise.allSettled([
+          load ?? Promise.resolve(),
+          writes,
+          ...refreshesInFlight.values(),
+          ...firstReads,
+          ...rateLimitLookups.values(),
+        ])
+        if (refreshesInFlight.size === 0 && firstReads.size === 0 && rateLimitLookups.size === 0) {
           // One more pass over the write chain, which the last read extended.
           await writes
           return
@@ -1115,5 +1166,14 @@ async function sweepStaleTempFiles(userDataDir: string): Promise<void> {
     } catch {
       // Already gone, or not ours to remove. Either is fine.
     }
+  }
+}
+
+/** The host a pull request URL is on, as the rate-limit hold is kept: one quota per host. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return ''
   }
 }
