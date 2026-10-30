@@ -71,6 +71,12 @@ export type PanePopOutAction =
   | { type: 'set-board'; tabId: string; path: string }
   | { type: 'recent-url'; url: string }
   | { type: 'open'; input: PanePopOutOpenTabInput }
+  /**
+   * The window's own "+": a tab of this kind, in this window. A new tab joins
+   * it; one of a kind the pane keeps a single tab of, sitting in the pane,
+   * moves here rather than showing in the window the person is not looking at.
+   */
+  | { type: 'add'; kind: WorkspacePaneTabKind }
   /** The window's own tab click: remembered so docking back lands on it. */
   | { type: 'activate'; tabId: string }
   /** Send these tabs back to the pane; the window keeps the rest. */
