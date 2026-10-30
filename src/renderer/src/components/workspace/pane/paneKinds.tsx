@@ -76,15 +76,14 @@ function GitGlyph({ className }: { className?: string }) {
   )
 }
 
+// Plus over minus in the rounded frame the Terminal and Canvas glyphs share, so
+// it sits in the tab strip as one of the family. A page with ± on it was the
+// other candidate; it reads as `create-patch`, the Git panel's verb.
 function DiffGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-      <path
-        d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+      <rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   )
 }
