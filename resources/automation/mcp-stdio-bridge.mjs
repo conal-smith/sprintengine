@@ -221,11 +221,14 @@ function channelAuthLine(info) {
   return `${JSON.stringify({ t: 'auth', token })}\n`
 }
 
-// How long a bridge waits for Studio to come back after its gateway goes: the
-// Studio server restarting (it is supervised, and back within seconds), or
-// the app quitting, after which nothing comes back and the bridge leaves.
-const RECONNECT_WINDOW_MS = 30_000
+// How often a bridge looks for Studio again after its gateway goes: soon at
+// first (the Studio server is supervised, and usually back within seconds),
+// then less often, never giving up. The app may have crashed or quit and be
+// started again minutes later; an MCP client marks a stdio server that exits
+// "not connected" for the rest of its session, so the bridge stays for as
+// long as its client does (stdin open) and picks Studio up whenever it is back.
 const RECONNECT_POLL_MS = 250
+const RECONNECT_POLL_MAX_MS = 5_000
 // The id the bridge's own replayed `initialize` carries, so its answer is
 // recognised and kept from the client, which already had one.
 const REPLAY_ID_PREFIX = '__studio_reinitialize_'
@@ -240,7 +243,8 @@ const REPLAY_ID_PREFIX = '__studio_reinitialize_'
  *      an error ("Studio restarted; retry"), and so is anything sent before
  *      Studio is back;
  *   3. it reconnects once the discovery file names a new process, or the
- *      socket answers again, within 30 s; otherwise it leaves as before;
+ *      socket answers again, however long that takes: it leaves only when
+ *      the client closes its stdin;
  *   4. on the new socket it says who it is again, replays `initialize`
  *      (swallowing the answer) and `initialized`, then tells the client the
  *      tool list may have changed.
@@ -277,6 +281,17 @@ function runLocal(infoPathArg) {
       id,
       error: { code: -32000, message: 'SprintEngine Studio restarted; retry the request.' },
     })
+  // Sent while Studio is away: the client's request never reached it.
+  const answerAway = (id) =>
+    toClient({
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code: -32000,
+        message:
+          'SprintEngine Studio is restarting or not running; retry the request. This MCP server reconnects on its own once Studio is back.',
+      },
+    })
 
   function fromClient(line) {
     let message = null
@@ -290,7 +305,7 @@ function runLocal(infoPathArg) {
       if (message.method === 'notifications/initialized' && initializedLine === null) initializedLine = line
       if ('id' in message && typeof message.method === 'string') {
         if (reconnecting) {
-          answerRestarted(message.id)
+          answerAway(message.id)
           return
         }
         waiting.set(JSON.stringify(message.id), message.id)
@@ -321,9 +336,9 @@ function runLocal(infoPathArg) {
 
   // `retry` is the reconnect an attempt belongs to: an attempt that never
   // connects (a new discovery file written before its socket listens, a
-  // socket that answered the probe and then went) goes back to waiting
-  // within the same window, rather than leaving the bridge reconnecting
-  // forever with nothing to reconnect it.
+  // socket that answered the probe and then went) goes back to waiting,
+  // carrying its backoff on, rather than leaving the bridge marked as
+  // reconnecting with nothing to reconnect it.
   function open(info, replay, retry = null) {
     const next = connect(info.socketPath)
     socket = next
@@ -389,7 +404,7 @@ function runLocal(infoPathArg) {
         if (!saidNotBack)
           process.stderr.write('sprintengine-studio-mcp-bridge: Studio is not answering yet; still waiting.\n')
         saidNotBack = true
-        void reconnect(retry.previous, retry.deadline)
+        void reconnect(retry.previous, retry.attempt)
         return
       }
       for (const id of waiting.values()) answerRestarted(id)
@@ -398,10 +413,13 @@ function runLocal(infoPathArg) {
     })
   }
 
-  async function reconnect(previous, deadline = Date.now() + RECONNECT_WINDOW_MS) {
+  async function reconnect(previous, attempt = 0) {
     reconnecting = true
-    while (Date.now() < deadline && !stdinEnded) {
-      await new Promise((resolve) => setTimeout(resolve, RECONNECT_POLL_MS))
+    while (!stdinEnded) {
+      const delay = Math.min(RECONNECT_POLL_MS * 2 ** Math.min(attempt, 8), RECONNECT_POLL_MAX_MS)
+      attempt += 1
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      if (stdinEnded) break
       let info = null
       try {
         info = JSON.parse(readFileSync(infoPath, 'utf8'))
@@ -411,10 +429,10 @@ function runLocal(infoPathArg) {
       if (!info || typeof info.socketPath !== 'string') continue
       const restarted = info.pid !== previous.pid
       if (!restarted && !(await socketAnswers(info.socketPath))) continue
-      open(info, true, { previous, deadline })
+      open(info, true, { previous, attempt })
       return
     }
-    // Studio did not come back (the app quit): leave as a closed server always did.
+    // The client closed its end while Studio was away: the session is over.
     process.exit(0)
   }
 
@@ -434,6 +452,8 @@ function runLocal(infoPathArg) {
     if (socket) socket.end()
     else process.exit(0)
   })
+  // A client that went without closing stdin shows up as a broken stdout.
+  process.stdout.on('error', () => process.exit(0))
   open(firstInfo, false)
 }
 
