@@ -39,6 +39,10 @@
       "types": "./dist/scaffold.d.ts",
       "default": "./dist/scaffold.js"
     },
+    "./guide": {
+      "types": "./dist/guide.d.ts",
+      "default": "./dist/guide.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "default": "./dist/testing.js"
@@ -57,7 +61,7 @@
   },
   "files": [
     "dist",
-    "skills",
+    "guide",
     "templates",
     "README.md",
     "CHANGELOG.md",

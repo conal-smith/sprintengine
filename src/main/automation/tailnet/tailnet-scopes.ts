@@ -49,6 +49,10 @@ const TERMINAL_LAUNCH_TOOLS: ReadonlySet<string> = new Set(['terminal.create', '
  * person at it to confirm, so it stays local as well. `artifacts.list`,
  * `search` and `get` only read the site, and are served on the read scope
  * like any other read.
+ *
+ * The `extension.*` family makes an extension project in a folder on this
+ * machine that the caller names, and teaches an agent about to work in it; a
+ * paired device has neither the folder nor the agent.
  */
 export function localOnlyGatewayToolReason(toolName: string): string | null {
   if (toolName.startsWith('tailnet.')) {
@@ -68,6 +72,9 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
   }
   if (toolName === 'artifacts.publish' || toolName === 'artifacts.update' || toolName === 'artifacts.delete') {
     return `"${toolName}" publishes files from this machine's disk with its credentials, and is served only on its local socket. Run it from an agent on that machine.`
+  }
+  if (toolName.startsWith('extension.')) {
+    return `"${toolName}" makes and explains an extension project on this machine's disk, for an agent working there. Run it from an agent on that machine.`
   }
   if (toolName.startsWith('worktree.')) {
     return `"${toolName}" hands the calling agent a worktree on this machine and holds it for that agent, and a paired device is not an agent. Run it from an agent on that machine.`

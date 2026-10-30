@@ -45,13 +45,13 @@ handler that needs it.
 
 | Helper / token | Permission | `dependsOn` | What |
 | --- | --- | --- | --- |
-| `getConversationService(host)` | `conversation:read` / `conversation:operate` | `agent-runtime` | The module's own chats — [conversation-api.md](conversation-api.md) |
+| `getConversationService(host)` | `conversation:read` / `conversation:operate` | `agent-runtime` | The module's own chats — the `conversations` topic |
 | `getModuleStorage(host)` | `storage` | `agent-runtime` | JSON key-value store, per workspace (`workspaceRoot`) or global; 1 MB per value; atomic writes |
-| `getSecretsService(host)` | `secrets` | — | API keys the host holds and sends only to named origins — [brokers.md](brokers.md) |
-| `getGitHubService(host)` | `github` | — | GitHub API calls with the user's sign-in — [brokers.md](brokers.md) |
+| `getSecretsService(host)` | `secrets` | — | API keys the host holds and sends only to named origins — the `brokers` topic |
+| `getGitHubService(host)` | `github` | — | GitHub API calls with the user's sign-in — the `brokers` topic |
 | `getScheduledAgentsService(host)` | `scheduled-agents.manage` | `scheduled-agents` | Create/list/update/remove/run the module's own scheduled agents, and hear when they change (`onChanged`) and when one starts a chat (`onRun`) |
 | `getCompanionAgentsService(host)` | `agents:companion` | `agent-runtime` | A workspace-bound background agent with a structured `runStructured` task API |
-| `getTextGenerationService(host)` | `agents:generate` | — (resolve in handlers) | One prompt answered by the person's own Claude Code or Codex with no chat or workspace — [conversation-api.md](conversation-api.md) |
+| `getTextGenerationService(host)` | `agents:generate` | — (resolve in handlers) | One prompt answered by the person's own Claude Code or Codex with no chat or workspace — the `conversations` topic |
 | `host.requireService(WorkspaceContextToken)` | `ipc:workspace-read` | — (resolve in handlers) | `get(id)`, and `list()` of open workspaces `{ id, name, folderPath, mode, open }`; `list({ includeClosed: true })` adds the ones closed on this machine (`open: false`, `closedAt`) |
 | `host.requireService(WorkspaceServiceToken)` | `ipc:workspace-write` | — (resolve in handlers) | `create({ name, folderPath })` a workspace |
 | `getBacklogService(host)` | `backlog.read` / `backlog.write` | `agent-runtime` | List, locate, create and change Backlog items through the app — below |
@@ -93,8 +93,8 @@ host.registerMcpTools([
   (`backlog_list` vs `backlog.list`), falls in a shell family (`browser`,
   `canvas`, `editor`, `tour`, `terminal`) or matches another module's tool is a
   registration error naming the conflict. Keep out of the core families too
-  (`agent`, `backlog`, `cli`, `conversation`, `local_server`, `marketplace`,
-  `module`, `pull_request`, `schedule`, `tailnet`, `workspace`, `worktree`,
+  (`agent`, `backlog`, `cli`, `conversation`, `extension`, `local_server`,
+  `marketplace`, `module`, `pull_request`, `schedule`, `tailnet`, `workspace`, `worktree`,
   `studio`, `sprintengine`, `app`): new core tools land there.
 - `context.metadata` says who is calling. `verified: true` means a launch token
   or the tailnet proved it; a chat Studio launched is always `studio-agent`,

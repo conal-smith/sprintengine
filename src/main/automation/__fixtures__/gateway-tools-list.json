@@ -357,6 +357,14 @@
       "sha256": "bf0cf483eccb6e8a045573c2e085f0586fc7de765597ac3695d860d2d12c28b5"
     },
     {
+      "name": "extension.create",
+      "sha256": "f4525db0abd39d2e2a5a5ebf58301aa643b431911b8a12432b36b9b07e751d57"
+    },
+    {
+      "name": "extension.guide",
+      "sha256": "63156b8af1080da04fd866171bb19de134a39b719ef987cdc2d2c70c35383cc2"
+    },
+    {
       "name": "tailnet.status",
       "sha256": "a52a946fe0082fa84e6bb392f2d3224b60d15ab424a6bf1a95322de513a48890"
     },
@@ -745,6 +753,14 @@
     {
       "name": "artifacts.delete",
       "sha256": "bf0cf483eccb6e8a045573c2e085f0586fc7de765597ac3695d860d2d12c28b5"
+    },
+    {
+      "name": "extension.create",
+      "sha256": "f4525db0abd39d2e2a5a5ebf58301aa643b431911b8a12432b36b9b07e751d57"
+    },
+    {
+      "name": "extension.guide",
+      "sha256": "63156b8af1080da04fd866171bb19de134a39b719ef987cdc2d2c70c35383cc2"
     },
     {
       "name": "tailnet.status",
