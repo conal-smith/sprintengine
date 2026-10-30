@@ -25,14 +25,9 @@ import type { ConversationApi, ConversationConnectionState } from "../../api/tai
 import { BottomSheet } from "../../components/BottomSheet";
 import { CircleButton } from "../../components/CircleButton";
 import { CopyButton } from "../../components/CopyButton";
-import { Popover } from "../../components/Popover";
 import {
   ChevronIcon,
-  CliLogo,
-  FolderGlyph,
   MachineGlyph,
-  MoreIcon,
-  RemoteMachineGlyph,
   ScheduleIcon,
   WorktreeGlyph,
   iconSize,
@@ -67,7 +62,7 @@ import { backgroundWorkLabel, formatElapsed, workingLabel } from "./agentLogic";
 import { useChats } from "./ChatsContext";
 import { followUpAction, followUpSendLabel, steerOffered } from "./followUp";
 import { chatHostMark, stripPullRequest } from "./chatMarks";
-import { MachineMarkLabel, PullRequestStripButton } from "./ChatMarkViews";
+import { PullRequestStripButton } from "./ChatMarkViews";
 import { ChatComposer } from "./ChatComposer";
 import { ComposerStrip, STRIP_ITEM_HEIGHT, type ComposerStripEntry } from "./ComposerStrip";
 import { conversationChanges, diffPill, STRIP_DROP_ORDER } from "./composerStripLogic";
@@ -85,6 +80,8 @@ import { pickChatFile } from "./pickChatFile";
 import { attachmentsOnlyText, rememberSentFile, sentFileName, splitSentUploads } from "./chatFiles";
 import { useChatImages, useSentImages } from "./ConversationImage";
 import { SentPhotoSquares } from "./SentPhotoSquares";
+import { ChatPage } from "./ChatPage";
+import { phoneChatActivity } from "./chatActivity";
 import { rememberSentPhoto, sentPhotoUri } from "./sentPhotos";
 import { AttachedFileCards } from "./AttachedFileCards";
 import { STUDIO_NAME } from "./studioNotice";
@@ -150,14 +147,6 @@ import { chatProvider, MODEL_SET_ONCE_NOTE, readOnlyProvider } from "./modelPick
 
 /** No turn to open: one list, so what is worked out from it is not worked out again. */
 const NO_TURNS: (ChangedTurn & { turnSeq: number })[] = [];
-
-/**
- * The header line's width below which the machine is left out of it: beside
- * More on a narrow phone the line can be about 200 dp, room for
- * the model whole and the project beside it, and three made all of them an
- * ellipsis. Its details are then the project's to open.
- */
-const MACHINE_LINE_MIN_WIDTH = 260;
 
 /** The ring's touch area on the strip's line; its long press pads out to the floor. */
 const RING_HIT_WIDTH = 28;
@@ -442,9 +431,8 @@ export function ConversationScreen({
   // The chat's title summary: its workspace's name, which is what the list
   // leads with. The thread's own title is the agent's name when it has one.
   const [workspaceTitle, setWorkspaceTitle] = useState<string | null>(null);
-  const [placeOpen, setPlaceOpen] = useState(false);
-  // The header line's width, once laid out: 0 until then, when the machine waits.
-  const [lineWidth, setLineWidth] = useState(0);
+  // The chat's page, which its title opens.
+  const [pageOpen, setPageOpen] = useState(false);
   // The branch the chat's checkout is on, and its worktree's name when the
   // folder is one, for the strip under the composer. A nicety like the
   // project: the chat never waits on it.
@@ -880,8 +868,6 @@ export function ConversationScreen({
         }
       : null;
   const machineMark = chatHostMark(listedThread.host);
-  // Without a project the machine has the project's room, and is never left out.
-  const machineShown = !project || lineWidth >= MACHINE_LINE_MIN_WIDTH;
   // The pull request rides the strip's pinned end, as the desktop's does.
   const pr = stripPullRequest(listedThread.pullRequests);
   const linkWords = CONNECTION_WORDS[chat.state];
@@ -889,6 +875,9 @@ export function ConversationScreen({
   // an action is said where it happened: on its request's card, or in the
   // composer's tray, where it can be dismissed.
   const status = linkWords;
+  const chatTitle = chat.listedTitle || listedThread.chatTitle || workspaceTitle || thread.title || "Conversation";
+  // What the agent touched: the chat page's rows.
+  const activity = useMemo(() => phoneChatActivity(chat.rows, chat.lanes), [chat.rows, chat.lanes]);
   const cacheState = chat.promptCache ? promptCacheState(chat.promptCache, now) : null;
   const cacheRow =
     !chat.busy &&
@@ -1012,7 +1001,7 @@ export function ConversationScreen({
       drop: STRIP_DROP_ORDER.machine,
       overflowLabel: `Runs on ${machineMark.label}`,
       overflowIcon: <MachineGlyph colour={machineMark.colour} kind={machineMark.kind} size={iconSize.sm} />,
-      onOverflowPress: () => setPlaceOpen(true),
+      onOverflowPress: () => setPageOpen(true),
       // The glyph alone: its name is a long press away, and the screen
       // reader's to say.
       render: () => (
@@ -1194,110 +1183,39 @@ export function ConversationScreen({
     [activeThread, replyText, source, now, onOpenAgent, onOpenPlan, onOpenChanges, unreadRowId, styles.unreadCell, liveTurn, chat.turnBusy],
   );
   return (
-    <ScreenFrame
-      ground="agent"
-      title={chat.listedTitle || listedThread.chatTitle || workspaceTitle || thread.title || "Conversation"}
-      onBack={onBack}
-      trailing={
-        settle || markUnread ? (
-          <CircleButton
-            active={sheet === "more"}
-            icon={<MoreIcon size={iconSize.md} tone="textPrimary" />}
-            label="More"
-            onPress={() => setSheet("more")}
-          />
-        ) : undefined
-      }
-      subtitle={
-        <View style={styles.subtitle}>
-          {/* One line under the title: the project, the machine by its name
-              (tap it for the rest: how it is reached, its address, the
-              agent's name, the access), and the CLI's logo with its model.
-              The CLI's name is the logo's to say, not a third line of text. */}
-          <View onLayout={(event) => setLineWidth(Math.round(event.nativeEvent.layout.width))} style={styles.pills}>
-            {project && session && !machineShown ? (
-              <Pressable
-                accessibilityHint="Shows the machine, the agent and its access."
-                accessibilityLabel={`${project}, runs on ${machineMark?.label ?? session.desktopName}`}
-                accessibilityRole="button"
-                hitSlop={space.md}
-                onPress={() => setPlaceOpen(true)}
-                style={({ pressed }) => [styles.pill, styles.placeButton, styles.projectButton, pressed ? styles.chipPressed : null]}
-              >
-                <FolderGlyph size={iconSize.xs} />
-                <Text numberOfLines={1} style={styles.pillText}>
-                  {project}
-                </Text>
-              </Pressable>
-            ) : project ? (
-              <View style={styles.pill}>
-                <FolderGlyph size={iconSize.xs} />
-                <Text numberOfLines={1} style={styles.pillText}>
-                  {project}
-                </Text>
-              </View>
-            ) : null}
-            {session && machineShown ? (
-              <Pressable
-                accessibilityHint="Shows the machine, the agent and its access."
-                accessibilityLabel={`Runs on ${machineMark?.label ?? session.desktopName}`}
-                accessibilityRole="button"
-                hitSlop={space.md}
-                onPress={() => setPlaceOpen(true)}
-                style={({ pressed }) => [styles.pill, styles.placeButton, pressed ? styles.chipPressed : null]}
-              >
-                {/* The machine it runs on, in its mark, when that is not the
-                    desktop itself; the desktop is the unmarked default. */}
-                {machineMark ? (
-                  <MachineMarkLabel mark={machineMark} textStyle={styles.pillText} />
-                ) : (
-                  <>
-                    <RemoteMachineGlyph size={iconSize.xs} />
-                    <Text numberOfLines={1} style={styles.pillText}>
-                      {session.desktopName}
-                    </Text>
-                  </>
-                )}
-              </Pressable>
-            ) : null}
-            <View style={[styles.pill, styles.modelPill]}>
-              <CliLogo cli={activeThread.models?.cli ?? cliForChatProvider(activeThread.providerId)} size={iconSize.xs} />
-              <Text numberOfLines={1} style={styles.pillText}>
-                {shortModelLabel(activeThread)}
-              </Text>
-            </View>
-          </View>
-          {status ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={[styles.meta, linkWords ? styles.warnInk : null]}
-            >
-              {status}
-            </Text>
-          ) : null}
-          <Popover align="left" closeLabel="Close details" onClose={() => setPlaceOpen(false)} top={96} visible={placeOpen}>
-            <View style={styles.place}>
-              {placeFacts({
-                machine: session?.desktopName ?? null,
-                runsOn: machineMark?.label ?? null,
-                address: session?.baseUrl ?? null,
-                agent: thread.title && thread.title !== workspaceTitle ? thread.title : null,
-                cliModel,
-                access: activeThread.permissionPreset ? permissionLabel(activeThread.permissionPreset) : null,
-              }).map((fact) => (
-                <View key={fact.label} style={styles.placeRow}>
-                  <Text style={styles.placeLabel}>{fact.label}</Text>
-                  <Text selectable numberOfLines={2} style={styles.placeValue}>
-                    {fact.value}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </Popover>
-        </View>
-      }
-    >
+    <ScreenFrame ground="agent">
       <View style={styles.stage}>
+        {/* No header bar: a back button and the chat's title float over the
+            transcript, and the title opens the chat's page (ChatPage) — who
+            and where the chat is, what its agent touched, and what the More
+            menu held. The link's state, when it is not live, says itself
+            under the title. */}
+        <View pointerEvents="box-none" style={styles.float}>
+          <CircleButton
+            icon={<ChevronIcon direction="left" size={iconSize.md} tone="textPrimary" />}
+            label="Go back"
+            onPress={onBack}
+          />
+          <View pointerEvents="box-none" style={styles.floatTitle}>
+            <Pressable
+              accessibilityHint="Shows the chat's details and what its agent touched."
+              accessibilityLabel={`${chatTitle}, chat details`}
+              accessibilityRole="button"
+              onPress={() => setPageOpen(true)}
+              style={({ pressed }) => [styles.titlePill, pressed ? styles.chipPressed : null]}
+            >
+              <Text numberOfLines={1} style={styles.titlePillText}>
+                {chatTitle}
+              </Text>
+              <ChevronIcon direction="right" size={iconSize.sm} tone="textMuted" />
+            </Pressable>
+            {status ? (
+              <Text accessibilityLiveRegion="polite" style={[styles.floatStatus, linkWords ? styles.warnInk : null]}>
+                {status}
+              </Text>
+            ) : null}
+          </View>
+        </View>
         <FlatList
           ref={list}
           data={chat.rows}
@@ -1306,7 +1224,7 @@ export function ConversationScreen({
           // the last reply can scroll clear. Padding, not a spacer in the
           // footer: Android's scroll range did not take in a footer spacer
           // that grew after the list had laid out.
-          contentContainerStyle={[styles.transcript, { paddingBottom: space.lg + floatHeight }]}
+          contentContainerStyle={[styles.transcript, styles.underFloat, { paddingBottom: space.lg + floatHeight }]}
           initialNumToRender={12}
           maxToRenderPerBatch={8}
           windowSize={7}
@@ -1793,25 +1711,51 @@ export function ConversationScreen({
           ))}
         </BottomSheet>
       ) : null}
+      {/* The chat's page, which its title opens. */}
+      <ChatPage
+        visible={pageOpen}
+        onClose={() => setPageOpen(false)}
+        title={chatTitle}
+        cli={activeThread.models?.cli ?? cliForChatProvider(activeThread.providerId)}
+        chips={[project, machineMark?.label ?? session?.desktopName, shortModelLabel(activeThread)].filter(
+          (chip): chip is string => Boolean(chip),
+        )}
+        facts={placeFacts({
+          machine: session?.desktopName ?? null,
+          runsOn: machineMark?.label ?? null,
+          address: session?.baseUrl ?? null,
+          agent: thread.title && thread.title !== workspaceTitle ? thread.title : null,
+          cliModel,
+          access: activeThread.permissionPreset ? permissionLabel(activeThread.permissionPreset) : null,
+        })}
+        activity={activity}
+        diff={changes ? { added: changes.addedLines, removed: changes.removedLines, files: changes.files } : null}
+        onOpenChanges={openChanges}
+        onOpenAgents={onOpenAgents && chat.lanes.length ? onOpenAgents : undefined}
+        actions={[
+          ...(markUnread
+            ? [
+                {
+                  label: "Mark unread",
+                  sub: `Shows its latest reply as new again, here and on ${session?.desktopName ?? "the desktop"}.`,
+                  onPress: markUnread,
+                },
+              ]
+            : []),
+          ...(settle
+            ? [
+                {
+                  label: "Settle",
+                  sub: `Moves it to Settled on ${session?.desktopName ?? "the desktop"}, and off the list.`,
+                  onPress: settle,
+                },
+              ]
+            : []),
+        ]}
+        sent={sentImages}
+        images={images}
+      />
       {/* More than one turn changed files: which one to open. */}
-      {settle || markUnread ? (
-        <BottomSheet onClose={() => setSheet(null)} title="Chat" visible={sheet === "more"}>
-          {markUnread ? (
-            <SheetOption
-              label="Mark unread"
-              onPress={markUnread}
-              sub={`Shows its latest reply as new again, here and on ${session?.desktopName ?? "the desktop"}.`}
-            />
-          ) : null}
-          {settle ? (
-            <SheetOption
-              label="Settle"
-              onPress={settle}
-              sub={`Moves it to Settled on ${session?.desktopName ?? "the desktop"}, and off the list.`}
-            />
-          ) : null}
-        </BottomSheet>
-      ) : null}
       <BottomSheet onClose={() => setSheet(null)} title="Changed files" visible={sheet === "changes"}>
         <ScrollView>
           {openableRows.map(({ turn, label, time }) => (
@@ -2459,36 +2403,38 @@ function PendingCard({
 }
 const createStyles = ({ colors, cardShadowOpacity }: Theme) =>
   StyleSheet.create({
-    subtitle: { gap: space["2xs"] },
-    // The line fits the title's width, whatever the names: the project and
-    // the machine give way first, down to an ellipsis, and the model, the
-    // one that changes, is said whole, up to 70%. Where the line is narrow
-    // the machine is left out (MACHINE_LINE_MIN_WIDTH).
-    pills: {
+    warnInk: { color: colors.toneWarn },
+    stage: { flex: 1 },
+    // The back button and the title, over the transcript's top.
+    float: {
+      position: "absolute",
+      top: space.xs,
+      left: space.lg,
+      right: space.lg,
+      zIndex: 2,
+      elevation: 2,
       flexDirection: "row",
-      alignItems: "center",
-      gap: space.md,
-      minWidth: 0,
+      alignItems: "flex-start",
+      gap: space.sm,
     },
-    pill: {
+    floatTitle: { flexShrink: 1, alignItems: "flex-start", gap: space["3xs"] },
+    titlePill: {
       flexDirection: "row",
       alignItems: "center",
       gap: space["2xs"],
-      maxWidth: "60%",
-      flexShrink: 1,
-      minWidth: 0,
+      height: 40,
+      maxWidth: "100%",
+      paddingLeft: space.xl,
+      paddingRight: space.md,
+      borderRadius: radius.chip,
+      backgroundColor: colors.bgSurfaceRaised,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.borderDefault,
     },
-    modelPill: { flexShrink: 0, maxWidth: "70%" },
-    pillText: { ...typography.meta, color: colors.textMuted, flexShrink: 1 },
-    placeButton: { padding: space["3xs"], borderRadius: radius.control, flexShrink: 1, maxWidth: "40%" },
-    // The project, standing in for the machine: the project's own room.
-    projectButton: { maxWidth: "60%" },
-    place: { paddingHorizontal: space.lg, paddingVertical: space.sm, gap: space.sm, minWidth: 240 },
-    placeRow: { gap: space["3xs"] },
-    placeLabel: { ...typography.micro, color: colors.textSubtle },
-    placeValue: { ...typography.meta, color: colors.textPrimary },
-    warnInk: { color: colors.toneWarn },
-    stage: { flex: 1 },
+    titlePillText: { ...typography.heading, color: colors.textPrimary, flexShrink: 1 },
+    floatStatus: { ...typography.micro, color: colors.textMuted, paddingLeft: space.xl },
+    // Room at the top for the floating back button and title.
+    underFloat: { paddingTop: 40 + space.xs + space.lg },
     landing: { opacity: 0 },
     landingNote: {
       ...StyleSheet.absoluteFillObject,
