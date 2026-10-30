@@ -170,7 +170,7 @@
     },
     {
       "name": "conversation.auto_settle",
-      "sha256": "5d7bc7c9c9ef0ac355a93a2f7e2492b3c67cb7fcad10d43ad96655e800e4981a"
+      "sha256": "fd712db735bae797dc99470ec9e28561ff229c33563e57dd8bca166370e86542"
     },
     {
       "name": "conversation.pull_request_state",
@@ -568,7 +568,7 @@
     },
     {
       "name": "conversation.auto_settle",
-      "sha256": "5d7bc7c9c9ef0ac355a93a2f7e2492b3c67cb7fcad10d43ad96655e800e4981a"
+      "sha256": "fd712db735bae797dc99470ec9e28561ff229c33563e57dd8bca166370e86542"
     },
     {
       "name": "conversation.pull_request_state",

@@ -13,7 +13,8 @@ import {
 } from '../../../utils/workspaceSnooze'
 import { newChatProjectTarget, type FolderGroup } from './folderGroups'
 import { isStarred } from '../../../utils/highlight'
-import { isSettledWorkspace } from '../../../utils/workspaceSettle'
+import { isSettledWorkspace, normalizeAutoSettleAfterDays } from '../../../utils/workspaceSettle'
+import { useWorkspaceStore } from '../../../store/workspaceStore'
 import {
   ContextMenu,
   MenuItem,
@@ -183,6 +184,8 @@ function ChatRestAndMarkItems({
   onSelect: (action: ChatMarkAction | 'toggle-auto-compact') => void
   onPickColor: (color: HighlightColor) => void
 }) {
+  // The quiet days a chat here settles after (Settings ▸ Settled chats).
+  const autoSettleDays = useWorkspaceStore((s) => s.appSettings.autoSettleAfterDays)
   return (
     <>
       <ChatMenuItem
@@ -250,14 +253,17 @@ function ChatRestAndMarkItems({
           ))}
         </MenuFlyoutItem>
       ) : null}
-      {/* Whether this chat settles by itself: after three quiet days, or when
+      {/* Whether this chat settles by itself: after its quiet days, or when
           its pull requests land. Off unless switched on here. A standing
           setting, so a switch row that stays open to show it flip, like Star. */}
       {autoSettle !== null ? (
         <ChatMenuItem
           checked={autoSettle}
           trailing={<SwitchGlyph checked={autoSettle} />}
-          tooltip={tips.autoSettle(where)}
+          tooltip={tips.autoSettle(
+            where,
+            where.kind === 'local' ? normalizeAutoSettleAfterDays(autoSettleDays) : undefined,
+          )}
           onClick={() => onSelect('toggle-auto-settle')}
         >
           Auto-settle

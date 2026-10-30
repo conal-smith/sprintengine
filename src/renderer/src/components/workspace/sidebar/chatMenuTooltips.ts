@@ -110,8 +110,8 @@ export const chatMenuTooltips = {
   // from a wake, held while a pull request is open; or its pull requests
   // merging; never a starred, snoozed, open, working or waiting chat. The
   // pull request halves are settings, both on by default.
-  autoSettle: (where: ChatMenuPlace = LOCAL) =>
-    'Settle this chat by itself after its quiet days with no activity (3 unless changed), or once its pull requests merge. ' +
+  autoSettle: (where: ChatMenuPlace = LOCAL, days = 3) =>
+    `Settle this chat by itself after ${days === 1 ? 'a day' : `${days} days`} with no activity, or once its pull requests merge. ` +
     'It waits while the chat is starred, snoozed, open, working or waiting on you. ' +
     (where.kind === 'remote'
       ? `${where.machineName} settles it, by its own Settled chats settings.`
