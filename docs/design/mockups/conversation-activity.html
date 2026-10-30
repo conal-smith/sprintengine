@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mockup: what the agent touched, one click away</title>
 <!-- An interactive mock-up of a per-conversation card that lists what the
-     agent touched: the files it changed, the page it drove, the board it drew
+     agent touched: the files it changed and where they sit, the page it drove, the board it drew
      on, the agents it spawned and the images in the chat. Each row opens the
      pane on that tab. Where the chat has no room for the card, it condenses to
      a pill in the title bar, and the phone uses the same pill above the
@@ -130,7 +130,7 @@
 
   /* The condensed form: a pill in the title bar that drops the card down. */
   .pill {
-    display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px 0 7px; border-radius: var(--sem-radius-pill); flex: none;
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 7px 0 8px; border-radius: var(--sem-radius-pill); flex: none;
     border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface-raised); cursor: pointer;
     font-size: var(--sem-font-size-meta); color: var(--sem-color-text-default);
   }
@@ -188,6 +188,20 @@
   .tile .cap1 { font-size: var(--sem-font-size-meta); color: var(--sem-color-text-default); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tile .cap2 { font-size: var(--sem-font-size-micro); color: var(--sem-color-text-subtle); display: flex; gap: 5px; align-items: center; }
   .tile .cap2 svg { width: 11px; height: 11px; }
+  .tree { padding: 0 8px 12px; font-size: var(--sem-font-size-meta); }
+  .tree-row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: var(--sem-radius-control); color: var(--sem-color-text-default); }
+  .tree-row .tw { width: 10px; font-size: 9px; color: var(--sem-color-text-subtle); text-align: center; }
+  .tree-row svg { width: 14px; height: 14px; color: var(--sem-color-text-muted); }
+  .tree-row .ext { width: 14px; text-align: center; font-size: 8.5px; font-family: var(--sem-font-family-mono); color: var(--sem-color-mark-blue); }
+  .tree-row .ext.css { color: var(--sem-color-mark-violet); }
+  .tree-row .ext.json, .tree-row .ext.md { color: var(--sem-color-text-subtle); }
+  .tree-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree-row .st { font-family: var(--sem-font-family-mono); font-size: 10.5px; color: var(--sem-color-text-subtle); padding-right: 6px; }
+  .tree-row.modified .nm { color: var(--sem-color-mark-blue); }
+  .tree-row.added .nm { color: var(--sem-color-diff-added); }
+  .tree-row.live { background: var(--sem-color-agent-trail-soft); }
+  .m-tree { padding: 0; font-size: 15px; }
+  .m-tree .tree-row { height: 38px; }
   .pane-empty { padding: 40px 24px; text-align: center; color: var(--sem-color-text-subtle); font-size: var(--sem-font-size-meta); }
 
   /* ── The phone ───────────────────────────────────────────────── */
@@ -212,43 +226,56 @@
   .m-circle { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--sem-color-border-default); display: inline-flex; align-items: center; justify-content: center; color: var(--sem-color-text-primary); flex: none; }
   .m-body { flex: 1; min-height: 0; overflow: hidden; position: relative; }
   .m-scroll { position: absolute; inset: 0; overflow: auto; padding: 56px 16px 12px; display: flex; flex-direction: column; gap: 14px; }
-  .m-scroll.plain { padding-top: 14px; }
+
   .m-user { align-self: flex-end; max-width: 88%; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); border-radius: 18px; padding: 10px 14px; color: var(--sem-color-text-primary); line-height: 1.4; }
   .m-user .atts .thumb { width: 64px; height: 64px; border-radius: 10px; }
   .m-worked { display: flex; align-items: center; gap: 8px; color: var(--sem-color-text-muted); font-size: 14px; }
   .m-worked .sp { flex: 1; }
   .m-answer { line-height: 1.45; color: var(--sem-color-text-default); }
   .m-answer p { margin: 0 0 8px; }
-  /* The pill floats over the top of the transcript, centred, as the condensed card. */
-  .m-pill {
-    position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3;
-    display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 12px; border-radius: var(--sem-radius-pill);
-    cursor: pointer; font-size: 14px; color: var(--sem-color-text-primary); white-space: nowrap;
-  }
-  .m-pill .stack svg { width: 16px; height: 16px; }
-  .m-pill .chev { color: var(--sem-color-text-muted); display: inline-flex; }
-  .m-pill.enter { animation: fade-in var(--sem-motion-duration-deliberate) var(--sem-motion-ease-standard); }
+  /* No header bar: a back button and the pill float over the transcript, which fades out under them. */
+  .m-fade { position: absolute; top: 0; left: 0; right: 0; height: 64px; z-index: 2; pointer-events: none; background: linear-gradient(var(--sem-color-bg-app) 30%, transparent); }
+  .m-float { position: absolute; top: 4px; left: 12px; right: 12px; z-index: 3; display: flex; gap: 8px; align-items: center; }
+  .m-fab { width: 42px; height: 42px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--sem-color-text-primary); cursor: pointer; }
+  .m-pill { display: inline-flex; align-items: center; gap: 8px; height: 42px; max-width: 262px; min-width: 0; padding: 0 10px 0 6px; border-radius: var(--sem-radius-pill); cursor: pointer; color: var(--sem-color-text-primary); white-space: nowrap; }
+  .m-pill .mk { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--sem-color-bg-well); display: inline-flex; align-items: center; justify-content: center; }
+  .m-pill .tt { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 15px; font-weight: var(--sem-font-weight-medium); }
+  .m-pill .stack { gap: 5px; align-items: center; flex: none; }
+  .m-pill .stack svg { width: 15px; height: 15px; }
+  .m-pill .stack .more { font-size: 12px; color: var(--sem-color-text-muted); font-family: var(--sem-font-family-mono); }
+  .m-pill .stack .enter { animation: fade-in var(--sem-motion-duration-deliberate) var(--sem-motion-ease-standard); }
+  .m-pill .chev { color: var(--sem-color-text-muted); display: inline-flex; flex: none; }
+  .m-scroll { padding-top: 60px; }
+  .m-scroll.plain { padding-top: 14px; }
+  .m-scroll.m-detail { padding-top: 0; }
+  .m-detail { padding: 0 16px 24px; }
+  .m-scroll > * { flex: none; }
+  .m-hero { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 60px 8px 20px; text-align: center; }
+  .m-hero .mk { width: 72px; height: 72px; border-radius: 24px; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 4px; }
+  .m-hero .mk svg { width: 34px; height: 34px; }
+  .m-hero .t { font-size: 20px; font-weight: var(--sem-font-weight-emphasis); color: var(--sem-color-text-primary); line-height: 1.25; }
+  .m-hero .s { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; font-size: 13px; color: var(--sem-color-text-muted); }
+  .m-hero .s span { display: inline-flex; gap: 4px; align-items: center; }
+  .m-hero .s svg { width: 13px; height: 13px; }
+  .m-group { border-radius: 18px; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); overflow: hidden; margin-bottom: 14px; }
+  .m-grow { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 52px; padding: 0 14px; border: 0; background: none; cursor: pointer; text-align: left; color: var(--sem-color-text-primary); }
+  .m-grow:hover { background: var(--sem-color-bg-hover); }
+  .m-grow + .m-grow::before { content: ''; position: absolute; top: 0; left: 48px; right: 0; height: 1px; background: var(--sem-color-border-subtle); }
+  .m-group:last-of-type .m-grow + .m-grow::before { left: 14px; }
+  .m-grow .gl { color: var(--sem-color-text-muted); display: inline-flex; }
+  .m-grow .gl svg { width: 20px; height: 20px; }
+  .m-grow.live .gl { color: var(--sem-color-agent-trail-ink); }
+  .m-grow .lb { flex: 1; font-size: 16px; }
+  .m-grow .meta { font-size: 14px; color: var(--sem-color-text-muted); white-space: nowrap; }
+  .m-grow.live .meta.word { color: var(--sem-color-agent-trail-ink); }
+  .m-grow .chev { color: var(--sem-color-text-subtle); display: inline-flex; }
+  .m-grow.quiet { color: var(--sem-color-text-subtle); font-size: 14px; cursor: default; }
+  .m-foot { font-size: 13px; color: var(--sem-color-text-subtle); padding: 0 14px; margin-top: -6px; }
   .m-composer { flex: none; margin: 0 10px 8px; border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface); border-radius: 24px; padding: 12px 14px 10px; }
   .m-composer .ph { color: var(--sem-color-text-subtle); margin-bottom: 14px; }
   .m-composer .row { display: flex; align-items: center; gap: 10px; color: var(--sem-color-text-muted); font-size: 14px; }
   .m-strip { flex: none; margin: 0 22px 22px; padding: 6px 12px; border: 1px solid var(--sem-color-border-subtle); border-top: 0; border-radius: 0 0 14px 14px; display: flex; gap: 10px; font-size: 13px; color: var(--sem-color-text-muted); }
   .m-strip > .mono { color: var(--sem-color-text-default); }
-  .scrim { position: absolute; inset: 0; background: var(--sem-color-overlay-scrim); z-index: 5; }
-  .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--sem-color-bg-surface-raised); border-radius: 22px 22px 0 0; border-top: 1px solid var(--sem-color-border-default); padding: 8px 10px 34px; }
-  .sheet.enter { animation: rise var(--sem-motion-duration-deliberate) var(--sem-motion-ease-standard); }
-  .grab { width: 38px; height: 5px; border-radius: 3px; background: var(--sem-color-border-strong); margin: 0 auto 10px; }
-  .sheet h3 { margin: 0 8px 8px; font-size: 17px; color: var(--sem-color-text-primary); }
-  .m-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 6px 10px; border: 0; background: none; border-radius: 14px; cursor: pointer; text-align: left; }
-  .m-row:hover { background: var(--sem-color-bg-hover); }
-  .m-row .gl { color: var(--sem-color-text-muted); display: inline-flex; }
-  .m-row .gl svg { width: 20px; height: 20px; }
-  .m-row.live .gl { color: var(--sem-color-agent-trail-ink); }
-  .m-row .txt { flex: 1; min-width: 0; }
-  .m-row .l1 { color: var(--sem-color-text-primary); font-size: 15px; }
-  .m-row .l2 { color: var(--sem-color-text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .m-row .meta { font-size: 13px; color: var(--sem-color-text-muted); white-space: nowrap; }
-  .m-row.live .meta.word { color: var(--sem-color-agent-trail-ink); }
-  .m-row .chev { color: var(--sem-color-text-subtle); display: inline-flex; }
   .m-sec { padding: 4px 16px 16px; }
   .m-sec .lede { font-size: 13px; color: var(--sem-color-text-muted); margin: 0 0 12px; }
   .m-card { border: 1px solid var(--sem-color-border-subtle); background: var(--sem-color-bg-surface); border-radius: 16px; padding: 12px 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: flex-start; }
@@ -285,6 +312,7 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--sem-color-border-subtle); vertical-align: top; }
   th { color: var(--sem-color-text-subtle); font-weight: var(--sem-font-weight-medium); }
   td:first-child { color: var(--sem-color-text-primary); white-space: nowrap; }
+  .inline-glyph { display: inline-flex; vertical-align: -3px; color: var(--sem-color-text-primary); }
   code { font-family: var(--sem-font-family-mono); font-size: 11.5px; color: var(--sem-color-text-default); }
 </style>
 </head>
@@ -292,7 +320,7 @@
 
 <div class="intro">
   <h1>What the agent touched, one click away</h1>
-  <p>A card on the right of a chat lists what the agent has touched in this conversation: the files it changed, the page it drove, the board it drew on, the agents it spawned, and every image in the chat. A row appears the first time the agent touches that thing, and opens the pane on that tab. Where the chat is too narrow for the card, it condenses to a pill in the title bar that drops the same rows down. The phone uses the same pill, above the transcript, and opens a sheet of the same rows. Press <b>Replay the run</b> to watch the desktop and the phone fill in together.</p>
+  <p>A card on the right of a chat lists what the agent has touched in this conversation: the files it changed and where they sit, the page it drove, the board it drew on, the agents it spawned, and every image in the chat. A row appears the first time the agent touches that thing, and opens the pane on that tab. Where the chat is too narrow for the card, it condenses to a pill in the title bar, just the rows' glyphs and an arrow, that drops the same rows down. On the phone the header bar goes: a back button and a pill with the chat's title float over the transcript, and the pill opens the chat's page with the same rows. Press <b>Replay the run</b> to watch the desktop and the phone fill in together.</p>
 </div>
 
 <div class="controls">
@@ -359,9 +387,9 @@
   <p>The left phone is live: tap the pill, then a row, and use the back arrow. The other two hold one step each, so the whole path is visible at once.</p>
 </div>
 <div class="phones">
-  <div class="phone-col"><div class="phone" id="phone1"></div><div class="phone-cap"><b>1 · The pill.</b> It appears above the transcript the first time the agent touches something, and stays for the rest of the chat. Its glyphs grow with the card's rows, in violet while an agent is in one.</div></div>
-  <div class="phone-col"><div class="phone" id="phone2"></div><div class="phone-cap"><b>2 · Tap it: the card's rows, as a sheet.</b> Same rows, same order, same facts as the desktop card, at a 56pt tap height.</div></div>
-  <div class="phone-col"><div class="phone" id="phone3"></div><div class="phone-cap"><b>3 · A row opens its screen.</b> Changes and Agents open the screens the phone already has. Library is new. Browser and Canvas show the agent's latest picture of the page or board.</div></div>
+  <div class="phone-col"><div class="phone" id="phone1"></div><div class="phone-cap"><b>1 · No header bar.</b> A back button and one pill float over the transcript: the runtime's mark, the chat's title, and the glyphs of the newest things the agent touched, in violet while an agent is in one. Tap the pill for the rest.</div></div>
+  <div class="phone-col"><div class="phone" id="phone2"></div><div class="phone-cap"><b>2 · The chat's page.</b> Its title, project, machine and model, then the desktop card's rows in the same order with the same facts, then Mark unread and Settle, which the ⋯ menu used to hold.</div></div>
+  <div class="phone-col"><div class="phone" id="phone3"></div><div class="phone-cap"><b>3 · A row opens its screen.</b> Changes and Agents open the screens the phone already has. Files and Library are new. Browser and Canvas show the agent's latest picture of the page or board.</div></div>
 </div>
 
 <div class="notes">
@@ -370,24 +398,25 @@
     The rule is about the chat's width, not the window's: a wide window with the pane open has a narrow chat.
     <ol>
       <li><b>Room for it</b> (the chat is at least 860px wide): the card is docked at the top right, always open. The transcript keeps clear of it.</li>
-      <li><b>No room</b> (a medium window, or the pane is open): the card becomes a pill in the title bar with its glyphs and a short summary, "3 files · 2 agents · 5 images". Clicking it drops the card down under it. A row opens the pane, and the drop-down closes.</li>
-      <li><b>Narrow window</b>: the pill keeps only its glyphs and arrow. The folder and branch chips leave the title bar first, so the pill never has to.</li>
-      <li><b>Phone</b>: the same pill, floating above the transcript. It opens a sheet of the rows, and each row opens a screen.</li>
+      <li><b>No room</b> (a medium or narrow window, or the pane is open): the card becomes a pill in the title bar holding only the rows' glyphs and an arrow. Clicking it drops the card down under it. A row opens the pane, and the drop-down closes. In a narrow window the folder and branch chips leave the title bar first, so the pill never has to.</li>
+      <li><b>Phone</b>: no header bar. A back button and a pill float over the transcript. The pill shows the chat's title and its newest glyphs, and opens the chat's page, where the rows live. Each row opens a screen.</li>
     </ol>
   </div>
   <div class="note">
     <h3>What the rows show</h3>
     <ul>
-      <li><b>Order.</b> Rows appear in the order the agent first touched each thing, and don't reorder later. Library stays last, because it holds what came out of the run rather than a place the agent worked.</li>
+      <li><b>Order.</b> Rows appear in the order the agent first touched each thing, and don't reorder later. Files arrives with Changes: one says what changed, the other shows where it sits in the project. Library stays last, because it holds what came out of the run rather than a place the agent worked.</li>
       <li><b>A row the agent is in right now</b> has its glyph in the agent-trail violet the pane tabs and Files tree already use. A spawned agent's row uses its agent glyph. No dots.</li>
       <li><b>New, not yet opened</b>: the glyph is in primary ink instead of muted. Opening the row clears it.</li>
       <li>The pill's glyphs follow the same rules, so it says the same thing at a glance.</li>
+      <li><b>A new Diff glyph</b>, <span class="inline-glyph"><svg class="g" viewBox="0 0 16 16" fill="none"><path d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span> → <span class="inline-glyph"><svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>: plus over minus in the rounded frame the pane's other glyphs share. It replaces <code>DiffGlyph</code> in <code>pane/paneKinds.tsx</code>, so the pane tab changes too.</li>
     </ul>
   </div>
   <div class="note">
     <h3>On the phone</h3>
     <ul>
       <li><b>Changes</b> opens the Changes screen the phone already has. Today you reach it from the diff pill under the composer, and that pill can stay.</li>
+      <li><b>Files</b> is a new, read-only tree, opened out to the folders the agent edited, since the phone has no file browser yet.</li>
       <li><b>Agents</b> opens the Agents screen that "See agents" opens today.</li>
       <li><b>Browser</b> shows the agent's last screenshot of the page. A <code>localhost</code> page on the desktop isn't reachable from the phone, so the screen offers to open it only when the desktop has published that dev server, as Web pages does.</li>
       <li><b>Canvas</b> shows the board as the agent last drew it, read-only.</li>
@@ -397,7 +426,8 @@
   <div class="note">
     <h3>Things to decide</h3>
     <ul>
-      <li>Should the phone's pill hide while you scroll back through the transcript and come back when you scroll down, or stay put?</li>
+      <li>Should the phone's floating controls hide while you scroll back through the transcript and come back when you scroll down, or stay put?</li>
+      <li>Does the chat's page want a Notifications switch for this chat?</li>
       <li>Should the desktop card have a close control, so a person who never wants it docked keeps only the pill?</li>
       <li>Does the composer's diff pill on the phone stay, now that the header pill carries Changes too?</li>
       <li>Should Terminal get a row when the agent runs a long command?</li>
@@ -408,6 +438,7 @@
     <table>
       <tr><th>Row</th><th>Lights up when</th><th>Source today</th><th>Desktop opens</th><th>Phone opens</th></tr>
       <tr><td>Changes</td><td>The agent writes a file in this conversation's checkout</td><td>The per-agent change record in <code>docs/design/agent-changes.md</code>. Until chats feed that record, the checkout's diff (the phone reads its turns' changed files).</td><td>Diff tab, on the newest file</td><td><code>ConversationChangesScreen</code></td></tr>
+      <tr><td>Files</td><td>With Changes: the agent writes a file</td><td>The same edits; the Files tree already marks a file an agent is in (<code>panels/agentFileTrail.ts</code>)</td><td>Files tab, opened out to the edited folders</td><td>Files screen (new, read-only)</td></tr>
       <tr><td>Browser</td><td>An agent takes a page</td><td><code>browser:state</code> controller via <code>pane/agentPresence.ts</code></td><td>Browser tab on that page</td><td>The agent's last screenshot; open it if published</td></tr>
       <tr><td>Canvas</td><td>An agent draws on a board</td><td><code>canvas:presence</code> via <code>pane/agentPresence.ts</code></td><td>Canvas tab on that board</td><td>The board's latest snapshot</td></tr>
       <tr><td>Agents</td><td>The conversation spawns an agent</td><td>The spawned-agent list the Agents tab and the phone's agent cards read</td><td>Agents tab</td><td><code>ConversationAgentsScreen</code></td></tr>
@@ -419,11 +450,14 @@
 <script>
 // ── Glyphs: the pane's own 16px drawings, plus one new one for Library. ──
 const G = {
-  changes: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  // The new Diff glyph: plus over minus in the frame the pane's other glyphs share.
+  changes: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  oldChanges: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   browser: '<svg class="g" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   canvas: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M2 8.5v3A1.5 1.5 0 0 0 3.5 13H7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.2 8.3 9 12.5l-2 .5.5-2 4.2-4.2a1.06 1.06 0 0 1 1.5 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   agents: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="3" y="5.4" width="10" height="7.8" rx="2.4" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.4V3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M6.2 8.6v1.4M9.8 8.6v1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   library: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="6.6" r="1.2" stroke="currentColor" stroke-width="1.3"/><path d="M2.6 12.2 6 9l2.4 2.2 2-1.8 3 2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  files: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   read: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M4.5 2h4.8L12 4.7v7.8a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 3 12.5v-9A1.5 1.5 0 0 1 4.5 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   folder: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   laptop: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="3" y="3.5" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 12.5h13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
@@ -480,7 +514,7 @@ function log(s, glyph, html) { s.logs.push({ glyph, html }) }
 function edit(s, path, add, del) {
   const f = s.files.find(x => x.path === path)
   if (f) { f.add += add; f.del += del } else s.files.unshift({ path, add, del })
-  s.liveFile = path; touch(s, 'changes')
+  s.liveFile = path; touch(s, 'changes'); touch(s, 'files')
   log(s, 'changes', `Edited <span class="mono">${path.split('/').pop()}</span> <span class="mono add">+${add}</span> <span class="mono del">−${del}</span>`)
   setTimeout(() => { if (S.liveFile === path) { S.liveFile = null; render() } }, 900)
 }
@@ -492,6 +526,8 @@ function addImage(s, art, caption, from) { s.images.unshift({ art, caption, from
 const orderOf = s => [...s.order.filter(k => k !== 'library'), ...(s.order.includes('library') ? ['library'] : [])]
 const totals = s => s.files.reduce((t, f) => ({ add: t.add + f.add, del: t.del + f.del }), { add: 0, del: 0 })
 const working = s => s.agents.filter(a => a.state === 'working').length
+// The folder the agent's edits share, which the Files tree opens out to.
+const editedDir = s => { const dirs = s.files.map(f => f.path.split('/').slice(0, -1)); return (dirs[0] ?? []).filter((d, i) => dirs.every(x => x[i] === d)).join('/') || '.' }
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
 const diffSpan = t => `<span class="mono add">+${t.add}</span> <span class="mono del">−${t.del}</span>`
 
@@ -499,19 +535,13 @@ const diffSpan = t => `<span class="mono add">+${t.add}</span> <span class="mono
 function rowsOf(s) {
   const rows = {
     changes: () => ({ label: `Changes · ${plural(s.files.length, 'file')}`, title: 'Changes', sub: plural(s.files.length, 'file'), meta: diffSpan(totals(s)), live: !!s.liveFile }),
+    files: () => ({ label: 'Files', title: 'Files', sub: `Opened at ${editedDir(s)}`, meta: editedDir(s), phoneMeta: '', live: !!s.liveFile }),
     browser: () => ({ label: 'Browser', title: 'Browser', sub: s.browser.url, meta: s.browser.live ? 'Agent here' : s.browser.url.split('/')[0], phoneMeta: s.browser.live ? 'Agent here' : '', word: s.browser.live, live: s.browser.live }),
     canvas: () => ({ label: 'Canvas', title: 'Canvas', sub: s.canvas.board, meta: s.canvas.live ? 'Drawing' : s.canvas.board, phoneMeta: s.canvas.live ? 'Drawing' : '', word: s.canvas.live, live: s.canvas.live }),
     agents: () => { const w = working(s); return { label: `Agents · ${s.agents.length}`, title: 'Agents', sub: s.agents.map(a => a.name).join(', '), meta: w ? `${w} working` : 'All done', word: !!w, live: !!w, glyph: robot(w ? 'working' : 'done') } },
     library: () => ({ label: 'Library', title: 'Library', sub: 'Every image in this chat', meta: plural(s.images.length, 'image'), live: false }),
   }
   return orderOf(s).map(key => ({ key, ...rows[key]() }))
-}
-function summary(s) {
-  const bits = []
-  if (s.files.length) bits.push(plural(s.files.length, 'file'))
-  if (s.agents.length) bits.push(plural(s.agents.length, 'agent'))
-  if (s.images.length) bits.push(plural(s.images.length, 'image'))
-  return bits
 }
 const stack = rows => `<span class="stack">${rows.map(r => `<span class="${r.live ? 'live' : ''}">${G[r.key]}</span>`).join('')}</span>`
 
@@ -522,7 +552,7 @@ function layout(s) {
   const sidebar = s.width !== 'narrow'
   const overlay = s.width !== 'wide'
   const chatW = W - (sidebar ? 200 : 0) - (s.paneOpen && !overlay ? 440 : 0)
-  return { W, sidebar, overlay, docked: chatW >= 860, compact: s.width === 'narrow' }
+  return { W, sidebar, overlay, docked: chatW >= 860 }
 }
 function actRow(r, s) {
   const cls = ['act' + enter('row:' + r.key), r.live && 'live', !s.seen.has(r.key) && 'unseen', s.paneOpen && s.tab === r.key && 'on'].filter(Boolean).join(' ')
@@ -556,12 +586,12 @@ function renderDesktop(s) {
   pillSlot.innerHTML = ''; cardSlot.innerHTML = ''
   const cardBody = rows.length ? rows.map(r => actRow(r, s)).join('') : '<div class="empty">Nothing yet. Files, pages, boards, agents and images show up here as the agent uses them.</div>'
   if (L.docked) {
-    cardSlot.innerHTML = `<div class="card glass docked" style="top:${40 + 12}px"><div class="head">This chat</div>${cardBody}</div>`
+    cardSlot.innerHTML = `<div class="card glass docked" style="top:${40 + 12}px">${cardBody}</div>`
   } else if (rows.length) {
-    pillSlot.innerHTML = `<button class="pill${enter('pill:' + s.width)}" id="pill" aria-expanded="${s.popOpen}" title="What the agent touched">${stack(rows)}${L.compact ? '' : `<span>${summary(s).join(' · ')}</span>`}<span class="chev">${G.down}</span></button>`
+    pillSlot.innerHTML = `<button class="pill${enter('pill:' + s.width)}" id="pill" aria-expanded="${s.popOpen}" title="What the agent touched">${stack(rows)}<span class="chev">${G.down}</span></button>`
     if (s.popOpen) {
       const pr = $('pill').getBoundingClientRect(), ar = app.getBoundingClientRect()
-      cardSlot.innerHTML = `<div class="card glass" style="top:${pr.bottom - ar.top + 6}px;right:${Math.max(8, ar.right - pr.right)}px"><div class="head">This chat</div>${cardBody}</div>`
+      cardSlot.innerHTML = `<div class="card glass" style="top:${pr.bottom - ar.top + 6}px;right:${Math.max(8, ar.right - pr.right)}px">${cardBody}</div>`
     }
   }
 
@@ -570,17 +600,15 @@ function renderDesktop(s) {
   document.querySelectorAll('[data-width]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.width === s.width)))
   $('desktopNote').innerHTML = L.docked
     ? '<b>Docked.</b> The chat has room, so the card sits at its top right, always open. Open the pane or pick a narrower width to see it condense.'
-    : L.compact
-      ? '<b>Narrow.</b> The pill keeps its glyphs and arrow and nothing else; the folder and branch chips have left the title bar first. Click it for the rows.'
-      : `<b>Condensed.</b> ${s.paneOpen && s.width === 'wide' ? 'The pane is open, so the chat is too narrow for the card.' : 'The chat is too narrow for the card.'} It becomes a pill in the title bar. Click it to drop the rows down.`
+    : `<b>Condensed.</b> ${s.paneOpen && s.width === 'wide' ? 'The pane is open, so the chat is too narrow for the card.' : 'The chat is too narrow for the card.'} It becomes a pill in the title bar: the rows' glyphs and an arrow, nothing else. Click it to drop the rows down.`
 }
 
 function renderPane(s) {
   const pane = $('pane')
   pane.classList.toggle('open', s.paneOpen)
   if (!s.paneOpen) { pane.innerHTML = ''; return }
-  const label = { changes: 'Diff', browser: 'Browser', canvas: 'Canvas', agents: 'Agents', library: 'Library' }
-  const live = { changes: !!s.liveFile, browser: s.browser?.live, canvas: s.canvas?.live, agents: working(s) > 0 }
+  const label = { changes: 'Diff', files: 'Files', browser: 'Browser', canvas: 'Canvas', agents: 'Agents', library: 'Library' }
+  const live = { changes: !!s.liveFile, files: !!s.liveFile, browser: s.browser?.live, canvas: s.canvas?.live, agents: working(s) > 0 }
   pane.innerHTML = `<div class="tabs">${orderOf(s).map(k => `<button class="tab${s.tab === k ? ' on' : ''}${live[k] ? ' live' : ''}" data-tab="${k}">${G[k]}${label[k]}</button>`).join('')}<span class="tb-spacer"></span><button class="icon-btn" data-close title="Close pane">${G.close}</button></div><div class="pane-body">${paneBody(s)}</div>`
 }
 function libraryTiles(s, cls) {
@@ -589,6 +617,21 @@ function libraryTiles(s, cls) {
   return list.length
     ? `<div class="${cls}">${list.map(i => `<button class="tile${enter(cls + ':' + i.caption)}"><div class="pic">${ART[i.art]()}<span class="jump">Jump to message</span></div><div class="cap1">${i.caption}</div><div class="cap2">${src[i.from][1]}${src[i.from][0]} · ${i.at}</div></button>`).join('')}</div>`
     : '<div class="pane-empty">No images from here yet.</div>'
+}
+// The project tree, opened out to the folders the agent edited: its files carry their
+// change in the name's tint, and the one it is in right now a violet wash.
+function fileTree(s, cls) {
+  const edited = new Map(s.files.map(f => [f.path, f.path.endsWith('Footer.tsx') ? 'added' : 'modified']))
+  const rows = [
+    [0, 'dir', 'src', true], [1, 'dir', 'catalog', false], [1, 'dir', 'export', true],
+    [2, 'file', 'src/export/ExportDialog.tsx'], [2, 'file', 'src/export/ExportFooter.tsx'], [2, 'file', 'src/export/export.css'], [2, 'file', 'src/export/formats.ts'],
+    [1, 'dir', 'routes', false], [0, 'file', 'package.json'], [0, 'file', 'README.md'],
+  ]
+  return `<div class="${cls}">${rows.filter(([, kind, path]) => kind === 'dir' || !path.endsWith('Footer.tsx') || edited.has(path)).map(([depth, kind, path, open]) => {
+    const name = path.split('/').pop(), state = edited.get(path)
+    const glyph = kind === 'dir' ? `<span class="tw">${open ? '▾' : '▸'}</span>${G.files}` : `<span class="tw"></span><span class="ext ${name.split('.').pop()}">${name.endsWith('.css') ? '#' : name.endsWith('.md') ? 'M↓' : name.endsWith('.json') ? '{}' : 'TS'}</span>`
+    return `<div class="tree-row${state ? ' ' + state : ''}${s.liveFile === path ? ' live' : ''}" style="padding-left:${8 + depth * 14}px">${glyph}<span class="nm">${name}</span>${state ? `<span class="st">${state === 'added' ? 'A' : 'M'}</span>` : ''}</div>`
+  }).join('')}</div>`
 }
 const LIB_FILTERS = [['all', 'All'], ['you', 'From you'], ['agent', 'From the agent']]
 function paneBody(s) {
@@ -599,11 +642,12 @@ function paneBody(s) {
         ${s.files.map(x => { const parts = x.path.split('/'), name = parts.pop(), ext = name.split('.').pop(); return `<div class="file${x === f ? ' on' : ''}"><span class="ext ${ext}">${ext === 'css' ? '#' : 'TS'}</span><span class="path">${name} <i>${parts.join('/')}</i></span><span class="mono add">+${x.add}</span><span class="mono del">−${x.del}</span></div>` }).join('')}</div>
         ${f ? `<div class="diff"><div class="h">@@ ExportDialog.tsx -41,9 +41,14 @@</div><div>  return (</div><div class="r">-    &lt;Dialog className="export-dialog"&gt;</div><div class="a">+    &lt;Dialog className="export-dialog" layout="pinned-footer"&gt;</div><div>       &lt;DialogHeader title="Export" /&gt;</div><div class="r">-      &lt;div className="export-body"&gt;</div><div class="a">+      &lt;div className="export-body" data-scroll&gt;</div><div>         &lt;FormatPicker … /&gt;</div><div class="a">+      &lt;/div&gt;</div><div class="a">+      &lt;ExportFooter onExport={onExport} /&gt;</div></div>` : ''}`
     }
+    case 'files': return `<div class="pane-sec"><h4>atlas · opened at <span class="mono">${editedDir(s)}</span></h4></div>${fileTree(s, 'tree')}`
     case 'browser': return `<div class="urlbar">${G.browser}<span class="mono">${s.browser.url}</span>${s.browser.live ? '<span class="who">Agent is driving</span>' : ''}</div><div class="page${s.browser.live ? ' live' : ''}">${ART.fixed()}</div>`
     case 'canvas': return `<div class="urlbar">${G.canvas}<span>${s.canvas.board}</span>${s.canvas.live ? '<span class="who">Agent is drawing</span>' : ''}</div><div class="page${s.canvas.live ? ' live' : ''}">${ART.flow()}</div>`
     case 'agents': return `<div class="pane-sec">${s.agents.map(a => `<div class="agent-row">${robot(a.state)}<div><div class="nm">${a.name}</div><div class="task">${a.task}</div></div><span class="when ${a.state}">${a.state === 'working' ? `Working · ${Math.round((Date.now() - a.at) / 1000)}s` : `Done · ${a.took}`}</span></div>`).join('')}</div>`
     case 'library': return `<div class="lib-filter"><div class="seg">${LIB_FILTERS.map(([k, l]) => `<button data-lib="${k}" aria-pressed="${s.libFilter === k}">${l}</button>`).join('')}</div></div>
-        <div class="lib-group">This chat · ${plural(s.images.length, 'image')}</div>${libraryTiles(s, 'lib-grid')}`
+        <div class="lib-group">${plural(s.images.length, 'image')}</div>${libraryTiles(s, 'lib-grid')}`
     default: return ''
   }
 }
@@ -612,24 +656,38 @@ function paneBody(s) {
 function phoneFrame(inner) {
   return `<div class="status"><span>10:46</span><span class="notch"></span><svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x=".5" y=".5" width="22" height="11" rx="3" stroke="currentColor" opacity=".5"/><rect x="2.5" y="2.5" width="16" height="7" rx="1.5" fill="currentColor"/><path d="M24 4v4" stroke="currentColor" opacity=".5" stroke-linecap="round"/></svg></div>${inner}`
 }
-function phoneChat(s, id, withSheet) {
+// The runtime's mark, in its own colour: the phone's stand-in for an avatar.
+const RUNTIME_MARK = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M3.8 3.8l2.8 2.8M9.4 9.4l2.8 2.8M12.2 3.8 9.4 6.6M6.6 9.4l-2.8 2.8" stroke="#D97757" stroke-width="1.8" stroke-linecap="round"/></svg>'
+const TITLE = 'Footer drops off the export dialog'
+function phoneChat(s, id) {
   const rows = rowsOf(s)
-  const bits = summary(s).slice(0, 2)
-  const head = `<div class="m-head"><button class="m-back">${G.back}</button><div class="m-title"><div class="t">Footer drops off the export dialog</div><div class="s"><span>${G.folder}atlas</span><span>${G.laptop}dev-macbook-air</span><span>Opus 5.5</span></div></div><span class="m-circle">${G.more}</span></div>`
+  // The pill holds the newest three glyphs; older ones fold into a count.
+  const shown = rows.slice(-3), extra = rows.length - shown.length
   let body = ''
   if (s.user) body += `<div class="m-user">The export dialog's footer drops off the bottom at 1280×720, so you can't reach Export. Fix it, check it in the browser, and sketch the flow on the canvas.<div class="atts">${s.images.filter(i => i.from === 'you').reverse().map(i => `<div class="thumb">${ART[i.art]()}</div>`).join('')}</div></div>`
   if (s.logs.length) body += `<div class="m-worked">${G.read}<span>${s.working ? 'Working' : 'Worked'} · ${s.logs.length} steps</span><span class="sp"></span>${G.right}</div>`
   if (s.done) body += `<div class="m-answer"><p>The footer is fixed. The dialog body scrolls now, and the footer stays pinned at both sizes I checked.</p><p>Three files changed, ${diffSpan(totals(s))}. The screenshots are in the Library.</p></div>`
-  const pill = rows.length ? `<button class="m-pill glass${enter(id + ':pill')}" data-phone-pill>${stack(rows)}<span>${bits.join(' · ')}</span><span class="chev">${G.right}</span></button>` : ''
-  const sheet = withSheet
-    ? `<div class="scrim" data-phone-back></div><div class="sheet${enter(id + ':sheet:' + s.sheetOpenedAt)}"><div class="grab"></div><h3>This chat</h3>${rows.map(r => `<button class="m-row${r.live ? ' live' : ''}" data-phone-open="${r.key}"><span class="gl">${r.glyph ?? G[r.key]}</span><span class="txt"><div class="l1">${r.title}</div><div class="l2">${r.sub}</div></span><span class="meta${r.word ? ' word' : ''}">${r.phoneMeta ?? r.meta}</span><span class="chev">${G.right}</span></button>`).join('') || '<div class="empty">Nothing yet.</div>'}</div>`
-    : ''
-  return phoneFrame(`${head}<div class="m-body">${pill}<div class="m-scroll">${body}</div></div>
+  const pill = `<button class="m-pill glass" data-phone-pill><span class="mk">${RUNTIME_MARK}</span><span class="tt">${TITLE}</span>${rows.length ? `<span class="stack">${extra ? `<span class="more">+${extra}</span>` : ''}${shown.map(r => `<span class="${r.live ? 'live' : ''}${enter(id + ':g:' + r.key)}">${G[r.key]}</span>`).join('')}</span>` : ''}<span class="chev">${G.right}</span></button>`
+  return phoneFrame(`<div class="m-body"><div class="m-scroll">${body}</div><div class="m-fade"></div>
+      <div class="m-float"><button class="m-fab glass" data-phone-go="chat">${G.back}</button>${pill}</div></div>
     <div class="m-composer"><div class="ph">Reply…</div><div class="row"><span style="font-size:20px;line-height:1">+</span><span style="margin-left:auto">Opus 5.5</span><span class="send"><svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M8 13V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div></div>
-    <div class="m-strip"><span class="mono">agent/chat-k2fa</span>${s.files.length ? `<span style="margin-left:auto">${diffSpan(totals(s))}</span>` : ''}</div>${sheet}`)
+    <div class="m-strip"><span class="mono">agent/chat-k2fa</span>${s.files.length ? `<span style="margin-left:auto">${diffSpan(totals(s))}</span>` : ''}</div>`)
+}
+// The chat's own page, which the pill opens: who and where, then what the agent touched, then what the ⋯ menu held.
+function phoneDetails(s) {
+  const rows = rowsOf(s)
+  const group = rows.length
+    ? rows.map(r => `<button class="m-grow${r.live ? ' live' : ''}" data-phone-open="${r.key}"><span class="gl">${r.glyph ?? G[r.key]}</span><span class="lb">${r.title}</span><span class="meta${r.word ? ' word' : ''}">${r.meta}</span><span class="chev">${G.right}</span></button>`).join('')
+    : '<div class="m-grow quiet">What the agent touches shows up here.</div>'
+  return phoneFrame(`<div class="m-body"><div class="m-scroll plain m-detail">
+      <div class="m-hero"><span class="mk">${RUNTIME_MARK}</span><div class="t">${TITLE}</div><div class="s"><span>${G.folder}atlas</span><span>${G.laptop}dev-macbook-air</span><span>Opus 5.5</span></div></div>
+      <div class="m-group">${group}</div>
+      <div class="m-group"><button class="m-grow"><span class="lb">Mark unread</span></button><button class="m-grow"><span class="lb">Settle</span></button></div>
+      <div class="m-foot">Settle moves it to Settled on dev-macbook-air, and off the list.</div>
+    </div><div class="m-float"><button class="m-fab glass" data-phone-go="chat">${G.back}</button></div></div>`)
 }
 function phoneScreen(s, key) {
-  const head = (title, sub) => `<div class="m-head"><button class="m-back" data-phone-back>${G.back}</button><div class="m-title"><div class="t">${title}</div><div class="s"><span>${sub}</span></div></div></div>`
+  const head = (title, sub) => `<div class="m-head"><button class="m-back" data-phone-go="details">${G.back}</button><div class="m-title"><div class="t">${title}</div><div class="s"><span>${sub}</span></div></div></div>`
   let inner = ''
   switch (key) {
     case 'library':
@@ -637,6 +695,9 @@ function phoneScreen(s, key) {
       break
     case 'changes':
       inner = head('Changes', `${plural(s.files.length, 'file')} · ${diffSpan(totals(s))}`) + `<div class="m-body"><div class="m-scroll plain"><div>${s.files.map(f => { const parts = f.path.split('/'), name = parts.pop(); return `<div class="m-file"><span class="st">${f.path.endsWith('Footer.tsx') ? 'A' : 'M'}</span><div class="p"><div>${name}</div><div>${parts.join('/')}</div></div>${diffSpan(f)}</div>` }).join('')}<p class="m-note">Tap a file for its diff. This is the Changes screen the phone has today.</p></div></div></div>`
+      break
+    case 'files':
+      inner = head('Files', `atlas · <span class="mono">${editedDir(s)}</span>`) + `<div class="m-body"><div class="m-scroll plain"><div>${fileTree(s, 'tree m-tree')}<p class="m-note">The project's files, opened out to where the agent worked. Tap a file to read it.</p></div></div></div>`
       break
     case 'agents':
       inner = head('Agents', `${plural(s.agents.length, 'agent')}${working(s) ? ` · ${working(s)} working` : ''}`) + `<div class="m-body"><div class="m-scroll plain"><div>${s.agents.map(a => `<div class="m-card">${robot(a.state)}<div><div class="nm">${a.name}</div><div class="task">${a.task}</div></div><span class="when ${a.state}">${a.state === 'working' ? `Working · ${Math.round((Date.now() - a.at) / 1000)}s` : `Done in ${a.took}`}</span></div>`).join('')}</div></div></div>`
@@ -654,8 +715,8 @@ function phoneScreen(s, key) {
 }
 function renderPhones(s) {
   const v = s.phoneView
-  $('phone1').innerHTML = v === 'chat' || v === 'sheet' ? phoneChat(s, 'p1', v === 'sheet') : phoneScreen(s, v)
-  $('phone2').innerHTML = phoneChat(s, 'p2', true)
+  $('phone1').innerHTML = v === 'chat' ? phoneChat(s, 'p1') : v === 'details' ? phoneDetails(s) : phoneScreen(s, v)
+  $('phone2').innerHTML = phoneDetails(s)
   $('phone3').innerHTML = phoneScreen(s, s.order.includes(v) ? v : 'library')
 }
 
@@ -682,16 +743,16 @@ function play(skip) {
 function openTab(key) { S.paneOpen = true; S.tab = key; S.seen.add(key); S.popOpen = false; render() }
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-open],[data-tab],[data-close],[data-lib],[data-width],[data-phone-pill],[data-phone-open],[data-phone-back],#pill,#paneToggle')
+  const t = e.target.closest('[data-open],[data-tab],[data-close],[data-lib],[data-width],[data-phone-pill],[data-phone-open],[data-phone-go],#pill,#paneToggle')
   if (!t) { if (S.popOpen && !e.target.closest('.card')) { S.popOpen = false; render() } return }
   if (t.dataset.open) return openTab(t.dataset.open)
   if (t.dataset.tab) return openTab(t.dataset.tab)
   if (t.hasAttribute('data-close')) { S.paneOpen = false; return render() }
   if (t.dataset.lib) { S.libFilter = t.dataset.lib; return render() }
   if (t.dataset.width) { S.width = t.dataset.width; S.popOpen = false; return render() }
-  if (t.hasAttribute('data-phone-pill')) { S.phoneView = 'sheet'; S.sheetOpenedAt = Date.now(); return render() }
+  if (t.hasAttribute('data-phone-pill')) { S.phoneView = 'details'; return render() }
   if (t.dataset.phoneOpen) { S.phoneView = t.dataset.phoneOpen; S.seen.add(t.dataset.phoneOpen); return render() }
-  if (t.hasAttribute('data-phone-back')) { S.phoneView = 'chat'; return render() }
+  if (t.dataset.phoneGo) { S.phoneView = t.dataset.phoneGo; return render() }
   if (t.id === 'pill') { S.popOpen = !S.popOpen; return render() }
   if (t.id === 'paneToggle') { if (S.paneOpen) { S.paneOpen = false; return render() } return openTab(S.tab ?? orderOf(S)[0] ?? 'library') }
 })
