@@ -51,7 +51,45 @@ export function isAppSender(event: SenderEvent | null | undefined): boolean {
   return isAppRendererUrl(frame.url)
 }
 
-class ForeignIpcSenderError extends Error {
+// Every document the app loads in a window of its own with one of its
+// preloads attached: the workspace and aux windows' renderer, the launch
+// plate, and the canvas worker's page.
+const APP_DOCUMENTS = new Set(['index.html', 'splash.html', 'canvas-worker.html'])
+
+/** Whether `url` is one of the app's own documents (`APP_DOCUMENTS`), wherever this build serves them from. */
+export function isAppDocumentUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  const devOrigin = devRendererOrigin()
+  if (devOrigin) {
+    if (parsed.origin !== devOrigin) return false
+    return parsed.pathname === '/' || APP_DOCUMENTS.has(parsed.pathname.slice(1))
+  }
+  if (parsed.protocol !== 'file:') return false
+  const match = /\/renderer\/([^/]+)$/.exec(parsed.pathname)
+  return match !== null && APP_DOCUMENTS.has(match[1]!)
+}
+
+/**
+ * Whether any of the app's own windows is asking: the floor every IPC handler
+ * stands on (`ipc-sender-guard.ts`). The same tests as `isAppSender`, but for
+ * the document, which may be any of the app's own; a handler that changes
+ * what runs on this machine still asks `assertAppSender` for the renderer
+ * itself.
+ */
+export function isAppWindowSender(event: SenderEvent | null | undefined): boolean {
+  const frame = event?.senderFrame
+  if (!frame) return false
+  if (frame.parent !== null) return false
+  if (!event.sender || !BrowserWindow.fromWebContents(event.sender)) return false
+  return isAppDocumentUrl(frame.url)
+}
+
+export class ForeignIpcSenderError extends Error {
   constructor() {
     super('This request did not come from a SprintEngine Studio window.')
   }
