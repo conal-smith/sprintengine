@@ -29,7 +29,7 @@ import { heldMessageCarries } from './queuedTurnBubble'
 /** What a row draws of a scheduled message, wherever it is kept. */
 export type ScheduledMessageView = Pick<
   ScheduledMessage,
-  'id' | 'text' | 'sendAt' | 'waitingSince' | 'sending' | 'failure'
+  'id' | 'text' | 'sendAt' | 'waitingSince' | 'sending' | 'failure' | 'untilLimitReset'
 >
 
 /** What the row says of when the message goes: "Sends Today 3:00 PM", "Sending…". */
@@ -40,6 +40,7 @@ export function scheduledMessageStatus(message: ScheduledMessageView, now: numbe
     return `Couldn't send: ${reason ? reason.charAt(0).toLowerCase() + reason.slice(1) : 'the chat refused it'}.`
   }
   if (message.waitingSince !== undefined) return 'Sends when this turn ends'
+  if (message.untilLimitReset) return `Sends when the limit resets, ${sendTimeWords(message.sendAt, now)}`
   return `Sends ${sendTimeWords(message.sendAt, now)}`
 }
 

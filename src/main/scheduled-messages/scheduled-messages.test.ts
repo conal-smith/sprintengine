@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterAll, test } from 'vitest'
 
 import type { ConversationEvent, ConversationSessionSummary } from '../../shared/conversation-runtime'
-import { parseScheduledMessageUpdate } from '../../shared/scheduled-messages'
+import { limitResetSendAt, parseScheduledMessageUpdate } from '../../shared/scheduled-messages'
 import {
   createScheduledMessages,
   scheduledMessagesFileStorage,
@@ -49,6 +49,8 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number; id
   const released: Array<{ carried: ScheduledMessageCarried; sent: boolean }> = []
   const storage = options.storage ?? memoryStorage()
   let sendAnswer: () => ScheduledMessageSendResult = () => ({ ok: true })
+  let limit: { limited: boolean; resetsAt: number | null } = { limited: false, resetsAt: null }
+  const limitAsks: string[] = []
   let ids = 0
 
   const scheduled = createScheduledMessages({
@@ -59,6 +61,10 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number; id
       return () => eventListeners.delete(listener)
     },
     chatExists: (chat) => chats.has(`${chat.workspaceId}/${chat.agentId}`),
+    rateLimit: (provider) => {
+      limitAsks.push(provider)
+      return limit
+    },
     send: async (chat, text, commandId, carried) => {
       sent.push({ chat, text, commandId, ...(carried ? { carried } : {}) })
       return sendAnswer()
@@ -122,6 +128,10 @@ function harness(options: { storage?: ScheduledMessagesStorage; now?: number; id
     answerSends: (answer: typeof sendAnswer) => {
       sendAnswer = answer
     },
+    limitIs: (next: typeof limit) => {
+      limit = next
+    },
+    limitAsks,
     now: () => now,
   }
 }
@@ -150,6 +160,52 @@ test('a scheduled message waits for its time, then goes into its chat as the per
   assert.deepEqual(h.sent, [{ chat: CHAT, text: 'Carry on with the migration.', commandId: 'scheduled-message:sm-1' }])
   assert.deepEqual(h.scheduled.state().messages, [], 'sent, it is gone')
   assert.deepEqual(JSON.parse(storage.body ?? '{}').messages, [], 'from the file too')
+})
+
+test('a message for when the limit resets asks the limit again at its time, and follows a later reset', async () => {
+  const h = harness()
+  await started(h)
+  const reset = h.now() + HOUR
+  h.scheduled.update({ kind: 'schedule', ...CHAT, text: 'Pick it back up.', sendAt: reset, untilLimitReset: 'claude' })
+  assert.equal(h.scheduled.state().messages[0]?.untilLimitReset, 'claude', 'the tray knows what it waits on')
+  // A weekly window behind the session's is still at its limit.
+  const weekly = reset + 3 * HOUR
+  h.limitIs({ limited: true, resetsAt: weekly })
+  await h.advance(HOUR)
+  assert.equal(h.sent.length, 0, 'not while the provider is still limited')
+  assert.deepEqual(h.limitAsks, ['claude'])
+  assert.equal(h.scheduled.state().messages[0]?.sendAt, weekly + MINUTE, 'moved to the later reset, with a buffer')
+  h.limitIs({ limited: false, resetsAt: null })
+  await h.advance(3 * HOUR + MINUTE)
+  assert.deepEqual(
+    h.sent.map((entry) => entry.text),
+    ['Pick it back up.'],
+  )
+})
+
+test('a message for when the limit resets, still limited with no reset said, looks again later; Send now skips the limit', async () => {
+  const h = harness()
+  await started(h)
+  h.scheduled.update({ kind: 'schedule', ...CHAT, text: 'Go on.', sendAt: h.now() + HOUR, untilLimitReset: 'codex' })
+  h.limitIs({ limited: true, resetsAt: null })
+  await h.advance(HOUR)
+  assert.equal(h.sent.length, 0)
+  await h.advance(5 * MINUTE)
+  assert.equal(h.limitAsks.length, 2, 'asked again after a while')
+  const id = h.scheduled.state().messages[0]!.id
+  h.scheduled.update({ kind: 'send-now', id })
+  await h.advance(MINUTE)
+  assert.equal(h.sent.length, 1, 'the person asked for it now')
+})
+
+test('a message for a picked time never asks the limit', async () => {
+  const h = harness()
+  await started(h)
+  h.limitIs({ limited: true, resetsAt: h.now() + 10 * HOUR })
+  h.scheduled.update({ kind: 'schedule', ...CHAT, text: 'Hello.', sendAt: h.now() + HOUR })
+  await h.advance(HOUR)
+  assert.equal(h.sent.length, 1)
+  assert.deepEqual(h.limitAsks, [])
 })
 
 test('a chat in a turn when the message comes due gets it once the turn ends, and the tray says it waits', async () => {
@@ -268,6 +324,51 @@ test('a window’s update is read strictly', () => {
   assert.deepEqual(parseScheduledMessageUpdate({ kind: 'delete', id: 'sm-1' }), { kind: 'delete', id: 'sm-1' })
   assert.equal(parseScheduledMessageUpdate({ kind: 'reschedule', id: 'sm-1', sendAt: -1 }), null)
   assert.equal(parseScheduledMessageUpdate({ kind: 'explode', id: 'sm-1' }), null)
+  const base = { kind: 'schedule', workspaceId: 'ws', agentId: 'a', text: 'hi', sendAt: 5 }
+  assert.deepEqual(parseScheduledMessageUpdate({ ...base, untilLimitReset: 'codex' }), {
+    ...base,
+    untilLimitReset: 'codex',
+  })
+  assert.deepEqual(
+    parseScheduledMessageUpdate({ ...base, untilLimitReset: 'nobody' }),
+    base,
+    'an unknown provider is dropped',
+  )
+})
+
+test('when a message for the limit reset would go, from what the provider last said', () => {
+  const window = (resetsAt: number | null, status: 'allowed' | 'rejected', scope?: 'model') => ({
+    id: `w-${resetsAt}`,
+    label: 'w',
+    usedPercent: 50,
+    resetsAt,
+    status,
+    observedAt: T0,
+    ...(scope ? { scope } : {}),
+  })
+  const snapshot = (windows: ReturnType<typeof window>[]) => ({
+    provider: 'claude' as const,
+    billing: 'subscription' as const,
+    windows,
+    observedAt: T0,
+  })
+  assert.equal(limitResetSendAt(null, T0), null)
+  assert.equal(limitResetSendAt(snapshot([window(null, 'rejected')]), T0), null, 'no reset said')
+  assert.equal(
+    limitResetSendAt(snapshot([window(T0 + HOUR, 'allowed'), window(T0 + 9 * HOUR, 'allowed')]), T0),
+    T0 + HOUR + MINUTE,
+    'none at its limit: the soonest reset',
+  )
+  assert.equal(
+    limitResetSendAt(snapshot([window(T0 + HOUR, 'rejected'), window(T0 + 9 * HOUR, 'rejected')]), T0),
+    T0 + 9 * HOUR + MINUTE,
+    'every window at its limit has to have reset',
+  )
+  assert.equal(
+    limitResetSendAt(snapshot([window(T0 + HOUR, 'allowed'), window(T0 + 20 * HOUR, 'rejected', 'model')]), T0),
+    T0 + HOUR + MINUTE,
+    'a window metering one model holds back no chat on another',
+  )
 })
 
 test('a message a paired machine queued is held until the turn ends, then goes from here', async () => {

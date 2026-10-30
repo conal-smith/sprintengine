@@ -12,9 +12,11 @@ import type { ConversationEvent, ConversationSessionSummary } from '../../shared
 import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENTS_PER_TURN } from '../../shared/conversation-attachments'
 import { conversationTurnInProgress } from '../../shared/conversation/phase'
 import { isRecord } from '../../shared/records'
+import { USAGE_LIMIT_PROVIDERS, type UsageLimitProvider } from '../../shared/usage-limits'
 import {
   isId,
   isTime,
+  LIMIT_RESET_SEND_BUFFER_MS,
   MAX_SCHEDULED_MESSAGE_LENGTH,
   type ScheduledMessage,
   type ScheduledMessageCarries,
@@ -98,6 +100,8 @@ const STARTUP_GRACE_MS = 15_000
 const BUSY_RETRY_MS = 30_000
 /** After a chat's turn ends, before its waiting message goes: the runtime lets go of the turn just after it says so. */
 const TURN_END_SETTLE_MS = 1_500
+/** A message waiting on a limit that has not said when it resets is looked at again after this. */
+const LIMIT_UNKNOWN_RETRY_MS = 5 * 60_000
 /** A timer longer than this is armed again rather than trusted (sleep, a changed clock). */
 const MAX_TIMER_MS = 15 * 60_000
 /** A refusal's words, as the tray keeps them. */
@@ -154,6 +158,12 @@ export type ScheduledMessagesDeps = {
   storage: ScheduledMessagesStorage
   listSessions: () => ConversationSessionSummary[]
   onConversationEvent: (listener: (event: ConversationEvent) => void) => () => void
+  /**
+   * Where the provider's usage limit stands now, for a message to go once it
+   * lifts: asked again when it comes due, since a window that resets later
+   * may hold the provider back past the reset it was scheduled for.
+   */
+  rateLimit?: (provider: UsageLimitProvider, now: number) => { limited: boolean; resetsAt: number | null }
   /** Whether the chat is still there; false for one deleted. */
   chatExists: (chat: ScheduledMessageChat) => boolean
   /**
@@ -375,6 +385,16 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
           conversationTurnInProgress(session),
       )
     if (busy) return wait(entry, at, BUSY_RETRY_MS)
+    // To go once the limit lifts: still held back by a window that resets
+    // later, it moves to that reset, as a resume after a limit does.
+    if (entry.untilLimitReset && deps.rateLimit) {
+      const limit = deps.rateLimit(entry.untilLimitReset, at)
+      if (limit.limited) {
+        if (limit.resetsAt !== null && limit.resetsAt > at) entry.sendAt = limit.resetsAt + LIMIT_RESET_SEND_BUFFER_MS
+        else entry.retryAt = at + LIMIT_UNKNOWN_RETRY_MS
+        return changed()
+      }
+    }
     // Only a send holds the next one back: a look that found the chat busy
     // sent nothing.
     quietUntil = Math.max(quietUntil, at + STAGGER_MS)
@@ -460,6 +480,7 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
           text: input.text,
           sendAt: input.sendAt,
           createdAt: now(),
+          ...(input.untilLimitReset ? { untilLimitReset: input.untilLimitReset } : {}),
         },
       ]
       changed()
@@ -479,11 +500,15 @@ export function createScheduledMessages(deps: ScheduledMessagesDeps): ScheduledM
     entry.waitingSince = undefined
     entry.retryAt = undefined
     if (input.kind === 'reschedule') {
+      // A time the person picked: no longer waiting on the limit.
+      entry.untilLimitReset = undefined
       entry.sendAt = input.sendAt
       changed()
       return state()
     }
-    // Send now: asked for, so not held back by the start's grace or the stagger.
+    // Send now: asked for, so not held back by the start's grace or the
+    // stagger, nor by the limit it was waiting on.
+    entry.untilLimitReset = undefined
     const at = now()
     entry.sendAt = Math.min(entry.sendAt, at)
     if (running) fire(entry, at)
@@ -722,6 +747,9 @@ function readPending(raw: unknown): Pending[] {
       createdAt: raw.createdAt,
       ...(isTime(raw.waitingSince) ? { waitingSince: raw.waitingSince } : {}),
       ...(raw.queued === true ? { queued: true as const } : {}),
+      ...(USAGE_LIMIT_PROVIDERS.includes(raw.untilLimitReset as UsageLimitProvider)
+        ? { untilLimitReset: raw.untilLimitReset as UsageLimitProvider }
+        : {}),
       ...(typeof raw.failure === 'string' && raw.failure ? { failure: failureWords(raw.failure) } : {}),
       ...(typeof raw.attempt === 'number' && Number.isInteger(raw.attempt) && raw.attempt > 0
         ? { attempt: raw.attempt }

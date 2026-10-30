@@ -20,15 +20,24 @@ import {
 // press each; any other is a day and a time typed. Every change is handed back
 // at once, so the tag it opens from says the new time while it is still open.
 
+/**
+ * "When my limit resets", for a message into a chat whose provider meters its
+ * use: `at` is when it would go, from the provider's latest word, and `on`
+ * that it is the choice. Main asks the limit again when that time comes.
+ */
+export type SendAtLimitReset = { at: number; on: boolean; onPick: () => void }
+
 export function SendTimeEditor({
   at,
   onChange,
   timezone,
+  limitReset,
 }: {
   at: number
   onChange: (at: number) => void
   /** Said under the readout where the zone matters: a scheduled agent's. */
   timezone?: string
+  limitReset?: SendAtLimitReset | null
 }) {
   const now = useRelativeNow(30_000)
   const passed = at <= now
@@ -47,6 +56,17 @@ export function SendTimeEditor({
             {choice.label}
           </ChipButton>
         ))}
+        {limitReset ? (
+          <ChipButton
+            variant="outline"
+            pressed={limitReset.on}
+            onClick={limitReset.onPick}
+            className="h-control-sm"
+            data-send-at-limit-reset="true"
+          >
+            When my limit resets
+          </ChipButton>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -82,8 +102,12 @@ export function SendTimeEditor({
           <p className="text-body text-[color:var(--tone-error)]">That time has passed — pick one ahead.</p>
         ) : (
           <>
-            <p className="text-heading font-medium text-[color:var(--text-strong)]">{sendTimeWords(at, now)}</p>
-            <p className="mt-0.5 text-meta tabular-nums text-[color:var(--text-subtle)]">{fromNow}</p>
+            <p className="text-heading font-medium text-[color:var(--text-strong)]">
+              {limitReset?.on ? 'When the usage limit resets' : sendTimeWords(at, now)}
+            </p>
+            <p className="mt-0.5 text-meta tabular-nums text-[color:var(--text-subtle)]">
+              {limitReset?.on ? `${sendTimeWords(at, now)} · ${fromNow}` : fromNow}
+            </p>
           </>
         )}
       </div>
@@ -107,14 +131,17 @@ export function SendTimeTag({
   at,
   onChange,
   onRemove,
+  limitReset,
 }: {
   at: number
   onChange: (at: number) => void
   onRemove: () => void
+  limitReset?: SendAtLimitReset | null
 }) {
   const [open, setOpen] = React.useState(false)
   const now = useRelativeNow(30_000)
-  const words = sendTimeWords(at, now)
+  const words = limitReset?.on ? 'When the limit resets' : sendTimeWords(at, now)
+  const spoken = limitReset?.on ? 'when the limit resets' : words
   const passed = at <= now
   return (
     <AttachmentChip
@@ -136,7 +163,7 @@ export function SendTimeTag({
             ink="quiet"
             size="inherit"
             onClick={togglePopover}
-            aria-label={`Sends ${words}. Change the time`}
+            aria-label={`Sends ${spoken}. Change the time`}
             data-send-time-tag="true"
             {...triggerProps}
           >
@@ -144,7 +171,7 @@ export function SendTimeTag({
           </LinkButton>
         )}
       >
-        <SendTimeEditor at={at} onChange={onChange} />
+        <SendTimeEditor at={at} onChange={onChange} limitReset={limitReset} />
       </Popover>
     </AttachmentChip>
   )
