@@ -23,6 +23,13 @@ import { claudeStatusLineUpdates } from './sources'
 // One reading per provider, not per account: no source names the account
 // without its credentials being read, and a person signed in to a second
 // account replaces the first's reading the moment that account reports.
+//
+// Billing is a session's, though, not the provider's: one chat may run on a
+// claude.ai login while another in the same run uses an API key, a cloud
+// provider or a gateway. The key's chat reports no windows and its limits are
+// not plan limits (each provider checks its own session's billing before it
+// reports either), so all it may change here is a provider no subscription has
+// spoken for this run: it must not wipe what the subscription's chats report.
 
 /** Part of a window, as one report has it: fields left undefined keep what was known. */
 export type UsageWindowUpdate = {
@@ -74,6 +81,9 @@ type ProviderEntry = {
   // The last turn that ended on a limit, until a later reading says the
   // provider is allowed again or the time it gave has passed.
   hit: { resetsAt: number | null; at: number } | null
+  // A session on a subscription has spoken in this run: signed in, reported
+  // windows or hit a limit. Readings restored from an earlier run do not count.
+  subscribedThisRun?: boolean
 }
 
 // A reading republished with nothing changed but its age, so the "as of" a
@@ -179,11 +189,15 @@ export function createUsageLimitsStore(options: { now?: () => number } = {}): Us
   return {
     noteBilling(provider, billing, plan) {
       const entry = entryFor(provider)
+      // Another chat's subscription is reporting into this entry: a session
+      // on a key leaves its readings, its plan and its limit where they are.
+      if (billing === 'api' && entry.subscribedThisRun) return
+      if (billing === 'subscription') entry.subscribedThisRun = true
       const changed = entry.billing !== billing || (plan !== undefined && entry.plan !== plan)
       entry.billing = billing
       if (plan !== undefined) entry.plan = plan
-      // An API key has no plan limits: what was read under a subscription is
-      // not this account's, and is neither shown nor kept.
+      // An API key has no plan limits: what an earlier run read under a
+      // subscription is not this account's, and is neither shown nor kept.
       if (billing === 'api') {
         entry.windows.clear()
         entry.plan = undefined
@@ -197,6 +211,7 @@ export function createUsageLimitsStore(options: { now?: () => number } = {}): Us
       // Only a subscription is reported windows; whatever was believed before,
       // this is one now.
       entry.billing = 'subscription'
+      entry.subscribedThisRun = true
       for (const update of updates) mergeWindow(entry, update, at)
       entry.observedAt = Math.max(entry.observedAt, at)
       if (entry.hit && updates.some((update) => update.status === 'allowed' || update.status === 'warning')) {
@@ -212,6 +227,7 @@ export function createUsageLimitsStore(options: { now?: () => number } = {}): Us
       const at = input.at ?? clock()
       const entry = entryFor(input.provider)
       if (entry.billing === 'api') return
+      entry.subscribedThisRun = true
       let resetsAt = input.resetsAt
       const named = input.windowId ? entry.windows.get(input.windowId) : undefined
       if (named && input.windowId) {
@@ -297,7 +313,12 @@ function limitingWindows(entry: ProviderEntry, now: number): { resetsAt: number 
 
 // The app's one store. Providers report into it from wherever they run; the
 // IPC layer relays it, and a later feature asks it whether to wait.
-const usageLimits = createUsageLimitsStore()
+let usageLimits = createUsageLimitsStore()
+
+/** Test seam: the app's store as a fresh process has it. Listeners on the old one hear nothing more. */
+export function resetUsageLimitsStore(): void {
+  usageLimits = createUsageLimitsStore()
+}
 
 export function usageLimitsStore(): UsageLimitsStore {
   return usageLimits

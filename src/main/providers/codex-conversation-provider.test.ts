@@ -22,7 +22,7 @@ import type {
 } from '../../shared/conversation-runtime'
 import { resolveGatewayLaunchToken } from '../../server/core/gateway-launch-tokens'
 import { conversationCommandsFor } from '../conversation-commands/registry'
-import { onUsageLimitHit, usageLimitsStore, usageRateLimit } from '../usage-limits/store'
+import { onUsageLimitHit, resetUsageLimitsStore, usageLimitsStore, usageRateLimit } from '../usage-limits/store'
 import type { UsageLimitHit } from '../../shared/usage-limits'
 import { VISUALS_INSTRUCTION } from './visuals-guidance'
 
@@ -2220,6 +2220,8 @@ test('the read of the limits never holds a turn up', async () => {
 })
 
 test('an API-key sign-in has no plan limits: none are read, and none are shown', async () => {
+  // What the chats before this one reported is another session's reading.
+  resetUsageLimitsStore()
   const f = fixture({ account: { requiresOpenaiAuth: true, account: { type: 'apiKey' } }, rateLimits: () => ({}) })
   await f.adapter.startSession(f.input)
   const done = f.send()

@@ -53,7 +53,18 @@ test('an API-billed provider is never written', async () => {
   const store = createUsageLimitsStore()
   const cache = createUsageLimitsDiskCache({ file, debounceMs: 5 })
   await cache.attach(store)
-  store.noteWindows('claude', [{ id: 'five_hour', usedPercent: 5, resetsAt: Date.now() + HOUR }])
+  // A reading an earlier run kept, and this run's only Claude chat on a key.
+  const at = Date.now()
+  store.restore([
+    {
+      provider: 'claude',
+      billing: 'subscription',
+      windows: [
+        { id: 'five_hour', label: 'five_hour', usedPercent: 5, resetsAt: at + HOUR, status: 'allowed', observedAt: at },
+      ],
+      observedAt: at,
+    },
+  ])
   store.noteBilling('claude', 'api')
   await cache.dispose()
   expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ version: 1, snapshots: [] })
