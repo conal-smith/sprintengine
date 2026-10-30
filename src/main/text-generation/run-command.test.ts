@@ -39,3 +39,57 @@ test('a signal already aborted stops the process as it starts', async () => {
   })
   assert.equal(outcome.cancelled, true)
 })
+
+const quietEnv = () => ({ ...process.env }) as Record<string, string>
+
+test('a character split across two writes reads back whole', async () => {
+  // The euro sign is three bytes; the first write ends after one of them.
+  const script =
+    "const b = Buffer.from('€ ok', 'utf8'); process.stdout.write(b.subarray(0, 1)); " +
+    'setTimeout(() => { process.stdout.write(b.subarray(1)); process.stderr.write(b.subarray(0, 1)); ' +
+    'setTimeout(() => process.stderr.write(b.subarray(1)), 50) }, 50)'
+  const outcome = await runCommand({
+    file: process.execPath,
+    args: ['-e', script],
+    cwd: tmpdir(),
+    env: quietEnv(),
+    stdin: '',
+    timeoutMs: 20_000,
+  })
+  assert.equal(outcome.code, 0)
+  assert.equal(outcome.stdout, '€ ok')
+  assert.equal(outcome.stderr, '€ ok')
+})
+
+test('a CLI that prints past the cap is stopped, and says so', async () => {
+  const started = Date.now()
+  const outcome = await runCommand({
+    file: process.execPath,
+    args: ['-e', "setInterval(() => process.stdout.write('x'.repeat(4096)), 1)"],
+    cwd: tmpdir(),
+    env: quietEnv(),
+    stdin: '',
+    timeoutMs: 20_000,
+    maxOutputChars: 64 * 1024,
+  })
+  assert.equal(outcome.overflowed, true)
+  assert.equal(outcome.timedOut, false)
+  assert.ok(outcome.stdout.length <= 64 * 1024)
+  assert.ok(Date.now() - started < 10_000, 'stopped long before its deadline')
+})
+
+test('stderr keeps its newest end, whatever the CLI says before it', async () => {
+  const outcome = await runCommand({
+    file: process.execPath,
+    args: ['-e', "process.stderr.write('a'.repeat(200000)); process.stderr.write('the reason')"],
+    cwd: tmpdir(),
+    env: quietEnv(),
+    stdin: '',
+    timeoutMs: 20_000,
+    maxOutputChars: 64 * 1024,
+  })
+  assert.equal(outcome.code, 0)
+  assert.equal(outcome.overflowed, undefined)
+  assert.ok(outcome.stderr.length <= 64 * 1024)
+  assert.ok(outcome.stderr.endsWith('the reason'))
+})
