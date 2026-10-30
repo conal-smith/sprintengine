@@ -21,11 +21,11 @@ export function buildBrowserElementBlock(picked: BrowserPickedElement, screensho
     picked.source ? `source="${escapeAttribute(picked.source)}"` : null,
   ].filter((part): part is string => part !== null)
   const styles = Object.entries(picked.styles)
-    .map(([key, value]) => `${key}:${value}`)
+    .map(([key, value]) => `${key}:${withoutBlockTags(value)}`)
     .join('; ')
   const lines = [
     `<browser_element ${attributes.join(' ')}>`,
-    `<html>${picked.outerHtml}</html>`,
+    `<html>${withoutBlockTags(picked.outerHtml)}</html>`,
     styles ? `<styles>${styles}</styles>` : null,
     '</browser_element>',
     screenshotPath ? `Screenshot: ${screenshotPath}` : null,
@@ -33,12 +33,26 @@ export function buildBrowserElementBlock(picked: BrowserPickedElement, screensho
   return lines.join('\n')
 }
 
+// The element's HTML and its computed styles are the page's text, set inside
+// the block's own `<html>` and `<styles>` elements. A tag in that text naming
+// one of the block's elements could end the block early and leave whatever
+// the page wrote after it reading as the person's prompt, so its `<` is
+// written as `&lt;`. Only those tags: the rest of the markup stays as the page
+// has it, which is what an agent reads best. Matched however a parser would
+// still call it a tag — any case, space before the name or the slash.
+const BLOCK_TAG = /<(?=\s*\/?\s*(?:html|styles|browser_element)\b)/gi
+
+function withoutBlockTags(value: string): string {
+  return value.replace(BLOCK_TAG, '&lt;')
+}
+
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/\n/g, ' ')
 }
 
-// The page controls what the guest preload reports (context isolation is off
-// for the picker), so the payload is untrusted: every field is re-typed and
+// The page controls what the guest preload reports (it owns the DOM the
+// preload reads, and the world its React context comes from), so the payload
+// is untrusted: every field is re-typed and
 // re-capped here before it reaches an agent's prompt or the clipboard.
 const MAX_TEXT = 200
 const MAX_SELECTOR = 1000
