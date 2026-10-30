@@ -40,14 +40,26 @@ import type { ConversationCommand } from '../../shared/conversation/commands'
 import { conversationPermissionPresetRefusals } from '../../shared/conversation-harness'
 import { isLooserCliPermissionPreset } from '../../shared/cli-permission-preset'
 import type {
-  ClientSideConnection,
+  CancelNotification,
+  ForkSessionRequest,
+  InitializeRequest,
+  LoadSessionRequest,
   McpCapabilities,
   McpServer,
+  NewSessionRequest,
+  PromptRequest,
+  ReadTextFileRequest,
+  ReadTextFileResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionNotification,
   SessionUpdate,
+  SetSessionConfigOptionRequest,
+  SetSessionModeRequest,
+  Stream,
   ToolKind,
-} from '@agentclientprotocol/sdk'
+  WriteTextFileRequest,
+} from '@agentclientprotocol/sdk/unstable'
 import type {
   ConversationCapabilities,
   ConversationCliRuntimeOverrides,
@@ -615,12 +627,52 @@ export function cursorTransportFailure(reply: string): string | undefined {
   return diagnostic ? message : undefined
 }
 
+type AcpSdk = typeof import('@agentclientprotocol/sdk/unstable')
+
+/** What this client answers when the agent asks it something. */
+type AcpClientHandlers = {
+  requestPermission: (params: RequestPermissionRequest) => Promise<RequestPermissionResponse>
+  sessionUpdate: (params: SessionNotification) => Promise<void>
+  readTextFile: (params: ReadTextFileRequest) => Promise<ReadTextFileResponse>
+  writeTextFile: (params: WriteTextFileRequest) => Promise<void>
+}
+
+/**
+ * One connection to an agent CLI over `stream`, answering it with `handlers`,
+ * with a method for each request this provider makes of the agent. The SDK's
+ * unstable entrypoint is the full ACP v1, which session forking and a turn's
+ * usage are part of; the stable one would strip them.
+ */
+function acpConnection(sdk: AcpSdk, handlers: AcpClientHandlers, stream: Stream) {
+  const { agent: methods } = sdk.methods
+  const { agent } = sdk
+    .client({ name: 'sprintengine-studio' })
+    .onRequest(sdk.methods.client.session.requestPermission, ({ params }) => handlers.requestPermission(params))
+    .onNotification(sdk.methods.client.session.update, ({ params }) => handlers.sessionUpdate(params))
+    .onRequest(sdk.methods.client.fs.readTextFile, ({ params }) => handlers.readTextFile(params))
+    .onRequest(sdk.methods.client.fs.writeTextFile, ({ params }) => handlers.writeTextFile(params))
+    .connect(stream)
+  return {
+    initialize: (params: InitializeRequest) => agent.request(methods.initialize, params),
+    authenticate: (params: { methodId: string }) => agent.request(methods.authenticate, params),
+    newSession: (params: NewSessionRequest) => agent.request(methods.session.new, params),
+    loadSession: (params: LoadSessionRequest) => agent.request(methods.session.load, params),
+    forkSession: (params: ForkSessionRequest) => agent.request(methods.session.fork, params),
+    setSessionMode: (params: SetSessionModeRequest) => agent.request(methods.session.setMode, params),
+    setSessionConfigOption: (params: SetSessionConfigOptionRequest) =>
+      agent.request(methods.session.setConfigOption, params),
+    prompt: (params: PromptRequest) => agent.request(methods.session.prompt, params),
+    cancel: (params: CancelNotification) => agent.notify(methods.session.cancel, params),
+  }
+}
+type AcpConnection = ReturnType<typeof acpConnection>
+
 type State = {
   input: MockAdapterSessionInput
   // What the agent said it can connect to, from its handshake.
   mcpCapabilities?: McpCapabilities
   child?: ChildProcessWithoutNullStreams
-  connection?: ClientSideConnection
+  connection?: AcpConnection
   starting?: Promise<void>
   nativeId?: string
   closed: boolean
@@ -821,7 +873,7 @@ export async function probeAcpConversationCommands(
   // Nobody asked for this start, so it runs as a check does (cli-probe-env.ts).
   const probeEnv = cliProbeEnv(profile.cli)
   const env = { ...(await (options.buildEnv ?? acpEnvironment)()), ...probeEnv }
-  const sdk = await import('@agentclientprotocol/sdk')
+  const sdk = await import('@agentclientprotocol/sdk/unstable')
   const wslChild = wsl ? acpWslChild(wsl, profile) : null
   const target = cliHostSpawn({
     command,
@@ -842,13 +894,14 @@ export async function probeAcpConversationCommands(
   const refuse = async (): Promise<never> => {
     throw new Error('No conversation is open.')
   }
-  const connection = new sdk.ClientSideConnection(
-    () => ({
+  const connection = acpConnection(
+    sdk,
+    {
       requestPermission: refuse,
       sessionUpdate: async () => undefined,
       readTextFile: refuse,
       writeTextFile: refuse,
-    }),
+    },
     sdk.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
   )
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -1175,7 +1228,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       const hostId = state.input.cliRuntimes?.[profile.cli]?.hostId
       const gateway = await options.resolveStudioMcpServer?.({ ...(hostId ? { hostId } : {}) }).catch(() => null)
       if (state.closed) throw new Error('Conversation was stopped during startup.')
-      const sdk = await import('@agentclientprotocol/sdk')
+      const sdk = await import('@agentclientprotocol/sdk/unstable')
       if (state.closed) throw new Error('Conversation was stopped during startup.')
       // The child is issued its own gateway token, bound to this chat, and
       // taken back when it ends: on stdin in WSL, where it is also the channel
@@ -1245,8 +1298,9 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           },
         }),
       )
-      const connection = new sdk.ClientSideConnection(
-        () => ({
+      const connection = acpConnection(
+        sdk,
+        {
           // A child that has been replaced (a permission change relaunches it)
           // can still be flushing what it said last; none of it belongs to the
           // turn its replacement is running.
@@ -1337,7 +1391,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
               await file.close()
             }
           },
-        }),
+        },
         sdk.ndJsonStream(Writable.toWeb(child.stdin), boundedInput),
       )
       const initialize = async () => {
@@ -1373,7 +1427,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
           throw new Error('Conversation was stopped during startup.')
         state.connection = connection
       }
-      const openSession = async (connection: ClientSideConnection) => {
+      const openSession = async (connection: AcpConnection) => {
         const resumeId = state.nativeId ?? state.input.resumeSessionId
         state.replayHistory = Boolean(resumeId && !state.loadSupported) || state.seedPending
         // The app's gateway and the session's own servers, on a new session
@@ -1403,7 +1457,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
         const cwd = wsl ? toWslPath(state.input.workspaceRoot!) : state.input.workspaceRoot!
         state.opened = { cwd, mcpServers }
         const fresh = () => connection.newSession({ cwd, mcpServers })
-        let session: Awaited<ReturnType<typeof fresh>> | Awaited<ReturnType<ClientSideConnection['loadSession']>>
+        let session: Awaited<ReturnType<typeof fresh>> | Awaited<ReturnType<AcpConnection['loadSession']>>
         if (resumeId && state.loadSupported) {
           try {
             session = await connection.loadSession({ sessionId: resumeId, cwd, mcpServers })
@@ -1601,7 +1655,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
                   ...state.history.map((turn) => `User: ${turn.user}\nAssistant: ${turn.assistant}`),
                 ].join('\n\n')
               : ''
-          const prompt: Parameters<ClientSideConnection['prompt']>[0]['prompt'] = [
+          const prompt: PromptRequest['prompt'] = [
             {
               type: 'text',
               text: prior ? `Previous conversation:\n${prior}\n\nUser: ${input.message}` : input.message,
@@ -1748,7 +1802,7 @@ export function createAcpConversationProvider(profile: AcpProfile, options: Opti
       try {
         // Without the gateway: its entry carries this chat's token, and the
         // branch is another chat's, whose own child opens it with its own.
-        const branched = await connection.unstable_forkSession({
+        const branched = await connection.forkSession({
           sessionId: state.nativeId,
           cwd: state.opened.cwd,
           mcpServers: state.opened.mcpServers.filter((server) => !isStudioGatewayName(server.name)),
