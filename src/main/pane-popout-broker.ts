@@ -80,6 +80,7 @@ const ACTION_TYPES: ReadonlySet<PanePopOutAction['type']> = new Set([
   'set-board',
   'recent-url',
   'open',
+  'add',
   'activate',
   'dock',
   'open-file',

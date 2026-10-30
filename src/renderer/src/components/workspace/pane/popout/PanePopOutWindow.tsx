@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { PanePopOutState } from '../../../../../../shared/ipc/pane-popout'
 import { normalizeWorkspacePaneState } from '../../../../store/slices/workspacePaneSlice'
+import { getRendererHost, onThirdPartyRendererModulesLoaded, selectModuleEnabled } from '../../../../modules'
 import { useWorkspaceStore, workspaceRegistryReady } from '../../../../store/workspaceStore'
-import type { WorkspacePaneTab } from '../../../../types/workspace'
+import type { WorkspacePaneTab, WorkspacePaneTabKind } from '../../../../types/workspace'
 import { useWindowPageVisible } from '../../../../utils/windowActivity'
 import { ContextMenu, EmptyState, MenuDivider, MenuItem, Spinner, Tabs, TabsScroller } from '../../../ui'
 import { ToastRegion } from '../../../ui/ToastRegion'
@@ -15,6 +16,9 @@ import { useAgentPresentTabIds } from '../agentPresence'
 import { closePaneTabAndItsTerminal, paneTerminalSessionId } from '../paneTerminals'
 import { WorkspacePaneBody } from '../WorkspacePaneBody'
 import { adoptAgentFocusRequest } from '../agents/agentsPaneFocus'
+import { composePaneKinds, type PaneLaunchKind } from '../paneKinds'
+import { WorkspacePaneAddMenu } from '../WorkspacePaneAddMenu'
+import { popOutAddKinds } from './panePopOutHost'
 import { redirectPaneWrites } from './panePopOutRedirect'
 
 // A workspace pane, or one of its tabs, in a window of its own (`?aux=pane`).
@@ -24,8 +28,11 @@ import { redirectPaneWrites } from './panePopOutRedirect'
 // the same tab bodies the pane does, and everything the person does to a tab
 // here goes back to the owner as an action (panePopOutRedirect.ts). Its own
 // strip is the pane's strip — the same tab items, the same close and context
-// menu — minus "+": a new tab is opened in the pane, or by a tab here asking
-// for one, and a window that grew tabs of its own would be a second pane.
+// menu, and the same "+" (owner ruling 2026-10-30: a window holding the canvas
+// should be able to open Files or Agents beside it). A kind picked from "+" is
+// opened by the owner and joins this window, in front — the pane's own tab of
+// that kind moves over if it has one; it is still the pane's tab, and goes
+// home with the rest when the window closes.
 //
 // Closing the window is how its tabs go home. On macOS that is the traffic
 // light, and full screen is the native green button; on win/linux the strip
@@ -69,6 +76,21 @@ export default function PanePopOutWindow({ popOutId, workspaceId }: Props) {
   const workspaceName = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId)?.name ?? '')
   const workspacePresent = useWorkspaceStore((s) => s.workspaces.some((w) => w.id === workspaceId))
   const pageVisible = useWindowPageVisible()
+  const moduleOverrides = useWorkspaceStore((s) => s.appSettings.modules)
+  // A module that finishes loading after the window renders adds its row
+  // without a reload, as in the pane.
+  const [moduleRegistryGeneration, setModuleRegistryGeneration] = useState(0)
+  useEffect(() => onThirdPartyRendererModulesLoaded(() => setModuleRegistryGeneration((n) => n + 1)), [])
+  const addKinds = useMemo(
+    () =>
+      popOutAddKinds(
+        composePaneKinds(getRendererHost().getModalSurfaceLaunchers(), (moduleId) =>
+          selectModuleEnabled(moduleOverrides, moduleId),
+        ),
+      ),
+    // moduleRegistryGeneration: a late third-party load re-derives the list.
+    [moduleOverrides, moduleRegistryGeneration],
+  )
 
   const act = useCallback(
     (action: Parameters<typeof window.api.panePopOutAct>[1]) => window.api.panePopOutAct(popOutId, action),
@@ -289,6 +311,18 @@ export default function PanePopOutWindow({ popOutId, workspaceId }: Props) {
             />
           ) : null}
         </TabsScroller>
+        {/* Right of the last tab, as in the pane. The pick goes to the
+            owner, which opens the tab (or moves the pane's one over) and
+            hands it here, in front. */}
+        {ready && addKinds.length > 0 ? (
+          <div className="app-no-drag flex h-full shrink-0 items-center pl-0.5">
+            <WorkspacePaneAddMenu
+              kinds={addKinds}
+              label="Open in this window"
+              onPick={(kind: PaneLaunchKind) => act({ type: 'add', kind: kind as WorkspacePaneTabKind })}
+            />
+          </div>
+        ) : null}
         <div className="min-w-0 flex-1 self-stretch" aria-hidden="true" />
         {/* Frameless on win/linux: the window draws its own way to minimise,
             maximise and close. macOS keeps its native lights on the left. */}
