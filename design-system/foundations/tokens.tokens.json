@@ -48,7 +48,7 @@
       },
       "paper-500": {
         "$type": "color",
-        "$value": "#707078",
+        "$value": "#7c7c84",
         "$description": "Subtle text ink on dark surfaces. Source: dark --text-subtle."
       },
       "paper-600": {

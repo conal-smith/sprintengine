@@ -737,9 +737,13 @@
 
    Steps are spaced at least 1.10x apart in contrast so each reads as its own
    rung — the bundle, which is the authority, runs its own bottom step at
-   1.23x (dark) and 1.16x (light). A ramp step under AA for body text is by
-   design: subtle and disabled carry metadata, never prose. Retone on the
-   ink's own hue/chroma line so a fix never shifts a theme's identity. */
+   1.23x (dark) and 1.16x (light). Subtle ink is still read — paths,
+   identifiers, timestamps — so it clears AA's 4.5:1 on --bg-surface in every
+   theme, as the accent does where the app sets type in it, and a button's
+   --text-on-accent does on the accent (assets/themeContrast.test.ts).
+   Disabled ink stays under AA by design: it carries no copy of its own.
+   Retone on the ink's own hue/chroma line so a fix never shifts a theme's
+   identity. */
 
 /* Slate uses a neutral grey ramp, lighter than the default ink scale so
    adjacent editor surfaces remain distinct. The accent stays brand blue.
@@ -757,16 +761,16 @@
   --text-strong: #e8e8e8;
   --text-default: #cccccc;
   --text-muted: #9c9c9c;
-  --text-subtle: #808080;
+  --text-subtle: #8c8c8c;
   --text-disabled: #787878;
-  --text-on-accent: #ffffff;
+  --text-on-accent: #202020;
 
   --border-subtle: rgba(252, 252, 252, 0.07);
   --border-default: rgba(252, 252, 252, 0.1);
   --border-strong: rgba(252, 252, 252, 0.16);
   --border-focus: #5c7cfc;
 
-  --accent-primary: #5c7cfc;
+  --accent-primary: #6484fc;
   --accent-primary-hover: #7090fc;
   --accent-primary-soft: rgba(92, 124, 252, 0.16);
   --accent-primary-soft-strong: rgba(92, 124, 252, 0.24);
@@ -800,7 +804,7 @@
   --text-strong: #f4e8c8;
   --text-default: #d8c4a0;
   --text-muted: #a89870;
-  --text-subtle: #84745c;
+  --text-subtle: #908068;
   --text-disabled: #7c6c58;
   --text-on-accent: #181408;
 
@@ -843,7 +847,7 @@
   --text-strong: #c0c8dc;
   --text-default: #a0a8c0;
   --text-muted: #8088a8;
-  --text-subtle: #787c9c;
+  --text-subtle: #8084a4;
   --text-disabled: #707490;
   --text-on-accent: #181824;
 
@@ -884,7 +888,7 @@
   --text-strong: #e0d4dc;
   --text-default: #c4b4bc;
   --text-muted: #9c8c98;
-  --text-subtle: #84707c;
+  --text-subtle: #94808c;
   --text-disabled: #786870;
   --text-on-accent: #181420;
 
@@ -1247,7 +1251,7 @@
   --text-strong: #484c64;
   --text-default: #505470;
   --text-muted: #5c6078;
-  --text-subtle: #686c84;
+  --text-subtle: #60647c;
   --text-disabled: #747890;
   /* Base on Mauve, as Catppuccin's own buttons draw it. */
   --text-on-accent: #f0f0f4;
@@ -1257,7 +1261,7 @@
   --border-strong: rgba(72, 76, 100, 0.3);
   --border-focus: #8838f0;
 
-  --accent-primary: #8838f0;
+  --accent-primary: #8434ec;
   --accent-primary-hover: #7428e0;
   --accent-primary-soft: rgba(136, 56, 240, 0.12);
   --accent-primary-soft-strong: rgba(136, 56, 240, 0.2);
@@ -1345,7 +1349,7 @@
   --text-strong: #2c2418;
   --text-default: #4c4030;
   --text-muted: #6c6048;
-  --text-subtle: #7c6c54;
+  --text-subtle: #786850;
   /* Disabled deepened to clear AA-large (3:1) on the warm canvas, not just on
      the lighter surface — empty-state hints sit on both. */
   --text-disabled: #887c64;
@@ -1589,9 +1593,9 @@
   --text-strong: #e8e8d4;
   --text-default: #ccccb0;
   --text-muted: #a0a084;
-  --text-subtle: #888868;
+  --text-subtle: #949474;
   --text-disabled: #7c8064;
-  --text-on-accent: #ffffff;
+  --text-on-accent: #20241c;
 
   --border-subtle: rgba(232, 232, 212, 0.07);
   --border-default: rgba(232, 232, 212, 0.11);
@@ -1602,7 +1606,7 @@
      clear. #d4603c reads 3.36:1 there and 4.16:1 on --bg-app. */
   --border-focus: #d4603c;
 
-  --accent-primary: #c85838;
+  --accent-primary: #e47454;
   --accent-primary-hover: #d46844;
   --accent-primary-soft: rgba(200, 88, 56, 0.16);
   --accent-primary-soft-strong: rgba(200, 88, 56, 0.24);
@@ -1663,7 +1667,7 @@
   --text-strong: #e4e8d8;
   --text-default: #c4ccb4;
   --text-muted: #9ca48c;
-  --text-subtle: #7c8470;
+  --text-subtle: #848c78;
   --text-disabled: #68785c;
   /* Sage accent carries dark ink (a light label would wash out on it). */
   --text-on-accent: #181c14;
