@@ -3,9 +3,11 @@ import { getGitHubRepoWebUrl } from './git-github'
 import { runGit } from './git-utils'
 
 export async function getGitBranches(repoRoot: string): Promise<GitBranchSnapshot> {
+  // `lstrip=2`, not `short`: `short` keeps `heads/` on a branch that shares
+  // its name with a tag, and that name is then shown and pushed as the branch.
   const branchOutput = await runGit(repoRoot, [
     'branch',
-    '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)',
+    '--format=%(refname:lstrip=2)%09%(HEAD)%09%(upstream:short)',
     '--sort=refname',
   ])
   const branches = branchOutput
@@ -47,7 +49,12 @@ async function collectGitRefs(repoRoot: string, headHash: string | null): Promis
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line): GitRef => {
-      const [name = '', hash = '', fullRef = ''] = line.split('\t')
+      const [shortName = '', hash = '', fullRef = ''] = line.split('\t')
+      // Branches and tags are named from their full ref: the short form of a
+      // branch and a tag that share a name is `heads/<name>` and `tags/<name>`.
+      const name = /^refs\/(?:heads|tags)\//u.test(fullRef)
+        ? fullRef.replace(/^refs\/(?:heads|tags)\//u, '')
+        : shortName
       const type = fullRef.startsWith('refs/heads/')
         ? 'head'
         : fullRef.startsWith('refs/remotes/')

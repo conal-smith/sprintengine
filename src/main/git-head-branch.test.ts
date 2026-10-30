@@ -6,6 +6,7 @@ import { afterEach, test } from 'vitest'
 
 import { readBranchName } from './git-branch-span'
 import { branchNameFromHeadRef } from './git-head-branch'
+import { getGitBranches, getGitCommitGraph } from './git-read-models'
 import { getGitRowSummary } from './git-status'
 import { runGitCommand } from './git-utils'
 
@@ -42,4 +43,15 @@ test('a branch that shares its name with a tag is read as the branch, not heads/
 
   assert.equal(await readBranchName(root), 'release')
   assert.equal((await getGitRowSummary(root)).branch, 'release')
+  const branches = await getGitBranches(root)
+  assert.equal(branches.current, 'release')
+  assert.deepEqual(
+    branches.branches.map((branch) => branch.name),
+    ['release'],
+  )
+  const graph = await getGitCommitGraph(root)
+  assert.deepEqual(
+    graph.refs.filter((ref) => ref.type !== 'other').map((ref) => `${ref.type}:${ref.name}`),
+    ['head:release', 'tag:release'],
+  )
 })
