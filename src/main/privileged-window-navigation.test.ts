@@ -6,8 +6,11 @@ import {
   externalLinkForWindowOpen,
   guardPrivilegedWindow,
   isAppDocument,
+  refusesFrameNavigation,
+  type FrameNavigation,
   type GuardedContents,
 } from './privileged-window-navigation'
+import { SEALED_VISUAL_URL_PREFIX } from '../shared/sealed-visual'
 
 const packaged = appDocumentUrl(
   undefined,
@@ -18,20 +21,32 @@ const development = appDocumentUrl('http://localhost:5173/', '/unused')
 function fakeContents() {
   let openHandler: ((details: { url: string }) => { action: 'deny' }) | null = null
   let navigate: ((event: { preventDefault(): void }, url: string) => void) | null = null
-  const contents: GuardedContents = {
-    setWindowOpenHandler: (handler) => {
+  let frameNavigate: ((details: FrameNavigation) => void) | null = null
+  const contents = {
+    setWindowOpenHandler: (handler: (details: { url: string }) => { action: 'deny' }) => {
       openHandler = handler
     },
-    on: (_event, listener) => {
-      navigate = listener
+    on: (event: string, listener: never) => {
+      if (event === 'will-navigate') navigate = listener
+      else frameNavigate = listener
     },
-  }
+  } as GuardedContents
   return {
     contents,
     open: (url: string) => openHandler!({ url }),
     navigate: (url: string) => {
       let prevented = false
       navigate!({ preventDefault: () => (prevented = true) }, url)
+      return prevented ? 'blocked' : 'allowed'
+    },
+    navigateFrame: (frameUrl: string, isSameDocument = false) => {
+      let prevented = false
+      frameNavigate!({
+        preventDefault: () => (prevented = true),
+        isMainFrame: false,
+        isSameDocument,
+        frame: { url: frameUrl },
+      })
       return prevented ? 'blocked' : 'allowed'
     },
   }
@@ -71,4 +86,29 @@ test('window.open hands only web and mail links to the OS, and never opens a win
 
 test('a link that is not a URL is dropped', () => {
   assert.equal(externalLinkForWindowOpen('not a link'), null)
+})
+
+const sealed = `${SEALED_VISUAL_URL_PREFIX}${encodeURIComponent('<p>hi</p>')}`
+
+test('a sealed visual frame may not navigate itself anywhere, its own address included', () => {
+  const { contents, navigateFrame } = fakeContents()
+  guardPrivilegedWindow(contents, packaged, () => undefined)
+  assert.equal(navigateFrame(sealed), 'blocked')
+  // A link within its own document loads nothing.
+  assert.equal(navigateFrame(sealed, true), 'allowed')
+  // Every other frame (a fresh one loading its first document, an artifact
+  // preview, a browser pane) is not this rule's business.
+  assert.equal(navigateFrame('about:blank'), 'allowed')
+  assert.equal(navigateFrame('about:srcdoc'), 'allowed')
+})
+
+test('the frame rule ignores the window itself and a frame that is already gone', () => {
+  assert.equal(refusesFrameNavigation({ isMainFrame: true, isSameDocument: false, frame: { url: sealed } }), false)
+  assert.equal(refusesFrameNavigation({ isMainFrame: false, isSameDocument: false, frame: null }), false)
+  const disposed = {
+    get url(): string {
+      throw new Error('Render frame was disposed')
+    },
+  }
+  assert.equal(refusesFrameNavigation({ isMainFrame: false, isSameDocument: false, frame: disposed }), false)
 })
