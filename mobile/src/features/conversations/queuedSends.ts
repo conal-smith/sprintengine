@@ -92,12 +92,11 @@ export type QueuedBubble =
  *
  * - Only to a desktop that holds messages, and only while a turn runs: with
  *   none running, a send goes straight into the chat, as it always did.
- * - Never with pictures. A held message is its words alone (the contract
- *   refuses `queue` beside `uploadIds`): an upload is staged for the send it
- *   was made for and is gone by the turn the message waits on. A message with
- *   pictures waits on the phone, as before, and is lost if the phone sleeps
- *   first; that is the trade for keeping the pictures with their words rather
- *   than sending the words without them.
+ * - With pictures and files only to a desktop that holds them too
+ *   (`conversation-queued-attachments`): it copies them the moment it holds the
+ *   message, before their uploads are spent. An older desktop refuses `queue`
+ *   beside `uploadIds`, so there a message with pictures waits on the phone, as
+ *   before, rather than going without them.
  * - Never behind a message the phone is already holding. The desktop sends
  *   what it holds the moment the turn ends, before the phone has heard the
  *   turn end, so a message queued after one with pictures would overtake it.
@@ -108,11 +107,18 @@ export type QueuedBubble =
  */
 export function holdsOnDesktop(input: {
   declared: boolean;
+  /** The desktop holds pictures and files with a queued message too. */
+  attachments: boolean;
   turnBusy: boolean;
   uploads: number;
   phoneQueued: number;
 }): boolean {
-  return input.declared && input.turnBusy && input.uploads === 0 && input.phoneQueued === 0;
+  return (
+    input.declared &&
+    input.turnBusy &&
+    (input.uploads === 0 || input.attachments) &&
+    input.phoneQueued === 0
+  );
 }
 
 /**

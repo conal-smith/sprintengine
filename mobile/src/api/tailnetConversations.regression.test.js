@@ -915,6 +915,54 @@ test("a busy send with pictures, or from a desktop that holds nothing, waits on 
   plainStream.close();
 });
 
+test("a busy send with pictures goes to a desktop that holds them, pictures and all, under its id", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true, queuedAttachments: true });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  stream.command({ kind: "send", message: "see this", uploadIds: ["upload-1"], composedAt: T0 }, "picture");
+  f.sockets[0].frame({ type: "commandResult", commandId: "picture", ok: false, code: "busy", retryAfterMs: 1_000 });
+  assert.deepEqual(
+    commandsOn(f.sockets[0]).map((frame) => [frame.commandId, frame.command]),
+    [
+      ["picture", { kind: "send", message: "see this", uploadIds: ["upload-1"], composedAt: T0 }],
+      ["picture", { kind: "send", message: "see this", uploadIds: ["upload-1"], composedAt: T0, queue: true }],
+    ],
+  );
+  assert.deepEqual(f.reheld.map((item) => item.id), ["picture"]);
+  assert.deepEqual(f.waiting, [], "nothing waits on the phone");
+  f.sockets[0].frame({ type: "commandResult", commandId: "picture", ok: true });
+  await f.advance(1_000);
+  assert.equal(commandsOn(f.sockets[0]).length, 2, "held once, never offered again");
+  stream.close();
+});
+
+test("sends written behind a busy one go to the desktop with it, in the order they were written", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true, queuedAttachments: true });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  stream.command(sent("first", "check the logs").command, "first");
+  stream.command(sent("second", "then the tests").command, "second");
+  stream.command({ kind: "send", message: "and this", uploadIds: ["upload-2"], composedAt: T0 }, "third");
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["first"], "one send in flight at a time");
+  f.sockets[0].frame({ type: "commandResult", commandId: "first", ok: false, code: "busy", retryAfterMs: 1_000 });
+  assert.deepEqual(
+    commandsOn(f.sockets[0]).slice(1).map((frame) => [frame.commandId, frame.command.queue, frame.command.uploadIds]),
+    [["first", true, undefined], ["second", true, undefined], ["third", true, ["upload-2"]]],
+  );
+  assert.deepEqual(f.reheld.map((item) => item.id), ["first", "second", "third"]);
+  assert.deepEqual(f.waiting, []);
+  for (const id of ["first", "second", "third"]) f.sockets[0].frame({ type: "commandResult", commandId: id, ok: true });
+  await f.advance(1_000);
+  assert.equal(commandsOn(f.sockets[0]).length, 4, "none is offered as a plain send afterwards");
+  stream.close();
+});
+
+test("a cached held send with pictures goes as a plain one to a desktop that holds only words", async () => {
+  const pictured = { commandId: "cached", command: { kind: "send", message: "see this", uploadIds: ["upload-3"], queue: true }, queuedAt: T0 };
+  const f = fixture(), stream = f.open({ queuedSends: true, pendingSends: [pictured] });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.command), [{ kind: "send", message: "see this", uploadIds: ["upload-3"] }]);
+  stream.close();
+});
+
 test("a send the desktop refuses as stale is handed back, and Send now offers it under its id, confirmed", async () => {
   const f = fixture(), stream = f.open();
   await f.advance(); f.synchronize(f.sockets[0]);

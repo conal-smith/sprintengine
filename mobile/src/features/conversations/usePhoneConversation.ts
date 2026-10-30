@@ -22,6 +22,7 @@ import {
 } from "../../api/conversationWire";
 import {
   declaresConversationHello,
+  declaresQueuedAttachments,
   declaresQueuedSends,
   declaresScheduledSends,
   declaresSteerSends,
@@ -262,6 +263,9 @@ export function usePhoneConversation(
   // Whether the desktop holds queued messages; re-read on every foreground, so
   // a desktop that updates starts holding them without a re-pair.
   const holdsQueued = !!session && declaresQueuedSends(session);
+  // Whether it holds a queued message's pictures and files as well, so one
+  // carrying them goes to it too rather than waiting here.
+  const holdsAttachments = !!session && declaresQueuedAttachments(session);
   // Whether the desktop keeps messages scheduled into a chat, read the same way.
   const holdsScheduled = !!session && declaresScheduledSends(session);
   const takesSteer = !!session && declaresSteerSends(session);
@@ -656,7 +660,9 @@ export function usePhoneConversation(
       // under its id (the desktop holds a repeat once); to a desktop that has
       // since lost the capability it waits here like any other.
       const handed = (item: CachedConversation["pending"][number]) =>
-        item.command.queue === true && holdsQueued;
+        item.command.queue === true &&
+        holdsQueued &&
+        (!item.command.uploadIds?.length || holdsAttachments);
       setQueued(
         pendingRef.current
           .filter((item) => !handed(item) && !staleAtOpen.has(item.commandId))
@@ -1075,6 +1081,7 @@ export function usePhoneConversation(
             thread.phase === "waiting_for_approval" ||
             thread.phase === "waiting_for_input",
           queuedSends: holdsQueued,
+          queuedAttachments: holdsAttachments,
           scheduledSends: holdsScheduled,
           hello: answersHello,
         },
@@ -1112,7 +1119,14 @@ export function usePhoneConversation(
       stream.current = null;
       // A message still queued goes on to the desktop without this screen.
       if (durable !== null && api && (pendingRef.current.length || writing.current))
-        queuedSends.carry({ deviceId: durable, key: cacheKey, api, queuedSends: holdsQueued, hello: answersHello });
+        queuedSends.carry({
+          deviceId: durable,
+          key: cacheKey,
+          api,
+          queuedSends: holdsQueued,
+          queuedAttachments: holdsAttachments,
+          hello: answersHello,
+        });
       actionRequests.current.clear();
       abandonThreadChanges(switches, "Conversation closed.");
       for (const settle of takingBack.values()) settle({ ok: false, message: "Conversation closed." });
@@ -1142,6 +1156,7 @@ export function usePhoneConversation(
     memoryKey,
     held,
     holdsQueued,
+    holdsAttachments,
     answersHello,
   ]);
   const command = useCallback((input: ConversationCommand) => {
@@ -1253,17 +1268,26 @@ export function usePhoneConversation(
         // one now and sends it itself (`queuedSends.ts` says when not).
         const handOver = !steer && holdsOnDesktop({
           declared: holdsQueued,
+          attachments: holdsAttachments,
           turnBusy: turnBusyRef.current,
           uploads: uploadIds.length,
           phoneQueued: phoneQueuedRef.current,
         });
         // One send is one message, whatever separators the text carries. A
-        // held one carries no `uploadIds` at all: the desktop refuses `queue`
-        // beside even an empty list.
+        // held one carries `uploadIds` only when it has pictures or files to
+        // hand over: a desktop without `conversation-queued-attachments`
+        // refuses `queue` beside even an empty list, and is never handed one
+        // with any (`holdsOnDesktop`).
         const command: Extract<ConversationCommand, { kind: "send" }> = steer
           ? { kind: "send", message: plainLineBreaks(message), steer: true, composedAt: queuedAt }
           : handOver
-            ? { kind: "send", message: plainLineBreaks(message), queue: true, composedAt: queuedAt }
+            ? {
+                kind: "send",
+                message: plainLineBreaks(message),
+                queue: true,
+                ...(uploadIds.length ? { uploadIds } : {}),
+                composedAt: queuedAt,
+              }
             : { kind: "send", message: plainLineBreaks(message), uploadIds, composedAt: queuedAt };
         // Checked before the outbox: a send the desktop must refuse would
         // otherwise be persisted and offered again on every reconnect.
@@ -1303,7 +1327,7 @@ export function usePhoneConversation(
       };
       return serialize(run);
     },
-    [mutatePending, serialize, holdsQueued, takesSteer],
+    [mutatePending, serialize, holdsQueued, holdsAttachments, takesSteer],
   );
   // Take back a message the desktop holds, by the id its list names it by.
   // Settles when the desktop answers; its next `queued` frame then leaves the
