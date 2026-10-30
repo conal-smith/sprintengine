@@ -8,6 +8,7 @@ import {
   PROJECT_LOGO_RASTER_MAX_PX,
   createProjectLogoResolver,
   detectProjectLogo,
+  pageIconPaths,
   rankProjectLogoCandidates,
   sanitizeProjectLogoSvg,
   type ProjectLogoIo,
@@ -332,4 +333,39 @@ test('a logo whose header declares a vast picture is passed over, not decoded', 
   )
   expect(await detectProjectLogo('/repo', io)).toBeNull()
   expect(downscaled).toBe(0)
+})
+
+test('a web project’s favicon is found in its public, app and asset folders, and from its page’s icon link', async () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" /></svg>'
+  const svg = { bytes: Buffer.from(SVG) }
+  const found = async (files: Record<string, FakeFile>) => (await detectProjectLogo('/repo', createIo(files).io))?.path
+
+  expect(await found({ '/repo/README.md': svg, '/repo/public/favicon.svg': svg })).toBe('/repo/public/favicon.svg')
+  expect(await found({ '/repo/src/app/icon.svg': svg })).toBe('/repo/src/app/icon.svg')
+  expect(await found({ '/repo/static/favicon.svg': svg, '/repo/assets/logo.svg': svg })).toBe('/repo/assets/logo.svg')
+  expect(await found({ '/repo/logo.svg': svg, '/repo/public/favicon.svg': svg })).toBe('/repo/logo.svg')
+  // The page's own link, ahead of the folders: Vite serves `/` from public/.
+  const page = { bytes: Buffer.from('<head><link rel="icon" type="image/svg+xml" href="/brand/mark.svg?v=2"></head>') }
+  expect(
+    await found({ '/repo/index.html': page, '/repo/public/brand/mark.svg': svg, '/repo/public/favicon.svg': svg }),
+  ).toBe('/repo/public/brand/mark.svg')
+  // A rejected SVG in a folder falls through to the next candidate, as at the top level.
+  const scripted = { bytes: Buffer.from('<svg><script>alert(1)</script></svg>') }
+  expect(await found({ '/repo/public/favicon.svg': scripted, '/repo/app/icon.svg': svg })).toBe('/repo/app/icon.svg')
+})
+
+test('a page’s icon link names a path in the project, never a URL or a climb out of it', () => {
+  expect(pageIconPaths('<link rel="shortcut icon" href="favicon.ico">', '')).toEqual(['favicon.ico'])
+  expect(pageIconPaths("<link href='./img/i.png' rel='icon'>", 'public')).toEqual(['public/img/i.png'])
+  expect(pageIconPaths('<link rel="icon" href="/f.svg">', '')).toEqual(['public/f.svg', 'f.svg'])
+  expect(pageIconPaths('<link rel="apple-touch-icon" href="touch.png">', '')).toEqual(['touch.png'])
+  for (const href of [
+    'https://cdn.example.com/f.svg',
+    '//cdn/f.svg',
+    'data:image/svg+xml,<svg/>',
+    '../f.svg',
+    'a\\..\\f.svg',
+  ])
+    expect(pageIconPaths(`<link rel="icon" href="${href}">`, '')).toEqual([])
+  expect(pageIconPaths('<link rel="stylesheet" href="app.css">', '')).toEqual([])
 })

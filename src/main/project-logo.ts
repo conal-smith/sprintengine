@@ -3,8 +3,9 @@ import { imageMimeType } from './filesystem-image'
 import { extractIcnsPng } from './project-logo-icns'
 import { imageWithinDecodeLimits } from '../shared/image-dimensions'
 
-// A project's own logo, read off the top level of its repo (or a macOS app's
-// icon from where such a repo keeps it) so a row of projects reads like a row
+// A project's own logo, read off the top level of its repo, the page its web
+// app links as its icon, the folders a web project serves its favicon from,
+// or a macOS app's icon from where such a repo keeps it so a row of projects reads like a row
 // of products. Detection only — there is no
 // per-project icon picker, and nothing here writes to the repo.
 //
@@ -37,6 +38,19 @@ const PROJECT_LOGO_CANDIDATES = [
 // candidate, each by a single existence check on its exact path — still no
 // walk.
 const PROJECT_LOGO_NESTED_CANDIDATES = ['build/icon.icns', 'resources/icon.icns', 'Resources/AppIcon.icns'] as const
+
+// The folders a web project keeps its favicon in, each listed once and ranked
+// as the top level is (`rankProjectLogoCandidates`): Vite's and Create React
+// App's `public/`, the Next.js app router's `app/` and `src/app/`, and the
+// `assets/` and `static/` other toolchains serve. Tried after the top level
+// and the page's own `<link rel="icon">`, in this order; still no walk.
+const PROJECT_LOGO_FOLDERS = ['public', 'app', 'src/app', 'assets', 'static'] as const
+
+// The pages whose `<link rel="icon">` names the favicon, by where a web
+// project keeps its entry page.
+const PROJECT_LOGO_PAGES = ['index.html', 'public/index.html'] as const
+// A page past this is not read for its icon link.
+const PROJECT_LOGO_PAGE_MAX_BYTES = 256 * 1024
 
 // Candidates above this are skipped and the next-ranked one is tried. A
 // sidebar glyph is never worth a megabyte, and the bytes travel to the renderer
@@ -152,6 +166,39 @@ export function sanitizeProjectLogoSvg(source: string): string | null {
   return source
 }
 
+/**
+ * The icons a page's `<link rel="icon">` (or `shortcut icon`, or
+ * `apple-touch-icon`) names, in the page's order, as paths inside the project:
+ * `pageDir` is the page's folder in it (`''` or `public`). A leading `/` is
+ * the site root, which a bundler serves from `public/`, so both are tried. A
+ * URL, a `data:` payload, or a path that climbs out of the project names
+ * nothing.
+ */
+export function pageIconPaths(html: string, pageDir: string): string[] {
+  const paths: string[] = []
+  for (const tag of html.match(/<link\b[^>]*>/giu) ?? []) {
+    const attribute = (name: string): string | null =>
+      tag
+        .match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'iu'))
+        ?.slice(1)
+        .find((v) => v !== undefined) ?? null
+    const rel = (attribute('rel') ?? '').toLowerCase().split(/\s+/u)
+    if (!rel.includes('icon') && !rel.includes('apple-touch-icon')) continue
+    const href = attribute('href')?.trim().split(/[?#]/u)[0]
+    if (!href || /^[a-z][a-z0-9+.-]*:/iu.test(href) || href.startsWith('//')) continue
+    const fromRoot = href.startsWith('/')
+    const relative = href.replace(/^\.?\/+/u, '')
+    const parts = relative.split('/')
+    if (!relative || relative.includes('\\') || parts.some((part) => part === '..' || part === '')) continue
+    const candidates = fromRoot ? ['public', ''] : [pageDir]
+    for (const dir of candidates) {
+      const path = dir ? `${dir}/${relative}` : relative
+      if (!paths.includes(path)) paths.push(path)
+    }
+  }
+  return paths
+}
+
 function toDataUrl(bytes: Buffer, mimeType: string): string {
   return `data:${mimeType};base64,${bytes.toString('base64')}`
 }
@@ -175,44 +222,80 @@ export async function detectProjectLogo(folderPath: string, io: ProjectLogoIo): 
     return null
   }
 
-  const candidatePaths = [
-    ...rankProjectLogoCandidates(entries).map((name) => io.join(folderPath, name)),
-    ...PROJECT_LOGO_NESTED_CANDIDATES.map((relativePath) => io.join(folderPath, relativePath)),
+  // Lazily, in rank order: the top level, the page's icon link, the web
+  // folders, then the app icons. A folder or a page is read only when every
+  // candidate before it missed.
+  const lists: Array<() => Promise<string[]>> = [
+    async () => rankProjectLogoCandidates(entries).map((name) => io.join(folderPath, name)),
+    () => pageIconCandidates(folderPath, io),
+    ...PROJECT_LOGO_FOLDERS.map((folder) => async () => {
+      const inside = await io.readdir(io.join(folderPath, folder)).catch(() => [] as string[])
+      return rankProjectLogoCandidates(inside).map((name) => io.join(io.join(folderPath, folder), name))
+    }),
+    async () => PROJECT_LOGO_NESTED_CANDIDATES.map((relativePath) => io.join(folderPath, relativePath)),
   ]
-  for (const filePath of candidatePaths) {
-    // Only the io calls are caught. A candidate a user's disk will not give us
-    // is an ordinary miss and falls through to the next-ranked one; a throw out
-    // of the ranking, the sanitizer, or the encoding below is a bug in this
-    // module and must surface rather than quietly degrade to the glyph.
-    const read = await readCandidate(filePath, io)
-    if (!read) continue
-
-    const { stats, raw, mimeType } = read
-
-    if (mimeType === SVG_MIME_TYPE) {
-      const sanitized = sanitizeProjectLogoSvg(raw.toString('utf-8'))
-      if (sanitized === null) continue
-      return {
-        path: filePath,
-        mtimeMs: stats.mtimeMs,
-        dataUrl: toDataUrl(Buffer.from(sanitized, 'utf-8'), mimeType),
-      }
+  const tried = new Set<string>()
+  for (const list of lists) {
+    for (const filePath of await list()) {
+      if (tried.has(filePath)) continue
+      tried.add(filePath)
+      const logo = await logoFrom(filePath, io)
+      if (logo) return logo
     }
+  }
+  return null
+}
 
-    // Nothing downstream decodes an `.icns`; the PNG inside it is the logo.
-    const raster = mimeType === ICNS_MIME_TYPE ? extractIcnsPng(raw, PROJECT_LOGO_RASTER_MAX_PX) : raw
-    if (!raster || raster.byteLength > PROJECT_LOGO_MAX_BYTES) continue
-    // A file that declares a vast picture is not a logo: the window would decode it.
-    if (!imageWithinDecodeLimits(raster)) continue
-    const downscaled = await downscaleCandidate(raster, mimeType === ICNS_MIME_TYPE ? PNG_MIME_TYPE : mimeType, io)
+// The icons the project's entry page links, each a path in the project.
+async function pageIconCandidates(folderPath: string, io: ProjectLogoIo): Promise<string[]> {
+  const found: string[] = []
+  for (const page of PROJECT_LOGO_PAGES) {
+    const pagePath = io.join(folderPath, page)
+    try {
+      const stats = await io.stat(pagePath)
+      if (!stats.isFile || stats.size > PROJECT_LOGO_PAGE_MAX_BYTES) continue
+      const html = (await io.readFile(pagePath)).toString('utf-8')
+      const pageDir = page.includes('/') ? page.slice(0, page.lastIndexOf('/')) : ''
+      for (const path of pageIconPaths(html, pageDir)) found.push(io.join(folderPath, path))
+    } catch {
+      // No such page: nothing it links.
+    }
+  }
+  return found
+}
+
+// One candidate file as the logo, or null for one that is not usable.
+async function logoFrom(filePath: string, io: ProjectLogoIo): Promise<ProjectLogo | null> {
+  // Only the io calls are caught. A candidate a user's disk will not give us
+  // is an ordinary miss and falls through to the next-ranked one; a throw out
+  // of the ranking, the sanitizer, or the encoding below is a bug in this
+  // module and must surface rather than quietly degrade to the glyph.
+  const read = await readCandidate(filePath, io)
+  if (!read) return null
+
+  const { stats, raw, mimeType } = read
+
+  if (mimeType === SVG_MIME_TYPE) {
+    const sanitized = sanitizeProjectLogoSvg(raw.toString('utf-8'))
+    if (sanitized === null) return null
     return {
       path: filePath,
       mtimeMs: stats.mtimeMs,
-      dataUrl: toDataUrl(downscaled.bytes, downscaled.mimeType),
+      dataUrl: toDataUrl(Buffer.from(sanitized, 'utf-8'), mimeType),
     }
   }
 
-  return null
+  // Nothing downstream decodes an `.icns`; the PNG inside it is the logo.
+  const raster = mimeType === ICNS_MIME_TYPE ? extractIcnsPng(raw, PROJECT_LOGO_RASTER_MAX_PX) : raw
+  if (!raster || raster.byteLength > PROJECT_LOGO_MAX_BYTES) return null
+  // A file that declares a vast picture is not a logo: the window would decode it.
+  if (!imageWithinDecodeLimits(raster)) return null
+  const downscaled = await downscaleCandidate(raster, mimeType === ICNS_MIME_TYPE ? PNG_MIME_TYPE : mimeType, io)
+  return {
+    path: filePath,
+    mtimeMs: stats.mtimeMs,
+    dataUrl: toDataUrl(downscaled.bytes, downscaled.mimeType),
+  }
 }
 
 type ReadCandidate = { stats: ProjectLogoStat; raw: Buffer; mimeType: string }
