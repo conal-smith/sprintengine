@@ -13,6 +13,7 @@
 import type { CommitMessageInput } from '../shared/text-generation/commit-message'
 import { followsConventionalCommits, type TextGenerationWritingStyle } from '../shared/text-generation/writing-style'
 import { runGitCommand } from './git-utils'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 
 export type CommitMessageDraftInputOutcome = { ok: true; input: CommitMessageInput } | { ok: false; message: string }
 
@@ -39,7 +40,7 @@ export async function readCommitMessageDraftInput(
     out(['diff', ...DIFF_FLAGS]),
     // A repository with no commits yet has no history to read: an empty list.
     out(['log', `-${HISTORY_DEPTH}`, '--no-merges', '--format=%s']),
-    out(['symbolic-ref', '--quiet', '--short', 'HEAD']),
+    out([...HEAD_BRANCH_REF_ARGS]),
   ])
   if (diffStat === null) return { ok: false, message: 'Git could not read the staged changes.' }
   if (!diffStat.trim()) return { ok: false, message: 'Nothing is staged to commit.' }
@@ -47,7 +48,7 @@ export async function readCommitMessageDraftInput(
   return {
     ok: true,
     input: {
-      branch: branch?.trim() || null,
+      branch: branchNameFromHeadRef(branch),
       diffStat: diffStat.slice(0, MAX_DIFF_STAT_READ_CHARS),
       // A diff past git's own output limit comes back as null: the summary
       // alone still says what changed, and the prompt says the diff is missing.

@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from 'path'
 
 import { pathExists, runGitCommand } from './git-utils'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 import type { ChangedFileCounts } from '../shared/electron-api'
 
 /**
@@ -272,9 +273,8 @@ export async function isLinkedWorktree(cwd: string): Promise<boolean> {
  * distinction the row needs.
  */
 export async function readBranchName(cwd: string): Promise<string | null> {
-  const result = await runGitCommand(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
-  if (!result.ok) return null
-  return result.stdout.trim() || null
+  const result = await runGitCommand(cwd, [...HEAD_BRANCH_REF_ARGS])
+  return result.ok ? branchNameFromHeadRef(result.stdout) : null
 }
 
 /**

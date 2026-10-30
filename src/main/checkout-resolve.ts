@@ -29,6 +29,7 @@ import { readFile, realpath, stat } from 'fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'path'
 import type { ObservedCheckout } from '../shared/observed-checkout'
 import { pathExists, runGitCommand } from './git-utils'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 import { isWindowsPath, isWslDriveMountPath, wslToWindowsPath } from '../shared/host-paths'
 
 export type ResolvedCheckoutFacts = Pick<
@@ -201,8 +202,8 @@ async function readCheckoutFacts(
   const headPath = ownGitDir ? join(ownGitDir, 'HEAD') : null
   let branch = headPath ? branchFromHeadFile(await readFile(headPath, 'utf8').catch(() => null)) : undefined
   if (branch === undefined) {
-    const head = await runGitCommand(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'], CLEAN_GIT_ENV)
-    branch = head.ok ? firstLine(head.stdout) || null : null
+    const head = await runGitCommand(cwd, [...HEAD_BRANCH_REF_ARGS], CLEAN_GIT_ENV)
+    branch = head.ok ? branchNameFromHeadRef(head.stdout) : null
   }
 
   return { facts: { gitRoot, repoRoot, branch, isLinkedWorktree }, headPath }

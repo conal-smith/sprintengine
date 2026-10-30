@@ -62,6 +62,9 @@ test('a printable scan skips controls and escapes and resumes inside a split seq
   assert.equal(scanForPrintable('\x1b]0;title\x07\x1b]8;;https://example.com\x1b\\').printable, false)
   assert.equal(scanForPrintable('\x1b(B\x1b7\x1b8').printable, false)
   assert.deepEqual(scanForPrintable('\x1b[2Jx'), { printable: true, resumeAt: 4 })
+  // CAN and SUB cancel a sequence, and what follows them paints.
+  assert.deepEqual(scanForPrintable('\x1b]0;title\x18x'), { printable: true, resumeAt: 10 })
+  assert.deepEqual(scanForPrintable('\x1b[12\x1ax'), { printable: true, resumeAt: 5 })
 
   // An escape cut off at the end of a chunk is not text, and the next scan
   // starts at its ESC so the rest of it is read as part of the sequence.

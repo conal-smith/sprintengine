@@ -21,6 +21,7 @@ import {
   type ArtifactSummary,
 } from './artifact-site'
 import type { ArtifactsGit } from './artifacts-store'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from '../git-head-branch'
 import { resolveArtifactsHost, type ArtifactsHost, type ArtifactsHostDeps } from './artifacts-hosts'
 
 // What the `artifacts.*` tools do, on whichever host Settings ▸ Artifacts
@@ -161,7 +162,7 @@ export function createArtifactsService(deps: ArtifactsServiceDeps) {
     const detected = top
       ? {
           commit: await ask(['rev-parse', 'HEAD']),
-          branch: await ask(['symbolic-ref', '--quiet', '--short', 'HEAD']),
+          branch: branchNameFromHeadRef(await ask([...HEAD_BRANCH_REF_ARGS])) ?? '',
           remote: await ask(['remote', 'get-url', 'origin']),
         }
       : { commit: '', branch: '', remote: '' }

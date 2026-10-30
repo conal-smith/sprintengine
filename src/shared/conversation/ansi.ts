@@ -137,6 +137,14 @@ function createState(): AnsiState {
 
 function consumeEscape(state: AnsiState, char: string): boolean {
   state.pending += char
+  // CAN and SUB abort a sequence wherever they land in it, and what follows is
+  // text again; read as part of an OSC, a cancelled title hid all the rest.
+  if (char === '\x18' || char === '\x1a') {
+    state.pending = ''
+    state.escapeKind = undefined
+    state.oscEscape = false
+    return true
+  }
   if (state.escapeKind === 'start') {
     if (char === '[' || char === ']') {
       state.escapeKind = char === '[' ? 'csi' : 'osc'

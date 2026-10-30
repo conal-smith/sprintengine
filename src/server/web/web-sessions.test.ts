@@ -132,3 +132,15 @@ test('a browser is named from its user agent', () => {
   expect(browserNameFromUserAgent('Mozilla/5.0 (Windows NT 10.0) Firefox/140.0')).toBe('Firefox on Windows')
   expect(browserNameFromUserAgent(undefined)).toBe('Browser')
 })
+
+test('a phone browser is named for itself, not the engine its user agent also names', () => {
+  const ios = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)'
+  const android = 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko)'
+  expect(browserNameFromUserAgent(`${ios} EdgiOS/140.0 Version/18.0 Mobile/15E148 Safari/604.1`)).toBe('Edge on iOS')
+  expect(browserNameFromUserAgent(`${ios} FxiOS/140.0 Mobile/15E148 Safari/605.1.15`)).toBe('Firefox on iOS')
+  expect(browserNameFromUserAgent(`${ios} CriOS/140.0 Mobile/15E148 Safari/604.1`)).toBe('Chrome on iOS')
+  expect(browserNameFromUserAgent(`${ios} OPiOS/16.0 Mobile/15E148 Safari/9537.53`)).toBe('Opera on iOS')
+  expect(browserNameFromUserAgent(`${android} Chrome/140.0 Mobile Safari/537.36 EdgA/140.0`)).toBe('Edge on Android')
+  expect(browserNameFromUserAgent(`${android} Chrome/140.0 Mobile Safari/537.36 OPR/90.0`)).toBe('Opera on Android')
+  expect(browserNameFromUserAgent(`${android} Chrome/140.0 Mobile Safari/537.36`)).toBe('Chrome on Android')
+})

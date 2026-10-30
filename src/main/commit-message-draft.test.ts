@@ -26,7 +26,7 @@ test('the staged diff, its summary, the history and the branch are read', async 
   const subjects = Array.from({ length: 12 }, (_, i) => `fix(area${i}): thing ${i}`).join('\n')
   const outcome = await readCommitMessageDraftInput('/Users/dev/app', STYLE, {
     git: fakeGit(
-      { stat: ' a.ts | 1 +\n', patch: '+a\n', log: `${subjects}\n`, 'symbolic-ref': 'feature/marks\n' },
+      { stat: ' a.ts | 1 +\n', patch: '+a\n', log: `${subjects}\n`, 'symbolic-ref': 'refs/heads/feature/marks\n' },
       calls,
     ),
   })
@@ -44,7 +44,7 @@ test('the staged diff, its summary, the history and the branch are read', async 
 
 test('nothing staged is said, and is not a draft', async () => {
   const outcome = await readCommitMessageDraftInput('/Users/dev/app', STYLE, {
-    git: fakeGit({ stat: '', patch: '', log: '', 'symbolic-ref': 'main' }),
+    git: fakeGit({ stat: '', patch: '', log: '', 'symbolic-ref': 'refs/heads/main' }),
   })
   assert.deepEqual(outcome, { ok: false, message: 'Nothing is staged to commit.' })
 })
@@ -62,7 +62,7 @@ test('a repository with no commits, on no branch, still drafts from what is stag
 
 test('a staged diff past the read bound is cut', async () => {
   const outcome = await readCommitMessageDraftInput('/Users/dev/app', STYLE, {
-    git: fakeGit({ stat: ' a.ts | 1 +', patch: 'x'.repeat(200_000), log: '', 'symbolic-ref': 'main' }),
+    git: fakeGit({ stat: ' a.ts | 1 +', patch: 'x'.repeat(200_000), log: '', 'symbolic-ref': 'refs/heads/main' }),
   })
   assert.ok(outcome.ok)
   assert.equal(outcome.input.patch.length, 60_000)

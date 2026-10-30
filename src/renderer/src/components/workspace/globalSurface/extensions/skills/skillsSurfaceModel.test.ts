@@ -350,6 +350,11 @@ test('skillsSurfaceModel', async () => {
     assert.equal(formatStars(973), '973')
     assert.equal(formatStars(4900), '4.9k')
     assert.equal(formatStars(52341), '52k')
+    assert.equal(formatStars(999.6), '1k')
+    assert.equal(formatStars(1000), '1k')
+    assert.equal(formatStars(9960), '10k')
+    assert.equal(formatStars(999_600), '1M')
+    assert.equal(formatStars(1_240_000), '1.2M')
 
     const added = addedRepoKeys(['browser-act/skills', '', 'MattPocock/Skills '])
     assert.equal(isRepoAdded(added, 'Browser-Act/Skills'), true)

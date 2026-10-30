@@ -13,7 +13,7 @@
 // Studio server's `pullRequests.link`, the same record the gateway's tool and
 // the captured create commands write.
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -39,6 +39,7 @@ import { createForgePullRequests, isDriven } from './forge-pull-request'
 import { listBranchPullRequests } from './github/branch-pull-request'
 import { sharedGhRunner, type GhRunner } from './github/gh'
 import { gitPushTarget, originDefaultBranch } from './git-push-target'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 import { runGitCommand } from './git-utils'
 
 export type DraftInputOutcome = { ok: true; input: PullRequestTextInput } | { ok: false; message: string }
@@ -64,17 +65,39 @@ const MAX_PATCH_READ_CHARS = 60_000
 const GH_CREATE_TIMEOUT_MS = 60_000
 /** gh's refusal to open a second pull request for a branch. */
 const GH_ALREADY_EXISTS = /\ba pull request for branch\b[^\n]*\balready exists\b/i
-/** Where a repository keeps its pull request template, in the order a forge looks. */
-const TEMPLATE_PATHS = [
-  '.github/pull_request_template.md',
-  '.github/PULL_REQUEST_TEMPLATE.md',
-  'docs/pull_request_template.md',
-  'docs/PULL_REQUEST_TEMPLATE.md',
-  'pull_request_template.md',
-  'PULL_REQUEST_TEMPLATE.md',
-  '.gitlab/merge_request_templates/Default.md',
-  '.gitea/pull_request_template.md',
+/** What a pull request template is called; GitHub takes either extension. */
+const PULL_REQUEST_TEMPLATE_NAMES = ['pull_request_template.md', 'pull_request_template.txt']
+/**
+ * Where a repository keeps its pull request template, in the order a forge
+ * looks. A name matches in any case, as the forge matches it: on a
+ * case-sensitive disk `Pull_Request_Template.md` is the same template.
+ */
+const TEMPLATE_LOCATIONS: ReadonlyArray<{ folder: string; names: readonly string[] }> = [
+  { folder: '.github', names: PULL_REQUEST_TEMPLATE_NAMES },
+  { folder: 'docs', names: PULL_REQUEST_TEMPLATE_NAMES },
+  { folder: '', names: PULL_REQUEST_TEMPLATE_NAMES },
+  { folder: '.gitlab/merge_request_templates', names: ['default.md'] },
+  { folder: '.gitea', names: PULL_REQUEST_TEMPLATE_NAMES },
 ]
+
+/** The first non-empty template the checkout has, its comments left out; null when it has none. */
+async function readPullRequestTemplate(gitRoot: string): Promise<string | null> {
+  for (const { folder, names } of TEMPLATE_LOCATIONS) {
+    const entries = await readdir(path.join(gitRoot, folder)).catch(() => [] as string[])
+    for (const name of names) {
+      // The lowercase spelling first when a case-sensitive disk holds two.
+      const matches = entries
+        .filter((entry) => entry.toLowerCase() === name)
+        .sort((a, b) => Number(b === name) - Number(a === name) || a.localeCompare(b))
+      for (const match of matches) {
+        // A folder named like a template fails to read and is passed over.
+        const text = await readFile(path.join(gitRoot, folder, match), 'utf8').catch(() => null)
+        if (text && text.trim()) return text.replace(/<!--[\s\S]*?-->/g, '').trim()
+      }
+    }
+  }
+  return null
+}
 
 type Lookup = { at: number; open: boolean | null; mergedHeads: string[] }
 
@@ -139,7 +162,7 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     const gitRoot = await out(cwd, ['rev-parse', '--show-toplevel'])
     if (!gitRoot) return empty
     const [branch, headSha, originHead, status, remoteUrl] = await Promise.all([
-      out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+      out(gitRoot, [...HEAD_BRANCH_REF_ARGS]).then(branchNameFromHeadRef),
       out(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']),
       out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']),
       // The sidecar folder an older build wrote is not the person's work, so
@@ -281,14 +304,7 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
       out(gitRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', `${base}...HEAD`]),
       out(gitRoot, ['log', '-30', '--format=%s', base]),
     ])
-    let template: string | null = null
-    for (const candidate of TEMPLATE_PATHS) {
-      const text = await readFile(path.join(gitRoot, candidate), 'utf8').catch(() => null)
-      if (text && text.trim()) {
-        template = text.replace(/<!--[\s\S]*?-->/g, '').trim()
-        break
-      }
-    }
+    const template = await readPullRequestTemplate(gitRoot)
     return {
       ok: true,
       input: {

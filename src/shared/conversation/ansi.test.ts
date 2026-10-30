@@ -135,6 +135,11 @@ test('an OSC cut short by another escape ends there instead of swallowing the re
   assert.equal(ansiPlainText('\x1b]0;title\x1b[31mred text\x1b[0m'), 'red text')
 })
 
+test('CAN or SUB cancels a sequence, and the text after it is shown', () => {
+  assert.equal(ansiPlainText('\x1b]0;title\x18after'), 'after')
+  assert.equal(ansiPlainText('\x1b[12\x1aafter'), 'after')
+})
+
 test('a growing log read chunk by chunk reads as the whole of it parsed at once', () => {
   const log =
     '\x1b[32madded\x1b[39m 3 packages\n\x1b]8;;https://example.com\x07docs\x1b]8;;\x07\nfetching 10%\rfetching 100%\x1b[K\nbar \x1b[1mdone\x1b[0m'

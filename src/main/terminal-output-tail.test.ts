@@ -165,6 +165,10 @@ test('an unfinished escape is told apart from a finished one of every kind', () 
   assert.equal(unfinishedEscapeLength('a\x1b('), 2)
   assert.equal(unfinishedEscapeLength('a\x1b(B'), 0)
   assert.equal(unfinishedEscapeLength('a\x1bM'), 0)
+  // CAN and SUB cancel a sequence, so one they cut short holds nothing back.
+  assert.equal(unfinishedEscapeLength('a\x1b]0;title\x18 done'), 0)
+  assert.equal(unfinishedEscapeLength('a\x1b]0;title\x1a'), 0)
+  assert.equal(unfinishedEscapeLength('a\x1b[12\x18 1 2'), 0)
   // Too far back to be a sequence still being written.
   assert.equal(unfinishedEscapeLength(`\x1b[${'1'.repeat(5_000)}`), 0)
 })
