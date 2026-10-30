@@ -748,26 +748,76 @@ function WorkspaceSidebar({
   // reload, as they are on a paired machine following them. Idle is the
   // row's own reading: nothing working (its background agents and monitors
   // count) and nothing waiting on the person.
-  const visitClockDoneRef = useRef<ReadonlySet<string> | undefined>(undefined)
-  const visitClockDoneIds = useMemo(() => {
+  //
+  // The rows here are not drawn again for a visit (the manager's projection
+  // leaves `lastVisitedAt` out, so a stamp every few seconds does not
+  // re-render the list), so their visit clocks can be a visit behind: read
+  // alone, a chat opened and left kept its green until something else about
+  // it changed. The rows' clocks pick the candidates, which can only be more
+  // than the live ones mark (a visit only moves the clock on; a rewind is
+  // `rewoundVisits`' to mark), and the store is watched for the candidates'
+  // clocks alone, as `unseenVisits` does, which are read live.
+  const finishedAtOf = useCallback(
+    (workspace: Workspace) =>
+      latestFinishOf(workspace, conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS),
+    [conversationsByWorkspaceId],
+  )
+  const idleOf = useCallback(
+    (id: string) => {
+      const activity = activityByWorkspaceId[id]
+      return (
+        activity !== 'working' &&
+        activity !== 'needs-input' &&
+        typeof terminalRecencyByWorkspaceId[id]?.workingSince !== 'number'
+      )
+    },
+    [activityByWorkspaceId, terminalRecencyByWorkspaceId],
+  )
+  const visitClockCandidatesRef = useRef<ReadonlySet<string> | undefined>(undefined)
+  const visitClockCandidateIds = useMemo(() => {
     const next = visitClockCompletions({
       workspaces,
-      finishedAt: (workspace) =>
-        latestFinishOf(workspace, conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS),
-      idle: (id) => {
-        const activity = activityByWorkspaceId[id]
-        return (
-          activity !== 'working' &&
-          activity !== 'needs-input' &&
-          typeof terminalRecencyByWorkspaceId[id]?.workingSince !== 'number'
-        )
-      },
+      finishedAt: finishedAtOf,
+      idle: idleOf,
       onScreenWorkspaceId,
+      previous: visitClockCandidatesRef.current,
+    })
+    visitClockCandidatesRef.current = next
+    return next
+  }, [workspaces, finishedAtOf, idleOf, onScreenWorkspaceId])
+  const candidateVisits = useWorkspaceStore(
+    useCallback(
+      (state: { workspaces: Workspace[] }) => {
+        if (visitClockCandidateIds.size === 0) return ''
+        let visits = ''
+        for (const workspace of state.workspaces) {
+          if (visitClockCandidateIds.has(workspace.id) && typeof workspace.lastVisitedAt === 'number')
+            visits += `${workspace.id}=${workspace.lastVisitedAt};`
+        }
+        return visits
+      },
+      [visitClockCandidateIds],
+    ),
+  )
+  const visitClockDoneRef = useRef<ReadonlySet<string> | undefined>(undefined)
+  const visitClockDoneIds = useMemo(() => {
+    if (visitClockCandidateIds.size === 0) return visitClockCandidateIds
+    const liveVisitedAt = new Map<string, Workspace['lastVisitedAt']>()
+    for (const pair of candidateVisits.split(';')) {
+      const at = pair.lastIndexOf('=')
+      if (at > 0) liveVisitedAt.set(pair.slice(0, at), Number(pair.slice(at + 1)))
+    }
+    const next = visitClockCompletions({
+      workspaces: workspaces.filter((workspace) => visitClockCandidateIds.has(workspace.id)),
+      finishedAt: finishedAtOf,
+      idle: idleOf,
+      onScreenWorkspaceId,
+      visitedAt: (workspace) => liveVisitedAt.get(workspace.id) ?? workspace.lastVisitedAt,
       previous: visitClockDoneRef.current,
     })
     visitClockDoneRef.current = next
     return next
-  }, [workspaces, conversationsByWorkspaceId, activityByWorkspaceId, terminalRecencyByWorkspaceId, onScreenWorkspaceId])
+  }, [visitClockCandidateIds, candidateVisits, workspaces, finishedAtOf, idleOf, onScreenWorkspaceId])
   const unseenDoneIds = useMemo<ReadonlySet<string>>(() => {
     if (visitClockDoneIds.size === 0) return observedDoneIds
     if ([...visitClockDoneIds].every((id) => observedDoneIds.has(id))) return observedDoneIds

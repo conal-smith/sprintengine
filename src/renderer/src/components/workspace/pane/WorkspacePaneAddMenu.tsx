@@ -23,11 +23,19 @@ type WorkspacePaneAddMenuProps = {
   /** Held by the pane when it opens the menu from the keyboard (`pane.add`). */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** The trigger's name: where the picked tab opens. A pop-out window's says it opens there. */
+  label?: string
 }
 
 const MENU_ITEM_SELECTOR = '[role=menuitem]:not([disabled])'
 
-export function WorkspacePaneAddMenu({ kinds, onPick, open: heldOpen, onOpenChange }: WorkspacePaneAddMenuProps) {
+export function WorkspacePaneAddMenu({
+  kinds,
+  onPick,
+  open: heldOpen,
+  onOpenChange,
+  label = 'Open in the pane',
+}: WorkspacePaneAddMenuProps) {
   const [ownOpen, setOwnOpen] = useState(false)
   const open = heldOpen ?? ownOpen
   const setOpen = useCallback(
@@ -80,18 +88,18 @@ export function WorkspacePaneAddMenu({ kinds, onPick, open: heldOpen, onOpenChan
     <Popover
       open={open}
       onOpenChange={setOpen}
-      ariaLabel="Open in the pane"
+      ariaLabel={label}
       popupRole="menu"
       placement="bottom-start"
       onOpenAutoFocus={(surface) => {
         surface.querySelector<HTMLButtonElement>(MENU_ITEM_SELECTOR)?.focus()
       }}
       renderTrigger={({ ref, triggerProps, togglePopover }) => (
-        <Tooltip content="Open in the pane" placement="bottom">
+        <Tooltip content={label} placement="bottom">
           <IconButton
             ref={ref}
             onClick={togglePopover}
-            aria-label="Open in the pane"
+            aria-label={label}
             pressed={open}
             className="app-no-drag"
             {...triggerProps}

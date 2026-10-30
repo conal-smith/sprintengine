@@ -269,3 +269,77 @@ export function SignOutIcon({ tone, size = iconSize.md, label }: AppGlyphProps) 
     </GlyphFrame>
   );
 }
+
+// ── What the agent touched: the chat page's rows ─────────────────────────
+// The desktop pane's own tab glyphs (`pane/paneKinds.tsx`), on the same 16
+// grid, so a row reads the same on both: Diff, Browser, Canvas, Agents and
+// Library.
+
+/** Plus over minus in a frame: what a chat changed. Desktop `DiffGlyph`. */
+export function DiffGlyph({ tone, size = iconSize.xs, label, ink }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone, ink)} size={size} label={label}>
+      <Rect x={2.25} y={2.25} width={11.5} height={11.5} rx={2.25} stroke="currentColor" strokeWidth={STROKE} />
+      <Path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" />
+    </GlyphFrame>
+  );
+}
+
+/** A globe: the page the agent drove. Desktop `BrowserGlyph`. */
+export function BrowserGlyph({ tone, size = iconSize.xs, label, ink }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone, ink)} size={size} label={label}>
+      <Circle cx={8} cy={8} r={6} stroke="currentColor" strokeWidth={STROKE} />
+      <Path
+        d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+      />
+    </GlyphFrame>
+  );
+}
+
+/** A board with a pen: the canvas the agent drew on. Desktop `CanvasGlyph`. */
+export function CanvasGlyph({ tone, size = iconSize.xs, label, ink }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone, ink)} size={size} label={label}>
+      <Path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v4" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" />
+      <Path d="M2 8.5v3A1.5 1.5 0 0 0 3.5 13H7" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" />
+      <Path
+        d="M13.2 8.3 9 12.5l-2 .5.5-2 4.2-4.2a1.06 1.06 0 0 1 1.5 1.5Z"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        strokeLinejoin="round"
+      />
+    </GlyphFrame>
+  );
+}
+
+/** A small robot: the agents the chat sent off. Desktop `AgentsGlyph`. */
+export function AgentsGlyph({ tone, size = iconSize.xs, label, ink }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone, ink)} size={size} label={label}>
+      <Rect x={3} y={5.4} width={10} height={7.8} rx={2.4} stroke="currentColor" strokeWidth={STROKE} />
+      <Path d="M8 5.4V3" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" />
+      <Path d="M6.2 8.6v1.4M9.8 8.6v1.4" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
+    </GlyphFrame>
+  );
+}
+
+/** A picture in a frame: the chat's pictures. Desktop `LibraryGlyph`. */
+export function LibraryGlyph({ tone, size = iconSize.xs, label, ink }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone, ink)} size={size} label={label}>
+      <Rect x={2} y={3} width={12} height={10} rx={1.5} stroke="currentColor" strokeWidth={STROKE} />
+      <Circle cx={6} cy={6.6} r={1.2} stroke="currentColor" strokeWidth={1.3} />
+      <Path
+        d="M2.6 12.2 6 9l2.4 2.2 2-1.8 3 2.6"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </GlyphFrame>
+  );
+}

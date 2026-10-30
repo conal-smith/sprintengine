@@ -14,13 +14,14 @@ const {
 } = require("../../../.mobile-test-build/src/features/conversations/queuedSends.js");
 const { createQueuedSendCourier } = require("../../../.mobile-test-build/src/features/conversations/queuedSendCourier.js");
 
-const base = { declared: true, turnBusy: true, uploads: 0, phoneQueued: 0 };
+const base = { declared: true, attachments: false, turnBusy: true, uploads: 0, phoneQueued: 0 };
 
-test("a message goes to the desktop to hold only behind a running turn, without pictures, and behind nothing the phone holds", () => {
+test("a message goes to the desktop to hold behind a running turn, with pictures where it holds them, and behind nothing the phone holds", () => {
   assert.equal(holdsOnDesktop(base), true);
   assert.equal(holdsOnDesktop({ ...base, declared: false }), false, "an older desktop: the phone holds it, as before");
   assert.equal(holdsOnDesktop({ ...base, turnBusy: false }), false, "no turn running: it goes straight into the chat");
-  assert.equal(holdsOnDesktop({ ...base, uploads: 1 }), false, "pictures stay with their words, on the phone");
+  assert.equal(holdsOnDesktop({ ...base, uploads: 1 }), false, "a desktop that holds only words: pictures stay with their words, on the phone");
+  assert.equal(holdsOnDesktop({ ...base, uploads: 1, attachments: true }), true, "a desktop that holds pictures takes them with the message");
   assert.equal(holdsOnDesktop({ ...base, phoneQueued: 1 }), false, "it would overtake the message the phone holds");
 });
 

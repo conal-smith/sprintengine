@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mockup: what the agent touched, one click away</title>
+<!-- An interactive mock-up of a per-conversation card that lists what the
+     agent touched: the files it changed and where they sit, the page it drove, the board it drew
+     on, the agents it spawned and the images in the chat. Each row opens the
+     pane on that tab. Where the chat has no room for the card, it condenses to
+     a pill in the title bar, and the phone uses the same pill above the
+     transcript, opening a sheet of the same rows. Drawn with the design
+     system's own tokens; every name in it is made up. Open it straight from
+     disk. -->
+<link rel="stylesheet" href="../../../design-system/foundations/tokens.css" />
+<link rel="stylesheet" href="../../../design-system/components/agent-glyph/component.css" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: var(--sem-space-3xl) var(--sem-space-2xl);
+    font-family: var(--sem-font-family-ui); font-size: var(--sem-font-size-body);
+    line-height: var(--sem-font-line-default);
+    background: var(--sem-color-bg-app); color: var(--sem-color-text-default);
+  }
+  button { font: inherit; color: inherit; }
+  svg.g { width: 16px; height: 16px; flex: none; }
+  .mono { font-family: var(--sem-font-family-mono); font-variant-numeric: tabular-nums; }
+  .add { color: var(--sem-color-diff-added); }
+  .del { color: var(--sem-color-diff-removed); }
+
+  /* ── Page chrome around the stages ─────────────────────────────── */
+  .intro, .controls, .section-head, .notes { max-width: 1240px; margin-left: auto; margin-right: auto; }
+  .intro { margin-bottom: var(--sem-space-xl); }
+  .intro h1 { margin: 0 0 var(--sem-space-2xs); font-size: var(--sem-font-size-title); color: var(--sem-color-text-primary); letter-spacing: var(--sem-font-tracking-tight); }
+  .intro p { margin: 0; max-width: 80ch; color: var(--sem-color-text-muted); }
+  .controls { margin-bottom: var(--sem-space-lg); display: flex; flex-wrap: wrap; gap: var(--sem-space-lg); align-items: center; }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--sem-radius-control); background: var(--sem-color-bg-well); border: 1px solid var(--sem-color-border-subtle); }
+  .seg button { border: 0; background: none; padding: 4px 12px; border-radius: 5px; cursor: pointer; color: var(--sem-color-text-muted); font-size: var(--sem-font-size-meta); }
+  .seg button[aria-pressed="true"] { background: var(--sem-color-bg-selected); color: var(--sem-color-text-primary); }
+  .btn { border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface-raised); border-radius: var(--sem-radius-control); padding: 4px 12px; cursor: pointer; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-default); }
+  .btn:hover { background: var(--sem-color-bg-hover); }
+  .check { display: inline-flex; gap: 6px; align-items: center; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); cursor: pointer; }
+  .section-head { margin-top: var(--sem-space-3xl); margin-bottom: var(--sem-space-sm); }
+  .section-head:first-of-type { margin-top: 0; }
+  .section-head h2 { margin: 0 0 4px; font-size: var(--sem-font-size-heading); color: var(--sem-color-text-primary); }
+  .section-head p { margin: 0; max-width: 84ch; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); min-height: 1.5em; }
+  .section-head p b { color: var(--sem-color-text-primary); font-weight: var(--sem-font-weight-medium); }
+
+  /* ── The desktop window ───────────────────────────────────────── */
+  .stage-wrap { display: flex; justify-content: center; }
+  .app {
+    width: 1240px; height: 720px; display: grid; grid-template-rows: 40px 1fr;
+    border: 1px solid var(--sem-color-border-default); border-radius: var(--sem-radius-shell-lg);
+    background: var(--sem-color-bg-app); overflow: hidden; position: relative;
+    transition: width var(--sem-motion-duration-normal) var(--sem-motion-ease-standard);
+  }
+  .titlebar { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--sem-color-border-subtle); white-space: nowrap; position: relative; z-index: 5; min-width: 0; }
+  .wordmark { font-weight: var(--sem-font-weight-emphasis); color: var(--sem-color-text-primary); width: 186px; flex: none; }
+  .wordmark span { color: var(--sem-color-accent-primary); }
+  .app.no-sidebar .wordmark { width: auto; }
+  .tb-title { font-weight: var(--sem-font-weight-emphasis); color: var(--sem-color-text-primary); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .tb-chip { display: inline-flex; align-items: center; gap: 5px; color: var(--sem-color-text-muted); font-size: var(--sem-font-size-meta); }
+  .tb-chip svg { width: 13px; height: 13px; }
+  .app.no-sidebar .tb-chip { display: none; }
+  .tb-spacer { flex: 1; }
+  .icon-btn { width: 28px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; border-radius: var(--sem-radius-control); color: var(--sem-color-text-muted); cursor: pointer; position: relative; }
+  .icon-btn:hover { background: var(--sem-color-bg-hover); color: var(--sem-color-text-default); }
+  .icon-btn[aria-pressed="true"] { background: var(--sem-color-bg-selected); color: var(--sem-color-text-primary); }
+
+  .body { display: flex; min-height: 0; position: relative; }
+  .sidebar { width: 200px; flex: none; border-right: 1px solid var(--sem-color-border-subtle); padding: 10px 8px; font-size: var(--sem-font-size-meta); }
+  .app.no-sidebar .sidebar { display: none; }
+  .sb-row { padding: 5px 8px; border-radius: var(--sem-radius-control); color: var(--sem-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-row.on { background: var(--sem-color-bg-selected); color: var(--sem-color-text-primary); }
+  .sb-folder { padding: 10px 8px 4px; color: var(--sem-color-text-default); font-weight: var(--sem-font-weight-medium); }
+
+  .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+  .transcript { flex: 1; overflow: auto; padding: 22px 40px 12px; }
+  /* Docked, the card keeps the transcript clear of itself. */
+  .app.docked .transcript { padding-right: 300px; }
+  .msgs { max-width: 600px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  .user { align-self: flex-end; max-width: 86%; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); border-radius: var(--sem-radius-shell); padding: 10px 14px; color: var(--sem-color-text-primary); }
+  .atts { display: flex; gap: 6px; margin-top: 8px; }
+  .atts .thumb { width: 84px; height: 52px; border-radius: 6px; overflow: hidden; border: 1px solid var(--sem-color-border-default); }
+  .atts .thumb svg { display: block; width: 100%; height: 100%; }
+  .worked { color: var(--sem-color-text-muted); font-size: var(--sem-font-size-meta); display: flex; gap: 6px; align-items: center; }
+  .log { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0 2px; padding-left: 12px; border-left: 1px solid var(--sem-color-border-default); }
+  .log div { font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); display: flex; gap: 6px; align-items: center; }
+  .log div svg { width: 13px; height: 13px; }
+  .answer p { margin: 0 0 8px; }
+  .composer-wrap { padding: 0 40px 16px; }
+  .composer { max-width: 640px; margin: 0 auto; border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface); border-radius: var(--sem-radius-composer); padding: 12px 14px 10px; }
+  .composer .ph { color: var(--sem-color-text-subtle); margin-bottom: 18px; }
+  .composer .row { display: flex; align-items: center; gap: 8px; color: var(--sem-color-text-muted); font-size: var(--sem-font-size-meta); }
+  .send { width: 28px; height: 28px; border-radius: 50%; background: var(--sem-color-bg-selected); display: inline-flex; align-items: center; justify-content: center; }
+
+  @keyframes fade-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  @keyframes slide-in { from { opacity: 0; transform: translateX(10px) scale(.96); } to { opacity: 1; transform: none; } }
+  @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
+  .enter { animation: slide-in var(--sem-motion-duration-deliberate) var(--sem-motion-ease-standard); }
+  .log div.enter, .tile.enter, .answer.enter { animation-name: fade-in; animation-duration: var(--sem-motion-duration-normal); }
+
+  /* ── The rows (the desktop card, its popover, and the phone's sheet) ── */
+  .glass {
+    background: color-mix(in srgb, var(--sem-color-bg-surface-raised) calc(var(--sem-glass-opacity) * 100%), transparent);
+    -webkit-backdrop-filter: blur(var(--sem-glass-blur)) saturate(var(--sem-glass-saturation));
+    backdrop-filter: blur(var(--sem-glass-blur)) saturate(var(--sem-glass-saturation));
+    border: 1px solid var(--sem-color-border-default);
+    box-shadow: var(--sem-shadow-popover);
+  }
+  .act {
+    display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 8px;
+    border: 0; background: none; border-radius: var(--sem-radius-control); cursor: pointer;
+    color: var(--sem-color-text-default); text-align: left; white-space: nowrap;
+  }
+  .act:hover { background: var(--sem-color-bg-hover); }
+  .act.on { background: var(--sem-color-bg-selected); color: var(--sem-color-text-primary); }
+  .act .gl { color: var(--sem-color-text-muted); display: inline-flex; }
+  .act.unseen .gl { color: var(--sem-color-text-primary); }
+  /* An agent in it right now: the violet the Files tree and pane tabs already use for that. */
+  .act.live .gl { color: var(--sem-color-agent-trail-ink); }
+  .act .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  .act .meta { font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); flex: none; }
+  .act.live .meta.word { color: var(--sem-color-agent-trail-ink); }
+  .head { font-size: var(--sem-font-size-micro); color: var(--sem-color-text-subtle); padding: 4px 8px; letter-spacing: var(--sem-font-tracking-wide); text-transform: uppercase; white-space: nowrap; }
+  .empty { font-size: var(--sem-font-size-meta); color: var(--sem-color-text-subtle); padding: 4px 8px 8px; white-space: normal; }
+
+  .card { position: absolute; z-index: 9; width: 264px; padding: 6px; border-radius: 16px; }
+  .card.docked { top: 12px; right: 12px; }
+
+  /* The condensed form: a pill in the title bar that drops the card down. */
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 7px 0 8px; border-radius: var(--sem-radius-pill); flex: none;
+    border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface-raised); cursor: pointer;
+    font-size: var(--sem-font-size-meta); color: var(--sem-color-text-default);
+  }
+  .pill:hover, .pill[aria-expanded="true"] { background: var(--sem-color-bg-hover); }
+  .stack { display: inline-flex; gap: 3px; color: var(--sem-color-text-muted); }
+  .stack svg { width: 14px; height: 14px; }
+  .stack .live { color: var(--sem-color-agent-trail-ink); }
+  .pill .chev { color: var(--sem-color-text-muted); display: inline-flex; transition: transform var(--sem-motion-duration-fast); }
+  .pill[aria-expanded="true"] .chev { transform: rotate(180deg); }
+
+  /* ── The pane ────────────────────────────────────────────────── */
+  .pane { width: 0; flex: none; overflow: hidden; border-left: 1px solid transparent; background: var(--sem-color-bg-surface); display: flex; flex-direction: column; transition: width var(--sem-motion-duration-normal) var(--sem-motion-ease-standard); }
+  .pane.open { width: 440px; border-left-color: var(--sem-color-border-subtle); }
+  .app.overlay-pane .pane { position: absolute; right: 0; top: 0; bottom: 0; z-index: 7; box-shadow: var(--sem-shadow-drawer); }
+  .app.overlay-pane .pane.open { width: 420px; }
+  .tabs { display: flex; align-items: stretch; height: 36px; overflow: hidden; border-bottom: 1px solid var(--sem-color-border-subtle); padding: 0 6px; gap: 2px; flex: none; }
+  .tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; background: none; cursor: pointer; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+  .tab svg { width: 14px; height: 14px; }
+  .tab.on { color: var(--sem-color-text-primary); border-bottom-color: var(--sem-color-accent-primary); }
+  .tab.live svg { color: var(--sem-color-agent-trail-ink); }
+  .tabs .tb-spacer { flex: 1; }
+  .pane-body { flex: 1; overflow: auto; min-height: 0; }
+  .pane-sec { padding: 12px 14px; }
+  .pane-sec h4 { margin: 0 0 8px; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); font-weight: var(--sem-font-weight-medium); }
+  .file { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--sem-radius-control); font-size: var(--sem-font-size-meta); }
+  .file.on { background: var(--sem-color-bg-hover); }
+  .file .ext { width: 16px; text-align: center; font-size: 9px; font-family: var(--sem-font-family-mono); color: var(--sem-color-mark-blue); }
+  .file .ext.css { color: var(--sem-color-mark-violet); }
+  .file .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sem-color-text-default); }
+  .file .path i { font-style: normal; color: var(--sem-color-text-subtle); }
+  .diff { margin: 4px 14px 14px; border: 1px solid var(--sem-color-border-subtle); border-radius: var(--sem-radius-shell); overflow: hidden; font-family: var(--sem-font-family-mono); font-size: 11.5px; line-height: 1.6; }
+  .diff div { padding: 0 10px; white-space: pre; color: var(--sem-color-text-muted); }
+  .diff .a { background: color-mix(in srgb, var(--sem-color-diff-added) 12%, transparent); color: var(--sem-color-text-default); }
+  .diff .r { background: color-mix(in srgb, var(--sem-color-diff-removed) 12%, transparent); color: var(--sem-color-text-default); }
+  .diff .h { background: var(--sem-color-bg-well); color: var(--sem-color-text-subtle); }
+  .agent-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 6px; border-radius: var(--sem-radius-control); }
+  .agent-row .ds-agent-glyph { margin-top: 2px; }
+  .agent-row .nm { color: var(--sem-color-text-primary); font-size: 13px; }
+  .agent-row .task { color: var(--sem-color-text-muted); font-size: var(--sem-font-size-meta); }
+  .agent-row .when { margin-left: auto; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-subtle); white-space: nowrap; }
+  .agent-row .when.working { color: var(--sem-color-accent-primary); }
+  .urlbar { margin: 10px 12px; height: 28px; border-radius: var(--sem-radius-pill); background: var(--sem-color-bg-well); display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); }
+  .urlbar .who { margin-left: auto; color: var(--sem-color-agent-trail-ink); }
+  .page { margin: 0 12px 12px; border-radius: var(--sem-radius-shell); overflow: hidden; border: 1px solid var(--sem-color-border-subtle); }
+  .page svg { display: block; width: 100%; }
+  .page.live { box-shadow: 0 0 0 1px var(--sem-color-agent-trail-ink); }
+  .lib-filter { display: flex; gap: 6px; padding: 10px 14px 0; }
+  .lib-group { padding: 10px 14px 4px; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); }
+  .lib-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 0 14px 14px; }
+  .tile { border: 0; padding: 0; background: none; text-align: left; cursor: pointer; min-width: 0; }
+  .tile .pic { aspect-ratio: 16/10; border-radius: var(--sem-radius-shell); overflow: hidden; border: 1px solid var(--sem-color-border-default); position: relative; }
+  .tile .pic svg { display: block; width: 100%; height: 100%; }
+  .tile .jump { position: absolute; right: 6px; bottom: 6px; font-size: 10.5px; padding: 2px 7px; border-radius: var(--sem-radius-pill); background: rgba(0,0,0,.66); color: #fff; opacity: 0; transition: opacity var(--sem-motion-duration-fast); }
+  .tile:hover .jump { opacity: 1; }
+  .tile .cap1 { font-size: var(--sem-font-size-meta); color: var(--sem-color-text-default); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .cap2 { font-size: var(--sem-font-size-micro); color: var(--sem-color-text-subtle); display: flex; gap: 5px; align-items: center; }
+  .tile .cap2 svg { width: 11px; height: 11px; }
+  .tree { padding: 0 8px 12px; font-size: var(--sem-font-size-meta); }
+  .tree-row { display: flex; align-items: center; gap: 6px; height: 24px; border-radius: var(--sem-radius-control); color: var(--sem-color-text-default); }
+  .tree-row .tw { width: 10px; font-size: 9px; color: var(--sem-color-text-subtle); text-align: center; }
+  .tree-row svg { width: 14px; height: 14px; color: var(--sem-color-text-muted); }
+  .tree-row .ext { width: 14px; text-align: center; font-size: 8.5px; font-family: var(--sem-font-family-mono); color: var(--sem-color-mark-blue); }
+  .tree-row .ext.css { color: var(--sem-color-mark-violet); }
+  .tree-row .ext.json, .tree-row .ext.md { color: var(--sem-color-text-subtle); }
+  .tree-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree-row .st { font-family: var(--sem-font-family-mono); font-size: 10.5px; color: var(--sem-color-text-subtle); padding-right: 6px; }
+  .tree-row.modified .nm { color: var(--sem-color-mark-blue); }
+  .tree-row.added .nm { color: var(--sem-color-diff-added); }
+  .tree-row.live { background: var(--sem-color-agent-trail-soft); }
+  .m-tree { padding: 0; font-size: 15px; }
+  .m-tree .tree-row { height: 38px; }
+  .pane-empty { padding: 40px 24px; text-align: center; color: var(--sem-color-text-subtle); font-size: var(--sem-font-size-meta); }
+
+  /* ── The phone ───────────────────────────────────────────────── */
+  .phones { display: flex; gap: 28px; justify-content: center; align-items: flex-start; }
+  .phone-col { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .phone-cap { width: 360px; font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); }
+  .phone-cap b { color: var(--sem-color-text-primary); font-weight: var(--sem-font-weight-medium); }
+  .phone {
+    width: 360px; height: 740px; border-radius: 46px; border: 1px solid var(--sem-color-border-strong);
+    background: var(--sem-color-bg-app); position: relative; overflow: hidden; display: flex; flex-direction: column;
+    font-size: 15px; box-shadow: 0 0 0 6px var(--sem-color-bg-surface);
+  }
+  .status { height: 46px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 6px 30px 0 34px; font-size: 14px; font-weight: var(--sem-font-weight-emphasis); color: var(--sem-color-text-primary); }
+  .notch { width: 104px; height: 30px; border-radius: 20px; background: #000; }
+  .m-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px 10px 10px; border-bottom: 1px solid var(--sem-color-border-subtle); }
+  .m-back { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--sem-color-text-primary); border: 0; background: none; cursor: pointer; flex: none; }
+  .m-title { flex: 1; min-width: 0; }
+  .m-title .t { color: var(--sem-color-text-primary); font-weight: var(--sem-font-weight-emphasis); font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-title .s { display: flex; gap: 12px; color: var(--sem-color-text-muted); font-size: 13px; white-space: nowrap; overflow: hidden; }
+  .m-title .s span { display: inline-flex; gap: 4px; align-items: center; }
+  .m-title .s svg { width: 13px; height: 13px; }
+  .m-circle { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--sem-color-border-default); display: inline-flex; align-items: center; justify-content: center; color: var(--sem-color-text-primary); flex: none; }
+  .m-body { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+  .m-scroll { position: absolute; inset: 0; overflow: auto; padding: 56px 16px 12px; display: flex; flex-direction: column; gap: 14px; }
+
+  .m-user { align-self: flex-end; max-width: 88%; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); border-radius: 18px; padding: 10px 14px; color: var(--sem-color-text-primary); line-height: 1.4; }
+  .m-user .atts .thumb { width: 64px; height: 64px; border-radius: 10px; }
+  .m-worked { display: flex; align-items: center; gap: 8px; color: var(--sem-color-text-muted); font-size: 14px; }
+  .m-worked .sp { flex: 1; }
+  .m-answer { line-height: 1.45; color: var(--sem-color-text-default); }
+  .m-answer p { margin: 0 0 8px; }
+  /* No header bar: a back button and the pill float over the transcript, which fades out under them. */
+  .m-fade { position: absolute; top: 0; left: 0; right: 0; height: 64px; z-index: 2; pointer-events: none; background: linear-gradient(var(--sem-color-bg-app) 30%, transparent); }
+  .m-float { position: absolute; top: 4px; left: 12px; right: 12px; z-index: 3; display: flex; gap: 8px; align-items: center; }
+  .m-fab { width: 42px; height: 42px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--sem-color-text-primary); cursor: pointer; }
+  .m-pill { display: inline-flex; align-items: center; gap: 6px; height: 42px; min-width: 0; padding: 0 10px 0 16px; border-radius: var(--sem-radius-pill); cursor: pointer; color: var(--sem-color-text-primary); white-space: nowrap; }
+  .m-pill .tt { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 15px; font-weight: var(--sem-font-weight-medium); }
+  .m-pill .chev { color: var(--sem-color-text-muted); display: inline-flex; flex: none; }
+  .m-scroll { padding-top: 60px; }
+  .m-scroll.plain { padding-top: 14px; }
+  .m-scroll.m-detail { padding-top: 0; }
+  .m-detail { padding: 0 16px 24px; }
+  .m-scroll > * { flex: none; }
+  .m-hero { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 60px 8px 20px; text-align: center; }
+  .m-hero .mk { width: 72px; height: 72px; border-radius: 24px; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 4px; }
+  .m-hero .mk svg { width: 34px; height: 34px; }
+  .m-hero .t { font-size: 20px; font-weight: var(--sem-font-weight-emphasis); color: var(--sem-color-text-primary); line-height: 1.25; }
+  .m-hero .s { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; font-size: 13px; color: var(--sem-color-text-muted); }
+  .m-hero .s span { display: inline-flex; gap: 4px; align-items: center; }
+  .m-hero .s svg { width: 13px; height: 13px; }
+  .m-group { border-radius: 18px; background: var(--sem-color-bg-surface-raised); border: 1px solid var(--sem-color-border-subtle); overflow: hidden; margin-bottom: 14px; }
+  .m-grow { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; min-height: 52px; padding: 0 14px; border: 0; background: none; cursor: pointer; text-align: left; color: var(--sem-color-text-primary); }
+  .m-grow:hover { background: var(--sem-color-bg-hover); }
+  .m-grow + .m-grow::before { content: ''; position: absolute; top: 0; left: 48px; right: 0; height: 1px; background: var(--sem-color-border-subtle); }
+  .m-group:last-of-type .m-grow + .m-grow::before { left: 14px; }
+  .m-grow .gl { color: var(--sem-color-text-muted); display: inline-flex; }
+  .m-grow .gl svg { width: 20px; height: 20px; }
+  .m-grow.live .gl { color: var(--sem-color-agent-trail-ink); }
+  .m-grow .lb { flex: 1; font-size: 16px; }
+  .m-grow .meta { font-size: 14px; color: var(--sem-color-text-muted); white-space: nowrap; }
+  .m-grow.live .meta.word { color: var(--sem-color-agent-trail-ink); }
+  .m-grow .chev { color: var(--sem-color-text-subtle); display: inline-flex; }
+  .m-grow.quiet { color: var(--sem-color-text-subtle); font-size: 14px; cursor: default; }
+  .m-foot { font-size: 13px; color: var(--sem-color-text-subtle); padding: 0 14px; margin-top: -6px; }
+  .m-composer { flex: none; margin: 0 10px 8px; border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface); border-radius: 24px; padding: 12px 14px 10px; }
+  .m-composer .ph { color: var(--sem-color-text-subtle); margin-bottom: 14px; }
+  .m-composer .row { display: flex; align-items: center; gap: 10px; color: var(--sem-color-text-muted); font-size: 14px; }
+  .m-strip { flex: none; margin: 0 22px 22px; padding: 6px 12px; border: 1px solid var(--sem-color-border-subtle); border-top: 0; border-radius: 0 0 14px 14px; display: flex; gap: 10px; font-size: 13px; color: var(--sem-color-text-muted); }
+  .m-strip > .mono { color: var(--sem-color-text-default); }
+  .m-sec { padding: 4px 16px 16px; }
+  .m-sec .lede { font-size: 13px; color: var(--sem-color-text-muted); margin: 0 0 12px; }
+  .m-card { border: 1px solid var(--sem-color-border-subtle); background: var(--sem-color-bg-surface); border-radius: 16px; padding: 12px 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: flex-start; }
+  .m-card .nm { color: var(--sem-color-text-primary); font-weight: var(--sem-font-weight-medium); }
+  .m-card .task { color: var(--sem-color-text-muted); font-size: 14px; }
+  .m-card .when { margin-left: auto; font-size: 13px; color: var(--sem-color-text-subtle); white-space: nowrap; }
+  .m-card .when.working { color: var(--sem-color-accent-primary); }
+  .m-card .ds-agent-glyph { width: 22px; height: 22px; margin-top: 1px; }
+  .m-file { display: flex; gap: 10px; align-items: center; padding: 11px 2px; border-bottom: 1px solid var(--sem-color-border-subtle); font-size: 14px; }
+  .m-file .st { width: 18px; color: var(--sem-color-text-subtle); font-family: var(--sem-font-family-mono); font-size: 12px; }
+  .m-file .p { flex: 1; min-width: 0; }
+  .m-file .p div:first-child { color: var(--sem-color-text-primary); }
+  .m-file .p div:last-child { color: var(--sem-color-text-subtle); font-size: 12px; }
+  .m-shot { border-radius: 14px; overflow: hidden; border: 1px solid var(--sem-color-border-default); }
+  .m-shot svg { display: block; width: 100%; }
+  .m-note { margin-top: 12px; font-size: 13px; color: var(--sem-color-text-muted); line-height: 1.45; }
+  .m-btn { margin-top: 12px; width: 100%; height: 44px; border-radius: 22px; border: 1px solid var(--sem-color-border-default); background: var(--sem-color-bg-surface-raised); color: var(--sem-color-text-primary); font-size: 15px; }
+  .m-lib { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .m-lib .tile .pic { aspect-ratio: 1; border-radius: 12px; }
+  .m-lib .tile .cap1 { font-size: 13px; }
+  .m-lib .tile .cap2 { font-size: 11px; }
+  .m-seg { display: flex; padding: 2px; border-radius: 10px; background: var(--sem-color-bg-well); margin-bottom: 12px; }
+  .m-seg button { flex: 1; border: 0; background: none; padding: 6px 0; border-radius: 8px; font-size: 13px; color: var(--sem-color-text-muted); cursor: pointer; }
+  .m-seg button[aria-pressed="true"] { background: var(--sem-color-bg-selected); color: var(--sem-color-text-primary); }
+
+  /* ── Notes under the stages ───────────────────────────────────── */
+  .notes { margin-top: var(--sem-space-3xl); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sem-space-xl); }
+  .note { border: 1px solid var(--sem-color-border-subtle); border-radius: var(--sem-radius-shell-lg); padding: var(--sem-space-lg) var(--sem-space-xl); background: var(--sem-color-bg-surface); font-size: var(--sem-font-size-meta); color: var(--sem-color-text-muted); }
+  .note h3 { margin: 0 0 6px; font-size: var(--sem-font-size-body); color: var(--sem-color-text-primary); }
+  .note ul, .note ol { margin: 6px 0 0; padding-left: 18px; }
+  .note li { margin: 3px 0; }
+  .wide { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--sem-font-size-meta); }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--sem-color-border-subtle); vertical-align: top; }
+  th { color: var(--sem-color-text-subtle); font-weight: var(--sem-font-weight-medium); }
+  td:first-child { color: var(--sem-color-text-primary); white-space: nowrap; }
+  .inline-glyph { display: inline-flex; vertical-align: -3px; color: var(--sem-color-text-primary); }
+  code { font-family: var(--sem-font-family-mono); font-size: 11.5px; color: var(--sem-color-text-default); }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>What the agent touched, one click away</h1>
+  <p>A card on the right of a chat lists what the agent has touched in this conversation: the files it changed and where they sit, the page it drove, the board it drew on, the agents it spawned, and every image in the chat. A row appears the first time the agent touches that thing, and opens the pane on that tab. Where the chat is too narrow for the card, it condenses to a pill in the title bar, just the rows' glyphs and an arrow, that drops the same rows down. On the phone the header bar goes: a back button and a pill with the chat's title float over the transcript, and the pill opens the chat's page with the same rows. Press <b>Replay the run</b> to watch the desktop and the phone fill in together.</p>
+</div>
+
+<div class="controls">
+  <button class="btn" id="replay">Replay the run</button>
+  <button class="btn" id="skip">Skip to the end</button>
+  <div class="seg" role="group" aria-label="Window width">
+    <button data-width="wide" aria-pressed="true">Wide · 1240</button>
+    <button data-width="medium" aria-pressed="false">Medium · 1000</button>
+    <button data-width="narrow" aria-pressed="false">Narrow · 760</button>
+  </div>
+  <label class="check"><input type="checkbox" id="light" /> Light mode</label>
+</div>
+
+<div class="section-head">
+  <h2>Desktop</h2>
+  <p id="desktopNote"></p>
+</div>
+<div class="stage-wrap">
+  <div class="app" id="app">
+    <div class="titlebar">
+      <span class="wordmark">sprint<span>engine</span></span>
+      <span class="tb-title">Footer drops off the export dialog</span>
+      <span class="tb-chip"><svg viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>atlas</span>
+      <span class="tb-chip"><svg viewBox="0 0 16 16" fill="none"><circle cx="4.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="4.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="11.5" cy="5.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-7 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>agent/chat-k2fa</span>
+      <span class="tb-spacer"></span>
+      <span id="pillSlot" style="display:contents"></span>
+      <button class="icon-btn" title="Terminal"><svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 6.5 7 8.5 5 10.5M8.5 10.5h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn" title="Notifications"><svg class="g" viewBox="0 0 16 16" fill="none"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3L4 11zM6.5 14h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn" id="paneToggle" title="Open pane"><svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M10 3V13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+    </div>
+    <div class="body">
+      <aside class="sidebar">
+        <div class="sb-row">New chat</div>
+        <div class="sb-folder">atlas</div>
+        <div class="sb-row on">Footer drops off the export dialog</div>
+        <div class="sb-row">Virtualised star catalogue list</div>
+        <div class="sb-row">Typed routes for the catalogue</div>
+        <div class="sb-row">Fuzzy search over 40k stars</div>
+        <div class="sb-folder">orbit</div>
+        <div class="sb-row">Ring-buffer orbit trails</div>
+        <div class="sb-row">Flat Morton-ordered octree</div>
+      </aside>
+      <section class="chat">
+        <div class="transcript"><div class="msgs" id="msgs"></div></div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <div class="ph">Send a message…</div>
+            <div class="row">
+              <span style="font-size:18px;line-height:1">+</span>
+              <span style="margin-left:auto;margin-right:6px">Claude Code</span>
+              <span class="send"><svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M8 13V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="pane" id="pane" aria-label="Pane"></section>
+    </div>
+    <div id="cardSlot"></div>
+  </div>
+</div>
+
+<div class="section-head">
+  <h2>Phone</h2>
+  <p>The left phone is live: tap the pill, then a row, and use the back arrow. The other two hold one step each, so the whole path is visible at once.</p>
+</div>
+<div class="phones">
+  <div class="phone-col"><div class="phone" id="phone1"></div><div class="phone-cap"><b>1 · No header bar.</b> A back button and one pill float over the transcript. The pill is the chat's title and an arrow, nothing else. Tap it for everything the agent touched.</div></div>
+  <div class="phone-col"><div class="phone" id="phone2"></div><div class="phone-cap"><b>2 · The chat's page.</b> Its title, project, machine and model, then the desktop card's rows in the same order with the same facts, then Mark unread and Settle, which the ⋯ menu used to hold.</div></div>
+  <div class="phone-col"><div class="phone" id="phone3"></div><div class="phone-cap"><b>3 · A row opens its screen.</b> Changes and Agents open the screens the phone already has. Files and Library are new. Browser and Canvas show the agent's latest picture of the page or board.</div></div>
+</div>
+
+<div class="notes">
+  <div class="note wide">
+    <h3>How the card condenses</h3>
+    The rule is about the chat's width, not the window's: a wide window with the pane open has a narrow chat.
+    <ol>
+      <li><b>Room for it</b> (the chat is at least 860px wide): the card is docked at the top right, always open. The transcript keeps clear of it.</li>
+      <li><b>No room</b> (a medium or narrow window, or the pane is open): the card becomes a pill in the title bar holding only the rows' glyphs and an arrow. Clicking it drops the card down under it. A row opens the pane, and the drop-down closes. In a narrow window the folder and branch chips leave the title bar first, so the pill never has to.</li>
+      <li><b>Phone</b>: no header bar. A back button and a pill with the chat's title float over the transcript. The pill opens the chat's page, where the rows live. Each row opens a screen.</li>
+    </ol>
+  </div>
+  <div class="note">
+    <h3>What the rows show</h3>
+    <ul>
+      <li><b>Order.</b> Rows appear in the order the agent first touched each thing, and don't reorder later. Files arrives with Changes: one says what changed, the other shows where it sits in the project. Library stays last, because it holds what came out of the run rather than a place the agent worked.</li>
+      <li><b>A row the agent is in right now</b> has its glyph in the agent-trail violet the pane tabs and Files tree already use. A spawned agent's row uses its agent glyph. No dots.</li>
+      <li><b>New, not yet opened</b>: the glyph is in primary ink instead of muted. Opening the row clears it.</li>
+      <li>The desktop pill's glyphs follow the same rules, so it says the same thing at a glance. The phone's pill is the chat's title alone.</li>
+      <li><b>A new Diff glyph</b>, <span class="inline-glyph"><svg class="g" viewBox="0 0 16 16" fill="none"><path d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span> → <span class="inline-glyph"><svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>: plus over minus in the rounded frame the pane's other glyphs share. It replaces <code>DiffGlyph</code> in <code>pane/paneKinds.tsx</code>, so the pane tab changes too.</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h3>On the phone</h3>
+    <ul>
+      <li><b>Changes</b> opens the Changes screen the phone already has. Today you reach it from the diff pill under the composer, and that pill can stay.</li>
+      <li><b>Files</b> is a new, read-only tree, opened out to the folders the agent edited, since the phone has no file browser yet.</li>
+      <li><b>Agents</b> opens the Agents screen that "See agents" opens today.</li>
+      <li><b>Browser</b> shows the agent's last screenshot of the page. A <code>localhost</code> page on the desktop isn't reachable from the phone, so the screen offers to open it only when the desktop has published that dev server, as Web pages does.</li>
+      <li><b>Canvas</b> shows the board as the agent last drew it, read-only.</li>
+      <li><b>Library</b> is new: every image in the chat, with a filter by who added it.</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h3>Things to decide</h3>
+    <ul>
+      <li>Should the phone's floating controls hide while you scroll back through the transcript and come back when you scroll down, or stay put?</li>
+      <li>Does the chat's page want a Notifications switch for this chat?</li>
+      <li>Should the desktop card have a close control, so a person who never wants it docked keeps only the pill?</li>
+      <li>Does the composer's diff pill on the phone stay, now that the header pill carries Changes too?</li>
+      <li>Should Terminal get a row when the agent runs a long command?</li>
+    </ul>
+  </div>
+  <div class="note wide">
+    <h3>Where each row's data already lives</h3>
+    <table>
+      <tr><th>Row</th><th>Lights up when</th><th>Source today</th><th>Desktop opens</th><th>Phone opens</th></tr>
+      <tr><td>Changes</td><td>The agent writes a file in this conversation's checkout</td><td>The per-agent change record in <code>docs/design/agent-changes.md</code>. Until chats feed that record, the checkout's diff (the phone reads its turns' changed files).</td><td>Diff tab, on the newest file</td><td><code>ConversationChangesScreen</code></td></tr>
+      <tr><td>Files</td><td>With Changes: the agent writes a file</td><td>The same edits; the Files tree already marks a file an agent is in (<code>panels/agentFileTrail.ts</code>)</td><td>Files tab, opened out to the edited folders</td><td>Files screen (new, read-only)</td></tr>
+      <tr><td>Browser</td><td>An agent takes a page</td><td><code>browser:state</code> controller via <code>pane/agentPresence.ts</code></td><td>Browser tab on that page</td><td>The agent's last screenshot; open it if published</td></tr>
+      <tr><td>Canvas</td><td>An agent draws on a board</td><td><code>canvas:presence</code> via <code>pane/agentPresence.ts</code></td><td>Canvas tab on that board</td><td>The board's latest snapshot</td></tr>
+      <tr><td>Agents</td><td>The conversation spawns an agent</td><td>The spawned-agent list the Agents tab and the phone's agent cards read</td><td>Agents tab</td><td><code>ConversationAgentsScreen</code></td></tr>
+      <tr><td>Library</td><td>An image is attached, captured or returned</td><td>New: message attachments (the phone already draws them, <code>sentPhotos.ts</code>), screenshot tool results, image blocks in replies</td><td>Library tab (new pane kind)</td><td>Library screen (new)</td></tr>
+    </table>
+  </div>
+</div>
+
+<script>
+// ── Glyphs: the pane's own 16px drawings, plus one new one for Library. ──
+const G = {
+  // The new Diff glyph: plus over minus in the frame the pane's other glyphs share.
+  changes: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  oldChanges: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  browser: '<svg class="g" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  canvas: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M2 8.5v3A1.5 1.5 0 0 0 3.5 13H7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.2 8.3 9 12.5l-2 .5.5-2 4.2-4.2a1.06 1.06 0 0 1 1.5 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  agents: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="3" y="5.4" width="10" height="7.8" rx="2.4" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.4V3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M6.2 8.6v1.4M9.8 8.6v1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  library: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="6.6" r="1.2" stroke="currentColor" stroke-width="1.3"/><path d="M2.6 12.2 6 9l2.4 2.2 2-1.8 3 2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  files: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  read: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M4.5 2h4.8L12 4.7v7.8a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 3 12.5v-9A1.5 1.5 0 0 1 4.5 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  folder: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  laptop: '<svg class="g" viewBox="0 0 16 16" fill="none"><rect x="3" y="3.5" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 12.5h13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  right: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  down: '<svg viewBox="0 0 16 16" width="12" height="12" fill="none"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  back: '<svg viewBox="0 0 16 16" width="20" height="20" fill="none"><path d="m10 3-5 5 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  more: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>',
+  close: '<svg class="g" viewBox="0 0 16 16" fill="none"><path d="m4.5 4.5 7 7m0-7-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+}
+function robot(state) {
+  const face = state === 'working'
+    ? '<g class="ds-agent-glyph-eyes"><rect fill="currentColor" x="5.4" y="8" width="1.6" height="2.2" rx=".6"></rect><rect fill="currentColor" x="9" y="8" width="1.6" height="2.2" rx=".6"></rect></g>'
+    : '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M5.4 9.55q.8-1 1.6 0M9 9.55q.8-1 1.6 0"></path>'
+  const body = `<rect fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" x="3" y="5.4" width="10" height="7.8" rx="2.4"></rect><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M8 5.4V3.3M2.1 8.4v1.8M13.9 8.4v1.8"></path><circle fill="currentColor" class="ds-agent-glyph-antenna" cx="8" cy="2.4" r=".95"${state === 'working' ? '' : ' opacity=".35"'}></circle>${face}`
+  return `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true" class="ds-agent-glyph ds-agent-glyph--robot ds-agent-glyph--${state}">${state === 'working' ? `<g class="ds-agent-glyph-whole">${body}</g>` : body}</svg>`
+}
+
+// ── Pictures for the Library and the attachments, drawn rather than shipped. ──
+const ART = {
+  clipped: () => `<svg viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice"><rect width="160" height="100" fill="#14171b"/><rect x="28" y="12" width="104" height="96" rx="5" fill="#22262c" stroke="#3a3f47"/><rect x="36" y="20" width="50" height="6" rx="2" fill="#5b616b"/><rect x="36" y="34" width="88" height="10" rx="2" fill="#2c3138"/><rect x="36" y="50" width="88" height="10" rx="2" fill="#2c3138"/><rect x="36" y="66" width="88" height="10" rx="2" fill="#2c3138"/><line x1="0" y1="92" x2="160" y2="92" stroke="#f0806b" stroke-dasharray="4 3"/></svg>`,
+  sketch: () => `<svg viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice"><rect width="160" height="100" fill="#f4f1ea"/><path d="M30 14h100v74H30z" fill="none" stroke="#3a3a3a" stroke-width="1.4" stroke-linejoin="round"/><path d="M38 24h40M38 38h84M38 50h84" stroke="#888" stroke-width="1.2"/><path d="M30 70h100" stroke="#3a3a3a" stroke-width="1.2"/><rect x="86" y="76" width="18" height="7" rx="2" fill="none" stroke="#3a3a3a"/><rect x="108" y="76" width="16" height="7" rx="2" fill="#3a3a3a"/><path d="M134 72c8 2 10 8 6 12" fill="none" stroke="#d4553f" stroke-width="1.4"/></svg>`,
+  fixed: () => `<svg viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice"><rect width="160" height="100" fill="#14171b"/><rect x="28" y="8" width="104" height="84" rx="5" fill="#22262c" stroke="#3a3f47"/><rect x="36" y="16" width="50" height="6" rx="2" fill="#5b616b"/><rect x="36" y="28" width="88" height="9" rx="2" fill="#2c3138"/><rect x="36" y="41" width="88" height="9" rx="2" fill="#2c3138"/><rect x="36" y="54" width="88" height="9" rx="2" fill="#2c3138"/><line x1="28" y1="72" x2="132" y2="72" stroke="#3a3f47"/><rect x="82" y="78" width="22" height="8" rx="2" fill="none" stroke="#5b616b"/><rect x="107" y="78" width="19" height="8" rx="2" fill="#4caf7a"/></svg>`,
+  flow: () => `<svg viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice"><rect width="160" height="100" fill="#181b20"/><g fill="none" stroke="#8a93a0" stroke-width="1.2"><rect x="12" y="38" width="36" height="22" rx="4"/><rect x="62" y="16" width="36" height="22" rx="4"/><rect x="62" y="60" width="36" height="22" rx="4"/><rect x="112" y="38" width="36" height="22" rx="4" stroke="#b39af5"/><path d="M48 46 62 28M48 52l14 18M98 28l14 16M98 70l14-14"/></g><path d="M118 49h24" stroke="#b39af5" stroke-width="1.2"/></svg>`,
+  narrow: () => `<svg viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice"><rect width="160" height="100" fill="#14171b"/><rect x="50" y="8" width="60" height="84" rx="5" fill="#22262c" stroke="#3a3f47"/><rect x="56" y="16" width="30" height="5" rx="2" fill="#5b616b"/><rect x="56" y="28" width="48" height="8" rx="2" fill="#2c3138"/><rect x="56" y="40" width="48" height="8" rx="2" fill="#2c3138"/><line x1="50" y1="72" x2="110" y2="72" stroke="#3a3f47"/><rect x="62" y="78" width="18" height="8" rx="2" fill="none" stroke="#5b616b"/><rect x="83" y="78" width="21" height="8" rx="2" fill="#4caf7a"/></svg>`,
+}
+
+// ── The run, as the events that feed the rows. ──
+const RUN = [
+  { t: 300, do: s => { s.user = true; addImage(s, 'clipped', 'Footer cut off at 1280×720', 'you'); addImage(s, 'sketch', 'Where the buttons should sit', 'you') } },
+  { t: 1300, do: s => { s.working = true; log(s, 'read', 'Read <span class="mono">ExportDialog.tsx</span>') } },
+  { t: 2400, do: s => { edit(s, 'src/export/ExportDialog.tsx', 24, 6) } },
+  { t: 3500, do: s => { spawn(s, 'Explore agent', 'Find every scroll container under export/') } },
+  { t: 4700, do: s => { s.browser = { url: 'localhost:5173/export', live: true }; touch(s, 'browser'); log(s, 'browser', 'Opened <span class="mono">localhost:5173/export</span>') } },
+  { t: 5900, do: s => { addImage(s, 'fixed', 'Footer visible at 1280×720', 'browser'); log(s, 'library', 'Took a screenshot') } },
+  { t: 7000, do: s => { edit(s, 'src/export/export.css', 38, 9); edit(s, 'src/export/ExportFooter.tsx', 80, 3) } },
+  { t: 8200, do: s => { finish(s, 'Explore agent', '34s'); spawn(s, 'Review agent', 'Review the footer change') } },
+  { t: 9400, do: s => { s.canvas = { board: 'Export flow', live: true }; touch(s, 'canvas'); log(s, 'canvas', 'Drew <span class="mono">Export flow</span> on the canvas') } },
+  { t: 10600, do: s => { s.canvas.live = false; addImage(s, 'flow', 'Export flow, as drawn', 'canvas') } },
+  { t: 11800, do: s => { addImage(s, 'narrow', 'Footer at 900×640', 'browser'); log(s, 'library', 'Took a screenshot at 900×640') } },
+  { t: 13000, do: s => { s.browser.live = false; finish(s, 'Review agent', '41s'); s.working = false; s.done = true } },
+]
+
+let S, timers = [], started = 0, clock = null
+// Animate a thing only the first time it is drawn, so a redraw doesn't replay every entrance.
+let drawn = new Set()
+const enter = id => (drawn.has(id) ? '' : (drawn.add(id), ' enter'))
+function fresh() {
+  return { width: S?.width ?? 'wide', order: [], seen: new Set(), files: [], liveFile: null,
+    agents: [], images: [], logs: [], browser: null, canvas: null, user: false, working: false, done: false,
+    paneOpen: false, tab: null, popOpen: false, libFilter: 'all', phoneView: 'chat' }
+}
+function touch(s, key) { if (!s.order.includes(key)) s.order.push(key); s.seen.delete(key) }
+function log(s, glyph, html) { s.logs.push({ glyph, html }) }
+function edit(s, path, add, del) {
+  const f = s.files.find(x => x.path === path)
+  if (f) { f.add += add; f.del += del } else s.files.unshift({ path, add, del })
+  s.liveFile = path; touch(s, 'changes'); touch(s, 'files')
+  log(s, 'changes', `Edited <span class="mono">${path.split('/').pop()}</span> <span class="mono add">+${add}</span> <span class="mono del">−${del}</span>`)
+  setTimeout(() => { if (S.liveFile === path) { S.liveFile = null; render() } }, 900)
+}
+function spawn(s, name, task) { s.agents.push({ name, task, state: 'working', took: null, at: Date.now() }); touch(s, 'agents'); log(s, 'agents', `Started <b style="font-weight:500">${name}</b>`) }
+function finish(s, name, took) { const a = s.agents.find(x => x.name === name); a.state = 'done'; a.took = took }
+function addImage(s, art, caption, from) { s.images.unshift({ art, caption, from, at: `10:${String(41 + s.images.length).padStart(2, '0')}` }); touch(s, 'library') }
+
+// Places and helpers in the order the agent first touched them; Library, being what came out of the run, stays last.
+const orderOf = s => [...s.order.filter(k => k !== 'library'), ...(s.order.includes('library') ? ['library'] : [])]
+const totals = s => s.files.reduce((t, f) => ({ add: t.add + f.add, del: t.del + f.del }), { add: 0, del: 0 })
+const working = s => s.agents.filter(a => a.state === 'working').length
+// The folder the agent's edits share, which the Files tree opens out to.
+const editedDir = s => { const dirs = s.files.map(f => f.path.split('/').slice(0, -1)); return (dirs[0] ?? []).filter((d, i) => dirs.every(x => x[i] === d)).join('/') || '.' }
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
+const diffSpan = t => `<span class="mono add">+${t.add}</span> <span class="mono del">−${t.del}</span>`
+
+// What each row says: `label` and `meta` on the desktop, `sub` added on the phone.
+function rowsOf(s) {
+  const rows = {
+    changes: () => ({ label: `Changes · ${plural(s.files.length, 'file')}`, title: 'Changes', sub: plural(s.files.length, 'file'), meta: diffSpan(totals(s)), live: !!s.liveFile }),
+    files: () => ({ label: 'Files', title: 'Files', sub: `Opened at ${editedDir(s)}`, meta: editedDir(s), phoneMeta: '', live: !!s.liveFile }),
+    browser: () => ({ label: 'Browser', title: 'Browser', sub: s.browser.url, meta: s.browser.live ? 'Agent here' : s.browser.url.split('/')[0], phoneMeta: s.browser.live ? 'Agent here' : '', word: s.browser.live, live: s.browser.live }),
+    canvas: () => ({ label: 'Canvas', title: 'Canvas', sub: s.canvas.board, meta: s.canvas.live ? 'Drawing' : s.canvas.board, phoneMeta: s.canvas.live ? 'Drawing' : '', word: s.canvas.live, live: s.canvas.live }),
+    agents: () => { const w = working(s); return { label: `Agents · ${s.agents.length}`, title: 'Agents', sub: s.agents.map(a => a.name).join(', '), meta: w ? `${w} working` : 'All done', word: !!w, live: !!w, glyph: robot(w ? 'working' : 'done') } },
+    library: () => ({ label: 'Library', title: 'Library', sub: 'Every image in this chat', meta: plural(s.images.length, 'image'), live: false }),
+  }
+  return orderOf(s).map(key => ({ key, ...rows[key]() }))
+}
+const stack = rows => `<span class="stack">${rows.map(r => `<span class="${r.live ? 'live' : ''}">${G[r.key]}</span>`).join('')}</span>`
+
+// ── The desktop ──
+const $ = id => document.getElementById(id)
+function layout(s) {
+  const W = { wide: 1240, medium: 1000, narrow: 760 }[s.width]
+  const sidebar = s.width !== 'narrow'
+  const overlay = s.width !== 'wide'
+  const chatW = W - (sidebar ? 200 : 0) - (s.paneOpen && !overlay ? 440 : 0)
+  return { W, sidebar, overlay, docked: chatW >= 860 }
+}
+function actRow(r, s) {
+  const cls = ['act' + enter('row:' + r.key), r.live && 'live', !s.seen.has(r.key) && 'unseen', s.paneOpen && s.tab === r.key && 'on'].filter(Boolean).join(' ')
+  return `<button class="${cls}" data-open="${r.key}"><span class="gl">${r.glyph ?? G[r.key]}</span><span class="label">${r.label}</span><span class="meta${r.word ? ' word' : ''}">${r.meta}</span></button>`
+}
+function transcript(s) {
+  let html = ''
+  if (s.user) html += `<div class="user">The export dialog's footer drops off the bottom at 1280×720, so you can't reach Export. Fix it, check it in the browser at a couple of sizes, and sketch the flow on the canvas while you're at it.
+      <div class="atts">${s.images.filter(i => i.from === 'you').reverse().map(i => `<div class="thumb">${ART[i.art]()}</div>`).join('')}</div></div>`
+  if (s.logs.length) {
+    html += `<div><div class="worked">${s.working ? 'Working' : 'Worked'} for ${secs(s)}s · ${s.logs.length} steps ${G.right}</div>
+      <div class="log">${s.logs.map((l, i) => `<div class="${enter('log:' + i).trim()}">${G[l.glyph]}<span>${l.html}</span></div>`).join('')}</div></div>`
+  }
+  if (s.done) html += `<div class="answer${enter('answer')}"><p>The footer is fixed. The dialog body scrolls now, and the footer stays pinned at 1280×720 and at 900×640. Both screenshots are in the Library.</p><p>Three files changed, ${diffSpan(totals(s))}. The review agent found nothing to change.</p></div>`
+  return html
+}
+const secs = s => Math.max(1, Math.round(((s.done ? s.doneAt : Date.now()) - started) / 1000))
+
+function renderDesktop(s) {
+  const app = $('app'), L = layout(s)
+  app.style.width = L.W + 'px'
+  app.classList.toggle('no-sidebar', !L.sidebar)
+  app.classList.toggle('overlay-pane', L.overlay)
+  app.classList.toggle('docked', L.docked)
+  if (L.docked) s.popOpen = false
+  const rows = rowsOf(s)
+  $('msgs').innerHTML = transcript(s)
+
+  // Docked card, or the pill that stands in for it.
+  const pillSlot = $('pillSlot'), cardSlot = $('cardSlot')
+  pillSlot.innerHTML = ''; cardSlot.innerHTML = ''
+  const cardBody = rows.length ? rows.map(r => actRow(r, s)).join('') : '<div class="empty">Nothing yet. Files, pages, boards, agents and images show up here as the agent uses them.</div>'
+  if (L.docked) {
+    cardSlot.innerHTML = `<div class="card glass docked" style="top:${40 + 12}px">${cardBody}</div>`
+  } else if (rows.length) {
+    pillSlot.innerHTML = `<button class="pill${enter('pill:' + s.width)}" id="pill" aria-expanded="${s.popOpen}" title="What the agent touched">${stack(rows)}<span class="chev">${G.down}</span></button>`
+    if (s.popOpen) {
+      const pr = $('pill').getBoundingClientRect(), ar = app.getBoundingClientRect()
+      cardSlot.innerHTML = `<div class="card glass" style="top:${pr.bottom - ar.top + 6}px;right:${Math.max(8, ar.right - pr.right)}px">${cardBody}</div>`
+    }
+  }
+
+  renderPane(s)
+  $('paneToggle').setAttribute('aria-pressed', String(s.paneOpen))
+  document.querySelectorAll('[data-width]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.width === s.width)))
+  $('desktopNote').innerHTML = L.docked
+    ? '<b>Docked.</b> The chat has room, so the card sits at its top right, always open. Open the pane or pick a narrower width to see it condense.'
+    : `<b>Condensed.</b> ${s.paneOpen && s.width === 'wide' ? 'The pane is open, so the chat is too narrow for the card.' : 'The chat is too narrow for the card.'} It becomes a pill in the title bar: the rows' glyphs and an arrow, nothing else. Click it to drop the rows down.`
+}
+
+function renderPane(s) {
+  const pane = $('pane')
+  pane.classList.toggle('open', s.paneOpen)
+  if (!s.paneOpen) { pane.innerHTML = ''; return }
+  const label = { changes: 'Diff', files: 'Files', browser: 'Browser', canvas: 'Canvas', agents: 'Agents', library: 'Library' }
+  const live = { changes: !!s.liveFile, files: !!s.liveFile, browser: s.browser?.live, canvas: s.canvas?.live, agents: working(s) > 0 }
+  pane.innerHTML = `<div class="tabs">${orderOf(s).map(k => `<button class="tab${s.tab === k ? ' on' : ''}${live[k] ? ' live' : ''}" data-tab="${k}">${G[k]}${label[k]}</button>`).join('')}<span class="tb-spacer"></span><button class="icon-btn" data-close title="Close pane">${G.close}</button></div><div class="pane-body">${paneBody(s)}</div>`
+}
+function libraryTiles(s, cls) {
+  const src = { you: ['You', ''], browser: ['Browser screenshot', G.browser], canvas: ['Canvas', G.canvas] }
+  const list = s.images.filter(i => s.libFilter === 'all' || (s.libFilter === 'you') === (i.from === 'you'))
+  return list.length
+    ? `<div class="${cls}">${list.map(i => `<button class="tile${enter(cls + ':' + i.caption)}"><div class="pic">${ART[i.art]()}<span class="jump">Jump to message</span></div><div class="cap1">${i.caption}</div><div class="cap2">${src[i.from][1]}${src[i.from][0]} · ${i.at}</div></button>`).join('')}</div>`
+    : '<div class="pane-empty">No images from here yet.</div>'
+}
+// The project tree, opened out to the folders the agent edited: its files carry their
+// change in the name's tint, and the one it is in right now a violet wash.
+function fileTree(s, cls) {
+  const edited = new Map(s.files.map(f => [f.path, f.path.endsWith('Footer.tsx') ? 'added' : 'modified']))
+  const rows = [
+    [0, 'dir', 'src', true], [1, 'dir', 'catalog', false], [1, 'dir', 'export', true],
+    [2, 'file', 'src/export/ExportDialog.tsx'], [2, 'file', 'src/export/ExportFooter.tsx'], [2, 'file', 'src/export/export.css'], [2, 'file', 'src/export/formats.ts'],
+    [1, 'dir', 'routes', false], [0, 'file', 'package.json'], [0, 'file', 'README.md'],
+  ]
+  return `<div class="${cls}">${rows.filter(([, kind, path]) => kind === 'dir' || !path.endsWith('Footer.tsx') || edited.has(path)).map(([depth, kind, path, open]) => {
+    const name = path.split('/').pop(), state = edited.get(path)
+    const glyph = kind === 'dir' ? `<span class="tw">${open ? '▾' : '▸'}</span>${G.files}` : `<span class="tw"></span><span class="ext ${name.split('.').pop()}">${name.endsWith('.css') ? '#' : name.endsWith('.md') ? 'M↓' : name.endsWith('.json') ? '{}' : 'TS'}</span>`
+    return `<div class="tree-row${state ? ' ' + state : ''}${s.liveFile === path ? ' live' : ''}" style="padding-left:${8 + depth * 14}px">${glyph}<span class="nm">${name}</span>${state ? `<span class="st">${state === 'added' ? 'A' : 'M'}</span>` : ''}</div>`
+  }).join('')}</div>`
+}
+const LIB_FILTERS = [['all', 'All'], ['you', 'From you'], ['agent', 'From the agent']]
+function paneBody(s) {
+  switch (s.tab) {
+    case 'changes': {
+      const t = totals(s), f = s.files.find(x => x.path.endsWith('ExportDialog.tsx'))
+      return `<div class="pane-sec"><h4>${plural(s.files.length, 'file')} changed · ${diffSpan(t)}</h4>
+        ${s.files.map(x => { const parts = x.path.split('/'), name = parts.pop(), ext = name.split('.').pop(); return `<div class="file${x === f ? ' on' : ''}"><span class="ext ${ext}">${ext === 'css' ? '#' : 'TS'}</span><span class="path">${name} <i>${parts.join('/')}</i></span><span class="mono add">+${x.add}</span><span class="mono del">−${x.del}</span></div>` }).join('')}</div>
+        ${f ? `<div class="diff"><div class="h">@@ ExportDialog.tsx -41,9 +41,14 @@</div><div>  return (</div><div class="r">-    &lt;Dialog className="export-dialog"&gt;</div><div class="a">+    &lt;Dialog className="export-dialog" layout="pinned-footer"&gt;</div><div>       &lt;DialogHeader title="Export" /&gt;</div><div class="r">-      &lt;div className="export-body"&gt;</div><div class="a">+      &lt;div className="export-body" data-scroll&gt;</div><div>         &lt;FormatPicker … /&gt;</div><div class="a">+      &lt;/div&gt;</div><div class="a">+      &lt;ExportFooter onExport={onExport} /&gt;</div></div>` : ''}`
+    }
+    case 'files': return `<div class="pane-sec"><h4>atlas · opened at <span class="mono">${editedDir(s)}</span></h4></div>${fileTree(s, 'tree')}`
+    case 'browser': return `<div class="urlbar">${G.browser}<span class="mono">${s.browser.url}</span>${s.browser.live ? '<span class="who">Agent is driving</span>' : ''}</div><div class="page${s.browser.live ? ' live' : ''}">${ART.fixed()}</div>`
+    case 'canvas': return `<div class="urlbar">${G.canvas}<span>${s.canvas.board}</span>${s.canvas.live ? '<span class="who">Agent is drawing</span>' : ''}</div><div class="page${s.canvas.live ? ' live' : ''}">${ART.flow()}</div>`
+    case 'agents': return `<div class="pane-sec">${s.agents.map(a => `<div class="agent-row">${robot(a.state)}<div><div class="nm">${a.name}</div><div class="task">${a.task}</div></div><span class="when ${a.state}">${a.state === 'working' ? `Working · ${Math.round((Date.now() - a.at) / 1000)}s` : `Done · ${a.took}`}</span></div>`).join('')}</div>`
+    case 'library': return `<div class="lib-filter"><div class="seg">${LIB_FILTERS.map(([k, l]) => `<button data-lib="${k}" aria-pressed="${s.libFilter === k}">${l}</button>`).join('')}</div></div>
+        <div class="lib-group">${plural(s.images.length, 'image')}</div>${libraryTiles(s, 'lib-grid')}`
+    default: return ''
+  }
+}
+
+// ── The phone ──
+function phoneFrame(inner) {
+  return `<div class="status"><span>10:46</span><span class="notch"></span><svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x=".5" y=".5" width="22" height="11" rx="3" stroke="currentColor" opacity=".5"/><rect x="2.5" y="2.5" width="16" height="7" rx="1.5" fill="currentColor"/><path d="M24 4v4" stroke="currentColor" opacity=".5" stroke-linecap="round"/></svg></div>${inner}`
+}
+// The runtime's mark, in its own colour: the phone's stand-in for an avatar.
+const RUNTIME_MARK = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M3.8 3.8l2.8 2.8M9.4 9.4l2.8 2.8M12.2 3.8 9.4 6.6M6.6 9.4l-2.8 2.8" stroke="#D97757" stroke-width="1.8" stroke-linecap="round"/></svg>'
+const TITLE = 'Footer drops off the export dialog'
+function phoneChat(s, id) {
+  let body = ''
+  if (s.user) body += `<div class="m-user">The export dialog's footer drops off the bottom at 1280×720, so you can't reach Export. Fix it, check it in the browser, and sketch the flow on the canvas.<div class="atts">${s.images.filter(i => i.from === 'you').reverse().map(i => `<div class="thumb">${ART[i.art]()}</div>`).join('')}</div></div>`
+  if (s.logs.length) body += `<div class="m-worked">${G.read}<span>${s.working ? 'Working' : 'Worked'} · ${s.logs.length} steps</span><span class="sp"></span>${G.right}</div>`
+  if (s.done) body += `<div class="m-answer"><p>The footer is fixed. The dialog body scrolls now, and the footer stays pinned at both sizes I checked.</p><p>Three files changed, ${diffSpan(totals(s))}. The screenshots are in the Library.</p></div>`
+  // The pill is the chat's title and nothing else: what the agent touched is one tap away, on the chat's page.
+  const pill = `<button class="m-pill glass" data-phone-pill><span class="tt">${TITLE}</span><span class="chev">${G.right}</span></button>`
+  return phoneFrame(`<div class="m-body"><div class="m-scroll">${body}</div><div class="m-fade"></div>
+      <div class="m-float"><button class="m-fab glass" data-phone-go="chat">${G.back}</button>${pill}</div></div>
+    <div class="m-composer"><div class="ph">Reply…</div><div class="row"><span style="font-size:20px;line-height:1">+</span><span style="margin-left:auto">Opus 5.5</span><span class="send"><svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M8 13V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div></div>
+    <div class="m-strip"><span class="mono">agent/chat-k2fa</span>${s.files.length ? `<span style="margin-left:auto">${diffSpan(totals(s))}</span>` : ''}</div>`)
+}
+// The chat's own page, which the pill opens: who and where, then what the agent touched, then what the ⋯ menu held.
+function phoneDetails(s) {
+  const rows = rowsOf(s)
+  const group = rows.length
+    ? rows.map(r => `<button class="m-grow${r.live ? ' live' : ''}" data-phone-open="${r.key}"><span class="gl">${r.glyph ?? G[r.key]}</span><span class="lb">${r.title}</span><span class="meta${r.word ? ' word' : ''}">${r.meta}</span><span class="chev">${G.right}</span></button>`).join('')
+    : '<div class="m-grow quiet">What the agent touches shows up here.</div>'
+  return phoneFrame(`<div class="m-body"><div class="m-scroll plain m-detail">
+      <div class="m-hero"><span class="mk">${RUNTIME_MARK}</span><div class="t">${TITLE}</div><div class="s"><span>${G.folder}atlas</span><span>${G.laptop}dev-macbook-air</span><span>Opus 5.5</span></div></div>
+      <div class="m-group">${group}</div>
+      <div class="m-group"><button class="m-grow"><span class="lb">Mark unread</span></button><button class="m-grow"><span class="lb">Settle</span></button></div>
+      <div class="m-foot">Settle moves it to Settled on dev-macbook-air, and off the list.</div>
+    </div><div class="m-float"><button class="m-fab glass" data-phone-go="chat">${G.back}</button></div></div>`)
+}
+function phoneScreen(s, key) {
+  const head = (title, sub) => `<div class="m-head"><button class="m-back" data-phone-go="details">${G.back}</button><div class="m-title"><div class="t">${title}</div><div class="s"><span>${sub}</span></div></div></div>`
+  let inner = ''
+  switch (key) {
+    case 'library':
+      inner = head('Library', `${plural(s.images.length, 'image')} in this chat`) + `<div class="m-body"><div class="m-scroll plain"><div><div class="m-seg">${LIB_FILTERS.map(([k, l]) => `<button data-lib="${k}" aria-pressed="${s.libFilter === k}">${l}</button>`).join('')}</div>${libraryTiles(s, 'm-lib')}</div></div></div>`
+      break
+    case 'changes':
+      inner = head('Changes', `${plural(s.files.length, 'file')} · ${diffSpan(totals(s))}`) + `<div class="m-body"><div class="m-scroll plain"><div>${s.files.map(f => { const parts = f.path.split('/'), name = parts.pop(); return `<div class="m-file"><span class="st">${f.path.endsWith('Footer.tsx') ? 'A' : 'M'}</span><div class="p"><div>${name}</div><div>${parts.join('/')}</div></div>${diffSpan(f)}</div>` }).join('')}<p class="m-note">Tap a file for its diff. This is the Changes screen the phone has today.</p></div></div></div>`
+      break
+    case 'files':
+      inner = head('Files', `atlas · <span class="mono">${editedDir(s)}</span>`) + `<div class="m-body"><div class="m-scroll plain"><div>${fileTree(s, 'tree m-tree')}<p class="m-note">The project's files, opened out to where the agent worked. Tap a file to read it.</p></div></div></div>`
+      break
+    case 'agents':
+      inner = head('Agents', `${plural(s.agents.length, 'agent')}${working(s) ? ` · ${working(s)} working` : ''}`) + `<div class="m-body"><div class="m-scroll plain"><div>${s.agents.map(a => `<div class="m-card">${robot(a.state)}<div><div class="nm">${a.name}</div><div class="task">${a.task}</div></div><span class="when ${a.state}">${a.state === 'working' ? `Working · ${Math.round((Date.now() - a.at) / 1000)}s` : `Done in ${a.took}`}</span></div>`).join('')}</div></div></div>`
+      break
+    case 'browser': {
+      const shot = s.images.find(i => i.from === 'browser')
+      inner = head('Browser', `<span class="mono">${s.browser?.url ?? ''}</span>`) + `<div class="m-body"><div class="m-scroll plain"><div>${shot ? `<div class="m-shot">${ART[shot.art]()}</div><p class="m-note">The agent's last look at the page, ${shot.at}${s.browser?.live ? '. The agent is on it now.' : '.'}</p>` : '<p class="m-note">The agent hasn\'t taken a picture of the page yet.</p>'}<p class="m-note">This page is <span class="mono">localhost</span> on the desktop, so the phone can't open it until the desktop publishes that dev server, as Web pages does.</p><button class="m-btn" disabled style="opacity:.5">Open on this phone</button></div></div></div>`
+      break
+    }
+    case 'canvas':
+      inner = head('Canvas', s.canvas?.board ?? '') + `<div class="m-body"><div class="m-scroll plain"><div><div class="m-shot">${ART.flow()}</div><p class="m-note">The board as the agent last drew it. Open it on the desktop to edit.</p></div></div></div>`
+      break
+  }
+  return phoneFrame(inner)
+}
+function renderPhones(s) {
+  const v = s.phoneView
+  $('phone1').innerHTML = v === 'chat' ? phoneChat(s, 'p1') : v === 'details' ? phoneDetails(s) : phoneScreen(s, v)
+  $('phone2').innerHTML = phoneDetails(s)
+  $('phone3').innerHTML = phoneScreen(s, s.order.includes(v) ? v : 'library')
+}
+
+function render(tick) {
+  if (tick) {
+    $('msgs').innerHTML = transcript(S)
+    if (S.paneOpen && S.tab === 'agents') renderPane(S)
+    renderPhones(S)
+    return
+  }
+  renderDesktop(S)
+  renderPhones(S)
+}
+
+// ── Driving it ──
+function play(skip) {
+  timers.forEach(clearTimeout); timers = []; clearInterval(clock)
+  S = fresh(); started = Date.now(); drawn = new Set()
+  if (skip) { RUN.forEach(e => e.do(S)); S.liveFile = null; S.doneAt = started + 13000; render(); return }
+  render()
+  RUN.forEach(e => timers.push(setTimeout(() => { e.do(S); if (S.done) S.doneAt = Date.now(); render() }, e.t)))
+  clock = setInterval(() => { if (S.working) render(true) }, 1000)
+}
+function openTab(key) { S.paneOpen = true; S.tab = key; S.seen.add(key); S.popOpen = false; render() }
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-open],[data-tab],[data-close],[data-lib],[data-width],[data-phone-pill],[data-phone-open],[data-phone-go],#pill,#paneToggle')
+  if (!t) { if (S.popOpen && !e.target.closest('.card')) { S.popOpen = false; render() } return }
+  if (t.dataset.open) return openTab(t.dataset.open)
+  if (t.dataset.tab) return openTab(t.dataset.tab)
+  if (t.hasAttribute('data-close')) { S.paneOpen = false; return render() }
+  if (t.dataset.lib) { S.libFilter = t.dataset.lib; return render() }
+  if (t.dataset.width) { S.width = t.dataset.width; S.popOpen = false; return render() }
+  if (t.hasAttribute('data-phone-pill')) { S.phoneView = 'details'; return render() }
+  if (t.dataset.phoneOpen) { S.phoneView = t.dataset.phoneOpen; S.seen.add(t.dataset.phoneOpen); return render() }
+  if (t.dataset.phoneGo) { S.phoneView = t.dataset.phoneGo; return render() }
+  if (t.id === 'pill') { S.popOpen = !S.popOpen; return render() }
+  if (t.id === 'paneToggle') { if (S.paneOpen) { S.paneOpen = false; return render() } return openTab(S.tab ?? orderOf(S)[0] ?? 'library') }
+})
+$('replay').onclick = () => play(false)
+$('skip').onclick = () => play(true)
+$('light').onchange = e => { document.documentElement.dataset.mode = e.target.checked ? 'light' : 'dark' }
+
+play(false)
+</script>
+</body>
+</html>

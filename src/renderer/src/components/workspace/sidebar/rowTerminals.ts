@@ -138,6 +138,9 @@ export function keepUnvisitedCompletions(input: {
  * the same. The chat on screen is being looked at, and a chat followed from a
  * paired machine keeps its read state there, so neither is marked. Answers
  * `previous` itself when the marks are the same, so a caller keeps its identity.
+ *
+ * `visitedAt` reads the chat's visit clock somewhere other than the record
+ * handed in, for a caller whose records can be a visit behind.
  */
 export function visitClockCompletions<W extends Pick<Workspace, 'id' | 'lastVisitedAt' | 'remoteOrigin'>>(input: {
   workspaces: readonly W[]
@@ -145,6 +148,7 @@ export function visitClockCompletions<W extends Pick<Workspace, 'id' | 'lastVisi
   finishedAt: (workspace: W) => number | null
   idle: (workspaceId: string) => boolean
   onScreenWorkspaceId: string | null
+  visitedAt?: (workspace: W) => number | null | undefined
   previous?: ReadonlySet<string>
 }): ReadonlySet<string> {
   const next = new Set<string>()
@@ -154,7 +158,7 @@ export function visitClockCompletions<W extends Pick<Workspace, 'id' | 'lastVisi
       finishedUnseen({
         idle: input.idle(workspace.id),
         finishedAt: input.finishedAt(workspace),
-        visitedAt: workspace.lastVisitedAt,
+        visitedAt: input.visitedAt ? input.visitedAt(workspace) : workspace.lastVisitedAt,
       })
     )
       next.add(workspace.id)

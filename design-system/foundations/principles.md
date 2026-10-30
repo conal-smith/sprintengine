@@ -21,11 +21,8 @@ has, so it is spent on almost nothing:
 - `accent.primary` as **ink or a hairline** may mark focus (`focus.ring`) and a
   genuinely live process.
 - Everything else earns its weight from the neutral ink and surface ramps.
-- One carve-out that is not a signal at all: the **tinted window material**
-  lays a barely perceptible wash of `accent.primary` behind the accent half of
-  the brand wordmark, and nowhere else (owner rulings 2026-09-24). That is the
-  material the chrome is made of, following the colour of the letters it sits
-  behind, not the accent spent on anything — see "Window material" below.
+- The brand monogram's "e" is drawn in `accent.primary` ink, the way the
+  application icon draws it. Ink on two letters, not a fill and not a signal.
 
 If a surface needs a second accent, it is missing hierarchy, not color. Status
 hues (`status.*`) are not accents: never a button background, section border,
@@ -465,12 +462,16 @@ here", "while the app is open". The name belongs in exactly four places: the
 window title, the About/version line, the sign-in and account surfaces, and
 first-run onboarding.
 
-The one carve-out is the brand **wordmark**, which may appear exactly once, as
-window chrome at the top of the left column. A mark is not a sentence: it
+The one carve-out is the brand **monogram** — the application icon's "se" —
+which may appear exactly once, as window chrome at the foot of the app rail,
+below Settings, where a click opens the project's repository (owner ruling
+2026-10-30; it replaced the "sprintengine" wordmark at the top of the left
+column). A nightly build draws it on the nightly icon's night tile; a stable
+build draws it on the rail's own ground. A mark is not a sentence: it
 identifies the window the way a title bar does, and it does not narrate. The
 rule above is unchanged for copy — no label, message, tooltip, or empty state
-gains the name because the wordmark exists — and "exactly once" is literal, so
-a second placement retires the first rather than joining it.
+gains the name because the mark exists — and "exactly once" is literal, so a
+second placement retires the first rather than joining it.
 
 **Report the result, not the inventory.** When an operation finishes, show the
 one fact that answers "did it work?" — a count, a name, a state. Everything
@@ -826,7 +827,7 @@ A gate, not a preference. No design system supplies it for you.
 
 ## Window material
 
-The window's chrome — the app rail, the sidebar's brand row, the 36px title
+The window's chrome — the app rail, the sidebar's chrome row, the 36px title
 band, the aside column — stands on one ground, and the person picks what that
 ground is made of. It is a second appearance axis beside the theme: every
 material works over every theme and both modes, because each is derived from
@@ -850,16 +851,7 @@ whichever ground is chosen, so a material is only ever seen in the chrome.
     the ink of what stands on it — the rail's glyphs and the chrome's text —
     so on a dark theme it is a faint lift of the foreground, and on a light one
     a faint shade of it.
-  - *The wordmark's wash.* The one thing in the chrome that is two colours
-    gets a wash in both: `text.primary` behind "sprint" at `tinted.brand-ink`
-    and `accent.primary` behind "engine" at `tinted.brand`, overlapping across
-    the join and feathered to nothing `tinted.brand-reach` past the mark
-    (four tenths of that above and below, so it stays inside the brand row).
-    The ink half carries the smaller share because the foreground is much
-    further from the ground than the accent: at one share for both, "sprint"
-    sat in a grey smudge and "engine" in almost nothing. This is the only
-    place the material spends the accent.
-- **Solid** — the plain opaque `bg.app` ground, with neither.
+- **Solid** — the plain opaque `bg.app` ground, with no wash.
 
 The rules that keep Tinted honest:
 
@@ -868,9 +860,12 @@ The rules that keep Tinted honest:
   exactly as it does on Solid, in its own box. A glow per rail button was
   tried first and read as a square with a coloured halo round every one of
   them. Selection stays the neutral `bg.selected` fill.
+  The nightly build's night tile behind the rail's brand monogram is not the
+  material: it is the nightly application icon's own ground, the same on every
+  material, theme and mode.
 - **The colour follows what it sits behind.** The foreground under the
-  foreground, the accent only under the accent. A wash of a colour that
-  nothing on it is drawn in reads as a light shining on the chrome.
+  foreground, and never the accent. A wash of a colour that nothing on it is
+  drawn in reads as a light shining on the chrome.
 - **No edge anywhere.** Every wash falls off on a smooth curve (a raised
   cosine, many stops) rather than a few linear stops, so there is no ring, rim
   or band at any stop and nothing is clipped at a box's edge: each wash has
@@ -884,8 +879,7 @@ The rules that keep Tinted honest:
   less than the step between the ground and the cards, so on a dark theme a
   card still reads as standing above the chrome rather than sunk into it.
 - **Contrast holds.** The ambient wash moves `bg.app` by one or two hundredths
-  of the foreground at its strongest, and the wordmark's wash by a few
-  hundredths of its own inks, both far below what would take the chrome's text
+  of the foreground at its strongest, far below what would take the chrome's text
   or the rail's glyphs out of AA on their ground in either mode.
 - **The chrome's fills tint, they do not cover.** On both glass and tinted the
   canvas layers go see-through and the ground is painted once, so a hovered or

@@ -137,6 +137,12 @@ import { conversationContextReading } from './agentChat/contextReading'
 import type { ContextBreakdownSource } from './agentChat/ContextBreakdown'
 import { ConversationComposerStrip } from './agentChat/conversationStrip'
 import { useConversationStripFacts } from './agentChat/conversationStripFacts'
+import {
+  ACTIVITY_CARD_DOCK_MIN_WIDTH,
+  DockedChatActivityCard,
+  useChatActivityCard,
+  useWidthAtLeast,
+} from './agentChat/ChatActivityCard'
 import { useUsageLimitSnapshot } from './agentChat/usageLimits'
 import { HostUsageLimitNoticeRow, UsageLimitResumeRow } from './agentChat/usageLimitResume'
 import {
@@ -3684,6 +3690,25 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     transport,
     listed: binding.listed ?? null,
   })
+  // ── What the agent touched ───────────────────────────────────────────────
+  // The card at the transcript's top right while it has room, the title bar's
+  // pill otherwise (ChatActivityCard). Its Changes row counts what the strip
+  // counts, so the two never disagree.
+  const activityDocked = useWidthAtLeast(transcriptRef, ACTIVITY_CARD_DOCK_MIN_WIDTH)
+  const stripAdded = stripFacts.changes?.added ?? null
+  const stripRemoved = stripFacts.changes?.removed ?? null
+  const activityDiff = useMemo(
+    () => (stripAdded !== null && stripRemoved !== null ? { added: stripAdded, removed: stripRemoved } : null),
+    [stripAdded, stripRemoved],
+  )
+  const chatActivity = useChatActivityCard({
+    workspaceId,
+    agentId,
+    entries: projection.entries,
+    diff: activityDiff,
+    workspaceRoot,
+    docked: activityDocked,
+  })
   // ── Scheduling the next message ──────────────────────────────────────────
   // Offered for a chat that runs on this computer, as its usage-limit resume
   // is: main sends the message, through this computer's own chats. And for a
@@ -3982,6 +4007,8 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           ) : null}
           <div
             ref={transcriptRef}
+            // The transcript keeps its text clear of the docked card (index.css).
+            data-activity-docked={chatActivity.docked && chatActivity.rows.length ? '' : undefined}
             // Under a replay the live chat keeps running, out of reach.
             inert={replay !== null}
             role="log"
@@ -4112,6 +4139,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               />
             )}
             {minimap}
+            <DockedChatActivityCard
+              workspaceId={workspaceId}
+              activity={chatActivity}
+              // Below Find, which takes the same corner while it is open.
+              topInset={chatFind.open && replay === null ? 44 : 0}
+            />
             <QuoteSelectionToolbar
               rootRef={transcriptRef}
               // A chat nobody can see has no selection to offer a quote for.

@@ -4943,23 +4943,11 @@ export default function WorkspaceManager() {
         onNavigateBack={sidebarNavigateBack}
         onNavigateForward={sidebarNavigateForward}
         onOpenSearch={sidebarOpenSearch}
-        // The brand row's wordmark is the New chat button, so it routes to the
-        // same panel as the rail's New chat row below it — one action, two
-        // affordances, never two behaviours.
-        onNewChat={sidebarNewChat}
         menuItems={menubarItems}
         onShowMenu={sidebarShowMenu}
       />
     ),
-    [
-      isFullScreen,
-      sidebarToggle,
-      sidebarNavigateBack,
-      sidebarNavigateForward,
-      sidebarOpenSearch,
-      sidebarNewChat,
-      sidebarShowMenu,
-    ],
+    [isFullScreen, sidebarToggle, sidebarNavigateBack, sidebarNavigateForward, sidebarOpenSearch, sidebarShowMenu],
   )
   const contextRailSurfaceKey = activeGlobalSurfaceEntry?.id ?? null
   const sidebarContextRail = useMemo(

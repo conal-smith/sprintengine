@@ -206,6 +206,18 @@ test('WorkspaceSidebar.unseenFinish', async () => {
     assert.equal(green('Nightly triage'), false, 'visited after it finished')
     assert.equal(green('Nightly changelog'), true, 'the other still waits for a look')
 
+    // Opened here and left: the visit lands in the store, but the rows the
+    // manager hands the sidebar leave the visit clock out and are not drawn
+    // again for it, so they still carry the clock from before the visit.
+    useWorkspaceStore.setState({
+      workspaces: visited.map((workspace) =>
+        workspace.id === 'overnight-2' ? ({ ...workspace, lastVisitedAt: now - 60_000 } as Workspace) : workspace,
+      ),
+    } as never)
+    await settle()
+    assert.equal(green('Nightly changelog'), false, 'a visit the rows have not caught up with is still seen')
+    assert.ok(!reported.has('overnight-2'), 'and the rail’s badge drops it')
+
     // Working again is not finished.
     await render({
       ...base,

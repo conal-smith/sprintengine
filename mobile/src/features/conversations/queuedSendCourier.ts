@@ -55,6 +55,8 @@ export interface QueuedSendCourier {
     api: ConversationApi;
     /** The desktop holds queued messages: a handed-over send goes to it as one. */
     queuedSends?: boolean;
+    /** It holds their pictures and files too (`conversation-queued-attachments`). */
+    queuedAttachments?: boolean;
     /** The desktop answers `hello`, the socket's cheap probe. */
     hello?: boolean;
   }): void;
@@ -71,7 +73,7 @@ export function createQueuedSendCourier(deps: QueuedSendCourierDeps): QueuedSend
   const chatOf = (deviceId: string, key: ConversationKey) =>
     `${deviceId}\0${key.workspaceId}\0${key.agentId}`;
   return {
-    carry({ deviceId, key, api, queuedSends = false, hello = false }) {
+    carry({ deviceId, key, api, queuedSends = false, queuedAttachments = false, hello = false }) {
       const chat = chatOf(deviceId, key);
       carried.get(chat)?.();
       let stopped = false;
@@ -160,6 +162,7 @@ export function createQueuedSendCourier(deps: QueuedSendCourierDeps): QueuedSend
           {
             pendingSends: pending,
             queuedSends,
+            queuedAttachments,
             hello,
             ...(cached?.generation === undefined ? {} : { generation: cached.generation }),
           },

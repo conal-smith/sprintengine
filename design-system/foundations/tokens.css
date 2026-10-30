@@ -183,10 +183,6 @@
   --sem-glass-opacity: 0.8;
   --sem-glass-saturation: 1.14;
   --sem-tinted-wash: 0.02;
-  --sem-tinted-brand: 0.05;
-  --sem-tinted-brand-ink: 0.025;
-  --sem-tinted-brand-reach: 24px;
-  --sem-z-behind: -1;
   --sem-z-parked: -1;
   --sem-z-sticky: 10;
   --sem-z-pane: 20;
@@ -263,5 +259,4 @@
   --sem-glass-blur: 16px;
   --sem-glass-saturation: 1.08;
   --sem-tinted-wash: 0.014;
-  --sem-tinted-brand: 0.06;
 }

@@ -9,6 +9,7 @@ import type { WorkspaceId, WorkspacePaneTab, WorkspacePaneTabKind } from '../../
 import { openFileSurface } from '../../../../utils/openFileSurface'
 import { readAuxWindowBounds } from '../../../auxWindows/auxWindowPlacement'
 import { readAgentFocusRequest, subscribeAgentFocusRequests } from '../agents/agentsPaneFocus'
+import type { PaneKindDefinition } from '../paneKinds'
 
 // The owner window's half of the pane pop-out (shared/ipc/pane-popout.ts has
 // the protocol). This window's store stays the one record of every tab: a
@@ -158,6 +159,18 @@ const POP_OUT_OPEN_KINDS: ReadonlySet<WorkspacePaneTabKind> = new Set<WorkspaceP
   'agents',
 ])
 const POP_OUT_OPEN_FIELDS = ['title', 'url', 'diff', 'canvas', 'document'] as const
+
+/**
+ * The rows a pop-out window's "+" offers: the pane's own list, less what a
+ * window cannot open. A terminal tab is opened in the pane, which starts its
+ * pty, and a row that floats a modal surface (Reviews) needs the window that
+ * hosts the modals; neither is a tab the owner would hand this window.
+ */
+export function popOutAddKinds(kinds: readonly PaneKindDefinition[]): PaneKindDefinition[] {
+  return kinds.filter(
+    (definition) => !definition.modalSurfaceId && POP_OUT_OPEN_KINDS.has(definition.kind as WorkspacePaneTabKind),
+  )
+}
 const POP_OUT_PATCH_FIELDS = ['title', 'url', 'faviconUrl', 'diff', 'canvas', 'document', 'viewport'] as const
 
 function pickPopOutFields<K extends keyof WorkspacePaneTab>(
@@ -253,6 +266,27 @@ export function applyPanePopOutAction(popOutId: string, action: PanePopOutAction
       } else if ((action.input as { activate?: unknown }).activate !== false) {
         store.setActivePaneTab(workspaceId, opened)
       }
+      return
+    }
+    case 'add': {
+      // The window's "+". What `open` does for a tab body's request, except
+      // that the kind comes HERE: the person picked it in this window. A tab
+      // already in another window stays there and comes forward in it — one
+      // tab, one window — but one sitting in the pane moves over.
+      const kind = action.kind
+      if (typeof kind !== 'string' || !POP_OUT_OPEN_KINDS.has(kind) || kind === 'document') return
+      const opened = store.openPaneTab(workspaceId, { kind, activate: false })
+      if (opened === null) return
+      const tab = paneTabs(workspaceId).find((candidate) => candidate.id === opened)
+      if (!tab) return
+      if (tab.poppedOut && tab.poppedOut !== popOutId && popOuts.has(tab.poppedOut)) {
+        bumpReveal(tab.poppedOut, opened)
+        showPanePopOut(tab.poppedOut)
+      } else {
+        if (!tab.poppedOut) store.popOutPaneTabs(workspaceId, [opened], popOutId)
+        bumpReveal(popOutId, opened)
+      }
+      requestSync?.()
       return
     }
     case 'open-file':

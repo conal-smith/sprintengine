@@ -80,6 +80,11 @@ export {
   ScheduleIcon,
   SignOutIcon,
   WorktreeGlyph,
+  DiffGlyph,
+  BrowserGlyph,
+  CanvasGlyph,
+  AgentsGlyph,
+  LibraryGlyph,
 } from "./AppGlyphs";
 
 export {

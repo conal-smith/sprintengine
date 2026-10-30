@@ -27,6 +27,7 @@ const WORKSPACE_PANE_TAB_KINDS: readonly WorkspacePaneTabKind[] = [
   'canvas',
   'document',
   'agents',
+  'library',
 ]
 
 // Kinds a workspace opens at most once: opening them again focuses the tab
@@ -42,6 +43,7 @@ const SINGLETON_PANE_TAB_KINDS: ReadonlySet<WorkspacePaneTabKind> = new Set([
   'git',
   'backlog',
   'agents',
+  'library',
 ])
 
 /**

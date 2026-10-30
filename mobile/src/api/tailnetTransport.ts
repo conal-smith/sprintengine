@@ -156,6 +156,18 @@ export function declaresQueuedSends(session: { tailnetCapabilities?: string[] })
 }
 
 /**
+ * Whether the desktop said it holds what a queued message carries beside its
+ * words, pictures and files (`conversation-queued-attachments`): a `send` with
+ * `queue` takes `uploadIds`, and the desktop makes them its own the moment it
+ * holds the message, so the phone may sleep before the turn ends. Absence is a
+ * NO: an older desktop refuses `queue` beside them, and such a message waits
+ * on the phone.
+ */
+export function declaresQueuedAttachments(session: { tailnetCapabilities?: string[] }): boolean {
+  return session.tailnetCapabilities?.includes("conversation-queued-attachments") ?? false;
+}
+
+/**
  * Whether the desktop said it keeps a message scheduled into a chat and sends
  * it at its time (`conversation-scheduled-sends`). Absence is a NO: the chat's
  * "+" offers no Schedule, since an older desktop refuses the commands.

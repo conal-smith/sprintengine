@@ -199,6 +199,54 @@ test('a tab opened from the window joins it, in front', async () => {
   assert.equal(last?.state.reveal?.tabId, diff?.id)
 })
 
+// The window's own "+" (owner ruling 2026-10-30): the picked kind comes to the
+// window, and the pane's single tab of that kind moves over rather than being
+// shown behind the person in the other window.
+test("the window's + brings the kind into the window, moving the pane's own tab over", async () => {
+  await seed(structuredClone(TABS))
+  await mountHost(new Set([WS, OTHER]))
+  const popOutId = await popOut(['git'])
+
+  send(popOutId, { type: 'add', kind: 'files' })
+  let tabs = (await pane())?.tabs ?? []
+  assert.equal(tabs.filter((tab) => tab.kind === 'files').length, 1, 'still one Files tab')
+  assert.equal(tabs.find((tab) => tab.id === 'files')?.poppedOut, popOutId, 'the pane’s Files moved to the window')
+  let last = pushes.filter((push) => push.popOutId === popOutId).at(-1)
+  assert.deepEqual(
+    last?.state.tabs.map((tab) => tab.id),
+    ['files', 'git'],
+  )
+  assert.equal(last?.state.reveal?.tabId, 'files', 'in front')
+
+  send(popOutId, { type: 'add', kind: 'agents' })
+  tabs = (await pane())?.tabs ?? []
+  const agents = tabs.find((tab) => tab.kind === 'agents')
+  assert.equal(agents?.poppedOut, popOutId, 'a kind the pane lacked is opened in the window')
+  last = pushes.filter((push) => push.popOutId === popOutId).at(-1)
+  assert.equal(last?.state.reveal?.tabId, agents?.id)
+
+  const before = (await pane())?.tabs.length
+  send(popOutId, { type: 'add', kind: 'terminal' })
+  send(popOutId, { type: 'add', kind: 'document' })
+  assert.equal((await pane())?.tabs.length, before, 'no terminal or empty document from a window')
+})
+
+test("the window's + offers the pane's kinds less a terminal and the modal rows", async () => {
+  const { popOutAddKinds } = await import('./panePopOutHost')
+  const glyph = () => null
+  const kinds = popOutAddKinds([
+    { kind: 'browser', label: 'Browser', letter: 'B', Glyph: glyph },
+    { kind: 'terminal', label: 'Terminal', letter: 'T', Glyph: glyph },
+    { kind: 'files', label: 'Files', letter: 'F', Glyph: glyph },
+    { kind: 'agents', label: 'Agents', letter: 'A', Glyph: glyph },
+    { kind: 'reviews', label: 'Reviews', letter: 'R', Glyph: glyph, modalSurfaceId: 'reviews' },
+  ])
+  assert.deepEqual(
+    kinds.map((definition) => definition.kind),
+    ['browser', 'files', 'agents'],
+  )
+})
+
 test('closing its last tab closes the window; a closed window brings its tabs home', async () => {
   await seed(structuredClone(TABS))
   await mountHost(new Set([WS, OTHER]))

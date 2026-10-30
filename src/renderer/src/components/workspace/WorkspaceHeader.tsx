@@ -21,6 +21,7 @@
 import React from 'react'
 import { IconButton, Tooltip } from '../ui'
 import { PanelSwitches } from './PanelSwitches'
+import { ChatActivityPill } from '../panels/agentChat/ChatActivityCard'
 import { APP_RAIL_WIDTH, TRAFFIC_LIGHT_RESERVE } from './AppRail'
 import { AppMenuButton } from './SidebarChrome'
 import { TitleBarFoldProvider, useMeasuredTitleBarFold } from './titleBarFold'
@@ -232,6 +233,9 @@ export function WorkspaceHeader<MenuItem extends string>({
           whole workspace card, terminals included, every frame (the call
           workspaceAsideColumn.tsx already made for this same column). */}
       <div className="flex shrink-0 items-center">
+        {/* The focused chat's "what the agent touched" card, condensed to its
+            glyphs while the chat is too narrow to dock it. */}
+        {globalSurfaceActive ? null : <ChatActivityPill workspaceId={activeWorkspaceId} />}
         {actionsSlot}
         {/* The toolbar's two remaining members are both conditional now that the
             attention cue is gone, so the host renders nothing rather than an
