@@ -198,15 +198,18 @@ export function useAgentCliRuns(): AgentCliRuns {
       const runtime = cliRuntimeOnMachine(cli, hostId, { cliRuntimes, hosts })
       const key = cliUpdateRunKey(hostId, cli)
       setCliUpdateRuns((prev) => ({ ...prev, [key]: { running: true, notice: null, log: '' } }))
-      // Updates stream on the channel installs use. It is keyed by CLI alone,
-      // so the same CLI updating on two machines at once would share it.
+      // Updates stream on the channel installs use, one per CLI per machine,
+      // so the same CLI updating on two machines at once keeps two logs.
       const unsubscribe =
         typeof api.onCliInstallOutput === 'function'
-          ? api.onCliInstallOutput(cli, (chunk) =>
-              setCliUpdateRuns((prev) => {
-                const run = prev[key]
-                return run?.running ? { ...prev, [key]: { ...run, log: run.log + chunk } } : prev
-              }),
+          ? api.onCliInstallOutput(
+              cli,
+              (chunk) =>
+                setCliUpdateRuns((prev) => {
+                  const run = prev[key]
+                  return run?.running ? { ...prev, [key]: { ...run, log: run.log + chunk } } : prev
+                }),
+              hostId,
             )
           : () => undefined
       let notice: { tone: 'warn' | 'error'; text: string } | null = null
