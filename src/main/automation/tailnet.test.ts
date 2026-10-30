@@ -1661,14 +1661,8 @@ test('tailnet', async () => {
     assert.equal(bad.kind, 'error')
     assert.match(bad.kind === 'error' ? bad.reason : '', /must be masked/u)
 
-    // Fragmentation and binary frames are refused rather than half-handled.
-    const fragmented = createWebSocketFrameDecoder()
-    const frame = maskedTextFrame('x')
-    frame[0] = 0x01 // text, FIN clear
-    const fragmentResult = fragmented.push(frame)
-    assert.equal(fragmentResult.kind, 'error')
-    assert.match(fragmentResult.kind === 'error' ? fragmentResult.reason : '', /Fragmented messages are not supported/u)
-
+    // Binary frames are refused rather than half-handled. Fragmented text is
+    // read whole: websocket-frames.test.ts.
     const binary = createWebSocketFrameDecoder()
     const binaryFrame = maskedTextFrame('x')
     binaryFrame[0] = 0x82
