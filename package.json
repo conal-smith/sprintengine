@@ -316,7 +316,7 @@
     "@electron/asar": "^4.3.1",
     "@electron/notarize": "^3.1.2",
     "@excalidraw/excalidraw": "0.18.1",
-    "@excalidraw/mermaid-to-excalidraw": "2.3.0",
+    "@excalidraw/mermaid-to-excalidraw": "3.1.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@legendapp/list": "3.7.0",
