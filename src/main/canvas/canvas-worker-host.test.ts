@@ -143,7 +143,18 @@ test('canvas-worker-host', async () => {
     const answer = await call
     assert.equal(answer.ok, false)
     assert.equal(answer.ok === false && answer.error.code, 'timeout')
-    console.log('ok - a worker that does not answer in time fails the call as a timeout')
+    assert.equal(fake.posted.length, 1, 'a timeout is not retried')
+    assert.equal(fake.counts.stops, 1, 'the worker that did not answer is stopped')
+
+    // It serves one request at a time, so the one it never finished would hold
+    // this one too: the next call goes to a fresh worker instead.
+    const next = host.call(layoutRequest)
+    await flush()
+    assert.equal(fake.counts.starts, 2, 'the next call starts a new worker')
+    assert.equal(fake.posted.length, 2)
+    fake.respond({ kind: 'layout', requestId: fake.posted[1].requestId, ok: true, elements: [], changed: [] })
+    assert.ok((await next).ok, 'and the new worker answers it')
+    console.log('ok - a worker that does not answer in time fails the call as a timeout, and is replaced')
   }
 
   async function assertCrashRestartsOnce(): Promise<void> {
