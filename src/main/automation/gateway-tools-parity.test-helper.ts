@@ -21,6 +21,7 @@ import { createTailnetTools } from './tailnet/tailnet-tools'
 import { createTourTools } from './tour-tools'
 import { createWorktreePoolTools } from '../worktree-pool/worktree-pool-tools'
 import { createArtifactsTools } from '../artifacts/artifacts-tools'
+import { createExtensionTools } from './extension-tools'
 import { createUsageTools } from '../usage/usage-tools'
 
 // The tools/list agents see from the desktop, byte for byte: names,
@@ -50,6 +51,7 @@ export function desktopToolParts(): Parameters<typeof desktopGatewayTools>[0] & 
     automation: createAutomationTools(stub),
     worktree: createWorktreePoolTools(stub),
     artifacts: createArtifactsTools(stub),
+    extension: createExtensionTools(stub),
     tailnet: createTailnetTools({ resolveTailnet: () => null }),
     core: [
       ...createConversationTools(stub),

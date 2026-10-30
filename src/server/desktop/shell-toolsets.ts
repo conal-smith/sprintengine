@@ -15,7 +15,9 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
  * `worktree` family is the shell's too: main keeps the pool, and a pool driven
  * from two processes would race over its slots. So is `artifacts`: a publish
  * reads the page from this machine's disk and signs in with its credentials,
- * and its clone of the site is one main keeps.
+ * and its clone of the site is one main keeps. And `extension`: making an
+ * extension project uses the templates and the guide shipped beside the app,
+ * through the same scaffold as the New chat door.
  */
 export const SHELL_TOOLSETS = [
   'browser',
@@ -26,6 +28,7 @@ export const SHELL_TOOLSETS = [
   'agent',
   'worktree',
   'artifacts',
+  'extension',
 ] as const
 
 /** Whether a gateway tool is one the shell offers, out of process, and not the server's. */

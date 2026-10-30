@@ -15,6 +15,30 @@ other.
 
 ## module/manifest.json
 
+```json
+{
+  "id": "my-extension",
+  "displayName": "My Extension",
+  "version": 1,
+  "publisher": "Your name",
+  "summary": "One sentence the install prompt shows.",
+  "defaultEnabled": false,
+  "source": "third-party",
+  "engines": { "hostApi": 1 },
+  "permissions": ["storage"],
+  "dependsOn": ["agent-runtime"],
+  "entry": { "renderer": "dist/renderer.mjs", "main": "dist/main.cjs" }
+}
+```
+
+- `id` prefixes IPC channels and command ids; name MCP tools in a family of
+  your own that is not a core one (the `api-main` topic).
+- `version` is an integer. Bump it on every release.
+- `files` is written for you by `npm run build` (only when the files changed),
+  `dev:install` and `sprintengine-module sign`. Never edit it by hand.
+- `plugin.json` must carry the same `id`, `version` and `permissions`.
+
+
 | Field | Required | Notes |
 | --- | --- | --- |
 | `id` | yes | `^[a-z0-9][a-z0-9-]{0,62}$`, equal to the install folder name, not in `BUNDLED_MODULE_IDS`. Never change it after release: trust, storage and settings are keyed by it. |
@@ -26,7 +50,7 @@ other.
 | `defaultEnabled` | yes | Keep `false`: a new module starts off until the person turns it on. |
 | `source` | yes | `"third-party"`. The validator forces it anyway. |
 | `engines` | yes | `{ "hostApi": 1 }` — the SDK's `HOST_API_VERSION`. Missing, non-integer, newer than Studio, or older than it still loads: the module is refused with a message saying which. |
-| `permissions` | no | See [permissions.md](permissions.md). |
+| `permissions` | no | See the `permissions` topic. |
 | `dependsOn` | no | Module ids that must load (and be enabled) first: `agent-runtime`, `scheduled-agents`. |
 | `conflictsWith` | no | Module ids that must not be enabled alongside. |
 | `entry` | no | `{ "renderer": "dist/renderer.mjs", "main": "dist/main.cjs" }`, relative to `module/`. `entry.preload` is reserved and never loaded. |

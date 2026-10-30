@@ -167,12 +167,11 @@ One per area: `studio-backlog`, `studio-scheduled-agents`, `studio-canvas`,
 `studio-diff-tours`, `studio-workspaces`, `studio-ship` (push, open the pull
 request, set it to merge, and have Studio watch it) and `studio-design-system`
 — seven. (`studio-review` left
-with the Reviews module, which ships it itself.) An eighth, offered by the
-Extensions home, is not the plugin's own: `sprintengine-extension-builder` is
-the module SDK's skill (`packages/module-sdk/skills/`), copied here byte for byte
-so an agent in any workspace can build an extension —
-`src/main/skills/extension-builder-skill-parity.test.ts` holds the two copies
-equal, so edit the SDK's and copy it over. The last one is the odd shape of
+with the Reviews module, which ships it itself. `sprintengine-extension-builder`,
+the module SDK's skill that the Extensions home used to offer, left on
+2026-10-30: the gateway's `extension.create` and `extension.guide` tools teach
+every agent instead, and the workspace pass removes a copy an earlier build
+installed.) The last one is the odd shape of
 the set: the other four are manuals for a tool surface, and it is the manual for
 the *repository's* design system. It sits here rather than with the workflow
 skills because it teaches the studio's own kit, spec trio and lint gates by path,

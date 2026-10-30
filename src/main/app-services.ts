@@ -163,6 +163,8 @@ import { createEditorRevealBroker } from './editor-reveal/editor-reveal-broker'
 import { createEditorToolBackends } from './editor-reveal/editor-tool-backends'
 import { EDITOR_REVEAL_PENDING_CHANNEL } from '../shared/editor-reveal'
 import { createTourTools } from './automation/tour-tools'
+import { createExtensionTools } from './automation/extension-tools'
+import { createExtensionScaffoldHandlers, resolveScaffoldRoots } from './ipc/extension-scaffold-ipc'
 import { createAppTourService } from './tours/tour-app'
 import { canvasBoardStoreDir } from './canvas/canvas-board-store'
 import { createCanvasService } from './canvas/canvas-service'
@@ -1793,6 +1795,14 @@ export function createAppServices(
     hasWorkspace: (workspaceId) =>
       workspaceSyncService.getSnapshot().state.workspaces.some((workspace) => workspace.id === workspaceId),
   })
+  // `extension.create` and `extension.guide`: a project made on this machine's
+  // disk, by the New chat door's own scaffold, and the guide shipped beside the
+  // app. In process the gateway's own; out of process the shell's `extension`
+  // toolset.
+  const extensionTools = createExtensionTools({
+    scaffold: createExtensionScaffoldHandlers(),
+    guideRoot: () => resolveScaffoldRoots().guideRoot,
+  })
 
   // Instance-global SprintEngine Studio MCP surface: reads come from the
   // workspace-sync snapshot and terminal runtime, and mutations go straight to
@@ -1904,6 +1914,7 @@ export function createAppServices(
           // this whole family regardless of a device's scopes (tailnet-scopes.ts).
           worktree: worktreeTools,
           artifacts: artifactsTools,
+          extension: extensionTools,
           tailnet: createTailnetTools({ resolveTailnet: () => tailnetToolsFrontDoor }),
         }),
       })
@@ -2003,6 +2014,7 @@ export function createAppServices(
             { name: 'tour', registrations: tourTools },
             { name: 'worktree', registrations: worktreeTools },
             { name: 'artifacts', registrations: artifactsTools },
+            { name: 'extension', registrations: extensionTools },
             ...shellTerminalToolsets(
               createServerGatewayBackends({
                 getWorkspaceSyncSnapshot: () => workspaceSyncService.getSnapshot(),

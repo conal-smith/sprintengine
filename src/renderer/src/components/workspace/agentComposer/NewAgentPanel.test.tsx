@@ -3734,12 +3734,16 @@ test('NewAgentPanel', async () => {
       return { view, asked, opened, setValue, nameField, folderChip, settle, enter }
     }
 
-    await check('extension mode: the builder skill, a name chip, and ideas that fill the box', async () => {
+    await check('extension mode: an Extension tag, a name chip, and ideas that fill the box', async () => {
       seedStore()
       const door = await extensionDoor()
       const text = door.view.text()
       assert.ok(text.includes('What should your extension do?'))
-      assert.ok(text.includes('extension-builder'), 'the builder skill is attached')
+      assert.ok(
+        door.view.container.querySelector('[aria-label="Start a plain chat instead"]'),
+        'the Extension tag says the mode',
+      )
+      assert.ok(!text.includes('extension-builder'), 'no skill is attached: Studio’s extension tools teach the agent')
       assert.ok(!text.includes('Scheduled agent'), 'no Chat / Scheduled switch')
       assert.equal(
         door.view.container.querySelector('[data-extension-name-chip]')?.getAttribute('data-extension-name-chip'),
@@ -3777,10 +3781,7 @@ test('NewAgentPanel', async () => {
       assert.deepEqual(launch.extension, { id: 'pr-radar' })
       assert.equal(launch.kind, 'conversation')
       assert.match(String(launch.prompt), /^A top-bar badge counting the pull requests/)
-      assert.deepEqual(
-        (launch.skills as Array<{ id: string }>).map((skill) => skill.id),
-        ['sprintengine-extension-builder'],
-      )
+      assert.deepEqual(launch.skills ?? [], [], 'the chat carries no skill')
       door.view.unmount()
     })
 
@@ -3848,11 +3849,11 @@ test('NewAgentPanel', async () => {
       door.view.unmount()
     })
 
-    await check('removing the builder chip leaves extension mode for a plain New chat', async () => {
+    await check('removing the Extension tag leaves extension mode for a plain New chat', async () => {
       seedStore()
       const door = await extensionDoor()
-      const remove = door.view.container.querySelector('[aria-label="Remove skill extension-builder"]')
-      assert.ok(remove, 'the builder chip can be removed')
+      const remove = door.view.container.querySelector('[aria-label="Start a plain chat instead"]')
+      assert.ok(remove, 'the Extension tag can be removed')
       await act(async () => {
         remove!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
       })

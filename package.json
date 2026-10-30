@@ -158,8 +158,8 @@
         ]
       },
       {
-        "from": "packages/module-sdk/skills",
-        "to": "sdk-skills",
+        "from": "packages/module-sdk/guide",
+        "to": "sdk-guide",
         "filter": [
           "**/*"
         ]

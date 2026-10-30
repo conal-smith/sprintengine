@@ -4,10 +4,12 @@ This project builds a SprintEngine Studio extension (a capability module) with
 `@sprintengine/module-sdk`. It never compiles against the app's source: the SDK
 is the whole contract.
 
-**Read first:** the `sprintengine-extension-builder` skill
-(`.agents/skills/sprintengine-extension-builder/SKILL.md`; the copy under
-`.claude/skills/` is a pointer to it). Its `references/` answer "which API", "which permission" and
-"why won't it load". The SDK's own README is
+**Read first:** the extension guide. Call SprintEngine Studio's
+`extension.guide` tool (on the `sprintengine-studio` MCP server) with topic
+`start` before changing anything; its other topics answer "which surface",
+"which API", "which permission" and "why won't it load". Without Studio's tools
+the same topics are the files in `node_modules/@sprintengine/module-sdk/guide/`
+(after `npm install`). The SDK's own README is
 `node_modules/@sprintengine/module-sdk/README.md`, and its type declarations in
 `node_modules/@sprintengine/module-sdk/dist/*.d.ts` are the authority on every
 signature. What the extension is for is in `IDEA.md`.
@@ -20,12 +22,13 @@ signature. What the extension is for is in `IDEA.md`.
 | `module/` | The installable module: `manifest.json` plus the built `dist/`. Everything in here ships, and it is committed — build included — because a GitHub install reads it at a commit |
 | `plugin.json` | The bundle manifest a GitHub or marketplace install reads; its `module` component is `module/` |
 | `test/` | `smoke.test.mjs` loads the built bundles against the SDK's fake hosts and renders what they register; `*.test.ts` are your tests |
-| `scripts/` | `validate.mjs` and `dev-install.mjs`, the dev loop |
+| `scripts/` | `check-toolchain.mjs` (is this machine ready), `validate.mjs` and `dev-install.mjs`, the dev loop |
 
 ## Commands
 
 ```sh
 npm install
+node scripts/check-toolchain.mjs   # Node, npm, git, the SDK installed, the host API declared
 npm run check        # typecheck, build (which records the file digests), tests, validate — run before calling anything done
 npm test             # bundle test/*.test.ts with esbuild, then run them and the smoke test with node --test
 npm run dev:install  # build, record file digests, sign if you have a key, copy into ~/.sprintengine/modules/{{id}}

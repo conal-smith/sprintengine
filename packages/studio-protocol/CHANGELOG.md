@@ -4,6 +4,9 @@
 
 ### Added
 
+- `extension` among `STUDIO_RESERVED_TOOLSET_NAMES`: `extension.create`,
+  which makes a SprintEngine Studio extension project, and `extension.guide`,
+  the guide to building one, which a Studio's shell offers.
 - **A chat's effort, its MCP servers and its agent's restart**
   (`conversation-reasoning-effort`, `conversation-mcp-server-actions` and
   `conversation-restart-session`, in `welcome.conversation`, owners):

@@ -41,7 +41,7 @@ afterEach(() => {
 
 function handlers() {
   return createExtensionScaffoldHandlers({
-    roots: () => ({ templatesRoot: join(SDK, 'templates'), skillsRoot: join(SDK, 'skills'), sdkTarball }),
+    roots: () => ({ templatesRoot: join(SDK, 'templates'), guideRoot: join(SDK, 'guide'), sdkTarball }),
     moduleRoot: () => join(parent, 'installed-modules'),
     home: () => join(parent, 'Documents', 'SprintEngine', 'Extensions'),
   })
@@ -157,7 +157,7 @@ describe('extensions:scaffold:create', () => {
       readFileSync(join(result.folder, 'IDEA.md'), 'utf8'),
       '# Pr radar\n\nA count of the PRs waiting on me.\n',
     )
-    assert.equal(existsSync(join(result.folder, '.claude/skills/sprintengine-extension-builder/SKILL.md')), true)
+    assert.equal(existsSync(join(result.folder, '.claude')), false, 'no skill: the extension guide is served by Studio')
   })
 
   test('depends on the SDK the app ships, copied into vendor/, so npm install needs no registry', async () => {
@@ -208,12 +208,12 @@ test('reads the shipped copies when packaged and the SDK package in a checkout',
   assert.equal(SCAFFOLD_SDK_TARBALL, `sprintengine-module-sdk-${SCAFFOLD_SDK_VERSION}.tgz`)
   assert.deepEqual(resolveScaffoldRoots({ isPackaged: true, resourcesPath: '/App/Resources', appPath: '/x' }), {
     templatesRoot: join('/App/Resources', 'sdk-templates'),
-    skillsRoot: join('/App/Resources', 'sdk-skills'),
+    guideRoot: join('/App/Resources', 'sdk-guide'),
     sdkTarball: join('/App/Resources', 'module-sdk', SCAFFOLD_SDK_TARBALL),
   })
   assert.deepEqual(resolveScaffoldRoots({ isPackaged: false, resourcesPath: '/x', appPath: '/repo' }), {
     templatesRoot: join('/repo', 'packages', 'module-sdk', 'templates'),
-    skillsRoot: join('/repo', 'packages', 'module-sdk', 'skills'),
+    guideRoot: join('/repo', 'packages', 'module-sdk', 'guide'),
     sdkTarball: join('/repo', 'resources', 'module-sdk', SCAFFOLD_SDK_TARBALL),
   })
 })

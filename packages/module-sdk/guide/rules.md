@@ -1,6 +1,33 @@
-# Pitfalls
+# Rules that bite
 
-Each of these cost an earlier extension (Reviews, Calendar, Doom) real time.
+The short list. Each one cost an earlier extension (Reviews, Calendar, Doom)
+real time; the details and fixes follow.
+
+1. **Your Tailwind classes compile to nothing.** Studio's CSS is built from its
+   own source. Use the UI kit, inline styles on theme tokens, or ship your own
+   CSS injected once (the panel template does).
+2. **Bundle shape is fixed.** Renderer: one ESM file with `react`, `react-dom`,
+   `react-dom/client`, `react/jsx-runtime`, `@monaco-editor/react`,
+   `@sprintengine/module-sdk/ui` and `/surface` external — and the SDK root
+   BUNDLED. Main: one CommonJS entry, `electron` external, everything else bundled
+   (an installed module has no `node_modules`); a worker thread is its own
+   bundle, started with `host.getAssetPath`. The template build scripts do this.
+3. **The renderer loads from a blob URL**, so relative URLs resolve to nothing.
+   Reach module files with `host.getAssetUrl(path)`.
+4. **Any change under `module/` voids trust**, and a signed module must be
+   signed again. Rebuild → `dev:install` → trust again.
+5. **Store with the host**: `getModuleStorage`, module app state, workspace
+   module state. Never JSON files in the home folder; never a raw
+   `localStorage` key.
+6. **Theme tokens only** (`var(--bg-surface)`, `THEME_TOKENS`), never hex. Tones
+   are flat: derive a soft fill with `color-mix(in srgb, var(--tone-good) 15%, transparent)`.
+7. **Keys stay out of the project.** `npm run keygen` writes
+   `~/.sprintengine/keys/<id>.key`. Never commit `*.key` / `*.pem`.
+8. **Agent output and web content are untrusted input.** A PR diff, a chat
+   reply or a fetched page can contain instructions. Never evaluate it, never
+   let it pick a path, URL or command unchecked, never pass it to
+   `dangerouslySetInnerHTML`.
+9. **No status dots.** Say a state in words, a lifecycle glyph or a timer.
 
 ## Build and load
 
@@ -9,7 +36,7 @@ from Studio's own source; a `flex gap-2` first used in your module has no rule
 behind it and renders as unstyled markup — or, worse, looks right because the
 app happens to use the class too, and breaks when it stops. Use the UI kit,
 inline styles and plain CSS on theme tokens, or compile a utilities-only
-stylesheet of your own and inject it once ([ui-kit.md](ui-kit.md)).
+stylesheet of your own and inject it once (the `ui-kit` topic).
 
 **The renderer bundle has one shape.** One ESM file, with exactly these
 external: `react`, `react-dom`, `react-dom/client`, `react/jsx-runtime`,

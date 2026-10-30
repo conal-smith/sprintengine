@@ -39,6 +39,16 @@ commit, never squash or rebase, with Conventional Commit titles; see
 Removals an installed profile cannot be migrated through. State each in the notes
 of the first release that ships it, then delete the line.
 
+- The extension-builder skill, 2026-10-30: the `sprintengine-extension-builder`
+  skill is no longer offered by the Extensions home or listed in Settings ->
+  Skills, and the next workspace pass removes the copy an earlier build
+  installed (one the repository committed, or someone edited, is left). New chat's
+  Build an extension no longer attaches it; an **Extension** tag marks the mode
+  instead. Agents build extensions with the gateway's new `extension.create`
+  (makes the project) and `extension.guide` (the manual, by topic) tools, which
+  every agent on the machine is listed. A project scaffolded earlier keeps its own
+  `.agents/skills` copy, which still works.
+
 - Voice dictation, 2026-10-09: the top-bar microphone button, its shortcut
   (`voice-dictation.toggle`, and the older `voice.toggle` spelling) and the
   Settings -> Voice dictation section are removed. The feature only ever shipped
