@@ -856,6 +856,8 @@ test('settingsSlice', async () => {
   // opens on the comfortable chat column (owner ruling 2026-10-04).
   assert.deepEqual(defaultAppearanceSettings(), {
     theme: 'system',
+    systemLightTheme: 'light',
+    systemDarkTheme: 'dark',
     windowMaterial: 'glass',
     chatContrast: 100,
     chatWidth: 'comfortable',
@@ -869,6 +871,8 @@ test('settingsSlice', async () => {
   assert.deepEqual(normalizeAppearanceSettings(undefined), defaultAppearanceSettings())
   assert.deepEqual(normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'glass' }), {
     theme: 'sage',
+    systemLightTheme: 'light',
+    systemDarkTheme: 'dark',
     windowMaterial: 'glass',
     chatContrast: 100,
     chatWidth: 'full',
@@ -883,6 +887,8 @@ test('settingsSlice', async () => {
     normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'tinted' }),
     {
       theme: 'sage',
+      systemLightTheme: 'light',
+      systemDarkTheme: 'dark',
       windowMaterial: 'tinted',
       chatContrast: 100,
       chatWidth: 'full',
@@ -899,6 +905,8 @@ test('settingsSlice', async () => {
     normalizeAppearanceSettings({ theme: 'sage' }),
     {
       theme: 'sage',
+      systemLightTheme: 'light',
+      systemDarkTheme: 'dark',
       windowMaterial: 'glass',
       chatContrast: 100,
       chatWidth: 'full',
@@ -1424,6 +1432,8 @@ test('a remembered model survives a refresh that stops listing it', () => {
 test('a stored appearance from before the chat settings hydrates to the chat as it was', () => {
   assert.deepEqual(normalizeAppearanceSettings({ theme: 'light', windowMaterial: 'solid' }), {
     theme: 'light',
+    systemLightTheme: 'light',
+    systemDarkTheme: 'dark',
     windowMaterial: 'solid',
     chatContrast: 100,
     chatWidth: 'full',

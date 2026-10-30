@@ -14,6 +14,7 @@ import { KeepAwakeSetting } from './KeepAwakeSetting'
 import { StudioServerSettings } from './StudioServerSettings'
 import { ModuleSettingsSectionHost } from './ModuleSettingsSection'
 import AppThemePicker from './AppThemePicker'
+import { SystemThemeRows } from './SystemThemeRows'
 import { ChatAppearanceRows } from './ChatAppearanceRows'
 import { FontAppearanceRows } from './FontAppearanceRows'
 import { effectiveWindowMaterial, type WindowMaterial } from '../../types/appTheme'
@@ -1240,6 +1241,7 @@ export default function SettingsPanel({
         >
           <SettingsPageHeader title="Appearance" />
           <AppThemePicker value={appearanceTheme} onChange={setAppearanceTheme} />
+          <SystemThemeRows />
           {/* How the chat rail lists conversations (all-chats-view). It lives
               here rather than over the list itself (owner, 2026-09-07): it is
               how this person reads their work — set once, lived with — and the

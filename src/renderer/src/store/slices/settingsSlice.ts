@@ -54,6 +54,9 @@ import {
   DEFAULT_CHAT_CONTRAST,
   DEFAULT_CHAT_WIDTH,
   isAppTheme,
+  DEFAULT_SYSTEM_DARK_THEME,
+  DEFAULT_SYSTEM_LIGHT_THEME,
+  normalizeSystemTheme,
   isChatWidth,
   isClockFormat,
   isReplyStreaming,
@@ -67,6 +70,7 @@ import {
   type ChatWidth,
   type ClockFormat,
   type ReplyStreaming,
+  type ResolvedAppTheme,
   type WindowMaterial,
 } from '../../types/appTheme'
 import { normalizeModuleOverrides } from '../../../../shared/modules/manifest'
@@ -109,6 +113,8 @@ let lastAgentsMachineRequestId = 0
 export function defaultAppearanceSettings(): AppearanceSettings {
   return {
     theme: 'system',
+    systemLightTheme: DEFAULT_SYSTEM_LIGHT_THEME,
+    systemDarkTheme: DEFAULT_SYSTEM_DARK_THEME,
     windowMaterial: 'glass',
     chatContrast: DEFAULT_CHAT_CONTRAST,
     chatWidth: DEFAULT_CHAT_WIDTH,
@@ -127,6 +133,9 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
   const candidate = value as Partial<AppearanceSettings>
   return {
     theme: isAppTheme(candidate.theme) ? candidate.theme : defaults.theme,
+    // Absent before the pair existed: `system` resolved to Light and Dark.
+    systemLightTheme: normalizeSystemTheme(candidate.systemLightTheme, 'light'),
+    systemDarkTheme: normalizeSystemTheme(candidate.systemDarkTheme, 'dark'),
     windowMaterial: isWindowMaterial(candidate.windowMaterial) ? candidate.windowMaterial : defaults.windowMaterial,
     // Both chat fields arrived after the envelope's other appearance fields, so
     // a stored appearance without them is an older profile, not a corrupt one:
@@ -1123,6 +1132,8 @@ export interface SettingsSliceActions {
   setKeepRunningInBackground: (enabled: boolean) => void
   setTelemetryEnabled: (enabled: boolean) => void
   setAppearanceTheme: (theme: AppTheme) => void
+  /** The theme `system` uses on one side of the OS's light/dark switch. */
+  setAppearanceSystemTheme: (side: 'light' | 'dark', theme: ResolvedAppTheme) => void
   setAppearanceWindowMaterial: (material: WindowMaterial) => void
   setAppearanceChatContrast: (contrast: number) => void
   setAppearanceChatWidth: (width: ChatWidth) => void
@@ -1817,6 +1828,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
           theme,
+        })
+      }),
+
+    setAppearanceSystemTheme: (side, theme) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          [side === 'light' ? 'systemLightTheme' : 'systemDarkTheme']: theme,
         })
       }),
 

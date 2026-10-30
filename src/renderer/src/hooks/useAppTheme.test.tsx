@@ -116,3 +116,48 @@ test('the boot script stamps the persisted chat appearance before the first pain
     window.localStorage.removeItem('sprintengine-app-settings')
   }
 })
+
+test('under System, the boot script and the hook paint the theme chosen for the side the OS is on', async () => {
+  const boot = readFileSync(join(process.cwd(), 'src', 'renderer', 'public', 'boot-theme.js'), 'utf8')
+  const original = window.matchMedia
+  let light = true
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('light') ? light : !light,
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  })) as unknown as typeof window.matchMedia
+  const booted = (appearance: Record<string, unknown>) => {
+    window.localStorage.setItem('sprintengine-app-settings', JSON.stringify({ state: { appSettings: { appearance } } }))
+    new Function(boot)()
+    return [html.getAttribute('data-theme'), html.getAttribute('data-mode')]
+  }
+  try {
+    expect(booted({ theme: 'system' })).toEqual(['light', 'light'])
+    expect(booted({ theme: 'system', systemLightTheme: 'paper', systemDarkTheme: 'nord' })).toEqual(['paper', 'light'])
+    light = false
+    expect(booted({ theme: 'system', systemLightTheme: 'paper', systemDarkTheme: 'nord' })).toEqual(['nord', 'dark'])
+    expect(booted({ theme: 'system' })).toEqual(['dark', 'dark'])
+
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    function Probe() {
+      useAppTheme({ mirrorToMain: false })
+      return null
+    }
+    useWorkspaceStore.getState().setAppearanceTheme('system')
+    useWorkspaceStore.getState().setAppearanceSystemTheme('dark', 'dracula')
+    await act(async () => root.render(<Probe />))
+    expect(html.getAttribute('data-theme')).toBe('dracula')
+    await act(async () => useWorkspaceStore.getState().setAppearanceSystemTheme('dark', 'tokyo-night'))
+    expect(html.getAttribute('data-theme')).toBe('tokyo-night')
+    // A light theme is not a choice for dark mode: the store keeps that side's default.
+    await act(async () => useWorkspaceStore.getState().setAppearanceSystemTheme('dark', 'paper'))
+    expect(useWorkspaceStore.getState().appSettings.appearance.systemDarkTheme).toBe('dark')
+    act(() => root.unmount())
+  } finally {
+    window.matchMedia = original
+    window.localStorage.removeItem('sprintengine-app-settings')
+    useWorkspaceStore.getState().setAppearanceSystemTheme('dark', 'dark')
+  }
+})

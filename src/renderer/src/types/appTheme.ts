@@ -326,6 +326,35 @@ export const LIGHT_SURFACE_THEMES: readonly ResolvedAppTheme[] = APP_THEMES.flat
   t.resolved && colorSchemeForResolvedTheme(t.resolved) === 'light' ? [t.resolved] : [],
 )
 
+export const DEFAULT_SYSTEM_LIGHT_THEME: ResolvedAppTheme = 'light'
+export const DEFAULT_SYSTEM_DARK_THEME: ResolvedAppTheme = 'dark'
+
+/** The themes `system` may use in light mode (`light`) or dark mode (`dark`), in the picker's order. */
+export function systemThemeChoices(side: ColorScheme): ResolvedAppTheme[] {
+  return APP_THEMES.flatMap((t) =>
+    t.resolved && LIGHT_SURFACE_THEMES.includes(t.resolved) === (side === 'light') ? [t.resolved] : [],
+  )
+}
+
+/** A stored theme for one side of `system`, or that side's default when it is not one of its choices. */
+export function normalizeSystemTheme(value: unknown, side: ColorScheme): ResolvedAppTheme {
+  const choices = systemThemeChoices(side)
+  return (
+    choices.find((choice) => choice === value) ??
+    (side === 'light' ? DEFAULT_SYSTEM_LIGHT_THEME : DEFAULT_SYSTEM_DARK_THEME)
+  )
+}
+
+/** The theme a preference paints: itself, or under `system` the side the OS is on. */
+export function resolveAppTheme(
+  theme: AppTheme,
+  prefersLight: boolean,
+  system: Pick<AppearanceSettings, 'systemLightTheme' | 'systemDarkTheme'>,
+): ResolvedAppTheme {
+  if (theme !== 'system') return theme
+  return prefersLight ? system.systemLightTheme : system.systemDarkTheme
+}
+
 export function isAppTheme(value: unknown): value is AppTheme {
   return typeof value === 'string' && (APP_THEME_IDS as readonly string[]).includes(value)
 }
@@ -420,6 +449,10 @@ export function isReplyStreaming(value: unknown): value is ReplyStreaming {
 
 export type AppearanceSettings = {
   theme: AppTheme
+  // What `system` resolves to on each side of the OS's light/dark switch: a
+  // light-surface theme for light mode, any other for dark.
+  systemLightTheme: ResolvedAppTheme
+  systemDarkTheme: ResolvedAppTheme
   windowMaterial: WindowMaterial
   chatContrast: number
   chatWidth: ChatWidth

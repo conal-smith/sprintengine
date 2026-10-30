@@ -57,8 +57,15 @@
       persisted.state.appSettings.appearance &&
       persisted.state.appSettings.appearance.theme
     if (!theme || theme === 'system') {
+      // The theme the person chose for each side of the OS's switch
+      // (systemLightTheme / systemDarkTheme), Light and Dark when none is
+      // stored. Mirrors resolveAppTheme() in types/appTheme.ts.
+      var stored = persisted && persisted.state && persisted.state.appSettings && persisted.state.appSettings.appearance
       var mql = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)')
-      theme = mql && mql.matches ? 'light' : 'dark'
+      theme =
+        mql && mql.matches
+          ? (stored && typeof stored.systemLightTheme === 'string' && stored.systemLightTheme) || 'light'
+          : (stored && typeof stored.systemDarkTheme === 'string' && stored.systemDarkTheme) || 'dark'
     }
     applyThemeAttributes(theme)
     // Window material must be stamped just as synchronously: main

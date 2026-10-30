@@ -263,7 +263,9 @@ if (typeof window !== 'undefined') {
             getScheme: () => appTheme.resolvedColorScheme(useWorkspaceStore.getState().appSettings.appearance.theme),
             subscribe: (cb) => {
               const stopStore = useWorkspaceStore.subscribe((state, prev) => {
-                if (state.appSettings.appearance.theme !== prev.appSettings.appearance.theme) cb()
+                // The theme, or what `system` resolves to on either side; the
+                // watcher dedupes a change that leaves the scheme as it was.
+                if (state.appSettings.appearance !== prev.appSettings.appearance) cb()
               })
               // Always attached, whatever the preference: the watcher dedupes,
               // so an OS switch under an explicit theme costs one no-op read
