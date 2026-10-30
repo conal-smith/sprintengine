@@ -173,6 +173,7 @@ export function ConversationScreen({
   onOpenAgent,
   onOpenPlan,
   onOpenChanges,
+  onOpenPullRequest,
   opening,
   onOpeningTaken,
   initialSheet,
@@ -198,6 +199,8 @@ export function ConversationScreen({
   onOpenAgent?: (laneId: string) => void;
   /** A proposed plan as a page, by its request id. */
   onOpenPlan?: (requestId: string) => void;
+  /** The chat's pull request in the phone's viewer, where its desktop serves it; absent, the browser. */
+  onOpenPullRequest?: (url: string) => void;
   /** The files a checkpointed turn changed, by the turn's sequence number. */
   onOpenChanges?: (turnSeq: number) => void;
 }) {
@@ -1104,7 +1107,13 @@ export function ConversationScreen({
   const pinned =
     pr || (ring && ringLabel) ? (
       <>
-        {pr ? <PullRequestStripButton height={STRIP_ITEM_HEIGHT} pr={pr} /> : null}
+        {pr ? (
+          <PullRequestStripButton
+            height={STRIP_ITEM_HEIGHT}
+            onOpen={onOpenPullRequest ? () => onOpenPullRequest(pr.mark.url) : undefined}
+            pr={pr}
+          />
+        ) : null}
         {ring && ringLabel ? (
           <Pressable
             accessibilityLabel={`Context, ${ringLabel}`}
