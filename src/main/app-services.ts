@@ -174,7 +174,7 @@ import { createCanvasWorkerHost } from './canvas/canvas-worker-host'
 import { createCanvasWorkerTransport, isCanvasWorkerWindow } from './canvas/canvas-worker-window'
 import { broadcastToWorkspaceWindows, isBrowserHostWebContents, listWorkspaceWindows } from './window-factory'
 import { createAgentControlPlane } from './agent-control-plane'
-import { createAgentLaunchNotices } from './agent-launch-notices'
+import { createAgentLaunchNotices, LAUNCH_NOTICES_FILE, launchNoticesFileStorage } from './agent-launch-notices'
 import { powerActivity } from './power-activity'
 import { isSettledWorkspace } from '../shared/workspace-lifecycle'
 import { forwardStatusLineRateLimits, usageLimitsStore, usageRateLimit } from './usage-limits/store'
@@ -1298,10 +1298,13 @@ export function createAppServices(
       const record = workspaceRegistry.getRecord(workspaceId)
       return record ? isSettledWorkspace(record) : false
     },
+    // Kept across a restart: a parent still hears of a child the quit stopped.
+    storage: launchNoticesFileStorage(join(app.getPath('userData'), LAUNCH_NOTICES_FILE)),
     log: (message) => {
       void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Launch notices', message })
     },
   })
+  void agentLaunchNotices.restore()
   // A hold's timer stood still while the computer slept; waking reads the clock again.
   powerActivity.onResume(() => agentLaunchNotices.wake())
   powerActivity.onScreenLockChange((locked) => {
@@ -2453,6 +2456,7 @@ export function createAppServices(
           },
         },
     scheduledMessages: server ? null : { dispose: () => core.stopScheduledMessages() },
+    launchNotices: { freeze: () => agentLaunchNotices.freeze() },
     broadcastGitChangelistsChanged,
     updateService,
     withIpcDiagnostics,

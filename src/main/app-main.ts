@@ -480,6 +480,7 @@ registerAppLifecycle({
   ...(services.localServers ? { localServers: services.localServers } : {}),
   ...(services.usageLimitResumes ? { usageLimitResumes: services.usageLimitResumes } : {}),
   ...(services.scheduledMessages ? { scheduledMessages: services.scheduledMessages } : {}),
+  launchNotices: services.launchNotices,
   analytics: services.analytics,
   // Out of process the server runs every module's startup and shutdown hooks.
   ...(serverHost ? {} : { moduleKernel: moduleLoad.kernel }),
