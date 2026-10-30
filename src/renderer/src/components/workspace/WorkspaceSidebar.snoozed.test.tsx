@@ -136,6 +136,8 @@ test('WorkspaceSidebar.snoozed', async () => {
     ]
 
     const noop = () => {}
+    // The chats the sidebar opened, for the hand-off a Snooze of the open chat makes.
+    const selected: string[] = []
     // What the rail's Home badge is told to skip. The badge counts what the
     // sidebar SHOWS, so a chat taken off screen has to be named here or its
     // count outlives the gesture that hid it.
@@ -153,7 +155,7 @@ test('WorkspaceSidebar.snoozed', async () => {
       activeWorkspaceId: 'w1',
       activityByWorkspaceId: { w1: 'idle', w2: 'idle', w3: 'idle', w4: 'idle' },
       terminalRecencyByWorkspaceId: {},
-      onSelectWorkspace: noop,
+      onSelectWorkspace: (id: string) => selected.push(id),
       onMoveWorkspaceToNewWindow: noop,
       onMoveWorkspaceToMainWindow: noop,
       onForgetFolder: noop,
@@ -347,10 +349,15 @@ test('WorkspaceSidebar.snoozed', async () => {
         ),
       ].find((el) => el.textContent?.trim().startsWith('In 1 hour'))
       assert.ok(anHour, 'the 1-hour preset is clickable')
+      selected.length = 0
       act(() => {
         anHour.click()
       })
       await settle()
+      // Alpha is the chat on screen, so snoozing it moves you on, as Settle
+      // does: to the next chat still awake (Delta, woken), past the sleepers.
+      // Without it the row stayed in front with its agents paused under you.
+      assert.deepEqual(selected, ['w4'], 'snoozing the open chat opens the next chat that is awake')
       assert.deepEqual(suspended, ['alpha-pty'], "snoozing pauses the chat's agent pty")
       assert.deepEqual(killed, [], 'and never kills it — the session has to survive to be resumed')
       assert.deepEqual(resumed, [], 'nothing is resumed by the snooze itself')
