@@ -256,6 +256,13 @@ export interface ConversationApi {
        */
       queuedSends?: boolean;
       /**
+       * The desktop advertises `conversation-queued-attachments` as well: a
+       * `queue` send may carry `uploadIds`, which it makes its own the moment
+       * it holds the message. Without it a `queue` send with any is an
+       * ordinary one, held here until the turn ends.
+       */
+      queuedAttachments?: boolean;
+      /**
        * The desktop advertises `conversation-scheduled-sends`: the stream
        * asks it to say what it keeps scheduled into the chat
        * (`watchScheduled`) after every fence.
@@ -369,6 +376,11 @@ export function createTailnetConversationsApi(input: {
       let heard = false;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       const queuedSends = options?.queuedSends === true;
+      const queuedAttachments = queuedSends && options?.queuedAttachments === true;
+      // Whether the desktop can hold this send for its turn's end: one with
+      // pictures or files only where it holds those too.
+      const holdable = (command: Extract<ConversationCommand, { kind: "send" }>) =>
+        queuedSends && (!command.uploadIds?.length || queuedAttachments);
       const scheduledSends = options?.scheduledSends === true;
       // Sends this phone holds until the turn ends, in the order written.
       const outbox = new Map<
@@ -416,7 +428,7 @@ export function createTailnetConversationsApi(input: {
       ) => {
         parked.delete(commandId);
         written.set(commandId, queuedAt);
-        if (command.queue && queuedSends)
+        if (command.queue && holdable(command))
           held.set(commandId, { command, sentAfter, socket: -1 });
         else {
           const { queue: _queue, ...plain } = command;
@@ -864,28 +876,31 @@ export function createTailnetConversationsApi(input: {
               !frame.ok &&
               frame.code === "busy"
             ) {
-              const command = outbox.get(frame.commandId)!;
               // A turn is running there that this phone had not heard of. A
               // desktop that holds messages takes this one to send when the
               // turn ends, so it no longer depends on this phone staying
               // awake to offer it again: offered once more, under the same
-              // id, as a held send. Only words can be held, a steer is the
-              // desktop's to hold already, and one with others behind it
-              // waits here so the desktop's send cannot overtake them.
+              // id, as a held send, with its pictures and files where the
+              // desktop holds those too. The sends written after it go with
+              // it, in order, so the desktop holds them all and none of them
+              // waits on this phone; a steer is the desktop's to hold already.
+              // Only the oldest send hands the line over, and only when every
+              // send in it can be held: otherwise they all wait here, so a held
+              // one cannot overtake one the phone still has.
+              const line = [...outbox];
               if (
-                queuedSends &&
-                !command.steer &&
-                !command.uploadIds?.length &&
-                outbox.size === 1 &&
-                !reheld.has(frame.commandId)
+                line[0]?.[0] === frame.commandId &&
+                line.every(([commandId, command]) => !command.steer && holdable(command) && !reheld.has(commandId))
               ) {
-                reheld.add(frame.commandId);
-                outbox.delete(frame.commandId);
-                if (activeSendId === frame.commandId) activeSendId = null;
-                const { uploadIds: _pictures, ...words } = command;
-                const heldCommand = { ...words, queue: true as const };
-                held.set(frame.commandId, { command: heldCommand, sentAfter: null, socket: -1 });
-                handlers.onSendHeld?.(frame.commandId, heldCommand, afterSeq);
+                for (const [commandId, command] of line) {
+                  reheld.add(commandId);
+                  outbox.delete(commandId);
+                  const { uploadIds, ...words } = command;
+                  const heldCommand = { ...words, ...(uploadIds?.length ? { uploadIds } : {}), queue: true as const };
+                  held.set(commandId, { command: heldCommand, sentAfter: null, socket: -1 });
+                  handlers.onSendHeld?.(commandId, heldCommand, afterSeq);
+                }
+                if (activeSendId && !outbox.has(activeSendId)) activeSendId = null;
                 flushHeld();
                 return;
               }
