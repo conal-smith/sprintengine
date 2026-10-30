@@ -97,8 +97,14 @@ export function ChatComposer({
    */
   attachments?: { key: string; name: string; uri?: string; file?: boolean; onRemove: () => void }[];
   attachmentsLocked?: boolean;
-  /** What the "+" holds; no rows, no "+". */
-  options?: { rows: readonly ComposerOption[]; disabled: boolean; busy: boolean; onAttach: (source: AttachSource) => void } | null;
+  /** What the "+" holds; no rows, no "+". `onSchedule` answers a Schedule row. */
+  options?: {
+    rows: readonly ComposerOption[];
+    disabled: boolean;
+    busy: boolean;
+    onAttach: (source: AttachSource) => void;
+    onSchedule?: () => void;
+  } | null;
   tags?: ReactNode;
   /** The CLI's mark and the model. `onPress` absent: read-only, no chevron. */
   picker?: {
@@ -266,6 +272,10 @@ export function ChatComposer({
           onAttach={(source) => {
             setOptionsOpen(false);
             handoff.after(() => options.onAttach(source));
+          }}
+          onSchedule={() => {
+            setOptionsOpen(false);
+            handoff.after(() => options.onSchedule?.());
           }}
           onClose={() => setOptionsOpen(false)}
           onDismiss={handoff.onDismiss}

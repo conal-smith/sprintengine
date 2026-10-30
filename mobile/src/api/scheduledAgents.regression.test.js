@@ -4,15 +4,18 @@ const path = require("node:path");
 const test = require("node:test");
 
 // A desktop's scheduled agents from the phone: listed on `schedule.list`,
-// driven on the tool of each action's name, and made on `schedule.create`
-// with only the arguments it always took.
+// driven on the tool of each action's name, and made on `schedule.create`:
+// a repeating one with only the arguments it always took, a one-time one
+// with `once` where the desktop advertises `scheduled-agents`.
 
 const buildRoot = path.resolve(__dirname, "../../.mobile-test-build");
 const {
   SCHEDULE_PRESETS,
   buildCreateScheduleArgs,
   canOperateSchedules,
+  cronForInstant,
   nextRunWords,
+  oncePresets,
   readScheduledAgents,
   scheduleStatusLine,
   scheduledAgentActionTool,
@@ -89,4 +92,54 @@ test("when it runs next is a time to come", () => {
   assert.equal(nextRunWords(now + 30_000, now), "now");
   assert.equal(nextRunWords(now + 12 * 60_000, now), "in 12m");
   assert.equal(nextRunWords(now + 5 * 3_600_000, now), "in 5h");
+});
+
+test("a one-time schedule sends its instant, and a cron naming the same minute", () => {
+  const once = new Date(2026, 9, 30, 15, 5);
+  const args = buildCreateScheduleArgs({
+    workspaceId: "ws-1",
+    prompt: "Ping me about the release",
+    cron: SCHEDULE_PRESETS[0].cron,
+    timezone: "UTC",
+    cli: "claude-code",
+    once,
+  });
+  assert.equal(args.once, once.toISOString());
+  assert.equal(args.cron, "5 15 30 10 *");
+  assert.equal(cronForInstant(new Date(2026, 0, 2, 0, 0)), "0 0 2 1 *");
+});
+
+test("New chat's worktree and access go with a schedule only where they were picked", () => {
+  const base = { workspaceId: "ws-1", prompt: "Tidy", cron: "0 9 * * *", timezone: "UTC", cli: "codex" };
+  assert.deepEqual(Object.keys(buildCreateScheduleArgs({ ...base, worktree: false, permissionPreset: null, once: null })), [
+    "workspaceId",
+    "prompt",
+    "cron",
+    "timezone",
+    "cli",
+  ]);
+  const picked = buildCreateScheduleArgs({ ...base, model: "gpt-5", worktree: true, permissionPreset: "auto" });
+  assert.equal(picked.model, "gpt-5");
+  assert.equal(picked.worktree, true);
+  assert.equal(picked.permissionPreset, "auto");
+});
+
+test("the one-time times offered are all ahead, and this evening only while it is well ahead", () => {
+  const morning = new Date(2026, 9, 30, 9, 47);
+  const offered = oncePresets(morning);
+  assert.deepEqual(
+    offered.map((preset) => preset.label),
+    ["Once, in an hour", "Once, in 3 hours", "Once, today at 6:00 PM", "Once, tomorrow at 9:00 AM"],
+  );
+  assert.deepEqual(offered[2].at(morning), new Date(2026, 9, 30, 18, 0));
+  assert.deepEqual(offered[3].at(morning), new Date(2026, 9, 31, 9, 0));
+  for (const preset of offered) assert.ok(preset.at(morning).getTime() > morning.getTime());
+  const late = new Date(2026, 9, 30, 17, 40);
+  assert.equal(
+    oncePresets(late).some((preset) => preset.id === "once-tonight"),
+    false,
+  );
+  // Past midnight's eve, tomorrow is still the next day's morning.
+  const night = new Date(2026, 9, 31, 23, 50);
+  assert.deepEqual(oncePresets(night).find((preset) => preset.id === "once-tomorrow").at(night), new Date(2026, 10, 1, 9, 0));
 });

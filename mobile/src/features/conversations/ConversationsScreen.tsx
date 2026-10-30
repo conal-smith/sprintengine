@@ -14,6 +14,7 @@ import {
   LifecycleGlyph,
   PlusIcon,
   RemoteMachineGlyph,
+  ScheduleIcon,
   SearchIcon,
   WorktreeGlyph,
 } from "../../components/glyphs";
@@ -79,6 +80,7 @@ export function ConversationsScreen({
   onOpen,
   onNew,
   onOpenNotices,
+  onOpenScheduled,
   onOpenSettings,
   noticeCount,
 }: {
@@ -86,6 +88,8 @@ export function ConversationsScreen({
   /** Step one of New; the button is drawn only where some desktop may start a chat. */
   onNew: () => void;
   onOpenNotices: () => void;
+  /** The scheduled agents on every paired desktop; absent, no button. */
+  onOpenScheduled?: () => void;
   onOpenSettings: () => void;
   /** Drives the bell's dot; the count itself lives on the notices screen. */
   noticeCount: number;
@@ -235,6 +239,13 @@ export function ConversationsScreen({
             label="Search chats"
             onPress={search.show}
           />
+          {onOpenScheduled ? (
+            <CircleButton
+              icon={<ScheduleIcon size={iconSize.md} tone="textPrimary" />}
+              label="Scheduled agents"
+              onPress={onOpenScheduled}
+            />
+          ) : null}
           <CircleButton
             badge={noticeCount > 0}
             icon={<BellIcon size={iconSize.md} tone="textPrimary" />}

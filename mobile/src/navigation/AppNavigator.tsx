@@ -99,6 +99,7 @@ export function AppNavigator() {
             onNew={() => navigation.navigate("ChooseProject")}
             onOpen={(target) => navigation.navigate("Conversation", target)}
             onOpenNotices={() => navigation.navigate("Notices")}
+            onOpenScheduled={() => navigation.navigate("Scheduled")}
             onOpenSettings={() => navigation.navigate("SettingsHome")}
           />
         )}
@@ -218,6 +219,7 @@ export function AppNavigator() {
                 return CommonActions.reset({ ...state, routes, index: routes.length - 1 });
               })
             }
+            onSchedule={(target, fromNewChat) => navigation.navigate("NewSchedule", { ...target, fromNewChat })}
             projectName={route.params.projectName}
             workspaceId={route.params.workspaceId}
           />
@@ -266,9 +268,19 @@ export function AppNavigator() {
         {({ navigation, route }) => (
           <NewScheduleScreen
             desktopName={route.params.desktopName}
+            fromNewChat={route.params.fromNewChat}
             onCancel={() => navigation.goBack()}
-            // Back past the project chooser to the list, which reads again.
-            onScheduled={() => navigation.navigate("Scheduled")}
+            onScheduled={() =>
+              route.params.fromNewChat
+                ? // From New's "+": New leaves with it, as it does for a chat,
+                  // so Back from the schedules is Back to the list.
+                  navigation.dispatch((state: NavigationState) => {
+                    const routes = routesAfterNewChat(state.routes, { name: "Scheduled" as const });
+                    return CommonActions.reset({ ...state, routes, index: routes.length - 1 });
+                  })
+                : // Back past the project chooser to the list, which reads again.
+                  navigation.navigate("Scheduled")
+            }
             projectName={route.params.projectName}
             session={sessions.find((candidate) => candidate.deviceId === route.params.deviceId) ?? null}
             workspaceId={route.params.workspaceId}

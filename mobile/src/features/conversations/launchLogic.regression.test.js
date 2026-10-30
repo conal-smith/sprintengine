@@ -100,6 +100,16 @@ test("a started chat replaces the whole New flow, so Back returns to the list", 
     "whatever opened New is where Back lands",
   );
   assert.deepEqual(names(routesAfterNewChat([{ name: "HomeOverview" }], chat)), ["HomeOverview", "Conversation"]);
+  assert.deepEqual(
+    names(
+      routesAfterNewChat(
+        [{ name: "HomeOverview" }, { name: "ChooseProject" }, { name: "NewChat" }, { name: "NewSchedule" }],
+        { name: "Scheduled" },
+      ),
+    ),
+    ["HomeOverview", "Scheduled"],
+    "a schedule made from New's + lands on the schedules, and Back from them on the list",
+  );
 });
 
 test("New offers Worktree where the desktop takes it and the folder can be forked, and defaults to offering it", () => {

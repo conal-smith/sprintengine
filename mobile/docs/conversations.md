@@ -114,6 +114,19 @@ New is the desktop's New chat composer: the prompt, the "+" for pictures,
 the model picker and send, with the strip tucked under the box saying where
 the chat runs: the machine, the project, Worktree, and the branch.
 
+The "+" ends with **Schedule** where the pairing may operate the desktop
+(`workspace:operate`). It starts nothing: it takes the words, the machine and
+project, the agent and model, the Worktree switch and the access to New
+scheduled agent, which makes the schedule on the desktop with `schedule.create`.
+There "When" offers one-time runs first ("Once, in an hour", "Once, tomorrow
+at 9:00 AM"), sent as `once` with a cron naming the same minute, and only
+where the desktop advertises `scheduled-agents`, since an older handler refuses
+the argument; the common repeats follow. A schedule's runs start from words
+alone, so while a picture or file is attached the row says to remove it. Once
+scheduled, New leaves and the Scheduled list opens: every paired desktop's
+schedules, which the home screen's clock button and Settings → Scheduled agents
+also open.
+
 Worktree is on when New opens, as on the desktop: the chat starts in a
 worktree of its own, cut from the desktop's worktree pool on the project's
 main checkout's branch, which the strip names ("from main"). Tap it for "No
