@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { ExtensionsGlyph } from '../AppIcons'
+import { RailBrandMark } from '../brand/RailBrandMark'
 import type { RegisteredGlobalSurface, SurfaceIconComponent } from '../../modules/renderer-host'
 import type { SidebarSection } from '../../store/slices/settingsSlice'
 import { Badge } from '../ui/Badge'
@@ -120,8 +121,9 @@ type AppRailProps = {
   surfaces: readonly RailSurface[]
   activeGlobalSurface: string | null
   onOpenSurface: (surface: RailSurface) => void
-  // The account + Settings cluster stays at the rail's foot across sections.
-  // Owned by the host; the rail only places it.
+  // The account + Settings cluster stays at the rail's foot across sections,
+  // with only the brand mark below it. Owned by the host; the rail only places
+  // it.
   accountSlot?: React.ReactNode
 }
 
@@ -261,6 +263,11 @@ export function AppRail({
       </div>
       <div className="flex-1" />
       {accountSlot}
+      {/* The brand, last in the column and below Settings (owner ruling
+          2026-10-30): the icon's "se", opening the project's repository. It
+          moved here from the top of the sidebar's chrome row, so the window
+          still shows the brand exactly once. */}
+      <RailBrandMark />
     </nav>
   )
 }

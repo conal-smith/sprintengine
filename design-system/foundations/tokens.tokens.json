@@ -2294,76 +2294,16 @@
           "com.sprintengine": {
             "role": "surface",
             "use": "The tinted window material's ground only (owner rulings 2026-09-24): one static, heavily feathered radial wash of text.primary over bg.app, painted once on the window ground under the chrome (rail, sidebar strip, title band). Its colour is the ink of what sits on it \u2014 the rail's glyphs and the chrome's text \u2014 so it reads as a hint of that colour rather than a glow, and it falls off on a smooth curve with no visible edge. At its heart it stays below the step between bg.app and the cards, so a card still reads as raised above the chrome rather than sunk into it.",
-            "doNotUse": "Any card, panel, row or control ground, a wash worn by a single control, and any surface that says something \u2014 the wash is ground, not signal. Never the accent (that is tinted.brand, behind the accent half of the wordmark only). Never animated.",
+            "doNotUse": "Any card, panel, row or control ground, a wash worn by a single control, and any surface that says something \u2014 the wash is ground, not signal. Never the accent. Never animated.",
             "modes": {
               "light": 0.02,
               "dark": 0.014
             }
           }
         }
-      },
-      "brand": {
-        "$type": "number",
-        "$value": 0.05,
-        "$description": "How much of the accent the brand wordmark's feathered wash carries at its heart, behind \"engine\", under the tinted material.",
-        "$extensions": {
-          "com.sprintengine": {
-            "role": "surface",
-            "use": "The accent half of the tinted window material's wash behind the brand wordmark, and nothing else: a soft ellipse of accent.primary behind \"engine\", at tinted.brand at its centre and feathered to nothing at tinted.brand-reach past the mark. The colour follows the letters it sits behind, which is the only place the material spends the accent.",
-            "doNotUse": "A rail button, any other control, or marking state \u2014 a wash per control reads as a tile or a halo behind it. Never animated.",
-            "modes": {
-              "light": 0.05,
-              "dark": 0.06
-            }
-          }
-        }
-      },
-      "brand-ink": {
-        "$type": "number",
-        "$value": 0.025,
-        "$description": "How much of the foreground ink the brand wordmark's feathered wash carries at its heart, behind \"sprint\", under the tinted material.",
-        "$extensions": {
-          "com.sprintengine": {
-            "role": "surface",
-            "use": "The ink half of the tinted window material's wash behind the brand wordmark: a soft ellipse of text.primary behind \"sprint\", paired with tinted.brand behind \"engine\". Smaller than tinted.brand because the foreground sits much further from bg.app than the accent does, so the same share of it would lift the ground several times as much; at this share the two halves read as one faint strength.",
-            "doNotUse": "A rail button, any other control, or marking state \u2014 a wash per control reads as a tile or a halo behind it. Never animated.",
-            "modes": {
-              "light": 0.025,
-              "dark": 0.025
-            }
-          }
-        }
-      },
-      "brand-reach": {
-        "$type": "dimension",
-        "$value": "24px",
-        "$description": "How far the brand wordmark's feathered wash reaches past the mark along the brand row.",
-        "$extensions": {
-          "com.sprintengine": {
-            "role": "surface",
-            "use": "The horizontal outset of the wordmark's wash under the tinted material, paired with tinted.brand; the wash reaches four tenths of it above and below the mark, so it stays inside the 36px brand row and has faded to nothing before any edge.",
-            "doNotUse": "Any shadow \u2014 elevation comes from the sem.shadow set.",
-            "modes": {
-              "light": "24px",
-              "dark": "24px"
-            }
-          }
-        }
       }
     },
     "z": {
-      "behind": {
-        "$type": "number",
-        "$value": -1,
-        "$description": "Decoration painted behind its own element's content: a wash pseudo-element inside the element's isolated stacking context.",
-        "$extensions": {
-          "com.sprintengine": {
-            "role": "layering",
-            "use": "A `::before` or `::after` that decorates the ground under its own element (the tinted material's wash behind the brand wordmark) and must sit behind that element's content. Pair it with `isolation: isolate` on the element, so it goes behind the content and no further.",
-            "doNotUse": "Pushing a real surface under another one, or anything outside an isolated stacking context: without the isolation it slips behind the element's ancestors' backgrounds and vanishes."
-          }
-        }
-      },
       "parked": {
         "$type": "number",
         "$value": -1,

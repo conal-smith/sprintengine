@@ -15,3 +15,6 @@
 export const RELEASES_REPO = 'conal-smith/sprintengine'
 
 export const RELEASES_URL = `https://github.com/${RELEASES_REPO}/releases`
+
+/** The project's public repository, which the brand mark at the rail's foot opens. */
+export const REPOSITORY_URL = `https://github.com/${RELEASES_REPO}`

@@ -602,10 +602,6 @@
      panel-internal popover or HUD (`--z-float`) — has its own three steps in
      the same source since 2026-09-02, so Tailwind's bare `z-20` / `z-30` are
      no longer the way to say it: write `z-[var(--z-pane)]` / `z-[var(--z-float)]`. */
-  /* Below them all, one step for decoration behind its own element's content
-     inside an isolated stacking context (the tinted material's wash behind the
-     brand wordmark). */
-  --z-behind: var(--sem-z-behind);
   /* A browser tab recording out of view: under everything, still painting. */
   --z-parked: var(--sem-z-parked);
   --z-sticky: var(--sem-z-sticky);
@@ -4843,20 +4839,16 @@ body:has([data-selection-pane]:focus-within)
  * AMBIENT. It is never worn by a single control — a glow per rail button read
  * as a square tile with a green halo around it on every one of them — and its
  * colour is the ink of whatever sits on it. The rail's glyphs and the chrome's
- * text are the foreground, so the wash under them is the foreground; the
- * accent appears only behind the accent half of the wordmark.
+ * text are the foreground, so the wash under them is the foreground.
  *
- * The falloff. Every wash below fades on the same curve — a raised cosine,
+ * The falloff. The wash fades on a smooth curve — a raised cosine,
  * sampled every tenth of the radius — rather than on a two- or three-stop
  * linear ramp. A linear ramp has a corner in its slope at each stop, and the
  * eye reads a slope corner as an edge: that is where a glow's ring and its
  * rim came from. The cosine leaves the heart flat and meets zero flat, so
- * there is no edge to find at any stop or at the end. It is written once as
- * --tinted-feather against two per-element inputs, the ink and its peak
- * share, and each element that wears it sets those two. */
-:root[data-window-material="tinted"] body,
-:root[data-window-material="tinted"] .material-brand-wash::before,
-:root[data-window-material="tinted"] .material-brand-wash::after {
+ * there is no edge to find at any stop or at the end. It is written as
+ * --tinted-feather against two inputs, the ink and its peak share. */
+:root[data-window-material="tinted"] body {
   --tinted-feather:
     color-mix(in srgb, var(--tinted-feather-ink) calc(var(--tinted-feather-peak) * 100%), transparent) 0%,
     color-mix(in srgb, var(--tinted-feather-ink) calc(var(--tinted-feather-peak) * 97.6%), transparent) 10%,
@@ -4888,59 +4880,47 @@ body:has([data-selection-pane]:focus-within)
   background-color: var(--bg-app);
   background-image: radial-gradient(ellipse 60% 90% at 0% 0%, var(--tinted-feather));
 }
-/* 2. The wordmark. The one place the wash takes a colour other than the
- *    foreground, because it is the one thing in the chrome that is two
- *    colours: "sprint" in the foreground ink and "engine" in the accent. Two
- *    ellipses, one behind each half, on the mark's two pseudo-elements; they
- *    overlap across the join, so the colour crosses from one ink to the other
- *    rather than meeting at a line. Each is sized to reach exactly to its
- *    pseudo-element's edge, where the feather is already zero, so nothing is
- *    ever clipped into a visible edge. The reach runs --sem-tinted-brand-reach
- *    along the row and four tenths of it above and below, which keeps the
- *    wash inside the 36px brand row and off the sidebar card beneath it.
- *    The two halves carry different shares because their inks do: the
- *    foreground is far further from the ground than the accent is, so the same
- *    share of it lifts the ground several times as much, and one number for
- *    both left a grey smudge behind "sprint" and almost nothing behind
- *    "engine". --sem-tinted-brand-ink is the smaller share that makes the two
- *    halves read as the same faint strength.
- *    `isolation` keeps both pseudo-elements behind the letters and inside the
- *    mark's own stacking context (--z-behind). It rides on the mark rather
- *    than on its button so it follows the mark wherever the row puts it and
- *    goes with it when the row is too narrow to show it. */
-:root[data-window-material="tinted"] .material-brand-wash {
-  position: relative;
-  isolation: isolate;
-}
-:root[data-window-material="tinted"] .material-brand-wash::before,
-:root[data-window-material="tinted"] .material-brand-wash::after {
-  content: '';
-  position: absolute;
-  inset: calc(var(--sem-tinted-brand-reach) * -0.4) calc(var(--sem-tinted-brand-reach) * -1);
-  z-index: var(--z-behind);
-  pointer-events: none;
-}
-:root[data-window-material="tinted"] .material-brand-wash::before {
-  --tinted-feather-ink: var(--text-strong);
-  --tinted-feather-peak: var(--sem-tinted-brand-ink);
-  background-image: radial-gradient(ellipse 36% 50% at 36% 50%, var(--tinted-feather));
-}
-:root[data-window-material="tinted"] .material-brand-wash::after {
-  --tinted-feather-ink: var(--accent-primary);
-  --tinted-feather-peak: var(--sem-tinted-brand);
-  background-image: radial-gradient(ellipse 36% 50% at 64% 50%, var(--tinted-feather));
-}
-/* 3. Forced colours. The material is colour on the ground, and a forced
- *    palette decides the ground: both washes go, so nothing the person's
- *    palette did not choose sits under the chrome or behind the wordmark.
+/* 2. Forced colours. The material is colour on the ground, and a forced
+ *    palette decides the ground: the wash goes, so nothing the person's
+ *    palette did not choose sits under the chrome.
  *    Said here rather than left to how the engine treats a gradient under
  *    forced colours. */
 @media (forced-colors: active) {
   :root[data-window-material="tinted"] body {
     background-image: none;
   }
-  :root[data-window-material="tinted"] .material-brand-wash::before,
-  :root[data-window-material="tinted"] .material-brand-wash::after {
-    content: none;
+}
+
+/* The nightly build's brand tile at the foot of the app rail (RailBrandMark):
+ * the nightly application icon's night ground, cut to a rail-sized rounded
+ * square, with the icon's own "se" inks on it. Fixed colours rather than theme
+ * tokens, on purpose: it is the icon, and the icon is the same night in every
+ * theme and both modes — which is also why the letters on it take the icon's
+ * inks (SprintEngineMonogram `inks="icon"`) rather than the theme's, whose
+ * light-mode foreground would vanish into the ground. The colours are sampled
+ * from resources/icon-nightly.png (ground) and the mark's source
+ * (resources/brand/sprintengine-se-mark.source.html, letters). A few faint
+ * stars sit at the edges, away from the letters, the way the icon's sky keeps
+ * its stars off the mark; the inset top highlight is the splash tile's bezel.
+ * design-tokens-allow-block: the nightly application icon's fixed colours */
+.brand-night-tile {
+  --brand-icon-ink: #ececec;
+  --brand-icon-accent: #3f9468;
+  background-color: #0a0f23;
+  background-image:
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.7) 0 0.5px, transparent 1px),
+    radial-gradient(circle at 84% 16%, rgba(255, 255, 255, 0.5) 0 0.5px, transparent 1px),
+    radial-gradient(circle at 78% 86%, rgba(255, 255, 255, 0.45) 0 0.5px, transparent 1px),
+    radial-gradient(circle at 12% 80%, rgba(255, 255, 255, 0.35) 0 0.5px, transparent 1px),
+    linear-gradient(160deg, #070a1a 0%, #0a0f23 45%, #121b3c 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+/* design-tokens-allow-end */
+/* A forced palette decides the ground; the letters fall back to its text. */
+@media (forced-colors: active) {
+  .brand-night-tile {
+    background-image: none;
+    --brand-icon-ink: CanvasText;
+    --brand-icon-accent: CanvasText;
   }
 }

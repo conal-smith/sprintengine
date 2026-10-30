@@ -113,9 +113,20 @@ test('AppRail', async () => {
     return host
   }
   const nav = () => dom.window.document.querySelector('nav[aria-label="App rail"]') as HTMLElement
-  const buttons = () => [...dom.window.document.querySelectorAll('nav[aria-label="App rail"] button')] as HTMLElement[]
+  const allButtons = () =>
+    [...dom.window.document.querySelectorAll('nav[aria-label="App rail"] button')] as HTMLElement[]
+  // The section and surface glyphs; the brand mark at the foot is checked on its own.
+  const buttons = () => allButtons().filter((b) => !b.hasAttribute('data-build'))
 
   render('home', null)
+  const brand = allButtons().at(-1)
+  assert.equal(
+    brand?.getAttribute('aria-label'),
+    'Open the GitHub repository',
+    'the brand mark is the last thing in the rail, where it sits below the account cluster',
+  )
+  assert.equal(brand?.textContent, 'se', 'the brand is the icon’s "se", never the full wordmark')
+  assert.ok((brand?.getAttribute('class') ?? '').includes('size-control-lg'), 'the mark sits on a rail square')
   assert.deepEqual(
     buttons().map((b) => b.getAttribute('aria-label')),
     ['Home', 'Tides', 'Extensions'],
