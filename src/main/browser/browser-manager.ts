@@ -1206,8 +1206,10 @@ export function createBrowserManager(deps: BrowserManagerDeps) {
 
     async clearCookies(): Promise<BrowserClearResult> {
       try {
+        // Cache Storage goes with the service workers that fill it: left behind,
+        // a worker the site registers again answers from the old responses.
         await ensureSession().clearStorageData({
-          storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers'],
+          storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage'],
         })
         return { ok: true }
       } catch (error) {
