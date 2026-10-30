@@ -497,6 +497,8 @@ function runFailure(
     return { ok: false, code: 'unavailable', message: `${cli} could not be started: ${outcome.spawnError}` }
   }
   if (outcome.timedOut) return { ok: false, code: 'timeout', message: `${cli} did not answer in time.` }
+  if (outcome.overflowed)
+    return { ok: false, code: 'transport', message: `${cli} printed far more than an answer, and was stopped.` }
   if (outcome.code !== 0) {
     // Claude's own reason is in its stdout envelope; stderr then carries at
     // most a wrapper's notice, and a bare stdout fallback is the raw JSON.

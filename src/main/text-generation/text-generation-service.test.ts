@@ -552,3 +552,20 @@ test('a headless Codex call keeps to its deadline across the listing as well', a
   )
   assert.equal(runs[1]!.timeoutMs, 26_000)
 })
+
+test('a CLI stopped for printing past the cap is a failed call, not a parse of what it left', async () => {
+  const runs: CommandRunInput[] = []
+  const answering = codexAnswering({ stdout: '[]' }, runs)
+  const result = await generateChatTitle(CODEX_TITLE, {
+    ...answering,
+    run: async (input) => {
+      const done = await answering.run!(input)
+      return input.args.includes('mcp') ? done : { ...done, code: null, overflowed: true }
+    },
+  })
+  assert.deepEqual(result, {
+    ok: false,
+    code: 'transport',
+    message: 'codex printed far more than an answer, and was stopped.',
+  })
+})
