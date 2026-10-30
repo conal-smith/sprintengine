@@ -18,16 +18,18 @@ import type { RailBadge } from './AppRail'
 // WorkspaceTopBar. The account menu, its trigger, and
 // the Settings gear keep their original handlers — only the mount point moved.
 //
-// THREE controls, and no more: Usage, the account and Settings. For four days
-// it also hosted a trigger glyph per registered modal surface (doors→modals,
-// 2026-09-01): Plugins, Automations and Design left the top-nav door band and
+// Four controls, and no more: the app update, Usage, the account and
+// Settings. For four days it also hosted a trigger glyph per registered modal
+// surface (doors→modals, 2026-09-01): Plugins, Automations and Design left the top-nav door band and
 // opened as modals from beside the gear. The Extensions drawer ruling
 // (2026-09-05) sent all three back to being doors — a destination the shell's
 // own chrome offers routes the card region — so nothing renders a module's
 // modal trigger here. Settings stays because it belongs to the WINDOW rather
 // than to whichever section the sidebar is showing, and the usage dashboard
 // joined it above the account (owner ruling 2026-10-10) for the same reason:
-// what every agent on this machine has spent is nobody's section.
+// what every agent on this machine has spent is nobody's section. The app
+// update's glyph joined them on top (owner ruling 2026-10-30): a newer build of
+// the app is the window's news, not any section's.
 
 // Three bars of different heights, the column chart with no axes (lucide
 // "chart-no-axes-column" geometry): a chart, read at icon size, with nothing
@@ -186,6 +188,12 @@ export type SidebarAccountBarProps = {
    * ruling 2026-09-25) — worn on the gear as the rail's own corner count.
    */
   settingsBadge?: RailBadge | null
+  /**
+   * The app update's glyph (AppUpdateRailButton), at the top of the cluster:
+   * it lights up when a release is waiting, and pressing it downloads and
+   * then restarts into it (owner ruling 2026-10-30).
+   */
+  updateButton?: React.ReactNode
   /** The usage dashboard's open state, and the toggle the chart glyph calls. */
   usageOpen?: boolean
   openUsage?: () => void
@@ -206,6 +214,7 @@ export default function SidebarAccountBar({
   openSettings,
   settingsOpen,
   settingsBadge,
+  updateButton,
   usageOpen = false,
   openUsage,
 }: SidebarAccountBarProps) {
@@ -344,8 +353,10 @@ export default function SidebarAccountBar({
         collapsed ? 'flex flex-col items-center gap-1.5 px-2 py-2' : 'flex items-center gap-1.5 px-2 py-1.5'
       }`}
     >
-      {/* On the rail, Usage stands above the account; in a row it sits with
-          the gear at the right edge, the account holding the left. */}
+      {/* On the rail, the update glyph and Usage stand above the account; in
+          a row they sit with the gear at the right edge, the account holding
+          the left. */}
+      {collapsed ? updateButton : null}
       {collapsed ? usageButton : null}
       {accountControl}
       {collapsed ? (
@@ -354,6 +365,7 @@ export default function SidebarAccountBar({
         // With the account control now icon-only, the settings gear pins to
         // the row's right edge; the account badge holds the left.
         <div className="ml-auto flex items-center gap-1.5">
+          {updateButton}
           {usageButton}
           {settingsButton}
         </div>

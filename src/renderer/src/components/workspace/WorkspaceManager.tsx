@@ -264,6 +264,7 @@ import { controlTabContextItemOf, controlTabContextOf, cycleFocusedControlTabSco
 import { useExtensionsDrawerRows } from './extensionsDrawerRows'
 import { useModuleNotificationIngest } from './useModuleNotificationIngest'
 import { createAppUpdateToastDriver, showAppUpdateOutcomeToast } from './manager/appUpdateToast'
+import { AppUpdateRailButton } from './AppUpdateRailButton'
 import { showCliUpdateToast } from './manager/cliUpdateToast'
 import { showWorktreeInstallToast } from './manager/worktreeInstallToast'
 import { cardSurfaceRoute } from './manager/cardSurfaceRoute'
@@ -1717,9 +1718,9 @@ export default function WorkspaceManager() {
   // The updates waiting in Settings, worn on the rail's gear.
   const settingsUpdateBadges = useSettingsUpdateBadges()
 
-  // The app update: one toast that follows it through its steps (offered,
-  // downloading, ready, installing) and a bell row at each question, plus, at
-  // the first start after an update, how it went.
+  // The app update: its glyph on the rail carries it (AppUpdateRailButton);
+  // the toasts say when its download lands and when a step is refused, plus,
+  // at the first start after an update, how it went.
   useEffect(() => {
     const api = typeof window === 'undefined' ? null : window.api
     if (!api || typeof api.onUpdateStateChanged !== 'function') return
@@ -5020,6 +5021,7 @@ export default function WorkspaceManager() {
                 openSettings={openSettings}
                 settingsOpen={settingsOpen}
                 settingsBadge={settingsUpdateBadges.rail}
+                updateButton={<AppUpdateRailButton />}
                 usageOpen={usageOpen}
                 openUsage={() => (usageOpen ? closeModalSurface() : openModalSurface('usage'))}
               />

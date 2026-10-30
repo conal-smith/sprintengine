@@ -89,15 +89,6 @@ export function updateReadyNotice(appName: string, version: string | null, requi
   }
 }
 
-// Owner ruling 2026-09-24: an update downloads when the person asks for it
-// (unless they turned automatic download on in Settings -> General).
-export function updateAvailableNotice(appName: string, version: string | null): Notice {
-  return {
-    title: version ? `${appName} ${version} is available` : `A ${appName} update is available`,
-    description: 'Download it now, or any time from Settings → General.',
-  }
-}
-
 // Plugin sources (backlog/2026-09-05-plugin-sources.md, "Update notifications"):
 // one notice per check that DISCOVERED drift, naming up to three repositories
 // and then "and N more". Sources already known to be behind are not news
