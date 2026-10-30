@@ -539,6 +539,16 @@ test('a draft is written from the branch’s own commits and diff, its template 
   assert.equal(draft.input.conventionalCommits, false, 'one commit on main says nothing about a convention')
 })
 
+test('a template is found whatever its case or extension, past a folder named like one', async () => {
+  const { clone } = await checkout()
+  await exec('mkdir', ['-p', path.join(clone, '.github', 'pull_request_template.md'), path.join(clone, 'docs')])
+  await writeFile(path.join(clone, 'docs', 'Pull_Request_Template.txt'), 'Summary:\n')
+  const creator = createPullRequestCreator({ listBranch: lookupOf(NONE).listBranch })
+  const draft = await creator.draftInput(clone)
+  assert.ok(draft.ok)
+  assert.equal(draft.input.template, 'Summary:')
+})
+
 test('the push and the creation are for the branch and commit confirmed, and refused once the checkout moved', async () => {
   const { clone, origin } = await checkout()
   const calls: string[][] = []
