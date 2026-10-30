@@ -152,48 +152,17 @@ function ScheduleEditor({
   );
 
   if (schedule.once !== null) {
-    const at = schedule.once;
-    const pick = (next: number) => {
-      setOnceAt(next);
-      onChange({ cron: schedule.cron, once: next });
-    };
-    const passed = at <= now;
     return (
       <View style={styles.editor}>
         {tabs}
-        <View accessibilityLabel="Quick times" style={styles.wrap}>
-          {quickSendTimes(now).map((choice) => (
-            <OptionChip key={choice.label} label={choice.label} onPress={() => pick(choice.at)} selected={choice.at === at} />
-          ))}
-        </View>
-        <View style={styles.row}>
-          <Section label="On">
-            <View style={styles.stepper}>
-              <StepButton
-                direction="left"
-                disabled={onOrBeforeToday(at, now)}
-                label="The day before"
-                onPress={() => pick(withDayOffset(at, -1))}
-              />
-              <Text style={styles.stepperText}>{sendDayWords(at, now)}</Text>
-              <StepButton direction="right" label="The day after" onPress={() => pick(withDayOffset(at, 1))} />
-            </View>
-          </Section>
-          <Section label="At">
-            <TimeField onChange={(minutes) => pick(withMinutesOfDay(at, minutes))} time={minutesOfDay(at)} />
-          </Section>
-        </View>
-        <View accessibilityLabel="When it runs" accessibilityLiveRegion="polite" style={styles.readout}>
-          {passed ? (
-            <Text style={styles.readoutError}>That time has passed — pick one ahead.</Text>
-          ) : (
-            <>
-              <Text style={styles.readoutWords}>{sendTimeWords(at, now)}</Text>
-              <Text style={styles.readoutNext}>{sendTimeFromNow(at, now)}</Text>
-            </>
-          )}
-        </View>
-        <ZoneLine timezone={timezone} />
+        <SendTimeEditor
+          at={schedule.once}
+          onChange={(at) => {
+            setOnceAt(at);
+            onChange({ cron: schedule.cron, once: at });
+          }}
+          timezone={timezone}
+        />
       </View>
     );
   }
@@ -293,6 +262,106 @@ function ScheduleEditor({
   );
 }
 
+/**
+ * One moment to send at: Once's editor, and the time a message scheduled into
+ * a chat goes out, as the desktop's `SendTimeEditor` is both. The everyday
+ * times are one press each; any other is a day stepped to and a time typed.
+ */
+export function SendTimeEditor({
+  at,
+  onChange,
+  timezone,
+}: {
+  at: number;
+  onChange: (at: number) => void;
+  /** Said under the readout where the zone matters: a scheduled agent's. */
+  timezone?: string;
+}) {
+  const styles = useThemedStyles(createStyles);
+  const now = useNow(true);
+  const passed = at <= now;
+  return (
+    <View style={styles.editor}>
+      <View accessibilityLabel="Quick times" style={styles.wrap}>
+        {quickSendTimes(now).map((choice) => (
+          <OptionChip key={choice.label} label={choice.label} onPress={() => onChange(choice.at)} selected={choice.at === at} />
+        ))}
+      </View>
+      <View style={styles.row}>
+        <Section label="On">
+          <View style={styles.stepper}>
+            <StepButton
+              direction="left"
+              disabled={onOrBeforeToday(at, now)}
+              label="The day before"
+              onPress={() => onChange(withDayOffset(at, -1))}
+            />
+            <Text style={styles.stepperText}>{sendDayWords(at, now)}</Text>
+            <StepButton direction="right" label="The day after" onPress={() => onChange(withDayOffset(at, 1))} />
+          </View>
+        </Section>
+        <Section label="At">
+          <TimeField onChange={(minutes) => onChange(withMinutesOfDay(at, minutes))} time={minutesOfDay(at)} />
+        </Section>
+      </View>
+      <View accessibilityLabel="When it sends" accessibilityLiveRegion="polite" style={styles.readout}>
+        {passed ? (
+          <Text style={styles.readoutError}>That time has passed — pick one ahead.</Text>
+        ) : (
+          <>
+            <Text style={styles.readoutWords}>{sendTimeWords(at, now)}</Text>
+            <Text style={styles.readoutNext}>{sendTimeFromNow(at, now)}</Text>
+          </>
+        )}
+      </View>
+      {timezone ? <ZoneLine timezone={timezone} /> : null}
+    </View>
+  );
+}
+
+/** The send time's picker, as a sheet: a chat's "+" Schedule. */
+export function SendTimeSheet({
+  visible,
+  at,
+  onChange,
+  onClose,
+}: {
+  visible: boolean;
+  at: number;
+  onChange: (at: number) => void;
+  onClose: () => void;
+}) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <BottomSheet onClose={onClose} title="Send at" visible={visible}>
+      {visible ? <SendTimeEditor at={at} onChange={onChange} /> : null}
+      <View style={styles.done}>
+        <PrimaryButton label="Done" onPress={onClose} />
+      </View>
+    </BottomSheet>
+  );
+}
+
+/**
+ * The time a message will be sent at, as a tag beside a chat's "+": the
+ * schedule glyph, the time, and × to send it as usual instead, as the
+ * desktop's `SendTimeTag`.
+ */
+export function SendTimeTag({ at, onPress, onRemove }: { at: number; onPress: () => void; onRemove: () => void }) {
+  const now = useNow(false);
+  const words = sendTimeWords(at, now);
+  return (
+    <TagShell
+      accessibilityLabel={`Sends ${words}`}
+      error={at <= now}
+      onPress={onPress}
+      onRemove={onRemove}
+      removeLabel="Don't schedule, send as usual"
+      words={words}
+    />
+  );
+}
+
 /** The schedule as a tag beside the composer's "+": its glyph, what it says, and × to stop scheduling. */
 export function ScheduleTag({
   schedule,
@@ -305,26 +374,53 @@ export function ScheduleTag({
   onPress: () => void;
   onRemove: () => void;
 }) {
-  const styles = useThemedStyles(createStyles);
-  const now = useNow(true);
+  const now = useNow(false);
   const read = readPickedSchedule(schedule, timezone, now);
+  return (
+    <TagShell
+      accessibilityLabel={read.ok ? `Schedule: ${read.words}, next ${read.next[0]}` : `Schedule: ${read.message}`}
+      error={!read.ok}
+      onPress={onPress}
+      onRemove={onRemove}
+      removeLabel="Stop scheduling"
+      words={read.ok ? read.words : read.message}
+    />
+  );
+}
+
+function TagShell({
+  words,
+  error,
+  accessibilityLabel,
+  removeLabel,
+  onPress,
+  onRemove,
+}: {
+  words: string;
+  error: boolean;
+  accessibilityLabel: string;
+  removeLabel: string;
+  onPress: () => void;
+  onRemove: () => void;
+}) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.tag}>
       <Pressable
         accessibilityHint="Change when it runs."
-        accessibilityLabel={read.ok ? `Schedule: ${read.words}, next ${read.next[0]}` : `Schedule: ${read.message}`}
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         hitSlop={touchSlop(TAG_HEIGHT)}
         onPress={onPress}
         style={({ pressed }) => [styles.tagBody, pressed ? styles.pressed : null]}
       >
         <ScheduleIcon size={iconSize.xs} tone="accentPrimary" />
-        <Text numberOfLines={1} style={[styles.tagText, read.ok ? null : styles.tagTextError]}>
-          {read.ok ? read.words : read.message}
+        <Text numberOfLines={1} style={[styles.tagText, error ? styles.tagTextError : null]}>
+          {words}
         </Text>
       </Pressable>
       <Pressable
-        accessibilityLabel="Stop scheduling"
+        accessibilityLabel={removeLabel}
         accessibilityRole="button"
         hitSlop={touchSlop(TAG_HEIGHT)}
         onPress={onRemove}

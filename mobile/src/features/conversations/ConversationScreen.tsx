@@ -33,6 +33,7 @@ import {
   MachineGlyph,
   MoreIcon,
   RemoteMachineGlyph,
+  ScheduleIcon,
   WorktreeGlyph,
   iconSize,
 } from "../../components/glyphs";
@@ -124,6 +125,9 @@ import { markUnreadOffered } from "./chatLifecycleLogic";
 import { chatOpenedKey, cliForChatProvider } from "./conversationListLogic";
 import { dictatedDraft, dictationPlaceholder, joinDictation, messageWithDictation } from "../dictation/dictationLogic";
 import { ComposerTray, ComposerTrayAction, ComposerTrayRow } from "./ComposerTray";
+import { SendTimeSheet, SendTimeTag } from "../scheduled/ScheduleSheet";
+import { scheduledMessageStatus } from "../scheduled/scheduledMessages";
+import { defaultSendAt } from "../scheduled/sendTime";
 import { useDictation } from "../dictation/useDictation";
 import { usePublishConversation } from "./liveConversation";
 import {
@@ -515,7 +519,11 @@ export function ConversationScreen({
   // older one says nothing, and the chip would be guessing.
   const preset = canOperate ? activeThread.permissionPreset : undefined;
   const presetChoices = session && preset ? permissionChoices(session, activeThread) : [];
-  const [sheet, setSheet] = useState<"model" | "permission" | "changes" | "more" | null>(initialSheet ?? null);
+  const [sheet, setSheet] = useState<"model" | "permission" | "changes" | "more" | "sendAt" | null>(initialSheet ?? null);
+  // The time the next message is scheduled for, while the "+"'s Schedule is
+  // on (`conversation-scheduled-sends`): Send then hands it to the desktop to
+  // send at that time rather than now. Null sends as usual.
+  const [sendAt, setSendAt] = useState<number | null>(null);
   useEffect(() => {
     if (initialSheet) setSheet(initialSheet);
   }, [initialSheet]);
@@ -631,6 +639,24 @@ export function ConversationScreen({
         setText(message);
       }
       if (!message.trim() && !uploads.length) return;
+      if (sendAt !== null) {
+        // Scheduled: the desktop keeps the words and sends them at the time,
+        // whether or not this phone is awake then. Words alone, as the
+        // desktop's Schedule takes them.
+        if (sendAt <= Date.now()) {
+          chat.setNotice("That time has passed. Pick one ahead.");
+          return;
+        }
+        const result = await chat.scheduleMessage(message.trim(), sendAt);
+        if (!mounted.current) return;
+        if (!result.ok) {
+          chat.setNotice(result.message);
+          return;
+        }
+        setText("");
+        setSendAt(null);
+        return;
+      }
       // Decided as the message goes, not when the button was drawn: the turn
       // may have ended while the microphone finished.
       const action = followUpAction({
@@ -703,6 +729,26 @@ export function ConversationScreen({
         return;
       }
       setText((previous) => (previous.trim() ? `${previous}\n${words}` : words));
+    });
+  };
+  // A scheduled message is taken back from the desktop first, then its words
+  // return to the composer still set for its time, as the desktop's Edit
+  // does; Delete lets it go, and Send now (Retry, for one refused) sends it.
+  const editScheduled = (scheduledId: string, words: string, at: number) => {
+    void chat.cancelScheduled(scheduledId).then((result) => {
+      if (!mounted.current) return;
+      if (!result.ok) {
+        chat.setNotice(result.message);
+        return;
+      }
+      setText((previous) => (previous.trim() ? `${previous}\n${words}` : words));
+      setUploads([]);
+      setSendAt(at > Date.now() ? at : defaultSendAt(Date.now()));
+    });
+  };
+  const actOnScheduled = (action: Promise<{ ok: true } | { ok: false; message: string }>) => {
+    void action.then((result) => {
+      if (mounted.current && !result.ok) chat.setNotice(result.message);
     });
   };
   // A held message the chat refused waits on the person; Remove gives it up.
@@ -857,12 +903,27 @@ export function ConversationScreen({
   // the phone's own and those on their way to the desktop.
   const queuedIds = new Set([...chat.queued, ...chat.handing].map((item) => item.commandId));
   const hasText = !!dictatedDraft(text, dictation.interim).trim() || uploads.length > 0;
+  // A desktop that stops keeping scheduled messages (an older build after a
+  // redial) takes Schedule with it: the next Send goes as usual.
+  useEffect(() => {
+    if (!chat.holdsScheduled && sendAt !== null) setSendAt(null);
+  }, [chat.holdsScheduled, sendAt]);
+  const toggleSchedule = () => {
+    if (sendAt !== null) {
+      setSendAt(null);
+      return;
+    }
+    setSendAt(defaultSendAt(Date.now()));
+    setSheet("sendAt");
+  };
   // What the "+" holds: pictures, where the chat's agent reads them, and
   // files, where the desktop takes them (any agent reads a file by its
   // path). The phone starts conversations only, so "Start as" has no second
   // choice and is not drawn.
+  const scheduleOffered = chat.holdsScheduled;
   const optionRows = composerOptions({
     startAs: { offered: PHONE_START_AS, selected: "conversation" },
+    schedule: scheduleOffered ? { on: sendAt !== null, busy: uploading } : null,
     attach:
       activeThread.sessionId && (activeThread.capabilities?.images || filesOffered)
         ? {
@@ -908,6 +969,8 @@ export function ConversationScreen({
       ? {
           cli: chatCli,
           label: pickerLabel,
+          // The send time's tag shares the row: the mark alone.
+          compact: sendAt !== null,
           accessibilityLabel: [
             `Model, ${pickerLabel}${model && !model.editable ? ", set when the chat started" : ""}`,
             preset ? `access ${permissionLabel(preset)}` : null,
@@ -1551,6 +1614,42 @@ export function ConversationScreen({
                     {dictation.error}
                   </ComposerTrayRow>
                 ) : null}
+                {chat.desktopScheduled.map((message) => {
+                  const failed = message.failure !== undefined;
+                  return (
+                    <ComposerTrayRow
+                      key={`scheduled-${message.id}`}
+                      tone={failed ? "warn" : "neutral"}
+                      glyph={failed ? undefined : <ScheduleIcon size={iconSize.sm} tone="textSubtle" />}
+                      actions={
+                        message.sending ? null : (
+                          <>
+                            <ComposerTrayAction
+                              disabled={!canAct}
+                              label={failed ? "Retry" : "Send now"}
+                              onPress={() => actOnScheduled(chat.sendScheduledNow(message.id))}
+                            />
+                            <ComposerTrayAction
+                              disabled={!canAct}
+                              label="Edit"
+                              onPress={() => editScheduled(message.id, message.text, message.sendAt)}
+                            />
+                            <ComposerTrayAction
+                              disabled={!canAct}
+                              label="Delete"
+                              onPress={() => actOnScheduled(chat.cancelScheduled(message.id))}
+                            />
+                          </>
+                        )
+                      }
+                    >
+                      <Text accessibilityLabel={`Scheduled message. ${scheduledMessageStatus(message, now)}: ${message.text}`} numberOfLines={3} style={styles.scheduledRow}>
+                        <Text style={styles.scheduledWhen}>{scheduledMessageStatus(message, now)}</Text>
+                        {`  ${message.text}`}
+                      </Text>
+                    </ComposerTrayRow>
+                  );
+                })}
                 {cacheRow ? (
                   <ComposerTrayRow
                     key="cache"
@@ -1566,7 +1665,7 @@ export function ConversationScreen({
                 action={
                   composerActionKind({
                     hasText,
-                    stoppable,
+                    stoppable: stoppable && sendAt === null,
                     dictating: dictation.state !== "idle",
                     sending,
                     justSent,
@@ -1578,16 +1677,23 @@ export function ConversationScreen({
                           ? "Finishing dictation"
                           : sending
                           ? "Saving"
-                          : followUp !== "send"
+                          : sendAt !== null
+                            ? "Schedule"
+                            : followUp !== "send"
                             ? followUpLabel.label
                             : chat.state === "offline"
                               ? "Send when online"
                               : "Send",
-                        disabled: uploading || sending || !hasText,
+                        // A scheduled message is its words alone.
+                        disabled: uploading || sending || !hasText || (sendAt !== null && uploads.length > 0),
                         onPress: () => void send(),
-                        ...(followUp !== "send" ? { followUp } : {}),
-                        ...(followUpLabel.hint ? { hint: followUpLabel.hint } : {}),
-                        ...(steerable ? { onLongPress: () => void send(true) } : {}),
+                        ...(sendAt !== null
+                          ? { schedule: true }
+                          : {
+                              ...(followUp !== "send" ? { followUp } : {}),
+                              ...(followUpLabel.hint ? { hint: followUpLabel.hint } : {}),
+                              ...(steerable ? { onLongPress: () => void send(true) } : {}),
+                            }),
                       }
                 }
                 // Stop stays in reach while words wait in the box: the send
@@ -1619,7 +1725,13 @@ export function ConversationScreen({
                   disabled: !canAct || uploading,
                   busy: uploading,
                   onAttach: (source) => void attach(source),
+                  onSchedule: toggleSchedule,
                 }}
+                tags={
+                  sendAt !== null ? (
+                    <SendTimeTag at={sendAt} onPress={() => setSheet("sendAt")} onRemove={() => setSendAt(null)} />
+                  ) : null
+                }
                 picker={picker}
                 strip={strip}
               />
@@ -1664,6 +1776,9 @@ export function ConversationScreen({
           title="Model"
           visible={sheet === "model"}
         />
+      ) : null}
+      {sendAt !== null ? (
+        <SendTimeSheet at={sendAt} onChange={setSendAt} onClose={() => setSheet(null)} visible={sheet === "sendAt"} />
       ) : null}
       {preset ? (
         <BottomSheet onClose={closeAccess} onDismiss={sheetHandoff.onDismiss} title="Access" visible={sheet === "permission"}>
@@ -2403,6 +2518,9 @@ const createStyles = ({ colors, cardShadowOpacity }: Theme) =>
     studioName: { fontWeight: fontWeight.medium, color: colors.textSubtle },
     text: { ...typography.body, color: colors.textPrimary },
     meta: { ...typography.meta, color: colors.textMuted },
+    // A scheduled message in the tray: when it goes, then its words.
+    scheduledRow: { ...typography.meta, color: colors.textDefault },
+    scheduledWhen: { color: colors.textMuted, fontWeight: fontWeight.medium },
     metaLine: { flexDirection: "row", alignItems: "center", gap: space.xs },
     turnMeta: {
       ...typography.meta,
