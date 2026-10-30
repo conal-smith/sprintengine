@@ -59,7 +59,7 @@ type Harness = {
 
 function harness(
   home: string,
-  overrides: Partial<SshEnvironmentDeps> & { spawnWith?: (interactive: boolean) => SessionProcess } = {},
+  overrides: Partial<SshEnvironmentDeps> & { spawnWith?: (interactive: boolean) => SessionProcess | undefined } = {},
 ): Harness {
   const spawned: Harness['spawned'] = []
   const changes: string[] = []
@@ -87,7 +87,7 @@ function harness(
     nodeBinary: async () => ({ binary: fakeNode }),
     onChange: () => changes.push(`${env.summary().state}: ${env.summary().stateText}`),
     onEnvironmentId: (id) => environmentIds.push(id),
-    timing: { backoffMs: [50, 100, 200], giveUpMs: 60_000 },
+    timing: { backoffMs: [50, 100, 200], giveUpMs: 60_000, livenessMs: 500 },
     ...overrides,
   })
   return { env, spawned, changes, environmentIds, settings }
@@ -151,8 +151,14 @@ test('connect: installed, started, connected; a second client attaches; a lost s
   ) as { pid: number }
   assert.equal(after.pid, record.pid, 'the server outlived the session')
 
-  // Wake: the session is restarted at once.
+  // Wake with a session that answers (a screen unlocked): it is kept, and no ssh runs.
   const sessions = first.spawned.length
+  first.env.wake()
+  await new Promise((resolve) => setTimeout(resolve, 1_000))
+  assert.equal(first.spawned.length, sessions, 'a session that answers is not restarted')
+  assert.equal(first.env.summary().state, 'connected')
+  // Wake with a session that stopped answering (a socket that died asleep): it is restarted.
+  first.spawned.at(-1)!.child.stdout.pause()
   first.env.wake()
   assert.ok(await until(() => first.spawned.length > sessions && first.env.summary().state === 'connected', 30_000))
 
@@ -332,6 +338,63 @@ test('a machine Studio cannot run on is named, and nothing is installed there', 
   assert.equal(alpine.env.summary().state, 'unsupported')
   assert.match(alpine.env.summary().stateText, /uses musl \(as Alpine does\)/u)
 })
+
+test('a wake tries again: time asleep is not counted, a machine that gave up reconnects, what the person holds stays held', async () => {
+  const home = join(scratch, 'woke')
+  mkdirSync(home)
+  let skew = 0
+  let refuse = false
+  const refusing = failingSsh('ssh: connect to host 127.0.0.1 port 2222: Connection refused')
+  const machine = harness(home, {
+    now: () => Date.now() + skew,
+    spawnWith: (interactive) => (refuse ? refusing(interactive) : undefined),
+    timing: { backoffMs: [50, 100, 200], giveUpMs: 2_000, livenessMs: 500 },
+  })
+  await machine.env.connect({ interactive: true })
+  const record = JSON.parse(
+    readFileSync(join(home, '.local', 'share', 'sprintengine-studio', 'data', 'run', 'server.json'), 'utf8'),
+  ) as { pid: number }
+  pids.add(record.pid)
+
+  // The network drops, then the lid closes for longer than the give-up window.
+  refuse = true
+  machine.spawned.at(-1)!.child.kill()
+  assert.ok(await until(() => machine.env.summary().state === 'reconnecting', 5_000))
+  skew += 10 * 60_000
+  machine.env.wake()
+  // The wake's first try fails (the Wi-Fi is not back yet): the machine keeps trying.
+  const tried = machine.spawned.length
+  assert.ok(await until(() => machine.spawned.length > tried + 1, 5_000))
+  assert.equal(machine.env.summary().state, 'reconnecting', machine.changes.join('\n'))
+
+  // Ten minutes awake and failing: it gives up, and background callers are told.
+  assert.ok(await until(() => machine.env.summary().state === 'disconnected', 10_000))
+  await assert.rejects(machine.env.connect({ interactive: false }), /Disconnected from build-box/u)
+  // The network comes back: the online check wakes it, and it reconnects on its own.
+  refuse = false
+  machine.env.wake()
+  assert.ok(await until(() => machine.env.summary().state === 'connected', 30_000), machine.changes.join('\n'))
+  assert.equal(machine.spawned.at(-1)!.interactive, false, 'a reconnect after a wake never prompts')
+
+  // The person's Disconnect is not undone by a wake.
+  machine.env.disconnect()
+  assert.ok(await until(() => machine.env.summary().state === 'idle', 5_000))
+  const afterDisconnect = machine.spawned.length
+  machine.env.wake()
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  assert.equal(machine.spawned.length, afterDisconnect)
+  assert.equal(machine.env.summary().state, 'idle')
+
+  // A reconnect that needs a sign-in waits for the person, wake or no wake.
+  const batch = harness(scratch, { spawnWith: failingSsh('dev@build-box: Permission denied (publickey,password).') })
+  await assert.rejects(batch.env.connect({ interactive: false }))
+  assert.equal(batch.env.summary().state, 'needs-sign-in')
+  const signInBefore = batch.spawned.length
+  batch.env.wake()
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  assert.equal(batch.spawned.length, signInBefore)
+  assert.equal(batch.env.summary().state, 'needs-sign-in')
+}, 120_000)
 
 test('install failures read as sentences', () => {
   assert.match(installFailureWords('unpack tar: Disk quota exceeded', 'build-box'), /your disk quota is full/u)
