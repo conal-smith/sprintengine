@@ -5,13 +5,16 @@ import { posix as posixPath, win32 as windowsPath } from 'node:path'
 import type { IpcMain } from 'electron'
 import {
   FOLDER_OPEN_TARGET_IDS,
+  folderOpenTargetOpensOverSsh,
   isFolderOpenTargetId,
+  sshRemoteFolderUrl,
   type FolderOpenRequest,
   type FolderOpenResult,
   type FolderOpenTargetAvailability,
   type FolderOpenTargetId,
 } from '../../shared/folder-open-targets'
 import { errorMessage } from '../../shared/errors'
+import { isMachinePath, parseMachinePath } from '../../shared/machine-paths'
 
 /**
  * How a target is launched. `reveal` is the OS file manager and goes through
@@ -69,6 +72,10 @@ export type FolderOpenIpcDependencies = {
   runLauncher(command: string, args: string[]): Promise<LaunchOutcome>
   /** Rejects when the folder cannot be reached; same rule show-item-in-folder applies. */
   assertPathReachable(targetPath: string): Promise<void>
+  /** Hand a URL to the app that answers its scheme: an editor's Remote - SSH link. */
+  openExternal?(url: string): Promise<void>
+  /** The destination saved for an SSH machine (an alias, or `user@host`), by its id; null for one not saved. */
+  sshDestination?(id: string): string | null
 }
 
 // The bundle names cover every spelling the vendors ship: the Community
@@ -375,6 +382,9 @@ export function registerFolderOpenIpc(ipcMain: IpcMain, deps: FolderOpenIpcDepen
     if (!folderPath.trim()) {
       return { ok: false, target, reason: 'path_unavailable', message: 'No folder was given to open.' }
     }
+    // A folder on an SSH machine is not on this disk, and never reaches it:
+    // the editor, installed here, opens it over SSH from its Remote - SSH link.
+    if (isMachinePath(folderPath)) return openOverSsh(target, folderPath, deps)
     try {
       await deps.assertPathReachable(folderPath)
     } catch (error) {
@@ -421,11 +431,42 @@ export function registerFolderOpenIpc(ipcMain: IpcMain, deps: FolderOpenIpcDepen
   })
 }
 
+async function openOverSsh(
+  target: FolderOpenTargetId,
+  spelled: string,
+  deps: FolderOpenIpcDependencies,
+): Promise<FolderOpenResult> {
+  const onMachine = parseMachinePath(spelled)
+  const destination = onMachine ? (deps.sshDestination?.(onMachine.id) ?? null) : null
+  if (!onMachine || destination === null)
+    return { ok: false, target, reason: 'path_unavailable', message: 'That SSH machine is not saved on this computer.' }
+  const remotePath = onMachine.path
+  if (!folderOpenTargetOpensOverSsh(target) || !deps.openExternal)
+    return {
+      ok: false,
+      target,
+      reason: 'target_unavailable',
+      message: `${TARGET_NAMES[target]} cannot open a folder on an SSH machine.`,
+    }
+  const link = sshRemoteFolderUrl(target, destination, remotePath)
+  if (!link.ok) return { ok: false, target, reason: 'path_unavailable', message: link.message }
+  if (!(await deps.resolveLauncher(target)))
+    return { ok: false, target, reason: 'target_unavailable', message: `${TARGET_NAMES[target]} is not installed.` }
+  try {
+    await deps.openExternal(link.url)
+    return { ok: true, target }
+  } catch (error) {
+    return { ok: false, target, reason: 'launch_failed', message: errorMessage(error) }
+  }
+}
+
 export function createFolderOpenIpcDependencies(
   showItemInFolder: (targetPath: string) => Promise<void>,
+  remote: Pick<FolderOpenIpcDependencies, 'openExternal' | 'sshDestination'> = {},
 ): FolderOpenIpcDependencies {
   return {
     showItemInFolder,
+    ...remote,
     resolveLauncher: resolveFolderOpenLauncherHere,
     runLauncher: (command, args) => runLauncher(command, args, LAUNCH_SETTLE_MS),
     assertPathReachable: (targetPath) => access(targetPath),

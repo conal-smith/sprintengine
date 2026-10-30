@@ -217,7 +217,17 @@ export function registerCoreIpc(
   registerFilesystemReadIpc(machineIpc, filesystemReadHandlers)
   // The file-manager target of the open-in-editor control is the same reveal the
   // rest of the app already uses, so it is handed the very same handler.
-  registerFolderOpenIpc(machineIpc, createFolderOpenIpcDependencies(filesystemReadHandlers.showItemInFolder))
+  // On plain `ipcMain`: a folder on an SSH machine is opened by an editor here
+  // over its own SSH, so the handler reads the machine path itself
+  // (folder-open-ipc.ts) and never hands it to this computer's disk.
+  registerFolderOpenIpc(
+    ipcMain,
+    createFolderOpenIpcDependencies(filesystemReadHandlers.showItemInFolder, {
+      openExternal: (url) => shell.openExternal(url),
+      sshDestination: (id) =>
+        services.ssh?.environments.list().find((machine) => machine.id === id)?.destination ?? null,
+    }),
+  )
   // Memory/knowledge-graph backend is foundational: agent context injection
   // (TerminalView) and the Knowledge Graph settings tab
   // depend on it, so it is always registered. The memory-graph capability
