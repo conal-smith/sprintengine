@@ -2,6 +2,7 @@ import React, { type JSX } from 'react'
 
 import { PullRequestGlyph, SplitButton, Tooltip, IconButton, type SplitButtonItem } from '../ui'
 import { formatRelativeMs, relativeFromNow } from '../../utils/relativeTime'
+import { openUrlInPane } from './pane/browser/openInPane'
 import {
   earlierPullRequests,
   groupPullRequests,
@@ -343,6 +344,30 @@ function openPullRequest(url: string): void {
   void window.api?.openExternal?.(url)
 }
 
+function withPaneHint(copy: PullRequestCopy): PullRequestCopy {
+  const hint = `Opens in the browser pane; ${window.api?.platform === 'darwin' ? '⌘' : 'Ctrl'}-click opens your browser.`
+  return { ...copy, lines: [...copy.lines, hint], ariaLabel: `${copy.ariaLabel} ${hint}` }
+}
+
+/**
+ * A click on a row's mark: the pull request in the chat's own browser pane,
+ * beside the conversation that opened it, or with Cmd (Ctrl elsewhere) held
+ * in the system browser, as a link's modified click opens outside. A pane
+ * that cannot take it (the tab cap) hands it to the system browser too. True
+ * when it went to the pane.
+ */
+export function openPullRequestFromMark(
+  url: string,
+  workspaceId: string | undefined,
+  modifiers: { metaKey: boolean; ctrlKey: boolean },
+  openInPane: (workspaceId: string, url: string) => boolean = openUrlInPane,
+): boolean {
+  const outside = modifiers.metaKey || modifiers.ctrlKey
+  if (!outside && workspaceId && openInPane(workspaceId, url)) return true
+  openPullRequest(url)
+  return false
+}
+
 /**
  * The tooltip body: the identifier in the title's weight, then the description
  * (design-system/components/tooltip → Anatomy). Block spans rather than a
@@ -369,8 +394,9 @@ function MarkTooltip({ copy }: { copy: PullRequestCopy }) {
  * The glyph is `icon-xs` and the control around it is the kit's smallest icon
  * step, whose transparent overlay pads a 16px drawing out to the 24px hit floor
  * without growing the 20px line it sits on. It is a real control and not an
- * anchor: nothing here navigates inside the app, and the click hands the URL to
- * the app's one external-open path.
+ * anchor: a click opens the pull request in the chat's browser pane, and a
+ * Cmd/Ctrl-click hands the URL to the app's one external-open path
+ * (`openPullRequestFromMark`).
  *
  * The ink is the state's tone, inline from the shared map — the idiom every
  * other tone-driven mark in the app already uses (`StatusDot`) — so no per-state class literal exists here to fall out of step
@@ -381,18 +407,26 @@ function MarkTooltip({ copy }: { copy: PullRequestCopy }) {
 export function PullRequestMark({
   pullRequests,
   dim = false,
+  workspaceId,
 }: {
   pullRequests: readonly BranchPullRequest[]
   /** The row is background: the mark recedes with the rest of its line. */
   dim?: boolean
+  /**
+   * The chat whose browser pane a click opens the pull request in; absent, a
+   * click opens the system browser (a paired machine's row, which has no pane here).
+   */
+  workspaceId?: string
 }): JSX.Element | null {
   // Open asks for you and merged says it went in; a pull request closed
   // unmerged says neither, so the row does not wear it (owner, 2026-10-02).
   // The peek's menu still lists it.
   const shown = pullRequests.filter((pr) => pr.state !== 'closed')
   const primary = primaryPullRequest(shown)
-  const copy = sidebarMarkCopy(shown)
-  if (!primary || !copy) return null
+  const listed = sidebarMarkCopy(shown)
+  if (!primary || !listed) return null
+  // Into the pane by default, so the tooltip says how to reach the system browser.
+  const copy = workspaceId ? withPaneHint(listed) : listed
   return (
     <Tooltip content={<MarkTooltip copy={copy} />} multiline wrapperClassName="flex shrink-0 items-center">
       <IconButton
@@ -402,10 +436,12 @@ export function PullRequestMark({
         className={`shrink-0 ${dim ? 'opacity-60' : ''}`}
         style={{ color: PULL_REQUEST_TONE_VAR[pullRequestTone(primary.state)] }}
         onClick={(event) => {
-          // The row underneath is a click target: without this, opening the
-          // pull request would also select the chat.
-          event.stopPropagation()
-          openPullRequest(primary.url)
+          // Into the pane, the click goes on to the row, which selects the
+          // chat so the pane it opened in is the one in front. Outside, the
+          // row underneath must not take it: opening the pull request would
+          // also select the chat.
+          const inPane = openPullRequestFromMark(primary.url, workspaceId, event)
+          if (!inPane) event.stopPropagation()
         }}
       >
         <PullRequestGlyph state={primary.state} className="icon-xs" />
