@@ -245,7 +245,8 @@ export function evaluatePullRequestWatch(
       kind: 'remark',
       author: remark.author,
       verdict: remark.verdict ?? null,
-      body: remark.body,
+      // A review left only on lines says what it said there.
+      body: remark.body.trim() === '' && remark.inline ? remark.inline : remark.body,
       url: remark.url,
       edited: seen !== undefined,
     })

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 
-import { listBranchPullRequests, readPullRequestState } from './branch-pull-request'
+import {
+  listBranchPullRequests,
+  parseRateLimitReset,
+  readPullRequestState,
+  readRateLimitReset,
+} from './branch-pull-request'
 import type { GhResult, GhRunner } from './gh'
 import { test } from 'vitest'
 
@@ -478,4 +483,43 @@ test('branch-pull-request', async () => {
   )
 
   await suiteRun
+})
+
+test('the rate-limit reset is the latest among the spent quotas the reads use', () => {
+  const quota = (remaining: number, reset: number) => ({ limit: 5000, used: 5000 - remaining, remaining, reset })
+  assert.equal(
+    parseRateLimitReset({ resources: { core: quota(0, 1_800_000_100), graphql: quota(0, 1_800_000_200) } }),
+    1_800_000_200_000,
+  )
+  assert.equal(
+    parseRateLimitReset({ resources: { core: quota(12, 1_800_000_100), graphql: quota(0, 1_800_000_050) } }),
+    1_800_000_050_000,
+  )
+  // Nothing spent is a secondary limit: no reset to wait for.
+  assert.equal(
+    parseRateLimitReset({ resources: { core: quota(1, 1_800_000_100), graphql: quota(9, 1_800_000_100) } }),
+    null,
+  )
+  assert.equal(parseRateLimitReset({ message: 'Bad credentials' }), null)
+  assert.equal(parseRateLimitReset(null), null)
+})
+
+test('the rate-limit reset is asked of the pull request host, and an unaskable host is not asked', async () => {
+  const calls: string[][] = []
+  const gh: GhRunner = {
+    available: async () => true,
+    run: async (args) => {
+      calls.push(args)
+      return {
+        found: true,
+        code: 0,
+        stdout: JSON.stringify({ resources: { graphql: { remaining: 0, reset: 1_800_000_000 } } }),
+        stderr: '',
+      } as GhResult
+    },
+  }
+  assert.equal(await readRateLimitReset('github.example.com', { gh }), 1_800_000_000_000)
+  assert.deepEqual(calls, [['api', 'rate_limit', '--hostname', 'github.example.com']])
+  assert.equal(await readRateLimitReset('--hostname=evil', { gh }), null)
+  assert.equal(calls.length, 1)
 })

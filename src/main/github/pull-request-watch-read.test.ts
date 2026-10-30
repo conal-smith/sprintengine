@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { test } from 'vitest'
 
 import type { GhResult, GhRunner } from './gh'
-import { checkKey, parseWatchView, readPullRequestWatch, WATCH_VIEW_FIELDS } from './pull-request-watch-read'
+import {
+  checkKey,
+  MAX_INLINE_REVIEWS_PER_READ,
+  parseWatchView,
+  readPullRequestWatch,
+  WATCH_VIEW_FIELDS,
+} from './pull-request-watch-read'
 
 // A real `gh pr view --json` answer for a merged pull request, and its real
 // `gh pr checks --required --json` answer (gh 2.95), trimmed: logins are
@@ -247,4 +253,85 @@ test('a rate limit is its own reason, and a failure to ask is never an answer', 
   const bare = ghAnswering({ view: { stdout: openView([]) } })
   await readPullRequestWatch(URL, { gh: bare.gh })
   assert.equal(bare.calls.length, 1)
+})
+
+// A review left only as comments on lines: empty body in `gh pr view`.
+const lineReview = (id: string, submittedAt: string, body = '') => ({
+  id,
+  author: { login: 'review-bot' },
+  body,
+  state: 'COMMENTED',
+  submittedAt,
+})
+
+function ghWithLineComments(reviews: unknown[]) {
+  const calls: string[][] = []
+  const gh: GhRunner = {
+    available: async () => true,
+    run: async (args) => {
+      calls.push(args)
+      if (args[0] === 'api') {
+        const query = args.find((arg) => arg.startsWith('query=')) ?? ''
+        const ids = [...query.matchAll(/"(PRR_[A-Za-z0-9_]+)"/g)].map((match) => match[1])
+        const nodes = ids.map((id) => ({
+          id,
+          comments: { nodes: [{ path: 'src/app.ts', line: 12, originalLine: 10, body: `Off by one (${id})` }] },
+        }))
+        return { found: true, code: 0, stdout: JSON.stringify({ data: { nodes } }), stderr: '' }
+      }
+      return {
+        found: true,
+        code: 0,
+        stdout: openView([], { reviews, latestReviews: [], comments: [] }),
+        stderr: '',
+      }
+    },
+  }
+  return { gh, calls }
+}
+
+test('a review left only on lines is read with its line comments, once per run', async () => {
+  const since = Date.parse('2026-10-11T09:00:00Z')
+  const { gh, calls } = ghWithLineComments([
+    lineReview('PRR_new', '2026-10-11T09:30:00Z'),
+    lineReview('PRR_old', '2026-10-11T08:30:00Z'),
+    lineReview('PRR_said', '2026-10-11T09:40:00Z', 'Looks fine overall'),
+  ])
+  const inlineCache = new Map<string, string>()
+  const read = await readPullRequestWatch(URL, { gh, now: () => NOW }, { inlineSince: since, inlineCache })
+  assert.ok(read.settled)
+  const byId = new Map(read.remarks.map((remark) => [remark.id, remark]))
+  assert.equal(byId.get('PRR_new')?.inline, 'src/app.ts:12: Off by one (PRR_new)')
+  assert.equal(byId.get('PRR_new')?.body, '', 'the body stays what GitHub said, so no edit is invented')
+  assert.equal(byId.get('PRR_old')?.inline, undefined, 'from before the watch: never news, not asked about')
+  assert.equal(byId.get('PRR_said')?.inline, undefined, 'a review with its own words needs nothing more')
+  const asked = calls.filter((args) => args[0] === 'api')
+  assert.equal(asked.length, 1)
+  assert.deepEqual(asked[0]!.slice(0, 4), ['api', 'graphql', '--hostname', 'github.com'])
+
+  const again = await readPullRequestWatch(URL, { gh, now: () => NOW }, { inlineSince: since, inlineCache })
+  assert.ok(again.settled)
+  assert.equal(again.remarks.find((remark) => remark.id === 'PRR_new')?.inline, 'src/app.ts:12: Off by one (PRR_new)')
+  assert.equal(calls.filter((args) => args[0] === 'api').length, 1, 'read once, then from the cache')
+})
+
+test('line comments are asked about for a bounded number of reviews per read', async () => {
+  const reviews = Array.from({ length: MAX_INLINE_REVIEWS_PER_READ + 3 }, (_, index) =>
+    lineReview(`PRR_r${index}`, `2026-10-11T09:${String(10 + index).padStart(2, '0')}:00Z`),
+  )
+  const { gh, calls } = ghWithLineComments(reviews)
+  const inlineCache = new Map<string, string>()
+  const read = await readPullRequestWatch(URL, { gh, now: () => NOW }, { inlineSince: 0, inlineCache })
+  assert.ok(read.settled)
+  const api = calls.filter((args) => args[0] === 'api')
+  assert.equal(api.length, 1, 'one call per read')
+  assert.equal(inlineCache.size, MAX_INLINE_REVIEWS_PER_READ)
+  await readPullRequestWatch(URL, { gh, now: () => NOW }, { inlineSince: 0, inlineCache })
+  assert.equal(inlineCache.size, MAX_INLINE_REVIEWS_PER_READ + 3, 'the rest on the next read')
+})
+
+test('with no cache, a read makes no line-comment call', async () => {
+  const { gh, calls } = ghWithLineComments([lineReview('PRR_new', '2026-10-11T09:30:00Z')])
+  await readPullRequestWatch(URL, { gh, now: () => NOW })
+  assert.equal(calls.filter((args) => args[0] === 'api').length, 0)
 })
