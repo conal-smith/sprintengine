@@ -182,7 +182,10 @@ test('queue navigation preserves question answers, resolves selected ids, and de
     await act(async () => button('Previous request').click())
     await act(async () => button('Next request').click())
     expect(selected()?.textContent).toContain('Fast')
+    // "Something else" is the row after the options; picking it opens its field.
+    await act(async () => press(activeCard(), '3'))
     const answerInput = document.querySelector<HTMLInputElement>('[aria-label="Other answer for: Choose a mode"]')!
+    expect(document.activeElement).toBe(answerInput)
     await act(async () =>
       answerInput.dispatchEvent(
         new dom.window.KeyboardEvent('keydown', {
@@ -194,6 +197,8 @@ test('queue navigation preserves question answers, resolves selected ids, and de
       ),
     )
     expect(onApprove).toHaveBeenCalledTimes(1)
+    await act(async () => press(activeCard(), '1'))
+    expect(document.querySelector('[aria-label="Other answer for: Choose a mode"]')).toBeNull()
     await act(async () => press(activeCard(), 'Enter'))
     expect(onApprove).toHaveBeenLastCalledWith('question', true, { 'Choose a mode': 'Fast' })
     await act(async () =>
@@ -515,9 +520,20 @@ test('a question renders its markdown, and its options their inline marks', () =
   expect(html).not.toContain('**')
   expect([...document.querySelectorAll('strong')].map((node) => node.textContent)).toEqual(['scale', 'Compact'])
   expect(document.querySelector('[role="radio"] code')?.textContent).toBe('13px')
-  expect(document.querySelector('[aria-label^="Other answer for"]')?.getAttribute('aria-label')).toBe(
-    'Other answer for: Which scale should replies use?',
+})
+
+test('a question that takes no free text offers no Something else', () => {
+  const html = renderToStaticMarkup(
+    <ConversationQuestionCard
+      requestId="q"
+      questions={[
+        { question: 'Which scale?', options: [{ label: 'Compact' }], multiSelect: false, allowFreeText: false },
+      ]}
+      onAnswer={() => undefined}
+      busy={false}
+    />,
   )
+  expect(html).not.toContain('Something else')
 })
 
 test('a choose-one question’s rows wear the kit’s radio mark, a choose-many one’s its checkbox', () => {

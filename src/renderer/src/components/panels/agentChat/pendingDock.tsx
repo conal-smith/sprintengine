@@ -626,6 +626,12 @@ export function ConversationPlanCard({
 // bundles several). Keyboard-first: 1–9 pick options, ↑↓ move, ⏎ advances or
 // submits, ⎋ dismisses. Answers submit with the ORIGINAL option labels so the
 // tool call round-trips; only the display strips "(Recommended)".
+//
+// Where the question takes free text, "Something else" is a row of its own,
+// picked like any option, and picking it opens the field for the reply. In a
+// choose-one question it is the answer instead of an option, not beside one: a
+// field that sat under the rows unpicked read as a note to add to a pick, and
+// typing in it without a pick did not look like an answer at all.
 export function ConversationQuestionCard({
   requestId,
   questions,
@@ -647,7 +653,12 @@ export function ConversationQuestionCard({
   const [stepIndex, setStepIndex] = useState(0)
   const [selected, setSelected] = useState<Record<string, string[]>>({})
   const [otherText, setOtherText] = useState<Record<string, string>>({})
+  const [otherPicked, setOtherPicked] = useState<Record<string, boolean>>({})
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const otherInputRef = useRef<HTMLInputElement | null>(null)
+  // Set when "Something else" is picked, so the field it opens takes the caret
+  // once it has rendered.
+  const focusOtherInput = useRef(false)
   const quietUntil = useRef(0)
   const announcement = useArrivalFocus(
     active,
@@ -659,18 +670,34 @@ export function ConversationQuestionCard({
   )
 
   const question = questions[Math.min(stepIndex, questions.length - 1)]
+  const otherOpen = question ? question.allowFreeText !== false && otherPicked[question.question] === true : false
+  useEffect(() => {
+    if (!otherOpen || !focusOtherInput.current) return
+    focusOtherInput.current = false
+    otherInputRef.current?.focus()
+  }, [otherOpen])
   if (!question) return null
   const picks = selected[question.question] ?? []
   const isLast = stepIndex >= questions.length - 1
+  const offersOther = question.allowFreeText !== false
 
   const answerFor = (target: ConversationQuestion): string => {
     const targetPicks = selected[target.question] ?? []
-    const other = otherText[target.question]?.trim()
+    const other =
+      target.allowFreeText !== false && otherPicked[target.question] ? otherText[target.question]?.trim() : ''
     return [...targetPicks, ...(other ? [other] : [])].join(', ')
   }
   const currentAnswered = answerFor(question).length > 0
 
+  const toggleOther = (): void => {
+    const next = !otherPicked[question.question]
+    focusOtherInput.current = next
+    setOtherPicked((current) => ({ ...current, [question.question]: next }))
+    if (next && !question.multiSelect) setSelected((current) => ({ ...current, [question.question]: [] }))
+  }
+
   const toggleOption = (label: string): void => {
+    if (!question.multiSelect) setOtherPicked((current) => ({ ...current, [question.question]: false }))
     setSelected((current) => {
       const currentPicks = current[question.question] ?? []
       if (question.multiSelect) {
@@ -685,6 +712,7 @@ export function ConversationQuestionCard({
 
   const moveSelection = (delta: number): void => {
     if (question.multiSelect || question.options.length === 0) return
+    setOtherPicked((current) => ({ ...current, [question.question]: false }))
     setSelected((current) => {
       const currentPicks = current[question.question] ?? []
       const labels = question.options.map((option) => option.label)
@@ -710,10 +738,14 @@ export function ConversationQuestionCard({
     if (performance.now() < quietUntil.current) return
     if (event.key === 'Enter' && event.target !== event.currentTarget) return
     if (event.key >= '1' && event.key <= '9') {
-      const option = question.options[Number(event.key) - 1]
+      const index = Number(event.key) - 1
+      const option = question.options[index]
       if (option) {
         event.preventDefault()
         toggleOption(option.label)
+      } else if (offersOther && index === question.options.length) {
+        event.preventDefault()
+        toggleOther()
       }
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
       event.preventDefault()
@@ -800,10 +832,30 @@ export function ConversationQuestionCard({
             </MenuOption>
           )
         })}
+        {offersOther ? (
+          <MenuOption
+            role={question.multiSelect ? 'menuitemcheckbox' : 'radio'}
+            stacked
+            selected={otherOpen}
+            disabled={busy}
+            onClick={toggleOther}
+            icon={
+              <span className="mt-0.5 flex shrink-0">
+                {question.multiSelect ? <CheckboxBox checked={otherOpen} /> : <RadioMark checked={otherOpen} />}
+              </span>
+            }
+          >
+            <span className="block text-body font-semibold leading-5 text-[color:var(--text-strong)]">
+              Something else
+            </span>
+            <span className="block text-meta leading-[1.45] text-[color:var(--text-muted)]">Type your own answer</span>
+          </MenuOption>
+        ) : null}
       </div>
-      {question.allowFreeText !== false ? (
+      {otherOpen ? (
         <div className="px-5 pb-1 pt-1.5">
           <Input
+            ref={otherInputRef}
             variant="quiet"
             size="content"
             value={otherText[question.question] ?? ''}
@@ -821,7 +873,7 @@ export function ConversationQuestionCard({
                 onAnswer(requestId, false)
               }
             }}
-            placeholder="Something else…"
+            placeholder="Your answer…"
             disabled={busy}
             aria-label={`Other answer for: ${plainInlineText(question.question)}`}
           />
