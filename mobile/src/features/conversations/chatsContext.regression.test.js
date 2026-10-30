@@ -418,3 +418,86 @@ test("a mark unread made on the desktop after this phone's own visit wins, thoug
   await settle(h);
   assert.equal(rowState(h, Date.now()), "finished");
 });
+
+// Settle and Snooze from the list, with the Undo their toasts offer.
+const rowMenuDesktop = () => ({
+  ...desktop("one"),
+  tailnetCapabilities: ["conversations", "conversation-lifecycle", "chat-row-menu"],
+});
+async function lifecycleHarness(now = Date.now()) {
+  const h = harness({ threads: [finishedChat(now)] });
+  const lifecycle = {
+    calls: [],
+    settle: async (workspaceId, settled = true) => {
+      lifecycle.calls.push(["settle", workspaceId, settled]);
+      return { ok: true, data: { workspaceId, settledAt: settled ? Date.now() : null } };
+    },
+    visit: async (workspaceId) => ({ ok: true, data: { workspaceId, lastVisitedAt: Date.now() } }),
+    markUnread: async () => ({ ok: false }),
+    snooze: async (workspaceId, until) => {
+      lifecycle.calls.push(["snooze", workspaceId, until]);
+      if (lifecycle.refuse) return { ok: false, errorCode: "invalid_payload", message: lifecycle.refuse };
+      return { ok: true, data: { workspaceId, snoozedUntil: until } };
+    },
+  };
+  h.render({ sessions: [rowMenuDesktop()], activeDeviceId: "one", lifecycleApiOverride: lifecycle });
+  await settle(h);
+  return { h, lifecycle, now };
+}
+
+test("a settle the desktop took says so with Undo, which un-settles the chat and brings its row back", async () => {
+  const { h, lifecycle } = await lifecycleHarness();
+  const [row] = h.value().chats;
+  assert.equal(await h.value().settleChat(row), true);
+  h.render();
+  assert.equal(h.value().chats.length, 0, "the row goes at once");
+  assert.equal(h.toasts.length, 1);
+  assert.equal(h.toasts[0].action.label, "Undo");
+  assert.ok(h.toasts[0].autoDismissMs <= 5_000, "a short toast");
+  h.toasts[0].action.onPress();
+  await settle(h);
+  assert.deepEqual(lifecycle.calls, [
+    ["settle", "w", true],
+    ["settle", "w", false],
+  ]);
+  assert.equal(h.value().chats.length, 1, "the desktop lists it again and nothing here hides it");
+});
+
+test("a snooze moves the row to the shelf at once, and Undo wakes it; a refusal puts it back and says why", async () => {
+  const { h, lifecycle } = await lifecycleHarness();
+  const [row] = h.value().chats;
+  assert.equal(row.snoozable, true);
+  const until = Date.now() + 60 * MIN;
+  const asked = h.value().snoozeChat(row, until);
+  h.render();
+  assert.equal(h.value().chats[0].thread.snoozedUntil, until, "drawn asleep before the desktop answers");
+  assert.equal(await asked, true);
+  h.render();
+  assert.equal(h.toasts.length, 1);
+  assert.match(h.toasts[0].title, /^Snoozed/);
+  assert.equal(h.toasts[0].action.label, "Undo");
+  h.toasts[0].action.onPress();
+  await settle(h);
+  assert.deepEqual(lifecycle.calls.at(-1), ["snooze", "w", null], "Undo wakes a chat that was awake");
+  assert.equal(h.value().chats[0].thread.snoozedUntil, undefined);
+  assert.equal(h.toasts.length, 1, "an undo says nothing more");
+
+  lifecycle.refuse = "An agent in this chat is still working. Snooze it once it has finished.";
+  assert.equal(await h.value().snoozeChat(h.value().chats[0], until), false);
+  h.render();
+  assert.equal(h.value().chats[0].thread.snoozedUntil, undefined, "back as listed");
+  assert.equal(h.toasts.at(-1).tone, "error");
+  assert.equal(h.toasts.at(-1).message, lifecycle.refuse);
+});
+
+test("a desktop without chat-row-menu offers no Snooze", async () => {
+  const h = harness({ threads: [finishedChat(Date.now())] });
+  h.render({
+    sessions: [{ ...desktop("one"), tailnetCapabilities: ["conversations", "conversation-lifecycle"] }],
+    activeDeviceId: "one",
+  });
+  await settle(h);
+  const [row] = h.value().chats;
+  assert.equal(row.snoozable, false);
+  assert.equal(await h.value().snoozeChat(row, Date.now() + MIN), false);
+});
