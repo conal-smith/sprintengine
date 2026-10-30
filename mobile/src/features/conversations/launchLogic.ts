@@ -270,8 +270,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The screens that make up New: the project picker and the composer.
-const NEW_CHAT_FLOW = new Set(["ChooseProject", "NewChat"]);
+// The screens that make up New: the project picker, the composer, and the
+// schedule its "+" opens, which leaves the same way once it has scheduled.
+const NEW_CHAT_FLOW = new Set(["ChooseProject", "NewChat", "NewSchedule"]);
 
 /**
  * The stack once New has started a chat: the picker and the composer leave

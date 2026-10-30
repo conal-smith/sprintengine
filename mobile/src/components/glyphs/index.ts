@@ -77,6 +77,7 @@ export {
   PushIcon,
   RefreshIcon,
   RemoteMachineGlyph,
+  ScheduleIcon,
   SignOutIcon,
   WorktreeGlyph,
 } from "./AppGlyphs";
