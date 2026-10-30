@@ -1,3 +1,5 @@
+import type { ScheduleFromNewChat } from "../features/scheduled/NewScheduleScreen";
+
 // The gate carries Settings' whole stack too: a phone whose only desktop went
 // offline still needs the desktop screen's diagnostics and its Forget button,
 // which is the one place that gets it un-stuck.
@@ -62,8 +64,14 @@ export type HomeStackParamList = {
   Scheduled: undefined;
   /** Step one of a new scheduled agent: the project it runs in, as New chat's step one. */
   ScheduleChooseProject: undefined;
-  /** Step two: its prompt and when it runs. */
-  NewSchedule: { deviceId: string; workspaceId: string; projectName: string; desktopName: string };
+  /** Step two: its prompt and when it runs. `fromNewChat`: reached from New chat's "+", with what it carries. */
+  NewSchedule: {
+    deviceId: string;
+    workspaceId: string;
+    projectName: string;
+    desktopName: string;
+    fromNewChat?: ScheduleFromNewChat;
+  };
   Appearance: undefined;
   Pairing: undefined;
 };

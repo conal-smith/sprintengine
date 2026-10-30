@@ -6,7 +6,8 @@ import { Screen } from "../../components/Screen";
 import { useToast } from "../../components/Toast";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { MobileSession } from "../../api/types";
-import { createScheduledAgentsApi, SCHEDULE_PRESETS } from "../../api/scheduledAgents";
+import { createScheduledAgentsApi, oncePresets, SCHEDULE_PRESETS } from "../../api/scheduledAgents";
+import { declaresScheduledAgents } from "../../api/tailnetTransport";
 import type { CliRuntime } from "../conversations/launchLogic";
 import { useChats } from "../conversations/ChatsContext";
 import { OptionRow, useCreateFormStyles } from "../backlog/createFormShared";
@@ -20,18 +21,36 @@ function phoneTimeZone(): string {
   }
 }
 
+/** What New chat's Schedule carries over: the words and the choices made there. */
+export interface ScheduleFromNewChat {
+  prompt: string;
+  /** The CLI picked in New chat; null left it to the desktop. */
+  cli: string | null;
+  model: string | null;
+  worktree: boolean;
+  permissionPreset: string | null;
+}
+
 /**
  * Step two of a new scheduled agent: what each run is asked, and when, in the
  * project chosen on step one. The desktop runs it: each time the schedule
  * comes round it starts a chat with this prompt, on its CLI's default model,
  * whether or not this phone is awake. The repeats offered are the common ones;
- * anything finer is the desktop's editor's.
+ * anything finer is the desktop's editor's. Where the desktop takes one, a
+ * one-time run is offered too ("Once, in an hour"): a message to start a chat
+ * with later.
+ *
+ * Reached from New chat's "+" as well, with `fromNewChat`: the prompt, the
+ * agent, the model, the Worktree switch and the access picked there, and a
+ * one-time run first where there is one, since that is what scheduling a
+ * message usually means.
  */
 export function NewScheduleScreen({
   session,
   workspaceId,
   projectName,
   desktopName,
+  fromNewChat,
   onCancel,
   onScheduled,
 }: {
@@ -39,6 +58,7 @@ export function NewScheduleScreen({
   workspaceId: string;
   projectName: string;
   desktopName: string;
+  fromNewChat?: ScheduleFromNewChat;
   onCancel: () => void;
   onScheduled: () => void;
 }) {
@@ -51,8 +71,11 @@ export function NewScheduleScreen({
     () => (session ? createScheduledAgentsApi({ baseUrl: session.baseUrl, deviceToken: session.deviceToken }) : null),
     [session],
   );
-  const [prompt, setPrompt] = useState("");
-  const [presetId, setPresetId] = useState(SCHEDULE_PRESETS[0]!.id);
+  const onceOffered = !!session && declaresScheduledAgents(session);
+  // Read when the screen opens; the instant itself is worked out on Schedule.
+  const [onceOptions] = useState(() => (onceOffered ? oncePresets(new Date()) : []));
+  const [prompt, setPrompt] = useState(fromNewChat?.prompt ?? "");
+  const [presetId, setPresetId] = useState((fromNewChat ? onceOptions[0]?.id : undefined) ?? SCHEDULE_PRESETS[0]!.id);
   const [runtimes, setRuntimes] = useState<CliRuntime[]>([]);
   const [cli, setCli] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -69,14 +92,19 @@ export function NewScheduleScreen({
       if (cancelled || !result.ok) return;
       const chats = (result.data ?? []).filter((runtime) => runtime.catalog?.conversational !== false);
       setRuntimes(chats);
-      setCli((current) => current ?? chats[0]?.id);
+      // New chat's pick, where this desktop still offers it.
+      const carried = fromNewChat?.cli && chats.some((runtime) => runtime.id === fromNewChat.cli) ? fromNewChat.cli : undefined;
+      setCli((current) => current ?? carried ?? chats[0]?.id);
     });
     return () => {
       cancelled = true;
     };
-  }, [workspaces]);
+  }, [workspaces, fromNewChat]);
 
   const preset = SCHEDULE_PRESETS.find((candidate) => candidate.id === presetId) ?? SCHEDULE_PRESETS[0]!;
+  const oncePicked = onceOptions.find((candidate) => candidate.id === presetId) ?? null;
+  const whenLabel = (id: string) =>
+    onceOptions.find((candidate) => candidate.id === id)?.label ?? SCHEDULE_PRESETS.find((candidate) => candidate.id === id)?.label ?? id;
 
   const submit = () => {
     if (sending.current || !api) return;
@@ -88,17 +116,33 @@ export function NewScheduleScreen({
       setError(`${desktopName} has no agent CLI that starts a chat.`);
       return;
     }
+    const once = oncePicked ? oncePicked.at(new Date()) : null;
+    if (once && once.getTime() <= Date.now()) {
+      setError("That time has already passed. Pick another.");
+      return;
+    }
     sending.current = true;
     setPending(true);
     setError(null);
     void api
-      .create({ workspaceId, prompt, cron: preset.cron, timezone: phoneTimeZone(), cli })
+      .create({
+        workspaceId,
+        prompt,
+        cron: preset.cron,
+        timezone: phoneTimeZone(),
+        cli,
+        // The model was picked for New chat's CLI; on another it is not sent.
+        model: fromNewChat && cli === fromNewChat.cli ? fromNewChat.model : null,
+        once,
+        worktree: fromNewChat?.worktree ?? false,
+        permissionPreset: fromNewChat?.permissionPreset ?? null,
+      })
       .then((result) => {
         if (!result.ok) {
           setError(result.message ?? "The desktop did not schedule it.");
           return;
         }
-        toast.show(`Scheduled on ${desktopName} · ${result.data?.scheduleWords ?? preset.label}`, "success");
+        toast.show(`Scheduled on ${desktopName} · ${result.data?.scheduleWords ?? whenLabel(presetId)}`, "success");
         onScheduled();
       })
       .finally(() => {
@@ -108,7 +152,12 @@ export function NewScheduleScreen({
   };
 
   return (
-    <Screen backLabel="Cancel" onBack={onCancel} subtitle={`${projectName} · ${desktopName}`} title="New scheduled agent">
+    <Screen
+      backLabel={fromNewChat ? "Back" : "Cancel"}
+      onBack={onCancel}
+      subtitle={`${projectName} · ${desktopName}`}
+      title={fromNewChat ? "Schedule" : "New scheduled agent"}
+    >
       <View style={formStyles.panel}>
         <View style={formStyles.field}>
           <Text style={formStyles.fieldLabel}>Prompt</Text>
@@ -124,15 +173,18 @@ export function NewScheduleScreen({
             textAlignVertical="top"
             value={prompt}
           />
-          <Text style={formStyles.fieldHint}>Each run is a new chat in {projectName}, started with this.</Text>
+          <Text style={formStyles.fieldHint}>
+            {oncePicked ? "It starts a new chat" : "Each run is a new chat"} in {projectName}
+            {fromNewChat?.worktree ? ", in a worktree of its own" : ""}, started with this.
+          </Text>
         </View>
 
         <OptionRow
           disabled={pending}
-          format={(id) => SCHEDULE_PRESETS.find((candidate) => candidate.id === id)?.label ?? id}
+          format={whenLabel}
           label="When"
           onSelect={setPresetId}
-          options={SCHEDULE_PRESETS.map((candidate) => candidate.id)}
+          options={[...onceOptions.map((candidate) => candidate.id), ...SCHEDULE_PRESETS.map((candidate) => candidate.id)]}
           selected={presetId}
         />
 

@@ -11,8 +11,12 @@
 //     phone: a group holding the one fixed answer asks nothing.
 //   - Attach: a photo from the library, or one taken now, and a file of any
 //     type where the desktop takes one (`conversation-message-files`).
-//   - Plan mode, Goal and Schedule are not offered: the conversation protocol
-//     the phone speaks does not carry them yet.
+//   - Schedule, on New only: the words, the project and the agent go to New
+//     scheduled agent, which makes a schedule on the desktop through its
+//     `schedule.create` tool rather than starting a chat. It is offered where
+//     the pairing may operate the desktop, and a schedule takes words only.
+//   - Plan mode and Goal are not offered: the conversation protocol the phone
+//     speaks does not carry them yet.
 
 /** How a launch starts. The phone's protocol starts a conversation and nothing else. */
 export type StartAs = "conversation" | "terminal-agent" | "terminal";
@@ -30,7 +34,8 @@ export type AttachSource = "library" | "camera" | "file";
 
 export type ComposerOption =
   | { kind: "start-as"; label: "Start as"; choices: readonly StartAs[]; selected: StartAs }
-  | { kind: "attach"; source: AttachSource; label: string; disabledReason: string | null };
+  | { kind: "attach"; source: AttachSource; label: string; disabledReason: string | null }
+  | { kind: "schedule"; label: "Schedule"; disabledReason: string | null };
 
 export const ATTACH_LABELS: Record<AttachSource, string> = {
   library: "Choose a photo",
@@ -48,10 +53,16 @@ export const ATTACH_LABELS: Record<AttachSource, string> = {
  * `conversation-message-files`). A full tray keeps the rows and says why they
  * are off: photos and files count toward the one limit, since a send carries
  * both as its uploads.
+ *
+ * `schedule` adds the Schedule row last, where New may schedule on the
+ * desktop; null or absent leaves it off (a chat, or a read-only pairing).
+ * A schedule's runs start from its prompt alone, so while anything is
+ * attached the row stays and says so.
  */
 export function composerOptions(input: {
   startAs: { offered: readonly StartAs[]; selected: StartAs };
   attach: { held: number; max: number; busy: boolean; pictures?: boolean; files?: boolean } | null;
+  schedule?: { busy: boolean } | null;
 }): ComposerOption[] {
   const rows: ComposerOption[] = [];
   const offered = input.startAs.offered.filter((kind, index, all) => all.indexOf(kind) === index);
@@ -73,6 +84,15 @@ export function composerOptions(input: {
       rows.push({ kind: "attach", source, label: ATTACH_LABELS[source], disabledReason });
     }
   }
+  if (input.schedule) {
+    const held = input.attach?.held ?? 0;
+    const disabledReason = input.schedule.busy
+      ? "Wait for the last attachment."
+      : held > 0
+        ? "Each run starts from words alone: remove the attachments to schedule it."
+        : null;
+    rows.push({ kind: "schedule", label: "Schedule", disabledReason });
+  }
   return rows;
 }
 
@@ -83,6 +103,9 @@ export function composerOptions(input: {
  */
 export function composerOptionsLabel(rows: readonly ComposerOption[]): string {
   if (rows.some((row) => row.kind === "start-as")) return "Options";
+  const scheduled = rows.some((row) => row.kind === "schedule");
+  if (scheduled && !rows.some((row) => row.kind === "attach")) return "Schedule";
+  if (scheduled) return "Attach or schedule";
   const sources = rows.flatMap((row) => (row.kind === "attach" ? [row.source] : []));
   const photos = sources.some((source) => source !== "file");
   const files = sources.includes("file");

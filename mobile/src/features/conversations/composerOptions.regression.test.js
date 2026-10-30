@@ -5,8 +5,9 @@ const test = require("node:test");
 
 // What the composer's "+" holds. The phone starts conversations only, so
 // "Start as" has one answer and, as on the desktop, a group with one answer is
-// not drawn. Pictures are the rest: from the library, or taken now. Plan mode,
-// a goal and a schedule are not offered: the protocol does not carry them.
+// not drawn. Pictures are next: from the library, or taken now. Schedule
+// comes last, on New only and where the pairing may operate the desktop. Plan
+// mode and a goal are not offered: the protocol does not carry them.
 
 const buildRoot = path.resolve(__dirname, "../../../.mobile-test-build");
 const {
@@ -25,7 +26,7 @@ const {
 
 const phone = { offered: PHONE_START_AS, selected: "conversation" };
 
-test("the phone's + holds the two picture rows and nothing else", () => {
+test("without a schedule asked for, the phone's + holds the two picture rows and nothing else", () => {
   const rows = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false } });
   assert.deepEqual(rows, [
     { kind: "attach", source: "library", label: "Choose a photo", disabledReason: null },
@@ -192,4 +193,22 @@ test("a picture over 5 MB is refused before upload, unless the desktop sizes pic
   });
   // Without a limit given, the older desktop's is the one applied.
   assert.equal(readPickedImage(photo, twelveMegabytes).ok, false);
+});
+
+test("New's + ends with Schedule, which waits on nothing but the attachments", () => {
+  const rows = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false }, schedule: { busy: false } });
+  assert.deepEqual(rows.at(-1), { kind: "schedule", label: "Schedule", disabledReason: null });
+  assert.equal(composerOptionsLabel(rows), "Attach or schedule");
+  const holding = composerOptions({ startAs: phone, attach: { held: 1, max: 4, busy: false }, schedule: { busy: false } });
+  assert.equal(holding.at(-1).disabledReason, "Each run starts from words alone: remove the attachments to schedule it.");
+  const adding = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: true }, schedule: { busy: true } });
+  assert.equal(adding.at(-1).disabledReason, "Wait for the last attachment.");
+  const alone = composerOptions({ startAs: phone, attach: null, schedule: { busy: false } });
+  assert.equal(composerHasOptions(alone), true);
+  assert.equal(composerOptionsLabel(alone), "Schedule");
+  assert.equal(
+    composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false }, schedule: null }).some((row) => row.kind === "schedule"),
+    false,
+    "a chat, or a read-only pairing, has no Schedule",
+  );
 });

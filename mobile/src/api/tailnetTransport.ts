@@ -229,6 +229,16 @@ export function declaresNewChatWorktree(session: { tailnetCapabilities?: string[
 }
 
 /**
+ * Whether the desktop said `schedule.create` takes a one-time instant, a
+ * name and a worktree name (`scheduled-agents`). Without it the phone still
+ * lists, runs and makes repeating schedules there, but offers no "Once":
+ * an older handler refuses an argument it does not declare.
+ */
+export function declaresScheduledAgents(session: { tailnetCapabilities?: string[] }): boolean {
+  return session.tailnetCapabilities?.includes("scheduled-agents") ?? false;
+}
+
+/**
  * Whether the desktop said `conversation.create` takes `effort`
  * (`new-chat-effort`), one of the CLI's `reasoningLevels`. Absence is a NO:
  * an older desktop would drop the level without a word.

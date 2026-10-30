@@ -26,6 +26,8 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { SheetOption } from "../../components/SheetOption";
 import { useSheetHandoff } from "../../components/useSheetHandoff";
 import { useSessionData } from "../../navigation/SessionDataProvider";
+import { canOperateSchedules } from "../../api/scheduledAgents";
+import type { ScheduleFromNewChat } from "../scheduled/NewScheduleScreen";
 import { useTheme, useThemedStyles } from "../../theme/ThemeProvider";
 import { monoFontFamily } from "../../theme/fonts";
 import { projectHueColor } from "../../theme/projectHue";
@@ -97,9 +99,12 @@ const TAG_BUTTON_HEIGHT = 32;
  * effort ramp where the CLI declares levels and the desktop takes one, and
  * the access. Each is sent only where the desktop advertises it.
  *
- * The "+" holds pictures. "Start as" has one answer on the phone, which starts
- * conversations only, so it is not drawn; plan mode, a goal and a schedule are
- * not offered because the protocol does not carry them. A picture cannot be
+ * The "+" holds pictures, and Schedule where this pairing may operate the
+ * desktop: it hands the words, the place and the picks to New scheduled agent,
+ * which schedules a chat there for later, once or on a repeat, rather than
+ * starting one now. "Start as" has one answer on the phone, which starts
+ * conversations only, so it is not drawn; plan mode and a goal are not offered
+ * because the protocol does not carry them. A picture cannot be
  * uploaded before the chat's session exists, so a launch that carries any
  * starts the chat bare and hands its words and pictures to the chat, which
  * sends them as its first message once it is live.
@@ -119,6 +124,7 @@ export function NewChatScreen({
   initialSheet,
   onCancel,
   onStarted,
+  onSchedule,
 }: {
   deviceId: string;
   desktopName: string;
@@ -128,6 +134,11 @@ export function NewChatScreen({
   initialSheet?: "model";
   onCancel: () => void;
   onStarted: (deviceId: string, thread: ConversationThread, opening?: ChatOpening) => void;
+  /** Schedule from the "+": where it runs, and what New chat carries over. Absent, no Schedule row. */
+  onSchedule?: (
+    target: { deviceId: string; desktopName: string; workspaceId: string; projectName: string },
+    draft: ScheduleFromNewChat,
+  ) => void;
 }) {
   const { colors, isDark } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -295,7 +306,21 @@ export function NewChatScreen({
       busy: picking,
       files: !!session && declaresMessageFiles(session),
     },
+    schedule: onSchedule && session && canOperateSchedules(session) ? { busy: picking } : null,
   });
+
+  const schedule = () => {
+    if (!onSchedule || state.status === "pending") return;
+    // The words as they stand; a microphone still listening keeps listening
+    // here, and what it has heard so far goes with them.
+    onSchedule(target, {
+      prompt: dictatedDraft(prompt, dictation.interim),
+      cli: selection.cli,
+      model: selection.cli ? selection.model : null,
+      worktree: worktreeOffered && worktreeOn,
+      permissionPreset: preset,
+    });
+  };
 
   const startChat = async (paired: MobileSession, draft: string, options: { worktree: boolean }) => {
     const text = draft.trim();
@@ -683,6 +708,7 @@ export function NewChatScreen({
               disabled: state.status === "pending" || picking,
               busy: picking,
               onAttach: (source) => void attach(source),
+              onSchedule: schedule,
             }}
             picker={{
               cli: selection.cli ?? "claude-code",

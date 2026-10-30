@@ -9,6 +9,7 @@ import {
   MachineGlyph,
   PullRequestStateGlyph,
   RemoteMachineGlyph,
+  ScheduleIcon,
 } from "../../components/glyphs";
 import { SheetOption } from "../../components/SheetOption";
 import { useTheme, useThemedStyles } from "../../theme/ThemeProvider";
@@ -164,6 +165,7 @@ export function ComposerOptionsSheet({
   onClose,
   onDismiss,
   onAttach,
+  onSchedule,
   onStartAs,
 }: {
   visible: boolean;
@@ -171,11 +173,12 @@ export function ComposerOptionsSheet({
   onClose: () => void;
   onDismiss?: () => void;
   onAttach: (source: AttachSource) => void;
+  onSchedule?: () => void;
   onStartAs?: (kind: StartAs) => void;
 }) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
-  const title = rows.some((row) => row.kind === "start-as") ? "Options" : "Attach";
+  const title = rows.some((row) => row.kind !== "attach") ? "Options" : "Attach";
   return (
     <BottomSheet onClose={onClose} onDismiss={onDismiss} title={title} visible={visible}>
       {rows.map((row) =>
@@ -193,6 +196,15 @@ export function ComposerOptionsSheet({
               />
             ))}
           </View>
+        ) : row.kind === "schedule" ? (
+          <SheetOption
+            disabled={row.disabledReason !== null}
+            icon={<ScheduleIcon size={iconSize.sm} tone="textMuted" />}
+            key="schedule"
+            label={row.label}
+            onPress={() => onSchedule?.()}
+            sub={row.disabledReason ?? "Run it later, or on a repeat, on the desktop"}
+          />
         ) : (
           <SheetOption
             disabled={row.disabledReason !== null}
