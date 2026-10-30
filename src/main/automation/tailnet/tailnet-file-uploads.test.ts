@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 
+import { noteUploadsSent } from '../../upload-references'
 import { createTailnetFileUploads, holdTailnetUpload, releaseTailnetUpload } from './tailnet-file-uploads'
 
 let root: string
@@ -98,4 +99,33 @@ test('a file a held message carries outlives the week, and goes or stays as the 
   assert.ok(existsSync(held.path), 'sent, it is kept a week from now')
   releaseTailnetUpload(root, dropped.path, false)
   assert.equal(existsSync(dirname(dropped.path)), false, 'deleted, it goes with its folder')
+})
+
+test('a file sent in a chat outlives the week while the chat is kept, and goes once it is deleted', async () => {
+  const now = Date.UTC(2026, 9, 1)
+  const uploads = createTailnetFileUploads({ root, now: () => now })
+  const sent = uploads.place('device-1', 'spec.pdf')
+  writeFileSync(sent.path, 'spec')
+  const transcript = join(root, '..', `${relative(tmpdir(), root)}-transcript.jsonl`)
+  writeFileSync(transcript, '{}\n')
+  try {
+    await noteUploadsSent([root], [sent.path], transcript)
+    await noteUploadsSent([root], [sent.path], transcript)
+    const eightDaysAgo = new Date(now - 8 * 24 * 60 * 60 * 1000)
+    utimesSync(dirname(sent.path), eightDaysAgo, eightDaysAgo)
+    uploads.place('device-2', 'next.txt')
+    assert.ok(existsSync(sent.path), 'its chat may read it again')
+    rmSync(transcript)
+    uploads.place('device-2', 'after.txt')
+    assert.equal(existsSync(sent.path), false, 'no chat it was sent in is kept')
+  } finally {
+    rmSync(transcript, { force: true })
+  }
+})
+
+test('only a file in an upload folder is noted', async () => {
+  const outside = join(root, 'loose.txt')
+  writeFileSync(outside, 'x')
+  await noteUploadsSent([root], [outside, join(root, '..', 'elsewhere.txt')], '/Users/dev/transcript.jsonl')
+  assert.equal(existsSync(join(root, '.sent')), false)
 })

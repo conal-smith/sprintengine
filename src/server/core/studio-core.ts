@@ -39,6 +39,8 @@ import {
   CONVERSATION_ATTACHMENTS_DIRECTORY,
   CONVERSATION_TOOL_IMAGES_DIRECTORY,
 } from '../../main/conversation-attachment-store'
+import { TAILNET_UPLOADS_DIRNAME } from '../../main/automation/tailnet/tailnet-file-uploads'
+import { WEB_UPLOADS_DIRNAME } from '../web/web-uploads'
 import { attachmentImagesRoot } from '../../main/attachment-image-file'
 import { createConversationLaunchService } from '../../main/conversation-launch-service'
 import { createConversationImportService } from '../../main/conversation-import/conversation-import-service'
@@ -274,6 +276,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     secretStore: getSharedCredentialStore(),
     approvalRules,
     attachmentStore: new ConversationAttachmentStore(dataDir),
+    uploadRoots: [join(dataDir, TAILNET_UPLOADS_DIRNAME), join(dataDir, WEB_UPLOADS_DIRNAME)],
     planStore: new ConversationPlanStore(dataDir),
     ...(options.resolveStudioMcpServer ? { resolveStudioMcpServer: options.resolveStudioMcpServer } : {}),
     ...(options.prepareChatFolder ? { prepareChatFolder: options.prepareChatFolder } : {}),

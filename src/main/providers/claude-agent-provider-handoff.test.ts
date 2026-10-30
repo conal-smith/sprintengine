@@ -210,3 +210,27 @@ test('a handoff is refused while a turn runs', async () => {
     await h.adapter.disposeAll()
   }
 })
+
+test('a folder the session is handed files in may be read unasked, with everything in it', async () => {
+  const h = harness()
+  const folder = '/Users/dev/Library/Application Support/SprintEngine/conversation-attachments/0123abcd'
+  try {
+    await h.adapter.startSession({ ...h.turn('turn_1'), allowedTools: ['Grep'], readableDirectories: [folder] })
+    await h.run('turn_1', 'hello', 'native-2')
+    assert.deepEqual(h.children[0].options.allowedTools, ['Grep', `Read(/${folder}/**)`])
+  } finally {
+    await h.adapter.disposeAll()
+  }
+  const patterned = harness()
+  try {
+    await patterned.adapter.startSession({
+      ...patterned.turn('turn_1'),
+      allowedTools: ['Grep'],
+      readableDirectories: ['/Users/dev (work)/attachments'],
+    })
+    await patterned.run('turn_1', 'hello', 'native-2')
+    assert.deepEqual(patterned.children[0].options.allowedTools, ['Grep'], 'a path that reads as a pattern asks')
+  } finally {
+    await patterned.adapter.disposeAll()
+  }
+})

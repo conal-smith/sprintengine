@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
-import { readFile, rm } from 'node:fs/promises'
+import { access, readFile, rm } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 
-import { safeImageFileName, writeAttachmentImageFile } from './attachment-image-file'
+import {
+  safeImageFileName,
+  VIEWED_IMAGE_KEEP_MS,
+  writeAttachmentImageFile,
+  writeViewedImageFile,
+} from './attachment-image-file'
 import { test } from 'vitest'
 
 test('attachment-image-file', async () => {
@@ -100,4 +105,54 @@ test('attachment-image-file', async () => {
   const suiteRun = main()
 
   await suiteRun
+})
+
+test('a name Windows keeps for a device is not used as it is', () => {
+  for (const [name, saved] of [
+    ['CON.png', '_CON.png'],
+    ['nul.tar.png', '_nul.tar.png'],
+    ['Com1.jpg', '_Com1.png'],
+    ['lpt9', '_lpt9.png'],
+    ['aux .notes.png', '_aux .notes.png'],
+  ] as const)
+    assert.equal(safeImageFileName(name, 'image', 'png'), saved, name)
+  // Only the whole first part is a device name.
+  assert.equal(safeImageFileName('console.png', 'image', 'png'), 'console.png')
+  assert.equal(safeImageFileName('com10.png', 'image', 'png'), 'com10.png')
+  assert.equal(safeImageFileName('my nul.png', 'image', 'png'), 'my nul.png')
+})
+
+test('opening the same image again reuses its viewer copy, and one unopened for a day goes', async () => {
+  // Bytes no other test writes, so the copy is this test's own.
+  const stamp = Buffer.from(`viewer-${process.pid}-${Date.now()}-${Math.random()}`)
+  const bytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), stamp])
+  const other = Buffer.concat([bytes, Buffer.from('other')])
+  const input = { mediaType: 'image/png', dataBase64: bytes.toString('base64'), name: 'shot.png' }
+  let clock = Date.now()
+  const first = await writeViewedImageFile(input, 'image', () => clock)
+  const otherPath = await writeViewedImageFile(
+    { mediaType: 'image/png', dataBase64: other.toString('base64'), name: 'shot.png' },
+    'image',
+    () => clock,
+  )
+  try {
+    assert.equal(await writeViewedImageFile(input, 'image', () => clock), first, 'one file per picture')
+    assert.deepEqual(await readFile(first), bytes)
+    clock += VIEWED_IMAGE_KEEP_MS / 2
+    await writeViewedImageFile(input, 'image', () => clock)
+    clock += VIEWED_IMAGE_KEEP_MS / 2 + 1_000
+    // Opening the first again prunes the other, last opened more than a day ago.
+    await writeViewedImageFile(input, 'image', () => clock)
+    assert.ok(await access(first).then(() => true), 'opened within the day: kept')
+    assert.equal(
+      await access(otherPath).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    )
+  } finally {
+    await rm(dirname(first), { recursive: true, force: true })
+    await rm(dirname(otherPath), { recursive: true, force: true })
+  }
 })

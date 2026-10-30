@@ -15,6 +15,7 @@ import type {
   ConversationPageResult,
   ConversationEvent,
   ConversationImageAttachment,
+  ConversationStoredImageAttachment,
   ConversationInterruptInput,
   ConversationMcpServer,
   ConversationPermissionPreset,
@@ -62,8 +63,8 @@ import type {
 } from '../shared/conversation-runtime'
 import { CONVERSATION_SESSION_NOT_FOUND, readConversationMessageOrigin } from '../shared/conversation-runtime'
 import { isStaleConversationSend } from '../../packages/conversation-protocol/src/public'
-import { cliRuntimesOnPlatform, distroOfHostId, type ExecutionHostId } from '../shared/execution-host'
-import { wslInputInRootSpelling } from '../shared/host-paths'
+import { cliRuntimesOnPlatform, distroOfHostId, isWslHostId, type ExecutionHostId } from '../shared/execution-host'
+import { isWindowsPath, toWslPath, wslInputInRootSpelling } from '../shared/host-paths'
 import { inferConversationToolKind } from '../shared/conversation/toolKind'
 import { isTurnlessSubagentStep, readSubagentStatus } from '../shared/conversation/subagents'
 import { readBackgroundTasks } from '../shared/conversation/backgroundTasks'
@@ -95,6 +96,7 @@ import {
 } from './conversation-skills'
 import { resolveConversationMentions } from './conversation-mentions'
 import { attachedFilesContext } from './conversation-attached-files'
+import { noteUploadsSent } from './upload-references'
 import { parseConversationAttachedFiles, type ConversationAttachedFile } from '../shared/conversation/attachedFiles'
 import { ConversationCheckpoints } from './conversation-checkpoints'
 import { ConversationIndex } from './conversation-index'
@@ -279,6 +281,12 @@ function openProviderTurn(turnId: string, continuation: boolean): ProviderTurn {
 export type ConversationRuntimeOptions = {
   approvalRules?: ConversationApprovalRuleStore
   attachmentStore?: ConversationAttachmentStore
+  /**
+   * The folders files uploaded from a phone or a browser are kept in. One sent
+   * with a turn is noted as the chat's, so it is kept while the chat is
+   * (upload-references.ts).
+   */
+  uploadRoots?: string[]
   planStore?: ConversationPlanStore
   resolveSkills?: ConversationSkillsResolver
   adapters?: ConversationProviderAdapter[]
@@ -463,6 +471,7 @@ export class ConversationRuntime {
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
   private readonly attachmentStore: ConversationAttachmentStore
+  private readonly uploadRoots: string[]
   private readonly planStore: ConversationPlanStore
   private readonly sessions = new Map<string, RuntimeSession>()
   private readonly deletingTranscripts = new Set<string>()
@@ -575,6 +584,7 @@ export class ConversationRuntime {
     this.prepareChatFolder = options.prepareChatFolder ?? (() => Promise.resolve({ ok: true }))
     this.approvalRules = options.approvalRules ?? new ConversationApprovalRuleStore()
     this.attachmentStore = options.attachmentStore ?? new ConversationAttachmentStore()
+    this.uploadRoots = options.uploadRoots ?? []
     this.planStore = options.planStore ?? new ConversationPlanStore()
     // Startup-time epoch (not randomId — tests inject deterministic id
     // sequences that must not be consumed by construction).
@@ -880,6 +890,7 @@ export class ConversationRuntime {
           ...(resume?.at ? { resumeSessionAt: resume.at } : {}),
           ...(resume?.seedFromHistory ? { seedFromHistory: true } : {}),
           ...(resume?.handoffPath ? { handoffPath: resume.handoffPath } : {}),
+          ...readableAttachments(this.attachmentStore.directoryFor(session)),
           ...(session.history ? { fallbackHistory: session.history } : fallbackHistory ? { fallbackHistory } : {}),
           ...(session.subagentLanes.size > 0 ? { knownSubagentLanes: Array.from(session.subagentLanes) } : {}),
           // Continuation channel: the adapter opens a mirror turn here when its
@@ -1141,6 +1152,13 @@ export class ConversationRuntime {
       try {
         await this.enableCheckpointsIfRepository(session)
         const storedAttachments = await this.saveAttachments(session, attachments)
+        const imagesContext = this.attachedImagesContext(session, storedAttachments)
+        if (files.length > 0 && this.uploadRoots.length > 0)
+          await noteUploadsSent(
+            this.uploadRoots,
+            files.map((file) => file.path),
+            this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId),
+          )
         await this.emit(
           session,
           this.eventForSession(session, 'user_message', {
@@ -1167,7 +1185,10 @@ export class ConversationRuntime {
               ...(skills.context ? [{ role: 'system' as const, content: skills.context }] : []),
               ...(session.revertedNote ? [{ role: 'system' as const, content: session.revertedNote }] : []),
               ...(session.history ?? []),
-              { role: 'user', content: [message, mentions.context, filesContext].filter(Boolean).join('\n\n') },
+              {
+                role: 'user',
+                content: [message, mentions.context, filesContext, imagesContext].filter(Boolean).join('\n\n'),
+              },
             ]
         // From here a steer can join this turn: the provider is being handed it.
         if (session.activeTurnId === turnId) session.providerTurn = providerTurn
@@ -1181,7 +1202,7 @@ export class ConversationRuntime {
             ...session,
             turnId,
             requestId,
-            message: providerMessage,
+            message: [providerMessage, imagesContext].filter(Boolean).join('\n\n'),
             skills: skills.ids,
             reasoningEffort: input.reasoningEffort,
             mode: input.mode,
@@ -1439,6 +1460,25 @@ export class ConversationRuntime {
     }
     if ('ok' in outcome) return outcome
     return outcome.ended
+  }
+
+  // Where each image sent with a turn is kept, said after the words the way a
+  // file attached by path is: the model sees the picture, and the agent can
+  // also read its bytes off the disk to do something with it (attach it to a
+  // pull request, put it in the repository). Paths as the agent's own host
+  // spells them, so a chat whose CLI runs in WSL reads them there.
+  private attachedImagesContext(session: RuntimeSession, stored: ConversationStoredImageAttachment[]): string {
+    const wsl = isWslHostId(session.cliRuntimes?.[cliForConversationProvider(session.providerId) ?? '']?.hostId)
+    return stored
+      .flatMap((image, index) => {
+        const path = this.attachmentStore.pathFor(image.ref)
+        if (!path) return []
+        const name = image.name?.trim() || `image ${index + 1}`
+        return [
+          `Attached image ${JSON.stringify(name)} (shown above), saved at: ${wsl && isWindowsPath(path) ? toWslPath(path) : path}`,
+        ]
+      })
+      .join('\n')
   }
 
   // Keep a turn's attached images in the attachment store; the event names
@@ -5126,4 +5166,9 @@ function isStreamedEvent(event: ConversationEvent): boolean {
     event.type === 'reasoning_delta' ||
     (event.type === 'tool_output' && event.payload?.partial === true)
   )
+}
+
+/** The folder a conversation's sent images are kept in, for the agent to read them (`readableDirectories`). */
+function readableAttachments(directory: string | null): { readableDirectories?: string[] } {
+  return directory ? { readableDirectories: [directory] } : {}
 }
