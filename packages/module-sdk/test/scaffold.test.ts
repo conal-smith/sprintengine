@@ -15,11 +15,9 @@
 // transpiled from source into @sprintengine/module-sdk.
 //
 // Also: the scaffolder's refusals, the placeholder and tarball handling, the
-// copies that must not drift — the dev-loop scripts shipped in both the skill
-// and the templates, and the build scripts the parts share with the templates —
-// projects composed from parts (`parts`, `addModuleParts`) running the same
-// loop, a rebuild of unchanged code leaving the manifest alone, and the skill
-// pointer that validate holds to the skill.
+// copies that must not drift — the build scripts the parts share with the
+// templates — projects composed from parts (`parts`, `addModuleParts`) running
+// the same loop, and a rebuild of unchanged code leaving the manifest alone.
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -46,9 +44,6 @@ import { validateThirdPartyModuleManifest } from '../src/manifest-validate.js'
 import { validateMarketplacePluginAuthoringManifest } from '../src/plugin-manifest.js'
 import {
   addModuleParts,
-  EXTENSION_BUILDER_SKILL_DIRS,
-  EXTENSION_BUILDER_SKILL_ID,
-  EXTENSION_BUILDER_SKILL_POINTER_DIR,
   listModuleParts,
   listModuleTemplates,
   sanitizeDisplayText,
@@ -58,7 +53,6 @@ import {
 const REPO = process.cwd()
 const SDK = join(REPO, 'packages/module-sdk')
 const TEMPLATES = join(SDK, 'templates')
-const SKILL = join(SDK, 'skills', EXTENSION_BUILDER_SKILL_ID)
 const SDK_VERSION = '1.0.0-beta.1'
 
 function walk(dir: string, prefix = ''): string[] {
@@ -166,13 +160,6 @@ test('scaffold', async () => {
     }
 
     // ── Copies that must not drift ─────────────────────────────────────────────
-    for (const script of ['module-tools.mjs', 'validate.mjs', 'dev-install.mjs']) {
-      assert.equal(
-        readFileSync(join(SKILL, 'scripts', script), 'utf8'),
-        readFileSync(join(TEMPLATES, '_shared', 'scripts', script), 'utf8'),
-        `skills/${EXTENSION_BUILDER_SKILL_ID}/scripts/${script} must equal templates/_shared/scripts/${script}`,
-      )
-    }
     // A part that adds an entry builds it exactly as the templates do.
     const partScripts = (id: string) =>
       (
@@ -237,7 +224,6 @@ test('scaffold', async () => {
         publisher: 'Acme',
         sdkVersion: SDK_VERSION,
         templatesRoot: TEMPLATES,
-        skillsRoot: join(SDK, 'skills'),
         ideaMarkdown: idea,
       })
       assert.ok(scaffolded.ok, scaffolded.ok ? '' : scaffolded.message)
@@ -257,20 +243,18 @@ test('scaffold', async () => {
         '.gitignore',
         'test/smoke.test.mjs',
         'test/module.test.ts',
+        'scripts/check-toolchain.mjs',
         'scripts/dev-install.mjs',
         'scripts/validate.mjs',
       ]) {
         assert.ok(files.includes(required), `${template.id}: ${required} is missing`)
       }
-      for (const skillDir of EXTENSION_BUILDER_SKILL_DIRS) {
-        assert.ok(files.includes(`${skillDir}/SKILL.md`), `${template.id}: the skill is not vendored into ${skillDir}`)
-      }
       assert.deepEqual(
-        files.filter((path) => path.startsWith(`${EXTENSION_BUILDER_SKILL_POINTER_DIR}/`)),
-        [`${EXTENSION_BUILDER_SKILL_POINTER_DIR}/SKILL.md`],
-        `${template.id}: Claude Code's folder holds a pointer, not a second copy`,
+        files.filter((path) => path.includes('skills/')),
+        [],
+        `${template.id}: a project carries no skill; the extension guide is the SDK's and Studio's`,
       )
-      for (const file of files.filter((path) => !path.includes('/skills/'))) {
+      for (const file of files) {
         const text = readFileSync(join(dir, file), 'utf8')
         assert.ok(!/\{\{\w+\}\}/.test(text), `${template.id}: ${file} still has a placeholder`)
       }
@@ -382,7 +366,6 @@ test('scaffold', async () => {
       displayName: 'Composed',
       sdkVersion: SDK_VERSION,
       templatesRoot: TEMPLATES,
-      skillsRoot: join(SDK, 'skills'),
       parts: ['door', 'mcp', 'settings', 'main'],
     })
     assert.ok(scaffoldedComposed.ok, scaffoldedComposed.ok ? '' : scaffoldedComposed.message)
@@ -414,15 +397,6 @@ test('scaffold', async () => {
     })
     assert.equal(!refusedPart.ok && refusedPart.code, 'already_present')
     assert.equal(existsSync(join(work, 'twice')), false, 'a refused part leaves no half-made project')
-
-    // ── The skill pointer is held to the skill ────────────────────────────────
-    const pointerPath = join(composed, EXTENSION_BUILDER_SKILL_POINTER_DIR, 'SKILL.md')
-    const pointer = readFileSync(pointerPath, 'utf8')
-    writeFileSync(pointerPath, pointer.replace(/^description: .*$/m, 'description: Something else.'))
-    const drifted = spawnSync('npm', ['run', 'validate', '--silent'], { cwd: composed, env, encoding: 'utf8' })
-    assert.equal(drifted.status, 1)
-    assert.match(drifted.stderr, /must carry the name and description/)
-    writeFileSync(pointerPath, pointer)
 
     // ── The smoke test catches what the old recording host let through ───────
     // A door that throws while rendering, and a service used without its

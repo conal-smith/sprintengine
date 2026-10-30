@@ -61,8 +61,8 @@ Usage:
   sprintengine-module plugin verify <plugin-dir>
 
 init creates an extension project in <dir> from a template: the module, its
-build and dev-loop scripts, and the extension-builder skill for whichever agent
-works on it. --id defaults to the folder name, --name to the id title-cased;
+build and dev-loop scripts, and the agent instructions that send whichever agent
+works on it to the extension guide. --id defaults to the folder name, --name to the id title-cased;
 --sdk-tarball depends on a local SDK tarball instead of the npm release. Run it
 with an unknown --template to list the templates. --with adds parts on top of
 the template, as add does.

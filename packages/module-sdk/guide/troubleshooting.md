@@ -32,7 +32,7 @@ up there first, with the app's own validators.
 | --- | --- |
 | A panel never appears | Nothing places it: add it to a workspace type's layout |
 | No row for my door | `registerGlobalSurface` needs both `label` and `Icon` for the Extensions drawer to list it |
-| Unstyled markup | Tailwind classes you wrote (see [ui-kit.md](ui-kit.md)) |
+| Unstyled markup | Tailwind classes you wrote (see the `ui-kit` topic) |
 | "…is provided by the host at runtime; mark it external" | The bundle inlined `./ui` or `./surface`; fix the esbuild `--external` flags |
 | Failed to resolve module specifier "@sprintengine/module-sdk" | The SDK root was left external in the renderer build; bundle it |
 | Cannot find module '…' from entry.main | A dependency left external in the main build; bundle it |

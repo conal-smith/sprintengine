@@ -1,5 +1,5 @@
 // Scaffold a new extension project from one of the templates this package
-// ships (`templates/<id>/`), with the extension-builder skill vendored into it.
+// ships (`templates/<id>/`).
 //
 // Subpath export `@sprintengine/module-sdk/scaffold`. Node-only (it reads and
 // writes the file system), so it is kept out of the root index, which must
@@ -50,8 +50,6 @@ export type ScaffoldModuleOptions = {
   sdkTarballPath?: string
   /** Defaults to the `templates/` folder beside this package's `dist/`. */
   templatesRoot?: string
-  /** Defaults to the `skills/` folder beside this package's `dist/`. */
-  skillsRoot?: string
   /** Written as the project's IDEA.md in place of the template's placeholder brief. */
   ideaMarkdown?: string
   /** Scaffold into a folder that already has files in it, overwriting the ones the template writes. */
@@ -76,56 +74,6 @@ export type ScaffoldModuleResult =
       code: 'unknown_template' | 'invalid_id' | 'dir_not_empty' | 'io_error' | 'unknown_part' | 'already_present'
       message: string
     }
-
-/** The skill every scaffolded project carries, for whichever agent works on it. */
-export const EXTENSION_BUILDER_SKILL_ID = 'sprintengine-extension-builder'
-
-/**
- * Where a project keeps the skill: one full copy, in the harness-neutral
- * skills folder every agent CLI can read.
- */
-export const EXTENSION_BUILDER_SKILL_DIR = `.agents/skills/${EXTENSION_BUILDER_SKILL_ID}`
-
-/**
- * Where Claude Code looks for project skills. It holds a pointer to
- * `EXTENSION_BUILDER_SKILL_DIR`, not a second copy: the same name and
- * description (so the skill triggers on the same requests) and a body that
- * sends the agent to the real one. Two copies drifted; one cannot.
- */
-export const EXTENSION_BUILDER_SKILL_POINTER_DIR = `.claude/skills/${EXTENSION_BUILDER_SKILL_ID}`
-
-/** Both folders a project has the skill in, each with a SKILL.md: the pointer first, then the copy. */
-export const EXTENSION_BUILDER_SKILL_DIRS: readonly string[] = [
-  EXTENSION_BUILDER_SKILL_POINTER_DIR,
-  EXTENSION_BUILDER_SKILL_DIR,
-]
-
-/** The line that marks a SKILL.md as the pointer; the project's validate script looks for it. */
-export const EXTENSION_BUILDER_SKILL_POINTER_MARK = '<!-- sprintengine-module: skill pointer -->'
-
-/**
- * The pointer SKILL.md for `EXTENSION_BUILDER_SKILL_POINTER_DIR`, made from
- * the skill's own SKILL.md: its front matter, verbatim, and a body naming the
- * real one.
- */
-export function extensionBuilderSkillPointer(skillMarkdown: string): string {
-  const frontMatter = /^---\r?\n[\s\S]*?\r?\n---/.exec(skillMarkdown)?.[0]
-  if (!frontMatter) throw new Error(`The ${EXTENSION_BUILDER_SKILL_ID} SKILL.md has no front matter.`)
-  return `${frontMatter}
-
-${EXTENSION_BUILDER_SKILL_POINTER_MARK}
-
-# ${EXTENSION_BUILDER_SKILL_ID}
-
-This project keeps the skill once, where every agent CLI can read it:
-\`${EXTENSION_BUILDER_SKILL_DIR}/SKILL.md\`. Read that file now and follow it.
-Its \`references/\` and \`scripts/\` paths are relative to
-\`${EXTENSION_BUILDER_SKILL_DIR}/\`.
-
-Edit the skill there, not here. \`npm run validate\` fails when this file's
-name or description no longer matches that one's.
-`
-}
 
 const SHARED_TEMPLATE_DIR = '_shared'
 const TEMPLATE_MANIFEST = 'template.json'
@@ -157,10 +105,6 @@ const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 export function defaultTemplatesRoot(): string {
   return join(PACKAGE_ROOT, 'templates')
-}
-
-export function defaultSkillsRoot(): string {
-  return join(PACKAGE_ROOT, 'skills')
 }
 
 /** This package's own version: what a project scaffolded by its CLI depends on. */
@@ -277,9 +221,8 @@ function isEmptyDir(dir: string): boolean {
 
 /**
  * Create an extension project in `options.dir` from a template: the template's
- * files with the module id, name and SDK version filled in, the shared dev-loop
- * files, and the extension-builder skill in `.claude/skills` and
- * `.agents/skills`. Expected failures come back as a result, never a throw.
+ * files with the module id, name and SDK version filled in, and the shared
+ * dev-loop files. Expected failures come back as a result, never a throw.
  */
 export async function scaffoldModuleProject(options: ScaffoldModuleOptions): Promise<ScaffoldModuleResult> {
   if (!MODULE_ID_PATTERN.test(options.id)) {
@@ -298,7 +241,6 @@ export async function scaffoldModuleProject(options: ScaffoldModuleOptions): Pro
   }
 
   const templatesRoot = resolve(options.templatesRoot ?? defaultTemplatesRoot())
-  const skillsRoot = resolve(options.skillsRoot ?? defaultSkillsRoot())
   const templateDir = join(templatesRoot, options.templateId)
   if (
     options.templateId.startsWith('_') ||
@@ -350,15 +292,6 @@ export async function scaffoldModuleProject(options: ScaffoldModuleOptions): Pro
 
     const template = readTemplateInfo(templateDir)
     const values = placeholderValues(options, template)
-    const skillDir = join(skillsRoot, EXTENSION_BUILDER_SKILL_ID)
-    if (!existsSync(join(skillDir, 'SKILL.md'))) {
-      return {
-        ok: false,
-        code: 'io_error',
-        message: `The ${EXTENSION_BUILDER_SKILL_ID} skill is missing from ${skillsRoot}.`,
-      }
-    }
-
     // Shared first, template second: a template's file of the same path wins.
     const sources = new Map<string, string>()
     const sharedDir = join(templatesRoot, SHARED_TEMPLATE_DIR)
@@ -397,16 +330,6 @@ export async function scaffoldModuleProject(options: ScaffoldModuleOptions): Pro
       copyFileSync(tarball, join(dir, target))
       written.push(target)
     }
-
-    // The skill once, where every agent CLI reads it, and a pointer to it
-    // where Claude Code looks.
-    for (const path of walkFiles(skillDir)) {
-      write(`${EXTENSION_BUILDER_SKILL_DIR}/${path}`, readFileSync(join(skillDir, path)))
-    }
-    write(
-      `${EXTENSION_BUILDER_SKILL_POINTER_DIR}/SKILL.md`,
-      extensionBuilderSkillPointer(readFileSync(join(skillDir, 'SKILL.md'), 'utf8')),
-    )
 
     if (options.parts && options.parts.length > 0) {
       const added = await addModuleParts({ dir, parts: options.parts, templatesRoot, force: options.force })

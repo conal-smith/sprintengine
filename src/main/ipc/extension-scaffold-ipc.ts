@@ -2,10 +2,12 @@
 // name is free where the extension goes, and scaffold the project there.
 //
 // The project is written by the SDK's own scaffolder — the one
-// `sprintengine-module init` runs — from the templates and the
-// extension-builder skill the app ships beside itself (`sdk-templates`,
-// `sdk-skills` in package.json `build.extraResources`), so a project made here
-// and one made on the command line are the same project. The SDK version it
+// `sprintengine-module init` runs — from the templates the app ships beside
+// itself (`sdk-templates` in package.json `build.extraResources`), so a project
+// made here and one made on the command line are the same project. The
+// extension guide ships beside them (`sdk-guide`), for the `extension.*` tools
+// (automation/extension-tools.ts), which make projects through these same
+// handlers. The SDK version it
 // depends on is this checkout's, fixed at build time.
 //
 // The SDK itself ships beside the app too, as the tarball `npm run sdk:bundle`
@@ -62,13 +64,14 @@ const MAX_IDEA_CHARS = 20_000
 
 export type ScaffoldRoots = {
   templatesRoot: string
-  skillsRoot: string
+  /** The extension guide's topics (packages/module-sdk/guide), which `extension.guide` serves. */
+  guideRoot: string
   /** Where the SDK tarball would be; the scaffold uses it only when it is there. */
   sdkTarball: string
 }
 
 /**
- * Where the templates, the skill and the SDK tarball are: beside the app when
+ * Where the templates, the guide and the SDK tarball are: beside the app when
  * packaged; the SDK package, and the tarball sdk:bundle packs, in a checkout.
  */
 export function resolveScaffoldRoots(
@@ -81,14 +84,14 @@ export function resolveScaffoldRoots(
   if (env.isPackaged) {
     return {
       templatesRoot: join(env.resourcesPath, 'sdk-templates'),
-      skillsRoot: join(env.resourcesPath, 'sdk-skills'),
+      guideRoot: join(env.resourcesPath, 'sdk-guide'),
       sdkTarball: join(env.resourcesPath, 'module-sdk', SCAFFOLD_SDK_TARBALL),
     }
   }
   const sdk = join(env.appPath, 'packages', 'module-sdk')
   return {
     templatesRoot: join(sdk, 'templates'),
-    skillsRoot: join(sdk, 'skills'),
+    guideRoot: join(sdk, 'guide'),
     sdkTarball: join(env.appPath, 'resources', 'module-sdk', SCAFFOLD_SDK_TARBALL),
   }
 }
@@ -206,7 +209,14 @@ export function createExtensionScaffoldHandlers(overrides: Partial<ExtensionScaf
       return { state: stateOf(where, input.id), folder: where.folder }
     },
 
-    async create(input: ExtensionScaffoldCreateInput | undefined): Promise<ExtensionScaffoldCreateResult> {
+    /**
+     * `start` is what the project starts as, for the `extension.create` tool;
+     * the door always starts from `EXTENSION_START_TEMPLATE_ID` alone.
+     */
+    async create(
+      input: ExtensionScaffoldCreateInput | undefined,
+      start: { templateId?: string; parts?: readonly string[] } = {},
+    ): Promise<ExtensionScaffoldCreateResult> {
       if (!input || typeof input !== 'object')
         return { ok: false, code: 'invalid_input', message: 'Nothing to create.' }
       const { id, ideaMarkdown } = input
@@ -251,20 +261,20 @@ export function createExtensionScaffoldHandlers(overrides: Partial<ExtensionScaf
         }
       }
 
-      const { templatesRoot, skillsRoot, sdkTarball } = deps.roots()
+      const { templatesRoot, sdkTarball } = deps.roots()
       const result = await deps.scaffold({
         dir: folder,
-        templateId: EXTENSION_START_TEMPLATE_ID,
+        templateId: start.templateId ?? EXTENSION_START_TEMPLATE_ID,
         id,
         displayName: extensionDisplayName(id),
         sdkVersion: deps.sdkVersion,
         templatesRoot,
-        skillsRoot,
+        ...(start.parts && start.parts.length > 0 ? { parts: start.parts } : {}),
         ...(existsSync(sdkTarball) ? { sdkTarballPath: sdkTarball } : {}),
         ...(ideaMarkdown !== undefined && ideaMarkdown.trim() !== '' ? { ideaMarkdown } : {}),
       })
       if (!result.ok) return result
-      return { ok: true, folder, existing: false }
+      return { ok: true, folder, existing: false, ...(result.notes?.length ? { notes: result.notes } : {}) }
     },
   }
 }

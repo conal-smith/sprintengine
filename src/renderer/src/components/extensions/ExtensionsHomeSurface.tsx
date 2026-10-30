@@ -23,7 +23,6 @@ import {
   skillsCountLine,
 } from './extensionsHomeTiles'
 import { homeCardCount, homeCardGrid, newHomeCardSlugs } from './homeCards'
-import { StudioSkillSuggestion } from '../studioSkills/StudioSkillSuggestion'
 import { openBuildExtension } from './buildExtensionHost'
 
 // The Extensions home (the app rail's Extensions glyph, 2026-09-05): the page
@@ -466,11 +465,10 @@ export default function ExtensionsHomeSurface(): JSX.Element {
       canGoBack={back.canGoBack}
     >
       <div className="flex h-full min-h-0 flex-col gap-6 overflow-y-auto px-5 py-4">
-        {/* The offer of the SDK's skill for every workspace, then the way to
-            build an extension of your own — above the cards and in every state
-            of the feed, because it is the one thing on this page that does not
-            depend on the network. */}
-        <StudioSkillSuggestion skillId="sprintengine-extension-builder" />
+        {/* The way to build an extension of your own, above the cards and in
+            every state of the feed, because it is the one thing on this page
+            that does not depend on the network. Agents need no skill for it:
+            Studio's `extension.create` and `extension.guide` tools teach them. */}
         <BuildExtensionPlate onOpen={() => void openBuildExtension()} />
         {loading ? <CardGridSkeleton /> : null}
         {!loading && drawable > 0 ? (

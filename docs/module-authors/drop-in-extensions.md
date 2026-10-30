@@ -36,7 +36,8 @@ the user has trusted execute code.
   or **Build your own extension** (the Extensions door, or the palette), which
   opens New chat in extension mode: name the extension, pick the project it goes
   in, describe it, and the project is scaffolded in `<project>/<name>` with a
-  chat on it, the `sprintengine-extension-builder` skill attached.
+  chat on it. Any agent Studio serves can do the same itself: `extension.create`
+  makes the project, and `extension.guide` is the manual it builds from.
   Templates combine: `init … --with main,mcp,settings,door`, or
   `sprintengine-module add <part>` in an existing project.
 - Test without the app. `@sprintengine/module-sdk/testing` has fake main and
