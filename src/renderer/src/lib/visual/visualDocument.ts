@@ -9,7 +9,9 @@
 // sanitized here (no scripts, handlers, frames, forms or links out, and every
 // CSS fetch made inert as a diagram's is, `withoutRemoteCss`); the document it
 // goes into carries the policy that refuses every load (`inertHtml`); and the
-// frame that shows it is sandboxed with scripts off.
+// frame that shows it is sandboxed with scripts off. A visual that brings its
+// own <script> takes the other road, a sealed frame with scripts on and no
+// origin (`scriptedVisualDocument.ts`); this one is for everything else.
 //
 // A visual is drawn in the window's colours. Its document opens with a short
 // set of variables taken from the app's semantic tokens (`VISUAL_VARIABLES`),
@@ -108,7 +110,7 @@ export function readVisualTheme(): VisualTheme {
 const FALLBACKS =
   '--font: system-ui, sans-serif; --font-size: 13px; --font-size-small: 12px; --font-size-heading: 14px;'
 
-function baseStylesheet(theme: VisualTheme): string {
+export function baseStylesheet(theme: VisualTheme): string {
   const variables = Object.entries(theme.variables)
     .filter(([, value]) => !UNSAFE_VALUE.test(value))
     .map(([name, value]) => `${name}: ${value};`)
