@@ -9,6 +9,7 @@ import type {
   CliRuntimeSettings,
   ElectronApi,
 } from '../../shared/electron-api'
+import { cliInstallOutputChannel } from '../../shared/ipc/cli-install-output'
 
 // The renderer passes the per-CLI runtime override (command path + WSL flag) so
 // detection/install run against the same binary and execution mode the agent
@@ -24,8 +25,8 @@ export const cliRuntimeApi = {
     ipcRenderer.invoke('cli-runtime:install', { ...input, runtime }),
   cliUpdate: (cli: AgentCli, runtime?: RuntimeOverride): Promise<CliInstallResult> =>
     ipcRenderer.invoke('cli-runtime:update', { cli, runtime }),
-  onCliInstallOutput: (cli: AgentCli, cb: (chunk: string) => void): (() => void) => {
-    const ch = `cli-runtime:install-output:${cli}`
+  onCliInstallOutput: (cli: AgentCli, cb: (chunk: string) => void, hostId?: string): (() => void) => {
+    const ch = cliInstallOutputChannel(cli, hostId)
     const handler = (_: IpcRendererEvent, chunk: string): void => cb(chunk)
     ipcRenderer.on(ch, handler)
     return () => ipcRenderer.removeListener(ch, handler)
