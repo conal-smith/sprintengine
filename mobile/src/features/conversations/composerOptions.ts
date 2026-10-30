@@ -11,10 +11,10 @@
 //     phone: a group holding the one fixed answer asks nothing.
 //   - Attach: a photo from the library, or one taken now, and a file of any
 //     type where the desktop takes one (`conversation-message-files`).
-//   - Schedule, on New only: the words, the project and the agent go to New
-//     scheduled agent, which makes a schedule on the desktop through its
-//     `schedule.create` tool rather than starting a chat. It is offered where
-//     the pairing may operate the desktop, and a schedule takes words only.
+//   - Schedule, on New only, as the desktop's "+" offers it: a switch that
+//     turns New into a scheduled agent, with the schedule as a tag beside the
+//     "+" and send saying Schedule. It is offered where the pairing may
+//     operate the desktop, and a schedule's runs start from words alone.
 //   - Plan mode and Goal are not offered: the conversation protocol the phone
 //     speaks does not carry them yet.
 
@@ -35,7 +35,7 @@ export type AttachSource = "library" | "camera" | "file";
 export type ComposerOption =
   | { kind: "start-as"; label: "Start as"; choices: readonly StartAs[]; selected: StartAs }
   | { kind: "attach"; source: AttachSource; label: string; disabledReason: string | null }
-  | { kind: "schedule"; label: "Schedule"; disabledReason: string | null };
+  | { kind: "schedule"; label: "Schedule"; on: boolean; disabledReason: string | null };
 
 export const ATTACH_LABELS: Record<AttachSource, string> = {
   library: "Choose a photo",
@@ -54,15 +54,15 @@ export const ATTACH_LABELS: Record<AttachSource, string> = {
  * are off: photos and files count toward the one limit, since a send carries
  * both as its uploads.
  *
- * `schedule` adds the Schedule row last, where New may schedule on the
+ * `schedule` adds the Schedule switch last, where New may schedule on the
  * desktop; null or absent leaves it off (a chat, or a read-only pairing).
- * A schedule's runs start from its prompt alone, so while anything is
- * attached the row stays and says so.
+ * A schedule's runs start from its prompt alone: while anything is attached
+ * the switch cannot be turned on, and while it is on nothing can be attached.
  */
 export function composerOptions(input: {
   startAs: { offered: readonly StartAs[]; selected: StartAs };
   attach: { held: number; max: number; busy: boolean; pictures?: boolean; files?: boolean } | null;
-  schedule?: { busy: boolean } | null;
+  schedule?: { on: boolean; busy: boolean } | null;
 }): ComposerOption[] {
   const rows: ComposerOption[] = [];
   const offered = input.startAs.offered.filter((kind, index, all) => all.indexOf(kind) === index);
@@ -72,7 +72,9 @@ export function composerOptions(input: {
   if (input.attach) {
     const { held, max, busy, pictures = true, files = false } = input.attach;
     const things = files ? "attachments" : "pictures";
-    const disabledReason = busy
+    const disabledReason = input.schedule?.on
+      ? "A scheduled run starts from words alone."
+      : busy
       ? files
         ? "Adding the last attachment…"
         : "Adding the last picture…"
@@ -85,13 +87,16 @@ export function composerOptions(input: {
     }
   }
   if (input.schedule) {
+    const { on, busy } = input.schedule;
     const held = input.attach?.held ?? 0;
-    const disabledReason = input.schedule.busy
-      ? "Wait for the last attachment."
-      : held > 0
-        ? "Each run starts from words alone: remove the attachments to schedule it."
-        : null;
-    rows.push({ kind: "schedule", label: "Schedule", disabledReason });
+    const disabledReason = on
+      ? null
+      : busy
+        ? "Wait for the last attachment."
+        : held > 0
+          ? "Each run starts from words alone: remove the attachments to schedule it."
+          : null;
+    rows.push({ kind: "schedule", label: "Schedule", on, disabledReason });
   }
   return rows;
 }

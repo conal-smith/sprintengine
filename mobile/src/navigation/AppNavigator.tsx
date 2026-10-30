@@ -44,9 +44,8 @@ import { ConversationPlanScreen } from "../features/conversations/ConversationPl
 import { ConversationChangesScreen } from "../features/conversations/ConversationChangesScreen";
 import { ConversationFileDiffScreen } from "../features/conversations/ConversationFileDiffScreen";
 import { NewChatScreen } from "../features/conversations/NewChatScreen";
-import { routesAfterNewChat } from "../features/conversations/launchLogic";
+import { routesAfterNewChat, routesAfterSchedule } from "../features/conversations/launchLogic";
 import { openWebTarget, WebTargetsScreen } from "../features/web/WebTargetsScreen";
-import { NewScheduleScreen } from "../features/scheduled/NewScheduleScreen";
 import { ScheduledAgentsScreen } from "../features/scheduled/ScheduledAgentsScreen";
 import { readWebTargets } from "../features/web/webTargetsLogic";
 import { stackScreenOptions } from "./navigationTheme";
@@ -194,10 +193,12 @@ export function AppNavigator() {
         )}
       </HomeStack.Screen>
       <HomeStack.Screen name="ChooseProject">
-        {({ navigation }) => (
+        {({ navigation, route }) => (
           <ChooseProjectScreen
             onBack={() => navigation.goBack()}
-            onChoose={(choice) => navigation.navigate("NewChat", choice)}
+            onChoose={(choice) =>
+              navigation.navigate("NewChat", { ...choice, ...(route.params?.scheduled ? { scheduled: true } : {}) })
+            }
           />
         )}
       </HomeStack.Screen>
@@ -206,6 +207,7 @@ export function AppNavigator() {
           <NewChatScreen
             deviceId={route.params.deviceId}
             desktopName={route.params.desktopName}
+            initialScheduled={route.params.scheduled === true}
             initialSheet={route.params.sheet === "model" ? "model" : undefined}
             onCancel={() => navigation.goBack()}
             onStarted={(deviceId, thread, opening) =>
@@ -219,7 +221,13 @@ export function AppNavigator() {
                 return CommonActions.reset({ ...state, routes, index: routes.length - 1 });
               })
             }
-            onSchedule={(target, fromNewChat) => navigation.navigate("NewSchedule", { ...target, fromNewChat })}
+            onScheduled={() =>
+              // New leaves, as it does for a chat, and the schedules are on top.
+              navigation.dispatch((state: NavigationState) => {
+                const routes = routesAfterSchedule(state.routes, { name: "Scheduled" as const });
+                return CommonActions.reset({ ...state, routes, index: routes.length - 1 });
+              })
+            }
             projectName={route.params.projectName}
             workspaceId={route.params.workspaceId}
           />
@@ -254,36 +262,8 @@ export function AppNavigator() {
         {({ navigation }) => (
           <ScheduledAgentsScreen
             onBack={() => navigation.goBack()}
-            onNew={() => navigation.navigate("ScheduleChooseProject")}
+            onNew={() => navigation.navigate("ChooseProject", { scheduled: true })}
             sessions={sessions}
-          />
-        )}
-      </HomeStack.Screen>
-      <HomeStack.Screen name="ScheduleChooseProject">
-        {({ navigation }) => (
-          <ChooseProjectScreen onBack={() => navigation.goBack()} onChoose={(choice) => navigation.navigate("NewSchedule", choice)} />
-        )}
-      </HomeStack.Screen>
-      <HomeStack.Screen name="NewSchedule">
-        {({ navigation, route }) => (
-          <NewScheduleScreen
-            desktopName={route.params.desktopName}
-            fromNewChat={route.params.fromNewChat}
-            onCancel={() => navigation.goBack()}
-            onScheduled={() =>
-              route.params.fromNewChat
-                ? // From New's "+": New leaves with it, as it does for a chat,
-                  // so Back from the schedules is Back to the list.
-                  navigation.dispatch((state: NavigationState) => {
-                    const routes = routesAfterNewChat(state.routes, { name: "Scheduled" as const });
-                    return CommonActions.reset({ ...state, routes, index: routes.length - 1 });
-                  })
-                : // Back past the project chooser to the list, which reads again.
-                  navigation.navigate("Scheduled")
-            }
-            projectName={route.params.projectName}
-            session={sessions.find((candidate) => candidate.deviceId === route.params.deviceId) ?? null}
-            workspaceId={route.params.workspaceId}
           />
         )}
       </HomeStack.Screen>

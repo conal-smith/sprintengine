@@ -47,49 +47,6 @@ export interface PhoneScheduledAgents {
   pausedAll: { until: number | null } | null;
 }
 
-/** A schedule New may offer: its words, and the cron it is. */
-export interface SchedulePreset {
-  id: string;
-  label: string;
-  cron: string;
-}
-
-/** The repeats the phone offers, the desktop's default first. Anything finer is the desktop's editor's. */
-export const SCHEDULE_PRESETS: readonly SchedulePreset[] = [
-  { id: "weekdays-9", label: "Every weekday at 9:00 AM", cron: "0 9 * * 1-5" },
-  { id: "daily-9", label: "Every day at 9:00 AM", cron: "0 9 * * *" },
-  { id: "monday-9", label: "Every Monday at 9:00 AM", cron: "0 9 * * 1" },
-  { id: "hourly", label: "Every hour", cron: "0 * * * *" },
-  { id: "evening-18", label: "Every day at 6:00 PM", cron: "0 18 * * *" },
-];
-
-/** A one-time schedule New may offer: its words, and when it runs from `now`. */
-export interface OncePreset {
-  id: string;
-  label: string;
-  at: (now: Date) => Date;
-}
-
-function atHour(now: Date, daysAhead: number, hour: number): Date {
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysAhead, hour, 0, 0, 0);
-}
-
-const ONCE_PRESETS: readonly OncePreset[] = [
-  { id: "once-1h", label: "Once, in an hour", at: (now) => new Date(now.getTime() + 60 * 60_000) },
-  { id: "once-3h", label: "Once, in 3 hours", at: (now) => new Date(now.getTime() + 3 * 60 * 60_000) },
-  { id: "once-tonight", label: "Once, today at 6:00 PM", at: (now) => atHour(now, 0, 18) },
-  { id: "once-tomorrow", label: "Once, tomorrow at 9:00 AM", at: (now) => atHour(now, 1, 9) },
-];
-
-/**
- * The one-time times worth offering at `now`, soonest first: "today at
- * 6:00 PM" only while that is more than half an hour off, so a pick made
- * just before it does not land in the past by the time it is sent.
- */
-export function oncePresets(now: Date): OncePreset[] {
-  return ONCE_PRESETS.filter((preset) => preset.at(now).getTime() - now.getTime() > 30 * 60_000);
-}
-
 /**
  * The cron naming the same minute as a one-time instant, in this phone's
  * zone, as the desktop's own `cronForInstant` writes it: `schedule.create`
@@ -104,10 +61,11 @@ export interface ScheduleDraft {
   prompt: string;
   cron: string;
   timezone: string;
-  cli: string;
+  /** The agent CLI; null leaves it to the desktop's last-picked one, as New chat's Desktop default does. */
+  cli?: string | null;
   model?: string | null;
-  /** Run once at this instant rather than repeating; sent only where `scheduled-agents` is advertised. */
-  once?: Date | null;
+  /** Run once at this instant (epoch ms) rather than repeating; offered only where `scheduled-agents` is advertised. */
+  once?: number | null;
   /** Each run in a fresh worktree of its own, as New chat's Worktree switch. */
   worktree?: boolean;
   /** The access New chat picked; absent, each run takes its CLI's at run time. */
@@ -125,19 +83,19 @@ export function scheduledAgentActionTool(action: ScheduledAgentAction): string {
 }
 
 /**
- * `schedule.create`'s arguments: the draft trimmed, and a model, a one-time
- * instant, a worktree and an access each only where one was picked, so a
- * repeating schedule sends nothing an older desktop does not declare.
+ * `schedule.create`'s arguments: the draft trimmed, and a CLI, a model, a
+ * one-time instant, a worktree and an access each only where one was picked,
+ * so a repeating schedule sends nothing an older desktop does not declare.
  */
 export function buildCreateScheduleArgs(draft: ScheduleDraft): Record<string, unknown> {
   return {
     workspaceId: draft.workspaceId,
     prompt: draft.prompt.trim(),
-    cron: draft.once ? cronForInstant(draft.once) : draft.cron,
+    cron: draft.once != null ? cronForInstant(new Date(draft.once)) : draft.cron,
     timezone: draft.timezone,
-    cli: draft.cli,
+    ...(draft.cli ? { cli: draft.cli } : {}),
     ...(draft.model ? { model: draft.model } : {}),
-    ...(draft.once ? { once: draft.once.toISOString() } : {}),
+    ...(draft.once != null ? { once: new Date(draft.once).toISOString() } : {}),
     ...(draft.worktree ? { worktree: true } : {}),
     ...(draft.permissionPreset ? { permissionPreset: draft.permissionPreset } : {}),
   };
