@@ -1,9 +1,5 @@
 // Helpers the extension dev-loop scripts share (validate.mjs, dev-install.mjs).
 //
-// The same file ships in a scaffolded project's scripts/ and in the
-// sprintengine-extension-builder skill's scripts/, so the skill's copies work
-// on any project and the project's own copies work without the skill.
-//
 // Everything here reads the project's OWN installed @sprintengine/module-sdk,
 // never a copy of its rules: the validator, the host API check and the signing
 // CLI are the code the app itself runs, so a project these scripts accept is

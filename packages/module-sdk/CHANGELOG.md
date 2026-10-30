@@ -9,6 +9,22 @@ services, the shell's notifications and window context, main-host plumbing,
 `module:bridge`, the testing kit, and companion tools, turn replies and
 scheduled-agent runs, all additive under host API 1.
 
+### Changed: the extension guide replaces the extension-builder skill
+
+- The `sprintengine-extension-builder` skill is gone from the package
+  (`skills/`), and `scaffoldModuleProject` no longer writes it into
+  `.agents/skills/` and `.claude/skills/`: its `skillsRoot` option,
+  `defaultSkillsRoot` and the `EXTENSION_BUILDER_SKILL_*` exports and
+  `extensionBuilderSkillPointer` are removed. A project's `validate.mjs` no
+  longer checks a skill pointer.
+- Its content is the extension guide: Markdown topics in `guide/`, shipped in
+  the package, with `EXTENSION_GUIDE_TOPICS`, `readExtensionGuideTopic` and
+  `defaultGuideRoot` in the new `@sprintengine/module-sdk/guide` subpath.
+  SprintEngine Studio serves the topics to agents with its `extension.guide`
+  tool, and makes projects with `extension.create`.
+- A scaffolded project's `AGENTS.md` sends its agent to the guide, and the
+  project gains `scripts/check-toolchain.mjs` (it was the skill's).
+
 ### Added: Backlog, usage and activity services
 
 - **Backlog writes.** `getBacklogService(host)` in `entry.main` — `list`,

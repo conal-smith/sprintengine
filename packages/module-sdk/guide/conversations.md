@@ -9,13 +9,13 @@ ways, and only these:
 | `host.openChat(input)` | renderer | `chat:draft` (a draft) or `conversation:operate` (needed for `send: true`) | The person: the prompt lands as a draft unless `send: true` |
 | `getConversationService(host)` | main | `conversation:operate` (everything) or `conversation:read` (watch/read only) | The module |
 | `getTextGenerationService(host)` | main | `agents:generate` | The module: one prompt, one answer, no chat at all |
-| `getCompanionAgentsService(host)` | main | `agents:companion` | The module: a background agent with a structured task API ([api-main.md](api-main.md)) |
+| `getCompanionAgentsService(host)` | main | `agents:companion` | The module: a background agent with a structured task API (the `api-main` topic) |
 
 The first two create ordinary chats: a tab in the workspace the person can
 read, answer and stop. A module drives only chats it created — never the
 person's own, never another module's (`not_owned`). Reading the person's
 chats, read-only, is `getActivityService(host)` behind the broad
-`conversation:read-all` ([api-main.md](api-main.md)). There is no
+`conversation:read-all` (the `api-main` topic). There is no
 terminal-agent API; do not spawn agent CLIs from `entry.main` to work around
 that.
 

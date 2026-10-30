@@ -120,7 +120,6 @@ import type { ScheduledRunEntry } from '../../../utils/scheduledAgentRuns'
 import { ExtensionFolderChip, ExtensionNameChip } from './ExtensionNameChip'
 import { EXTENSION_IDEAS, EXTENSION_IDEAS_FIRST, type ExtensionIdea } from './extensionIdeas'
 import {
-  EXTENSION_BUILDER_SKILL_ID,
   extensionIdFromName,
   extensionIdProblem,
   type ExtensionScaffoldTargetState,
@@ -347,7 +346,8 @@ export type NewAgentPanelProps = {
 /**
  * What the door starts: a chat now, a scheduled agent that starts one each
  * time its schedule comes round, or an extension — a new project made inside
- * the chosen one, and a chat in it with the extension-builder skill.
+ * the chosen one, and a chat in it. The project's own instructions send the
+ * agent to Studio's `extension.guide` tool; no skill rides the chat.
  */
 export type NewAgentPanelMode = 'chat' | 'scheduled' | 'extension'
 
@@ -408,14 +408,10 @@ function scheduledSkill(skill: { id: string; name: string }): WorkspaceSkill {
   return { id: skill.id, name: skill.name, source: 'custom', harnesses: [], installState: 'installed' }
 }
 
-// The skill an extension's chat opens with, as its chip shows it. Removing the
-// chip is how the door goes back to a plain New chat.
 const NO_SCHEDULED_RUNS: readonly ScheduledRunEntry[] = []
 
 /** ⌘⏎ in the prompt: start the chat and stay on New chat (see the registry). */
 const LAUNCH_IN_BACKGROUND_COMMAND = 'chat.new.launchInBackground'
-
-const EXTENSION_BUILDER_CHIP = scheduledSkill({ id: EXTENSION_BUILDER_SKILL_ID, name: 'extension-builder' })
 
 // `/schedule` at the end of the prompt, and whatever follows it on that line.
 const SCHEDULE_COMMAND = /(?:^|\s)\/schedule(?:[ \t]+([^\n]*))?$/u
@@ -580,7 +576,7 @@ export default function NewAgentPanel({
     showTerminal: true,
     conversationAvailable: conversationModeEnabled,
     // A scheduled agent's runs are chats: a terminal needs someone at it. An
-    // extension is built in a chat too, with its skill attached.
+    // extension is built in a chat too.
     initialSelection:
       editing || initialMode === 'scheduled' || initialMode === 'extension'
         ? { kind: 'conversation' }
@@ -590,11 +586,7 @@ export default function NewAgentPanel({
       : draft
         ? mergeDraftConnectors(initialMcpServers, draft.mcpServers)
         : initialMcpServers,
-    initialSkills: editing
-      ? editing.skills.map(scheduledSkill)
-      : initialMode === 'extension'
-        ? [EXTENSION_BUILDER_CHIP]
-        : draft?.skills,
+    initialSkills: editing ? editing.skills.map(scheduledSkill) : initialMode === 'extension' ? [] : draft?.skills,
     // A New chat starts in a worktree of its own unless the person turns the
     // chip off: a chat that edits the checkout everyone else is standing on
     // is the exception, not the rule. The door only (the one with a parked
@@ -635,17 +627,9 @@ export default function NewAgentPanel({
   React.useEffect(() => {
     if (pickedForRoot.current === workspaceRoot) return
     pickedForRoot.current = workspaceRoot
-    // The builder skill is not a pick: the scaffold puts it in the new
-    // project, wherever that is, so it stays with the extension.
-    composer.setSkills(extensionMode ? [EXTENSION_BUILDER_CHIP] : [])
+    composer.setSkills([])
     composer.setMcpServers([])
-  }, [composer, extensionMode, workspaceRoot])
-  // Removing the builder chip is leaving extension mode: the door is a plain
-  // New chat again, with the project it was on.
-  const builderAttached = composer.skills.some((skill) => skill.id === EXTENSION_BUILDER_SKILL_ID)
-  React.useEffect(() => {
-    if (extensionMode && !builderAttached) setMode('chat')
-  }, [builderAttached, extensionMode])
+  }, [composer, workspaceRoot])
   // The PROJECT, not the workspace: a solo-chat workspace is called things like
   // "new chat panel", which says nothing about where the agent will run. The
   // folder it opens in is the fact worth showing, so a wrong-project spawn is
@@ -2542,6 +2526,16 @@ export default function NewAgentPanel({
             {/* An extension's folder is new, so there is nothing to fork: its
                 name is a tag of its own, in the extension violet. It is a field
                 the launch cannot start without. */}
+            {/* Removing the Extension tag is leaving extension mode: the door is
+                a plain New chat again, with the project it was on. */}
+            {extensionMode ? (
+              <AttachmentChip
+                glyph={<ExtensionsGlyph className="icon-xs text-[color:var(--accent-primary)]" />}
+                label="Extension"
+                removeLabel="Start a plain chat instead"
+                onRemove={() => setMode('chat')}
+              />
+            ) : null}
             {extensionMode ? (
               <ExtensionNameChip
                 name={extensionName}

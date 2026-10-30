@@ -16,7 +16,7 @@ The package is types-first. Beyond the declarations it ships a few small pure
 values (`BUNDLED_MODULE_IDS`, `KNOWN_CAPABILITY_PERMISSIONS`,
 `HOST_API_VERSION`, `createServiceToken`, the `get*Service` helpers), the
 manifest validators, the `sprintengine-module` CLI, the starter templates,
-the `sprintengine-extension-builder` agent skill, and a testing kit
+the extension guide for agents (`guide/`, `@sprintengine/module-sdk/guide`), and a testing kit
 (`@sprintengine/module-sdk/testing`: fake hosts that keep the host's rules, and
 a UI kit stand-in that renders in Node). It has no runtime dependency
 on Electron or on the app's code, so a project compiles against the tarball
@@ -71,25 +71,27 @@ Studio can do the same from the Extensions door: **Build your own extension**
 opens New chat in extension mode. You name the extension, pick the project it
 goes in and describe it (or start from one of the ideas, one per template);
 Studio scaffolds `<project>/<name>` from the `blank` template and opens a chat
-on it with the agent you pick and the extension-builder skill, which adds the
-surfaces your description needs. The app ships this SDK beside itself, so such a
+on it with the agent you pick, which adds the surfaces your description needs. The app ships this SDK beside itself, so such a
 project depends on its own copy, `vendor/sprintengine-module-sdk-<version>.tgz`,
 by `file:`: `npm install` needs no registry, and the project builds against the
 SDK of the Studio that made it. Commit `vendor/` with the project.
 
-### The extension-builder skill
+### The extension guide
 
-Every scaffolded project carries the `sprintengine-extension-builder` skill
-once, in `.agents/skills/`, where every agent CLI can read it, with a pointer in
-`.claude/skills/` carrying the same name and description so Claude Code picks it
-up for the same requests (the package ships it under `skills/`).
-`npm run validate` fails when the pointer's name or description no longer match
-the skill's. It is the working method for an agent building an extension — the project
-layout, which host API to reach for, choosing permissions, the check /
-side-load loop, signing, publishing, and what "not trusted", "tampered" and
-"incompatible" mean — with references for the main and renderer APIs,
-conversations, brokers, the UI kit and troubleshooting. Point your agent at it:
-"Use the sprintengine-extension-builder skill."
+The working method for an agent building an extension — the project layout,
+which host API to reach for, choosing permissions, the check / side-load loop,
+signing, publishing, and what "not trusted", "tampered" and "incompatible"
+mean — is a set of topics in the package's `guide/` folder (`start`,
+`surfaces`, `manifest`, `permissions`, `rules`, `api-renderer`, `api-main`,
+`conversations`, `brokers`, `ui-kit`, `troubleshooting`, `publishing`), listed
+by `EXTENSION_GUIDE_TOPICS` in `@sprintengine/module-sdk/guide`.
+
+An agent Studio serves reads them with Studio's `extension.guide` tool, and
+`extension.create` makes a new project the way `init` does, answering with the
+`start` topic. Ask any agent in Studio for an extension and it has both. A
+scaffolded project's `AGENTS.md` sends its agent to the guide, and to
+`node_modules/@sprintengine/module-sdk/guide/` when Studio's tools are not to
+hand. Projects carry no copy of it, so they never hold a stale one.
 
 ### Project layout
 

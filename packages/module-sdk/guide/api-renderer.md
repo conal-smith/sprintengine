@@ -51,7 +51,7 @@ id.
 | `setSurfaceView(surfaceId, viewId \| null)` | Say which of your surface's `views` is showing (call it when your own rail moves, and with `null` on unmount) so exactly that drawer row reads selected. `false` for a surface or view that is not yours. |
 
 From `entry.main`, `host.notify({ severity, title, body?, target? })` is the
-bell: see [api-main.md](api-main.md).
+bell: see the `api-main` topic.
 
 ## Chats
 
@@ -62,7 +62,7 @@ bell: see [api-main.md](api-main.md).
 | `focusTab({ workspaceId, kind: 'chat' \| 'file', id })` | Focus a chat by agent id (from `openChat` or the conversation service) or a file by workspace-relative path. |
 
 For chats the module drives itself (send, watch, stop), use the main-side
-conversation service: [conversation-api.md](conversation-api.md).
+conversation service: the `conversations` topic.
 
 ## Workspaces and files
 

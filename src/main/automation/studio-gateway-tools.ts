@@ -8,6 +8,7 @@ import { CONVERSATION_COMMAND_TOOL_NAMES } from './tailnet/tailnet-conversation-
 import { TAILNET_MUTATION_TOOL_NAMES } from './tailnet/tailnet-tools'
 import { TOUR_MUTATION_TOOL_NAMES } from './tour-tools'
 import { ARTIFACTS_MUTATION_TOOL_NAMES } from '../artifacts/artifacts-tools'
+import { EXTENSION_MUTATION_TOOL_NAMES } from './extension-tools'
 import type { CliPermissionPreset } from '../../shared/cli-permission-preset'
 import {
   mcpToolWireName,
@@ -75,6 +76,10 @@ const APP_MUTATION_TOOLS = new Set([
   // artifacts site with this machine's credentials. Served on the local
   // socket only (`localOnlyGatewayToolReason`); listing and reading stay reads.
   ...ARTIFACTS_MUTATION_TOOL_NAMES,
+  // Making an extension project writes a folder on this machine's disk, at a
+  // path the caller names. Served on the local socket only
+  // (`localOnlyGatewayToolReason`); reading the guide stays a read.
+  ...EXTENSION_MUTATION_TOOL_NAMES,
   // The mobile companion's command envelope over the gateway. A mutation for both of its consequences: a
   // paired phone needs `workspace:operate` to drive it, and every dispatch —
   // including a refused one — lands in the audit with the device identity.

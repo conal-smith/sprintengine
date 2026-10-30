@@ -3,7 +3,7 @@
 //
 // The CLI runs as a real subprocess, bundled from source. The bundle is
 // CommonJS, where `import.meta.url` does not exist, so it is pinned to the
-// scaffolder's source file: the templates, the skill and the package version
+// scaffolder's source file: the templates and the package version
 // then resolve from this package exactly as they do from `dist/`.
 
 import assert from 'node:assert/strict'
@@ -15,13 +15,6 @@ import { pathToFileURL } from 'node:url'
 
 import { buildSync } from 'esbuild'
 import { afterAll, beforeAll, describe, test } from 'vitest'
-
-import {
-  EXTENSION_BUILDER_SKILL_DIR,
-  EXTENSION_BUILDER_SKILL_DIRS,
-  EXTENSION_BUILDER_SKILL_POINTER_DIR,
-  EXTENSION_BUILDER_SKILL_POINTER_MARK,
-} from '../src/scaffold.js'
 
 const SDK = join(process.cwd(), 'packages/module-sdk')
 const SDK_VERSION = (JSON.parse(readFileSync(join(SDK, 'package.json'), 'utf8')) as { version: string }).version
@@ -71,9 +64,6 @@ describe('sprintengine-module init', () => {
     assert.equal(manifest.displayName, 'Focus Notes')
     const pkg = readJson(join(dir, 'package.json')) as { devDependencies: Record<string, string> }
     assert.equal(pkg.devDependencies['@sprintengine/module-sdk'], `^${SDK_VERSION}`)
-    for (const skillDir of EXTENSION_BUILDER_SKILL_DIRS) {
-      assert.equal(existsSync(join(dir, skillDir, 'SKILL.md')), true, `${skillDir} carries the skill`)
-    }
     assert.equal(existsSync(join(dir, '.gitignore')), true)
   })
 
@@ -132,16 +122,14 @@ describe('sprintengine-module init', () => {
     assert.match(reserved.stderr, /reserved/)
   })
 
-  test('keeps the skill once, with a pointer where Claude Code looks', () => {
-    const dir = join(workDir, 'skill-once')
+  test('carries no skill: its agent instructions send the agent to the extension guide', () => {
+    const dir = join(workDir, 'no-skill')
     assert.equal(runCli(['init', dir, '--template', 'blank']).status, 0)
-    const pointer = readFileSync(join(dir, EXTENSION_BUILDER_SKILL_POINTER_DIR, 'SKILL.md'), 'utf8')
-    const skill = readFileSync(join(dir, EXTENSION_BUILDER_SKILL_DIR, 'SKILL.md'), 'utf8')
-    assert.ok(pointer.includes(EXTENSION_BUILDER_SKILL_POINTER_MARK))
-    assert.equal(pointer.split('\n---')[0], skill.split('\n---')[0], 'the same name and description')
-    assert.ok(pointer.includes(`${EXTENSION_BUILDER_SKILL_DIR}/SKILL.md`))
-    assert.equal(existsSync(join(dir, EXTENSION_BUILDER_SKILL_POINTER_DIR, 'references')), false, 'no second copy')
-    assert.equal(existsSync(join(dir, EXTENSION_BUILDER_SKILL_DIR, 'references', 'api-main.md')), true)
+    assert.equal(existsSync(join(dir, '.agents')), false)
+    assert.equal(existsSync(join(dir, '.claude')), false)
+    const agents = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+    assert.match(agents, /`extension\.guide`/)
+    assert.match(agents, /node_modules\/@sprintengine\/module-sdk\/guide\//)
   })
 
   test('--with adds parts on top of the template', () => {

@@ -14,16 +14,13 @@
 //   (stale digests are an error on a signed manifest, a warning otherwise:
 //   dev:install rewrites them on every install);
 // - no key material anywhere in the project;
-// - the extension-builder skill kept once: `.claude/skills/<id>/SKILL.md`
-//   points at `.agents/skills/<id>/` with the same name and description (or,
-//   in a project from before the pointer, the two full copies are identical);
 // - and, when either manifest is signed, `sprintengine-module verify` /
 //   `plugin verify`, the exact checks the app runs.
 //
 // Exit 1 on anything the app would refuse; warnings alone exit 0.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 import {
@@ -147,53 +144,6 @@ if (keyFiles.length > 0) {
   errors.push(
     `key material in the project (${keyFiles.join(', ')}). Keep signing keys in ~/.sprintengine/keys, never in a repository.`,
   )
-}
-
-// ── The extension-builder skill ──────────────────────────────────────────────
-
-// The project keeps the skill once, in .agents/skills/<id>/, which every agent
-// CLI can read; .claude/skills/<id>/SKILL.md is a pointer to it carrying the
-// same name and description, so Claude Code finds it by the same trigger.
-const SKILL_ID = 'sprintengine-extension-builder'
-// The line `sprintengine-module init` writes into the pointer.
-const SKILL_POINTER_MARK = '<!-- sprintengine-module: skill pointer -->'
-const skillCopy = join(projectDir, '.agents', 'skills', SKILL_ID)
-const skillPointer = join(projectDir, '.claude', 'skills', SKILL_ID)
-const frontMatter = (path) => {
-  const match = /^---\n([\s\S]*?)\n---/.exec(readFileSync(path, 'utf8').replace(/\r\n/g, '\n'))
-  const field = (name) => new RegExp(`^${name}:\\s*(.*)$`, 'm').exec(match?.[1] ?? '')?.[1]?.trim()
-  return { name: field('name'), description: field('description') }
-}
-const listFiles = (dir, prefix = '') =>
-  readdirSync(join(dir, prefix), { withFileTypes: true }).flatMap((entry) => {
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name
-    return entry.isDirectory() ? listFiles(dir, path) : [path]
-  })
-if (existsSync(join(skillCopy, 'SKILL.md')) && existsSync(join(skillPointer, 'SKILL.md'))) {
-  const pointerText = readFileSync(join(skillPointer, 'SKILL.md'), 'utf8')
-  if (pointerText.includes(SKILL_POINTER_MARK)) {
-    const canonical = frontMatter(join(skillCopy, 'SKILL.md'))
-    const pointer = frontMatter(join(skillPointer, 'SKILL.md'))
-    if (canonical.name !== pointer.name || canonical.description !== pointer.description) {
-      errors.push(
-        `.claude/skills/${SKILL_ID}/SKILL.md must carry the name and description of .agents/skills/${SKILL_ID}/SKILL.md, ` +
-          'so both agent CLIs pick the skill up for the same requests; copy the front matter over.',
-      )
-    }
-  } else {
-    // Two full copies (a project scaffolded before the pointer): they must not drift.
-    const differing = [...new Set([...listFiles(skillCopy), ...listFiles(skillPointer)])].filter((path) => {
-      const a = join(skillCopy, path)
-      const b = join(skillPointer, path)
-      return !existsSync(a) || !existsSync(b) || readFileSync(a, 'utf8') !== readFileSync(b, 'utf8')
-    })
-    if (differing.length > 0) {
-      errors.push(
-        `the two copies of the ${SKILL_ID} skill have drifted (${differing.join(', ')}). Keep .agents/skills/${SKILL_ID} ` +
-          `and replace .claude/skills/${SKILL_ID} with a pointer to it (\`sprintengine-module init\` writes one).`,
-      )
-    }
-  }
 }
 
 // ── Signatures: the app's own checks, through the SDK CLI ────────────────────

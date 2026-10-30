@@ -5,13 +5,11 @@
 
 import { BUNDLED_MODULE_IDS } from './modules/manifest'
 
-/** The skill every scaffolded project carries, and the one its chat opens with. */
-export const EXTENSION_BUILDER_SKILL_ID = 'sprintengine-extension-builder'
-
 /**
  * The template every project starts from. The person describes the extension
- * in their own words, and the skill has the agent add the surfaces that needs
- * (its "Which surface" table), so the start is the smallest project that runs.
+ * in their own words, and the extension guide has the agent add the surfaces
+ * that needs (its `surfaces` topic), so the start is the smallest project that
+ * runs.
  */
 export const EXTENSION_START_TEMPLATE_ID = 'blank'
 
@@ -50,8 +48,11 @@ export type ExtensionScaffoldCreateInput = ExtensionScaffoldTargetInput & {
 }
 
 export type ExtensionScaffoldCreateResult =
-  /** `existing`: the folder already held an extension, and nothing was written. */
-  | { ok: true; folder: string; existing: boolean }
+  /**
+   * `existing`: the folder already held an extension, and nothing was written.
+   * `notes`: steps the scaffolder left to do by hand (a part it could not wire in).
+   */
+  | { ok: true; folder: string; existing: boolean; notes?: string[] }
   | {
       ok: false
       code:
