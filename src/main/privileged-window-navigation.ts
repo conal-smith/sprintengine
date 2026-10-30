@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url'
+import { isSealedVisualUrl } from '../shared/sealed-visual'
 
 // The app's own windows load the renderer with the preload's bridge to the
 // machine attached — terminals, files, git. That bridge is exposed to whatever
@@ -6,11 +7,43 @@ import { pathToFileURL } from 'node:url'
 // Two ways out existed: a `window.open` (or `target="_blank"` link) whose URL
 // was handed to the OS whatever its scheme, and a navigation of the window
 // itself, which nothing stopped. Both are closed here, for every such window.
+//
+// A third is a frame inside the window that runs an agent's script: a chat's
+// sealed visual (`shared/sealed-visual.ts`). Its sandbox keeps it off the
+// window and its policy keeps it off the network, but neither stops it from
+// navigating itself to a page on the web, so that is refused here.
 
 /** The subset of `WebContents` the guard touches, so it can be tested without Electron. */
 export type GuardedContents = {
   setWindowOpenHandler(handler: (details: { url: string }) => { action: 'deny' }): void
   on(event: 'will-navigate', listener: (event: { preventDefault(): void }, url: string) => void): unknown
+  on(event: 'will-frame-navigate', listener: (details: FrameNavigation) => void): unknown
+}
+
+/** The part of a frame navigation the sealed-visual rule reads. */
+export type FrameNavigation = {
+  preventDefault(): void
+  isMainFrame: boolean
+  isSameDocument: boolean
+  frame: { url: string } | null
+}
+
+/**
+ * Whether a frame's navigation is refused: any that leaves a sealed visual's
+ * document, wherever it is headed, its own address included. A visual is
+ * replaced by a new frame, never by navigating the old one. A move within the
+ * same document (a `#section` link) loads nothing and stays.
+ */
+export function refusesFrameNavigation(details: Omit<FrameNavigation, 'preventDefault'>): boolean {
+  if (details.isMainFrame || details.isSameDocument) return false
+  let current: string | undefined
+  try {
+    current = details.frame?.url
+  } catch {
+    // A frame already gone has nowhere to go.
+    return false
+  }
+  return isSealedVisualUrl(current)
 }
 
 // mailto stays: a markdown message's mail link opens through `window.open`, and
@@ -59,5 +92,8 @@ export function guardPrivilegedWindow(
   })
   contents.on('will-navigate', (event, url) => {
     if (!isAppDocument(url, app)) event.preventDefault()
+  })
+  contents.on('will-frame-navigate', (details) => {
+    if (refusesFrameNavigation(details)) details.preventDefault()
   })
 }

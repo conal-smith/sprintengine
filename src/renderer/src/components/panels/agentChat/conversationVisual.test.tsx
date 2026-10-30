@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const { ConversationMarkdown } = await import('./conversationLinks')
+const { SEALED_VISUAL_URL_PREFIX } = await import('../../../../../shared/sealed-visual')
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -75,14 +76,34 @@ test('Show source swaps the visual for its source and back', async () => {
 })
 
 test('a visual with nothing left to draw stays its source, with a note saying why', async () => {
-  act(() => root.render(<ConversationMarkdown text={'```visual\n<script>steal()</script>\n```'} />))
+  const source = '<iframe src="https://example.com/"></iframe>'
+  act(() => root.render(<ConversationMarkdown text={`\`\`\`visual\n${source}\n\`\`\``} />))
   await settleUntil(() => container.querySelector('.ds-code-block__note') !== null)
   expect(frame()).toBeNull()
   expect(container.querySelector('button[aria-label="Show source"]')).toBeNull()
-  expect(container.querySelector('pre')?.textContent).toContain('<script>steal()</script>')
+  expect(container.querySelector('pre')?.textContent).toContain(source)
   expect(container.querySelector('.ds-code-block__note')?.textContent).toBe(
     'Shown as source: the visual has nothing to draw',
   )
+})
+
+test('a visual with a script runs it in a sealed frame; one without keeps the static frame', async () => {
+  const scripted = `\`\`\`visual\n<h3>Sortable</h3><table id="t"></table>\n<script>t.onclick = () => {}</script>\n\`\`\``
+  act(() => root.render(<ConversationMarkdown text={scripted} />))
+  await settleUntil(() => frame() !== null)
+  const sealed = frame()!
+  expect(sealed.getAttribute('sandbox')).toBe('allow-scripts')
+  expect(sealed.hasAttribute('srcdoc')).toBe(false)
+  expect(sealed.getAttribute('src')?.startsWith(SEALED_VISUAL_URL_PREFIX)).toBe(true)
+  expect(sealed.getAttribute('title')).toBe('Sortable')
+  // Its source is still the block's text, behind Show source.
+  expect(container.querySelector('.ds-code-block__body pre')?.textContent).toContain('t.onclick')
+
+  act(() => root.render(<ConversationMarkdown text={visual('Static')} />))
+  await settleUntil(() => frame()?.getAttribute('title') === 'Static')
+  expect(frame()?.getAttribute('sandbox')).toBe('allow-same-origin')
+  expect(frame()?.hasAttribute('src')).toBe(false)
+  expect(frame()?.getAttribute('srcdoc')).toContain('Content-Security-Policy')
 })
 
 test('html and svg blocks, and what a person typed, are shown as written', async () => {
