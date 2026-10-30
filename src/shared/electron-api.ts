@@ -132,6 +132,7 @@ export type {
   CapabilityDiagnostic,
 } from './skills'
 import type { AutomationServerStatus } from './automation'
+import type { McpHttpCreateResult, McpHttpStatus } from './mcp-http'
 import type {
   StudioLocalAppOfferInput,
   StudioLocalAppOfferView,
@@ -869,6 +870,11 @@ export type ElectronApi = {
    */
   workspaceMarkUnread: (workspaceId: string) => Promise<WorkspaceMarkUnreadResult>
   automationGetStatus: () => Promise<AutomationServerStatus>
+  /** The gateway's loopback HTTP endpoint: where it listens and the clients given a token. */
+  mcpHttpStatus: () => Promise<McpHttpStatus>
+  /** Make a token for a named client; the token comes back this once and is kept only hashed. */
+  mcpHttpCreate: (name: string) => Promise<McpHttpCreateResult>
+  mcpHttpRevoke: (id: string) => Promise<McpHttpStatus>
   /**
    * The applications on this machine paired with Studio's owner socket. Like
    * the tailnet's pairing, reachable from a window only: no socket method can

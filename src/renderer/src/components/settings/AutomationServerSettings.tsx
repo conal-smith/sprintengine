@@ -4,6 +4,7 @@ import type { AutomationServerStatus } from '../../../../shared/automation'
 import { STUDIO_MCP_SERVER_NAME } from '../../../../shared/product-identity'
 import { IconButton, InlineNotice, Tooltip } from '../ui'
 import { CopyIcon } from '../AppIcons'
+import { McpHttpSettings } from './McpHttpSettings'
 import { SettingCard, SettingsRow, SettingsSectionTitle } from './SettingsAtoms'
 
 // Settings → MCPs: read-only diagnostics for the always-on SprintEngine Studio
@@ -67,6 +68,7 @@ export function AutomationServerSettings() {
         ) : null}
       </SettingCard>
       {status.lastError ? <InlineNotice tone="error">{status.lastError}</InlineNotice> : null}
+      <McpHttpSettings />
     </section>
   )
 }
