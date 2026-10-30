@@ -111,6 +111,25 @@ export function refuseScheduledAgentRun(
   return isLooserCliPermissionPreset(effective, ceiling) ? escalation(effective, ceiling) : null
 }
 
+/**
+ * Whether an agent under `ceiling` may send a message to a chat running on
+ * `target`: refused when the chat runs looser than the caller, since its next
+ * turn would then carry out the caller's words with permissions the caller
+ * does not have (conversation-chat-tools.ts).
+ */
+export function refuseDrivingLooserChat(
+  target: CliPermissionPreset,
+  ceiling: CliPermissionPreset | null,
+): LaunchPermissionRefusal | null {
+  if (ceiling === null || !isLooserCliPermissionPreset(target, ceiling)) return null
+  return {
+    code: 'permission_escalation',
+    message:
+      `This agent runs on the "${ceiling}" permission preset, and that chat runs on "${target}", which lets its ` +
+      'agent do more without asking. An agent may only message chats that run at its level or stricter.',
+  }
+}
+
 function escalation(requested: CliPermissionPreset, ceiling: CliPermissionPreset): LaunchPermissionRefusal {
   return {
     code: 'permission_escalation',

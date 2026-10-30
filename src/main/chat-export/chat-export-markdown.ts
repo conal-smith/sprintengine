@@ -4,6 +4,7 @@ import type {
   ExportImage,
   ExportInline,
   ExportListItem,
+  ExportMessage,
   ExportPart,
 } from './chat-export-document'
 import {
@@ -52,6 +53,24 @@ export function writeChatExportMarkdown(document: ChatExportDocument, assetFolde
     }
   }
   return { markdown: `${sections.filter(Boolean).join('\n\n')}\n`, files }
+}
+
+/**
+ * One message's body alone, without the document's title or the message's
+ * heading, each picture named in brackets: what a reader of a chat's words
+ * takes a message at a time (conversation-chat-tools.ts).
+ */
+export function writeExportMessageMarkdown(message: ExportMessage): string {
+  const sections: string[] = []
+  if (message.kind === 'user') {
+    if (message.blocks.length) sections.push(blocks(message.blocks))
+    const pictures = message.images.map((image) => picture(image, [], null))
+    if (pictures.length) sections.push(pictures.join('\n\n'))
+    if (message.files.length) sections.push(`Attached files: ${message.files.map((path) => code(path)).join(', ')}`)
+  } else {
+    for (const part of message.parts) sections.push(partOf(part))
+  }
+  return sections.filter(Boolean).join('\n\n')
 }
 
 function picture(image: ExportImage, files: MarkdownExport['files'], assetFolder: string | null): string {
