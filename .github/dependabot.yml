@@ -38,8 +38,25 @@ updates:
         update-types: ['version-update:semver-major', 'version-update:semver-minor']
       - dependency-name: 'react-native'
         update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      # React Native carries its own renderer, built against one exact React:
+      # even a React patch it was not built with stops the app at launch.
       - dependency-name: 'react'
+      # The native modules and lint config the SDK names its own versions of
+      # (`npx expo install --check`).
+      - dependency-name: 'react-native-safe-area-context'
         update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'react-native-screens'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'react-native-svg'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'react-native-webview'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: 'eslint-config-expo'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      # typescript-eslint reads TypeScript's JavaScript API, which TypeScript 7
+      # does not have; lint stays on 5.x until typescript-eslint supports 7.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     commit-message:
       prefix: "ci"
