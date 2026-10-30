@@ -554,7 +554,8 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
       name: 'conversation.auto_settle',
       description:
         "Switch Auto-settle on or off for a chat on this machine, as its row menu's Auto-settle does. With it " +
-        'on, the chat settles by itself after three quiet days, or once its pull requests land. Off by ' +
+        'on, the chat settles by itself after the quiet days set in Settings (three unless changed), or once ' +
+        'its pull requests land. Off by ' +
         'default. Settles nothing at once.',
       inputSchema: {
         type: 'object',

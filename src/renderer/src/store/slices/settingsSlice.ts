@@ -1,4 +1,5 @@
 import { isFolderOpenTargetId } from '../../../../shared/folder-open-targets'
+import { DEFAULT_AUTO_SETTLE_AFTER_DAYS, normalizeAutoSettleAfterDays } from '../../utils/workspaceSettle'
 import type { ExecutionHostId, ExecutionHostSettings } from '../../../../shared/execution-host'
 import {
   normalizeAgentLaunchHosts,
@@ -723,6 +724,7 @@ export const defaultAppSettings = (): AppSettings => ({
   terminalKeepRecentAlive: DEFAULT_TERMINAL_KEEP_RECENT_ALIVE,
   settleOnPullRequestMerge: true,
   keepChatsWithOpenPullRequest: true,
+  autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   browserAutoFloatAgentPreview: true,
   // A message sent mid-turn waits for the turn, as every one did before the
   // choice: a steer is something a person asks for.
@@ -821,6 +823,8 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     // Only an explicit stored `false` lets the idle rule settle a chat whose
     // pull request is still open: a profile from before the setting keeps them.
     keepChatsWithOpenPullRequest: settings?.keepChatsWithOpenPullRequest !== false,
+    // Absent before the setting existed: the three days it always was.
+    autoSettleAfterDays: normalizeAutoSettleAfterDays(settings?.autoSettleAfterDays),
     // Only an explicit stored `false` turns the player off: it is the
     // feature's default, and an unreadable value should not hide an agent.
     browserAutoFloatAgentPreview: settings?.browserAutoFloatAgentPreview !== false,
@@ -1126,6 +1130,7 @@ export interface SettingsSliceActions {
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
   setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
+  setAutoSettleAfterDays: (days: number) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   setFollowUpBehavior: (behavior: FollowUpBehavior) => void
   /** Keep the app (and its running agents) alive after the last window closes. */
@@ -1796,6 +1801,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
     setKeepChatsWithOpenPullRequest: (enabled) =>
       set((state) => {
         state.appSettings.keepChatsWithOpenPullRequest = enabled === true
+      }),
+
+    setAutoSettleAfterDays: (days) =>
+      set((state) => {
+        state.appSettings.autoSettleAfterDays = normalizeAutoSettleAfterDays(days)
       }),
 
     setBrowserAutoFloatAgentPreview: (enabled) =>

@@ -106,16 +106,16 @@ export const chatMenuTooltips = {
   snoozeUntil: (label: string, whenLabel: string) => `Snooze until ${label.toLowerCase()}, ${whenLabel}.`,
   wake: (where: ChatMenuPlace = LOCAL) =>
     'Bring this chat back to the list now.' + (where.kind === 'remote' ? ` It wakes on ${where.machineName} too.` : ''),
-  // The rest sweep (`shouldAutoSettleWorkspace`): three quiet days, counted
+  // The rest sweep (`shouldAutoSettleWorkspace`): its quiet days, counted
   // from a wake, held while a pull request is open; or its pull requests
   // merging; never a starred, snoozed, open, working or waiting chat. The
   // pull request halves are settings, both on by default.
   autoSettle: (where: ChatMenuPlace = LOCAL) =>
-    'Settle this chat by itself after 3 days with no activity, or once its pull requests merge. ' +
+    'Settle this chat by itself after its quiet days with no activity (3 unless changed), or once its pull requests merge. ' +
     'It waits while the chat is starred, snoozed, open, working or waiting on you. ' +
     (where.kind === 'remote'
       ? `${where.machineName} settles it, by its own Settled chats settings.`
-      : 'The pull request rules are in Settings ▸ Settled chats.'),
+      : 'The days and the pull request rules are in Settings ▸ Settled chats.'),
   // Studio's own compaction before a cache expires (conversation-auto-compact.ts):
   // idle, Claude only, at least 100k tokens, a minute or five before expiry.
   autoCompact: (claude: boolean, where: ChatMenuPlace = LOCAL) =>

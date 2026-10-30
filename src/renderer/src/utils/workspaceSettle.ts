@@ -8,16 +8,26 @@ import type { LifecycleState } from '../../../shared/lifecycle-state'
 import { isSettledWorkspace } from '../../../shared/workspace-lifecycle'
 
 // A chat settles — moves from its folder's active list into the folder's
-// Settled shelf — once it has gone this long without activity. One constant,
-// on purpose: the fold this replaces was also a single unconfigurable
-// threshold, and three days is long enough that a chat someone means to come
-// back to tomorrow is never swept out from under them. Settling keeps the
+// Settled shelf — once it has gone this long without activity: three days by
+// default, long enough that a chat someone means to come back to tomorrow is
+// never swept out from under them, and anything from a day to ninety in
+// Settings ▸ Settled chats (`autoSettleAfterDays`). Settling keeps the
 // workspace on disk and in the store, and opening it brings it back — but it
 // is no longer free of consequence: a resting chat holds no terminals (owner
 // ruling 2026-09-07), so the ptys are killed with the row and the agent
 // resumes from its CLI session when the chat is next opened. This module
 // still only DECIDES; the sidebar carries the decision out.
-export const WORKSPACE_AUTO_SETTLE_AFTER_MS = 3 * 24 * 60 * 60 * 1000 // 3 days
+const DAY_MS = 24 * 60 * 60 * 1000
+export const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3
+export const MIN_AUTO_SETTLE_AFTER_DAYS = 1
+export const MAX_AUTO_SETTLE_AFTER_DAYS = 90
+export const WORKSPACE_AUTO_SETTLE_AFTER_MS = DEFAULT_AUTO_SETTLE_AFTER_DAYS * DAY_MS
+
+/** A stored idle delay as whole days in range; the default for anything else. */
+export function normalizeAutoSettleAfterDays(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_AUTO_SETTLE_AFTER_DAYS
+  return Math.min(MAX_AUTO_SETTLE_AFTER_DAYS, Math.max(MIN_AUTO_SETTLE_AFTER_DAYS, Math.round(value)))
+}
 
 // Module-owned run states that must never settle on their own, no matter how
 // old: anything still in flight or waiting on the person. Carried over from the
@@ -44,6 +54,8 @@ export type AutoSettleContext = {
   pullRequestsUnread?: boolean
   settleOnMerge?: boolean
   keepWithOpenPullRequest?: boolean
+  /** How many quiet days settle a chat (Settings ▸ Settled chats); three when absent. */
+  afterDays?: number
 }
 
 // The one answer to "is this row resting?", and the two transitions below,
@@ -67,7 +79,7 @@ export { isSettledWorkspace }
  * (the Remote band has its own model), the rail-hidden hosts, and a row whose
  * module reports a run still in flight.
  *
- * Two ways in: three quiet days (counted from the wake, for a row that has
+ * Two ways in: its quiet days, three unless the person chose others (counted from the wake, for a row that has
  * just come back from a snooze), unless one of its pull requests is still open
  * and Keep chats with an open pull request is on; or its pull requests landing
  * (`pullRequestsLanded`) when Settle on merge is on.
@@ -91,7 +103,8 @@ export function shouldAutoSettleWorkspace(workspace: Workspace, now: number, con
   // for a week would otherwise wake already a week quiet and settle — its
   // terminals killed — on the very tick it came back to the list.
   const quietSince = Math.max(workspaceLastActiveAt(workspace), workspaceWokeAt(workspace, now) ?? 0)
-  if (now - quietSince >= WORKSPACE_AUTO_SETTLE_AFTER_MS && !keptForOpenPullRequest(context)) return true
+  const afterMs = normalizeAutoSettleAfterDays(context.afterDays ?? DEFAULT_AUTO_SETTLE_AFTER_DAYS) * DAY_MS
+  if (now - quietSince >= afterMs && !keptForOpenPullRequest(context)) return true
   return context.settleOnMerge === true && pullRequestsLanded(workspace, context.pullRequests ?? [])
 }
 
