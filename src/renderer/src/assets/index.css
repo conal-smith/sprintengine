@@ -4509,6 +4509,15 @@ body:has([data-selection-pane]:focus-within)
   scrollbar-gutter: stable;
 }
 
+/* While the "what the agent touched" card is docked at the transcript's top
+ * right (agentChat/ChatActivityCard.tsx), the column keeps its text clear of
+ * it: the right gutter is at least the card's 264px and its 12px margins, and
+ * the column moves left by whatever that takes from it. The chat only docks
+ * the card where the transcript is wide enough for both. */
+[data-activity-docked] .chat-column-gutter {
+  padding-inline-end: max(calc(264px + var(--sem-space-lg) * 2), calc((100% - var(--chat-max-width)) / 2));
+}
+
 /* The composer tray (agentChat/composerTray.tsx) slides up out from behind the
  * composer when its first row arrives: it starts tucked under the field, which
  * paints over it, so it is never drawn across the text being typed. Its display

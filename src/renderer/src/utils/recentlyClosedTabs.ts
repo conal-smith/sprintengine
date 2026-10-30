@@ -52,6 +52,7 @@ export function closedPaneTabSpec(tab: WorkspacePaneTab): WorkspacePaneOpenInput
     case 'git':
     case 'backlog':
     case 'agents':
+    case 'library':
       return { kind: tab.kind }
     case 'diff': {
       // Where it was looking; an agent's reveal and a tour are the moment's,
