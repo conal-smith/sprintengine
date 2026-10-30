@@ -5,6 +5,8 @@ import { afterEach, beforeEach, test, vi } from 'vitest'
 
 import {
   createPullRequestWatchPoller,
+  PR_WATCH_FOCUS_FRESH_MS,
+  PR_WATCH_FOCUS_SETTLE_MS,
   PR_WATCH_FOCUS_SPREAD_MS,
   PR_WATCH_UNFOCUSED_MS,
   type WatchPollerFocus,
@@ -129,5 +131,53 @@ test('a key that keeps its pace is probed every two minutes with no window in fr
   watch.arm(other)
   await vi.advanceTimersByTimeAsync(5 * MINUTE)
   assert.deepEqual(probes, [URL, URL, URL], 'an agent waiting on it is looking; nobody is looking at the other')
+  watch.dispose()
+})
+
+test('a window that comes back for a moment and goes again probes nothing', async () => {
+  const window = focus(false)
+  const { watch, probes } = poller(window)
+  watch.arm(URL)
+  await vi.advanceTimersByTimeAsync(3 * MINUTE)
+  // An editor and back, ten times over: blur and focus a moment apart.
+  for (let flap = 0; flap < 10; flap += 1) {
+    window.set(true)
+    await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_SETTLE_MS / 2)
+    window.set(false)
+    await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_SETTLE_MS)
+  }
+  await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_SPREAD_MS)
+  assert.deepEqual(probes, [], 'no return settled, so nothing is probed early')
+  watch.dispose()
+})
+
+test('a window coming back does not probe a key read inside the fresh window', async () => {
+  const window = focus(true)
+  const { watch, probes } = poller(window)
+  watch.arm(URL)
+  await vi.advanceTimersByTimeAsync(MINUTE)
+  assert.equal(probes.length, 1, 'the first probe, at one minute')
+
+  // Away and back, well inside a minute of that probe, and staying in front.
+  window.set(false)
+  await vi.advanceTimersByTimeAsync(5_000)
+  window.set(true)
+  await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_SETTLE_MS + PR_WATCH_FOCUS_SPREAD_MS)
+  assert.equal(probes.length, 1, 'just read: its state is as fresh as a prompt probe would make it')
+  watch.dispose()
+})
+
+test('a window coming back after the fresh window probes the key once, shortly', async () => {
+  const window = focus(true)
+  const { watch, probes } = poller(window)
+  watch.arm(URL)
+  await vi.advanceTimersByTimeAsync(MINUTE)
+  window.set(false)
+  await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_FRESH_MS)
+  const back = Date.now()
+  window.set(true)
+  await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_SETTLE_MS + PR_WATCH_FOCUS_SPREAD_MS)
+  assert.equal(probes.length, 2)
+  assert.ok(probes[1]! - back <= PR_WATCH_FOCUS_SETTLE_MS + PR_WATCH_FOCUS_SPREAD_MS)
   watch.dispose()
 })

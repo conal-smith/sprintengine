@@ -839,13 +839,10 @@ Cross-Origin-Resource-Policy: same-origin   (on every authenticated response, 3.
 - **Recommended route:** `tailscale serve --bg --https=443 http://127.0.0.1:<port>`.
   The server sets this up on request, and `tailscale-serve.ts` already
   drives the CLI. The listener stays loopback-only. The public origin
-  `https://<node>.<tailnet>.ts.net` is added to the allowed set. Peer identity
-  comes from the `Tailscale-User-Login` and `Tailscale-User-Name` headers that
-  serve adds. The server trusts those headers only when it set up serve
-  itself, the connection arrives on loopback, and the request carries serve's
-  identity headers; otherwise it treats the request as an ordinary loopback
-  browser that must pair. Pairing (6.2, approval) still applies: identity
-  narrows who may ask, it does not replace the approval.
+  `https://<node>.<tailnet>.ts.net` is added to the allowed set. Serve's
+  identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`) are not
+  read: see the identity bullet in 6.6. Pairing (6.2, approval) is what lets
+  a browser in.
 - **`tailscale cert`** with the server terminating TLS itself is the fallback
   where serve is unavailable. It needs cert renewal; not v1.
 - **Generic reverse proxies.** `--public-origin https://studio.example.ts.net`
@@ -1595,12 +1592,13 @@ keeps the same swaps, since the browser's own window still takes
   earlier run, recorded in `run/web-tailscale.json`, which a crash leaves
   pointing at a port the listener no longer holds. A clean stop turns the
   mapping off, only while it still points at this run's listener.
-- **Identity headers label, they do not admit.** `Tailscale-User-Login` (and
-  `-Name`, RFC 2047 words decoded) are read only on serve's own host name,
-  after this server set serve up; the loopback socket is the only way in, so
-  the remaining forger is a local program, which the six digits still stop.
-  A pairing request through serve shows "signed in to Tailscale as ..." in
-  the owner's Browsers settings. Sessions do not record the login.
+- **Identity headers are not read.** They were once shown on a pairing
+  request through serve ("signed in to Tailscale as ..."), believed only on
+  serve's own host name. That check cannot hold: the listener is on loopback,
+  so any local program, another user's included, can send serve's name in
+  `Host` and any login beside it. The six digits do not stop it either, since
+  its own browser shows them, and a forged account name is exactly what would
+  persuade the owner to type them. A request is labelled by its route alone.
 - **Not smoke-tested against a live tailscaled** on the build machine: serve
   configuration outlives the process and the machine is shared. The tests
   drive a stand-in daemon that keeps a serve table; the CLI refusals were run

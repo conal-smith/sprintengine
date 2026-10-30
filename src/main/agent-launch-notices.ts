@@ -1,3 +1,6 @@
+import { mkdir, readFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
 import type { AgentPhase } from '../shared/electron-api'
 import type { AgentPhaseEvent, AgentSessionExitEvent } from '../shared/agent-runtime'
 import type { ConversationEvent, ConversationSessionSummary } from '../shared/conversation-runtime'
@@ -8,7 +11,9 @@ import {
   usageLimitProviderOfConversation,
   type UsageLimitProvider,
 } from '../shared/usage-limits'
+import { isRecord } from '../shared/records'
 import type { AgentControlPlane, ControlPlaneSendOptions, ControlPlaneSession } from './agent-control-plane'
+import { writeFileAtomically } from './config-file-write'
 
 /**
  * Launch notices — an agent that started another agent hears back from it.
@@ -65,9 +70,16 @@ import type { AgentControlPlane, ControlPlaneSendOptions, ControlPlaneSession } 
  * whose CLI reports its turns through hooks. A CLI without them never reads
  * idle, so its notices would wait forever; its caller is told to poll.
  *
- * Links and queues live in memory. A launched agent dies with the app (its
- * terminal does, and a chat's turn does), so a link that outlived a restart
- * would point at nothing.
+ * Links and queues are kept in a small file in the data directory, so a
+ * restart does not leave a parent waiting for news it will never hear. A
+ * launched agent's turn dies with the app (its terminal does, and a chat's
+ * turn does), so a child that was still at work when the app quit is reported
+ * stopped once the app is back; notices that were queued and not yet typed
+ * are typed then; and a chat child the person resumes later still reports to
+ * whoever launched it. A restored parent is told at its first rest after the
+ * person brings it back. The file is written as the app starts to quit, before
+ * its sessions close, so the closes the quit itself makes are not taken for
+ * parents that went away. What is older than two days is not brought back.
  *
  * The notice is typed as a turn. A chat records it as Studio's (`origin` on
  * its `user_message`), so the chat view draws it as Studio's row and nothing
@@ -127,6 +139,8 @@ export type AgentLaunchNoticesDeps = {
   onUsageLimitsChanged?: (listener: () => void) => void
   /** Whether the parent's workspace is settled (put away). Absent, none is. */
   isSettled?: (workspaceId: string) => boolean
+  /** Where links and queues are kept across a restart. Absent, they live in memory only. */
+  storage?: LaunchNoticesStorage
   /** Run `job` after `ms`; returns the cancel. Injected so tests drive the clock. */
   schedule?: (job: () => void, ms: number) => () => void
   now?: () => number
@@ -148,6 +162,13 @@ export type AgentLaunchNotices = {
   onChatIdle(summary: Pick<ConversationSessionSummary, 'sessionId' | 'workspaceId' | 'agentId'>): void
   /** The computer woke or was unlocked: a timer stood still while it slept, so the holds read the clock again. */
   wake(): void
+  /** Bring back what was kept before the app last quit. A link made since start wins over one read back. */
+  restore(): Promise<void>
+  /**
+   * The app is quitting: write what is kept now, and nothing after, so the
+   * sessions the quit closes are not written down as parents that went away.
+   */
+  freeze(): Promise<void>
   /** How many children are linked. Exposed for tests. */
   linkCount(): number
   /** How many notices are queued for a parent. Exposed for tests. */
@@ -180,6 +201,16 @@ type ParentState = {
   hold: { at: number; cancel: () => void } | null
   /** The last look found the parent's provider out of its usage. */
   limited: boolean
+  /** Brought back from before a restart, and not yet found again: it waits for its session rather than being dropped. */
+  restored: boolean
+  /** When it was linked or last had news, for what a restart brings back. */
+  touchedAt: number
+}
+
+/** Where the links and queues are kept between runs. */
+export type LaunchNoticesStorage = {
+  read(): Promise<string | null>
+  write(body: string): Promise<void>
 }
 
 /**
@@ -208,6 +239,11 @@ const MAX_NAME_CHARS = 60
 const MAX_ID_CHARS = 120
 /** The tail of a chat child's reply the notice carries. */
 const MAX_REPLY_CHARS = 280
+/** The most of a chat child's reply kept on disk for a notice still to go: more than a notice quotes. */
+const MAX_SAVED_REPLY_CHARS = 2_000
+/** What a restart brings back: a parent linked or told anything within this long. */
+const RESTORE_MAX_AGE_MS = 2 * 24 * 60 * 60_000
+const SAVED_VERSION = 1
 
 const WORKING_PHASES: ReadonlySet<AgentPhase> = new Set<AgentPhase>(['starting', 'thinking', 'tool_use'])
 /** Failures that mean the parent is not there to tell. */
@@ -271,7 +307,7 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     if (!parent.workspaceId || !parent.agentId || !input.child.sessionId)
       return { linked: false, reason: NOT_TOLD_OUTSIDE }
     const session = resolveParentSession(parent)
-    if (!session) return { linked: false, reason: NOT_TOLD_OUTSIDE }
+    if (!session || session === AMBIGUOUS) return { linked: false, reason: NOT_TOLD_OUTSIDE }
     // A terminal parent is told when its hooks say its turn ended. One whose
     // phase is only a lifecycle stamp (no hooks, or stuck `starting` or
     // `stalled`) never reads idle, so it would never be told.
@@ -287,10 +323,14 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
         delivering: false,
         hold: null,
         limited: false,
+        restored: false,
+        touchedAt: now(),
       })
     }
+    parents.get(key)!.touchedAt = now()
     children.set(input.child.sessionId, { identity: { ...input.child }, parentKey: key, reported: null })
     while (children.size > MAX_LINKS) unlinkChild(children.keys().next().value!)
+    save()
     return { linked: true }
   }
 
@@ -383,11 +423,17 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
   }
 
   function childWentToWork(child: ChildLink): void {
+    // Every phase a working child moves through comes here: only a change is written.
+    let changed = child.reported !== null
     child.reported = null
     // A question the child was answered on is no longer news.
     const parent = parents.get(child.parentKey)
     const sessionId = child.identity.sessionId
-    if (parent?.pending.get(sessionId)?.kind === 'waiting') parent.pending.delete(sessionId)
+    if (parent?.pending.get(sessionId)?.kind === 'waiting') {
+      parent.pending.delete(sessionId)
+      changed = true
+    }
+    if (changed) save()
   }
 
   function report(child: ChildLink, kind: LaunchNoticeKind, reply?: string): void {
@@ -396,6 +442,8 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     const parent = parents.get(child.parentKey)
     if (!parent) return
     parent.pending.set(child.identity.sessionId, { kind, child: child.identity, ...(reply?.trim() ? { reply } : {}) })
+    parent.touchedAt = now()
+    save()
     void flush(parent)
   }
 
@@ -409,7 +457,10 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     }
   }
 
-  function resolveParentSession(parent: { workspaceId: string; agentId: string }): ControlPlaneSession | undefined {
+  function resolveParentSession(parent: {
+    workspaceId: string
+    agentId: string
+  }): ControlPlaneSession | typeof AMBIGUOUS | undefined {
     const matches = deps.plane
       .listSessions()
       .filter(
@@ -419,8 +470,11 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
           (session.workspaceId === parent.workspaceId || session.launchWorkspaceId === parent.workspaceId),
       )
     // Two live sessions claiming one agent is a state the app does not mean
-    // to be in; typing into either could be typing into the wrong one.
-    return matches.length === 1 ? matches[0] : undefined
+    // to be in; typing into either could be typing into the wrong one. It is
+    // a passing one (a session restarting while the old one winds down), not
+    // the parent going: nothing is typed, and nothing is dropped.
+    if (matches.length > 1) return AMBIGUOUS
+    return matches[0]
   }
 
   function isIdle(sessionId: string): boolean {
@@ -479,10 +533,15 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
   async function flush(parent: ParentState): Promise<void> {
     if (parent.delivering || parent.pending.size === 0) return
     const session = resolveParentSession(parent)
+    // Not sure which session is the parent's: its next rest looks again.
+    if (session === AMBIGUOUS) return
     if (!session) {
-      dropParent(parent)
+      // One brought back from before a restart has no session until the
+      // person opens it again; it waits for that rather than being dropped.
+      if (!parent.restored) dropParent(parent)
       return
     }
+    parent.restored = false
     if (!readsIdle(session)) return
     // Put away: its next rest once the person brings it back looks again.
     if (deps.isSettled?.(parent.workspaceId)) return
@@ -498,6 +557,7 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
 
     const batch = [...parent.pending.values()]
     parent.pending.clear()
+    save()
     parent.delivering = true
     let failure: { reason: string; message: string } | null = null
     try {
@@ -535,6 +595,7 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     // person is writing, ends in one.
     for (const notice of batch)
       if (!parent.pending.has(notice.child.sessionId)) parent.pending.set(notice.child.sessionId, notice)
+    save()
   }
 
   function forgetIfDone(parent: ParentState): void {
@@ -542,20 +603,126 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     for (const child of children.values()) if (child.parentKey === parent.key) return
     clearHold(parent)
     parents.delete(parent.key)
+    save()
   }
 
   function dropParent(parent: ParentState): void {
     clearHold(parent)
     parents.delete(parent.key)
     for (const [sessionId, child] of children) if (child.parentKey === parent.key) children.delete(sessionId)
+    save()
   }
 
   function unlinkChild(sessionId: string, options: { keepParent?: boolean } = {}): void {
     const child = children.get(sessionId)
     if (!child) return
     children.delete(sessionId)
+    save()
     const parent = parents.get(child.parentKey)
     if (parent && !options.keepParent) forgetIfDone(parent)
+  }
+
+  // ── Kept across a restart ────────────────────────────────────────────────
+
+  let frozen = false
+  let saveQueued = false
+  let writing: Promise<void> = Promise.resolve()
+
+  function snapshot(): string {
+    const saved: SavedLaunchNotices = {
+      version: SAVED_VERSION,
+      parents: [...parents.values()].map((parent) => ({
+        workspaceId: parent.workspaceId,
+        agentId: parent.agentId,
+        touchedAt: parent.touchedAt,
+        pending: [...parent.pending.values()].map((notice) =>
+          notice.reply ? { ...notice, reply: notice.reply.slice(-MAX_SAVED_REPLY_CHARS) } : notice,
+        ),
+      })),
+      children: [...children.values()].map((child) => ({
+        child: child.identity,
+        parent: parents.get(child.parentKey)
+          ? { workspaceId: parents.get(child.parentKey)!.workspaceId, agentId: parents.get(child.parentKey)!.agentId }
+          : null,
+        reported: child.reported,
+      })),
+    }
+    return JSON.stringify(saved)
+  }
+
+  function write(body: string): void {
+    const storage = deps.storage
+    if (!storage) return
+    writing = writing
+      .then(() => storage.write(body))
+      .catch((error: unknown) => {
+        deps.log?.(`Launch notices could not be saved: ${error instanceof Error ? error.message : String(error)}`)
+      })
+  }
+
+  /** Write what is kept once the change in hand is done: several in one go are one write. */
+  function save(): void {
+    if (!deps.storage || frozen || saveQueued) return
+    saveQueued = true
+    queueMicrotask(() => {
+      saveQueued = false
+      if (!frozen) write(snapshot())
+    })
+  }
+
+  async function restore(): Promise<void> {
+    const storage = deps.storage
+    if (!storage) return
+    let raw: string | null
+    try {
+      raw = await storage.read()
+    } catch (error) {
+      deps.log?.(`Launch notices could not be read: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    const saved = readSavedLaunchNotices(raw)
+    if (!saved) return
+    const oldest = now() - RESTORE_MAX_AGE_MS
+    for (const entry of saved.parents) {
+      const key = parentKey(entry)
+      if (parents.has(key) || entry.touchedAt < oldest) continue
+      parents.set(key, {
+        key,
+        workspaceId: entry.workspaceId,
+        agentId: entry.agentId,
+        pending: new Map(entry.pending.map((notice) => [notice.child.sessionId, notice])),
+        delivering: false,
+        hold: null,
+        limited: false,
+        restored: true,
+        touchedAt: entry.touchedAt,
+      })
+    }
+    for (const entry of saved.children) {
+      if (!entry.parent || children.has(entry.child.sessionId)) continue
+      const key = parentKey(entry.parent)
+      const parent = parents.get(key)
+      if (!parent?.restored) continue
+      // A child at work, or waiting on the person, when the app quit had its
+      // turn end with the app: that is the parent's news.
+      const ended = entry.reported === null || entry.reported === 'waiting'
+      children.set(entry.child.sessionId, {
+        identity: entry.child,
+        parentKey: key,
+        reported: ended ? 'stopped' : entry.reported,
+      })
+      if (ended) parent.pending.set(entry.child.sessionId, { kind: 'stopped', child: entry.child })
+    }
+    while (children.size > MAX_LINKS) unlinkChild(children.keys().next().value!)
+    for (const parent of [...parents.values()]) if (parent.restored) forgetIfDone(parent)
+    save()
+  }
+
+  async function freeze(): Promise<void> {
+    if (!deps.storage) return
+    if (!frozen) write(snapshot())
+    frozen = true
+    await writing
   }
 
   /**
@@ -579,8 +746,96 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     onConversationEvent,
     onChatIdle,
     wake,
+    restore,
+    freeze,
     linkCount: () => children.size,
     pendingCount: (parent) => parents.get(parentKey(parent))?.pending.size ?? 0,
+  }
+}
+
+/** More than one live session claims the parent. */
+const AMBIGUOUS = Symbol('ambiguous parent session')
+
+type SavedLaunchNotices = {
+  version: typeof SAVED_VERSION
+  parents: Array<{ workspaceId: string; agentId: string; touchedAt: number; pending: LaunchNotice[] }>
+  children: Array<{
+    child: LaunchedAgentLink['child']
+    parent: { workspaceId: string; agentId: string } | null
+    reported: LaunchNoticeKind | null
+  }>
+}
+
+const NOTICE_KINDS: ReadonlySet<string> = new Set<LaunchNoticeKind>(['finished', 'failed', 'waiting', 'stopped'])
+const isText = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+
+function readSavedChild(value: unknown): LaunchedAgentLink['child'] | null {
+  if (!isRecord(value)) return null
+  const { workspaceId, agentId, sessionId, transport, name } = value
+  if (!isText(workspaceId) || !isText(agentId) || !isText(sessionId)) return null
+  if (transport !== 'terminal' && transport !== 'conversation') return null
+  return { workspaceId, agentId, sessionId, transport, ...(isText(name) ? { name } : {}) }
+}
+
+function readSavedNotice(value: unknown): LaunchNotice | null {
+  if (!isRecord(value) || typeof value.kind !== 'string' || !NOTICE_KINDS.has(value.kind)) return null
+  const child = readSavedChild(value.child)
+  if (!child) return null
+  return { kind: value.kind as LaunchNoticeKind, child, ...(isText(value.reply) ? { reply: value.reply } : {}) }
+}
+
+/** What a file kept before a restart says, as this build would have written it; null for a file that is not that. */
+export function readSavedLaunchNotices(raw: string | null): SavedLaunchNotices | null {
+  if (!raw) return null
+  let input: unknown
+  try {
+    input = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isRecord(input) || input.version !== SAVED_VERSION) return null
+  const parents: SavedLaunchNotices['parents'] = []
+  for (const entry of Array.isArray(input.parents) ? input.parents : []) {
+    if (!isRecord(entry) || !isText(entry.workspaceId) || !isText(entry.agentId)) continue
+    if (typeof entry.touchedAt !== 'number' || !Number.isFinite(entry.touchedAt)) continue
+    const pending = (Array.isArray(entry.pending) ? entry.pending : [])
+      .map(readSavedNotice)
+      .filter((notice): notice is LaunchNotice => notice !== null)
+    parents.push({ workspaceId: entry.workspaceId, agentId: entry.agentId, touchedAt: entry.touchedAt, pending })
+  }
+  const children: SavedLaunchNotices['children'] = []
+  for (const entry of Array.isArray(input.children) ? input.children : []) {
+    if (!isRecord(entry)) continue
+    const child = readSavedChild(entry.child)
+    const parent = isRecord(entry.parent) ? entry.parent : null
+    if (!child || !parent || !isText(parent.workspaceId) || !isText(parent.agentId)) continue
+    const reported =
+      typeof entry.reported === 'string' && NOTICE_KINDS.has(entry.reported)
+        ? (entry.reported as LaunchNoticeKind)
+        : null
+    children.push({ child, parent: { workspaceId: parent.workspaceId, agentId: parent.agentId }, reported })
+  }
+  return { version: SAVED_VERSION, parents, children }
+}
+
+/** The file in the data directory the links and queues are kept in. */
+export const LAUNCH_NOTICES_FILE = 'launch-notices.json'
+
+/** The links and queues kept in `file`, written whole and atomically. */
+export function launchNoticesFileStorage(file: string): LaunchNoticesStorage {
+  return {
+    async read() {
+      try {
+        return await readFile(file, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+        throw error
+      }
+    },
+    async write(body) {
+      await mkdir(dirname(file), { recursive: true })
+      await writeFileAtomically(file, body)
+    },
   }
 }
 

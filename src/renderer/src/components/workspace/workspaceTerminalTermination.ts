@@ -200,3 +200,29 @@ export async function suspendWorkspaceTerminals(workspace: Workspace): Promise<v
     suspendWorkspaceConversations(workspace),
   ])
 }
+
+/**
+ * What Snooze's suspend came to: the chat's processes paused, an agent found
+ * working when main was asked (left running), or the chat woken while main
+ * was being asked (left alone).
+ */
+export type SnoozeSuspendOutcome = 'suspended' | 'working' | 'woken'
+
+/**
+ * Snooze's suspend, guarded the way Settle's kill is
+ * (`terminateSettledWorkspaceTerminals`). The gesture checks for a working
+ * agent against the sidebar's last render, and suspending interrupts a
+ * running turn, so an agent that started since — a scheduled message landing,
+ * a reply from a paired phone — was cut off mid-turn by a Snooze that would
+ * have been refused a moment later. Main's own list is read first, and a chat
+ * working by then keeps its agents; so does one woken during that round trip.
+ */
+export async function suspendSnoozedWorkspaceTerminals(
+  workspace: Workspace,
+  stillSnoozed: () => boolean = () => true,
+): Promise<SnoozeSuspendOutcome> {
+  if (await workspaceWorkingNow(workspace)) return 'working'
+  if (!stillSnoozed()) return 'woken'
+  await suspendWorkspaceTerminals(workspace)
+  return 'suspended'
+}

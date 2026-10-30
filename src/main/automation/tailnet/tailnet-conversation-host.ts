@@ -522,7 +522,7 @@ function lifecycleOf(
     // How the chat began, which this desktop's row marks with the schedule's clock.
     ...(scheduledAgentId ? { scheduledAgentId } : {}),
     // Only a snooze still ahead: one that has run out is a row awake here.
-    ...(epoch(record?.snoozedUntil) && record.snoozedUntil > now
+    ...(epoch(record?.snoozedUntil) && record.snoozedUntil > now && !isSettledWorkspace(record)
       ? { snoozedUntil: Math.trunc(record.snoozedUntil) }
       : {}),
     // The row menu's star, colour and Auto-settle, which a paired device's

@@ -181,9 +181,13 @@ export function isSnoozeUnexpired(workspace: Pick<Workspace, 'snoozedUntil'>, no
   return hasSnooze(workspace) && (workspace.snoozedUntil as number) > now
 }
 
-/** The one answer to "is this row asleep right now?". */
-export function isSnoozedWorkspace(workspace: Pick<Workspace, 'snoozedUntil'>, now: number): boolean {
-  return isSnoozeUnexpired(workspace, now)
+/**
+ * The one answer to "is this row asleep right now?". Rest outranks sleep: a
+ * settled row keeps a snooze still ahead underneath its rest, to hand back if
+ * the Settle is undone (`settleWorkspacePatch`), and is not asleep meanwhile.
+ */
+export function isSnoozedWorkspace(workspace: Pick<Workspace, 'snoozedUntil' | 'settledAt'>, now: number): boolean {
+  return typeof workspace.settledAt !== 'number' && isSnoozeUnexpired(workspace, now)
 }
 
 /**

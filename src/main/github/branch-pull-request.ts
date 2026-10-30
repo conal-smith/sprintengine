@@ -182,6 +182,35 @@ export async function readPullRequestState(
 
 export type GhOutcome = { ok: true; stdout: string } | { ok: false; reason: PullRequestReadFailure; stderr?: string }
 
+/**
+ * When the API quota that refused a call comes back, ms epoch, or null when
+ * that cannot be said: the lookup failed, or no quota is spent, which is what
+ * a secondary (abuse) limit looks like. `GET /rate_limit` is not counted
+ * against any quota, so asking costs nothing while the limit holds. The
+ * pull request reads go through GraphQL and `gh pr checks` through REST, so
+ * either one being spent counts; the later reset is the one to wait for.
+ */
+export async function readRateLimitReset(host: string, deps: BranchPullRequestDeps = {}): Promise<number | null> {
+  if (!/^[a-z0-9.-]+(?::\d+)?$/i.test(host)) return null
+  const outcome = await runGh(['api', 'rate_limit', '--hostname', host], {}, deps)
+  if (!outcome.ok) return null
+  return parseRateLimitReset(parseJsonDocument(outcome.stdout))
+}
+
+/** `gh api rate_limit` → the latest reset among the spent quotas the reads use. Exported for the test. */
+export function parseRateLimitReset(json: unknown): number | null {
+  if (!isRecord(json) || !isRecord(json.resources)) return null
+  let latest: number | null = null
+  for (const name of ['graphql', 'core']) {
+    const quota = json.resources[name]
+    if (!isRecord(quota) || quota.remaining !== 0) continue
+    if (typeof quota.reset !== 'number' || !Number.isFinite(quota.reset) || quota.reset <= 0) continue
+    const at = quota.reset * 1000
+    if (latest === null || at > latest) latest = at
+  }
+  return latest
+}
+
 /** What `gh` prints on stderr when GitHub's API rate limit, or its secondary limit, refused a call. */
 const RATE_LIMITED = /\brate limit|\bAPI rate\b|abuse detection/i
 

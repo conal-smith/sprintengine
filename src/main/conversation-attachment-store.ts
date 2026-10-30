@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto'
-import { copyFile, lstat, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { copyFile, link, lstat, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { MAX_ATTACHMENT_BYTES } from '../shared/conversation-attachments'
 import type {
@@ -55,6 +55,24 @@ export class ConversationAttachmentStore {
       .slice(0, 32)
   }
 
+  /**
+   * The folder a conversation's sent images are kept in, absolute, or null
+   * when nothing is kept. The agent is told each image's file there
+   * ({@link pathFor}) and may read the folder, so it can do more with an image
+   * than look at it: attach it to a pull request, crop it, commit it.
+   */
+  directoryFor(key: ConversationKey): string | null {
+    const root = this.root
+    return root ? join(root, ConversationAttachmentStore.folderFor(key)) : null
+  }
+
+  /** The file a reference this store wrote names, absolute; null for anything else. */
+  pathFor(ref: unknown): string | null {
+    const root = this.root
+    const match = typeof ref === 'string' ? REF_PATTERN.exec(ref) : null
+    return root && match ? join(root, match[1], `${match[2]}.${match[3]}`) : null
+  }
+
   /** Writes each image and returns its reference; an image that cannot be written is left out, not fatal. */
   async save(
     key: ConversationKey,
@@ -94,8 +112,11 @@ export class ConversationAttachmentStore {
   /**
    * The same images kept for another conversation, for a fork: each file is
    * copied into that conversation's folder and its reference rewritten. One
-   * that cannot be copied keeps the reference it had, which still reads while
-   * the conversation it came from is kept.
+   * that cannot be copied is linked there instead (a hard link needs no room
+   * on the disk, and outlives the source's folder). One that can be neither
+   * still names the fork's own folder, so the fork's bubble says the image is
+   * gone: pointing it at the source's file would have it share a folder that
+   * deleting the source conversation removes.
    */
   async copy(attachments: unknown[], to: ConversationKey): Promise<unknown[]> {
     const root = this.root
@@ -111,12 +132,18 @@ export class ConversationAttachmentStore {
         continue
       }
       const file = `${match[2]}.${match[3]}`
-      try {
-        await copyFile(join(root, match[1], file), join(root, folder, file))
-        copied.push({ ...(attachment as object), ref: `${folder}/${file}` })
-      } catch {
-        copied.push(attachment)
-      }
+      const from = join(root, match[1], file)
+      const to = join(root, folder, file)
+      const kept = await copyFile(from, to).then(
+        () => true,
+        () =>
+          link(from, to).then(
+            () => true,
+            () => false,
+          ),
+      )
+      if (!kept) console.warn('[conversation-attachments] a forked image could not be kept for the fork:', ref)
+      copied.push({ ...(attachment as object), ref: `${folder}/${file}` })
     }
     return copied
   }

@@ -11,7 +11,9 @@ import {
   ScheduledAgentsServiceToken,
 } from '../module-host/service-tokens'
 import type { CapabilityModule } from '../module-host/load-modules'
+import { createScheduledPromptImages } from '../scheduled-agents/prompt-images'
 import { isRunChatWorking, runScheduledAgent } from '../scheduled-agents/runner'
+import { createScheduledRunOutcomes } from '../scheduled-agents/run-outcomes'
 import { createScheduledAgentsScheduler } from '../scheduled-agents/scheduler'
 import {
   createScheduledAgentsModuleRegistry,
@@ -73,52 +75,16 @@ export function createScheduledAgentsModule(
       // Late-bound: the scheduler reports a finished run to the service, which
       // is built around the scheduler.
       let service: ScheduledAgentsService | null = null
-      // A run's first message refused before its start was recorded, by the
-      // chat it started in: the start is recorded as that failure instead.
-      const refusedBeforeRecorded = new Map<string, string>()
-      const firstSendFailed = (agentId: string, workspaceId: string, message: string): void => {
-        void store
-          .failRun(agentId, workspaceId, message)
-          .then((failed) => {
-            if (failed) {
-              service?.notifyChanged()
-              return
-            }
-            refusedBeforeRecorded.set(workspaceId, message)
-            while (refusedBeforeRecorded.size > 32)
-              refusedBeforeRecorded.delete(refusedBeforeRecorded.keys().next().value!)
-          })
-          // The store refuses writes while its file cannot be read.
-          .catch((error: unknown) =>
-            console.warn(`[scheduled-agents] ${error instanceof Error ? error.message : String(error)}`),
-          )
-      }
+      const outcomes = createScheduledRunOutcomes({
+        store,
+        notifyRan: (agent, run) => service?.notifyRan(agent, run),
+        notifyChanged: () => service?.notifyChanged(),
+        warn: (message) => console.warn(`[scheduled-agents] ${message}`),
+      })
       const scheduler = createScheduledAgentsScheduler({
         list: () => store.list(),
-        recordRun: (id, run) => {
-          const refused = run.ok ? refusedBeforeRecorded.get(run.workspaceId) : undefined
-          if (refused === undefined || !run.ok) return store.recordRun(id, run)
-          refusedBeforeRecorded.delete(run.workspaceId)
-          return store.recordRun(id, { at: run.at, ok: false, message: refused })
-        },
-        onRan: (agent, run) => {
-          // Told first, so a one-time schedule's run is heard before the
-          // schedule closes and leaves the list.
-          service?.notifyRan(agent, run)
-          // A one-time schedule whose chat started has done its one job: it is
-          // closed, and its chat carries on as any other. One whose run failed
-          // stays, saying so, until the person has seen it.
-          if (agent.schedule.once !== undefined && run.ok) {
-            void store
-              .remove(agent.id)
-              .catch((error: unknown) =>
-                console.warn(`[scheduled-agents] ${error instanceof Error ? error.message : String(error)}`),
-              )
-              .then(() => service?.notifyChanged())
-            return
-          }
-          service?.notifyChanged()
-        },
+        recordRun: outcomes.recordRun,
+        onRan: outcomes.onRan,
         isRunWorking: (workspaceId) => {
           const listed = conversations.listSessions({ workspaceId })
           return listed.ok && isRunChatWorking(listed.sessions)
@@ -196,12 +162,16 @@ export function createScheduledAgentsModule(
                 }
                 await withGitHost(gitHostFor(hostId), () => removeGitWorktree({ repoRoot, path, force: true }))
               },
-              onFirstSendFailed: (workspaceId, message) => firstSendFailed(agent.id, workspaceId, message),
+              onFirstSendFailed: (workspaceId, message) => outcomes.firstSendFailed(agent.id, workspaceId, message),
             },
             signal,
           ),
       })
-      const scheduledAgents = createScheduledAgentsService({ store, scheduler })
+      const scheduledAgents = createScheduledAgentsService({
+        store,
+        scheduler,
+        promptImages: createScheduledPromptImages({ dataDir: platform.paths.dataDir() }),
+      })
       service = scheduledAgents
       host.provideService(ScheduledAgentsServiceToken, () => scheduledAgents)
       host.provideService(ScheduledAgentsModuleServiceToken, () =>

@@ -5,6 +5,7 @@ import {
   createUsageLimitsStore,
   forwardStatusLineRateLimits,
   noteStatusLineRateLimits,
+  resetUsageLimitsStore,
   usageLimitsStore,
 } from './store'
 
@@ -63,9 +64,25 @@ test('a full window without a word on status is at its limit, and a window that 
   expect(store.state().snapshots[0].windows[0].status).toBe('allowed')
 })
 
-test('an API-billed provider shows nothing and forgets what a subscription reported', () => {
+test('an API-billed provider shows nothing and forgets what an earlier run read under a subscription', () => {
   const { store } = storeAt()
-  store.noteWindows('claude', [{ id: 'five_hour', usedPercent: 10, resetsAt: T0 + HOUR }])
+  store.restore([
+    {
+      provider: 'claude',
+      billing: 'subscription',
+      windows: [
+        {
+          id: 'five_hour',
+          label: 'five_hour',
+          usedPercent: 10,
+          resetsAt: T0 + HOUR,
+          status: 'allowed',
+          observedAt: T0,
+        },
+      ],
+      observedAt: T0,
+    },
+  ])
   store.noteWindows('codex', [{ id: 'codex:primary', usedPercent: 30, resetsAt: T0 + HOUR }])
   store.noteBilling('claude', 'api')
   expect(store.state().snapshots.map((snapshot) => snapshot.provider)).toEqual(['codex'])
@@ -76,6 +93,33 @@ test('an API-billed provider shows nothing and forgets what a subscription repor
   store.onLimitHit((hit) => hits.push(hit))
   store.noteLimitHit({ provider: 'claude', sessionId: 's1', resetsAt: null, windowId: null })
   expect(hits).toEqual([])
+})
+
+test('a chat on an API key leaves the windows a subscription chat reports this run alone', () => {
+  const { store } = storeAt()
+  store.noteBilling('claude', 'subscription', 'max')
+  store.noteWindows('claude', [{ id: 'five_hour', usedPercent: 100, resetsAt: T0 + HOUR, status: 'rejected' }])
+  store.noteLimitHit({ provider: 'claude', sessionId: 's1', resetsAt: T0 + HOUR, windowId: 'five_hour' })
+  // Another chat starts on a key, a cloud provider or a gateway.
+  store.noteBilling('claude', 'api')
+  const claude = store.state().snapshots.find((snapshot) => snapshot.provider === 'claude')
+  expect(claude?.plan).toBe('max')
+  expect(claude?.windows.map((window) => [window.id, window.usedPercent])).toEqual([['five_hour', 100]])
+  expect(store.persisted().map((snapshot) => snapshot.provider)).toEqual(['claude'])
+  expect(store.rateLimit('claude')).toEqual({ limited: true, resetsAt: T0 + HOUR, windowId: 'five_hour' })
+  // The subscription chat's next limit is still heard.
+  const hits: UsageLimitHit[] = []
+  store.onLimitHit((hit) => hits.push(hit))
+  store.noteLimitHit({ provider: 'claude', sessionId: 's1', resetsAt: T0 + HOUR, windowId: 'five_hour' })
+  expect(hits).toHaveLength(1)
+})
+
+test('a subscription that has only signed in this run keeps its plan past a chat on an API key', () => {
+  const { store } = storeAt()
+  store.noteBilling('claude', 'subscription', 'pro')
+  store.noteBilling('claude', 'api')
+  store.noteWindows('claude', [{ id: 'five_hour', usedPercent: 5, resetsAt: T0 + HOUR }])
+  expect(store.state().snapshots[0]?.plan).toBe('pro')
 })
 
 test('a subscription with nothing reported yet shows nothing rather than a guess', () => {
@@ -251,5 +295,5 @@ test('a status line’s reading lands in this process’s store and goes to what
     .state()
     .snapshots.find((snapshot) => snapshot.provider === 'claude')
   expect(claude?.windows.find((window) => window.id === 'five_hour')?.usedPercent).toBe(64)
-  usageLimitsStore().noteBilling('claude', 'api')
+  resetUsageLimitsStore()
 })

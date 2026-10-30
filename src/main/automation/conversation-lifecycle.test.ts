@@ -75,7 +75,7 @@ test('settling writes the row menu’s own Settle patch, as the paired device', 
   assert.deepEqual(f.writes, [
     {
       workspaceId: 'ws-1',
-      patch: settleWorkspacePatch({ lastTerminalActivityAt: 500 }, NOW, 'settled'),
+      patch: settleWorkspacePatch({ lastTerminalActivityAt: 500, snoozedUntil: 2_000_000 }, NOW, 'settled'),
       actor: 'mobile',
     },
   ])
@@ -87,6 +87,23 @@ test('settled: false brings a chat back and holds it out of the sweep, as Un-set
   assert.deepEqual(result.structuredContent, { ok: true, workspaceId: 'ws-1', settledAt: null })
   assert.deepEqual(f.writes, [
     { workspaceId: 'ws-1', patch: { settledAt: null, settledOverride: 'active' }, actor: 'gateway' },
+  ])
+})
+
+test('bringing a chat back hands back a snooze its Settle kept, and drops one that ran out meanwhile', async () => {
+  const kept = fixture({ settledAt: 900, settledOverride: 'settled', snoozedUntil: 2_000_000 })
+  await kept.settle.handler({ workspaceId: 'ws-1', settled: false })
+  assert.deepEqual(kept.writes, [
+    { workspaceId: 'ws-1', patch: { settledAt: null, settledOverride: 'active' }, actor: 'gateway' },
+  ])
+  const ranOut = fixture({ settledAt: 900, settledOverride: 'settled', snoozedUntil: 950 })
+  await ranOut.settle.handler({ workspaceId: 'ws-1', settled: false })
+  assert.deepEqual(ranOut.writes, [
+    {
+      workspaceId: 'ws-1',
+      patch: { settledAt: null, settledOverride: 'active', snoozedUntil: null },
+      actor: 'gateway',
+    },
   ])
 })
 

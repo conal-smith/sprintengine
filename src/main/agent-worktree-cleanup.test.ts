@@ -373,3 +373,32 @@ test('a chat whose session starts in a worktree while it is being checked keeps 
   assert.equal(report.entries.find((entry) => entry.path === returning)?.verdict, 'in-use')
   assert.ok(await exists(returning))
 })
+
+test('an agent worktree whose folder was deleted is forgotten by git, so its merged branch can go', async () => {
+  const gone = await addWorktree('folder-deleted')
+  const handMade = await addWorktree('hand-made-deleted', 'sprintengine/hand-made-deleted')
+  await rm(gone, { recursive: true, force: true })
+  await rm(handMade, { recursive: true, force: true })
+
+  const dry = await cleanupAgentWorktrees(
+    { repoRoot: repo, protectedPaths: [], dryRun: true },
+    { log: () => {}, now: later },
+  )
+  const dryVerdicts = Object.fromEntries(dry.entries.map((entry) => [entry.path.split('/').pop(), entry.verdict]))
+  assert.equal(dryVerdicts['folder-deleted'], 'removed')
+  assert.match(await git(repo, 'worktree', 'list'), /folder-deleted/, 'a dry run forgets nothing')
+
+  const real = await cleanupAgentWorktrees(
+    { repoRoot: repo, protectedPaths: [], keepBranches: [] },
+    { log: () => {}, now: later },
+  )
+  const verdicts = Object.fromEntries(real.entries.map((entry) => [entry.path.split('/').pop(), entry.verdict]))
+  assert.equal(verdicts['folder-deleted'], 'removed')
+  // Not the app's: its folder may be on a volume that is not mounted.
+  assert.equal(verdicts['hand-made-deleted'], 'missing')
+  const listed = await git(repo, 'worktree', 'list')
+  assert.doesNotMatch(listed, /folder-deleted/, 'git no longer holds it')
+  assert.match(listed, /hand-made-deleted/, 'a worktree the app did not make keeps its note')
+  assert.equal(await git(repo, 'branch', '--list', 'agent/folder-deleted'), '', 'its branch, merged, is deleted')
+  assert.ok(real.deletedBranches?.includes('agent/folder-deleted'))
+})

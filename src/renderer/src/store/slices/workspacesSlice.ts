@@ -437,6 +437,35 @@ function clearRoutedSurfaces(state: WorkspacesSliceCarrier): void {
   state.activeModalSurfaceWorkspaceId = null
 }
 
+// What opening a chat means beyond pointing a window at it, said in one place
+// so every door does it: a row click, a notification's Reveal, Back and
+// Forward, the number keys, the palette. Opening spends the chat's snooze
+// (snooze, 2026-09-10) — a running one, because you are here now and "not
+// now" is over, and a spent one, because the Woke mark exists to get you to
+// this exact click. A door that skipped this showed a sleeping chat (the row
+// in front is never shelved) and dropped it back into the shelf the moment
+// you left it, still asleep and with its Woke mark still up.
+//
+// Two halves, because one runs before the store moves and one inside it. The
+// opening is said before the chat is drawn so its view mounts at the "New"
+// divider (`unreadDivider.ts`), with the visit clock as it stands before this
+// opening is stamped. A chat followed from another machine keeps its clock
+// there, and the sidebar's visit target says its opening with that clock.
+function noteWorkspaceOpening(state: WorkspacesSliceCarrier, id: WorkspaceId): void {
+  const opened = state.workspaces.find((w) => w.id === id)
+  if (opened && !opened.remoteOrigin)
+    noteChatOpened(id, typeof opened.lastVisitedAt === 'number' ? opened.lastVisitedAt : null, Date.now())
+}
+
+/** Inside the store update: spends the opened chat's snooze, and returns the patch to report, if any. */
+function spendSnoozeOnOpening(state: WorkspacesSliceCarrier, id: WorkspaceId): WorkspaceFieldsPatch | null {
+  const ws = state.workspaces.find((w) => w.id === id)
+  if (!ws || !hasSnooze(ws)) return null
+  const patch = wakeSnoozedWorkspacePatch()
+  Object.assign(ws, patch)
+  return patch
+}
+
 function findWorkspaceWindow(
   state: WorkspacesSliceCarrier,
   workspaceId: WorkspaceId,
@@ -766,6 +795,10 @@ export function createWorkspacesSlice(
 
     setActiveWorkspaceForWindow: (windowId, workspaceId) => {
       let changed = false
+      let snoozePatch: WorkspaceFieldsPatch | null = null
+      const before = getState()
+      if (before.workspaceWindows.find((candidate) => candidate.id === windowId)?.workspaceIds.includes(workspaceId))
+        noteWorkspaceOpening(before, workspaceId)
       set((state) => {
         const windowState = state.workspaceWindows.find((candidate) => candidate.id === windowId)
         if (!windowState?.workspaceIds.includes(workspaceId)) return
@@ -776,7 +809,13 @@ export function createWorkspacesSlice(
         // Leaving a door-routed full-page surface for a workspace (epic 1704);
         // an open modal closes with it so the workspace lands unobscured.
         clearRoutedSurfaces(state)
+        // The same opening as `setActiveWorkspace`'s: every door spends the
+        // snooze and says the opening (`noteWorkspaceOpening`).
+        snoozePatch = spendSnoozeOnOpening(state, workspaceId)
       })
+      // A hand gesture, reported once by the window that made it. The active
+      // change below is a separate event and carries no fields.
+      if (snoozePatch) void workspaceSyncClient.dispatchUpdateWorkspaceFields(workspaceId, snoozePatch)
       // Local state is the functional path (storage-event sync still mirrors it
       // to other windows as rollback). When the active selection actually
       // changes, also dispatch it through main so the event bus can broadcast it
@@ -973,7 +1012,7 @@ export function createWorkspacesSlice(
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws) return
-        patch = settled ? settleWorkspacePatch(ws, Date.now(), 'settled') : wakeWorkspacePatch('active')
+        patch = settled ? settleWorkspacePatch(ws, Date.now(), 'settled') : wakeWorkspacePatch('active', ws, Date.now())
         Object.assign(ws, patch)
       })
       // A hand gesture is this window's to report, whichever window routes the row.
@@ -1113,7 +1152,7 @@ export function createWorkspacesSlice(
           },
         })
         if (decision === 'none') continue
-        const patch = decision === 'settle' ? settleWorkspacePatch(ws, now, null) : wakeWorkspacePatch(null)
+        const patch = decision === 'settle' ? settleWorkspacePatch(ws, now, null) : wakeWorkspacePatch(null, ws, now)
         patches.push([ws.id, patch])
         if (decision === 'settle') settledIds.push(ws.id)
       }
@@ -1156,8 +1195,9 @@ export function createWorkspacesSlice(
         const syncClock = synced === undefined || lastInputAt - synced >= WORKSPACE_ACTIVITY_CLOCK_SYNC_MS
         const speaks = thisWindowSpeaksFor(state, id)
         if (isSettledWorkspace(ws) || ws.settledOverride != null) {
-          Object.assign(ws, wakeWorkspacePatch(null))
-          if (speaks) patch = { ...wakeWorkspacePatch(null), lastTerminalActivityAt: lastInputAt }
+          const wake = wakeWorkspacePatch(null, ws, lastInputAt)
+          Object.assign(ws, wake)
+          if (speaks) patch = { ...wake, lastTerminalActivityAt: lastInputAt }
         } else if (syncClock && speaks) {
           patch = { lastTerminalActivityAt: lastInputAt }
         }
@@ -1196,8 +1236,9 @@ export function createWorkspacesSlice(
           // The wake lands locally whichever window saw the message; only the
           // window that speaks for the row tells main, exactly as the
           // keystroke path does.
-          Object.assign(ws, wakeWorkspacePatch(null))
-          if (speaks) patch = { ...wakeWorkspacePatch(null), lastUserMessageAt: at }
+          const wake = wakeWorkspacePatch(null, ws, at)
+          Object.assign(ws, wake)
+          if (speaks) patch = { ...wake, lastUserMessageAt: at }
         } else if (speaks) {
           patch = { lastUserMessageAt: at }
         }
@@ -1554,19 +1595,10 @@ export function createWorkspacesSlice(
     },
 
     setActiveWorkspace: (id) => {
-      // Opening a chat spends its snooze (snooze, 2026-09-10) — both a running
-      // one, because you are here now and "not now" is over, and a spent one,
-      // because the Woke mark exists to get you to this exact click and has
-      // nothing left to say once you have made it.
+      // Opening a chat spends its snooze and says its opening, whichever door
+      // it came through (`noteWorkspaceOpening`, `spendSnoozeOnOpening`).
       let snoozePatch: WorkspaceFieldsPatch | null = null
-      // The opening, said before the chat is drawn so its view mounts at the
-      // "New" divider (`unreadDivider.ts`), with the visit clock as it stands
-      // before this opening is stamped. A chat followed from another machine
-      // keeps its clock there, and the sidebar's visit target says its
-      // opening with that clock as the machine's list reads it.
-      const opened = getState().workspaces.find((w) => w.id === id)
-      if (opened && !opened.remoteOrigin)
-        noteChatOpened(id, typeof opened.lastVisitedAt === 'number' ? opened.lastVisitedAt : null, Date.now())
+      noteWorkspaceOpening(getState(), id)
       set((state) => {
         state.activeWorkspaceId = id
         // Leaving a door-routed full-page surface for a workspace (epic 1704);
@@ -1578,11 +1610,7 @@ export function createWorkspacesSlice(
           windowState.activeWorkspaceId = id
           windowState.lastFocusedAt = seenAt
         }
-        const ws = state.workspaces.find((w) => w.id === id)
-        if (ws && hasSnooze(ws)) {
-          snoozePatch = wakeSnoozedWorkspacePatch()
-          Object.assign(ws, snoozePatch)
-        }
+        snoozePatch = spendSnoozeOnOpening(state, id)
       })
       // Selecting is a hand gesture, reported by the window that made it — the
       // rule `setWorkspaceSettled` follows, for the same reason.

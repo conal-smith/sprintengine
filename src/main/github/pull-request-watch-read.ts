@@ -16,6 +16,14 @@
 //   error saying so, which is read as "none required"; any other failure
 //   leaves it unknown, and the watch then waits on every check.
 //
+// A review left only as comments on lines has an empty body in `gh pr view`,
+// which does not list those comments, so it would reach the agent as "X
+// reviewed it" and nothing more. For such a review, written since the watch
+// began and not cached yet, a third call (`gh api graphql`) reads its line
+// comments: at most {@link MAX_INLINE_REVIEWS_PER_READ} reviews per read, each
+// read once per run (`inlineCache`), so a long review conversation does not
+// turn every probe into several calls.
+//
 // Nothing is guessed: a read that could not be made is unsettled, with the
 // reason, and the caller leaves what it knew alone (`branch-pull-request.ts`
 // sets that rule). A rate limit is its own reason, because it is a wait and
@@ -61,6 +69,14 @@ export const WATCH_VIEW_FIELDS = [
 
 const REQUIRED_CHECK_FIELDS = 'name,workflow'
 
+/** The most inline-only reviews one read asks about; the rest wait for the next probe. */
+export const MAX_INLINE_REVIEWS_PER_READ = 5
+/** The line comments read per review, and the most text kept from them. */
+const INLINE_COMMENTS_PER_REVIEW = 10
+const MAX_INLINE_CHARS = 4000
+/** The most reviews an inline cache remembers; the oldest go first. */
+export const MAX_INLINE_CACHE_ENTRIES = 500
+
 /** One check on the head, its runs folded into one (see `foldCheckRuns`). */
 export type WatchedCheck = {
   name: string
@@ -85,6 +101,20 @@ export type WatchedRemark = {
   at: number
   /** The account `gh` is signed in as wrote it: the agent itself. */
   own: boolean
+  /**
+   * A review's comments on lines, `path:line: text` each, for a review whose
+   * own body is empty. Kept apart from `body`, so what counts as an edit is
+   * unchanged by whether they could be read.
+   */
+  inline?: string
+}
+
+/** What a read may do beyond the pull request view. Absent, it reads no line comments. */
+export type PullRequestWatchReadOptions = {
+  /** Only reviews written after this (ms epoch) are worth their line comments: older ones are never news. */
+  inlineSince?: number
+  /** Review id → its line comments, read once per run and shared across reads. */
+  inlineCache?: Map<string, string>
 }
 
 export type PullRequestWatchRead =
@@ -123,6 +153,7 @@ export function checkKey(check: Pick<WatchedCheck, 'workflow' | 'name'>): string
 export async function readPullRequestWatch(
   url: string,
   deps: BranchPullRequestDeps = {},
+  options: PullRequestWatchReadOptions = {},
 ): Promise<PullRequestWatchRead> {
   const parsed = parsePullRequestUrl(url?.trim() ?? '')
   if (!parsed || 'unsupported' in parsed) return { settled: false, reason: 'bad-request' }
@@ -140,7 +171,80 @@ export async function readPullRequestWatch(
     const required = await runGh(['pr', 'checks', target, '--required', '--json', REQUIRED_CHECK_FIELDS], {}, deps)
     read.requiredChecks = parseRequiredChecks(required)
   }
+  if (options.inlineCache) await fillInlineComments(read.remarks, parsed.host, options.inlineCache, options, deps)
   return read
+}
+
+const REVIEW_NODE_ID = /^[A-Za-z0-9_-]{1,100}$/
+
+/**
+ * Line comments for the inline-only reviews among `remarks`, from the cache or
+ * one bounded GraphQL call. A call that fails leaves those reviews as they
+ * were (and uncached, so the next read asks again).
+ */
+async function fillInlineComments(
+  remarks: WatchedRemark[],
+  host: string,
+  cache: Map<string, string>,
+  options: PullRequestWatchReadOptions,
+  deps: BranchPullRequestDeps,
+): Promise<void> {
+  const since = options.inlineSince ?? 0
+  const wanted = remarks.filter(
+    (remark) => remark.kind === 'review' && !remark.own && remark.body.trim() === '' && REVIEW_NODE_ID.test(remark.id),
+  )
+  const ask = wanted
+    .filter((remark) => !cache.has(remark.id) && remark.at > since)
+    .slice(0, MAX_INLINE_REVIEWS_PER_READ)
+  if (ask.length > 0) {
+    const query = `query{nodes(ids:[${ask.map((remark) => JSON.stringify(remark.id)).join(',')}]){... on PullRequestReview{id comments(first:${INLINE_COMMENTS_PER_REVIEW}){nodes{path line originalLine body}}}}}`
+    const answered = await runGh(['api', 'graphql', '--hostname', host, '-f', `query=${query}`], {}, deps)
+    if (answered.ok) {
+      for (const [id, text] of parseInlineComments(parseJsonDocument(answered.stdout))) remember(cache, id, text)
+    }
+  }
+  for (const remark of wanted) {
+    const inline = cache.get(remark.id)
+    if (inline) remark.inline = inline
+  }
+}
+
+function remember(cache: Map<string, string>, id: string, text: string): void {
+  cache.delete(id)
+  cache.set(id, text)
+  while (cache.size > MAX_INLINE_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+}
+
+/** The GraphQL answer → review id and its line comments as text ('' for a review with none). Exported for the test. */
+export function parseInlineComments(json: unknown): Array<[string, string]> {
+  if (!isRecord(json) || !isRecord(json.data) || !Array.isArray(json.data.nodes)) return []
+  const found: Array<[string, string]> = []
+  for (const node of json.data.nodes) {
+    if (!isRecord(node)) continue
+    const id = nonEmpty(node.id)
+    if (!id || !isRecord(node.comments) || !Array.isArray(node.comments.nodes)) continue
+    const lines: string[] = []
+    for (const comment of node.comments.nodes) {
+      if (!isRecord(comment)) continue
+      const body = nonEmpty(comment.body)
+      if (!body) continue
+      const path = nonEmpty(comment.path)
+      const line =
+        typeof comment.line === 'number'
+          ? comment.line
+          : typeof comment.originalLine === 'number'
+            ? comment.originalLine
+            : null
+      const where = path ? `${path}${line === null ? '' : `:${line}`}: ` : ''
+      lines.push(`${where}${body}`)
+    }
+    found.push([id, lines.join('\n').slice(0, MAX_INLINE_CHARS)])
+  }
+  return found
 }
 
 /** `gh pr view --json` → the watch's read. Exported for the fixture test. */

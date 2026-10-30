@@ -19,6 +19,7 @@ import { refuseScheduledAgentRun } from '../automation/launch-permission-cap'
 import { moduleConversationCeiling } from '../module-host/module-conversation-service'
 import { clampToModuleToolCaller, moduleToolCallerCeiling } from '../module-host/module-tool-caller'
 import type { ScheduledAgentsScheduler } from './scheduler'
+import type { ScheduledPromptImages } from './prompt-images'
 import type { ScheduledAgentsStore } from './store'
 
 /** Lowers a validated draft's preset before it is stored; the identity when absent. */
@@ -83,6 +84,8 @@ export type ScheduledAgentsServiceDeps = {
   store: ScheduledAgentsStore
   scheduler: ScheduledAgentsScheduler
   now?: () => number
+  /** Keeps the images a prompt names past the temp folder's clearing (`prompt-images.ts`). Absent, prompts are stored as written. */
+  promptImages?: ScheduledPromptImages
 }
 
 export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): ScheduledAgentsService {
@@ -95,6 +98,13 @@ export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): 
     nextRunAt: deps.scheduler.nextRunAt(agent.id),
   })
   const listViews = (): ScheduledAgentView[] => deps.store.list().map(view)
+  // A prompt's temp images, copied where a later run can still read them.
+  const withKeptImages = async (draft: ScheduledAgentDraft): Promise<ScheduledAgentDraft> =>
+    deps.promptImages ? { ...draft, prompt: await deps.promptImages.keep(draft.prompt) } : draft
+  const pruneImages = (): void => {
+    if (!deps.promptImages) return
+    void deps.promptImages.prune(deps.store.list().map((agent) => agent.prompt)).catch(() => undefined)
+  }
   const changed = (): void => {
     deps.scheduler.refresh()
     const views = listViews()
@@ -129,7 +139,7 @@ export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): 
     async create(input, options) {
       const validated = validateScheduledAgentDraft(input, now())
       if (!validated.ok) return validated
-      const draft = capped(validated.draft, options?.capPreset)
+      const draft = await withKeptImages(capped(validated.draft, options?.capPreset))
       let created: ScheduledAgent
       try {
         created = await deps.store.create(draft, options?.ownerModuleId ?? null)
@@ -137,6 +147,7 @@ export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): 
         return refused(error)
       }
       changed()
+      pruneImages()
       return { ok: true, agent: view(created) }
     },
     async update(id, input, options) {
@@ -146,12 +157,13 @@ export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): 
       if (!validated.ok) return validated
       let updated: ScheduledAgent | null
       try {
-        updated = await deps.store.update(id, capped(validated.draft, options?.capPreset))
+        updated = await deps.store.update(id, await withKeptImages(capped(validated.draft, options?.capPreset)))
       } catch (error) {
         return refused(error)
       }
       if (!updated) return notFound(id)
       changed()
+      pruneImages()
       return { ok: true, agent: view(updated) }
     },
     async remove(id, options) {
@@ -163,6 +175,7 @@ export function createScheduledAgentsService(deps: ScheduledAgentsServiceDeps): 
         return refused(error)
       }
       changed()
+      pruneImages()
       return { ok: true }
     },
     async runNow(id, options) {

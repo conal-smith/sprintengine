@@ -20,7 +20,7 @@
   "scripts": {
     "start": "node scripts/dev.js",
     "dev": "node scripts/dev.js",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node scripts/check-sandboxed-preloads.mjs",
     "build:server": "node scripts/build-server.mjs",
     "build:server:wsl": "node scripts/build-server.mjs --wsl",
     "build:web": "vite build --config vite.web.config.ts",

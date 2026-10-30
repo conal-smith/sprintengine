@@ -10,6 +10,8 @@ import type { PullRequestWatchRead, WatchedCheck } from '../../main/github/pull-
 import {
   createPullRequestRecord,
   pullRequestStorePath,
+  RATE_LIMIT_FALLBACK_HOLD_MS,
+  RATE_LIMIT_MAX_HOLD_MS,
   WATCH_MAX_AGE_MS,
   type PullRequestRecordOptions,
   type PullRequestWatchNewsEvent,
@@ -107,6 +109,7 @@ async function setUp(extra: Partial<PullRequestRecordOptions> = {}) {
         watchReads.push(url)
         return nextWatchRead
       },
+      readRateLimitReset: async () => null,
     },
     onWatchNews: (event) => news.push(event),
     now: clock.nowMs,
@@ -211,15 +214,19 @@ test('a merge is said and ends the watch, and its timer with it', async () => {
 })
 
 test('eight failed reads end the watch and say so; a rate limit only waits', async () => {
-  const { record, news, answer, probe } = await setUp()
+  const { record, news, answer, probe, clock, watchReads } = await setUp()
   await record.watch(CHAT, { url: PR })
   await record.flush()
   answer({ settled: false, reason: 'rate-limited' })
   for (let index = 0; index < 10; index += 1) await probe()
   assert.equal(news.length, 0)
   assert.ok(record.watches().length === 1)
+  // The probes inside the rate-limit hold read nothing; eight that do read end it.
   answer({ settled: false, reason: 'gh-failed' })
-  for (let index = 0; index < 8; index += 1) await probe()
+  const failingFrom = watchReads.length
+  for (let index = 0; index < 40 && news.length === 0; index += 1) await probe()
+  assert.equal(watchReads.length - failingFrom, 8)
+  assert.ok(clock.nowMs() > NOW + RATE_LIMIT_FALLBACK_HOLD_MS)
   assert.deepEqual(
     news.map((event) => event.wake.stop),
     ['unreadable'],
@@ -360,4 +367,54 @@ test('a head no check reports on is told once, and neither watching again nor a 
   assert.ok(watchReads - readsBefore >= 25, `read ${watchReads - readsBefore} times after the restart`)
   assert.deepEqual(told(), ['no-checks'], 'a restart does not tell the same head again')
   reopened.dispose()
+})
+
+test('a rate limit holds every read on its host until the quota resets', async () => {
+  const resetIn = 20 * 60_000
+  const lookups: string[] = []
+  let clockNow = () => NOW
+  const { record, watchReads, stateReads, answer, probe, clock } = await setUp({
+    reads: {
+      readPullRequestState: async (url) => {
+        stateReads.push(url)
+        return opened()
+      },
+      readPullRequestWatch: async (url) => {
+        watchReads.push(url)
+        return nextRead
+      },
+      readRateLimitReset: async (host) => {
+        lookups.push(host)
+        return clockNow() + resetIn
+      },
+    },
+  })
+  clockNow = clock.nowMs
+  let nextRead: PullRequestWatchRead = watchRead()
+  const OTHER = 'https://github.com/acme/app/pull/235'
+  await record.watch(CHAT, { url: PR })
+  await record.noteOpened(CHAT, { url: OTHER })
+  await record.flush()
+  const before = { watch: watchReads.length, state: stateReads.length }
+
+  nextRead = { settled: false, reason: 'rate-limited' }
+  answer(nextRead)
+  await probe()
+  assert.equal(watchReads.length, before.watch + 1, 'the read that was refused')
+  assert.deepEqual(lookups, ['github.com'], 'asked once when the quota comes back')
+
+  // Every probe until the reset is skipped, for this pull request and the other.
+  const heldReads = { watch: watchReads.length, state: stateReads.length }
+  while (clock.nowMs() < NOW + resetIn - 60_000) await probe()
+  assert.deepEqual({ watch: watchReads.length, state: stateReads.length }, heldReads)
+  record.refreshOutstanding()
+  await record.flush()
+  assert.deepEqual({ watch: watchReads.length, state: stateReads.length }, heldReads, 'a refresh waits too')
+
+  nextRead = watchRead()
+  while (clock.nowMs() < NOW + resetIn + 3 * 60_000) await probe()
+  assert.ok(watchReads.length > heldReads.watch, 'reads resume once the quota is back')
+  assert.ok(stateReads.length > heldReads.state)
+  assert.ok(RATE_LIMIT_MAX_HOLD_MS >= resetIn)
+  record.dispose()
 })

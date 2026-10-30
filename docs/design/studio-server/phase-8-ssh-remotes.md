@@ -537,7 +537,7 @@ never run two bootstraps at once.
 | Upgrading | old server exited after `server.shutdown { drain: true }` | drain budget 60 s (turns finish or suspend), then SIGTERM, 10 s, SIGKILL | "The old server on build-box didn't stop" |
 | Relaying | `@@SPRINTENGINE_RELAY` | 10 s | — |
 | Handshaking | `welcome` | 10 s | window mismatch → VersionBlocked |
-| Reconnecting | Connected | backoff 1, 2, 4 … 30 s, reset on wake or network change | after 10 min: Disconnected with "last reached …" |
+| Reconnecting | Connected | backoff 1, 2, 4 … 30 s, reset on wake or network change | after 10 min awake: Disconnected with "last reached …"; a wake or network change tries again |
 
 As built (2026-10-03), `src/main/environments/ssh/ssh-environment.ts`:
 
@@ -844,7 +844,7 @@ one per SSH environment, in main:
 | Relaying, Handshaking, Connected | `CONNECT`s flow. |
 | Reconnecting, NeedsSignIn, Disconnected | The listener stays bound. Streams that were open die with the session, so Chromium shows its own error page, and a dev page's hot-reload client retries on its own. A new `CONNECT` waits up to 10 s for the relay, then gets 0x04. The pane shows a line in words: "build-box is reconnecting. This tab's network goes through it." |
 | Resolving to Locating, Starting, Upgrading | As Reconnecting: there is no relay yet. |
-| Sleep, wake, network change | The session is restarted (section 7); as Reconnecting. |
+| Sleep, wake, network change | The session is asked to answer, and restarted if it does not (section 7); as Reconnecting. |
 | Forget | The listener closes. "Also clear build-box's browsing data" calls `session.clearStorageData()` on the partition. |
 | App quit | The listener closes with main. |
 
@@ -977,9 +977,15 @@ one per SSH environment, in main:
 
 - **Keepalive**: `ServerAliveInterval=15`, `ServerAliveCountMax=3`: a silent
   path is noticed within 45 s (E4.8 measured 6 s at 2×2).
-- **Sleep and wake**: main's `powerMonitor` `resume` and a network change (an
-  `online` event, or a new default route) kill the SSH process at once and
-  reconnect, instead of waiting for keepalive to time out on a dead socket.
+- **Sleep and wake**: main's `powerMonitor` `resume`, a screen unlock and a
+  network change (an `online` event, or a new default route) ask a connected
+  session to answer within 10 s, instead of waiting for keepalive to time out
+  on a dead socket. One that answers is kept; one that does not is killed and
+  reconnected. Killing it unasked cost a full ssh handshake on every unlock,
+  and a key whose passphrase is not in ssh-agent cannot make one in the
+  background. A wake also restarts a reconnect's ten minutes (time asleep is
+  not time spent trying) and lets a machine that gave up (Disconnected) try
+  again; Needs sign-in and the person's own Disconnect stay held.
 - **Reconnect**: `BatchMode=yes`, backoff 1 → 30 s, reset on wake. On success
   the client resumes every open stream with its `afterSeq` and `generation`
   (parent 5.1); a cursor the server cannot vouch for gets a reset snapshot.

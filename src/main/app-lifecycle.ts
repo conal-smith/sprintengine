@@ -161,6 +161,9 @@ type RegisterAppLifecycleOptions = {
   // the chats do; one due during the quit would start an agent on the way out.
   usageLimitResumes?: { dispose(): Promise<void> }
   scheduledMessages?: { dispose(): Promise<void> }
+  // Who launched which agent, kept for after a restart. Written first, before
+  // any session closes: the closes a quit makes are not parents going away.
+  launchNotices?: { freeze(): Promise<void> }
   // Product telemetry. Given a shutdown leg of its own because everything above
   // it can emit a final event, and the buffer is in memory, so a quit that does
   // not drain it loses the whole session's tail.
@@ -260,6 +263,7 @@ export function registerAppLifecycle({
   localServers,
   usageLimitResumes,
   scheduledMessages,
+  launchNotices,
   analytics,
   moduleKernel,
   moduleLoadReady,
@@ -765,6 +769,7 @@ export function registerAppLifecycle({
           hostedFeedPoller?.stop()
         },
       ],
+      ['launch notices', () => launchNotices?.freeze()],
       // Before the gateway, whose audit it writes to: its clients are told to
       // come back later, and resume from their cursors.
       ['local app socket', () => studioRpcService?.stop()],
@@ -823,6 +828,7 @@ export function registerAppLifecycle({
           hostedFeedPoller?.stop()
         },
       ],
+      ['launch notices', () => launchNotices?.freeze()],
       ['dependency installs', () => dependencyInstaller?.shutdown()],
       ['browser recordings', () => browserRecorder?.stopAll('app_quit')],
       // The canvas's last board write lands before the server stops serving.

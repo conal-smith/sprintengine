@@ -308,6 +308,9 @@ type SessionState = {
   // it unasked. `owed` until a message has pointed the session at it
   // (handoffSeedText); a message that is a command does not.
   handoff: { path: string; owed: boolean } | null
+  // Folders outside the workspace the agent is handed files in, read without
+  // asking (`readableDirectories`, the images sent with its turns).
+  readableDirectories?: string[]
   query: Query | null
   inputQueue: PushStream<SDKUserMessage> | null
   abort: AbortController | null
@@ -1135,7 +1138,11 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
     const abort = new AbortController()
     const permissionMode = nativePermissionMode(state, state.mode)
     const handoffRule = handoffReadRule(state)
-    const allowedTools = [...(state.allowedTools ?? []), ...(handoffRule ? [handoffRule] : [])]
+    const allowedTools = [
+      ...(state.allowedTools ?? []),
+      ...(handoffRule ? [handoffRule] : []),
+      ...readableDirectoryRules(state),
+    ]
     const queryOptions: Options = {
       cwd: state.workspaceRoot,
       pathToClaudeCodeExecutable: executablePath,
@@ -1663,6 +1670,7 @@ export function createClaudeAgentProvider(options: ClaudeAgentProviderOptions = 
         openToolUseIds: new Set(),
         resumeAt: (input.resumeSessionId?.trim() && input.resumeSessionAt?.trim()) || null,
         handoff: input.handoffPath?.trim() ? { path: input.handoffPath.trim(), owed: true } : null,
+        ...(input.readableDirectories?.length ? { readableDirectories: input.readableDirectories } : {}),
         query: null,
         inputQueue: null,
         abort: null,
@@ -4020,10 +4028,28 @@ function handoffSeedText(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): 
  */
 function handoffReadRule(state: Pick<SessionState, 'handoff' | 'cliRuntimes'>): string | null {
   if (!state.handoff) return null
-  const path = handoffAgentPath(state).replace(/\\/gu, '/')
+  return absoluteReadRule(handoffAgentPath(state), '')
+}
+
+/** A `Read` allow rule for each folder the session may read outside its workspace, and everything in it. */
+function readableDirectoryRules(state: Pick<SessionState, 'readableDirectories' | 'cliRuntimes'>): string[] {
+  const wsl = isWslHostId(state.cliRuntimes?.['claude-code']?.hostId)
+  return (state.readableDirectories ?? []).flatMap((directory) => {
+    const rule = absoluteReadRule(wsl && isWindowsPath(directory) ? toWslPath(directory) : directory, '/**')
+    return rule ? [rule] : []
+  })
+}
+
+/**
+ * `Read(//abs/path<suffix>)`, the CLI's spelling of an absolute path in a
+ * permission rule, or null for a path whose characters a rule would read as a
+ * pattern.
+ */
+function absoluteReadRule(agentPath: string, suffix: string): string | null {
+  const path = agentPath.replace(/\\/gu, '/').replace(/\/+$/u, '')
   if (!path || /[*?[\]{}()!]/u.test(path)) return null
   const posix = /^[A-Za-z]:\//u.test(path) ? `/${path[0]!.toLowerCase()}${path.slice(2)}` : path
-  return `Read(/${posix.startsWith('/') ? posix : `/${posix}`})`
+  return `Read(/${posix.startsWith('/') ? posix : `/${posix}`}${suffix})`
 }
 
 function providerCursorPayload(state: { providerSessionId: string | null; lastChainUuid?: string | null }): {

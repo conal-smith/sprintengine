@@ -4,6 +4,8 @@ import { rm } from 'node:fs/promises'
 import type { IncomingMessage } from 'node:http'
 import { join } from 'node:path'
 
+import { uploadStillSent } from '../../main/upload-references'
+
 // Files a browser drops into a message (phase 9 spec, 4.1 #10; 14.14). A
 // browser has no path for a dropped file, and the agent reads files by path
 // on the server's machine, so the tab sends the bytes and the server answers
@@ -14,11 +16,13 @@ import { join } from 'node:path'
 // Owner sessions only, one file per request, 50 MB at most. Each upload has a
 // directory of its own, so two files of one name never meet, and the name is
 // the file's own made safe, so the agent reads a name the person recognises.
-// Uploads are kept a week, then removed when the next one is saved.
+// Uploads are kept a week, and past that for as long as a chat one was sent in
+// is kept (upload-references.ts), then removed when the next one is saved.
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
-const UPLOADS_DIRNAME = 'web-uploads'
+export const WEB_UPLOADS_DIRNAME = 'web-uploads'
+const UPLOADS_DIRNAME = WEB_UPLOADS_DIRNAME
 
 export type WebUploadAnswer =
   { ok: true; path: string; bytes: number } | { ok: false; status: 400 | 413 | 500; message: string }
@@ -113,8 +117,10 @@ export function createWebUploads(options: { dataDir: string; now?: () => number 
       }
       for (const upload of uploads) {
         try {
-          if (now() - statSync(join(dir, upload)).mtimeMs > KEEP_MS)
-            rmSync(join(dir, upload), { recursive: true, force: true })
+          if (now() - statSync(join(dir, upload)).mtimeMs <= KEEP_MS) continue
+          // A chat it was sent in may read it again, in any later turn.
+          if (uploadStillSent(join(dir, upload))) continue
+          rmSync(join(dir, upload), { recursive: true, force: true })
         } catch {
           // Gone already, or not ours to read.
         }

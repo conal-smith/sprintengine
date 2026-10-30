@@ -2,7 +2,7 @@ import { shell } from 'electron'
 import type { IpcMain } from 'electron'
 import { cp, mkdir, rename, writeFile } from 'fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
-import { writeAttachmentImageFile } from '../attachment-image-file'
+import { writeAttachmentImageFile, writeViewedImageFile } from '../attachment-image-file'
 import type { AttachmentImageInput } from '../attachment-image-file'
 import { resolveEditorSaveTarget } from '../editor-save-target'
 
@@ -59,7 +59,7 @@ export function registerFilesystemMutationIpc(ipcMain: IpcMain, deps: Filesystem
   // the viewer — the app owes the person their own image viewer here, not a
   // second-rate one of its own.
   ipcMain.handle('fs:open-image-attachment', async (_, input: AttachmentImageInput): Promise<void> => {
-    const filePath = await writeAttachmentImageFile(input, 'image')
+    const filePath = await writeViewedImageFile(input, 'image')
     // `openPath` reports failure by resolving with the message, not by throwing:
     // a non-empty string is the error the caller must see.
     const failure = await shell.openPath(filePath)
