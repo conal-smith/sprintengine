@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import type { CliDetectResult } from '../../shared/electron-api'
 import type { CommandRun, CommandRunInput } from './run-command'
-import { generateChatTitle, type TextGenerationServiceDeps } from './text-generation-service'
+import { generateChatTitle, generateHeadlessText, type TextGenerationServiceDeps } from './text-generation-service'
 import { test } from 'vitest'
 
 test('text-generation-service', async () => {
@@ -148,7 +148,9 @@ test('text-generation-service', async () => {
       },
     })
     const result = await generateChatTitle({ prompt: 'fix the flicker', engine: codexEngine }, d)
-    assert.deepEqual(result, { ok: true, value: 'Fix Mobile Sidebar Flicker', ms: 1000 })
+    // The clock that ticks a second per read is read once more after the MCP
+    // listing, to take the listing out of the deadline.
+    assert.deepEqual(result, { ok: true, value: 'Fix Mobile Sidebar Flicker', ms: 2000 })
     const call = d.runs[1]!
     assert.equal(call.file, '/bin/codex')
     assert.equal(call.args[0], 'exec')
@@ -492,4 +494,61 @@ test.each([
   assert.equal(exec.args[0], 'exec')
   assert.ok(exec.args.includes('features.plugins=false'), 'plugins and apps are off whatever the listing did')
   assert.ok(!exec.args.some((arg) => arg.startsWith('mcp_servers=')))
+})
+
+// The caller's deadline is the whole call's: the MCP listing that comes first
+// is taken out of it, not added to it.
+function codexOnAClock(listingMs: number, runs: CommandRunInput[]): TextGenerationServiceDeps {
+  let clock = 1_000_000
+  const answering = codexAnswering({ stdout: '[]' }, runs)
+  return {
+    ...answering,
+    now: () => clock,
+    run: async (input) => {
+      if (input.args.includes('mcp')) clock += listingMs
+      return answering.run!(input)
+    },
+  }
+}
+
+test('a Codex title spends what is left of its deadline after the MCP listing, not the whole deadline again', async () => {
+  const runs: CommandRunInput[] = []
+  const result = await generateChatTitle({ ...CODEX_TITLE, timeoutMs: 30_000 }, codexOnAClock(4_000, runs))
+  assert.equal(result.ok, true)
+  const [list, exec] = runs
+  assert.equal(list!.timeoutMs, 10_000)
+  assert.equal(exec!.timeoutMs, 26_000)
+})
+
+test('a deadline shorter than the listing’s own bounds the listing too', async () => {
+  const runs: CommandRunInput[] = []
+  await generateChatTitle({ ...CODEX_TITLE, timeoutMs: 6_000 }, codexOnAClock(1_000, runs))
+  assert.equal(runs[0]!.timeoutMs, 6_000)
+  assert.equal(runs[1]!.timeoutMs, 5_000)
+})
+
+test('a listing that used the whole deadline leaves the call timed out without starting it', async () => {
+  const runs: CommandRunInput[] = []
+  const result = await generateChatTitle({ ...CODEX_TITLE, timeoutMs: 6_000 }, codexOnAClock(6_000, runs))
+  assert.deepEqual(result, { ok: false, code: 'timeout', message: 'codex did not answer in time.' })
+  assert.equal(runs.length, 1)
+})
+
+test('a headless Codex call keeps to its deadline across the listing as well', async () => {
+  const runs: CommandRunInput[] = []
+  const deps = codexOnAClock(4_000, runs)
+  const answering = deps.run!
+  await generateHeadlessText(
+    { engine: { cli: 'codex', model: 'gpt-5.6-luna' }, prompt: 'say hi', timeoutMs: 30_000 },
+    {
+      ...deps,
+      run: async (input) => {
+        const done = await answering(input)
+        const at = input.args.indexOf('--output-last-message')
+        if (at >= 0) await writeFile(input.args[at + 1]!, 'hi\n', 'utf8')
+        return done
+      },
+    },
+  )
+  assert.equal(runs[1]!.timeoutMs, 26_000)
 })

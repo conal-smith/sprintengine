@@ -87,6 +87,17 @@ const SCRATCH_PREFIX = 'sprintengine-text-'
 // servers configured; a listing slower than this is not worth the call's wait.
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000
 
+/**
+ * The deadline is the caller's for the whole call: a step that runs ahead of
+ * the answer (Codex's MCP listing) is bounded by it and taken out of it, so a
+ * title asked for in 90 s is never waited on for 100. `left()` reads the
+ * clock, and is asked only once such a step has run.
+ */
+function callDeadline(startedAt: number, timeoutMs: number | undefined, now: () => number) {
+  const total = timeoutMs ?? DEFAULT_TEXT_GENERATION_TIMEOUT_MS
+  return { total, left: () => startedAt + total - now() }
+}
+
 export async function generateChatTitle(
   request: ChatTitleRequest,
   deps: TextGenerationServiceDeps = {},
@@ -196,17 +207,16 @@ export async function generateHeadlessText(
   try {
     const env = engineEnv(cli, deps.env)
     const run = deps.run ?? runCommand
-    const common = {
-      cwd: scratch,
-      env,
-      timeoutMs: request.timeoutMs ?? DEFAULT_TEXT_GENERATION_TIMEOUT_MS,
-      ...(request.signal ? { signal: request.signal } : {}),
-    }
+    const deadline = callDeadline(startedAt, request.timeoutMs, now)
+    const context = { cwd: scratch, env, ...(request.signal ? { signal: request.signal } : {}) }
+    const common = { ...context, timeoutMs: deadline.total }
     let answer: ClaudeTextAnswer | null
     if (cli === 'codex') {
       const outputPath = path.join(scratch, 'last-message.txt')
       await writeFile(outputPath, '', 'utf8')
-      const mcpServersOff = await listCodexMcpServers(binaryPath.path, run, common)
+      const mcpServersOff = await listCodexMcpServers(binaryPath.path, run, context, deadline.total)
+      common.timeoutMs = deadline.left()
+      if (common.timeoutMs <= 0) return { ok: false, code: 'timeout', message: `${cli} did not answer in time.` }
       const outcome = await run({
         ...codexTextInvocation({
           binaryPath: binaryPath.path,
@@ -283,7 +293,8 @@ async function runStructuredJob<T>(
 
   const scratch = await mkdtemp(path.join(deps.scratchRoot ?? tmpdir(), SCRATCH_PREFIX))
   try {
-    const timeoutMs = job.timeoutMs ?? DEFAULT_TEXT_GENERATION_TIMEOUT_MS
+    const deadline = callDeadline(startedAt, job.timeoutMs, now)
+    let listed = false
     const env = engineEnv(engine.cli, deps.env)
     const run = deps.run ?? runCommand
 
@@ -294,13 +305,18 @@ async function runStructuredJob<T>(
       schemaJson: JSON.stringify(job.schema),
       scratch,
       managedMcpConfig: engine.cli !== 'codex' && (deps.managedMcpConfig ?? hasClaudeManagedMcpConfig)(),
-      listMcpServers: () =>
-        listCodexMcpServers(binaryPath.path, run, {
-          cwd: scratch,
-          env,
-          ...(job.signal ? { signal: job.signal } : {}),
-        }),
+      listMcpServers: () => {
+        listed = true
+        return listCodexMcpServers(
+          binaryPath.path,
+          run,
+          { cwd: scratch, env, ...(job.signal ? { signal: job.signal } : {}) },
+          deadline.total,
+        )
+      },
     })
+    const timeoutMs = listed ? deadline.left() : deadline.total
+    if (timeoutMs <= 0) return { ok: false, code: 'timeout', message: `${engine.cli} did not answer in time.` }
     const outcome = await run({
       ...backend.invocation,
       cwd: scratch,
@@ -375,13 +391,14 @@ async function listCodexMcpServers(
   binaryPath: string,
   run: RunCommand,
   context: { cwd: string; env: Record<string, string>; signal?: AbortSignal },
+  deadlineMs: number,
 ): Promise<string[]> {
   try {
     const outcome = await run({
       ...codexMcpListInvocation(binaryPath),
       ...context,
       stdin: '',
-      timeoutMs: CODEX_MCP_LIST_TIMEOUT_MS,
+      timeoutMs: Math.min(CODEX_MCP_LIST_TIMEOUT_MS, deadlineMs),
     })
     if (outcome.code !== 0 || outcome.timedOut || outcome.spawnError) return []
     return readCodexEnabledMcpServers(outcome.stdout)
