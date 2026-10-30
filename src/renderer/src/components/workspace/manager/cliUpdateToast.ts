@@ -191,14 +191,18 @@ export async function runCliUpdateFromToast(
   }
   const unsubscribe =
     typeof api.onCliInstallOutput === 'function'
-      ? api.onCliInstallOutput(cli, (chunk) => {
-          output.push(chunk)
-          if (progressTimer !== null) return
-          progressTimer = setTimeout(
-            showProgress,
-            Math.max(0, lastShownAt + CLI_UPDATE_PROGRESS_INTERVAL_MS - Date.now()),
-          )
-        })
+      ? api.onCliInstallOutput(
+          cli,
+          (chunk) => {
+            output.push(chunk)
+            if (progressTimer !== null) return
+            progressTimer = setTimeout(
+              showProgress,
+              Math.max(0, lastShownAt + CLI_UPDATE_PROGRESS_INTERVAL_MS - Date.now()),
+            )
+          },
+          hostId,
+        )
       : () => undefined
   // A failure keeps the updater's last line, so the toast that says it did not
   // update also says where it stopped.

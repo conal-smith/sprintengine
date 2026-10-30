@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -162,6 +162,98 @@ test('a fork keeps its own copies of the images its messages carried', async () 
     await store.deleteConversation(key)
     assert.deepEqual(await store.read(copied.ref), { ok: true, mediaType: 'image/png', dataBase64: PNG })
   } finally {
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('a fork whose image could not be kept never shares the source conversation’s folder', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'conversation-attachment-store-'))
+  try {
+    const store = new ConversationAttachmentStore(userData)
+    const [stored] = await store.save(key, [{ id: 'img-1', mediaType: 'image/png', dataBase64: PNG, byteLength: 16 }])
+    const fork = { ...key, agentId: 'fork' }
+    // Something already stands where the fork's copy would go, so neither a
+    // copy nor a link can be made.
+    const file = stored.ref.split('/')[1]!
+    await mkdir(join(userData, 'conversation-attachments', ConversationAttachmentStore.folderFor(fork), file), {
+      recursive: true,
+    })
+    const [copied] = (await store.copy([stored], fork)) as Array<ConversationStoredImageAttachment>
+    assert.equal(copied.ref.split('/')[0], ConversationAttachmentStore.folderFor(fork))
+    assert.notEqual(copied.ref, stored.ref)
+    assert.equal((await store.read(copied.ref)).ok, false, 'the fork says it is gone')
+    assert.equal((await store.read(stored.ref)).ok, true, 'the source keeps its own')
+  } finally {
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('the agent is told where an image is kept, inside the conversation’s own folder', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'conversation-attachment-store-'))
+  try {
+    const store = new ConversationAttachmentStore(userData)
+    const [stored] = await store.save(key, [{ id: 'img-1', mediaType: 'image/png', dataBase64: PNG, byteLength: 16 }])
+    const path = store.pathFor(stored.ref)
+    assert.ok(path)
+    assert.ok(path.startsWith(`${store.directoryFor(key)!}/`) || path.startsWith(`${store.directoryFor(key)!}\\`))
+    assert.equal((await readFile(path)).toString('base64'), PNG)
+    assert.equal(store.pathFor('../elsewhere.png'), null, 'a reference this store did not write names no file')
+    assert.equal(new ConversationAttachmentStore().pathFor(stored.ref), null)
+  } finally {
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('a sent image’s saved file is named to the agent, and its folder is one the agent may read', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-attachment-path-'))
+  const userData = await mkdtemp(join(tmpdir(), 'conversation-attachment-path-data-'))
+  const conversation = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+  const mock = createMockConversationProvider()
+  const starts: Array<{ readableDirectories?: string[] }> = []
+  const turns: Array<{ message: string }> = []
+  const store = new ConversationAttachmentStore(userData)
+  const runtime = new ConversationRuntime({
+    adapters: [
+      {
+        ...mock,
+        startSession: (input) => {
+          starts.push(input)
+          return mock.startSession(input)
+        },
+        sendTurn: (input) => {
+          turns.push(input)
+          return mock.sendTurn(input)
+        },
+      },
+    ],
+    getProviderById: () => undefined,
+    attachmentStore: store,
+  })
+  try {
+    const started = await runtime.startSession({ ...conversation, providerId: 'mock-provider', modelId: 'mock-model' })
+    assert.ok(started.ok)
+    assert.deepEqual(starts[0]?.readableDirectories, [store.directoryFor(conversation)])
+    const sent = await runtime.sendTurn({
+      sessionId: started.session.sessionId,
+      message: 'put this on the pull request',
+      attachments: [{ id: 'img-1', mediaType: 'image/png', dataBase64: PNG, name: 'cat.png', byteLength: 16 }],
+    })
+    assert.equal(sent.ok, true)
+    const said = turns[0]?.message ?? ''
+    const named = /Attached image "cat\.png" \(shown above\), saved at: (.+)$/m.exec(said)
+    assert.ok(named, said)
+    assert.ok(named[1]!.startsWith(store.directoryFor(conversation)!))
+    assert.equal((await readFile(named[1]!)).toString('base64'), PNG, 'the bytes the agent was shown')
+    const transcript = await runtime.readTranscript(conversation)
+    assert.ok(transcript.ok)
+    assert.equal(
+      transcript.events.find((event) => event.type === 'user_message')?.payload?.text,
+      'put this on the pull request',
+      'the person’s words are kept as they wrote them',
+    )
+  } finally {
+    await runtime.shutdown()
+    await rm(workspaceRoot, { recursive: true, force: true })
     await rm(userData, { recursive: true, force: true })
   }
 })

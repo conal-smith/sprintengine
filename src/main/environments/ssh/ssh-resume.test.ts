@@ -58,7 +58,8 @@ const until = async (check: () => boolean, ms: number) => {
   return check()
 }
 
-function machine(home: string, id: string): SshEnvironment {
+/** `sessions` collects every ssh the machine spawns, so a test can drop one. */
+function machine(home: string, id: string, sessions: SessionProcess[] = []): SshEnvironment {
   const fakeNode = Buffer.from(
     `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${WSL_NODE_VERSION}; exit 0; fi\nexec '${process.execPath}' "$@"\n`,
   )
@@ -66,12 +67,15 @@ function machine(home: string, id: string): SshEnvironment {
     id,
     label: () => 'build-box',
     settings: () => ({ ...DEFAULT_SSH_ENVIRONMENT_SETTINGS, keepRunning: true }),
-    spawn: () =>
-      spawn('sh', ['-s'], {
+    spawn: () => {
+      const child = spawn('sh', ['-s'], {
         cwd: home,
         env: { PATH: process.env.PATH, HOME: home, SHELL: '/bin/sh' },
         stdio: ['pipe', 'pipe', 'pipe'],
-      }) as unknown as SessionProcess,
+      }) as unknown as SessionProcess
+      sessions.push(child)
+      return child
+    },
     app: { version: VERSION, channel: 'latest', backendWire: BACKEND_WIRE_VERSION },
     dataName: 'data',
     startedBy: 'Studio on dev-macbook-air',
@@ -86,7 +90,8 @@ test('a chat open through a dropped session is handed what it missed, by its cur
   const home = join(scratch, 'home')
   mkdirSync(join(home, 'repo'), { recursive: true })
   const repo = join(home, 'repo')
-  const ours = machine(home, 'ours')
+  const ourSessions: SessionProcess[] = []
+  const ours = machine(home, 'ours', ourSessions)
   const local = new Proxy(
     {},
     {
@@ -155,7 +160,7 @@ test('a chat open through a dropped session is handed what it missed, by its cur
   )
 
   // This desktop's session drops.
-  ours.wake()
+  ourSessions.at(-1)!.kill()
   // Another client of the same machine answers the approval meanwhile.
   const other = machine(home, 'other')
   const theirs = await other.connect({ interactive: false })

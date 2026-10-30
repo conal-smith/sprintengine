@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync, write
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { legacyUploadOwnerDir, safeUploadName, uploadOwnerDir } from '../../../server/web/web-uploads'
+import { uploadStillSent } from '../../upload-references'
 
 // Files a paired device sends with a chat's message (`upload?kind=file`,
 // `conversation-message-files`). A picture is read into the turn and its
@@ -15,8 +16,10 @@ import { legacyUploadOwnerDir, safeUploadName, uploadOwnerDir } from '../../../s
 // Each upload has a folder of its own, so two files of one name never meet,
 // and the name is the file's own made safe, so the agent and the chat's card
 // read a name the person recognises. A file never sent goes with its upload
-// reference (an hour); one that was sent is kept a week, then removed when
-// the next one is placed. A device's folder goes when the device is removed.
+// reference (an hour); one that was sent is kept a week, and past that for as
+// long as a chat it was sent in is kept (upload-references.ts), then removed
+// when the next one is placed. A device's folder goes when the device is
+// removed.
 //
 // A file a held message carries (`conversation-queued-attachments`) waits
 // with the message for its chat's turn to end, which may be longer than a
@@ -69,8 +72,10 @@ export function createTailnetFileUploads(options: { root: string; now?: () => nu
       for (const upload of uploads) {
         try {
           if (existsSync(join(dir, upload, HELD_MARK))) continue
-          if (now() - statSync(join(dir, upload)).mtimeMs > KEEP_MS)
-            rmSync(join(dir, upload), { recursive: true, force: true })
+          if (now() - statSync(join(dir, upload)).mtimeMs <= KEEP_MS) continue
+          // A chat it was sent in may read it again, in any later turn.
+          if (uploadStillSent(join(dir, upload))) continue
+          rmSync(join(dir, upload), { recursive: true, force: true })
         } catch {
           // Gone already, or not ours to read.
         }

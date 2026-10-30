@@ -81,6 +81,13 @@ export default defineConfig({
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
+      // Each preload is one standalone file. The guest's and the launch
+      // plate's run sandboxed, where `require` reaches `electron` and nothing
+      // else: a chunk split out for code the entries share (the guest and the
+      // app both read `shared/browser.ts`) would leave the guest requiring a
+      // relative file it cannot load, and the picker would never start.
+      // `scripts/check-sandboxed-preloads.mjs` fails the build if one does.
+      isolatedEntries: true,
       rollupOptions: {
         // Two preloads: the app's, and the browser guest's element picker
         // (browser-pane epic), which main hands to the <webview> as a file

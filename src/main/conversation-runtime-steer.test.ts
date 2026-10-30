@@ -326,6 +326,8 @@ test('a steer is refused until the running turn has reached the provider, and af
     },
     read: async () => ({ ok: false as const, message: 'unused' }),
     deleteConversation: async () => undefined,
+    directoryFor: () => null,
+    pathFor: () => null,
   } as unknown as ConversationAttachmentStore
   const chat = await setup({ attachmentStore })
   const first = chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'investigate' })

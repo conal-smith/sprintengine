@@ -39,8 +39,10 @@ import { RemoteSession, SessionClosedError, type SessionProcess } from './ssh-se
 //
 // The managed server's life is not the connection's (decision R32): losing
 // the session leaves it running, and its idle rule ends it when nobody comes
-// back. Sleep, wake and a network change restart the session at once instead
-// of waiting out the keepalive on a dead socket.
+// back. Sleep, wake and a network change ask the session to answer at once
+// instead of waiting out the keepalive on a dead socket: one that answers is
+// kept, one that does not is restarted. A wake also lets a machine that gave
+// up reconnecting try again, since the network it was waiting for may be back.
 
 export type SshServerConnection = {
   /** The router's key for this machine: `ssh:<saved id>`. */
@@ -90,6 +92,8 @@ export const DEFAULT_TIMING = {
   handshakeMs: 15_000,
   backoffMs: [1_000, 2_000, 4_000, 8_000, 16_000, 30_000],
   giveUpMs: 10 * 60_000,
+  /** How long a wake waits for a connected session to answer before calling it dead. */
+  livenessMs: 10_000,
 }
 
 const IDLE_MS = 5 * 60_000
@@ -161,6 +165,8 @@ export class SshEnvironment {
     promise: Promise<SshServerConnection>
     settle(attempt: Promise<SshServerConnection>): void
   } | null = null
+  /** A wake's check that the connected session still answers, while it runs. */
+  private livenessCheck: Promise<void> | null = null
   private upgradeAsked = false
   /**
    * The person disconnected the machine or stopped its server: nothing in the
@@ -600,17 +606,63 @@ export class SshEnvironment {
   }
 
   /**
-   * The machine woke, or the network changed: the old session is likely dead
-   * and keepalive would take up to 45 s to say so. Restart it now, and start
-   * the backoff over.
+   * The machine woke, the screen was unlocked, or the network came back. A
+   * connected session may be dead, and keepalive would take up to 45 s to say
+   * so: it is asked to answer now, and restarted only if it does not. Closing
+   * it unasked would cost a full ssh handshake on every unlock, and a key
+   * whose passphrase is not in ssh-agent cannot make one in the background,
+   * so a healthy machine would end at "needs you to sign in".
+   *
+   * A machine reconnecting starts its backoff and its ten minutes over: time
+   * asleep or offline was not time spent trying. One that already gave up
+   * (`disconnected`) tries again, since what it waited for may be back. What
+   * needs the person (a sign-in, a changed host key) and what the person did
+   * (Disconnect, Stop server) stay held.
    */
   wake(): void {
     this.attempt = 0
     if (this.endpoint && !this.endpoint.closed) {
-      this.endpoint.close('The computer woke or its network changed.')
+      void this.checkLiveness()
       return
     }
-    if (this.lostAt !== null && !this.running) this.retry()
+    if (this.lostAt !== null) {
+      this.lostAt = this.now()
+      if (!this.running) this.retry()
+      return
+    }
+    if (this.view.state === 'disconnected' && !this.heldByPerson && !this.running) {
+      this.lostAt = this.now()
+      this.retry()
+    }
+  }
+
+  /** Whether the connected session answers within `livenessMs`; closed, and so reconnected, when it does not. */
+  private checkLiveness(): Promise<void> {
+    if (this.livenessCheck) return this.livenessCheck
+    const connection = this.connection
+    const endpoint = this.endpoint
+    if (!connection || !endpoint) return Promise.resolve()
+    const check = (async () => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const answered = await Promise.race([
+        connection.backend.refresh().then(
+          () => true,
+          () => false,
+        ),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), this.timing.livenessMs)
+          timer.unref?.()
+        }),
+      ])
+      if (timer) clearTimeout(timer)
+      if (answered || this.endpoint !== endpoint || endpoint.closed) return
+      this.log(`${connection.label} did not answer within ${this.timing.livenessMs} ms of a wake; reconnecting.`)
+      endpoint.close('The connection stopped answering after the computer woke or its network changed.')
+    })().finally(() => {
+      this.livenessCheck = null
+    })
+    this.livenessCheck = check
+    return check
   }
 
   /** Let the session go. The managed server keeps running (its idle rule ends it). */

@@ -20,7 +20,7 @@ import { hasTerminalSessionsSnapshot } from '../../hooks/terminalSessionsStore'
 import { groupConversationSessionsByWorkspace } from '../../hooks/conversationSessionsStore'
 import { summariesEqual, useSidebarGitSummaries } from './useSidebarGitSummaries'
 import { checkoutPathsOf, lineOfRemoteRow, terminalLinesOf } from './terminalLines'
-import { suspendWorkspaceTerminals, terminateSettledWorkspaceTerminals } from './workspaceTerminalTermination'
+import { suspendSnoozedWorkspaceTerminals, terminateSettledWorkspaceTerminals } from './workspaceTerminalTermination'
 import { ConversationPeekPopover } from './ConversationPeekPopover'
 import { hostPlatform } from '../../clientCapabilities'
 import {
@@ -900,32 +900,6 @@ function WorkspaceSidebar({
     [rowHasOpenAgents],
   )
 
-  // Snooze by hand (owner ruling, 2026-09-10): the record first, then PAUSE the
-  // ptys — the same order and the same reason as Settle above, and the same
-  // gate on the row actually having something open, because asking main to
-  // suspend a chat whose ptys died with the last app run is a round trip to
-  // say nothing.
-  //
-  // Paused, not killed. A snoozed chat has to sit like every other non-live
-  // chat — no agent process burning while the row is off screen — but it is
-  // coming back on a clock, so the session is kept resumable and the person's
-  // first keystroke relaunches the agent with `--resume`. Waking resumes
-  // nothing; see `suspendWorkspaceTerminals`.
-  //
-  // Never while an agent in it is working, for Settle's reason: pausing ends
-  // the agent processes, and an agent working in the background ends with
-  // them and does not come back on the wake.
-  const snoozeWorkspaceById = useCallback(
-    (id: WorkspaceId, wakeAt: number) => {
-      if (rowIsWorking(id)) return
-      setWorkspaceSnoozed(id, wakeAt)
-      const workspace = openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)
-      if (!workspace || !rowHasOpenAgents(workspace)) return
-      void suspendWorkspaceTerminals(workspace)
-    },
-    [rowIsWorking, setWorkspaceSnoozed, rowHasOpenAgents],
-  )
-
   // ─── The pull requests a chat holds after its agents are gone ──────────
   //
   // Owner, 2026-09-10: "he is no longer active, but it doesn't show on his card
@@ -1130,6 +1104,68 @@ function WorkspaceSidebar({
     [rowIsWorking, handOffFrom, setWorkspaceSettled, quietSettledWorkspace],
   )
 
+  // The second half of a Snooze: PAUSE the chat's ptys once the record has
+  // moved, behind the same gate as Settle's kill — something has to be open,
+  // because asking main to suspend a chat whose ptys died with the last app
+  // run is a round trip to say nothing, and main is asked first whether an
+  // agent there is working (`suspendSnoozedWorkspaceTerminals`). The record
+  // is read again once main has answered: a chat woken meanwhile is left be.
+  //
+  // An agent found working keeps its processes, and the chat its place: a
+  // snooze would hide it while it works, and suspending ends its turn. So the
+  // snooze is taken back, as the menu would have refused it a moment later,
+  // and the person is told why the row came back.
+  const quietSnoozedWorkspace = useCallback(
+    (id: WorkspaceId, wakeAt: number) => {
+      const workspace = openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)
+      if (!workspace || !rowHasOpenAgents(workspace)) return
+      // One gone from the record (its folder forgotten) has nobody left to keep
+      // its agents for, as in Settle's check.
+      const stillThisSnooze = () => {
+        const now = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
+        return now === undefined || now.snoozedUntil === wakeAt
+      }
+      void suspendSnoozedWorkspaceTerminals(workspace, stillThisSnooze).then((outcome) => {
+        if (outcome !== 'working') return
+        const now = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
+        if (now?.snoozedUntil !== wakeAt) return
+        useWorkspaceStore.getState().setWorkspaceSnoozed(id, null)
+        showToast({
+          tone: 'neutral',
+          title: `${workspace.name} is still working`,
+          description: 'It can be snoozed once its agents finish.',
+        })
+      })
+    },
+    [rowHasOpenAgents],
+  )
+
+  // Snooze by hand (owner ruling, 2026-09-10): the record first, then PAUSE the
+  // ptys (`quietSnoozedWorkspace`) — the same order and the same reason as
+  // Settle above — and the same hand-off: snoozing the chat on screen moves you
+  // on to the next one. Without it the row stayed in front, its agents paused
+  // under the person, and the next click on it woke it again.
+  //
+  // Paused, not killed. A snoozed chat has to sit like every other non-live
+  // chat — no agent process burning while the row is off screen — but it is
+  // coming back on a clock, so the session is kept resumable and the person's
+  // first keystroke relaunches the agent with `--resume`. Waking resumes
+  // nothing; see `suspendWorkspaceTerminals`.
+  //
+  // Never while an agent in it is working, for Settle's reason: pausing ends
+  // the agent processes, and an agent working in the background ends with
+  // them and does not come back on the wake.
+  const snoozeWorkspaceById = useCallback(
+    (id: WorkspaceId, wakeAt: number) => {
+      if (rowIsWorking(id)) return
+      const handOff = handOffFrom(id)
+      setWorkspaceSnoozed(id, wakeAt)
+      quietSnoozedWorkspace(id, wakeAt)
+      handOff()
+    },
+    [rowIsWorking, handOffFrom, setWorkspaceSnoozed, quietSnoozedWorkspace],
+  )
+
   // A Settle made somewhere else — a paired phone or desktop
   // (`conversation.settle`), or another window here — reaches this window as
   // a record that is suddenly resting (`settledElsewhere.ts`). The rest of a
@@ -1155,7 +1191,9 @@ function WorkspaceSidebar({
   const snoozedElsewhere = useStableCallback((id: WorkspaceId) => {
     if (rowIsWorking(id) || !useWorkspaceStore.getState().speaksForWorkspace(id)) return
     const workspace = openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)
-    if (workspace && rowHasOpenAgents(workspace)) void suspendWorkspaceTerminals(workspace)
+    // Main is asked first, as for a Snooze by hand: an agent that began after
+    // that machine said yes is not cut off mid-turn here.
+    if (workspace && rowHasOpenAgents(workspace)) void suspendSnoozedWorkspaceTerminals(workspace)
   })
   useEffect(() => {
     // Taken after the store update that noted it has finished, never inside it.
@@ -2258,11 +2296,13 @@ function WorkspaceSidebar({
   // Asleep RIGHT NOW: the wake time is still ahead, and that is the whole test
   // — nothing brings a row back early. Reading a chat never sends it to sleep,
   // the same exemption `isShelved` gives the row you are in, though in
-  // practice opening one already spent its snooze (`setActiveWorkspace`), so
-  // this is the belt to that braces.
+  // practice opening one already spent its snooze (`spendSnoozeOnOpening`), so
+  // this is the belt to that braces. New chat over it is leaving it, as for
+  // `isShelved`: snoozing the last chat still going hands off to New chat, and
+  // the row it left goes to its shelf.
   const isAsleep = useCallback(
-    (workspace: Workspace) => workspace.id !== activeWorkspaceId && isSnoozedWorkspace(workspace, now),
-    [activeWorkspaceId, now],
+    (workspace: Workspace) => (workspace.id !== activeWorkspaceId || newChatOpen) && isSnoozedWorkspace(workspace, now),
+    [activeWorkspaceId, newChatOpen, now],
   )
 
   // A row that came back and has not been opened since. The list's order is

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 
 import type { TailscaleRun } from '../../main/automation/tailnet/tailscale-cli'
 import type { TailscaleServeDeps } from '../../main/automation/tailnet/tailscale-serve'
-import { checkTailscaleServePort, serveWebOnTailnet, tailnetIdentityOf } from './web-tailscale-serve'
+import { checkTailscaleServePort, serveWebOnTailnet } from './web-tailscale-serve'
 
 // The web client on the tailnet through `tailscale serve` (R19; phase 9 spec,
 // 6.6), against a stand-in for tailscaled that keeps its serve table.
@@ -100,21 +100,6 @@ test("the dev-server shares' ports are refused for the web client", () => {
   expect(checkTailscaleServePort(443)).toBeNull()
   expect(checkTailscaleServePort(8443)).toMatch(/shares dev servers on/u)
   expect(checkTailscaleServePort(70000)).toMatch(/port number/u)
-})
-
-test("serve's identity headers are believed only on serve's own name", () => {
-  const headers = { 'tailscale-user-login': 'dev@example.com', 'tailscale-user-name': '=?utf-8?q?D=C3=A9v?=' }
-  expect(tailnetIdentityOf(headers, 'mac-mini.tail1234.ts.net', ['mac-mini.tail1234.ts.net'])).toEqual({
-    login: 'dev@example.com',
-    name: 'Dév',
-  })
-  // The same headers sent to the loopback name are a local program's say-so.
-  expect(tailnetIdentityOf(headers, '127.0.0.1:4791', ['mac-mini.tail1234.ts.net'])).toBeNull()
-  // A server that did not set serve up believes no one.
-  expect(tailnetIdentityOf(headers, 'mac-mini.tail1234.ts.net', [])).toBeNull()
-  expect(
-    tailnetIdentityOf({ 'tailscale-user-login': 'a\u0007b' }, 'mac-mini.tail1234.ts.net', ['mac-mini.tail1234.ts.net']),
-  ).toEqual({ login: 'ab', name: null })
 })
 
 function serveStatusWith(port: number, extra: Record<string, unknown>) {

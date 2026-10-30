@@ -10,6 +10,7 @@ import {
   wakeWorkspacePatch,
   workspaceLastActiveAt,
 } from './workspaceSettle'
+import { isSnoozedWorkspace } from './workspaceSnooze'
 import { test } from 'vitest'
 
 test('workspaceSettle', async () => {
@@ -261,8 +262,8 @@ test('workspaceSettle', async () => {
 
   // The two transitions as field patches. A rest decision carries the input
   // clock so main is never behind the decision; a wake clears the stamp and
-  // sets (or spends) the hand decision. Rest also supersedes sleep, so a settle
-  // tombstones any snooze underneath it (snooze, 2026-09-10).
+  // sets (or spends) the hand decision. A snooze that has run out (a Woke
+  // mark) is tombstoned by a settle; one still ahead is kept underneath it.
   assert.deepEqual(settleWorkspacePatch(ws({ lastTerminalActivityAt: NOW - 5 * DAY }), NOW, 'settled'), {
     snoozedUntil: null,
     settledAt: NOW,
@@ -274,8 +275,11 @@ test('workspaceSettle', async () => {
     { snoozedUntil: null, settledAt: NOW, settledOverride: null },
     'no input clock, no clock in the patch (absent is "no opinion")',
   )
-  assert.deepEqual(wakeWorkspacePatch('active'), { settledAt: null, settledOverride: 'active' })
-  assert.deepEqual(wakeWorkspacePatch(null), { settledAt: null, settledOverride: null })
+  assert.deepEqual(wakeWorkspacePatch('active', ws({ settledAt: NOW }), NOW), {
+    settledAt: null,
+    settledOverride: 'active',
+  })
+  assert.deepEqual(wakeWorkspacePatch(null, ws({ settledAt: NOW }), NOW), { settledAt: null, settledOverride: null })
 
   console.log('workspaceSettle tests passed')
 })
@@ -393,4 +397,39 @@ test('settling on merge is unchanged by the keep', () => {
     }),
     true,
   )
+})
+
+// A Settle made by mistake on a sleeping chat used to clear its snooze, and
+// Un-settle could not give it back. The snooze is kept under the rest instead,
+// is not read as asleep while the row rests, and comes back with Un-settle.
+test('a snooze still ahead survives a Settle and comes back with Un-settle', () => {
+  const HOUR = 60 * 60 * 1000
+  const sleeping = snoozable({ snoozedUntil: NOW + 3 * HOUR })
+  const settle = settleWorkspacePatch(sleeping, NOW, 'settled')
+  assert.equal('snoozedUntil' in settle, false, 'the Settle leaves a snooze still ahead where it is')
+  const resting = { ...sleeping, ...settle } as Workspace
+  assert.equal(isSnoozedWorkspace(resting, NOW + HOUR), false, 'rest outranks sleep: a resting row is not asleep')
+
+  const unsettle = wakeWorkspacePatch('active', resting, NOW + HOUR)
+  assert.deepEqual(unsettle, { settledAt: null, settledOverride: 'active' }, 'Un-settle hands the snooze back')
+  const back = { ...resting, ...unsettle } as Workspace
+  assert.equal(isSnoozedWorkspace(back, NOW + HOUR), true, 'and the chat sleeps on until its wake time')
+
+  // Woken while it rested: nobody saw the wake, so it comes back with no Woke mark.
+  assert.deepEqual(wakeWorkspacePatch('active', resting, NOW + 4 * HOUR), {
+    settledAt: null,
+    settledOverride: 'active',
+    snoozedUntil: null,
+  })
+  // New activity is the chat coming back now: the kept snooze ends with the rest.
+  assert.deepEqual(wakeWorkspacePatch(null, resting, NOW + HOUR), {
+    settledAt: null,
+    settledOverride: null,
+    snoozedUntil: null,
+  })
+  // A row that is not resting keeps its own snooze through a spent hand decision.
+  assert.deepEqual(wakeWorkspacePatch(null, sleeping, NOW + HOUR), { settledAt: null, settledOverride: null })
+  // A Woke mark (a snooze already run out) is tombstoned by the Settle, as before.
+  const woke = settleWorkspacePatch(snoozable({ snoozedUntil: NOW - HOUR }), NOW, 'settled')
+  assert.equal(woke.snoozedUntil, null)
 })
