@@ -77,6 +77,17 @@ export function autoCompactSwitchOf(
   }
 }
 
+/**
+ * Whether a row's name can be written again by a model: a chat here, with a
+ * conversation in it to title from. A paired machine's chat is named there.
+ */
+export function canRegenerateTitleOf(workspace: Workspace): boolean {
+  if (workspace.remoteOrigin) return false
+  return Object.values(workspace.agents ?? {}).some(
+    (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+  )
+}
+
 /** What the rest-and-marks half of a chat's menu dispatches, on a row here or a paired machine's. */
 export type ChatMarkAction =
   | 'toggle-star'
@@ -107,6 +118,7 @@ export type ContextMenuAction =
   | 'mark-unread'
   | 'stop-watching'
   | 'rename'
+  | 'regenerate-title'
   | 'new-chat'
   | 'reveal'
   | 'copy-link'
@@ -412,6 +424,11 @@ export function WorkspaceContextMenu({
       <ChatMenuItem tooltip={tips.rename(where)} onClick={() => onSelect('rename')} shortcut="F2">
         Rename
       </ChatMenuItem>
+      {canRegenerateTitleOf(workspace) ? (
+        <ChatMenuItem tooltip={tips.regenerateTitle()} onClick={() => onSelect('regenerate-title')}>
+          Regenerate title
+        </ChatMenuItem>
+      ) : null}
       {canNewChatInProject ? (
         <ChatMenuItem
           tooltip={tips.newChat(isProjectlessChatsRoot(newChatTarget))}

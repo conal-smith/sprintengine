@@ -130,3 +130,76 @@ export function generatedWorkspaceTitleRequester(): GeneratedTitleRequester {
   }
   return defaultRequester
 }
+
+export type RegenerateTitleDeps = {
+  /** The first message with words the person sent in the chat, or null when none is kept. */
+  firstPrompt: (id: WorkspaceId) => Promise<string | null>
+  resolveEngine: () => ChatTitleRequest['engine'] | null
+  cliRuntimes: () => ChatTitleRequest['cliRuntimes']
+  generate: (request: ChatTitleRequest) => Promise<TextGenerationResult>
+  /** Name the chat and lock the name, as a hand rename does. */
+  rename: (id: WorkspaceId, name: string) => void
+}
+
+export type RegenerateTitleResult = { ok: true; title: string } | { ok: false; message: string }
+
+/**
+ * "Regenerate title": the person asked, so the lock a landed title or a hand
+ * rename put on the name does not hold this one back, and neither does the
+ * one call per chat the automatic title makes. The model titles the chat from
+ * its first message again, and the new name locks, as any title that lands
+ * does.
+ */
+export async function regenerateWorkspaceTitle(
+  id: WorkspaceId,
+  deps: RegenerateTitleDeps,
+): Promise<RegenerateTitleResult> {
+  const engine = deps.resolveEngine()
+  if (!engine)
+    return {
+      ok: false,
+      message: 'Model-written titles are off in Settings, or no agent CLI that writes them is installed.',
+    }
+  const prompt = (await deps.firstPrompt(id).catch(() => null))?.trim()
+  if (!prompt) return { ok: false, message: 'This chat has no message of yours to title it from.' }
+  const result = await deps
+    .generate({ prompt, engine, cliRuntimes: deps.cliRuntimes() })
+    .catch((error: unknown): TextGenerationResult => ({
+      ok: false,
+      code: 'transport',
+      message: error instanceof Error ? error.message : String(error),
+    }))
+  if (!result.ok) return { ok: false, message: result.message }
+  const title = result.value.trim()
+  if (!title) return { ok: false, message: 'The model answered with no title.' }
+  deps.rename(id, title)
+  return { ok: true, title }
+}
+
+/** Regenerate a chat's title through the store and the preload bridge. */
+export function regenerateStoreWorkspaceTitle(id: WorkspaceId): Promise<RegenerateTitleResult> {
+  return regenerateWorkspaceTitle(id, {
+    firstPrompt: async (workspaceId) => {
+      const api = typeof window !== 'undefined' ? window.api : undefined
+      if (!api?.conversationSessionsList || !api.readConversationPeek) return null
+      const listed = await api.conversationSessionsList({ workspaceId })
+      if (!listed.ok) return null
+      // Oldest first: the chat's first message is in its first session's transcript.
+      const sessions = [...listed.sessions].sort((a, b) => a.createdAt - b.createdAt)
+      for (const session of sessions) {
+        const peek = await api.readConversationPeek(session.sessionId)
+        if (peek.first?.text.trim()) return peek.first.text
+      }
+      return null
+    },
+    resolveEngine: resolveStoreTextGenerationEngine,
+    cliRuntimes: () => useWorkspaceStore.getState().appSettings.cliRuntimes,
+    generate: (request) => {
+      const api = typeof window !== 'undefined' ? window.api : undefined
+      if (!api?.generateChatTitle)
+        return Promise.resolve({ ok: false, code: 'unavailable', message: 'Text generation bridge is unavailable.' })
+      return api.generateChatTitle(request)
+    },
+    rename: (workspaceId, name) => useWorkspaceStore.getState().renameWorkspace(workspaceId, name),
+  })
+}

@@ -57,6 +57,8 @@ export const chatMenuTooltips = {
       : where.manage?.rename
         ? `Rename this chat on ${where.machineName}, and on every device that follows it.`
         : `Rename this chat on this computer. ${where.machineName} keeps its own name for it.`,
+  regenerateTitle: () =>
+    'Ask the model for a new name from the chat’s first message. It replaces the name, even one you typed.',
   newChat: (projectless: boolean, where: ChatMenuPlace = LOCAL) =>
     projectless
       ? 'Start a new chat that has no project, in a folder of its own.'

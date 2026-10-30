@@ -9,7 +9,12 @@ import {
 } from '../../../shared/text-generation/contract'
 import type { AgentCliAvailabilityMap } from '../../../shared/electron-api'
 import type { PluginCatalogEntry, WorkspaceId } from '../types/workspace'
-import { createGeneratedTitleRequester, resolveStoreTextGenerationEngine } from './generatedWorkspaceTitle'
+import {
+  createGeneratedTitleRequester,
+  regenerateWorkspaceTitle,
+  resolveStoreTextGenerationEngine,
+  type RegenerateTitleDeps,
+} from './generatedWorkspaceTitle'
 import { useWorkspaceStore } from './workspaceStore'
 import { test } from 'vitest'
 
@@ -317,4 +322,48 @@ test('generatedWorkspaceTitle', async () => {
   })
 
   await suiteRun
+})
+
+const ENGINE: ChatTitleRequest['engine'] = { cli: 'claude-code' } as ChatTitleRequest['engine']
+
+function regenerateDeps(overrides: Partial<RegenerateTitleDeps> = {}) {
+  const renamed: Array<[string, string]> = []
+  const asked: ChatTitleRequest[] = []
+  const deps: RegenerateTitleDeps = {
+    firstPrompt: async () => 'Fix the flaky login test on CI',
+    resolveEngine: () => ENGINE,
+    cliRuntimes: () => ({}),
+    generate: async (request) => {
+      asked.push(request)
+      return { ok: true, value: '  Flaky login test  ', ms: 5 }
+    },
+    rename: (id, name) => renamed.push([id, name]),
+    ...overrides,
+  }
+  return { deps, renamed, asked }
+}
+
+test('regenerating a title asks the model from the first message and renames the chat', async () => {
+  const { deps, renamed, asked } = regenerateDeps()
+  const result = await regenerateWorkspaceTitle('ws-1' as WorkspaceId, deps)
+  assert.deepEqual(result, { ok: true, title: 'Flaky login test' })
+  assert.equal(asked[0]?.prompt, 'Fix the flaky login test on CI')
+  assert.deepEqual(renamed, [['ws-1', 'Flaky login test']])
+})
+
+test('regenerating a title says why when it cannot, and leaves the name alone', async () => {
+  const off = regenerateDeps({ resolveEngine: () => null })
+  assert.equal((await regenerateWorkspaceTitle('ws-1' as WorkspaceId, off.deps)).ok, false)
+  const empty = regenerateDeps({ firstPrompt: async () => '   ' })
+  const noPrompt = await regenerateWorkspaceTitle('ws-1' as WorkspaceId, empty.deps)
+  assert.equal(noPrompt.ok, false)
+  assert.equal(empty.asked.length, 0, 'no call without a message to title from')
+  const failed = regenerateDeps({
+    generate: async (): Promise<TextGenerationResult> => ({ ok: false, code: 'transport', message: 'exited 1' }),
+  })
+  assert.deepEqual(await regenerateWorkspaceTitle('ws-1' as WorkspaceId, failed.deps), {
+    ok: false,
+    message: 'exited 1',
+  })
+  for (const run of [off, empty, failed]) assert.deepEqual(run.renamed, [])
 })

@@ -142,6 +142,7 @@ import { isSnoozedWorkspace, resolveSnoozePresets, snoozeWakeLabel, workspaceWok
 import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
 import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
+import { regenerateStoreWorkspaceTitle } from '../../store/generatedWorkspaceTitle'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
 import {
   remoteScheduleActionWords,
@@ -4053,6 +4054,15 @@ function WorkspaceSidebar({
             if (action === 'rename') {
               startRename(workspace)
               setContextMenu(null)
+              return
+            }
+            if (action === 'regenerate-title') {
+              setContextMenu(null)
+              const before = workspace.name
+              void regenerateStoreWorkspaceTitle(workspace.id).then((result) => {
+                if (!result.ok)
+                  showToast({ tone: 'error', title: `${before} was not renamed`, description: result.message })
+              })
               return
             }
             if (action === 'stop-watching' && workspace.remoteOrigin) {
