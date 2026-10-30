@@ -67,6 +67,18 @@ export type ScheduledAgentsStore = {
    * run becomes that failure. False when the last run is another one (or none).
    */
   failRun(id: string, workspaceId: string, message: string): Promise<boolean>
+  /**
+   * Close a one-time schedule whose run started its chat in `workspaceId`: it
+   * is removed and returned. Null, and kept, when its last run is not that
+   * one, or failed after all: a failed one stays to say so.
+   */
+  closeRan(id: string, workspaceId: string): Promise<ScheduledAgent | null>
+  /**
+   * Put back a schedule `closeRan` took away, as `agent` says it now is: its
+   * run's first message was refused after the schedule had closed. False when
+   * one with its id is already there.
+   */
+  restore(agent: ScheduledAgent): Promise<boolean>
   markFailureSeen(id: string): Promise<void>
   /** Paused at `at`, or running on its schedule again (null). Null when there is no such scheduled agent. */
   setPaused(id: string, at: number | null): Promise<ScheduledAgent | null>
@@ -199,6 +211,22 @@ export function createScheduledAgentsStore(options: ScheduledAgentsStoreOptions)
       const run = current?.lastRun
       if (!current || !run?.ok || run.workspaceId !== workspaceId) return false
       replace(id, { ...current, lastRun: { at: run.at, ok: false, message } })
+      await persist()
+      return true
+    },
+    async closeRan(id, workspaceId) {
+      await writable()
+      const current = agents.find((agent) => agent.id === id)
+      const run = current?.lastRun
+      if (!current || !run?.ok || run.workspaceId !== workspaceId) return null
+      agents = agents.filter((agent) => agent.id !== id)
+      await persist()
+      return current
+    },
+    async restore(agent) {
+      await writable()
+      if (agents.some((candidate) => candidate.id === agent.id)) return false
+      agents = [...agents, agent]
       await persist()
       return true
     },
