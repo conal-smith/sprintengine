@@ -16,6 +16,7 @@
   },
   "include": [
     "src/api/tailnetControlClient.ts",
+    "src/features/conversations/chatActivity.ts",
     "src/api/tailnetTransport.ts",
     "src/api/conversationWire.ts",
     "src/api/tailnetConversations.ts",
