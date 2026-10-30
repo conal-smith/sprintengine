@@ -2,7 +2,7 @@
 // Is this machine, and this project, ready to build a SprintEngine Studio
 // extension? Run it before anything else:
 //
-//   node .agents/skills/sprintengine-extension-builder/scripts/check-toolchain.mjs [--project <dir>]
+//   node scripts/check-toolchain.mjs [--project <dir>]
 //
 // Prints one line per check and what to do about each failure. Exit 1 when
 // something blocks the build; notes alone exit 0.

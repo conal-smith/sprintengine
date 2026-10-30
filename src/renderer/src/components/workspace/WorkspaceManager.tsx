@@ -3430,7 +3430,7 @@ export default function WorkspaceManager() {
 
   // "Build your own extension" (the Extensions home's plate, the palette) is
   // the New chat door in extension mode: the same machine, project, engine and
-  // composer, with the extension-builder skill attached, a name chip, and ideas
+  // composer, with an Extension tag, a name chip, and ideas
   // for cards. Never through the parked chat draft, which is the person's next
   // chat and not this (see `draftKey` below).
   const openBuildExtensionDoor = useStableCallback(() => {
