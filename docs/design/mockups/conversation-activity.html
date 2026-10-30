@@ -237,13 +237,8 @@
   .m-fade { position: absolute; top: 0; left: 0; right: 0; height: 64px; z-index: 2; pointer-events: none; background: linear-gradient(var(--sem-color-bg-app) 30%, transparent); }
   .m-float { position: absolute; top: 4px; left: 12px; right: 12px; z-index: 3; display: flex; gap: 8px; align-items: center; }
   .m-fab { width: 42px; height: 42px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--sem-color-text-primary); cursor: pointer; }
-  .m-pill { display: inline-flex; align-items: center; gap: 8px; height: 42px; max-width: 262px; min-width: 0; padding: 0 10px 0 6px; border-radius: var(--sem-radius-pill); cursor: pointer; color: var(--sem-color-text-primary); white-space: nowrap; }
-  .m-pill .mk { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--sem-color-bg-well); display: inline-flex; align-items: center; justify-content: center; }
+  .m-pill { display: inline-flex; align-items: center; gap: 6px; height: 42px; min-width: 0; padding: 0 10px 0 16px; border-radius: var(--sem-radius-pill); cursor: pointer; color: var(--sem-color-text-primary); white-space: nowrap; }
   .m-pill .tt { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 15px; font-weight: var(--sem-font-weight-medium); }
-  .m-pill .stack { gap: 5px; align-items: center; flex: none; }
-  .m-pill .stack svg { width: 15px; height: 15px; }
-  .m-pill .stack .more { font-size: 12px; color: var(--sem-color-text-muted); font-family: var(--sem-font-family-mono); }
-  .m-pill .stack .enter { animation: fade-in var(--sem-motion-duration-deliberate) var(--sem-motion-ease-standard); }
   .m-pill .chev { color: var(--sem-color-text-muted); display: inline-flex; flex: none; }
   .m-scroll { padding-top: 60px; }
   .m-scroll.plain { padding-top: 14px; }
@@ -387,7 +382,7 @@
   <p>The left phone is live: tap the pill, then a row, and use the back arrow. The other two hold one step each, so the whole path is visible at once.</p>
 </div>
 <div class="phones">
-  <div class="phone-col"><div class="phone" id="phone1"></div><div class="phone-cap"><b>1 · No header bar.</b> A back button and one pill float over the transcript: the runtime's mark, the chat's title, and the glyphs of the newest things the agent touched, in violet while an agent is in one. Tap the pill for the rest.</div></div>
+  <div class="phone-col"><div class="phone" id="phone1"></div><div class="phone-cap"><b>1 · No header bar.</b> A back button and one pill float over the transcript. The pill is the chat's title and an arrow, nothing else. Tap it for everything the agent touched.</div></div>
   <div class="phone-col"><div class="phone" id="phone2"></div><div class="phone-cap"><b>2 · The chat's page.</b> Its title, project, machine and model, then the desktop card's rows in the same order with the same facts, then Mark unread and Settle, which the ⋯ menu used to hold.</div></div>
   <div class="phone-col"><div class="phone" id="phone3"></div><div class="phone-cap"><b>3 · A row opens its screen.</b> Changes and Agents open the screens the phone already has. Files and Library are new. Browser and Canvas show the agent's latest picture of the page or board.</div></div>
 </div>
@@ -399,7 +394,7 @@
     <ol>
       <li><b>Room for it</b> (the chat is at least 860px wide): the card is docked at the top right, always open. The transcript keeps clear of it.</li>
       <li><b>No room</b> (a medium or narrow window, or the pane is open): the card becomes a pill in the title bar holding only the rows' glyphs and an arrow. Clicking it drops the card down under it. A row opens the pane, and the drop-down closes. In a narrow window the folder and branch chips leave the title bar first, so the pill never has to.</li>
-      <li><b>Phone</b>: no header bar. A back button and a pill float over the transcript. The pill shows the chat's title and its newest glyphs, and opens the chat's page, where the rows live. Each row opens a screen.</li>
+      <li><b>Phone</b>: no header bar. A back button and a pill with the chat's title float over the transcript. The pill opens the chat's page, where the rows live. Each row opens a screen.</li>
     </ol>
   </div>
   <div class="note">
@@ -408,7 +403,7 @@
       <li><b>Order.</b> Rows appear in the order the agent first touched each thing, and don't reorder later. Files arrives with Changes: one says what changed, the other shows where it sits in the project. Library stays last, because it holds what came out of the run rather than a place the agent worked.</li>
       <li><b>A row the agent is in right now</b> has its glyph in the agent-trail violet the pane tabs and Files tree already use. A spawned agent's row uses its agent glyph. No dots.</li>
       <li><b>New, not yet opened</b>: the glyph is in primary ink instead of muted. Opening the row clears it.</li>
-      <li>The pill's glyphs follow the same rules, so it says the same thing at a glance.</li>
+      <li>The desktop pill's glyphs follow the same rules, so it says the same thing at a glance. The phone's pill is the chat's title alone.</li>
       <li><b>A new Diff glyph</b>, <span class="inline-glyph"><svg class="g" viewBox="0 0 16 16" fill="none"><path d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span> → <span class="inline-glyph"><svg class="g" viewBox="0 0 16 16" fill="none"><rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>: plus over minus in the rounded frame the pane's other glyphs share. It replaces <code>DiffGlyph</code> in <code>pane/paneKinds.tsx</code>, so the pane tab changes too.</li>
     </ul>
   </div>
@@ -660,14 +655,12 @@ function phoneFrame(inner) {
 const RUNTIME_MARK = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M3.8 3.8l2.8 2.8M9.4 9.4l2.8 2.8M12.2 3.8 9.4 6.6M6.6 9.4l-2.8 2.8" stroke="#D97757" stroke-width="1.8" stroke-linecap="round"/></svg>'
 const TITLE = 'Footer drops off the export dialog'
 function phoneChat(s, id) {
-  const rows = rowsOf(s)
-  // The pill holds the newest three glyphs; older ones fold into a count.
-  const shown = rows.slice(-3), extra = rows.length - shown.length
   let body = ''
   if (s.user) body += `<div class="m-user">The export dialog's footer drops off the bottom at 1280×720, so you can't reach Export. Fix it, check it in the browser, and sketch the flow on the canvas.<div class="atts">${s.images.filter(i => i.from === 'you').reverse().map(i => `<div class="thumb">${ART[i.art]()}</div>`).join('')}</div></div>`
   if (s.logs.length) body += `<div class="m-worked">${G.read}<span>${s.working ? 'Working' : 'Worked'} · ${s.logs.length} steps</span><span class="sp"></span>${G.right}</div>`
   if (s.done) body += `<div class="m-answer"><p>The footer is fixed. The dialog body scrolls now, and the footer stays pinned at both sizes I checked.</p><p>Three files changed, ${diffSpan(totals(s))}. The screenshots are in the Library.</p></div>`
-  const pill = `<button class="m-pill glass" data-phone-pill><span class="mk">${RUNTIME_MARK}</span><span class="tt">${TITLE}</span>${rows.length ? `<span class="stack">${extra ? `<span class="more">+${extra}</span>` : ''}${shown.map(r => `<span class="${r.live ? 'live' : ''}${enter(id + ':g:' + r.key)}">${G[r.key]}</span>`).join('')}</span>` : ''}<span class="chev">${G.right}</span></button>`
+  // The pill is the chat's title and nothing else: what the agent touched is one tap away, on the chat's page.
+  const pill = `<button class="m-pill glass" data-phone-pill><span class="tt">${TITLE}</span><span class="chev">${G.right}</span></button>`
   return phoneFrame(`<div class="m-body"><div class="m-scroll">${body}</div><div class="m-fade"></div>
       <div class="m-float"><button class="m-fab glass" data-phone-go="chat">${G.back}</button>${pill}</div></div>
     <div class="m-composer"><div class="ph">Reply…</div><div class="row"><span style="font-size:20px;line-height:1">+</span><span style="margin-left:auto">Opus 5.5</span><span class="send"><svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M8 13V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div></div>
