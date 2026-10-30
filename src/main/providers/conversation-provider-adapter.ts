@@ -190,6 +190,10 @@ export type MockAdapterSessionInput = {
   // A provider that does not map it runs the preset's own.
   permissionMode?: string
   allowedTools?: string[]
+  // Folders outside the workspace the agent is handed files in (the images
+  // sent with its turns), absolute, for it to read without asking. A provider
+  // whose CLI asks before reading outside the workspace allows these.
+  readableDirectories?: string[]
   // MCP servers the provider starts this session with (`acceptsMcpServers`).
   mcpServers?: ConversationMcpServer[]
   // Session-scoped continuation channel (provider → runtime), set on
