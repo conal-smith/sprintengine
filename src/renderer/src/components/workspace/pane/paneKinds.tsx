@@ -52,7 +52,7 @@ function TerminalGlyph({ className }: { className?: string }) {
   )
 }
 
-function FilesGlyph({ className }: { className?: string }) {
+export function FilesGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
       <path
@@ -76,20 +76,37 @@ function GitGlyph({ className }: { className?: string }) {
   )
 }
 
-function DiffGlyph({ className }: { className?: string }) {
+// Plus over minus in the rounded frame the Terminal and Canvas glyphs share, so
+// it sits in the tab strip as one of the family. A page with ± on it was the
+// other candidate; it reads as `create-patch`, the Git panel's verb.
+export function DiffGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 4.75v4M6 6.75h4M6 11h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+// A picture in a frame: the sun and the hills every photo glyph draws, so the
+// Library reads as "the pictures" before its label is read.
+export function LibraryGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="6" cy="6.6" r="1.2" stroke="currentColor" strokeWidth="1.3" />
       <path
-        d="M5 2.5v5M2.5 5h5M2.5 11.5h5M8.5 13.5l4-11"
+        d="M2.6 12.2 6 9l2.4 2.2 2-1.8 3 2.6"
         stroke="currentColor"
-        strokeWidth="1.5"
+        strokeWidth="1.4"
         strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   )
 }
 
-function BrowserGlyph({ className }: { className?: string }) {
+export function BrowserGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
       <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
@@ -145,7 +162,7 @@ function BacklogGlyph({ className }: { className?: string }) {
 
 // A little robot, still: the Agents list. The characters that move live on the
 // agents themselves; the kind's own mark stays a plain glyph.
-function AgentsGlyph({ className }: { className?: string }) {
+export function AgentsGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
       <rect x="3" y="5.4" width="10" height="7.8" rx="2.4" stroke="currentColor" strokeWidth="1.5" />
@@ -186,6 +203,9 @@ export const STATIC_PANE_KINDS: readonly PaneKindDefinition[] = [
   { kind: 'canvas', label: 'Canvas', letter: 'C', moduleId: 'canvas', Glyph: CanvasGlyph },
   // The agents the focused chat sent off to work, running and finished.
   { kind: 'agents', label: 'Agents', letter: 'A', Glyph: AgentsGlyph },
+  // Every picture in the focused chat: what the person attached and what the
+  // agent's steps returned.
+  { kind: 'library', label: 'Library', letter: 'I', Glyph: LibraryGlyph },
 ]
 
 // Kinds that are tabs but never offered by the "+" menu or the launcher: a
