@@ -270,9 +270,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The screens that make up New: the project picker, the composer, and the
-// schedule its "+" opens, which leaves the same way once it has scheduled.
-const NEW_CHAT_FLOW = new Set(["ChooseProject", "NewChat", "NewSchedule"]);
+// The screens that make up New: the project picker and the composer.
+const NEW_CHAT_FLOW = new Set(["ChooseProject", "NewChat"]);
 
 /**
  * The stack once New has started a chat: the picker and the composer leave
@@ -284,4 +283,19 @@ export function routesAfterNewChat<R extends { name: string }, C>(routes: readon
   let end = routes.length;
   while (end > 0 && NEW_CHAT_FLOW.has(routes[end - 1].name)) end--;
   return [...routes.slice(0, end), chat];
+}
+
+/**
+ * The stack once New has made a scheduled agent: New leaves as it does for a
+ * chat, and the Scheduled list is on top, where the new schedule is listed. A
+ * New opened from that list goes back to it rather than stacking a second.
+ */
+export function routesAfterSchedule<R extends { name: string }, S extends { name: "Scheduled" }>(
+  routes: readonly R[],
+  scheduledList: S,
+): (R | S)[] {
+  let end = routes.length;
+  while (end > 0 && NEW_CHAT_FLOW.has(routes[end - 1].name)) end--;
+  const kept = routes.slice(0, end);
+  return kept[kept.length - 1]?.name === "Scheduled" ? kept : [...kept, scheduledList];
 }

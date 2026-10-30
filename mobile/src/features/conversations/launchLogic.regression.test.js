@@ -100,15 +100,25 @@ test("a started chat replaces the whole New flow, so Back returns to the list", 
     "whatever opened New is where Back lands",
   );
   assert.deepEqual(names(routesAfterNewChat([{ name: "HomeOverview" }], chat)), ["HomeOverview", "Conversation"]);
+});
+
+test("a schedule made in New lands on the Scheduled list, once", () => {
+  const { routesAfterSchedule } = require("../../../.mobile-test-build/src/features/conversations/launchLogic.js");
+  const names = (routes) => routes.map((route) => route.name);
+  assert.deepEqual(
+    names(routesAfterSchedule([{ name: "HomeOverview" }, { name: "ChooseProject" }, { name: "NewChat" }], { name: "Scheduled" })),
+    ["HomeOverview", "Scheduled"],
+    "from the list's +: New leaves, and Back from the schedules is the chat list",
+  );
   assert.deepEqual(
     names(
-      routesAfterNewChat(
-        [{ name: "HomeOverview" }, { name: "ChooseProject" }, { name: "NewChat" }, { name: "NewSchedule" }],
+      routesAfterSchedule(
+        [{ name: "HomeOverview" }, { name: "SettingsHome" }, { name: "Scheduled" }, { name: "ChooseProject" }, { name: "NewChat" }],
         { name: "Scheduled" },
       ),
     ),
-    ["HomeOverview", "Scheduled"],
-    "a schedule made from New's + lands on the schedules, and Back from them on the list",
+    ["HomeOverview", "SettingsHome", "Scheduled"],
+    "from the Scheduled list's New: back to that list, not a second one",
   );
 });
 

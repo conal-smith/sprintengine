@@ -115,17 +115,22 @@ the model picker and send, with the strip tucked under the box saying where
 the chat runs: the machine, the project, Worktree, and the branch.
 
 The "+" ends with **Schedule** where the pairing may operate the desktop
-(`workspace:operate`). It starts nothing: it takes the words, the machine and
-project, the agent and model, the Worktree switch and the access to New
-scheduled agent, which makes the schedule on the desktop with `schedule.create`.
-There "When" offers one-time runs first ("Once, in an hour", "Once, tomorrow
-at 9:00 AM"), sent as `once` with a cron naming the same minute, and only
-where the desktop advertises `scheduled-agents`, since an older handler refuses
-the argument; the common repeats follow. A schedule's runs start from words
-alone, so while a picture or file is attached the row says to remove it. Once
-scheduled, New leaves and the Scheduled list opens: every paired desktop's
-schedules, which the home screen's clock button and Settings → Scheduled agents
-also open.
+(`workspace:operate`), as the desktop's "+" offers it: a switch that makes New
+a scheduled agent rather than a chat. The schedule is a tag beside the "+"
+(tap it for the picker, × to start a chat now instead) and the send wears the
+schedule's clock. The picker is the desktop's: Once, Daily, Weekly, Monthly
+and Cron, with the days, typed times ("+ Time"), a readout of the next runs,
+and Once's quick times with a day stepper and a time. Its cron reader
+(`src/shared/cron/cron.ts`) and its tab model (`scheduleEditor.ts`) are the
+desktop's own files, mirrored and held to them by the regression suite. Once
+is `schedule.create`'s `once`, offered only where the desktop advertises
+`scheduled-agents`, since an older handler refuses the argument. Sending makes
+the schedule with New's own choices: the machine and project, the agent and
+model, the access and the Worktree switch; a schedule's runs start from words
+alone, so nothing can be attached while it is on. New then leaves and the
+Scheduled list opens: every paired desktop's schedules, also reached from the
+home screen's clock button and Settings → Scheduled agents, whose **+** opens
+New already scheduling.
 
 Worktree is on when New opens, as on the desktop: the chat starts in a
 worktree of its own, cut from the desktop's worktree pool on the project's

@@ -1,5 +1,3 @@
-import type { ScheduleFromNewChat } from "../features/scheduled/NewScheduleScreen";
-
 // The gate carries Settings' whole stack too: a phone whose only desktop went
 // offline still needs the desktop screen's diagnostics and its Forget button,
 // which is the one place that gets it un-stuck.
@@ -20,8 +18,11 @@ export type GateStackParamList = {
 // circular buttons in its top bar.
 export type HomeStackParamList = {
   HomeOverview: undefined;
-  /** Step one of a new chat: the projects each desktop has open. */
-  ChooseProject: undefined;
+  /**
+   * Step one of a new chat: the projects each desktop has open. `scheduled`:
+   * New from the Scheduled list, which opens as a scheduled agent.
+   */
+  ChooseProject: { scheduled?: boolean } | undefined;
   /** Step two: the first message of a chat on the chosen project. */
   NewChat: {
     deviceId: string;
@@ -30,6 +31,8 @@ export type HomeStackParamList = {
     desktopName: string;
     /** Opens with the model sheet up: a deep link's, so the picker can be reached in one step. */
     sheet?: "model";
+    /** Opens as a scheduled agent: New from the Scheduled list. */
+    scheduled?: boolean;
   };
   Conversation: {
     deviceId: string;
@@ -60,18 +63,11 @@ export type HomeStackParamList = {
   Desktop: { deviceId: string };
   /** Dev servers the paired desktops publish on the tailnet. */
   Web: undefined;
-  /** The scheduled agents on every paired desktop, with Run now, Pause, Resume and Close. */
+  /**
+   * The scheduled agents on every paired desktop, with Run now, Pause, Resume
+   * and Close. A new one is New chat with its "+"'s Schedule on.
+   */
   Scheduled: undefined;
-  /** Step one of a new scheduled agent: the project it runs in, as New chat's step one. */
-  ScheduleChooseProject: undefined;
-  /** Step two: its prompt and when it runs. `fromNewChat`: reached from New chat's "+", with what it carries. */
-  NewSchedule: {
-    deviceId: string;
-    workspaceId: string;
-    projectName: string;
-    desktopName: string;
-    fromNewChat?: ScheduleFromNewChat;
-  };
   Appearance: undefined;
   Pairing: undefined;
 };

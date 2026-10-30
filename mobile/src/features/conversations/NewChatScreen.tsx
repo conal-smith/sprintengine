@@ -16,6 +16,7 @@ import {
   declaresNewChatEffort,
   declaresNewChatWorktree,
   declaresPermissionModes,
+  declaresScheduledAgents,
 } from "../../api/tailnetTransport";
 import type { WorkspaceCheckout } from "../../api/tailnetWorkspaces";
 import type { MobileSession } from "../../api/types";
@@ -26,8 +27,12 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { SheetOption } from "../../components/SheetOption";
 import { useSheetHandoff } from "../../components/useSheetHandoff";
 import { useSessionData } from "../../navigation/SessionDataProvider";
-import { canOperateSchedules } from "../../api/scheduledAgents";
-import type { ScheduleFromNewChat } from "../scheduled/NewScheduleScreen";
+import { canOperateSchedules, createScheduledAgentsApi } from "../../api/scheduledAgents";
+import { useToast } from "../../components/Toast";
+import { ScheduleSheet, ScheduleTag } from "../scheduled/ScheduleSheet";
+import { localTimeZone } from "../scheduled/scheduleEditor";
+import { DEFAULT_SCHEDULE_CRON, readPickedSchedule, type PickedSchedule } from "../scheduled/schedulePick";
+import { defaultSendAt } from "../scheduled/sendTime";
 import { useTheme, useThemedStyles } from "../../theme/ThemeProvider";
 import { monoFontFamily } from "../../theme/fonts";
 import { projectHueColor } from "../../theme/projectHue";
@@ -100,11 +105,16 @@ const TAG_BUTTON_HEIGHT = 32;
  * the access. Each is sent only where the desktop advertises it.
  *
  * The "+" holds pictures, and Schedule where this pairing may operate the
- * desktop: it hands the words, the place and the picks to New scheduled agent,
- * which schedules a chat there for later, once or on a repeat, rather than
- * starting one now. "Start as" has one answer on the phone, which starts
- * conversations only, so it is not drawn; plan mode and a goal are not offered
- * because the protocol does not carry them. A picture cannot be
+ * desktop, as the desktop's "+" holds it: a switch that makes New a scheduled
+ * agent. The schedule is then a tag beside the "+" (tap it for the picker,
+ * × to start a chat now instead), the send wears the schedule's clock, and
+ * sending makes the schedule on the desktop with `schedule.create`: the
+ * words, the machine and project, the agent and model, the access and the
+ * Worktree switch, all as picked here. Each run is a new chat started with
+ * those words; the effort is the CLI's own, which a schedule does not carry.
+ * "Start as" has one answer on the phone, which starts conversations only, so
+ * it is not drawn; plan mode and a goal are not offered because the protocol
+ * does not carry them. A picture cannot be
  * uploaded before the chat's session exists, so a launch that carries any
  * starts the chat bare and hands its words and pictures to the chat, which
  * sends them as its first message once it is live.
@@ -122,9 +132,10 @@ export function NewChatScreen({
   workspaceId,
   projectName,
   initialSheet,
+  initialScheduled = false,
   onCancel,
   onStarted,
-  onSchedule,
+  onScheduled,
 }: {
   deviceId: string;
   desktopName: string;
@@ -134,11 +145,10 @@ export function NewChatScreen({
   initialSheet?: "model";
   onCancel: () => void;
   onStarted: (deviceId: string, thread: ConversationThread, opening?: ChatOpening) => void;
-  /** Schedule from the "+": where it runs, and what New chat carries over. Absent, no Schedule row. */
-  onSchedule?: (
-    target: { deviceId: string; desktopName: string; workspaceId: string; projectName: string },
-    draft: ScheduleFromNewChat,
-  ) => void;
+  /** Opens as a scheduled agent, on the desktop's default repeat: New from the Scheduled list. */
+  initialScheduled?: boolean;
+  /** A schedule was made. Absent, the "+" offers no Schedule. */
+  onScheduled?: () => void;
 }) {
   const { colors, isDark } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -151,6 +161,9 @@ export function NewChatScreen({
   const api = apiFor(target.deviceId);
   const session = sessions.find((candidate) => candidate.deviceId === target.deviceId) ?? null;
   const availability = chatLaunchAvailability(session, { machineName: target.desktopName });
+  const scheduleOffered = !!onScheduled && !!session && canOperateSchedules(session);
+  // A one-time run is `schedule.create`'s `once`, which an older desktop refuses.
+  const onceOffered = !!session && declaresScheduledAgents(session);
 
   const [prompt, setPrompt] = useState("");
   // The prompt is a draft until Start, so dictation can fill it; the words are
@@ -174,7 +187,14 @@ export function NewChatScreen({
   // It is sent only where it is offered (`worktreeOffered`).
   const [worktreeOn, setWorktreeOn] = useState(true);
   const [preset, setPreset] = useState<PermissionPreset | null>(null);
-  const [sheet, setSheet] = useState<"model" | "access" | "machine" | null>(initialSheet ?? null);
+  const [sheet, setSheet] = useState<"model" | "access" | "machine" | "schedule" | null>(initialSheet ?? null);
+  // The schedule while New is a scheduled agent; null while it starts a chat.
+  // Written in this phone's zone, which is the person's.
+  const [timezone] = useState(localTimeZone);
+  const [scheduled, setScheduled] = useState<PickedSchedule | null>(() =>
+    initialScheduled ? { cron: DEFAULT_SCHEDULE_CRON, once: null } : null,
+  );
+  const toast = useToast();
   useEffect(() => {
     if (initialSheet) setSheet(initialSheet);
   }, [initialSheet]);
@@ -284,8 +304,15 @@ export function NewChatScreen({
   useEffect(() => {
     if (preset && !presetMeta) setPreset(null);
   }, [preset, presetMeta]);
-  const hasContent = dictatedDraft(prompt, dictation.interim).trim().length > 0 || images.length > 0;
-  const canSend = availability.available && hasContent && state.status !== "pending" && !picking;
+  const hasWords = dictatedDraft(prompt, dictation.interim).trim().length > 0;
+  const hasContent = hasWords || images.length > 0;
+  // A schedule's runs start from its words alone, at a time still to come.
+  const scheduleReads = scheduled ? readPickedSchedule(scheduled, timezone, Date.now()).ok : true;
+  const canSend =
+    availability.available &&
+    (scheduled ? hasWords && images.length === 0 && scheduleReads : hasContent) &&
+    state.status !== "pending" &&
+    !picking;
   // The trigger names the model (the CLI's mark beside it names the CLI),
   // then the effort where one is picked.
   const modelText = pickerLabel(providers, selection, DESKTOP_DEFAULT_LABEL);
@@ -306,20 +333,54 @@ export function NewChatScreen({
       busy: picking,
       files: !!session && declaresMessageFiles(session),
     },
-    schedule: onSchedule && session && canOperateSchedules(session) ? { busy: picking } : null,
+    schedule: scheduleOffered ? { on: scheduled !== null, busy: picking } : null,
   });
 
-  const schedule = () => {
-    if (!onSchedule || state.status === "pending") return;
-    // The words as they stand; a microphone still listening keeps listening
-    // here, and what it has heard so far goes with them.
-    onSchedule(target, {
-      prompt: dictatedDraft(prompt, dictation.interim),
+  // The "+"'s Schedule: on, it opens on a one-time run at the next whole hour
+  // where the desktop takes one (as the desktop's does), else on its default
+  // repeat, with the picker up; off, New starts a chat again.
+  const toggleSchedule = () => {
+    if (scheduled) {
+      setScheduled(null);
+      return;
+    }
+    setScheduled({ cron: DEFAULT_SCHEDULE_CRON, once: onceOffered ? defaultSendAt(Date.now()) : null });
+    setSheet("schedule");
+    if (state.status === "error") setState({ status: "editing" });
+  };
+
+  // Another machine may not take a one-time run, or let this phone schedule at all.
+  useEffect(() => {
+    if (!scheduled) return;
+    if (!scheduleOffered) setScheduled(null);
+    else if (scheduled.once !== null && !onceOffered) setScheduled({ cron: scheduled.cron, once: null });
+  }, [scheduled, scheduleOffered, onceOffered]);
+
+  const scheduleRun = async (paired: MobileSession, draft: string, picked: PickedSchedule, options: { worktree: boolean }) => {
+    if (picked.once !== null && picked.once <= Date.now()) {
+      setState({ status: "error", message: "That time has passed. Pick one ahead." });
+      return;
+    }
+    const api = createScheduledAgentsApi({ baseUrl: paired.baseUrl, deviceToken: paired.deviceToken });
+    const result = await api.create({
+      workspaceId: target.workspaceId,
+      prompt: draft,
+      cron: picked.cron,
+      once: picked.once,
+      timezone,
       cli: selection.cli,
       model: selection.cli ? selection.model : null,
-      worktree: worktreeOffered && worktreeOn,
+      worktree: options.worktree,
       permissionPreset: preset,
     });
+    if (!result.ok) {
+      // Nothing was scheduled, so the words stay where they are.
+      setState({ status: "error", message: result.message ?? `${target.desktopName} did not schedule it.` });
+      return;
+    }
+    setState({ status: "editing" });
+    toast.show(`Scheduled on ${target.desktopName} · ${result.data?.scheduleWords ?? "on its schedule"}`, "success");
+    onScheduled?.();
   };
 
   const startChat = async (paired: MobileSession, draft: string, options: { worktree: boolean }) => {
@@ -427,7 +488,9 @@ export function NewChatScreen({
           return;
         }
       }
-      await startChat(session, draft, { worktree: overrides.worktree ?? (worktreeOffered && worktreeOn) });
+      const worktreeChosen = overrides.worktree ?? (worktreeOffered && worktreeOn);
+      if (scheduled) await scheduleRun(session, draft, scheduled, { worktree: worktreeChosen });
+      else await startChat(session, draft, { worktree: worktreeChosen });
     } catch (error) {
       setState({ status: "error", message: error instanceof Error ? error.message : "The chat did not start." });
     } finally {
@@ -675,10 +738,15 @@ export function NewChatScreen({
               label: finishingDictation
                 ? "Finishing dictation"
                 : state.status === "pending"
-                  ? "Starting the chat"
-                  : "Start chat",
+                  ? scheduled
+                    ? "Scheduling"
+                    : "Starting the chat"
+                  : scheduled
+                    ? "Schedule"
+                    : "Start chat",
               disabled: !canSend,
               onPress: () => void start(),
+              schedule: scheduled !== null,
             }}
             attachments={images.map((image, index) => ({
               key: `${image.uri}-${index}`,
@@ -708,7 +776,7 @@ export function NewChatScreen({
               disabled: state.status === "pending" || picking,
               busy: picking,
               onAttach: (source) => void attach(source),
-              onSchedule: schedule,
+              onSchedule: toggleSchedule,
             }}
             picker={{
               cli: selection.cli ?? "claude-code",
@@ -724,9 +792,18 @@ export function NewChatScreen({
             }}
             strip={<ComposerStrip entries={stripEntries} />}
             tags={
-              // A tag for each choice that is not the default: here the
-              // access, chosen in the model sheet. Tap it to change it.
-              presetMeta ? (
+              // A tag for each choice that is not the default: the schedule,
+              // and the access chosen in the model sheet. Tap one to change it.
+              <>
+              {scheduled ? (
+                <ScheduleTag
+                  onPress={() => setSheet("schedule")}
+                  onRemove={() => setScheduled(null)}
+                  schedule={scheduled}
+                  timezone={timezone}
+                />
+              ) : null}
+              {presetMeta ? (
                 <Pressable
                   accessibilityLabel={`Access, ${presetMeta.label}`}
                   accessibilityRole="button"
@@ -742,7 +819,8 @@ export function NewChatScreen({
                     {presetMeta.chip}
                   </Text>
                 </Pressable>
-              ) : null
+              ) : null}
+              </>
             }
           />
         </View>
@@ -816,6 +894,17 @@ export function NewChatScreen({
           />
         ))}
       </BottomSheet>
+
+      {scheduled ? (
+        <ScheduleSheet
+          onChange={setScheduled}
+          onClose={() => setSheet(null)}
+          onceOffered={onceOffered}
+          schedule={scheduled}
+          timezone={timezone}
+          visible={sheet === "schedule"}
+        />
+      ) : null}
 
       <BottomSheet onClose={() => setSheet(null)} title="Run on" visible={sheet === "machine"}>
         <Text style={styles.sheetLede}>The chat&apos;s agent runs on this machine.</Text>
