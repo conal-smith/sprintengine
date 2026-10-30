@@ -10,7 +10,9 @@ import { createGatewayToolCaller } from "./tailnetWorkspaces";
 // read here stops showing as finished-and-unseen there too. A desktop that
 // also advertises `chat-mark-unread` takes `conversation.mark_unread`, the
 // one call that moves the visit clock back: to just before the chat's latest
-// finish, so that finish reads as unseen again on every device.
+// finish, so that finish reads as unseen again on every device. One that
+// advertises `chat-row-menu` takes `conversation.snooze`: the chat sleeps on
+// its Snoozed shelf until a time, or wakes now.
 //
 // What is sent and what an answer means are pure and exported, so the
 // regression suite reads the same rules the screens run.
@@ -20,6 +22,8 @@ export const CONVERSATION_SETTLE_TIMEOUT_MS = 10_000;
 export const CONVERSATION_VISIT_TIMEOUT_MS = 5_000;
 /** Mark unread writes the desktop's record of the chat, as a settle does. */
 export const CONVERSATION_MARK_UNREAD_TIMEOUT_MS = 10_000;
+/** A snooze writes the record and pauses the chat's processes on the desktop. */
+export const CONVERSATION_SNOOZE_TIMEOUT_MS = 10_000;
 
 export interface SettledConversation {
   workspaceId: string;
@@ -31,6 +35,12 @@ export interface VisitedConversation {
   workspaceId: string;
   /** The desktop's visit clock after the stamp; it only moves forward. */
   lastVisitedAt: number;
+}
+
+export interface SnoozedConversation {
+  workspaceId: string;
+  /** When it wakes; null when the call woke it. */
+  snoozedUntil: number | null;
 }
 
 export interface MarkedUnreadConversation {
@@ -50,6 +60,12 @@ export interface ConversationLifecycleApi {
    * refusal's message is the desktop's own.
    */
   markUnread(workspaceId: string): Promise<ApiResult<MarkedUnreadConversation>>;
+  /**
+   * Only for a desktop that advertises `chat-row-menu`. `until` is a time
+   * still ahead; null wakes the chat now. Refused as `working` while an agent
+   * in it works and as `settled` for a settled chat, with the desktop's words.
+   */
+  snooze(workspaceId: string, until: number | null): Promise<ApiResult<SnoozedConversation>>;
 }
 
 /** `conversation.settle`'s arguments. `settled` is sent only to un-settle; the tool's default settles. */
@@ -73,6 +89,18 @@ export function readSettleAnswer(data: unknown, workspaceId: string): SettledCon
 export function readVisitAnswer(data: unknown, workspaceId: string): VisitedConversation | null {
   if (!isRecord(data) || data.ok !== true || data.workspaceId !== workspaceId) return null;
   return instant(data.lastVisitedAt) ? { workspaceId, lastVisitedAt: data.lastVisitedAt } : null;
+}
+
+/** `conversation.snooze`'s arguments: a whole millisecond to wake at, or null to wake now. */
+export function buildSnoozeArgs(workspaceId: string, until: number | null): Record<string, unknown> {
+  return { workspaceId, until: until === null ? null : Math.trunc(until) };
+}
+
+/** `conversation.snooze`'s answer, or null when it is not the tool's shape. */
+export function readSnoozeAnswer(data: unknown, workspaceId: string): SnoozedConversation | null {
+  if (!isRecord(data) || data.ok !== true || data.workspaceId !== workspaceId) return null;
+  if (data.snoozedUntil === null) return { workspaceId, snoozedUntil: null };
+  return instant(data.snoozedUntil) ? { workspaceId, snoozedUntil: data.snoozedUntil } : null;
 }
 
 /** `conversation.mark_unread`'s answer, or null when it is not the tool's shape. */
@@ -107,6 +135,22 @@ export function createConversationLifecycleApi(options: { baseUrl: string; devic
       return answer
         ? { ok: true as const, data: answer }
         : { ok: false as const, errorCode: "invalid_payload" as const, message: "The desktop did not confirm the chat was marked unread." };
+    },
+    async snooze(workspaceId, until) {
+      const result = await callTool(
+        "conversation.snooze",
+        buildSnoozeArgs(workspaceId, until),
+        CONVERSATION_SNOOZE_TIMEOUT_MS,
+      );
+      if (!result.ok) return { ok: false as const, errorCode: result.errorCode, message: result.message };
+      const answer = readSnoozeAnswer(result.data, workspaceId);
+      return answer
+        ? { ok: true as const, data: answer }
+        : {
+            ok: false as const,
+            errorCode: "invalid_payload" as const,
+            message: "The desktop did not confirm the snooze.",
+          };
     },
   };
 }

@@ -7,6 +7,8 @@ import { CircleButton } from "../../components/CircleButton";
 import { ExpandingSearch } from "../../components/ExpandingSearch";
 import {
   BellIcon,
+  CheckIcon,
+  ChevronIcon,
   CliLogo,
   FolderGlyph,
   GearIcon,
@@ -21,6 +23,7 @@ import {
 import { motionDurations, useReducedMotion } from "../../components/motion";
 import { ScreenFrame, useListContentStyle, useRefreshControl } from "../../components/Screen";
 import { SheetOption } from "../../components/SheetOption";
+import { SwipeRow, type SwipeAction } from "../../components/SwipeRow";
 import { useNow } from "../../components/useNow";
 import { WorkingMark } from "../../components/WorkingMark";
 import { useTheme, useThemedStyles } from "../../theme/ThemeProvider";
@@ -47,8 +50,16 @@ import {
   type ChatRowState,
 } from "./conversationListLogic";
 import type { ConversationTarget } from "./conversationLogic";
+import { isChatSnoozed, resolveSnoozePresets, snoozeOffered, snoozeWakeLabel, splitSnoozed } from "./snoozeLogic";
 
-type Section = { key: string; title: string | null; hue?: number | null; data: ChatListRow[] };
+type Section = {
+  key: string;
+  title: string | null;
+  hue?: number | null;
+  data: ChatListRow[];
+  /** The Snoozed shelf: how many chats sleep on it, whether or not it is open. */
+  shelf?: { count: number; open: boolean };
+};
 // How often the list in front reads its chats while an agent works.
 const LIST_POLL_MS = 15_000;
 
@@ -104,6 +115,7 @@ export function ConversationsScreen({
     openedAt,
     markChatOpened,
     settleChat,
+    snoozeChat,
     markUnreadChat,
     streamingDesktops,
     canStart,
@@ -116,8 +128,23 @@ export function ConversationsScreen({
   // before the list redraws for it.
   const deferredQuery = useDeferredValue(query);
   const search = useExpandingSearch(() => setQuery(""));
-  // The chat a long press asked about: its sheet offers Mark unread and Settle.
+  // The chat a long press asked about: its sheet offers Mark unread, Snooze and Settle.
   const [menuRow, setMenuRow] = useState<ChatListRow | null>(null);
+  // The chat whose Snooze is choosing a wake time, from its swipe, its sheet or its screen-reader action.
+  const [snoozeRow, setSnoozeRow] = useState<ChatListRow | null>(null);
+  // The Snoozed shelf, closed until opened, as each project's is on the desktop.
+  const [shelfOpen, setShelfOpen] = useState(false);
+  // One row is swiped open at a time; the list's scroll waits while one is dragged.
+  const openSwipe = useRef<(() => void) | null>(null);
+  const [swiping, setSwiping] = useState(false);
+  const swipeOpened = useCallback((shut: () => void) => {
+    if (openSwipe.current && openSwipe.current !== shut) openSwipe.current();
+    openSwipe.current = shut;
+  }, []);
+  const shutSwipe = useCallback(() => {
+    openSwipe.current?.();
+    openSwipe.current = null;
+  }, []);
   // The chat the person went into, so coming back marks it seen at the moment
   // they left it: a turn that ended while it was open was watched, not missed.
   const openedChat = useRef<string | null>(null);
@@ -166,20 +193,32 @@ export function ConversationsScreen({
   const view = groupByProject ? "project" : "recent";
   const sections = useMemo<Section[]>(() => {
     const matching = rows.filter((row) => matchesChatSearch(row, deferredQuery));
+    // Sleeping chats leave the list for a Snoozed shelf at its foot, soonest
+    // to wake first, as they leave the desktop sidebar's for each project's.
+    // A search opens it: a chat looked for by name is shown where it sleeps.
+    const { awake, asleep } = splitSnoozed(matching, now);
+    const open = shelfOpen || deferredQuery.trim().length > 0;
+    const shelf: Section[] = asleep.length
+      ? [{ key: "snoozed", title: "Snoozed", data: open ? asleep : [], shelf: { count: asleep.length, open } }]
+      : [];
     if (view === "project") {
-      return groupChatsByProject(matching, now).map((group) => ({
-        key: group.key,
-        title: group.projectName,
-        hue: group.projectHue,
-        data: group.rows,
-      }));
+      return [
+        ...groupChatsByProject(awake, now).map((group) => ({
+          key: group.key,
+          title: group.projectName,
+          hue: group.projectHue,
+          data: group.rows,
+        })),
+        ...shelf,
+      ];
     }
-    const { recent, earlier } = chatSections(matching, now);
+    const { recent, earlier } = chatSections(awake, now);
     return [
       ...(recent.length ? [{ key: "recent", title: null, data: recent }] : []),
       ...(earlier.length ? [{ key: "earlier", title: "Earlier", data: earlier }] : []),
+      ...shelf,
     ];
-  }, [now, deferredQuery, rows, view]);
+  }, [now, deferredQuery, rows, shelfOpen, view]);
 
   const open = useCallback(
     (row: ChatListRow) => {
@@ -191,13 +230,34 @@ export function ConversationsScreen({
     [markChatOpened, onOpen],
   );
 
-  // The row goes at once; a refusal brings it back with a toast saying why.
+  // The row goes at once; a refusal brings it back with a toast saying why,
+  // and a settle the desktop took offers Undo in one.
   const settle = useCallback(
     (row: ChatListRow) => {
       setMenuRow(null);
       void settleChat(row);
     },
     [settleChat],
+  );
+  // Snooze asks when: the wake times sheet. Choosing one moves the row to the
+  // shelf at once, and the toast that says so offers Undo.
+  const askSnooze = useCallback((row: ChatListRow) => {
+    setMenuRow(null);
+    setSnoozeRow(row);
+  }, []);
+  const snoozeUntil = useCallback(
+    (row: ChatListRow, until: number) => {
+      setSnoozeRow(null);
+      void snoozeChat(row, until);
+    },
+    [snoozeChat],
+  );
+  const wake = useCallback(
+    (row: ChatListRow) => {
+      setMenuRow(null);
+      void snoozeChat(row, null);
+    },
+    [snoozeChat],
   );
   // The row goes green the moment the desktop answers; a refusal says why.
   const markUnread = useCallback(
@@ -261,6 +321,8 @@ export function ConversationsScreen({
         contentContainerStyle={content}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={shutSwipe}
+        scrollEnabled={!swiping}
         keyExtractor={(item) => JSON.stringify([item.deviceId, item.thread.workspaceId, item.thread.agentId])}
         ListEmptyComponent={
           <Text style={styles.empty}>
@@ -290,27 +352,44 @@ export function ConversationsScreen({
         // tick that moves no row's time or surface leaves every row as drawn.
         renderItem={({ item, section }) => {
           const unreadable = offersMarkUnread(item);
+          const asleep = section.key === "snoozed";
+          const snoozable = !asleep && snoozeOffered(item);
           return (
             <ChatRow
+              asleep={asleep}
               onMarkUnread={unreadable ? markUnread : undefined}
-              onMenu={item.settleable || unreadable ? setMenuRow : undefined}
+              onMenu={item.settleable || unreadable || snoozable || (asleep && item.snoozable) ? setMenuRow : undefined}
               onOpen={open}
               onSettle={item.settleable ? settle : undefined}
+              onSnooze={snoozable ? askSnooze : undefined}
+              onSwipeOpen={swipeOpened}
+              onSwiping={setSwiping}
+              onWake={asleep && item.snoozable ? wake : undefined}
               row={item}
               settled={section.key === "earlier"}
               showDesktop={showDesktop}
-              showProject={view === "recent"}
+              showProject={view === "recent" || asleep}
               state={chatRowState(item.thread, {
                 now,
                 openedAt: openedAt[chatOpenedKey(item.deviceId, item.thread.agentId)] ?? null,
                 lifecycle: item.lifecycle,
               })}
-              time={formatChatSettledAt(chatRestingAt(item.thread), now)}
+              time={
+                asleep && item.thread.snoozedUntil !== undefined
+                  ? `in ${snoozeWakeLabel(item.thread.snoozedUntil, now)}`
+                  : formatChatSettledAt(chatRestingAt(item.thread), now)
+              }
             />
           );
         }}
         renderSectionHeader={({ section }) =>
-          view === "project" ? (
+          section.shelf ? (
+            <ShelfHeader
+              count={section.shelf.count}
+              onToggle={() => setShelfOpen((current) => !current)}
+              open={section.shelf.open}
+            />
+          ) : view === "project" ? (
             <ProjectHeader count={section.data.length} hue={section.hue ?? null} name={section.title ?? "Other"} />
           ) : section.title ? (
             <Text accessibilityRole="header" style={styles.sectionTitle}>
@@ -345,6 +424,16 @@ export function ConversationsScreen({
             sub={`Shows its latest reply as new again, here and on ${menuRow.desktopName}.`}
           />
         ) : null}
+        {menuRow && !isChatSnoozed(menuRow.thread, now) && snoozeOffered(menuRow) ? (
+          <SheetOption
+            label="Snooze"
+            onPress={() => askSnooze(menuRow)}
+            sub="Puts it on the Snoozed shelf until a time you choose."
+          />
+        ) : null}
+        {menuRow?.snoozable && isChatSnoozed(menuRow.thread, now) ? (
+          <SheetOption label="Wake now" onPress={() => wake(menuRow)} sub="Brings it back to the list." />
+        ) : null}
         {menuRow?.settleable ? (
           <SheetOption
             label="Settle"
@@ -352,6 +441,22 @@ export function ConversationsScreen({
             sub={`Moves it to Settled on ${menuRow.desktopName}, and off this list.`}
           />
         ) : null}
+      </BottomSheet>
+      <BottomSheet
+        onClose={() => setSnoozeRow(null)}
+        title={snoozeRow ? `Snooze “${chatRowTitle(snoozeRow).title}”` : "Snooze"}
+        visible={snoozeRow !== null}
+      >
+        {snoozeRow
+          ? resolveSnoozePresets(Date.now()).map((preset) => (
+              <SheetOption
+                key={preset.id}
+                label={preset.label}
+                onPress={() => snoozeUntil(snoozeRow, preset.wakeAt)}
+                sub={preset.whenLabel}
+              />
+            ))
+          : null}
       </BottomSheet>
     </ScreenFrame>
   );
@@ -457,12 +562,17 @@ const ChatRow = memo(function ChatRow({
   state,
   time,
   settled,
+  asleep,
   showDesktop,
   showProject,
   onOpen,
   onMenu,
   onSettle,
+  onSnooze,
+  onWake,
   onMarkUnread,
+  onSwipeOpen,
+  onSwiping,
 }: {
   row: ChatListRow;
   /** `chatRowState` for this chat now. */
@@ -471,6 +581,8 @@ const ChatRow = memo(function ChatRow({
   time: string;
   /** Under "Earlier": the title drops to the resting ink, as a read mail does. */
   settled: boolean;
+  /** On the Snoozed shelf: `time` is when it wakes. */
+  asleep: boolean;
   showDesktop: boolean;
   showProject: boolean;
   onOpen: (row: ChatListRow) => void;
@@ -480,6 +592,14 @@ const ChatRow = memo(function ChatRow({
   onSettle?: (row: ChatListRow) => void;
   /** Mark unread, as the screen reader's action on the row; absent where it is not offered. */
   onMarkUnread?: (row: ChatListRow) => void;
+  /** Snooze (which asks when), on the row's swipe and as its action; absent where it is not offered. */
+  onSnooze?: (row: ChatListRow) => void;
+  /** Wake now, for a sleeping row, on its swipe and as its action. */
+  onWake?: (row: ChatListRow) => void;
+  /** The row's swipe came open; the list shuts the last one. */
+  onSwipeOpen: (shut: () => void) => void;
+  /** A swipe is being dragged, so the list holds its scroll. */
+  onSwiping: (swiping: boolean) => void;
 }) {
   const styles = useThemedStyles(createStyles);
   const { colors, isDark } = useTheme();
@@ -508,117 +628,181 @@ const ChatRow = memo(function ChatRow({
   const actions = [
     ...(pr ? [{ name: "openPullRequest", label: `Open pull request ${pr.text}` }] : []),
     ...(onMarkUnread ? [{ name: "markUnread", label: "Mark unread" }] : []),
+    ...(onSnooze ? [{ name: "snooze", label: "Snooze" }] : []),
+    ...(onWake ? [{ name: "wake", label: "Wake now" }] : []),
     ...(onSettle ? [{ name: "settle", label: "Settle" }] : []),
   ];
+  // The same, behind the row's swipe to the left: Snooze or Wake now, then
+  // Settle outermost, which a full swipe does.
+  const swipeActions: SwipeAction[] = [
+    ...(onSnooze
+      ? [
+          {
+            key: "snooze",
+            label: "Snooze",
+            icon: <ScheduleIcon size={iconSize.sm} tone="textPrimary" />,
+            tone: "quiet" as const,
+            onPress: () => onSnooze(row),
+          },
+        ]
+      : []),
+    ...(onWake
+      ? [
+          {
+            key: "wake",
+            label: "Wake",
+            icon: <ScheduleIcon size={iconSize.sm} tone="textPrimary" />,
+            tone: "quiet" as const,
+            onPress: () => onWake(row),
+          },
+        ]
+      : []),
+    ...(onSettle
+      ? [
+          {
+            key: "settle",
+            label: "Settle",
+            icon: <CheckIcon size={iconSize.sm} tone="buttonInk" />,
+            tone: "primary" as const,
+            onPress: () => onSettle(row),
+          },
+        ]
+      : []),
+  ];
   return (
-    <Pressable
-      accessibilityHint={ACCESSIBILITY_HINT[state]}
-      accessibilityLabel={[
-        title,
-        agent,
-        `${mark.label} chat`,
-        chatModelName(thread),
-        activity.text,
-        project,
-        project && row.worktree ? "in a worktree" : null,
-        desktop,
-        machine ? `on ${machine.label}` : null,
-        pr ? pr.spokenInRow : null,
-        working ? null : time,
-      ]
-        .filter(Boolean)
-        .join(", ")}
-      accessibilityActions={actions.length ? actions : undefined}
-      onAccessibilityAction={(event) => {
-        if (pr && event.nativeEvent.actionName === "openPullRequest") openPullRequest(pr);
-        if (event.nativeEvent.actionName === "markUnread") onMarkUnread?.(row);
-        if (event.nativeEvent.actionName === "settle") onSettle?.(row);
-      }}
-      accessibilityRole="button"
-      onLongPress={onMenu ? () => onMenu(row) : undefined}
-      onPress={() => onOpen(row)}
-      style={({ pressed }) => [
-        styles.row,
-        state === "needs-input" ? styles.needsInput : null,
-        state === "finished" ? styles.finished : null,
-        pressed ? styles.pressed : null,
-      ]}
-    >
-      {project || desktop || machine ? (
-        <View style={styles.line}>
-          {project ? (
-            <View style={styles.project}>
-              <FolderGlyph ink={projectInk} size={iconSize.xs} />
-              <Text numberOfLines={1} style={styles.projectText}>
-                {project}
-              </Text>
-              {/* A chat in one of the project's worktrees wears the
+    <SwipeRow actions={swipeActions} fullSwipe={!!onSettle} onOpen={onSwipeOpen} onSwiping={onSwiping}>
+      <Pressable
+        accessibilityHint={ACCESSIBILITY_HINT[state]}
+        accessibilityLabel={[
+          title,
+          agent,
+          `${mark.label} chat`,
+          chatModelName(thread),
+          activity.text,
+          project,
+          project && row.worktree ? "in a worktree" : null,
+          desktop,
+          machine ? `on ${machine.label}` : null,
+          pr ? pr.spokenInRow : null,
+          asleep ? `snoozed, wakes ${time}` : working ? null : time,
+        ]
+          .filter(Boolean)
+          .join(", ")}
+        accessibilityActions={actions.length ? actions : undefined}
+        onAccessibilityAction={(event) => {
+          if (pr && event.nativeEvent.actionName === "openPullRequest") openPullRequest(pr);
+          if (event.nativeEvent.actionName === "markUnread") onMarkUnread?.(row);
+          if (event.nativeEvent.actionName === "snooze") onSnooze?.(row);
+          if (event.nativeEvent.actionName === "wake") onWake?.(row);
+          if (event.nativeEvent.actionName === "settle") onSettle?.(row);
+        }}
+        accessibilityRole="button"
+        onLongPress={onMenu ? () => onMenu(row) : undefined}
+        onPress={() => onOpen(row)}
+        style={({ pressed }) => [
+          styles.row,
+          state === "needs-input" ? styles.needsInput : null,
+          state === "finished" ? styles.finished : null,
+          pressed ? styles.pressed : null,
+        ]}
+      >
+        {project || desktop || machine ? (
+          <View style={styles.line}>
+            {project ? (
+              <View style={styles.project}>
+                <FolderGlyph ink={projectInk} size={iconSize.xs} />
+                <Text numberOfLines={1} style={styles.projectText}>
+                  {project}
+                </Text>
+                {/* A chat in one of the project's worktrees wears the
                   project's name and the worktree's mark, as the desktop's
                   sidebar files it, not the worktree's folder ("pool-02"). */}
-              {row.worktree ? <WorktreeGlyph size={iconSize.xs} tone="textSubtle" /> : null}
-            </View>
-          ) : null}
-          {desktop ? (
-            <View style={styles.project}>
-              <RemoteMachineGlyph size={iconSize.xs} />
-              <Text numberOfLines={1} style={styles.projectText}>
-                {desktop}
-              </Text>
-            </View>
-          ) : null}
-          {machine ? <MachineMarkLabel mark={machine} textStyle={styles.projectText} /> : null}
-          <View style={styles.grow} />
-          {seat}
-        </View>
-      ) : null}
-      <View style={styles.line}>
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.title,
-            settled ? styles.titleSettled : null,
-            state === "needs-input" ? styles.titleWarn : null,
-          ]}
-        >
-          {title}
-          {agent ? <Text style={styles.agent}>{`  ${agent}`}</Text> : null}
-        </Text>
-        {project || desktop || machine ? null : seat}
-      </View>
-      <View style={styles.detail}>
-        <View style={styles.markTile}>
-          <CliLogo cli={mark.kind === "chat" ? null : mark.cli} label={mark.label} size={iconSize.xs} />
-        </View>
-        <View style={styles.modelPill}>
-          <Text numberOfLines={1} style={styles.modelPillText}>
-            {chatModelName(thread)}
-          </Text>
-        </View>
-        {activity.tone === "warn" ? <LifecycleGlyph size={iconSize.xs} state="needs_input" /> : null}
-        {activity.tone === "failed" ? <LifecycleGlyph size={iconSize.xs} state="failed" /> : null}
-        {activity.text ? (
+                {row.worktree ? <WorktreeGlyph size={iconSize.xs} tone="textSubtle" /> : null}
+              </View>
+            ) : null}
+            {desktop ? (
+              <View style={styles.project}>
+                <RemoteMachineGlyph size={iconSize.xs} />
+                <Text numberOfLines={1} style={styles.projectText}>
+                  {desktop}
+                </Text>
+              </View>
+            ) : null}
+            {machine ? <MachineMarkLabel mark={machine} textStyle={styles.projectText} /> : null}
+            <View style={styles.grow} />
+            {seat}
+          </View>
+        ) : null}
+        <View style={styles.line}>
           <Text
             numberOfLines={1}
             style={[
-              styles.activity,
-              working ? styles.activityWorking : null,
-              activity.tone === "warn" ? styles.activityWarn : null,
-              activity.tone === "failed" ? styles.activityFailed : null,
+              styles.title,
+              settled ? styles.titleSettled : null,
+              state === "needs-input" ? styles.titleWarn : null,
             ]}
           >
-            {activity.text}
+            {title}
+            {agent ? <Text style={styles.agent}>{`  ${agent}`}</Text> : null}
           </Text>
-        ) : null}
-        {pr ? (
-          <>
-            <View style={styles.grow} />
-            <PullRequestMarkButton mark={pr} />
-          </>
-        ) : null}
-      </View>
-    </Pressable>
+          {project || desktop || machine ? null : seat}
+        </View>
+        <View style={styles.detail}>
+          <View style={styles.markTile}>
+            <CliLogo cli={mark.kind === "chat" ? null : mark.cli} label={mark.label} size={iconSize.xs} />
+          </View>
+          <View style={styles.modelPill}>
+            <Text numberOfLines={1} style={styles.modelPillText}>
+              {chatModelName(thread)}
+            </Text>
+          </View>
+          {activity.tone === "warn" ? <LifecycleGlyph size={iconSize.xs} state="needs_input" /> : null}
+          {activity.tone === "failed" ? <LifecycleGlyph size={iconSize.xs} state="failed" /> : null}
+          {activity.text ? (
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.activity,
+                working ? styles.activityWorking : null,
+                activity.tone === "warn" ? styles.activityWarn : null,
+                activity.tone === "failed" ? styles.activityFailed : null,
+              ]}
+            >
+              {activity.text}
+            </Text>
+          ) : null}
+          {pr ? (
+            <>
+              <View style={styles.grow} />
+              <PullRequestMarkButton mark={pr} />
+            </>
+          ) : null}
+        </View>
+      </Pressable>
+    </SwipeRow>
   );
 });
+
+/**
+ * The Snoozed shelf's fold: its name and how many sleep on it, opening and
+ * closing the rows under it, as the desktop sidebar's fold row does.
+ */
+function ShelfHeader({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <Pressable
+      accessibilityLabel={`Snoozed, ${count} ${count === 1 ? "chat" : "chats"}`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      onPress={onToggle}
+      style={({ pressed }) => [styles.shelfHeader, pressed ? styles.pressed : null]}
+    >
+      <ChevronIcon direction={open ? "down" : "right"} size={iconSize.xs} tone="textSubtle" />
+      <Text style={styles.shelfHeaderText}>Snoozed</Text>
+      <Text style={styles.projectCount}>{count}</Text>
+    </Pressable>
+  );
+}
 
 /** A project in the project view: its folder in its hue, its name, and how many chats. */
 function ProjectHeader({ name, hue, count }: { name: string; hue: number | null; count: number }) {
@@ -787,6 +971,21 @@ const createStyles = ({ colors }: Theme) =>
       ...typography.meta,
       color: colors.textSubtle,
       fontVariant: ["tabular-nums"],
+    },
+    // The Snoozed shelf's fold, set as "Earlier" is, with a chevron and a count.
+    shelfHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: space.xs,
+      minHeight: hitTargetMin,
+      paddingHorizontal: space.lg,
+      paddingTop: space.lg,
+      borderRadius: radius.overlay,
+    },
+    shelfHeaderText: {
+      ...typography.meta,
+      fontWeight: fontWeight.medium,
+      color: colors.textSubtle,
     },
     sectionTitle: {
       ...typography.meta,

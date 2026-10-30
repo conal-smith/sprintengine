@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { createConversationLifecycleApi, type ConversationLifecycleApi } from "../../api/conversationLifecycle";
 import { createTailnetConversationsApi, type ConversationApi } from "../../api/tailnetConversations";
-import { declaresChatMarkUnread, declaresConversationLifecycle } from "../../api/tailnetTransport";
+import { declaresChatMarkUnread, declaresChatRowMenu, declaresConversationLifecycle } from "../../api/tailnetTransport";
 import { createTailnetWorkspacesApi, type DesktopWorkspace, type WorkspacesApi } from "../../api/tailnetWorkspaces";
 import type { ApiResult, MobileSession } from "../../api/types";
 import { useToast } from "../../components/Toast";
@@ -34,6 +34,16 @@ import { conversationCanOperate, conversationEnabled } from "./conversationLogic
 import { keepUnchanged } from "./keepUnchanged";
 import type { FollowUpBehavior } from "./followUp";
 import { createRecentRead } from "./recentRead";
+import {
+  beginSnooze,
+  confirmSnooze,
+  failSnooze,
+  isChatSnoozed,
+  snoozesAfterRead,
+  snoozeWakeWords,
+  withPendingSnoozes,
+  type PendingSnoozes,
+} from "./snoozeLogic";
 
 /** One paired desktop whose projects this phone may read. */
 export interface ChatDesktop {
@@ -104,9 +114,19 @@ export interface ChatsValue {
   /**
    * Settles the chat's workspace on its desktop. The row leaves the list at
    * once; a refusal brings it back and says why in a toast. Answers whether
-   * the desktop settled it. Only for a row that is `settleable`.
+   * the desktop settled it. Only for a row that is `settleable`. A settle
+   * the desktop took says so in a short toast that offers Undo, which brings
+   * the chat back on every device.
    */
   settleChat: (row: ChatListRow) => Promise<boolean>;
+  /**
+   * Snoozes the chat on its desktop until `until`, or wakes it now with
+   * null (`conversation.snooze`). The row moves to or from the Snoozed shelf
+   * at once; a refusal moves it back and says why in a toast. A snooze the
+   * desktop took says so in a short toast that offers Undo, which puts the
+   * chat back as it was. Only for a row that is `snoozable`.
+   */
+  snoozeChat: (row: ChatListRow, until: number | null) => Promise<boolean>;
   /**
    * Marks the chat unread on its desktop (`conversation.mark_unread`): its
    * visit clock goes back to just before its latest finish, on every device.
@@ -142,6 +162,9 @@ export interface ChatsValue {
 // Exported for the screenshot harness (src/__verify__), which lays a fixture
 // row over the list for one screen. Nothing in the app reads it directly.
 export const ChatsContext = createContext<ChatsValue | null>(null);
+
+/** How long a settle's or a snooze's Undo stays on offer: long enough to reach, short enough not to linger. */
+export const UNDO_TOAST_MS = 5_000;
 
 const chatKey = (row: ChatListRow) => JSON.stringify([row.deviceId, row.thread.workspaceId, row.thread.agentId]);
 
@@ -206,6 +229,8 @@ export function ChatsProvider({
         canOperate: conversationCanOperate(session),
         // Mark unread rides the lifecycle tools, where the desktop takes it too.
         markUnread: declaresConversationLifecycle(session) && declaresChatMarkUnread(session),
+        // So do Snooze and Wake now, the row menu's, where the desktop takes those.
+        rowMenu: declaresConversationLifecycle(session) && declaresChatRowMenu(session),
       })),
     [conversationsApiOverride, lifecycleApiOverride, sessions],
   );
@@ -242,6 +267,9 @@ export function ChatsProvider({
   // Settles this phone has asked for and the list has not yet caught up with;
   // their rows stay hidden meanwhile (see `PendingSettles`).
   const [settles, setSettles] = useState<PendingSettles>({});
+  // Snoozes and wakes this phone has asked for, drawn until the list says
+  // the same (see `PendingSnoozes`).
+  const [snoozes, setSnoozes] = useState<PendingSnoozes>({});
   // Marks unread this phone knows of, by `chatWorkspaceKey`: its own, and
   // those its list reads show (`listedVisitRewind`). Each wins over this
   // phone's readings of the chat from before it (`withVisitRewind`, and the
@@ -269,7 +297,7 @@ export function ChatsProvider({
     const startedAt = Date.now();
     setRefreshing(true);
     const answers = await Promise.all(
-      chatClients.map(async ({ session, api, lifecycle, canOperate, markUnread }) => {
+      chatClients.map(async ({ session, api, lifecycle, canOperate, markUnread, rowMenu }) => {
         // The project pill comes from the desktop's workspace list. A pairing
         // that may not read it omits the pill rather than showing a workspace
         // id nobody chose.
@@ -297,6 +325,7 @@ export function ChatsProvider({
             lifecycle: lifecycle !== null,
             canOperate,
             markUnread,
+            rowMenu,
           }),
           markUnread,
           failed: threads === null,
@@ -336,6 +365,7 @@ export function ChatsProvider({
     // that found one new chat draws one row, not every row again.
     setChats((previous) => keepUnchanged(previous, answers.flatMap((answer) => answer.rows), chatKey));
     setSettles((current) => settlesAfterRead(current, startedAt));
+    setSnoozes((current) => snoozesAfterRead(current, startedAt));
     setFailures(answers.filter((answer) => answer.failed).map((answer) => answer.session.desktopName));
     // An answer for no desktops is not an answer for the ones paired next:
     // the provider reads once before the stored pairings arrive, and that
@@ -464,6 +494,29 @@ export function ChatsProvider({
       if (result?.ok) {
         setSettles((current) => confirmSettle(current, key, Date.now()));
         void refresh();
+        const title = chatRowTitle(row).title;
+        toastRef.current.show({
+          title: `Settled “${title}”.`,
+          autoDismissMs: UNDO_TOAST_MS,
+          action: {
+            label: "Undo",
+            onPress: () => {
+              void (async () => {
+                const undone = await api.settle(row.thread.workspaceId, false).catch(() => null);
+                if (undone?.ok) {
+                  setSettles((current) => failSettle(current, key));
+                  void refresh();
+                  return;
+                }
+                toastRef.current.show({
+                  title: `Couldn't bring back “${title}”.`,
+                  message: undone?.message ?? "The desktop did not answer.",
+                  tone: "error",
+                });
+              })();
+            },
+          },
+        });
         return true;
       }
       setSettles((current) => failSettle(current, key));
@@ -476,6 +529,51 @@ export function ChatsProvider({
     },
     [lifecycleFor, refresh],
   );
+
+  const snoozeChat = useCallback(
+    async (row: ChatListRow, until: number | null, undoing = false): Promise<boolean> => {
+      const api = lifecycleFor(row.deviceId);
+      if (!api || !row.snoozable) return false;
+      const key = chatWorkspaceKey(row);
+      const now = Date.now();
+      // What Undo puts back: the snooze the row was drawn with, while it is still ahead.
+      const before = isChatSnoozed(row.thread, now) ? (row.thread.snoozedUntil ?? null) : null;
+      setSnoozes((current) => beginSnooze(current, key, until));
+      const result = await api.snooze(row.thread.workspaceId, until).catch(() => null);
+      if (result?.ok && result.data) {
+        const answered = result.data.snoozedUntil;
+        setSnoozes((current) => confirmSnooze(current, key, answered, Date.now()));
+        void refresh();
+        if (answered !== null && !undoing) {
+          const title = chatRowTitle(row).title;
+          toastRef.current.show({
+            title: `Snoozed “${title}”.`,
+            message: `It wakes ${snoozeWakeWords(answered, Date.now())}.`,
+            autoDismissMs: UNDO_TOAST_MS,
+            action: {
+              label: "Undo",
+              onPress: () => void snoozeRef.current(row, before !== null && before > Date.now() ? before : null, true),
+            },
+          });
+        }
+        return true;
+      }
+      setSnoozes((current) => failSnooze(current, key));
+      toastRef.current.show({
+        title:
+          until === null
+            ? `Couldn't wake “${chatRowTitle(row).title}”.`
+            : `Couldn't snooze “${chatRowTitle(row).title}”.`,
+        message: result?.message ?? "The desktop did not answer.",
+        tone: "error",
+      });
+      return false;
+    },
+    [lifecycleFor, refresh],
+  );
+  // Undo calls back into the snooze it is the toast of, as it is when pressed.
+  const snoozeRef = useRef(snoozeChat);
+  snoozeRef.current = snoozeChat;
 
   // The desktop's visit clock each visit this phone stamped answered with, by
   // `chatWorkspaceKey`, which the list reads until its next read carries the
@@ -583,8 +681,8 @@ export function ChatsProvider({
             return thread === row.thread ? row : { ...row, thread };
           })
         : chats;
-    return withoutSettling(drawn, settles);
-  }, [chats, rewinds, settles, visited]);
+    return withPendingSnoozes(withoutSettling(drawn, settles), snoozes);
+  }, [chats, rewinds, settles, snoozes, visited]);
 
   // A mark unread resets this phone's own readings of the chat from before
   // it to the desktop's rewound clock: a visit answer it holds, and when it
@@ -643,6 +741,7 @@ export function ChatsProvider({
       openedAt,
       markChatOpened,
       settleChat,
+      snoozeChat,
       markUnreadChat,
       visitChat,
       groupByProject,
@@ -665,6 +764,7 @@ export function ChatsProvider({
       refreshing,
       revalidate,
       settleChat,
+      snoozeChat,
       markUnreadChat,
       visitChat,
       groupByProject,
