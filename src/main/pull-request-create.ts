@@ -39,6 +39,7 @@ import { createForgePullRequests, isDriven } from './forge-pull-request'
 import { listBranchPullRequests } from './github/branch-pull-request'
 import { sharedGhRunner, type GhRunner } from './github/gh'
 import { gitPushTarget, originDefaultBranch } from './git-push-target'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 import { runGitCommand } from './git-utils'
 
 export type DraftInputOutcome = { ok: true; input: PullRequestTextInput } | { ok: false; message: string }
@@ -139,7 +140,7 @@ export function createPullRequestCreator(deps: PullRequestCreateDeps = {}) {
     const gitRoot = await out(cwd, ['rev-parse', '--show-toplevel'])
     if (!gitRoot) return empty
     const [branch, headSha, originHead, status, remoteUrl] = await Promise.all([
-      out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']),
+      out(gitRoot, [...HEAD_BRANCH_REF_ARGS]).then(branchNameFromHeadRef),
       out(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']),
       out(gitRoot, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']),
       // The sidecar folder an older build wrote is not the person's work, so

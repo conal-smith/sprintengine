@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from 'path'
 import type { GitFileStatus, GitRepoOperation, GitStatusEntry, GitStatusSnapshot } from './git'
 import { pathExists, runGit, toAbsolutePath } from './git-utils'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 import type { GitRowSummary } from '../shared/electron-api'
 
 type GitStatusCode = {
@@ -106,7 +107,7 @@ export async function getGitRowSummary(repoRoot: string): Promise<GitRowSummary>
     // symbolic-ref, not rev-parse: it names the branch even on an unborn HEAD
     // (fresh init, nothing committed) and fails on a detached checkout — both
     // exactly what the row wants shown.
-    branch = (await runGit(repoRoot, ['symbolic-ref', '--short', 'HEAD'])).trim() || null
+    branch = branchNameFromHeadRef(await runGit(repoRoot, [...HEAD_BRANCH_REF_ARGS]))
   } catch {
     branch = null
     try {

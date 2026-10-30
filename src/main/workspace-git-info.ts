@@ -7,6 +7,7 @@ import { isMachinePath } from '../shared/machine-paths'
 import { parseRemoteFetchUrls, stripRemoteCredentials } from '../shared/repository-identity'
 import { getGitRepoRoot } from './git'
 import { runGit } from './git-utils'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 
 // A workspace's branch and remotes, for capability modules
 // (`MainHost.getWorkspaceGitInfo` / `RendererHost.getWorkspaceGitInfo`).
@@ -31,8 +32,7 @@ const defaultReaders: WorkspaceGitInfoReaders = {
   // detached HEAD, which is the null the contract promises for it.
   readBranch: async (repoRoot) => {
     try {
-      const branch = (await runGit(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
-      return branch || null
+      return branchNameFromHeadRef(await runGit(repoRoot, [...HEAD_BRANCH_REF_ARGS]))
     } catch {
       return null
     }

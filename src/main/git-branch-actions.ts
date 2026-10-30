@@ -2,6 +2,7 @@ import type { GitCommandResult, GitRepoOperation, GitResetMode } from './git'
 import { gitPushTarget, originDefaultBranch } from './git-push-target'
 import { getGitBranches } from './git-read-models'
 import { runGitCommand } from './git-utils'
+import { branchNameFromHeadRef, HEAD_BRANCH_REF_ARGS } from './git-head-branch'
 
 // Continue/finish steps invoke git's commit-message editor by default; a hung
 // hidden editor reads as "nothing happened", so every such command runs with
@@ -246,9 +247,8 @@ async function hasUncommittedTrackedChanges(repoRoot: string): Promise<boolean> 
 }
 
 async function getCurrentBranchName(repoRoot: string): Promise<string | null> {
-  const result = await runGitCommand(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD'])
-  if (!result.ok) return null
-  return result.stdout.trim() || null
+  const result = await runGitCommand(repoRoot, [...HEAD_BRANCH_REF_ARGS])
+  return result.ok ? branchNameFromHeadRef(result.stdout) : null
 }
 
 export async function mergeGitRef(repoRoot: string, ref: string): Promise<GitCommandResult> {
