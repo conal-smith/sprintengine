@@ -176,23 +176,13 @@ export function createCanvasWorkerHost(deps: CanvasWorkerHostDeps): CanvasWorker
   }
 
   /** One attempt: start if needed, post, and wait for this id, a crash or the clock. */
-  function attempt(request: CanvasWorkerRequest): Promise<CanvasResult<CanvasWorkerSuccess> | 'crashed'> {
+  function attempt(request: CanvasWorkerRequest): Promise<CanvasResult<CanvasWorkerSuccess> | 'crashed' | 'timed-out'> {
     return new Promise((settle) => {
       let done = false
       const wasColdStart = coldStart
-      const timer = setTimer(
-        () => {
-          finish(
-            canvasFail(
-              'timeout',
-              `The canvas worker did not answer a ${request.kind} request in time. The board is unchanged.`,
-            ),
-          )
-        },
-        deadlineFor(request.kind, wasColdStart),
-      )
+      const timer = setTimer(() => finish('timed-out'), deadlineFor(request.kind, wasColdStart))
 
-      const finish = (answer: CanvasResult<CanvasWorkerSuccess> | 'crashed'): void => {
+      const finish = (answer: CanvasResult<CanvasWorkerSuccess> | 'crashed' | 'timed-out'): void => {
         if (done) return
         done = true
         timer.cancel()
@@ -249,6 +239,19 @@ export function createCanvasWorkerHost(deps: CanvasWorkerHostDeps): CanvasWorker
     for (let attemptNumber = 0; attemptNumber < 2; attemptNumber += 1) {
       const withId = { ...request, requestId: newRequestId() } as CanvasWorkerRequest
       const answer = await attempt(withId)
+      if (answer === 'timed-out') {
+        // The worker serves one request at a time, so a request it never
+        // finishes (an export or a diagram import stalled in the hidden
+        // window) holds every request after it: kept, this worker would time
+        // out every call until the app restarted. A timeout is answered as
+        // one, not retried, and the next call gets a fresh worker.
+        log('The canvas worker did not answer in time; it is replaced for the next call', { kind: request.kind })
+        stopWorker()
+        return canvasFail(
+          'timeout',
+          `The canvas worker did not answer a ${request.kind} request in time. The board is unchanged.`,
+        )
+      }
       if (answer !== 'crashed') return answer
       // A crashed or never-started worker gets exactly one more chance: the
       // common cause is a window that died between calls, and asking twice for
