@@ -9,10 +9,14 @@
 // - `gh pr view <url> --json …` for the pull request itself. The fields are
 //   the ones `gh pr view --json` lists (gh 2.x); it answers the state read
 //   too, so a watched pull request costs one view per probe, not two.
-// - `gh pr checks <url> --required --json …` for which checks the base
-//   branch requires. `statusCheckRollup` does not say, and without it an
-//   advisory check that never finishes (a review bot) would hold "all checks
-//   passed" back for ever. gh answers a branch with no required checks with an
+// - which checks the base branch requires. `statusCheckRollup` does not say,
+//   and without it an advisory check that never finishes (a review bot) would
+//   hold "all checks passed" back for ever. Given a `requiredChecks` reader,
+//   the record's, it is asked first: conditional REST reads of the base
+//   branch's protection and rulesets, kept per repository and base, which
+//   cost no quota while the branch has not moved (`github-conditional.ts`).
+//   Without one, or when it could not say, `gh pr checks <url> --required
+//   --json …` answers. gh answers a branch with no required checks with an
 //   error saying so, which is read as "none required"; any other failure
 //   leaves it unknown, and the watch then waits on every check.
 //
@@ -32,6 +36,7 @@
 import { canonicalPullRequestUrl, parsePullRequestUrl } from '../../shared/git/pr-url'
 import type { PullRequestState } from '../../shared/git/pull-request'
 import { isRecord } from '../../shared/records'
+import type { RequiredChecksReader } from './github-conditional'
 import {
   parseJsonDocument,
   parseTimestamp,
@@ -115,6 +120,8 @@ export type PullRequestWatchReadOptions = {
   inlineSince?: number
   /** Review id → its line comments, read once per run and shared across reads. */
   inlineCache?: Map<string, string>
+  /** Which checks a base branch requires, asked before `gh pr checks`; see the header. */
+  requiredChecks?: RequiredChecksReader
 }
 
 export type PullRequestWatchRead =
@@ -168,8 +175,26 @@ export async function readPullRequestWatch(
   // Which checks are required is only worth asking while there are checks, and
   // only for an open pull request.
   if (read.state === 'open' && read.checks.length > 0) {
-    const required = await runGh(['pr', 'checks', target, '--required', '--json', REQUIRED_CHECK_FIELDS], {}, deps)
-    read.requiredChecks = parseRequiredChecks(required)
+    const names =
+      options.requiredChecks && read.baseRefName
+        ? await options.requiredChecks.read(
+            {
+              host: parsed.port ? `${parsed.host}:${parsed.port}` : parsed.host,
+              owner: parsed.owner,
+              repo: parsed.repo,
+              base: read.baseRefName,
+            },
+            deps,
+          )
+        : null
+    if (names) {
+      // A required check is named by its context alone: every check on the
+      // head by that name is one of them, whichever workflow runs it.
+      read.requiredChecks = read.checks.filter((check) => names.has(check.name)).map(checkKey)
+    } else {
+      const required = await runGh(['pr', 'checks', target, '--required', '--json', REQUIRED_CHECK_FIELDS], {}, deps)
+      read.requiredChecks = parseRequiredChecks(required)
+    }
   }
   if (options.inlineCache) await fillInlineComments(read.remarks, parsed.host, options.inlineCache, options, deps)
   return read
