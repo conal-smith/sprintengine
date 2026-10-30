@@ -228,6 +228,16 @@ export function declaresConversationLifecycle(session: { tailnetCapabilities?: s
 }
 
 /**
+ * Whether the desktop said a paired device may write its chats' row marks
+ * (`chat-row-menu`), Snooze and Wake now among them: `conversation.snooze`,
+ * with each listed chat's `snoozedUntil`. Absence is a NO: an older desktop
+ * answers the tool "Unknown tool", so the phone offers no Snooze there.
+ */
+export function declaresChatRowMenu(session: { tailnetCapabilities?: string[] }): boolean {
+  return session.tailnetCapabilities?.includes("chat-row-menu") ?? false;
+}
+
+/**
  * Whether the desktop said it takes `conversation.mark_unread`
  * (`chat-mark-unread`), which moves a chat's visit clock back so its latest
  * finish reads as unseen on every device. Absence is a NO: an older desktop
