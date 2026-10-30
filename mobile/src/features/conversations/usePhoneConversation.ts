@@ -17,11 +17,13 @@ import {
   type ConversationEvent,
   type ConversationPermissionPreset,
   type ConversationQueuedMessage,
+  type ConversationScheduledMessage,
   type ConversationThread,
 } from "../../api/conversationWire";
 import {
   declaresConversationHello,
   declaresQueuedSends,
+  declaresScheduledSends,
   declaresSteerSends,
   declaresStopSubagent,
 } from "../../api/tailnetTransport";
@@ -215,6 +217,9 @@ export function usePhoneConversation(
   // What the desktop says it holds for this chat (`conversation-queued-sends`),
   // as its latest `queued` frame said it: the one list of what waits there.
   const [desktopHeld, setDesktopHeld] = useState<ConversationQueuedMessage[]>([]);
+  // What the desktop keeps scheduled into this chat (`conversation-scheduled-sends`),
+  // as its latest `scheduled` frame said, soonest first.
+  const [desktopScheduled, setDesktopScheduled] = useState<ConversationScheduledMessage[]>([]);
   // Messages offered to the desktop to hold that its list does not name yet.
   const [handing, setHanding] = useState<HandingSend[]>([]);
   const [pendingActionIds, setPendingActionIds] = useState<Set<string>>(
@@ -246,6 +251,8 @@ export function usePhoneConversation(
   const threadChanges = useRef(new Map<string, PendingThreadChange>());
   // Held messages being taken back (`cancelQueued`), by command id.
   const cancellations = useRef(new Map<string, (result: CancelHeldResult) => void>());
+  // Scheduled messages being made, sent now or taken back, by command id.
+  const scheduledActions = useRef(new Map<string, (result: CancelHeldResult) => void>());
   // Agents being stopped by their own Stop (`stopSubagent`), by command id.
   const agentStops = useRef(new Map<string, { laneId: string; settle: (result: StopAgentResult) => void }>());
   // The lanes whose Stop is on its way or taken, until the agent reports its
@@ -255,6 +262,8 @@ export function usePhoneConversation(
   // Whether the desktop holds queued messages; re-read on every foreground, so
   // a desktop that updates starts holding them without a re-pair.
   const holdsQueued = !!session && declaresQueuedSends(session);
+  // Whether the desktop keeps messages scheduled into a chat, read the same way.
+  const holdsScheduled = !!session && declaresScheduledSends(session);
   const takesSteer = !!session && declaresSteerSends(session);
   // Whether an agent of this chat can be stopped by itself from here: the
   // desktop takes the command and this pairing may drive its chats. Whether
@@ -532,6 +541,7 @@ export function usePhoneConversation(
     // same one the handlers below fill.
     const switches = threadChanges.current;
     const takingBack = cancellations.current;
+    const scheduling = scheduledActions.current;
     const stopping = agentStops.current;
     // An agent's Stop that will not be answered now: its lane offers Stop again.
     const abandonAgentStops = (message: string) => {
@@ -587,6 +597,7 @@ export function usePhoneConversation(
     setOptimistic([]);
     setQueued([]);
     setDesktopHeld([]);
+    setDesktopScheduled([]);
     setHanding([]);
     const recalledPage = pageHeld(eventsRef.current);
     setPage({ hasMore: recalledPage !== null, beforeCursor: recalledPage });
@@ -679,6 +690,11 @@ export function usePhoneConversation(
                 for (const settle of takingBack.values())
                   settle({ ok: false, message: "The desktop disconnected before answering. Check the queue once it reconnects." });
                 takingBack.clear();
+                // The list the desktop sends after the redial says whether a
+                // schedule, a send-now or a take-back landed.
+                for (const settle of scheduling.values())
+                  settle({ ok: false, message: "The desktop disconnected before answering. Check the scheduled messages once it reconnects." });
+                scheduling.clear();
                 // A Stop sent before the drop may still have landed; the
                 // agent's lane says so once the transcript catches up.
                 abandonAgentStops("The desktop disconnected before answering. If the agent is still working, stop it again.");
@@ -902,6 +918,9 @@ export function usePhoneConversation(
                     ),
                   );
               }
+            } else if (frame.type === "scheduled") {
+              // The desktop's word on what it keeps stands whole, as `queued`'s does.
+              setDesktopScheduled(frame.messages);
             } else if (frame.type === "queued") {
               // The desktop's word on what it holds stands whole: a message
               // sent, taken back elsewhere or refused when its turn came is
@@ -946,6 +965,14 @@ export function usePhoneConversation(
               const settle = takingBack.get(frame.commandId)!;
               takingBack.delete(frame.commandId);
               settle(frame.ok ? { ok: true } : { ok: false, message: cancelRefusal(frame.message) });
+            } else if (frame.type === "commandResult" && scheduling.has(frame.commandId)) {
+              const settle = scheduling.get(frame.commandId)!;
+              scheduling.delete(frame.commandId);
+              settle(
+                frame.ok
+                  ? { ok: true }
+                  : { ok: false, message: frame.message ?? refusalText(frame.code, "The desktop did not take that.") },
+              );
             } else if (frame.type === "commandResult" && stopping.has(frame.commandId)) {
               const { laneId, settle } = stopping.get(frame.commandId)!;
               stopping.delete(frame.commandId);
@@ -1048,6 +1075,7 @@ export function usePhoneConversation(
             thread.phase === "waiting_for_approval" ||
             thread.phase === "waiting_for_input",
           queuedSends: holdsQueued,
+          scheduledSends: holdsScheduled,
           hello: answersHello,
         },
       );
@@ -1089,6 +1117,8 @@ export function usePhoneConversation(
       abandonThreadChanges(switches, "Conversation closed.");
       for (const settle of takingBack.values()) settle({ ok: false, message: "Conversation closed." });
       takingBack.clear();
+      for (const settle of scheduling.values()) settle({ ok: false, message: "Conversation closed." });
+      scheduling.clear();
       abandonAgentStops("Conversation closed.");
       for (const request of requestsRef.values()) {
         clearTimeout(request.timer);
@@ -1299,6 +1329,44 @@ export function usePhoneConversation(
       }),
     [],
   );
+  // Schedule a message into the chat, send a scheduled one now, or take one
+  // back (`conversation-scheduled-sends`). Settles when the desktop answers;
+  // its next `scheduled` frame then says what it keeps.
+  const scheduledCommand = useCallback(
+    (
+      command: Extract<ConversationCommand, { kind: "scheduleSend" | "sendScheduledNow" | "cancelScheduled" }>,
+    ): Promise<CancelHeldResult> =>
+      new Promise<CancelHeldResult>((resolve) => {
+        if (!stream.current) {
+          resolve({ ok: false, message: "Conversation is not connected yet." });
+          return;
+        }
+        let commandId: string;
+        try {
+          commandId = stream.current.command(command);
+        } catch (error) {
+          resolve({
+            ok: false,
+            message: error instanceof Error ? error.message : "Reconnect before using this action.",
+          });
+          return;
+        }
+        scheduledActions.current.set(commandId, resolve);
+      }),
+    [],
+  );
+  const scheduleMessage = useCallback(
+    (message: string, sendAt: number) => scheduledCommand({ kind: "scheduleSend", message, sendAt }),
+    [scheduledCommand],
+  );
+  const sendScheduledNow = useCallback(
+    (scheduledId: string) => scheduledCommand({ kind: "sendScheduledNow", scheduledId }),
+    [scheduledCommand],
+  );
+  const cancelScheduled = useCallback(
+    (scheduledId: string) => scheduledCommand({ kind: "cancelScheduled", scheduledId }),
+    [scheduledCommand],
+  );
   // An agent that has ended is stopping no more: dropped, so one resumed
   // later in the same lane (SendMessage) offers its Stop again.
   useEffect(() => {
@@ -1498,6 +1566,11 @@ export function usePhoneConversation(
     desktopHeld,
     handing,
     cancelHeld,
+    holdsScheduled,
+    desktopScheduled,
+    scheduleMessage,
+    sendScheduledNow,
+    cancelScheduled,
     dismissFailed,
     pendingActionIds,
     actionErrors,

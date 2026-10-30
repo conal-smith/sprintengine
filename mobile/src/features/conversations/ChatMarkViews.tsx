@@ -204,7 +204,16 @@ export function ComposerOptionsSheet({
             label={row.label}
             onPress={() => onSchedule?.()}
             selected={row.on}
-            sub={row.disabledReason ?? (row.on ? "On: tap to start it now instead" : "Run it later, or on a repeat")}
+            sub={
+              row.disabledReason ??
+              (row.on
+                ? row.repeats
+                  ? "On: tap to start it now instead"
+                  : "On: tap to send it now instead"
+                : row.repeats
+                  ? "Run it later, or on a repeat"
+                  : "Send it at a time you pick")
+            }
           />
         ) : (
           <SheetOption

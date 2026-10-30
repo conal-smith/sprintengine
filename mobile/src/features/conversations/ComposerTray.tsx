@@ -46,11 +46,14 @@ export function ComposerTray({ children }: { children: ReactNode }) {
  */
 export function ComposerTrayRow({
   tone = "neutral",
+  glyph,
   actions,
   onDismiss,
   children,
 }: {
   tone?: ComposerTrayTone;
+  /** A mark of the row's own in place of the tone's: a scheduled message's clock. */
+  glyph?: ReactNode;
   actions?: ReactNode;
   onDismiss?: () => void;
   children: ReactNode;
@@ -64,7 +67,9 @@ export function ComposerTrayRow({
       style={[styles.row, tone === "warn" ? styles.warn : tone === "error" ? styles.error : null]}
     >
       <View style={styles.glyph}>
-        {tone === "neutral" ? (
+        {glyph ? (
+          glyph
+        ) : tone === "neutral" ? (
           <NoteGlyph color={colors.textSubtle} size={iconSize.sm} />
         ) : (
           <LifecycleGlyph live={false} size={iconSize.sm} state={tone === "error" ? "failed" : "needs_input"} />

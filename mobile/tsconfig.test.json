@@ -26,6 +26,7 @@
     "src/features/scheduled/scheduleEditor.ts",
     "src/features/scheduled/schedulePick.ts",
     "src/features/scheduled/sendTime.ts",
+    "src/features/scheduled/scheduledMessages.ts",
     "src/shared/cron/cron.ts",
     "src/api/tailnetWorkspaces.ts",
     "src/components/document/htmlSandbox.ts",
