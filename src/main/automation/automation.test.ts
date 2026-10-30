@@ -1734,7 +1734,7 @@ test('automation', async () => {
     }
   }
 
-  async function testBridgePipesStdioToSocketAndExitsOnServerStop(): Promise<void> {
+  async function testBridgePipesStdioToSocketAndOutlivesServerStop(): Promise<void> {
     const dir = mkdtempSync(join(tmpdir(), 'se-automation-bridge-'))
     const socketPath = join(dir, 'automation.sock')
     const infoPath = join(dir, 'automation-server-info.json')
@@ -1770,12 +1770,17 @@ test('automation', async () => {
         ['workspace.list'],
       )
     } finally {
-      // Server stop closes the socket; the bridge must exit cleanly, the way MCP
-      // clients expect a server shutdown to look.
+      // Server stop closes the socket. The bridge stays, waiting for Studio to
+      // come back: an MCP client marks a stdio server that exits "not
+      // connected" for the rest of its session.
       await server.stop()
     }
+    const early = await Promise.race([bridge.exited, new Promise((resolve) => setTimeout(() => resolve(null), 1_000))])
+    assert.equal(early, null, 'the bridge outlives the server it was talking to')
+    // It leaves, cleanly, when its client closes stdin.
+    bridge.child.stdin.end()
     const exit = await bridge.exited
-    assert.equal(exit.code, 0, `bridge exits 0 on server stop (stderr: ${exit.stderr})`)
+    assert.equal(exit.code, 0, `bridge exits 0 once its client is gone (stderr: ${exit.stderr})`)
     rmSync(dir, { recursive: true, force: true })
   }
 
@@ -1830,6 +1835,8 @@ test('automation', async () => {
     } finally {
       await server.stop()
     }
+    first.child.stdin.end()
+    second.child.stdin.end()
     const [firstExit, secondExit] = await Promise.all([first.exited, second.exited])
     assert.equal(firstExit.code, 0)
     assert.equal(secondExit.code, 0)
@@ -3782,7 +3789,7 @@ test('automation', async () => {
     testToolsAnswerAConnectionThatNeverInitialized,
     testPerRequestProtocolVersionDeclarationIsValidated,
     testStaleSocketFileIsReplacedOnStart,
-    testBridgePipesStdioToSocketAndExitsOnServerStop,
+    testBridgePipesStdioToSocketAndOutlivesServerStop,
     testConcurrentBridgesKeepResponsesAndAttributionIsolated,
     testBridgeFailsClearlyWithoutDiscoveryFile,
     testBridgeReportsStaleDiscoveryFile,

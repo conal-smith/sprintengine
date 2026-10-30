@@ -727,8 +727,13 @@ what the client sent before the first socket connected (the connect frame has
 to be first), answer every request that was waiting when the socket closed,
 and answer at once anything sent while Studio is away. The replayed
 `initialize` carries an id of the bridge's own, whose answer it keeps from
-the client. A bridge whose Studio does not come back within 30 s leaves with
-code 0, as it did the moment the socket closed before.
+the client. A bridge never gives up on its Studio while its client is there:
+it looks again with a backoff of 250 ms doubling to 5 s, for as long as it
+takes (an app that crashed or quit may be started again minutes later), and
+leaves with code 0 only when its client closes stdin. An MCP client marks a
+stdio server that exits "not connected" for the rest of its session, so a
+bridge that left on its own would cut the agent off from a Studio that came
+back.
 
 ## 7. Process lifecycle
 

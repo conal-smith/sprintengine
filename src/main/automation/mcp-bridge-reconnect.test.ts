@@ -172,3 +172,91 @@ test.skipIf(process.platform === 'win32')(
     await second.close()
   },
 )
+
+test.skipIf(process.platform === 'win32')(
+  'a bridge outlives a Studio that is gone for longer than a quick restart, and reconnects when it is started again',
+  async () => {
+    const socketPath = join(scratch, 'away.sock')
+    const infoPath = join(scratch, 'away-info.json')
+    const writeInfo = (pid: number) => writeFileSync(infoPath, JSON.stringify({ socketPath, pid }))
+    writeInfo(1001)
+    const first = await startGateway(socketPath)
+
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('SPRINTENGINE_')) delete env[key]
+    const bridge = spawn(process.execPath, [BRIDGE, '--info-path', infoPath], { env, stdio: 'pipe' })
+    let exited: number | null | undefined
+    bridge.on('exit', (code) => (exited = code))
+    const out: Array<Record<string, any>> = []
+    createInterface({ input: bridge.stdout }).on('line', (line) => out.push(JSON.parse(line)))
+    const send = (message: unknown) => bridge.stdin.write(`${JSON.stringify(message)}\n`)
+
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })
+    await waitFor(() => out.find((message) => message.id === 1), 'the first initialize answer')
+    send({ jsonrpc: '2.0', id: 2, method: 'slow' })
+    await waitFor(() => first.lines.some((line) => line.includes('"slow"')), 'the slow request to arrive')
+
+    // The app goes (it crashed, or was quit) and nothing comes back for a
+    // while: the socket and the discovery file are both gone.
+    await first.close()
+    rmSync(socketPath, { force: true })
+    rmSync(infoPath, { force: true })
+    const failed = await waitFor(() => out.find((message) => message.id === 2), 'the waiting request to fail')
+    assert.match(failed.error.message, /retry/)
+
+    // Longer than a supervised restart ever takes. An MCP client marks a
+    // stdio server that exits "not connected" for good, so the bridge stays.
+    await new Promise((resolve) => setTimeout(resolve, 32_000))
+    assert.equal(exited, undefined, 'the bridge is still running while its client is')
+
+    // A request made while Studio is away is answered at once, retryably.
+    send({ jsonrpc: '2.0', id: 3, method: 'tools/list' })
+    const away = await waitFor(() => out.find((message) => message.id === 3), 'an answer while Studio is away')
+    assert.equal(away.error.code, -32000)
+    assert.match(away.error.message, /retry/)
+
+    // The app is started again: a new process, a new gateway.
+    const second = await startGateway(socketPath)
+    writeInfo(2002)
+    await waitFor(
+      () => out.find((message) => message.method === 'notifications/tools/list_changed'),
+      'tools/list_changed after Studio is back',
+    )
+    send({ jsonrpc: '2.0', id: 4, method: 'tools/list' })
+    const listed = await waitFor(() => out.find((message) => message.id === 4), 'tools/list over the new socket')
+    assert.deepEqual(listed.result, { tools: [] })
+
+    bridge.stdin.end()
+    const code = await new Promise<number | null>((resolve) =>
+      exited !== undefined ? resolve(exited) : bridge.on('exit', (exit) => resolve(exit)),
+    )
+    assert.equal(code, 0)
+    await second.close()
+  },
+)
+
+test.skipIf(process.platform === 'win32')(
+  'a bridge whose client closes stdin while Studio is away leaves',
+  async () => {
+    const socketPath = join(scratch, 'gone.sock')
+    const infoPath = join(scratch, 'gone-info.json')
+    writeFileSync(infoPath, JSON.stringify({ socketPath, pid: 1001 }))
+    const first = await startGateway(socketPath)
+
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('SPRINTENGINE_')) delete env[key]
+    const bridge = spawn(process.execPath, [BRIDGE, '--info-path', infoPath], { env, stdio: 'pipe' })
+    const out: Array<Record<string, any>> = []
+    createInterface({ input: bridge.stdout }).on('line', (line) => out.push(JSON.parse(line)))
+    bridge.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`)
+    await waitFor(() => out.find((message) => message.id === 1), 'the first initialize answer')
+
+    await first.close()
+    rmSync(socketPath, { force: true })
+    rmSync(infoPath, { force: true })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const exit = new Promise<number | null>((resolve) => bridge.on('exit', (code) => resolve(code)))
+    bridge.stdin.end()
+    assert.equal(await exit, 0)
+  },
+)
