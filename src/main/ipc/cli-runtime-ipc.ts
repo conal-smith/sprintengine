@@ -10,7 +10,13 @@ import type {
 } from '../../shared/electron-api'
 import { recordCliDetection } from '../cli-availability'
 import { cliInstallMethods, detectCli, installCli, updateCli } from '../cli-runtime-install'
-import { noteCliDetected } from '../cli-version-advisory-service'
+import { noteCliDetected, outdatedCliTargets, type CliUpdateTarget } from '../cli-version-advisory-service'
+import {
+  CLI_UPDATE_ALL_CHANNEL,
+  CLI_UPDATE_ALL_PROGRESS_CHANNEL,
+  type CliUpdateAllItem,
+  type CliUpdateAllResult,
+} from '../../shared/ipc/cli-update-all'
 import { isWslHostId, LOCAL_HOST_ID, type ExecutionHostId } from '../../shared/execution-host'
 import type { CliModelDiscoveryInput } from '../../shared/ipc/cli-model-discovery'
 import { cliInstallOutputChannel } from '../../shared/ipc/cli-install-output'
@@ -22,7 +28,10 @@ type InstallIpcInput = CliInstallInput & { runtime?: Partial<CliRuntimeSettings>
 
 type ModelDiscovery = (input: CliModelDiscoveryInput) => Promise<unknown>
 
-type OutputSender = { isDestroyed: () => boolean; send: (channel: string, chunk: string) => void }
+type OutputSender = {
+  isDestroyed: () => boolean
+  send: (channel: string, payload: string | CliUpdateAllItem[]) => void
+}
 type CliRun = { kind: 'install' | 'update'; senders: Set<OutputSender>; result: Promise<CliInstallResult> }
 
 export function registerCliRuntimeIpc(
@@ -34,8 +43,11 @@ export function registerCliRuntimeIpc(
      * the model catalog cache.
      */
     discoverModels?: ModelDiscovery
+    /** What Update everything updates; the version check's outdated CLIs unless a test names its own. */
+    outdatedTargets?: () => Promise<{ ok: true; targets: CliUpdateTarget[] } | { ok: false; message: string }>
   } = {},
 ): void {
+  const outdatedTargets = options.outdatedTargets ?? outdatedCliTargets
   const discoverModels: ModelDiscovery = options.discoverModels ?? ((input) => discoverAndBroadcastCliModels(input))
   // A row's own detection (opening it, or its Re-check): a probe of this one
   // CLI on this one machine, which the shared answer takes on, so the list, the
@@ -97,6 +109,77 @@ export function registerCliRuntimeIpc(
       updateCli(input.cli, input.runtime, onData),
     ),
   )
+
+  // Update everything: each outdated CLI on each machine, through the same
+  // lock and log a row's Update takes, so one already updating from a row is
+  // joined rather than run twice. A machine's CLIs go one after another (two
+  // package managers on one machine can share a global prefix); machines run
+  // beside each other. Every window that asked is told each time an item
+  // moves, and a second ask while one runs joins it.
+  let updateAll: { senders: Set<OutputSender>; result: Promise<CliUpdateAllResult> } | null = null
+  ipcMain.handle(CLI_UPDATE_ALL_CHANNEL, (event): Promise<CliUpdateAllResult> => {
+    if (updateAll) {
+      updateAll.senders.add(event.sender)
+      return updateAll.result
+    }
+    const senders = new Set<OutputSender>([event.sender])
+    const result = runUpdateAll(senders).finally(() => {
+      updateAll = null
+    })
+    updateAll = { senders, result }
+    return result
+  })
+
+  async function runUpdateAll(senders: Set<OutputSender>): Promise<CliUpdateAllResult> {
+    const listed = await outdatedTargets()
+    if (!listed.ok) return listed
+    const items: CliUpdateAllItem[] = listed.targets.map((target) => ({
+      hostId: target.hostId,
+      cli: target.cli,
+      from: target.currentVersion,
+      latest: target.latestVersion,
+      state: 'queued',
+    }))
+    const tell = () => {
+      const snapshot = items.map((item) => ({ ...item }))
+      for (const sender of senders) if (!sender.isDestroyed()) sender.send(CLI_UPDATE_ALL_PROGRESS_CHANNEL, snapshot)
+    }
+    tell()
+    const byMachine = new Map<string, number[]>()
+    listed.targets.forEach((target, index) => {
+      byMachine.set(target.hostId, [...(byMachine.get(target.hostId) ?? []), index])
+    })
+    // Output goes to whoever is following that CLI's row, as a row's Update does.
+    const quiet: OutputSender = { isDestroyed: () => false, send: () => undefined }
+    await Promise.all(
+      [...byMachine.values()].map(async (indexes) => {
+        for (const index of indexes) {
+          const target = listed.targets[index]!
+          const item = items[index]!
+          item.state = 'updating'
+          tell()
+          try {
+            const done = await exclusive('update', quiet, target.cli, target.runtime, (onData) =>
+              updateCli(target.cli, target.runtime, onData),
+            )
+            item.to = done.version
+            if (!done.ok) {
+              item.state = 'failed'
+              item.error = done.error ?? 'The update did not finish.'
+            } else {
+              item.state =
+                done.version && done.version.trim() === (target.currentVersion ?? '').trim() ? 'unchanged' : 'updated'
+            }
+          } catch (error) {
+            item.state = 'failed'
+            item.error = error instanceof Error ? error.message : String(error)
+          }
+          tell()
+        }
+      }),
+    )
+    return { ok: true, items: items.map((item) => ({ ...item })) }
+  }
 }
 
 // The machine a runtime override names, as the version check and the output

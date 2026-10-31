@@ -333,3 +333,41 @@ export async function noteCliDetected(
   current().record(runtime, detected)
   await readCliVersionAdvisories()
 }
+
+/** One CLI an Update everything runs: where, with which command, from which version to which. */
+export type CliUpdateTarget = {
+  hostId: ExecutionHostId
+  cli: AgentCli
+  runtime: Partial<CliRuntimeSettings> | undefined
+  currentVersion: string | null
+  latestVersion: string | null
+}
+
+/**
+ * Every CLI behind its published version on a machine Settings lists, that
+ * has an updater to run: what Update everything updates. Asked of the
+ * registry afresh (the person is about to act on it), and compared from what
+ * detection last found on each machine. Nobody is told of what it finds: the
+ * badges already say it, and a toast offering an update being run would be
+ * noise.
+ */
+export async function outdatedCliTargets(): Promise<
+  { ok: true; targets: CliUpdateTarget[] } | { ok: false; message: string }
+> {
+  const read = await readCliVersionAdvisories({ force: true }, { notify: false })
+  if (!read.ok) return read
+  const targets: CliUpdateTarget[] = []
+  for (const machine of current().machines()) {
+    for (const advisory of outdatedClis(read.advisories[machine.hostId] ?? {})) {
+      if (!advisory.updateCommand) continue
+      targets.push({
+        hostId: machine.hostId,
+        cli: advisory.cli,
+        runtime: machine.cliRuntimes[advisory.cli],
+        currentVersion: advisory.currentVersion,
+        latestVersion: advisory.latestVersion,
+      })
+    }
+  }
+  return { ok: true, targets }
+}
