@@ -44,7 +44,7 @@
     "eslint": "^9.0.0",
     "eslint-config-expo": "~55.0.0",
     "katex": "0.19.1",
-    "mermaid": "11.13.0",
+    "mermaid": "12.2.0",
     "typescript": "~5.9.0"
   },
   "overrides": {
