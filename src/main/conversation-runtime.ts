@@ -1415,40 +1415,53 @@ export class ConversationRuntime {
           ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         })
         if (!delivered.ok) return steerBusy(delivered.message)
-        const storedAttachments = await this.saveAttachments(session, input.attachments)
-        // The work since the running turn's first file change is one change,
-        // under that turn's number; a turn with none yet takes the new one.
-        const checkpointTurnSeq = session.checkpointCapture ? session.checkpointTurnSeq : null
-        await this.emitNow(
-          session,
-          this.eventForSession(session, 'turn_completed', {
-            turnId: running.turnId,
-            steered: true,
-            ...(delivered.providerCursor ? { providerCursor: delivered.providerCursor } : {}),
-          }),
-          { turnId: running.turnId },
-        )
-        running.turnId = turnId
-        session.activeTurnId = turnId
-        session.updatedAt = this.now()
-        await this.emitNow(
-          session,
-          this.eventForSession(session, 'user_message', {
-            turnId,
-            text: input.message,
-            ...(storedAttachments.length ? { attachments: storedAttachments } : {}),
-            ...(input.localTurnId ? { localTurnId: input.localTurnId } : {}),
-            ...(input.sourceCommandId ? { commandId: input.sourceCommandId } : {}),
-            ...(input.skillIds.length ? { skills: input.skillIds } : {}),
-            ...(input.mentionRefs.length ? { mentions: input.mentionRefs } : {}),
-            ...(input.files.length ? { files: input.files } : {}),
-            ...(input.origin ? { origin: input.origin } : {}),
-            ...(input.composedAt !== undefined ? { composedAt: input.composedAt } : {}),
-          }),
-          { turnId },
-        )
-        await this.emitNow(session, this.eventForSession(session, 'turn_started', { turnId }), { turnId })
-        if (checkpointTurnSeq !== null) session.checkpointTurnSeq = checkpointTurnSeq
+        // Delivered: from here the message is the agent's, whatever becomes of
+        // its record. A write below that fails must not answer "not sent":
+        // the window would queue the message again and the agent be told it
+        // twice. The stream carries on as the new turn either way.
+        try {
+          const storedAttachments = await this.saveAttachments(session, input.attachments)
+          // The work since the running turn's first file change is one change,
+          // under that turn's number; a turn with none yet takes the new one.
+          const checkpointTurnSeq = session.checkpointCapture ? session.checkpointTurnSeq : null
+          await this.emitNow(
+            session,
+            this.eventForSession(session, 'turn_completed', {
+              turnId: running.turnId,
+              steered: true,
+              ...(delivered.providerCursor ? { providerCursor: delivered.providerCursor } : {}),
+            }),
+            { turnId: running.turnId },
+          )
+          running.turnId = turnId
+          session.activeTurnId = turnId
+          session.updatedAt = this.now()
+          await this.emitNow(
+            session,
+            this.eventForSession(session, 'user_message', {
+              turnId,
+              text: input.message,
+              ...(storedAttachments.length ? { attachments: storedAttachments } : {}),
+              ...(input.localTurnId ? { localTurnId: input.localTurnId } : {}),
+              ...(input.sourceCommandId ? { commandId: input.sourceCommandId } : {}),
+              ...(input.skillIds.length ? { skills: input.skillIds } : {}),
+              ...(input.mentionRefs.length ? { mentions: input.mentionRefs } : {}),
+              ...(input.files.length ? { files: input.files } : {}),
+              ...(input.origin ? { origin: input.origin } : {}),
+              ...(input.composedAt !== undefined ? { composedAt: input.composedAt } : {}),
+            }),
+            { turnId },
+          )
+          await this.emitNow(session, this.eventForSession(session, 'turn_started', { turnId }), { turnId })
+          if (checkpointTurnSeq !== null) session.checkpointTurnSeq = checkpointTurnSeq
+        } catch (error) {
+          console.warn(
+            '[conversation-runtime] a steered message reached the agent but was not recorded:',
+            error instanceof Error ? error.message : error,
+          )
+          running.turnId = turnId
+          session.activeTurnId = turnId
+        }
         return running
       })
     this.emissionTails.set(path, handover)

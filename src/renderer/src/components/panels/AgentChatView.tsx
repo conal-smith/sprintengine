@@ -611,6 +611,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // typed intent is dropped. Attachments ride the queue too — dropping them at
   // the queue boundary would silently lose what the user staged.
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null)
+  // A chat on this computer hands a message queued in words alone to main,
+  // which holds it in its file and sends it when the turn ends, as it does a
+  // paired machine's (scheduled-messages.ts): kept in this view's state, a
+  // reload or a crash lost it. Set once the chat's machine is known, below;
+  // a chat on another machine, or one carrying more than words, queues here.
+  const holdQueueInMainRef = useRef(false)
   // When the draft is to be sent, picked from the "+" (Schedule); null sends
   // it as usual. While set, Enter and the send button schedule the draft
   // instead: main keeps it and sends it into this chat at that time, whether
@@ -1603,6 +1609,32 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   // or for one message by Primary+Enter (`commitComposerNow`). A steer the
   // turn cannot take now queues instead, and one the runtime refuses goes back
   // to the queue, so a message is never lost to the race with the turn's end.
+  // Hand a queued message to main to hold. One main would not keep waits here,
+  // whole, ahead of anything queued since, as every queued message did before.
+  const holdQueuedInMain = useCallback(
+    async (turn: QueuedTurn) => {
+      let reason: string
+      try {
+        const held = await window.api.holdQueuedMessage({
+          workspaceId,
+          agentId,
+          text: turn.text,
+          source: `${workspaceId}:${agentId}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+        })
+        if (held.ok) return
+        reason = held.reason
+      } catch (error) {
+        reason = error instanceof Error ? error.message : 'main did not answer'
+      }
+      setQueuedTurn((current) =>
+        current ? queueComposerDraft(turn, current.text, current.attachments, current.metadata).turn : turn,
+      )
+      setActionError(
+        `The message could not be kept for after this turn (${reason.replace(/\.$/u, '')}). It waits here instead, and goes when the turn ends.`,
+      )
+    },
+    [workspaceId, agentId],
+  )
   const commitDraft = useCallback(
     (forceQueue: boolean): boolean => {
       const text = draft.trim()
@@ -1653,6 +1685,19 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
           void steerTurnRef.current(turn)
           return true
         }
+        if (
+          holdQueueInMainRef.current &&
+          queuedTurn === null &&
+          attachments.length === 0 &&
+          !draftMetadata.mentions.length &&
+          !draftMetadata.skillIds.length &&
+          !draftMetadata.files.length
+        ) {
+          const { turn } = queueComposerDraft(null, text, attachments, draftMetadata)
+          clearDraft()
+          void holdQueuedInMain(turn)
+          return true
+        }
         if (handsQueueToHost) {
           const { turn, dropped } = queueComposerDraft(null, text, attachments, draftMetadata)
           clearDraft()
@@ -1689,6 +1734,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       sendTurn,
       sendAt,
       handsQueueToHost,
+      holdQueuedInMain,
       handToHost,
       followUpBehavior,
       canSteer,
@@ -3691,6 +3737,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     transport,
     listed: binding.listed ?? null,
   })
+  holdQueueInMainRef.current =
+    operate &&
+    transport.kind !== 'remote' &&
+    !stripFacts.machine &&
+    canScheduleMessages() &&
+    typeof window.api?.holdQueuedMessage === 'function'
   // ── What the agent touched ───────────────────────────────────────────────
   // The card at the transcript's top right while it has room, the title bar's
   // pill otherwise (ChatActivityCard). Its Changes row counts what the strip
