@@ -74,6 +74,8 @@ export const filesystemApi = {
     ipcRenderer.invoke('fs:check-workspace-folder', path),
   detectProjectLogo: (folderPath: string): Promise<ProjectLogo | null> =>
     ipcRenderer.invoke('fs:detect-project-logo', folderPath),
+  readProjectIconFile: (filePath: string): Promise<ProjectLogo | null> =>
+    ipcRenderer.invoke('fs:read-project-icon', filePath),
   memoryResolveRoot: (input: {
     workspaceRoot: string | null
     relativeRoot: string | null
@@ -132,6 +134,8 @@ export const filesystemApi = {
     }
   },
   openDir: (options?: { defaultPath?: string }) => ipcRenderer.invoke('fs:dialog:opendir', options),
+  openProjectIconFile: (options?: { defaultPath?: string }) =>
+    ipcRenderer.invoke('fs:dialog:open-project-icon', options),
   ensureDefaultUserSkillsDir: () => ipcRenderer.invoke('skills:ensure-default-user-dir'),
   defaultWorkspaceParentDir: () => ipcRenderer.invoke('app:default-workspace-parent'),
   projectlessChatsRoot: () => ipcRenderer.invoke('chats:projectless-root'),
@@ -156,6 +160,7 @@ export const filesystemApi = {
   | 'uploadFiles'
   | 'checkWorkspaceFolder'
   | 'detectProjectLogo'
+  | 'readProjectIconFile'
   | 'memoryResolveRoot'
   | 'memoryIndex'
   | 'memoryReadPreview'
@@ -182,6 +187,7 @@ export const filesystemApi = {
   | 'openFolderInTarget'
   | 'watchPath'
   | 'openDir'
+  | 'openProjectIconFile'
   | 'ensureDefaultUserSkillsDir'
   | 'defaultWorkspaceParentDir'
   | 'projectlessChatsRoot'

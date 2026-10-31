@@ -1,9 +1,11 @@
 import { isProjectlessChatsRoot } from '../../../../shared/projectless-chats'
 import { FolderTypeIcon, NoProjectGlyph } from '../AppIcons'
-import { useProjectLogo } from '../../hooks/useProjectLogo'
+import { useProjectIcon } from '../../hooks/useProjectIcon'
+import { ProjectMonogram } from './ProjectMonogram'
 import type { ProjectColor } from '../../utils/projectColor'
 
-// A folder header's identity in its icon slot: the project's own logo when the
+// A folder header's identity in its icon slot: the icon the person chose for
+// the project when there is one, else the project's own logo when the
 // repo at that path has one (at its top level, or as a macOS app icon where
 // such a repo keeps it), and the folder glyph when it does not (re-sited by the
 // owner on 2026-09-02).
@@ -41,7 +43,17 @@ export function FolderIdentityIcon({
   // The "No project" root is not a project: no logo to look for, no hue, its
   // own mark wherever a project's folder would be.
   const projectless = projectlessHeader || isProjectlessChatsRoot(folderPath)
-  const logoSrc = useProjectLogo(projectless ? null : folderPath)
+  // A chosen icon wins over the detected logo, which wins over the glyph
+  // (hooks/useProjectIcon).
+  const icon = useProjectIcon(projectless ? null : folderPath)
   if (projectless) return <NoProjectGlyph className={className} />
-  return <FolderTypeIcon className={className} logoSrc={logoSrc} color={color} unfiled={unfiled} />
+  if (icon?.kind === 'monogram') return <ProjectMonogram className={className} text={icon.text} hue={icon.hue} />
+  return (
+    <FolderTypeIcon
+      className={className}
+      logoSrc={icon?.kind === 'image' ? icon.src : null}
+      color={color}
+      unfiled={unfiled}
+    />
+  )
 }

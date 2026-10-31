@@ -1576,3 +1576,23 @@ test('chats with an open pull request are kept from the idle rule unless the per
     false,
   )
 })
+
+test('a project icon is stored by folder, validated, and null returns it to detection', () => {
+  const icons = () => useWorkspaceStore.getState().appSettings.projectIcons ?? {}
+  const { setProjectIcon } = useWorkspaceStore.getState()
+
+  setProjectIcon('/Users/dev/app/', { kind: 'monogram', text: 'MA', hue: 255 })
+  const key = Object.keys(icons()).find((k) => icons()[k].kind === 'monogram')
+  assert.ok(key, 'the monogram was stored')
+  // Keyed by the normalised folder, so a trailing slash is the same project.
+  setProjectIcon('/Users/dev/app', { kind: 'file', path: '/Users/dev/art/mark.svg' })
+  assert.deepEqual(icons()[key], { kind: 'file', path: '/Users/dev/art/mark.svg' })
+
+  const before = icons()
+  setProjectIcon('/Users/dev/app', { kind: 'monogram', text: 'abc', hue: 255 } as never)
+  setProjectIcon('   ', { kind: 'monogram', text: 'X', hue: 25 })
+  assert.equal(icons(), before, 'a malformed icon or an empty folder is not written')
+
+  setProjectIcon('/Users/dev/app', null)
+  assert.equal(Object.hasOwn(icons(), key), false)
+})

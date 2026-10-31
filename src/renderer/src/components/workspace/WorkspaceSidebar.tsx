@@ -45,6 +45,7 @@ import { cancelOpenIntent, intendToOpenWorkspace } from './sidebarChatPrefetch'
 import { changelistOwnerId } from '../../../../shared/git/changelists'
 import { folderIdentityKey, useFolderRepositoryIdentities } from './useFolderRepositoryIdentities'
 import { FolderIdentityIcon } from './FolderIdentityIcon'
+import { ProjectIconDialog } from './sidebar/ProjectIconDialog'
 import { getRendererHost, selectModuleEnabled } from '../../modules'
 import type { WorkspaceTypeRowAction } from '../../modules/renderer-host'
 import { FOCUS_RING_CLASS } from '../ui/tokens'
@@ -1026,6 +1027,7 @@ function WorkspaceSidebar({
   } | null>(null)
   const [typeActionBusy, setTypeActionBusy] = useState(false)
   const [confirmForget, setConfirmForget] = useState<string | null>(null)
+  const [iconFolder, setIconFolder] = useState<{ path: string; hue: number | null } | null>(null)
 
   const renameInputRef = useRef<HTMLInputElement>(null)
   const sidebarRef = useRef<HTMLElement>(null)
@@ -4426,6 +4428,9 @@ function WorkspaceSidebar({
             }
             if (action === 'reveal' && group.fullPath) onRevealFolder(group.fullPath)
             if (action === 'forget' && group.fullPath) setConfirmForget(group.fullPath)
+            if (action === 'icon' && group.fullPath) {
+              setIconFolder({ path: group.fullPath, hue: projectColorOf(group.key) })
+            }
           }}
         />
       ) : null}
@@ -4471,6 +4476,16 @@ function WorkspaceSidebar({
             })()
           : null}
       </Modal>
+
+      {/* Mounted only while open: the sidebar re-renders on every chat switch,
+          and a closed dialog has no business rendering with it. */}
+      {iconFolder ? (
+        <ProjectIconDialog
+          folderPath={iconFolder.path}
+          projectHue={iconFolder.hue}
+          onClose={() => setIconFolder(null)}
+        />
+      ) : null}
 
       {/* Forget folder confirm */}
       <Modal

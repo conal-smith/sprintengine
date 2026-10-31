@@ -70,6 +70,14 @@ export function ensureProjectLogo(
     })
 }
 
+/**
+ * Drop one entry so the next `ensureProjectLogo` reads it again: a chosen icon
+ * file the person has just picked (again) must not show this session's copy.
+ */
+export function forgetProjectLogo(key: string): void {
+  if (entries.delete(key)) emit()
+}
+
 /** Test seam: clear everything this session has detected. */
 export function resetProjectLogos(): void {
   entries.clear()
