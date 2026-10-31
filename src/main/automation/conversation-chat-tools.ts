@@ -292,7 +292,9 @@ export function createConversationChatTools(deps: ConversationChatToolsDeps): Mc
         '"agent") and `at`. The newest `turns` turns by default; pass the answer\'s `before` back to page to ' +
         'earlier ones while `hasMore` is true. Inside `maxChars`, the newest messages are kept whole, one that ' +
         'does not fit is cut to its end (`cut`), and older ones are counted in `omitted`; ask for fewer turns ' +
-        'to see them. `state` says whether the chat is working or waiting on a person. Changes nothing.',
+        'to see them. `state` says whether the chat is working or waiting on a person. A chat link in a message ' +
+        '(`sprintengine://chat/<id>`, what dragging a chat into the composer writes) names a chat here: its <id> ' +
+        'is the `workspaceId`. Changes nothing.',
       inputSchema: {
         type: 'object',
         properties: {

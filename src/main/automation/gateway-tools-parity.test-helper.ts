@@ -20,6 +20,7 @@ import { isStudioGatewayMutation } from './studio-gateway-tools'
 import { gatewayToolsForCaller, localOnlyGatewayToolReason, requiredScopeForTool } from './tailnet/tailnet-scopes'
 import { createTailnetTools } from './tailnet/tailnet-tools'
 import { createTourTools } from './tour-tools'
+import { createVisualTools } from './visual-tools'
 import { createWorktreePoolTools } from '../worktree-pool/worktree-pool-tools'
 import { createArtifactsTools } from '../artifacts/artifacts-tools'
 import { createExtensionTools } from './extension-tools'
@@ -49,6 +50,7 @@ export function desktopToolParts(): Parameters<typeof desktopGatewayTools>[0] & 
     canvas: createCanvasTools(stub),
     editor: createEditorTools(stub),
     tour: createTourTools(stub),
+    visual: createVisualTools(stub),
     automation: createAutomationTools(stub),
     worktree: createWorktreePoolTools(stub),
     artifacts: createArtifactsTools(stub),

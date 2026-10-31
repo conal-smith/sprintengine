@@ -63,6 +63,9 @@ const CHAT_TO_CHAT_TOOLS: ReadonlySet<string> = new Set([
  * `search` and `get` only read the site, and are served on the read scope
  * like any other read.
  *
+ * The `visual.*` family draws an agent's markup, scripts and all, in a hidden
+ * window on this machine; it is for an agent writing a reply here.
+ *
  * The `extension.*` family makes an extension project in a folder on this
  * machine that the caller names, and teaches an agent about to work in it; a
  * paired device has neither the folder nor the agent.
@@ -94,6 +97,9 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
   }
   if (CHAT_TO_CHAT_TOOLS.has(toolName)) {
     return `"${toolName}" lets an agent on this machine drive another chat here. A paired device follows and drives this machine's chats over its conversation lane instead.`
+  }
+  if (toolName.startsWith('visual.')) {
+    return `"${toolName}" draws an agent's visual in a hidden window on this machine, for a reply it is writing here. Run it from an agent on that machine.`
   }
   if (toolName.startsWith('terminal.')) {
     return `"${toolName}" reads the terminals on this machine, and terminals are not served over the tailnet. A paired device follows this machine's chats instead; run it from an agent on that machine.`
