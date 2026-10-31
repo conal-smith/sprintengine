@@ -83,8 +83,10 @@ import type { WorkspaceSkill } from '../../../../shared/electron-api'
 import {
   CONVERSATION_DEFAULT_MODEL_ID,
   cliForConversationProvider,
+  conversationProviderForCli,
   conversationSignIn,
 } from '../../../../shared/conversation-harness'
+import { useOptionalConfirmDialog } from '../ui/ConfirmDialog'
 import { isLooserCliPermissionPreset, parseCliPermissionPreset } from '../../../../shared/cli-permission-preset'
 import { parseCliPermissionModeId } from '../../../../shared/cli-permission-mode'
 import { pickRandomAgentName } from '../../../../shared/agent-names'
@@ -2567,8 +2569,21 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         label: providerEntry?.displayName ?? chatCli,
       })
     : null
+  // Moving the chat to another agent CLI, or to a model its session cannot
+  // take live, hands it off (`switchConversationProvider`): the session
+  // ends, and the next message starts the new one, given the chat so far.
+  // A chat on this computer only; a paired machine's keeps its CLI.
+  const canSwitchAgent = operate && !hostEngine && typeof transport.switchProvider === 'function'
+  const chatStarted = isConversationModelLocked(userTurns.length, sessionId, shape.hasConversation)
   const chatPickerOptions = chatCliOption
-    ? [modelLocked ? lockedChatEngineOption(chatCliOption, chatModel) : chatCliOption]
+    ? canSwitchAgent
+      ? [
+          chatCliOption,
+          ...cliCatalogOptions.filter(
+            (option) => option.value !== chatCliOption.value && conversationProviderForCli(option.value) !== null,
+          ),
+        ]
+      : [modelLocked ? lockedChatEngineOption(chatCliOption, chatModel) : chatCliOption]
     : []
   const chatModelLabel = chatCliOption
     ? (chatCliOption.modelSelection?.options.find((option) => option.id === chatModel)?.label ??
@@ -2941,6 +2956,68 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     return renderKeybinding(keybinding, platform)
   }, [keybindingSettings])
   const [modelChanging, setModelChanging] = useState(false)
+  const confirmDialog = useOptionalConfirmDialog()
+  // The picker's choice of CLI and model. The chat's own CLI, before it
+  // starts or where its provider switches models live, is a model change as
+  // it always was; anything else on a chat that has started moves it.
+  const selectEngine = (cli: string, modelId: string) => {
+    const providerId = cli === chatCli ? conversation.providerId : conversationProviderForCli(cli)
+    if (!providerId) return
+    if (providerId === conversation.providerId && (!modelLocked || modelId === conversation.modelId)) {
+      selectModel(providerId, modelId)
+      return
+    }
+    setModelMenuOpen(false)
+    if (!chatStarted) {
+      updateBinding({ conversation: { providerId, modelId }, conversationMode: 'default' })
+      binding.rememberModel?.({ providerId, modelId })
+      return
+    }
+    if (canSwitchAgent) void switchAgent(cli, providerId, modelId)
+  }
+  const switchAgent = async (cli: string, providerId: string, modelId: string) => {
+    if (modelChanging || !transport.switchProvider) return
+    const root = binding.sessionRoot ?? workspaceRoot
+    if (!root) return
+    const name = cliCatalogOptions.find((option) => option.value === cli)?.label ?? cli
+    const sameCli = providerId === conversation.providerId
+    if (confirmDialog) {
+      const confirmed = await confirmDialog.confirm({
+        title: sameCli
+          ? `Move this chat to ${modelId === CONVERSATION_DEFAULT_MODEL_ID ? 'the default model' : modelId}?`
+          : `Move this chat to ${name}?`,
+        body: sameCli
+          ? 'Its session cannot change model while it runs, so it ends, and your next message starts a new one on that model, given the conversation so far.'
+          : `This chat's session ends, and your next message starts ${name} afresh, given the conversation so far: the messages, without the tool calls. A long chat carries its newest part.`,
+        confirmLabel: 'Move chat',
+      })
+      if (!confirmed) return
+    }
+    setActionError(null)
+    setPermissionNotice(null)
+    setModelChanging(true)
+    try {
+      const moved = await transport.switchProvider({
+        key: { workspaceRoot: root, workspaceId, agentId },
+        providerId,
+        modelId,
+      })
+      if (!moved.ok) {
+        setActionError(moved.message)
+        return
+      }
+      updateBinding({
+        conversation: { providerId: moved.providerId, modelId: moved.modelId },
+        conversationMode: 'default',
+      })
+      binding.rememberModel?.({ providerId: moved.providerId, modelId: moved.modelId })
+      setSession(null)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The chat was not moved.')
+    } finally {
+      setModelChanging(false)
+    }
+  }
   const selectModel = (providerId: string, modelId: string) => {
     setModelMenuOpen(false)
     if (modelLocked || modelChanging || (providerId === conversation.providerId && modelId === conversation.modelId))
@@ -4709,13 +4786,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     placement="top-start"
                     shortcutLabel={modelPickerShortcutLabel}
                     warn={composerPermissionWarn}
-                    onSelectCli={() => selectModel(conversation.providerId, CONVERSATION_DEFAULT_MODEL_ID)}
-                    onSelectModel={(_cli, next) =>
-                      selectModel(conversation.providerId, next ?? CONVERSATION_DEFAULT_MODEL_ID)
-                    }
+                    onSelectCli={(cli) => selectEngine(cli, CONVERSATION_DEFAULT_MODEL_ID)}
+                    onSelectModel={(cli, next) => selectEngine(cli, next ?? CONVERSATION_DEFAULT_MODEL_ID)}
                     onSelectReasoning={(_cli, next) => changeReasoningEffort(next ?? undefined)}
                     {...(modelLocked && modelSwitch
-                      ? { groupNote: { cli: chatCli, note: '· model is set once the chat starts' } }
+                      ? {
+                          groupNote: {
+                            cli: chatCli,
+                            note: canSwitchAgent
+                              ? '· another model or CLI moves the chat'
+                              : '· model is set once the chat starts',
+                          },
+                        }
                       : {})}
                     // Permissions on the picker's trailing row beside effort, as
                     // a launch picks them: one place for how the agent runs.

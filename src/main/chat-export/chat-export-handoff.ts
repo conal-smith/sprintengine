@@ -39,13 +39,13 @@ export type HandoffMarkdown = {
 export function writeHandoffMarkdown(
   events: readonly ConversationEvent[],
   meta: Omit<ChatExportMeta, 'messagesOnly'>,
-  options: { truncated: boolean; maxBytes: number },
+  options: { truncated: boolean; maxBytes: number; intro?: string },
 ): HandoffMarkdown {
   const document = buildChatExportDocument({ events, attachments: new Map() }, { ...meta, messagesOnly: true })
   let messages = document.messages
   let truncated = options.truncated
   for (;;) {
-    const markdown = render({ ...document, messages }, truncated)
+    const markdown = render({ ...document, messages }, truncated, options.intro ?? HANDOFF_INTRO)
     if (Buffer.byteLength(markdown) <= options.maxBytes || messages.length <= 1)
       return { markdown, messages: messages.length, truncated }
     // A tenth at a time, so a long chat is cut in a few passes, not thousands.
@@ -54,9 +54,9 @@ export function writeHandoffMarkdown(
   }
 }
 
-function render(document: ChatExportDocument, truncated: boolean): string {
+function render(document: ChatExportDocument, truncated: boolean, intro: string): string {
   const { markdown } = writeChatExportMarkdown(document, null)
-  const lead = [HANDOFF_INTRO, ...(truncated ? [`**${TRUNCATED_NOTE}**`] : [])].join('\n\n')
+  const lead = [intro, ...(truncated ? [`**${TRUNCATED_NOTE}**`] : [])].join('\n\n')
   const titleEnd = markdown.indexOf('\n\n')
   return titleEnd < 0
     ? `${markdown.trimEnd()}\n\n${lead}\n`

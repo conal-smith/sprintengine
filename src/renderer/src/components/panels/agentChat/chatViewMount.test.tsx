@@ -723,13 +723,69 @@ test('the composer offers one engine chip — no plan toggle, no separate permis
       ).toBe(false)
     }
     expect(chat.host.textContent).not.toMatch(/\$\d/)
-    // The chip opens the terminal agent's picker, locked to this chat's CLI.
+    // The chip opens the terminal agent's picker: this chat's CLI first, then
+    // the other CLIs a chat can move to.
     await chat.act(async () => chips[0].click())
     const rail = chat.dom.window.document.querySelector('[role="radiogroup"][aria-label="Provider"]')
-    expect(rail?.querySelectorAll('[role="radio"]')).toHaveLength(1)
+    const radios = Array.from(rail?.querySelectorAll('[role="radio"]') ?? [])
+    // Over the Studio protocol a chat cannot move yet, so its picker is its own CLI's alone.
+    if (chatOverStudioUnderTest()) expect(radios).toHaveLength(1)
+    else expect(radios.length).toBeGreaterThan(1)
+    expect(radios[0]?.getAttribute('aria-checked')).toBe('true')
     expect(chat.dom.window.document.querySelector('[role="listbox"][aria-label="Agent runtime"]')).not.toBeNull()
     // The chat's own permissions, on the picker's trailing row.
     expect(buttons().filter(permissionChip)).toHaveLength(1)
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('choosing another CLI on a chat that has started moves the chat there, carrying the conversation', async () => {
+  if (chatOverStudioUnderTest()) return
+  const switched: unknown[] = []
+  const chat = await mountChat({
+    providerId: 'claude-agent',
+    modelId: 'opus',
+    events: [event('user_message', { turnId: 't', text: 'hello' })],
+    api: {
+      conversationSwitchProvider: vi.fn(async (input: { providerId: string; modelId: string }) => {
+        switched.push(input)
+        return { ok: true, providerId: input.providerId, modelId: input.modelId, path: '/Users/dev/handoff.md' }
+      }),
+    },
+  })
+  try {
+    const chip = () =>
+      Array.from(chat.dom.window.document.querySelectorAll('button')).find((item) =>
+        item.getAttribute('aria-label')?.startsWith('Engine:'),
+      )!
+    await chat.act(async () => chip().click())
+    const rail = chat.dom.window.document.querySelector('[role="radiogroup"][aria-label="Provider"]')
+    const other = Array.from(rail?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []).find(
+      (radio) => radio.getAttribute('aria-checked') !== 'true',
+    )!
+    expect(other).toBeTruthy()
+    await chat.act(async () => other.click())
+    const row = chat.dom.window.document.querySelector<HTMLElement>(
+      '[role="listbox"][aria-label="Agent runtime"] [role="option"]',
+    )!
+    expect(row).toBeTruthy()
+    await chat.act(async () => row.click())
+    // It asks first: the session ends, and the next message starts the new agent.
+    const move = Array.from(chat.dom.window.document.querySelectorAll<HTMLElement>('[role="dialog"] button')).find(
+      (button) => button.textContent?.trim() === 'Move chat',
+    )
+    if (move) await chat.act(async () => move.click())
+    expect(switched).toHaveLength(1)
+    const asked = switched[0] as { key: Record<string, string>; providerId: string; modelId: string }
+    expect(asked.key).toEqual({
+      workspaceRoot: '/Users/dev/project',
+      workspaceId: expect.any(String),
+      agentId: expect.any(String),
+    })
+    expect(asked.providerId).not.toBe('claude-agent')
+    // The chat's record names the agent it moved to, which its next session starts on.
+    expect(chat.agent().conversation?.providerId).toBe(asked.providerId)
   } finally {
     await chat.unmount()
   }

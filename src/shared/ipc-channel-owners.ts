@@ -56,6 +56,7 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   },
   'conversation:events:unsubscribe': {},
   'conversation:handoff': {},
+  'conversation:switch-provider': {},
   'conversation:plan-document': { retry: 'once' },
   'conversation:providers:list': { retry: 'once' },
   'conversation:providers:models': { retry: 'once' },
