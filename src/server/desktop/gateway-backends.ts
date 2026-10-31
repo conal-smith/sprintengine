@@ -233,7 +233,14 @@ function createMobileControl(
   // via workspace.snapshot, mutations via workspace.mobile_command's
   // allowlist. Advertised in the snapshot so the phone's affordance
   // gate shows exactly what will work over this transport.
-  const gatewayCommands: MobileControlCommandType[] = ['snapshot.request', 'backlog.update']
+  // The pull request reads joined on 2026-10-30: a phone that sees them here
+  // opens a pull request in its own viewer rather than the browser.
+  const gatewayCommands: MobileControlCommandType[] = [
+    'snapshot.request',
+    'backlog.update',
+    'pullRequest.read',
+    'pullRequest.diff',
+  ]
   const workspaceRoots = () => uniqueResolvedRoots(listKnownWorkspaceRoots(getWorkspaceSyncSnapshot()))
   return {
     async readSnapshot(input: { include?: string[]; knownSnapshotVersion?: string }) {

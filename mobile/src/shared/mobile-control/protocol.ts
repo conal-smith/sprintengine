@@ -69,7 +69,18 @@ export type MobileControlCommandType =
   | "snapshot.request"
   | "device.revoke"
   | "backlog.update"
-  | "backlog.create";
+  | "backlog.create"
+  | "pullRequest.read"
+  | "pullRequest.diff";
+
+/**
+ * The commands that only read a pull request (2026-10-30): its detail, and a
+ * page of one file's diff. Additive, with no version bump: a desktop that
+ * lists them in its snapshot's `commands` serves them, and one that does not
+ * refuses them, where the phone opens the pull request in the browser as it
+ * always did. The answers' shapes and their readers are `api/pullRequests.ts`.
+ */
+export const pullRequestReadCommandTypes = ["pullRequest.read", "pullRequest.diff"] as const;
 
 export type MobileControlEventType =
   | "snapshot.updated"
@@ -219,11 +230,21 @@ export type BacklogCreateCommand = MobileControlCommandBase<
   }
 >;
 
+export type PullRequestReadCommand = MobileControlCommandBase<"pullRequest.read", { url: string }>;
+
+/** A page of one changed file's diff, from line `offset` of its section (0 when absent). */
+export type PullRequestDiffCommand = MobileControlCommandBase<
+  "pullRequest.diff",
+  { url: string; path: string; offset?: number }
+>;
+
 export type MobileControlCommand =
   | SnapshotRequestCommand
   | DeviceRevokeCommand
   | BacklogUpdateCommand
-  | BacklogCreateCommand;
+  | BacklogCreateCommand
+  | PullRequestReadCommand
+  | PullRequestDiffCommand;
 
 export type MobileControlBacklogItemStatus = "idea" | "ready" | "in_progress" | "needs_input" | "completed" | "archived";
 export type MobileControlBacklogItemType = "epic" | "feature" | "bug" | "mockup" | "spike";
@@ -398,6 +419,8 @@ const commandTypes = [
   "device.revoke",
   "backlog.update",
   "backlog.create",
+  "pullRequest.read",
+  "pullRequest.diff",
 ] as const satisfies readonly MobileControlCommandType[];
 
 const eventTypes = [
@@ -737,6 +760,17 @@ function validateCommandPayload(type: MobileControlCommandType, payload: Record<
         optionalString(payload, "type") ??
         optionalString(payload, "difficulty") ??
         optionalString(payload, "criticality")
+      );
+    case "pullRequest.read":
+      return requireString(payload, "url");
+    case "pullRequest.diff":
+      return (
+        requireString(payload, "url") ??
+        requireString(payload, "path") ??
+        (payload.offset === undefined ||
+        (typeof payload.offset === "number" && Number.isSafeInteger(payload.offset) && payload.offset >= 0)
+          ? null
+          : "offset must be a whole number of lines when provided")
       );
   }
 }

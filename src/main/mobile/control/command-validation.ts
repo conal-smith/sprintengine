@@ -21,7 +21,21 @@ type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: MobileCo
 // The gateway's `workspace.mobile_command` allowlist never named it and the
 // tailnet never advertised it, so a phone that sends it there is refused as
 // `command_not_supported` before this validator runs, exactly as it was.
-const commandTypes = new Set<MobileControlCommandType>(['snapshot.request', 'backlog.update', 'backlog.create'])
+//
+// The two pull request reads joined on 2026-10-30, additively (see
+// `mobileControlReadCommandTypes`).
+const commandTypes = new Set<MobileControlCommandType>([
+  'snapshot.request',
+  'backlog.update',
+  'backlog.create',
+  'pullRequest.read',
+  'pullRequest.diff',
+])
+
+/** A pull request URL the phone may name: GitHub's own shape, checked again where it is read. */
+const MAX_PULL_REQUEST_URL_CHARS = 500
+/** A changed file's path, as git names it; longer than any a repository holds. */
+const MAX_DIFF_PATH_CHARS = 1000
 
 export function validateMobileControlCommand(input: unknown): ValidationResult<MobileControlCommand> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -108,7 +122,26 @@ function validateCommandPayload(type: MobileControlCommandType, payload: Record<
         optionalString(payload, 'difficulty') ??
         optionalString(payload, 'criticality')
       )
+    case 'pullRequest.read':
+      return requireBoundedString(payload, 'url', MAX_PULL_REQUEST_URL_CHARS)
+    case 'pullRequest.diff':
+      return (
+        requireBoundedString(payload, 'url', MAX_PULL_REQUEST_URL_CHARS) ??
+        requireBoundedString(payload, 'path', MAX_DIFF_PATH_CHARS) ??
+        optionalLineOffset(payload, 'offset')
+      )
   }
+}
+
+function requireBoundedString(record: Record<string, unknown>, field: string, max: number): string | null {
+  return requireString(record, field) ?? ((record[field] as string).length > max ? `${field} is too long` : null)
+}
+
+function optionalLineOffset(record: Record<string, unknown>, field: string): string | null {
+  const value = record[field]
+  return value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+    ? null
+    : `${field} must be a whole number of lines when provided`
 }
 
 function requireString(record: Record<string, unknown>, field: string): string | null {

@@ -55,6 +55,26 @@ export class MobileControlCommandResultRecorder {
     }
   }
 
+  /**
+   * A read's answer. Not kept in the audit log or handed to its sink: a read
+   * changes nothing, and a phone paging through a diff would otherwise fill
+   * the log with one entry a page.
+   */
+  acceptRead(command: MobileControlCommand, data: unknown, message: string): MobileControlCommandResult {
+    const audit = this.buildAudit({ command, status: 'accepted', message })
+    return {
+      ok: true,
+      commandId: command.commandId,
+      commandType: command.type,
+      idempotencyKey: command.idempotencyKey,
+      executedAt: audit.recordedAt,
+      data,
+      stdout: '',
+      stderr: '',
+      audit,
+    }
+  }
+
   reject(
     command: MobileControlCommand,
     code: MobileControlError['code'],
@@ -97,7 +117,14 @@ export class MobileControlCommandResultRecorder {
   }
 
   recordAudit(input: MobileControlCommandAuditInput): MobileControlCommandAuditEntry {
-    const entry: MobileControlCommandAuditEntry = {
+    const entry = this.buildAudit(input)
+    this.auditLog.unshift(entry)
+    this.auditSink?.(entry)
+    return entry
+  }
+
+  private buildAudit(input: MobileControlCommandAuditInput): MobileControlCommandAuditEntry {
+    return {
       auditId: `msa_${randomUUID()}`,
       commandId: input.command?.commandId ?? 'unknown',
       commandType: input.command?.type ?? 'unknown',
@@ -109,9 +136,5 @@ export class MobileControlCommandResultRecorder {
       recordedAt: this.now().toISOString(),
       ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
     }
-
-    this.auditLog.unshift(entry)
-    this.auditSink?.(entry)
-    return entry
   }
 }
