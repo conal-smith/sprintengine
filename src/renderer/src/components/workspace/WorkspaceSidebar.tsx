@@ -138,11 +138,19 @@ import { isSettledWorkspace } from '../../utils/workspaceSettle'
 import { PANEL_COMMAND_EVENT } from '../../utils/panelCommands'
 import { chatSettleStep } from './chatSettleCommand'
 import { waitingChatCount, waitingLabel } from './sidebar/projectWaiting'
-import { isSnoozedWorkspace, resolveSnoozePresets, snoozeWakeLabel, workspaceWokeAt } from '../../utils/workspaceSnooze'
+import {
+  canSnoozeWorkspace,
+  isSnoozedWorkspace,
+  resolveSnoozePresets,
+  snoozeWakeLabel,
+  workspaceWokeAt,
+} from '../../utils/workspaceSnooze'
 import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
 import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
 import { regenerateStoreWorkspaceTitle } from '../../store/generatedWorkspaceTitle'
+import { BULK_SELECTED_ROW_CLASS, useSidebarBulkSelection } from './sidebar/sidebarBulkSelection'
+import { BulkChatContextMenu, type BulkChatAction, type BulkChatReach } from './sidebar/BulkChatContextMenu'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
 import {
   remoteScheduleActionWords,
@@ -215,6 +223,7 @@ import {
   RemoteConversationContextMenu,
   WorkspaceContextMenu,
   autoCompactSwitchOf,
+  canRegenerateTitleOf,
   chatLinkIdOf,
   isChatMarkChange,
   workspaceTypeRowActions,
@@ -2806,6 +2815,90 @@ function WorkspaceSidebar({
   // Everything a row can do, as callbacks whose identity never changes: each
   // runs the latest closure, so a row that skipped a render still acts on the
   // sidebar's current state (the drag in flight, the rename being typed).
+  // Several chats selected at once (Shift- and Cmd-click), for the menu that
+  // acts on all of them (sidebar/sidebarBulkSelection.ts). Only a chat here
+  // is selected: a paired machine's keeps its marks there.
+  const bulk = useSidebarBulkSelection({
+    treeRef,
+    cursorId: frontWorkspaceId,
+    canSelect: (id) => {
+      const workspace = workspaceById.get(id)
+      return Boolean(workspace && !workspace.remoteOrigin)
+    },
+  })
+  const [bulkMenu, setBulkMenu] = useState<{ x: number; y: number } | null>(null)
+  const pruneBulk = bulk.prune
+  useEffect(() => {
+    pruneBulk(new Set(localRailWorkspaces.map((workspace) => workspace.id)))
+  }, [pruneBulk, localRailWorkspaces])
+  const stableBulkClick = useStableCallback(bulk.click)
+  // A right-click on a row in the selection acts on the selection; on any
+  // other row it ends the selection and opens that row's own menu.
+  const stableRowContextMenu = useStableCallback((workspaceId: WorkspaceId, x: number, y: number) => {
+    if (bulk.isSelected(workspaceId)) {
+      setBulkMenu({ x, y })
+      return
+    }
+    bulk.clear()
+    setContextMenu({ workspaceId, x, y })
+  })
+  const bulkReach = (ids: ReadonlySet<string>): BulkChatReach => {
+    const chats = [...ids].flatMap((id) => workspaceById.get(id) ?? [])
+    return {
+      selected: chats.length,
+      settle: chats.filter((workspace) => !isSettledWorkspace(workspace) && !rowIsWorking(workspace.id)).length,
+      snooze: chats.filter((workspace) => canSnoozeWorkspace(workspace) && !rowIsWorking(workspace.id)).length,
+      regenerateTitle: chats.filter(canRegenerateTitleOf).length,
+      markUnread: chats.filter(canMarkWorkspaceUnread).length,
+      starred: chats.filter((workspace) => isStarred(workspace.highlight)).length,
+    }
+  }
+  const runBulkAction = (action: BulkChatAction) => {
+    const ids = bulk.selected
+    setBulkMenu(null)
+    if (!ids) return
+    const chats = [...ids].flatMap((id) => workspaceById.get(id) ?? [])
+    if (action === 'star' || action === 'unstar') {
+      for (const workspace of chats) setWorkspaceHighlight(workspace.id, { starred: action === 'star' })
+      return
+    }
+    if (action === 'mark-unread') {
+      for (const workspace of chats) {
+        if (!canMarkWorkspaceUnread(workspace)) continue
+        if (workspace.id === frontWorkspaceId) unreadOnLeaveRef.current.add(workspace.id)
+        else markWorkspaceUnread(workspace.id)
+      }
+      return
+    }
+    if (action === 'regenerate-titles') {
+      void Promise.all(
+        chats.filter(canRegenerateTitleOf).map(async (workspace) => ({
+          name: workspace.name,
+          result: await regenerateStoreWorkspaceTitle(workspace.id),
+        })),
+      ).then((outcomes) => {
+        const failed = outcomes.filter((outcome) => !outcome.result.ok)
+        if (failed.length === 0) return
+        showToast({
+          tone: 'error',
+          title: failed.length === 1 ? `${failed[0]!.name} was not renamed` : `${failed.length} chats were not renamed`,
+          description: failed[0]!.result.ok ? undefined : failed[0]!.result.message,
+        })
+      })
+      return
+    }
+    // Settle and Snooze leave a chat still working as it is, as each row's
+    // own does; the rest go, and the selection with them.
+    if (action === 'settle') {
+      for (const workspace of chats) if (!isSettledWorkspace(workspace)) settleWorkspaceById(workspace.id)
+    } else {
+      const presetId = action.slice('snooze:'.length)
+      const preset = resolveSnoozePresets(Date.now()).find((candidate) => candidate.id === presetId)
+      if (!preset) return
+      for (const workspace of chats) if (canSnoozeWorkspace(workspace)) snoozeWorkspaceById(workspace.id, preset.wakeAt)
+    }
+    bulk.clear()
+  }
   const stableSetContextMenu = useStableCallback(setContextMenu)
   // A sleeping row's Wake seat: a paired machine's chat that sleeps there is
   // woken there.
@@ -2836,6 +2929,8 @@ function WorkspaceSidebar({
   const rowHandlers = useMemo<WorkspaceRowHandlers>(
     () => ({
       setContextMenu: stableSetContextMenu,
+      bulkClick: stableBulkClick,
+      rowContextMenu: stableRowContextMenu,
       setWorkspaceSnoozed: stableSetWorkspaceSnoozed,
       settleWorkspaceById: stableSettleWorkspaceById,
       settleOpenedRemote: stableSettleOpenedRemote,
@@ -2860,6 +2955,8 @@ function WorkspaceSidebar({
     // Every entry is stable by construction; the list is here for the linter.
     [
       stableSetContextMenu,
+      stableBulkClick,
+      stableRowContextMenu,
       stableSetWorkspaceSnoozed,
       stableSettleWorkspaceById,
       stableSettleOpenedRemote,
@@ -2938,6 +3035,7 @@ function WorkspaceSidebar({
         rowLocalServers={workspaceLocalServers[workspace.id]}
         moduleOverrides={moduleOverrides}
         isRovingTarget={rovingKey === rowKey}
+        bulkSelected={bulk.selected ? bulk.selected.has(workspace.id) : undefined}
         anyRenaming={renamingId !== null}
         renaming={renamingId === workspace.id}
         renameValue={renamingId === workspace.id ? renameValue : ''}
@@ -3855,6 +3953,14 @@ function WorkspaceSidebar({
           ref={treeRef}
           className={`flex-1 overflow-y-auto pb-2 ${homeHidden ? 'hidden' : ''}`}
           role="tree"
+          aria-multiselectable="true"
+          // Escape lets go of a selection of several chats, from any row.
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && bulk.selected) {
+              event.preventDefault()
+              bulk.clear()
+            }
+          }}
           data-control-tab-scope
           // Read by Primary+1…9, which count these rows as drawn
           // (`manager/numberedChats.ts`).
@@ -3932,6 +4038,15 @@ function WorkspaceSidebar({
           section this column happens to be showing. */}
 
       {/* Context menu (workspace row) */}
+      {bulkMenu && bulk.selected ? (
+        <BulkChatContextMenu
+          x={bulkMenu.x}
+          y={bulkMenu.y}
+          reach={bulkReach(bulk.selected)}
+          onClose={() => setBulkMenu(null)}
+          onSelect={runBulkAction}
+        />
+      ) : null}
       {contextMenu ? (
         <WorkspaceContextMenu
           x={contextMenu.x}
@@ -4464,6 +4579,10 @@ const NO_GIT_SUMMARIES: RowGitSummaries = {}
 
 /** What a row does, held in one object whose identity never changes. */
 type WorkspaceRowHandlers = {
+  /** A click on the row: true when Shift or Cmd made it a selection change, and the row stays shut. */
+  bulkClick: (event: React.MouseEvent, workspaceId: WorkspaceId) => boolean
+  /** A right-click on the row: the selection's menu when the row is in it, else the row's own. */
+  rowContextMenu: (workspaceId: WorkspaceId, x: number, y: number) => void
   setContextMenu: (menu: { workspaceId: WorkspaceId; x: number; y: number } | null) => void
   setWorkspaceSnoozed: (workspaceId: WorkspaceId, until: number | null) => void
   settleWorkspaceById: (workspaceId: WorkspaceId) => void
@@ -4515,6 +4634,8 @@ type WorkspaceRowProps = {
   rowLocalServers: WorkspaceLocalServers[string] | undefined
   moduleOverrides: ReturnType<typeof useWorkspaceStore.getState>['appSettings']['modules']
   isRovingTarget: boolean
+  /** In a selection of several chats; undefined while there is none, so no row claims a selected state. */
+  bulkSelected?: boolean
   anyRenaming: boolean
   renaming: boolean
   renameValue: string
@@ -4549,6 +4670,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   rowLocalServers,
   moduleOverrides,
   isRovingTarget,
+  bulkSelected,
   anyRenaming,
   renaming,
   renameValue,
@@ -4556,6 +4678,8 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
 }: WorkspaceRowProps) {
   const {
     setContextMenu,
+    bulkClick,
+    rowContextMenu,
     setWorkspaceSnoozed,
     settleWorkspaceById,
     settleOpenedRemote,
@@ -5176,7 +5300,9 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
         handleRowDrop(event, workspace, fKey)
       }}
       onDragEnd={handleDragEnd}
-      onClick={() => {
+      onClick={(event) => {
+        // Shift and Cmd select instead of opening (sidebarBulkSelection.ts).
+        if (!anyRenaming && bulkClick(event, workspace.id)) return
         // A rename keeps the click while its field is on screen. A field that
         // went with its row (a folded project, a list that moved) never blurs,
         // so the rename ends here as a blur would have ended it; held, it left
@@ -5199,7 +5325,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
       }}
       onContextMenu={(event) => {
         event.preventDefault()
-        setContextMenu({ workspaceId: workspace.id, x: event.clientX, y: event.clientY })
+        rowContextMenu(workspace.id, event.clientX, event.clientY)
       }}
       // design-tokens-allow: alignment — 26px inset after the 4px highlight rail puts the row title on the sidebar's 36px content column (see the layout note below); the flat stream has no folder header to sit under, so its rows give the indent back and start on the column's own 16px edge, where New chat starts
       // Two-line row (remote-sessions-ux): a column now — line 1 is the title
@@ -5214,12 +5340,15 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
             ? doneRowClass(active)
             : active
               ? activeRowClass(workspace)
-              : highlighted
-                ? `${inactiveHighlightClass(workspace)} text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]`
-                : 'text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]'
+              : bulkSelected
+                ? BULK_SELECTED_ROW_CLASS
+                : highlighted
+                  ? `${inactiveHighlightClass(workspace)} text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]`
+                  : 'text-[color:var(--text-default)] hover:bg-[color:var(--bg-surface-raised)] hover:text-[color:var(--text-strong)]'
       } ${folderMissing ? 'opacity-70' : ''}`}
       role="treeitem"
       aria-current={active ? 'true' : undefined}
+      aria-selected={bulkSelected}
       data-settle-flourish={settleFlourish ? '' : undefined}
     >
       {/* The flat stream's top line (all-chats-view): the project this chat
