@@ -94,6 +94,7 @@ export function ConversationsScreen({
   onOpenScheduled,
   onOpenSettings,
   noticeCount,
+  onOpenPullRequest,
 }: {
   onOpen: (target: ConversationTarget) => void;
   /** Step one of New; the button is drawn only where some desktop may start a chat. */
@@ -104,6 +105,12 @@ export function ConversationsScreen({
   onOpenSettings: () => void;
   /** Drives the bell's dot; the count itself lives on the notices screen. */
   noticeCount: number;
+  /**
+   * Opens a chat's pull request in the phone's viewer, where the chat's
+   * desktop reads pull requests for this phone (else null: it opens in the
+   * browser, as before). Asked per desktop.
+   */
+  onOpenPullRequest?: (deviceId: string) => ((url: string) => void) | null;
 }) {
   const {
     chats: rows,
@@ -358,6 +365,7 @@ export function ConversationsScreen({
             <ChatRow
               asleep={asleep}
               onMarkUnread={unreadable ? markUnread : undefined}
+              onOpenPullRequest={onOpenPullRequest?.(item.deviceId) ?? undefined}
               onMenu={item.settleable || unreadable || snoozable || (asleep && item.snoozable) ? setMenuRow : undefined}
               onOpen={open}
               onSettle={item.settleable ? settle : undefined}
@@ -573,6 +581,7 @@ const ChatRow = memo(function ChatRow({
   onMarkUnread,
   onSwipeOpen,
   onSwiping,
+  onOpenPullRequest,
 }: {
   row: ChatListRow;
   /** `chatRowState` for this chat now. */
@@ -600,6 +609,8 @@ const ChatRow = memo(function ChatRow({
   onSwipeOpen: (shut: () => void) => void;
   /** A swipe is being dragged, so the list holds its scroll. */
   onSwiping: (swiping: boolean) => void;
+  /** The phone's own pull request viewer, where the chat's desktop serves it; absent, the browser. */
+  onOpenPullRequest?: (url: string) => void;
 }) {
   const styles = useThemedStyles(createStyles);
   const { colors, isDark } = useTheme();
@@ -690,7 +701,10 @@ const ChatRow = memo(function ChatRow({
           .join(", ")}
         accessibilityActions={actions.length ? actions : undefined}
         onAccessibilityAction={(event) => {
-          if (pr && event.nativeEvent.actionName === "openPullRequest") openPullRequest(pr);
+          if (pr && event.nativeEvent.actionName === "openPullRequest") {
+          if (onOpenPullRequest) onOpenPullRequest(pr.url);
+          else openPullRequest(pr);
+        }
           if (event.nativeEvent.actionName === "markUnread") onMarkUnread?.(row);
           if (event.nativeEvent.actionName === "snooze") onSnooze?.(row);
           if (event.nativeEvent.actionName === "wake") onWake?.(row);
@@ -774,7 +788,7 @@ const ChatRow = memo(function ChatRow({
           {pr ? (
             <>
               <View style={styles.grow} />
-              <PullRequestMarkButton mark={pr} />
+              <PullRequestMarkButton mark={pr} onOpen={onOpenPullRequest ? () => onOpenPullRequest(pr.url) : undefined} />
             </>
           ) : null}
         </View>

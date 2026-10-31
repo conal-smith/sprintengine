@@ -43,6 +43,10 @@ import { ConversationAgentScreen } from "../features/conversations/ConversationA
 import { ConversationPlanScreen } from "../features/conversations/ConversationPlanScreen";
 import { ConversationChangesScreen } from "../features/conversations/ConversationChangesScreen";
 import { ConversationFileDiffScreen } from "../features/conversations/ConversationFileDiffScreen";
+import { PullRequestFileScreen } from "../features/pullRequests/PullRequestFileScreen";
+import { PullRequestScreen } from "../features/pullRequests/PullRequestScreen";
+import { openPullRequest } from "../features/conversations/ChatMarkViews";
+import { tailnetGrantAllows } from "../api/tailnetControlClient";
 import { NewChatScreen } from "../features/conversations/NewChatScreen";
 import { routesAfterNewChat, routesAfterSchedule } from "../features/conversations/launchLogic";
 import { openWebTarget, WebTargetsScreen } from "../features/web/WebTargetsScreen";
@@ -88,6 +92,15 @@ export function AppNavigator() {
   // builder — a badge that could disagree with its own screen would be worse
   // than no badge.
   const lanes = splitNotices(buildNotices({ chats, openedAt, now: Date.now() }), notices.readIds);
+  // A chat's pull request opens in the phone's viewer where its desktop's
+  // grant covers the reads (they ride `workspace.mobile_command`, which the
+  // desktop holds to `workspace:operate`); elsewhere in the browser, as before.
+  // A desktop too old to serve them says so on the viewer, which offers the
+  // browser from there.
+  const viewsPullRequests = (deviceId: string) => {
+    const paired = sessions.find((candidate) => candidate.deviceId === deviceId);
+    return !!paired && tailnetGrantAllows(paired.tailnetScopes, "pullRequest.read");
+  };
 
   return (
     <HomeStack.Navigator screenOptions={stackScreenOptions(reducedMotion)}>
@@ -98,6 +111,9 @@ export function AppNavigator() {
             onNew={() => navigation.navigate("ChooseProject")}
             onOpen={(target) => navigation.navigate("Conversation", target)}
             onOpenNotices={() => navigation.navigate("Notices")}
+            onOpenPullRequest={(deviceId) =>
+              viewsPullRequests(deviceId) ? (url) => navigation.navigate("PullRequest", { deviceId, url }) : null
+            }
             onOpenScheduled={() => navigation.navigate("Scheduled")}
             onOpenSettings={() => navigation.navigate("SettingsHome")}
           />
@@ -121,6 +137,11 @@ export function AppNavigator() {
               onOpenAgent={(laneId) => navigation.push("ConversationAgent", { ...chat, laneId })}
               onOpenPlan={(requestId) => navigation.push("ConversationPlan", { ...chat, requestId })}
               onOpenChanges={(turnSeq) => navigation.push("ConversationChanges", { ...chat, turnSeq })}
+              onOpenPullRequest={
+                viewsPullRequests(chat.deviceId)
+                  ? (url) => navigation.push("PullRequest", { deviceId: chat.deviceId, url })
+                  : undefined
+              }
             />
           );
         }}
@@ -164,6 +185,28 @@ export function AppNavigator() {
             // In place, not pushed: stepping through ten files should not
             // leave ten screens for Back to walk through on the way to the list.
             onOpenFile={(path) => navigation.setParams({ path })}
+          />
+        )}
+      </HomeStack.Screen>
+      <HomeStack.Screen name="PullRequest" options={{ headerShown: false }}>
+        {({ navigation, route }) => (
+          <PullRequestScreen
+            onBack={() => navigation.goBack()}
+            onOpenFile={(path) => navigation.push("PullRequestFile", { ...route.params, path })}
+            onOpenInBrowser={() => openPullRequest({ url: route.params.url })}
+            session={sessions.find((candidate) => candidate.deviceId === route.params.deviceId) ?? null}
+            url={route.params.url}
+          />
+        )}
+      </HomeStack.Screen>
+      <HomeStack.Screen name="PullRequestFile" options={{ headerShown: false }}>
+        {({ navigation, route }) => (
+          <PullRequestFileScreen
+            key={route.params.path}
+            onBack={() => navigation.goBack()}
+            path={route.params.path}
+            session={sessions.find((candidate) => candidate.deviceId === route.params.deviceId) ?? null}
+            url={route.params.url}
           />
         )}
       </HomeStack.Screen>

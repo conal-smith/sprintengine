@@ -76,7 +76,25 @@ export function unsupportedMobileControlProtocolVersion(
   return `mobile-control protocol version ${saw} is not supported; this build speaks ${speaks}`
 }
 
-export type MobileControlCommandType = 'snapshot.request' | 'backlog.update' | 'backlog.create'
+export type MobileControlCommandType =
+  | 'snapshot.request'
+  | 'backlog.update'
+  | 'backlog.create'
+  | 'pullRequest.read'
+  | 'pullRequest.diff'
+
+/**
+ * The commands that only read: a pull request, and a page of one of its
+ * files' diffs (2026-10-30). Additive, with no version bump: a desktop that
+ * predates them refuses either as `invalid_payload` or `command_not_supported`,
+ * and the phone then opens the pull request in the browser as it always did.
+ * A desktop that serves them lists them in its snapshot's `commands`.
+ *
+ * They ride `workspace.mobile_command` like every command, but are answered
+ * afresh each time: a read is not remembered under its idempotency key, so a
+ * diff page is never held in memory after it is sent.
+ */
+export const mobileControlReadCommandTypes = ['pullRequest.read', 'pullRequest.diff'] as const
 
 /**
  * The error codes this desktop emits. The phone validates the code against its
@@ -172,7 +190,97 @@ export type BacklogCreateCommand = MobileControlCommandBase<
   }
 >
 
-export type MobileControlCommand = SnapshotRequestCommand | BacklogUpdateCommand | BacklogCreateCommand
+/** One pull request, by its GitHub URL. Answered with a `MobileControlPullRequestDetail`. */
+export type PullRequestReadCommand = MobileControlCommandBase<'pullRequest.read', { url: string }>
+
+/**
+ * A page of one changed file's diff: the file's section of the pull request's
+ * diff from line `offset` (0 when absent). Answered with a
+ * `MobileControlPullRequestDiffPage`.
+ */
+export type PullRequestDiffCommand = MobileControlCommandBase<
+  'pullRequest.diff',
+  { url: string; path: string; offset?: number }
+>
+
+export type MobileControlCommand =
+  | SnapshotRequestCommand
+  | BacklogUpdateCommand
+  | BacklogCreateCommand
+  | PullRequestReadCommand
+  | PullRequestDiffCommand
+
+/** The most of each list a pull request read carries; the totals say how many there are. */
+export const mobilePullRequestLimits = {
+  checks: 30,
+  remarks: 5,
+  remarkChars: 280,
+  files: 100,
+  /** Lines of one file's diff per page, cut back to a hunk's start where one falls inside it. */
+  diffPageLines: 300,
+  /** A diff line longer than this is cut, with an ellipsis. */
+  diffLineChars: 500,
+} as const
+
+export type MobileControlPullRequestCheck = {
+  name: string
+  /** The workflow it runs in; empty for a commit status. */
+  workflow: string
+  status: 'pending' | 'passed' | 'failed'
+  /** The base branch requires it; false also when that could not be read. */
+  required: boolean
+}
+
+export type MobileControlPullRequestRemark = {
+  kind: 'comment' | 'review'
+  author: string
+  /** A review's verdict; absent on a comment. */
+  verdict?: 'approved' | 'changes-requested' | 'commented'
+  /** The opening of what was written, at most `remarkChars`; empty for a review left only on lines. */
+  excerpt: string
+  /** When it was written, ms epoch; 0 when GitHub did not say. */
+  at: number
+}
+
+export interface MobileControlPullRequestDetail {
+  url: string
+  number: number | null
+  title: string | null
+  state: 'open' | 'merged' | 'closed'
+  isDraft: boolean
+  author: string | null
+  baseRefName: string | null
+  headRefName: string | null
+  openedAt: number | null
+  /** When it merged or closed; null while open. */
+  endedAt: number | null
+  mergeable: 'mergeable' | 'conflicting' | 'unknown'
+  /** Every check on the head, counted; `items` is the failing ones first, then running, then passed. */
+  checks: { passed: number; failed: number; pending: number; items: MobileControlPullRequestCheck[] }
+  reviewDecision: 'approved' | 'changes-requested' | 'review-required' | null
+  reviews: { approved: number; changesRequested: number; commented: number }
+  /** Comments and reviews together: how many, and the latest few, newest first. */
+  remarks: { total: number; latest: MobileControlPullRequestRemark[] }
+  /** The changed files. `total` is GitHub's count, which may be more than `items` lists. Null when they could not be read. */
+  files: {
+    total: number
+    additions: number
+    deletions: number
+    items: { path: string; additions: number; deletions: number; change: string | null }[]
+  } | null
+}
+
+export interface MobileControlPullRequestDiffPage {
+  url: string
+  path: string
+  /** The page as unified diff text: the file's header on the first page, then whole hunks where they fit. */
+  patch: string
+  offset: number
+  /** Where the next page starts, or null when this is the last. */
+  nextOffset: number | null
+  /** How many lines the file's section of the diff has. */
+  totalLines: number
+}
 
 export type MobileControlBacklogItemStatus = 'idea' | 'ready' | 'in_progress' | 'needs_input' | 'completed' | 'archived'
 export type MobileControlBacklogItemType = 'epic' | 'feature' | 'bug' | 'mockup' | 'spike'
