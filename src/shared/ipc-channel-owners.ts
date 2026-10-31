@@ -167,6 +167,7 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'scheduled-agents:run-now': {},
   'scheduled-agents:update': {},
   'scheduled-messages:get': { retry: 'once' },
+  'scheduled-messages:hold': {},
   'scheduled-messages:update': {},
   'studio-local-apps:cancel-offer': {},
   'studio-local-apps:offer': {},

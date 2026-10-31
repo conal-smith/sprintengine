@@ -472,3 +472,33 @@ for (const known of [true, false])
     // What stays in view is what the provider still has.
     assert.equal(marker?.payload?.rewoundFromSeq, known ? seqOf('three') : seqOf('two'))
   })
+
+test('a steer the agent took is answered as sent even when its record could not be written, so it is never sent twice', async () => {
+  const chat = await setup()
+  const first = await chat.sendRunning('investigate')
+  // The record of the handover fails once the agent has the message: the
+  // event log is out of space, say.
+  const runtime = chat.runtime as unknown as { emitNow: (...args: unknown[]) => Promise<unknown> }
+  const emitNow = runtime.emitNow
+  chat.provider.record.onSteer = () => {
+    runtime.emitNow = async () => {
+      throw new Error('ENOSPC: no space left on device')
+    }
+  }
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const steer = chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'use staging', steer: true })
+    await until(() => chat.provider.steers.length === 1, 'the agent to take the message')
+    await tick()
+    runtime.emitNow = emitNow
+    chat.provider.finish(first.turnId)
+    const answered = await steer
+    assert.equal(answered.ok, true, 'not "not delivered": the window would queue it and send it again')
+    assert.deepEqual(chat.provider.steers, [{ turnId: first.turnId, message: 'use staging' }], 'told once')
+    assert.equal((await first.settled).ok, true)
+  } finally {
+    console.warn = warn
+    runtime.emitNow = emitNow
+  }
+})

@@ -1,7 +1,10 @@
 import type { IpcMain } from 'electron'
 
 import {
+  parseScheduledMessageHold,
   parseScheduledMessageUpdate,
+  SCHEDULED_MESSAGES_HOLD_CHANNEL,
+  type ScheduledMessageHoldAnswer,
   SCHEDULED_MESSAGES_CHANGED_CHANNEL,
   SCHEDULED_MESSAGES_GET_CHANNEL,
   SCHEDULED_MESSAGES_UPDATE_CHANNEL,
@@ -42,6 +45,18 @@ export function registerScheduledMessagesIpc(
   ipcMain.handle(SCHEDULED_MESSAGES_UPDATE_CHANNEL, (_event, input: unknown) => {
     const update = parseScheduledMessageUpdate(input)
     return update ? scheduledMessages.update(update) : scheduledMessages.state()
+  })
+  // A window's own queued message, held here under the window's id for it
+  // (`window:` keeps it apart from a paired machine's command ids).
+  ipcMain.handle(SCHEDULED_MESSAGES_HOLD_CHANNEL, (_event, input: unknown): ScheduledMessageHoldAnswer => {
+    const hold = parseScheduledMessageHold(input)
+    if (!hold) return { ok: false, reason: 'The message to hold is not one this computer can keep.' }
+    const held = scheduledMessages.hold(
+      { workspaceId: hold.workspaceId, agentId: hold.agentId },
+      hold.text,
+      `window:${hold.source}`,
+    )
+    return held.ok ? { ok: true, id: held.id } : { ok: false, reason: held.reason }
   })
   const stopRelay = scheduledMessages.onChanged((state: ScheduledMessagesState) => {
     for (const [id, sender] of subscribers) {

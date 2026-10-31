@@ -309,7 +309,12 @@ import type { ConversationCommandCatalog } from './conversation/commands'
 import type { UsageLimitsState } from './usage-limits'
 import type { UsageReportRequest, UsageReportResult } from './usage-report'
 import type { UsageLimitResumeState, UsageLimitResumeUpdate } from './usage-limit-resume'
-import type { ScheduledMessagesState, ScheduledMessageUpdate } from './scheduled-messages'
+import type {
+  ScheduledMessageHoldAnswer,
+  ScheduledMessageHoldRequest,
+  ScheduledMessagesState,
+  ScheduledMessageUpdate,
+} from './scheduled-messages'
 import type {
   AgentLaunchPreviewInput,
   AgentLaunchPreviewResult,
@@ -1945,6 +1950,8 @@ export type ElectronApi = {
   // when their time comes (src/main/scheduled-messages), and every change after.
   scheduledMessages: () => Promise<ScheduledMessagesState>
   updateScheduledMessage: (update: ScheduledMessageUpdate) => Promise<ScheduledMessagesState>
+  /** Hold a message this window's chat queued, in main, to go when the chat's turn ends. */
+  holdQueuedMessage: (request: ScheduledMessageHoldRequest) => Promise<ScheduledMessageHoldAnswer>
   onScheduledMessagesChanged: (listener: (state: ScheduledMessagesState) => void) => () => void
   // One-shot text generation on the person's own agent CLI (their login, no
   // API key): today the chat title from a first prompt. Never rejects — a
