@@ -411,6 +411,9 @@ import type {
   CloneProgress,
   RepositoryCloneInput,
   RepositoryCloneResult,
+  NewProjectInput,
+  NewProjectResult,
+  GitHubOwnerListResult,
   GitHubRepoListResult,
   GitHubTokenStatus,
   GitHunkRef,
@@ -1369,6 +1372,8 @@ export type ElectronApi = {
   uploadFiles: (files: File[]) => Promise<string[]>
   checkWorkspaceFolder: (path: string) => Promise<WorkspaceFolderCheckResult>
   detectProjectLogo: (folderPath: string) => Promise<ProjectLogo | null>
+  /** A chosen icon file, through the logo guards; null when it cannot be used. */
+  readProjectIconFile: (filePath: string) => Promise<ProjectLogo | null>
   memoryResolveRoot: (input: { workspaceRoot: string | null; relativeRoot: string | null }) => Promise<MemoryRootStatus>
   memoryIndex: (input: { workspaceRoot: string | null; relativeRoot: string | null }) => Promise<MemoryGraphIndexResult>
   memoryReadPreview: (input: {
@@ -1666,6 +1671,8 @@ export type ElectronApi = {
     options?: { includeIgnored?: boolean },
   ) => Promise<() => Promise<void>>
   openDir: (options?: { defaultPath?: string }) => Promise<string | null>
+  /** The file dialog for a project's icon, filtered to images. */
+  openProjectIconFile: (options?: { defaultPath?: string }) => Promise<string | null>
   /** Creates `~/.sprintengine/skills` if needed and returns its absolute path. */
   ensureDefaultUserSkillsDir: () => Promise<string>
   defaultWorkspaceParentDir: () => Promise<string | null>
@@ -1870,6 +1877,10 @@ export type ElectronApi = {
   listGitHubRepos: () => Promise<GitHubRepoListResult>
   /** Clone any git repository (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, a self-hosted server). */
   cloneRepository: (input: RepositoryCloneInput) => Promise<RepositoryCloneResult>
+  /** Make a new project folder with a first commit, publishing it to GitHub only when `publish` is confirmed. */
+  createNewProject: (input: NewProjectInput) => Promise<NewProjectResult>
+  /** The signed-in GitHub account and its organisations, for a new repository's owner. */
+  listGitHubOwners: () => Promise<GitHubOwnerListResult>
   /** Stop the clone started with this `cloneId`; it answers `{ ok: false, reason: 'cancelled' }`. */
   cancelRepositoryClone: (cloneId: string) => Promise<void>
   /** Every running clone's progress, for the caller to filter on its `cloneId`. */

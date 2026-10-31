@@ -5,7 +5,7 @@ import { imageMimeType } from './filesystem-image'
 import { MAX_IMAGE_DATA_URL_BYTES, MAX_TEXT_FILE_READ_BYTES } from './filesystem-read-limits'
 import { checkWorkspaceFolder, pathExists } from './filesystem-workspace'
 import { expandHomePath } from './home-path'
-import { createProjectLogoResolver, type ProjectLogoIo } from './project-logo'
+import { createProjectLogoResolver, readProjectIconFile, type ProjectLogoIo } from './project-logo'
 import { namesNetworkLocation } from '../shared/network-paths'
 
 const BINARY_SNIFF_BYTES = 4096
@@ -37,6 +37,12 @@ export function createFilesystemReadHandlers(options: { opener?: FileOpener; pro
   return {
     detectProjectLogo(folderPath: string) {
       return projectLogos ? projectLogos.resolve(folderPath) : Promise.resolve(null)
+    },
+    // Not cached here: a chosen icon is read once per session by the renderer's
+    // own store, and re-read when the person picks again.
+    readProjectIconFile(filePath: string) {
+      const io = options.projectLogoIo
+      return io && typeof filePath === 'string' ? readProjectIconFile(filePath, io) : Promise.resolve(null)
     },
     async readDirectory(dirPath: string) {
       const entries = await readdir(dirPath, { withFileTypes: true })

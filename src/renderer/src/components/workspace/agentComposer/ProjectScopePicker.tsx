@@ -24,6 +24,8 @@ import {
   type ProjectSourceOption,
 } from './ProjectSourceMenu'
 import { ChipCaretGlyph } from './agentSpawnShared'
+import type { NewProjectRequest } from '../newWorkspace/NewProjectStep'
+import type { NewProjectResult } from '../../../../../shared/electron-api'
 
 // "Which project is this about?", as one chip.
 //
@@ -233,6 +235,32 @@ export function ProjectScopePicker({
     },
     [onClone, onSelect],
   )
+  // A new project is made here for the same reason a fallback clone is: this
+  // chip outlives the popover, so the project is adopted even if the menu
+  // closed while GitHub was answering.
+  const createProject = React.useCallback(
+    async (request: NewProjectRequest): Promise<NewProjectResult> => {
+      const made = await window.api.createNewProject(request).catch((caught: unknown): NewProjectResult => ({
+        ok: false,
+        reason: 'failed',
+        message: caught instanceof Error ? caught.message : 'Could not create the project.',
+      }))
+      if (!made.ok) return made
+      const label = basename(made.path) || made.path
+      showToast(
+        made.warning
+          ? { tone: 'warn', title: `Created ${label}`, description: made.warning }
+          : {
+              tone: 'good',
+              title: made.repository ? `Created ${label} and published it` : `Created ${label}`,
+              description: made.repository ? made.repository.htmlUrl : made.path,
+            },
+      )
+      onSelect(made.path)
+      return made
+    },
+    [onSelect],
+  )
   const [open, setOpen] = React.useState(false)
   return (
     <Popover
@@ -291,6 +319,9 @@ export function ProjectScopePicker({
         onStartWithoutProject={onStartWithoutProject}
         onBrowse={onBrowse}
         onClone={importFromGit ? runClone : undefined}
+        // A host that takes no clones takes no new projects either: both are a
+        // way to a project that is not on the disk yet.
+        onCreateProject={importFromGit ? createProject : undefined}
         onClose={() => setOpen(false)}
       />
     </Popover>

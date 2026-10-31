@@ -729,7 +729,7 @@ export function RemoteConversationContextMenu({
   )
 }
 
-export type FolderMenuAction = 'new-chat' | 'reveal' | 'forget'
+export type FolderMenuAction = 'new-chat' | 'reveal' | 'icon' | 'forget'
 
 export function FolderContextMenu({
   x,
@@ -798,6 +798,11 @@ export function FolderContextMenu({
         </MenuItem>
       ) : null}
       {canReveal ? <MenuItem onClick={() => onSelect('reveal')}>Reveal folder</MenuItem> : null}
+      {/* The icon is a folder's, on this disk: a chosen file is a path here,
+          so only a project with a folder that is present offers it. */}
+      {canReveal && !isProjectlessChatsRoot(group.fullPath) ? (
+        <MenuItem onClick={() => onSelect('icon')}>Project icon…</MenuItem>
+      ) : null}
       {/* The same swatch control the row menu spends on "Highlight color", one
           menu up: a highlight is a tint a person puts ON a chat, a project
           colour is what the project IS, and the header is the one line that

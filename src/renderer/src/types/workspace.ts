@@ -1,4 +1,5 @@
 import type { EditorRange } from '../../../shared/editor-reveal'
+import type { ProjectIconSetting } from '../../../shared/project-icon'
 import type { BranchStepSelection } from '../../../shared/electron-api'
 import type { IJsonModel } from 'flexlayout-react'
 import type { BrowserViewport } from '../../../shared/browser-devices'
@@ -373,6 +374,12 @@ export type AppSettings = {
    * `'none'` for "no colour", and is this machine's alone.
    */
   projectColors: Record<string, ProjectColorSetting>
+  /**
+   * A project's chosen icon, keyed by its folder (`normalizeFolderKey`):
+   * a file of the person's, or a generated monogram. Overrides only; a project
+   * with no entry shows its detected logo, else the folder glyph.
+   */
+  projectIcons?: Record<string, ProjectIconSetting>
   recentWorkspaceFolders: string[]
   /**
    * The project the Design door is showing, chosen with its own project chip.

@@ -1,8 +1,9 @@
 import type { IpcMain } from 'electron'
 import type { GitHubTokenStore } from '../github-token-store'
-import type { RepositoryCloneInput } from '../../shared/electron-api'
+import type { NewProjectInput, NewProjectResult, RepositoryCloneInput } from '../../shared/electron-api'
 import { listGitHubRepos } from '../github-repos'
 import { cloneRepository } from '../git-clone'
+import { createNewProject, listGitHubOwners, realNewProjectDeps } from '../new-project'
 import { sharedGhRunner } from '../github/gh'
 import { createGhHostTokenResolver, type GhHostTokenResolver } from '../github/host-token'
 
@@ -12,6 +13,17 @@ import { createGhHostTokenResolver, type GhHostTokenResolver } from '../github/h
 // progress and outcomes.
 export function registerGitHubReposIpc(ipcMain: IpcMain, githubTokenStore: GitHubTokenStore): void {
   ipcMain.handle('github:list-repos', () => listGitHubRepos(githubTokenStore))
+
+  // A new project, and the owners a published one can belong to. The token
+  // stays on this side here too: the renderer names an owner and says the
+  // person confirmed, and main does the rest.
+  const newProjectDeps = realNewProjectDeps(() => githubTokenStore.resolveToken())
+  ipcMain.handle('github:list-owners', () => listGitHubOwners(newProjectDeps))
+  ipcMain.handle('github:new-project', async (_, input: unknown): Promise<NewProjectResult> => {
+    const request = parseNewProjectInput(input)
+    if (!request) return { ok: false, reason: 'invalid', message: 'Invalid new-project request.' }
+    return createNewProject(request, newProjectDeps)
+  })
 
   // Made on the first clone that needs it, not at registration: most windows
   // never clone, and the resolver holds a cache for the life of the process.
@@ -60,4 +72,25 @@ export function registerGitHubReposIpc(ipcMain: IpcMain, githubTokenStore: GitHu
   ipcMain.handle('github:clone-cancel', (_, cloneId: unknown) => {
     if (typeof cloneId === 'string') running.get(cloneId)?.abort()
   })
+}
+
+/** The request as main will act on it, or null for one it will not. */
+export function parseNewProjectInput(input: unknown): NewProjectInput | null {
+  const request = input as Partial<NewProjectInput> | null
+  if (!request || typeof request.parentDir !== 'string' || typeof request.name !== 'string') return null
+  const publish = request.publish
+  if (publish == null) return { parentDir: request.parentDir, name: request.name, publish: null }
+  if (
+    typeof publish !== 'object' ||
+    (publish.owner !== null && typeof publish.owner !== 'string') ||
+    (publish.visibility !== 'private' && publish.visibility !== 'public') ||
+    typeof publish.confirmed !== 'boolean'
+  ) {
+    return null
+  }
+  return {
+    parentDir: request.parentDir,
+    name: request.name,
+    publish: { owner: publish.owner, visibility: publish.visibility, confirmed: publish.confirmed },
+  }
 }

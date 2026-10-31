@@ -1,3 +1,4 @@
+import type { ProjectIconSetting } from '../../../shared/project-icon'
 import { create, type Mutate, type StoreApi, type UseBoundStore } from 'zustand'
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware'
 import { immer } from 'zustand/middleware/immer'
@@ -307,6 +308,8 @@ export interface WorkspaceStore
    * project to its hashed hue.
    */
   setProjectColor: (key: string, color: ProjectColorSetting | null) => void
+  /** Set one project's icon, keyed by its folder; `null` returns it to the detected one. */
+  setProjectIcon: (folderPath: string, icon: ProjectIconSetting | null) => void
   /**
    * Stamp a design system as seen, now — the Design door's "New" marker reads
    * against it. Called AFTER the render that computed the markers, so the visit

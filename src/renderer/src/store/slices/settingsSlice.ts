@@ -24,6 +24,8 @@ import type { FolderOpenTargetId } from '../../../../shared/folder-open-targets'
 import { normalizeProjectKnowledgeRoots } from './memorySlice'
 import { launchSettingsClient } from '../launchSettingsClient'
 import { isProjectColorSetting, type ProjectColorSetting } from '../../utils/projectColor'
+import { isProjectIconSetting, normalizeProjectIcons, type ProjectIconSetting } from '../../../../shared/project-icon'
+import { normalizeFolderKey } from '../../../../shared/project-hue'
 import { isConnectorsFoldedSettingsTab, SKILLS_SETTINGS_TAB } from '../../components/settings/extensionsRoute'
 import {
   dispatchExtensionsSurfaceTarget,
@@ -706,6 +708,7 @@ export const defaultAppSettings = (): AppSettings => ({
   // so a fresh profile allocates as its first sidebar renders rather than
   // pre-colouring projects it has never opened.
   projectColors: {},
+  projectIcons: {},
   recentWorkspaceFolders: [],
   // Null follows the active workspace, which is what the Design door did before
   // it had a chip at all.
@@ -782,6 +785,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     // one again next week, or "it never changes behind your back" is untrue for
     // exactly the projects a person comes back to.
     projectColors: normalizeProjectColors(settings?.projectColors),
+    projectIcons: normalizeProjectIcons(settings?.projectIcons),
     recentWorkspaceFolders: normalizeRecentWorkspaceFolders(
       settings?.recentWorkspaceFolders,
       workspaces.map((ws) => ws.folderPath),
@@ -1051,6 +1055,8 @@ export interface SettingsSliceActions {
    * its key — "Automatic" in the picker.
    */
   setProjectColor: (key: string, color: ProjectColorSetting | null) => void
+  /** Set one project's icon, keyed by its folder; `null` returns it to the detected one. */
+  setProjectIcon: (folderPath: string, icon: ProjectIconSetting | null) => void
   /**
    * Stamp a design system as seen, now.
    *
@@ -1562,6 +1568,22 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         if (!isProjectColorSetting(color)) return
         if (current[projectKey] === color) return
         state.appSettings.projectColors = { ...current, [projectKey]: color }
+      }),
+
+    setProjectIcon: (folderPath, icon) =>
+      set((state) => {
+        const key = folderPath.trim() ? normalizeFolderKey(folderPath) : ''
+        if (!key) return
+        const current = state.appSettings.projectIcons ?? {}
+        if (icon === null) {
+          if (!Object.hasOwn(current, key)) return
+          const next = { ...current }
+          delete next[key]
+          state.appSettings.projectIcons = next
+          return
+        }
+        if (!isProjectIconSetting(icon)) return
+        state.appSettings.projectIcons = { ...current, [key]: icon }
       }),
 
     markDesignSystemSeen: (bundleId, at) =>
