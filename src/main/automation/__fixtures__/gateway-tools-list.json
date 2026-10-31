@@ -242,7 +242,7 @@
     },
     {
       "name": "workspace.mobile_command",
-      "sha256": "aa635abc72802af972e1924475063a52781d3eaf357a4eb964b0434b30c66f31"
+      "sha256": "70eb03165286a1d0eb56a50a70898563fc561bb9ac85a81b89d0477858e0f0cc"
     },
     {
       "name": "workspace.snapshot",
@@ -656,7 +656,7 @@
     },
     {
       "name": "workspace.mobile_command",
-      "sha256": "aa635abc72802af972e1924475063a52781d3eaf357a4eb964b0434b30c66f31"
+      "sha256": "70eb03165286a1d0eb56a50a70898563fc561bb9ac85a81b89d0477858e0f0cc"
     },
     {
       "name": "workspace.snapshot",
