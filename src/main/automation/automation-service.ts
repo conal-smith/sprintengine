@@ -18,6 +18,9 @@ import type { TailnetPeerScan } from '../../shared/tailnet-peers'
 import { readAutomationSettings, writeAutomationSettings } from './automation-settings'
 import { createGatewayAuditStore, isAuditedCall, type GatewayAuditStore } from './gateway-audit'
 import { createMcpSocketServer, type McpSocketServerOptions } from './mcp-socket-server'
+import { createMcpHttpServer, MCP_HTTP_PATH, type McpHttpServer } from './mcp-http-server'
+import { createMcpHttpTokenStore, MCP_HTTP_FILE, type McpHttpTokenStore } from './mcp-http-tokens'
+import type { McpHttpCreateResult, McpHttpStatus } from '../../shared/mcp-http'
 import { isStudioGatewayMutation } from './studio-gateway-tools'
 import { createTailnetMeshService, type TailnetMeshService } from './tailnet/tailnet-mesh-service'
 import { createTailnetRemoteService, type TailnetRemoteService } from './tailnet/tailnet-service'
@@ -97,6 +100,13 @@ export function createAutomationService(options: AutomationServiceOptions) {
   // with remote control off can still be a Mesh client.
   let mesh: TailnetMeshService | null = null
 
+  // The loopback HTTP door to the same gateway (mcp-http-server.ts), for an
+  // MCP client that takes a URL. It listens only while a token exists: with
+  // none, nobody could call it, and a port held open for nobody is a port.
+  let httpTokens: McpHttpTokenStore | null = null
+  let httpServer: McpHttpServer | null = null
+  let httpError: string | null = null
+
   function loadSettings(): void {
     if (settingsLoaded) return
     settingsLoaded = true
@@ -132,6 +142,7 @@ export function createAutomationService(options: AutomationServiceOptions) {
     loadSettings()
     gatewayStarted = startServer()
     await gatewayStarted
+    await syncHttpEndpoint()
     // Opt-in and independent: a tailnet listener that cannot start reports why
     // in its own status and never blocks the socket gateway the app depends on.
     await tailnetService().initialize()
@@ -265,6 +276,81 @@ export function createAutomationService(options: AutomationServiceOptions) {
     }
   }
 
+  function httpTokenStore(): McpHttpTokenStore {
+    httpTokens ??= createMcpHttpTokenStore({
+      file: join(options.resolveUserDataDir(), MCP_HTTP_FILE),
+      log: (text) => warn('Studio MCP over HTTP', text),
+    })
+    return httpTokens
+  }
+
+  function httpEndpoint(): McpHttpServer {
+    httpServer ??= createMcpHttpServer({
+      serverName: STUDIO_MCP_SERVER_ID,
+      serverVersion: options.appVersion,
+      resolveTools: options.resolveGatewayTools,
+      ...(options.clientTools ? { clientTools: options.clientTools } : {}),
+      authenticate: (token) => httpTokenStore().authenticate(token),
+      onToolCall: ({ context, tool, args, durationMs, result, error, servedBy }) => {
+        if (
+          !isAuditedCall(
+            tool,
+            isStudioGatewayMutation(tool, () => options.resolveGatewayTools(context)),
+          )
+        )
+          return
+        auditStore().record({ connection: context.metadata, tool, args, durationMs, result, error, servedBy })
+      },
+      log: (text) => warn('Studio MCP over HTTP', text),
+    })
+    return httpServer
+  }
+
+  /** Listen while a token exists, and not otherwise. */
+  async function syncHttpEndpoint(): Promise<void> {
+    const store = httpTokenStore()
+    const endpoint = httpEndpoint()
+    try {
+      if (store.list().length === 0) {
+        await endpoint.stop()
+      } else if (!endpoint.isRunning()) {
+        store.setPort(await endpoint.start(store.port()))
+      }
+      httpError = null
+    } catch (error) {
+      httpError = `The HTTP endpoint did not start: ${message(error)}`
+      warn('Studio MCP over HTTP', httpError)
+    }
+  }
+
+  function getMcpHttpStatus(): McpHttpStatus {
+    const port = httpServer?.port() ?? null
+    return {
+      running: port !== null,
+      url: port !== null ? `http://127.0.0.1:${port}${MCP_HTTP_PATH}` : null,
+      clients: httpTokenStore().list(),
+      lastError: httpError,
+    }
+  }
+
+  async function createMcpHttpClient(name: string): Promise<McpHttpCreateResult> {
+    const created = httpTokenStore().create(name)
+    if (!created.ok) return { ok: false, message: created.message, status: getMcpHttpStatus() }
+    await syncHttpEndpoint()
+    const status = getMcpHttpStatus()
+    if (!status.url) {
+      httpTokenStore().revoke(created.client.id)
+      return { ok: false, message: httpError ?? 'The HTTP endpoint did not start.', status: getMcpHttpStatus() }
+    }
+    return { ok: true, status, client: created.client, token: created.token, url: status.url }
+  }
+
+  async function revokeMcpHttpClient(id: string): Promise<McpHttpStatus> {
+    if (httpTokenStore().revoke(id)) httpServer?.dropClient(id)
+    await syncHttpEndpoint()
+    return getMcpHttpStatus()
+  }
+
   async function stopServer(): Promise<void> {
     const current = server
     server = null
@@ -286,6 +372,8 @@ export function createAutomationService(options: AutomationServiceOptions) {
     mesh?.shutdown()
     await tailnet?.shutdown()
     await stopServer()
+    await httpServer?.stop()
+    await httpTokens?.flush()
     // After both transports have stopped, so no mutation can queue a record
     // behind the close.
     await audit?.close()
@@ -329,6 +417,9 @@ export function createAutomationService(options: AutomationServiceOptions) {
     getStatus,
     setEnabled,
     shutdown,
+    getMcpHttpStatus,
+    createMcpHttpClient,
+    revokeMcpHttpClient,
     notifyToolsListChanged,
     notifyWorkspacesChanged,
     notifyConversationsChanged,
