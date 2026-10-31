@@ -70,6 +70,14 @@ export function openPullRequest(mark: Pick<PullRequestMarkView, "url">): void {
   });
 }
 
+/**
+ * The mark spoken, saying where it opens: here, where the chat's desktop
+ * reads pull requests for the phone, else the browser.
+ */
+export function pullRequestMarkLabel(mark: Pick<PullRequestMarkView, "accessibilityLabel">, here: boolean): string {
+  return here ? mark.accessibilityLabel.replace("Opens it in the browser.", "Opens it here.") : mark.accessibilityLabel;
+}
+
 /** The mark's drawn height: one line of meta text. */
 const PR_MARK_HEIGHT = typography.meta.lineHeight;
 
@@ -80,15 +88,15 @@ const PR_MARK_HEIGHT = typography.meta.lineHeight;
  * not reach it inside a list row, which speaks as one element; the row offers
  * the same action (`accessibilityActions`).
  */
-export function PullRequestMarkButton({ mark }: { mark: PullRequestMarkView }) {
+export function PullRequestMarkButton({ mark, onOpen }: { mark: PullRequestMarkView; onOpen?: () => void }) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
   return (
     <Pressable
-      accessibilityLabel={mark.accessibilityLabel}
-      accessibilityRole="link"
+      accessibilityLabel={pullRequestMarkLabel(mark, !!onOpen)}
+      accessibilityRole={onOpen ? "button" : "link"}
       hitSlop={touchSlop(PR_MARK_HEIGHT)}
-      onPress={() => openPullRequest(mark)}
+      onPress={onOpen ?? (() => openPullRequest(mark))}
       style={({ pressed }) => [styles.pr, pressed ? styles.pressed : null]}
     >
       <PullRequestStateGlyph color={colors[mark.tone]} size={iconSize.xs} state={mark.state} />
@@ -102,15 +110,24 @@ export function PullRequestMarkButton({ mark }: { mark: PullRequestMarkView }) {
  * words for it ("Open PR #42"), opening it in the browser. Drawn at the
  * strip's item height and padded out to the touch floor.
  */
-export function PullRequestStripButton({ pr, height }: { pr: { mark: PullRequestMarkView; text: string }; height: number }) {
+export function PullRequestStripButton({
+  pr,
+  height,
+  onOpen,
+}: {
+  pr: { mark: PullRequestMarkView; text: string };
+  height: number;
+  /** Opens it in the phone's own viewer; absent, the browser. */
+  onOpen?: () => void;
+}) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
   return (
     <Pressable
-      accessibilityLabel={pr.mark.accessibilityLabel}
-      accessibilityRole="link"
+      accessibilityLabel={pullRequestMarkLabel(pr.mark, !!onOpen)}
+      accessibilityRole={onOpen ? "button" : "link"}
       hitSlop={touchSlop(height)}
-      onPress={() => openPullRequest(pr.mark)}
+      onPress={onOpen ?? (() => openPullRequest(pr.mark))}
       style={({ pressed }) => [styles.pr, styles.prStrip, { minHeight: height }, pressed ? styles.pressed : null]}
     >
       <PullRequestStateGlyph color={colors[pr.mark.tone]} size={iconSize.xs} state={pr.mark.state} />

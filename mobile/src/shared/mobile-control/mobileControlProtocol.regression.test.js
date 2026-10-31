@@ -23,8 +23,12 @@ const test = require("node:test");
 // 2026-09-29: this pin moved alone, with the automations removal, while the
 // desktop takes them off its copy in parallel. The two copies are to be
 // reconciled against the desktop's final change and both pins set together.
+//
+// 2026-10-30: moved with the pull request reads (`pullRequest.read`,
+// `pullRequest.diff`), which the desktop's copy in
+// src/main/mobile/control/protocol.ts gained in the same change.
 const PROTOCOL_SOURCE_SHA256 =
-  "7bf19b9b818614df16b64f81a3294a6e6663548810b800c87c1871961e72d326";
+  "bdc70ea7ddff1e688becbd2265e695e8961fefb87708bbcb10a88676bda2b253";
 
 test("mobile protocol.ts stays byte-identical to the desktop wire schema (hash pin)", () => {
   const source = fs.readFileSync(path.join(__dirname, "protocol.ts"));
