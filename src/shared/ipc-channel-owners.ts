@@ -26,6 +26,9 @@ export type ServerIpcChannel = { retry?: 'once'; subscription?: ServerIpcSubscri
 
 export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'automation:get-status': { retry: 'once' },
+  'automation:mcp-http-create': {},
+  'automation:mcp-http-revoke': {},
+  'automation:mcp-http-status': { retry: 'once' },
   'backlog:add-or-update-link': {},
   'backlog:create-epic': {},
   'backlog:ensure-item-ids': {},
