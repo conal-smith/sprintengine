@@ -1,6 +1,6 @@
 ---
 name: studio-workspaces
-description: Read and drive SprintEngine Studio's workspaces, agents, terminals, git checkouts and the editor and the workspace browser pane through the workspace_*, agent_*, terminal_*, editor_* and browser_* tools. Use when asked what workspaces or agents exist, to open a workspace or launch an agent, to start or list the agent terminals on this machine or read a terminal's output (a dev server's errors, a test run's failures), to inspect a workspace's branches and worktrees, to show the person specific files, lines or your diff in their editor, to drive or screenshot the in-app browser, or to check the mobile companion snapshot or tailnet pairing.
+description: Read and drive SprintEngine Studio's workspaces, agents, terminals, git checkouts and the editor and the workspace browser pane through the workspace_*, agent_*, conversation_*, terminal_*, editor_* and browser_* tools. Use when asked what workspaces or agents exist, to open a workspace or launch an agent, to message, read, wait on or stop another chat, to start or list the agent terminals on this machine or read a terminal's output (a dev server's errors, a test run's failures), to inspect a workspace's branches and worktrees, to show the person specific files, lines or your diff in their editor, to drive or screenshot the in-app browser, or to check the mobile companion snapshot or tailnet pairing.
 ---
 
 # Workspaces and terminals
@@ -86,6 +86,30 @@ starts chat agents instead.
 
 Read `cli_runtime_list` before naming any `cli` or `cliModel`. Only rows with
 `agentSelectable: true` can be launched as agents.
+
+## Driving another chat
+
+Four tools let you work with another chat on this machine, as the person does
+by moving between chats. Name the chat by `workspaceId` (and `agentId` when
+its workspace holds more than one chat agent).
+
+- `conversation_send` with `{workspaceId, message}` sends it a message. The
+  default `mode: "queue"` sends now when the chat is not in a turn and
+  otherwise holds the message for the turn's end; `mode: "steer"` puts it
+  into the running turn where the chat's CLI can take one. A chat at rest is
+  resumed. The message is headed with which chat it came from. A chat that
+  runs on a looser permission preset than you is refused as
+  `permission_escalation`.
+- `conversation_read` reads what was said, the words without tool calls, a
+  few turns at a time inside `maxChars`; page back with the answer's
+  `before` while `hasMore` is true.
+- `conversation_wait` waits until the chat is `idle`, `needs_input`, or has
+  `finished` a turn since `since` (pass the `sentAt` from the send), up to
+  `timeoutMs`. Wait again rather than asking for a very long timeout.
+- `conversation_interrupt` stops the chat's running turn.
+
+None of them works on your own chat. They are served to agents on this
+machine only.
 
 ## The browser pane
 

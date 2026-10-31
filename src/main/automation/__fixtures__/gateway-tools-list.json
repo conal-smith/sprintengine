@@ -145,6 +145,10 @@
       "sha256": "b21c0cddd514d3a93df1433245d6c1776d645c27b7ca1fd94eab5e82d9300e50"
     },
     {
+      "name": "visual.preview",
+      "sha256": "460822b4f173ad7182db01c7a1e8a206233bde35bdb0a861a2e9f36b305252dc"
+    },
+    {
       "name": "conversation.create",
       "sha256": "13e9e5db1221a93e9efdc7c0853466bad3cb37d10029d8fe01721d2fe7b37e76"
     },
@@ -171,6 +175,22 @@
     {
       "name": "conversation.auto_settle",
       "sha256": "fd712db735bae797dc99470ec9e28561ff229c33563e57dd8bca166370e86542"
+    },
+    {
+      "name": "conversation.send",
+      "sha256": "7e841da0f12b5de986e1e727dd2c9ec585354b19b742b8f7b4d8b99e24fd3962"
+    },
+    {
+      "name": "conversation.read",
+      "sha256": "00eb4fbfbcadc9d65bc00dd00242cf03fd2dcfad2140b8e115bb54c7a0c7ebf4"
+    },
+    {
+      "name": "conversation.wait",
+      "sha256": "166c69ea8152cd791895c11cb3c4580f82b6168ec97aa892bd61ea656ae109ef"
+    },
+    {
+      "name": "conversation.interrupt",
+      "sha256": "617e12674520f14b708021c9e71e45ba1674d7e10aa017030e31424ea86996ca"
     },
     {
       "name": "conversation.pull_request_state",
@@ -543,6 +563,10 @@
       "sha256": "b21c0cddd514d3a93df1433245d6c1776d645c27b7ca1fd94eab5e82d9300e50"
     },
     {
+      "name": "visual.preview",
+      "sha256": "460822b4f173ad7182db01c7a1e8a206233bde35bdb0a861a2e9f36b305252dc"
+    },
+    {
       "name": "conversation.create",
       "sha256": "13e9e5db1221a93e9efdc7c0853466bad3cb37d10029d8fe01721d2fe7b37e76"
     },
@@ -569,6 +593,22 @@
     {
       "name": "conversation.auto_settle",
       "sha256": "fd712db735bae797dc99470ec9e28561ff229c33563e57dd8bca166370e86542"
+    },
+    {
+      "name": "conversation.send",
+      "sha256": "7e841da0f12b5de986e1e727dd2c9ec585354b19b742b8f7b4d8b99e24fd3962"
+    },
+    {
+      "name": "conversation.read",
+      "sha256": "00eb4fbfbcadc9d65bc00dd00242cf03fd2dcfad2140b8e115bb54c7a0c7ebf4"
+    },
+    {
+      "name": "conversation.wait",
+      "sha256": "166c69ea8152cd791895c11cb3c4580f82b6168ec97aa892bd61ea656ae109ef"
+    },
+    {
+      "name": "conversation.interrupt",
+      "sha256": "617e12674520f14b708021c9e71e45ba1674d7e10aa017030e31424ea86996ca"
     },
     {
       "name": "conversation.pull_request_state",

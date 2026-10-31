@@ -6,8 +6,11 @@ import { imageWithinDecodeLimits } from '../shared/image-dimensions'
 // A project's own logo, read off the top level of its repo, the page its web
 // app links as its icon, the folders a web project serves its favicon from,
 // or a macOS app's icon from where such a repo keeps it so a row of projects reads like a row
-// of products. Detection only — there is no
-// per-project icon picker, and nothing here writes to the repo.
+// of products. Nothing here writes to the repo. A person can override the
+// detected logo per project with a file of their choosing
+// (`readProjectIconFile`), which is held to exactly the guards a detected
+// candidate is: the size bound, the SVG sanitizer and the downscale. The
+// override itself is a setting in the renderer, not a file in the repo.
 //
 // This module is deliberately free of `fs` and `electron` imports (its
 // imports, `imageMimeType` and the `.icns` reader, are pure): it takes its
@@ -334,6 +337,16 @@ async function downscaleCandidate(
   } catch {
     return { bytes: raw, mimeType }
   }
+}
+
+/**
+ * A file the person chose as a project's icon, read through the same guards a
+ * detected candidate passes: too large, not an image, or an SVG the sanitizer
+ * rejects is null, and the caller says so rather than showing it.
+ */
+export function readProjectIconFile(filePath: string, io: ProjectLogoIo): Promise<ProjectLogo | null> {
+  if (!filePath) return Promise.resolve(null)
+  return logoFrom(filePath, io)
 }
 
 export type ProjectLogoResolver = {

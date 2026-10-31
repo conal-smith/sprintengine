@@ -17,13 +17,15 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
  * reads the page from this machine's disk and signs in with its credentials,
  * and its clone of the site is one main keeps. And `extension`: making an
  * extension project uses the templates and the guide shipped beside the app,
- * through the same scaffold as the New chat door.
+ * through the same scaffold as the New chat door. And `visual`: a preview is
+ * drawn in a hidden window of the app.
  */
 export const SHELL_TOOLSETS = [
   'browser',
   'canvas',
   'editor',
   'tour',
+  'visual',
   'terminal',
   'agent',
   'worktree',

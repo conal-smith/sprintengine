@@ -20,6 +20,19 @@ import type { TailnetScope } from '../../../shared/tailnet'
 const TERMINAL_LAUNCH_TOOLS: ReadonlySet<string> = new Set(['terminal.create', 'agent.launch', 'backlog.work'])
 
 /**
+ * One chat's agent driving another chat here (conversation-chat-tools.ts). A
+ * paired device follows and drives this machine's chats over its own
+ * conversation lane, which has its own commands for the same, so these are
+ * for the agents on this machine alone.
+ */
+const CHAT_TO_CHAT_TOOLS: ReadonlySet<string> = new Set([
+  'conversation.send',
+  'conversation.read',
+  'conversation.wait',
+  'conversation.interrupt',
+])
+
+/**
  * Why a tool is served on the local socket only and never to a paired device,
  * whatever its scopes — or null for a tool the tailnet may serve.
  *
@@ -50,6 +63,9 @@ const TERMINAL_LAUNCH_TOOLS: ReadonlySet<string> = new Set(['terminal.create', '
  * `search` and `get` only read the site, and are served on the read scope
  * like any other read.
  *
+ * The `visual.*` family draws an agent's markup, scripts and all, in a hidden
+ * window on this machine; it is for an agent writing a reply here.
+ *
  * The `extension.*` family makes an extension project in a folder on this
  * machine that the caller names, and teaches an agent about to work in it; a
  * paired device has neither the folder nor the agent.
@@ -78,6 +94,12 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
   }
   if (toolName.startsWith('worktree.')) {
     return `"${toolName}" hands the calling agent a worktree on this machine and holds it for that agent, and a paired device is not an agent. Run it from an agent on that machine.`
+  }
+  if (CHAT_TO_CHAT_TOOLS.has(toolName)) {
+    return `"${toolName}" lets an agent on this machine drive another chat here. A paired device follows and drives this machine's chats over its conversation lane instead.`
+  }
+  if (toolName.startsWith('visual.')) {
+    return `"${toolName}" draws an agent's visual in a hidden window on this machine, for a reply it is writing here. Run it from an agent on that machine.`
   }
   if (toolName.startsWith('terminal.')) {
     return `"${toolName}" reads the terminals on this machine, and terminals are not served over the tailnet. A paired device follows this machine's chats instead; run it from an agent on that machine.`

@@ -17,6 +17,8 @@ export type DesktopGatewayToolParts = {
   canvas: McpToolRegistration[]
   editor: McpToolRegistration[]
   tour: McpToolRegistration[]
+  /** `visual.preview`, which draws in a hidden window of this app. */
+  visual: McpToolRegistration[]
   automation: McpToolRegistration[]
   /** The worktree pool's `worktree.*`, which main serves because main keeps the pool. */
   worktree: McpToolRegistration[]
@@ -35,6 +37,7 @@ export function desktopGatewayTools(
     ...parts.canvas,
     ...parts.editor,
     ...parts.tour,
+    ...parts.visual,
     ...coreTools,
     ...parts.automation,
     ...parts.worktree,

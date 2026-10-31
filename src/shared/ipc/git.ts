@@ -487,6 +487,35 @@ export type RepositoryCloneResult =
       existingPath?: string
     }
 
+/** A project made from nothing: a folder with a first commit, and optionally a GitHub repository. */
+export type NewProjectInput = {
+  parentDir: string
+  /** The folder's name, and the repository's when it is published. */
+  name: string
+  /**
+   * Publish it to GitHub. `confirmed` is the person's yes to the confirmation
+   * the form shows; a request without it is not published. Absent or null
+   * makes a local repository only.
+   */
+  publish?: { owner: string | null; visibility: 'private' | 'public'; confirmed: boolean } | null
+}
+
+export type NewProjectResult =
+  | {
+      ok: true
+      path: string
+      /** The GitHub repository it was published to, or null for a local project. */
+      repository: { fullName: string; htmlUrl: string; isPrivate: boolean } | null
+      /** A step after the folder was made that did not happen, said plainly. */
+      warning: string | null
+    }
+  | { ok: false; reason: 'invalid' | 'exists' | 'failed'; message: string }
+
+/** Who a new repository can belong to: the signed-in account, or one of its organisations. */
+export type GitHubOwnerListResult =
+  | { ok: true; login: string; orgs: string[] }
+  | { ok: false; reason: 'no_token' | 'unauthorized' | 'network'; message: string }
+
 export type CloneProgressStage = 'connecting' | 'counting' | 'receiving' | 'resolving' | 'checkout'
 
 /** One step of a running clone, as `git clone --progress` reports it. */

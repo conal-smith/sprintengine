@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { StudioServerBanner } from '../studioServer/StudioServerBanner'
 import { hostIdForFolder, isWslHostId, LOCAL_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
 import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../shared/projectless-chats'
@@ -172,9 +172,14 @@ import { scheduledAgentScheduleWords } from '../../../../shared/scheduled-agents
 import { scheduledAgentRuns } from '../../utils/scheduledAgentRuns'
 import {
   clearNewChatDraft,
+  currentNewChatDraftId,
+  deleteNewChatDraft,
   newChatDraftHasContent,
   readNewChatDraft,
   rescopeNewChatDraft,
+  resumeNewChatDraft,
+  startAnotherNewChatDraft,
+  subscribeNewChatDrafts,
   writeNewChatDraft,
 } from './agentComposer/newChatDraft'
 import { bootComposerLive, dropBootComposerSnapshot, releaseBootComposer } from './agentComposer/bootComposer'
@@ -3024,7 +3029,10 @@ export default function WorkspaceManager() {
     [activeFolderPath, activeRemoteOrigin, activeWorktreeRepoRoot, workspaceWindowId],
   )
   presentNewChatPanelRef.current = presentNewChatPanel
-  const openNewChatPanel = useCallback(
+  // Bumped when this window's New chat changes draft (another begun, a kept
+  // one reopened), so the door remounts on it: the panel reads its draft once.
+  const [newChatDraftGeneration, setNewChatDraftGeneration] = useState(0)
+  const showNewChatPanel = useCallback(
     (
       folderPath?: string | null,
       connector?: AgentComposerConnector | null,
@@ -3044,6 +3052,37 @@ export default function WorkspaceManager() {
       setSidebarSection('home')
     },
     [closeGlobalSurface, closeModalSurface, presentNewChatPanel, setSidebarSection],
+  )
+  // New chat over a New chat door that holds something keeps that draft, in
+  // the sidebar's Drafts, and begins another; over an empty one, or anywhere
+  // else, it opens the door on the draft the window has, as it always did.
+  const newChatPanelStateRef = useRef(newChatPanelState)
+  newChatPanelStateRef.current = newChatPanelState
+  const openNewChatPanel = useCallback(
+    (
+      folderPath?: string | null,
+      connector?: AgentComposerConnector | null,
+      forcedSelection: AgentComposerSelection | null = null,
+    ) => {
+      const open = newChatPanelStateRef.current
+      if (
+        open &&
+        (open.mode ?? 'chat') === 'chat' &&
+        !open.editingScheduledAgentId &&
+        folderPath === undefined &&
+        !connector &&
+        !forcedSelection &&
+        newChatDraftHasContent(readNewChatDraft(workspaceWindowId)) &&
+        startAnotherNewChatDraft(workspaceWindowId)
+      ) {
+        setNewChatDraftGeneration((generation) => generation + 1)
+        // The new draft starts on the project the kept one was on.
+        showNewChatPanel(open.folderPath)
+        return
+      }
+      showNewChatPanel(folderPath, connector, forcedSelection)
+    },
+    [showNewChatPanel, workspaceWindowId],
   )
   // Closing ON PURPOSE — ×, Escape, or the chat starting — is the one thing
   // besides launch that forgets the draft. Every other way off the door
@@ -3435,7 +3474,7 @@ export default function WorkspaceManager() {
   // for cards. Never through the parked chat draft, which is the person's next
   // chat and not this (see `draftKey` below).
   const openBuildExtensionDoor = useStableCallback(() => {
-    openNewChatPanel()
+    showNewChatPanel()
     setNewChatPanelState((prev) => (prev ? { ...prev, mode: 'extension', editingScheduledAgentId: null } : prev))
   })
   useEffect(() => {
@@ -4838,6 +4877,24 @@ export default function WorkspaceManager() {
       editingScheduledAgentId: id,
     })
   })
+  // A kept draft from the sidebar's Drafts: made this window's, and New chat
+  // opened on it, on its own project. The draft the door had stays kept.
+  const sidebarOpenDraft = useStableCallback((id: string) => {
+    if (currentNewChatDraftId(workspaceWindowId) !== id) {
+      if (!resumeNewChatDraft(workspaceWindowId, id)) return
+      setNewChatDraftGeneration((generation) => generation + 1)
+    }
+    showNewChatPanel()
+  })
+  // Throwing away the draft the door is showing closes the door, as × does.
+  const sidebarDeleteDraft = useStableCallback((id: string) => {
+    if (newChatPanelState && newChatPanelIsDraftRef.current && currentNewChatDraftId(workspaceWindowId) === id)
+      closeNewChatPanel()
+    else deleteNewChatDraft(id)
+  })
+  const openNewChatDraftId = useSyncExternalStore(subscribeNewChatDrafts, () =>
+    currentNewChatDraftId(workspaceWindowId),
+  )
   const sidebarNewChatInFolder = useStableCallback((folderPath: string) => openNewChatPanel(folderPath))
   // A paired machine's project: the panel opens as for any project, then
   // picks that machine and project itself (`NewAgentPanel.remoteProject`).
@@ -5042,6 +5099,13 @@ export default function WorkspaceManager() {
             onNewScheduledAgent={sidebarNewScheduledAgent}
             onOpenScheduledAgent={sidebarOpenScheduledAgent}
             openScheduledAgentId={newChatPanelState?.editingScheduledAgentId ?? null}
+            onOpenDraft={sidebarOpenDraft}
+            onDeleteDraft={sidebarDeleteDraft}
+            openDraftId={
+              newChatPanelState && newChatPanelState.mode !== 'extension' && !newChatPanelState.editingScheduledAgentId
+                ? openNewChatDraftId
+                : null
+            }
             newChatOpen={newChatPanelState !== null}
             onNewChatInFolder={sidebarNewChatInFolder}
             onNewChatOnMachine={sidebarNewChatOnMachine}
@@ -5237,7 +5301,7 @@ export default function WorkspaceManager() {
                         open panel must remount; keyed on identity, so removing
                         the chip never does. */}
                             <NewAgentPanel
-                              key={`${newChatPanelState.connector?.id ?? 'plain'}:${newChatPanelState.forcedSelection?.kind ?? 'remembered'}:${newChatPanelState.mode ?? 'chat'}:${newChatPanelState.editingScheduledAgentId ?? ''}:${newChatPanelState.remoteProject ? `${newChatPanelState.remoteProject.connectionId}/${newChatPanelState.remoteProject.workspaceId}` : ''}`}
+                              key={`${newChatPanelState.connector?.id ?? 'plain'}:${newChatPanelState.forcedSelection?.kind ?? 'remembered'}:${newChatPanelState.mode ?? 'chat'}:${newChatPanelState.editingScheduledAgentId ?? ''}:${newChatPanelState.remoteProject ? `${newChatPanelState.remoteProject.connectionId}/${newChatPanelState.remoteProject.workspaceId}` : ''}:${newChatDraftGeneration}`}
                               remoteProject={newChatPanelState.remoteProject ?? null}
                               initialMcpServers={newChatPanelState.connector ? [newChatPanelState.connector] : null}
                               workspaceId={windowActiveWorkspaceId ?? ''}

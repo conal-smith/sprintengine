@@ -43,6 +43,20 @@ export function registerMenuDialogIpc(ipcMain: IpcMain): void {
     return result.filePaths[0] ?? null
   })
 
+  // A project's own icon: one image file, by the kinds the icon slot can show.
+  ipcMain.handle('fs:dialog:open-project-icon', async (event, options?: { defaultPath?: string }) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      title: 'Choose Project Icon',
+      filters: [{ name: 'Images', extensions: ['svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'icns'] }],
+      ...(typeof options?.defaultPath === 'string' && options.defaultPath.trim()
+        ? { defaultPath: options.defaultPath }
+        : {}),
+    })
+    return result.filePaths[0] ?? null
+  })
+
   ipcMain.handle('skills:ensure-default-user-dir', (): string => ensureDefaultUserSkillsDir())
 
   // Cold-start default location for a brand-new workspace folder, used only

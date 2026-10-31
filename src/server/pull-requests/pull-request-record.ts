@@ -39,6 +39,28 @@
 // pull request still open, and opened inside `PR_WATCH_BOOT_SCAN_MAX_AGE_MS` —
 // a 30-day window — holds a timer.
 //
+// ONE QUESTION PER SWEEP. The watch's timers fall into step (the poller's
+// sweeps), and a sweep asks GitHub one batched GraphQL question about every
+// pull request due in it: a fingerprint of each
+// (`github/pull-request-fingerprint.ts`), up to twenty per call. The
+// fingerprint holds every field the plain state read asks for, so it IS that
+// read for a pull request nobody watches. A watched one is read in full only
+// when its fingerprint moved, when its last full read left line comments
+// unread, or every {@link WATCH_FULL_REREAD_MS} regardless; otherwise its last
+// full read is evaluated again as of now, which costs nothing and keeps the
+// watch's time-based news ("no check reported") on time. A window's return and
+// a hover's stale readings go through the same sweep. With no fingerprint
+// reader (a test's injected reads), every read is a full one, as it was.
+//
+// THE QUOTA. Every answer that says how much API quota is left feeds one
+// tracker per host (`github/github-quota.ts`): the fingerprint's `rateLimit`,
+// and the `x-ratelimit-*` headers of the conditional REST reads of which
+// checks a base branch requires (`github/github-conditional.ts`, kept per
+// repository and base with their ETags, so a branch that has not moved costs
+// no quota). Down to a tenth of a quota, the watch pauses on that host until
+// it resets, leaving the rest for the agents. A refused read holds the host
+// the same way (RATE_LIMIT_FALLBACK_HOLD_MS).
+//
 // AN AGENT CAN ASK FOR MORE (`pull_request.watch`). A pull request its
 // conversation's agent asked Studio to babysit holds a timer however old it
 // is, keeps the two-minute pace with no window in front, and is read with
@@ -73,6 +95,13 @@ import {
   readPullRequestState as readPullRequestStateDefault,
   readRateLimitReset as readRateLimitResetDefault,
 } from '../../main/github/branch-pull-request'
+import { createRequiredChecksReader } from '../../main/github/github-conditional'
+import { createGitHubQuota } from '../../main/github/github-quota'
+import {
+  planFingerprintBatches,
+  readPullRequestFingerprints as readPullRequestFingerprintsDefault,
+  type PullRequestFingerprint,
+} from '../../main/github/pull-request-fingerprint'
 import { readPullRequestWatch as readPullRequestWatchDefault } from '../../main/github/pull-request-watch-read'
 import {
   createPullRequestWatchPoller,
@@ -128,6 +157,16 @@ export const RATE_LIMIT_MAX_HOLD_MS = 65 * 60_000
  */
 export const HOVER_REFRESH_STALE_MS = 60_000
 
+/** A watched pull request is read in full at least this often, its fingerprint unmoved or not. */
+export const WATCH_FULL_REREAD_MS = 30 * 60_000
+
+/**
+ * A pull request read this recently is left out of a sweep. A window coming
+ * back asks twice, a moment apart (the poller's return and the domain's
+ * outstanding refresh), and the second would learn nothing.
+ */
+export const SWEEP_FRESH_MS = 15_000
+
 /** How old an OPEN pull request may be and still hold a watch timer — see the header. */
 export const WATCH_MAX_AGE_MS = PR_WATCH_BOOT_SCAN_MAX_AGE_MS
 
@@ -169,6 +208,12 @@ export type PullRequestRecordOptions = {
     readPullRequestState?: typeof readPullRequestStateDefault
     readPullRequestWatch?: typeof readPullRequestWatchDefault
     readRateLimitReset?: typeof readRateLimitResetDefault
+    /**
+     * The batched fingerprint. Absent while other reads are given, every read
+     * is a full one: the injected reads stand for GitHub, and a real query
+     * beside them would spawn `gh`.
+     */
+    readPullRequestFingerprints?: typeof readPullRequestFingerprintsDefault
   }
   /** A list changed; see `PullRequestRecordChange`. */
   onRecordChanged?: (change: PullRequestRecordChange) => void
@@ -270,6 +315,9 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   const readState = options.reads?.readPullRequestState ?? readPullRequestStateDefault
   const readWatch = options.reads?.readPullRequestWatch ?? readPullRequestWatchDefault
   const readRateLimitReset = options.reads?.readRateLimitReset ?? readRateLimitResetDefault
+  const readFingerprints = options.reads
+    ? (options.reads.readPullRequestFingerprints ?? null)
+    : readPullRequestFingerprintsDefault
   const timers: WatchPollerTimers = options.timers ?? {
     setTimeout: (handler, ms) => {
       const handle = setTimeout(handler, ms)
@@ -309,8 +357,18 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   /** A watch's first read, waiting on a state read already out; settled by `flush`. */
   const firstReads = new Set<Promise<void>>()
   let ghMissingUntil = 0
-  /** Host → until when every read on it waits out a rate limit; see RATE_LIMIT_FALLBACK_HOLD_MS. */
-  const rateLimitedUntil = new Map<string, number>()
+  /** Per host: how much quota is left, and until when every read on it waits; see the header. */
+  const quota = createGitHubQuota({ now })
+  /** Which checks a base branch requires, per repository and base, read conditionally (`readPullRequestWatch`). */
+  const requiredChecks = createRequiredChecksReader({ now, onQuota: (host, reading) => quota.note(host, reading) })
+  /** URL → the fingerprint its last full read was taken against. */
+  const fingerprints = new Map<string, string>()
+  /** URL → its watch's last full read, and when it was taken; evaluated again while the fingerprint holds. */
+  const lastWatchReads = new Map<string, { read: SettledWatchRead; at: number }>()
+  /** URLs whose last full read left line comments unread: the next sweep reads them in full again. */
+  const inlineOutstanding = new Set<string>()
+  /** Sweeps in flight; settled by `flush`. */
+  const sweepsInFlight = new Set<Promise<void>>()
   /** Review id → its line comments, read once per run for every watched pull request (`readPullRequestWatch`). */
   const inlineCache = new Map<string, string>()
   /** Host → its reset lookup in flight; settled by `flush`. */
@@ -343,8 +401,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
 
   function mayAsk(url: string): boolean {
     if (disposed || now() < ghMissingUntil) return false
-    const until = rateLimitedUntil.get(hostOf(url))
-    return until === undefined || now() >= until
+    return quota.pausedUntil(hostOf(url)) === null
   }
 
   // The first refusal starts the fallback hold at once, so the reads already
@@ -352,14 +409,14 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   // lookup then moves it to when the quota is actually back.
   function noteRateLimited(url: string): void {
     const host = hostOf(url)
-    if ((rateLimitedUntil.get(host) ?? 0) > now()) return
-    rateLimitedUntil.set(host, now() + RATE_LIMIT_FALLBACK_HOLD_MS)
+    if (quota.pausedUntil(host) !== null) return
+    quota.hold(host, now() + RATE_LIMIT_FALLBACK_HOLD_MS)
     if (rateLimitLookups.has(host)) return
     const lookup = readRateLimitReset(host)
       .then((resetAt) => {
         if (disposed || resetAt === null) return
         const hold = Math.min(Math.max(resetAt - now(), RATE_LIMIT_MIN_HOLD_MS), RATE_LIMIT_MAX_HOLD_MS)
-        rateLimitedUntil.set(host, now() + hold)
+        quota.hold(host, now() + hold)
       })
       .catch((error) => warn('could not read when the rate limit resets', error))
       .finally(() => rateLimitLookups.delete(host))
@@ -374,6 +431,7 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       return entry ? isWatchable(entry) : false
     },
     probe: (url) => refresh(url),
+    probeMany: (urls) => sweep(urls),
     keepsPace: (url) => watches.has(url),
     timers,
     ...(options.focus ? { focus: options.focus } : {}),
@@ -666,7 +724,11 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
         !mayAsk(url)
           ? Promise.resolve({ settled: false, reason: 'bad-request' } as const)
           : watched
-            ? readWatch(url, { now }, { inlineSince: watches.get(url)?.startedAt ?? now(), inlineCache })
+            ? readWatch(
+                url,
+                { now },
+                { inlineSince: watches.get(url)?.startedAt ?? now(), inlineCache, requiredChecks },
+              )
             : readState(url, { now }),
       )
       if (disposed) return
@@ -680,7 +742,13 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
       refreshHolds.delete(url)
       applyState(url, outcome)
       // `watched` chose the watch's read above, so this is its answer.
-      if (watched) applyWatchRead(url, outcome as SettledWatchRead)
+      if (watched) {
+        const full = outcome as SettledWatchRead
+        lastWatchReads.set(url, { read: full, at: now() })
+        if (leftInlineUnread(url, full)) inlineOutstanding.add(url)
+        else inlineOutstanding.delete(url)
+        applyWatchRead(url, full)
+      }
     })().catch((error) => {
       warn('could not refresh a pull request state', error)
     })
@@ -690,6 +758,111 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
     } finally {
       if (refreshesInFlight.get(url) === read) refreshesInFlight.delete(url)
     }
+  }
+
+  // ── Sweeps ────────────────────────────────────────────────────────────────
+
+  /**
+   * Many pull requests' readings at once: one fingerprint call per batch, and
+   * a full read only where one is needed (see the header). Tracked so `flush`
+   * settles it.
+   */
+  function sweep(urls: readonly string[]): Promise<void> {
+    const run = runSweep(urls).catch((error) => warn('could not sweep the watched pull requests', error))
+    sweepsInFlight.add(run)
+    void run.finally(() => sweepsInFlight.delete(run))
+    return run
+  }
+
+  async function runSweep(urls: readonly string[]): Promise<void> {
+    if (disposed) return
+    const cutoff = now() - SWEEP_FRESH_MS
+    const due = urls.filter((url) => {
+      const entry = entries.get(url)
+      return entry && !entry.forge && !refreshesInFlight.has(url) && !(entry.stateAt > cutoff) && mayAsk(url)
+    })
+    if (due.length === 0) return
+    if (!readFingerprints) {
+      await Promise.all(due.map((url) => refresh(url)))
+      return
+    }
+    await Promise.all(planFingerprintBatches(due).map((batch) => sweepBatch(batch)))
+  }
+
+  async function sweepBatch(batch: { host: string; urls: string[] }): Promise<void> {
+    const answer = await withReadSlot(() =>
+      mayAsk(batch.urls[0]!) ? readFingerprints!(batch, { now }) : Promise.resolve(null),
+    )
+    if (disposed || answer === null) return
+    if (!answer.settled) {
+      if (answer.reason === 'gh-missing') {
+        ghMissingUntil = now() + GH_MISSING_HOLD_MS
+        return
+      }
+      if (answer.reason === 'rate-limited') {
+        noteRateLimited(batch.urls[0]!)
+        for (const url of batch.urls) refreshHolds.set(url, { at: now(), settled: false })
+        return
+      }
+      // Anything else: each read on its own, as before the batch, so a failure
+      // is met where it always was (and a watch counts it there).
+      await Promise.all(batch.urls.map((url) => refresh(url)))
+      return
+    }
+    if (answer.quota) quota.note(hostOf(batch.urls[0]!), answer.quota)
+    await Promise.all(batch.urls.map((url) => settleFingerprint(url, answer.pullRequests.get(url))))
+  }
+
+  async function settleFingerprint(url: string, answer: PullRequestFingerprint | undefined): Promise<void> {
+    if (disposed || !entries.has(url)) return
+    // Not in the answer (gone, or no access to it): the full read finds out
+    // the way it always has.
+    if (!answer?.settled) {
+      await refresh(url)
+      return
+    }
+    // A read that began before the fingerprint was taken answers for itself;
+    // the next sweep compares against what it stored.
+    const inFlight = refreshesInFlight.get(url)
+    if (inFlight) {
+      await inFlight
+      return
+    }
+    if (!watches.has(url)) {
+      // The fingerprint holds every field the state read asks for.
+      refreshHolds.delete(url)
+      applyState(url, answer.state)
+      return
+    }
+    const last = lastWatchReads.get(url)
+    const holds =
+      last !== undefined &&
+      fingerprints.get(url) === answer.fingerprint &&
+      now() - last.at < WATCH_FULL_REREAD_MS &&
+      !inlineOutstanding.has(url)
+    if (holds) {
+      refreshHolds.delete(url)
+      applyState(url, answer.state)
+      applyWatchRead(url, { ...last.read, stateAt: answer.state.stateAt })
+      return
+    }
+    const asked = now()
+    await refresh(url)
+    // Only a full read taken after the fingerprint is the one it describes.
+    if ((lastWatchReads.get(url)?.at ?? -Infinity) >= asked) fingerprints.set(url, answer.fingerprint)
+  }
+
+  /** Whether a full read left a line-only review's comments unread (a bounded number are read per read). */
+  function leftInlineUnread(url: string, read: SettledWatchRead): boolean {
+    const since = watches.get(url)?.startedAt ?? 0
+    return read.remarks.some(
+      (remark) =>
+        remark.kind === 'review' &&
+        !remark.own &&
+        remark.body.trim() === '' &&
+        remark.at > since &&
+        !inlineCache.has(remark.id),
+    )
   }
 
   // ── Watching ──────────────────────────────────────────────────────────────
@@ -753,6 +926,9 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   /** A watch stops, keeping what it last told its chat for a watch begun again. */
   function endWatch(url: string, last: PullRequestWatchState): void {
     watches.delete(url)
+    lastWatchReads.delete(url)
+    fingerprints.delete(url)
+    inlineOutstanding.delete(url)
     endedWatches.set(url, last)
   }
 
@@ -832,10 +1008,8 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
   /** The stale open readings in a list, re-read. Each URL's refresh coalesces itself. */
   function refreshStale(list: readonly BranchPullRequest[]): void {
     const cutoff = now() - HOVER_REFRESH_STALE_MS
-    for (const entry of list) {
-      if (entry.forge || entry.state !== 'open' || entry.stateAt > cutoff) continue
-      void refresh(entry.url)
-    }
+    const stale = list.filter((entry) => !entry.forge && entry.state === 'open' && !(entry.stateAt > cutoff))
+    if (stale.length > 0) void sweep(stale.map((entry) => entry.url))
   }
 
   // ── Reading ───────────────────────────────────────────────────────────────
@@ -955,10 +1129,16 @@ export function createPullRequestRecord(options: PullRequestRecordOptions): Pull
           load ?? Promise.resolve(),
           writes,
           ...refreshesInFlight.values(),
+          ...sweepsInFlight,
           ...firstReads,
           ...rateLimitLookups.values(),
         ])
-        if (refreshesInFlight.size === 0 && firstReads.size === 0 && rateLimitLookups.size === 0) {
+        if (
+          refreshesInFlight.size === 0 &&
+          sweepsInFlight.size === 0 &&
+          firstReads.size === 0 &&
+          rateLimitLookups.size === 0
+        ) {
           // One more pass over the write chain, which the last read extended.
           await writes
           return

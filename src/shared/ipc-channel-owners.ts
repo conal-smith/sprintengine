@@ -26,6 +26,9 @@ export type ServerIpcChannel = { retry?: 'once'; subscription?: ServerIpcSubscri
 
 export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'automation:get-status': { retry: 'once' },
+  'automation:mcp-http-create': {},
+  'automation:mcp-http-revoke': {},
+  'automation:mcp-http-status': { retry: 'once' },
   'backlog:add-or-update-link': {},
   'backlog:create-epic': {},
   'backlog:ensure-item-ids': {},
@@ -99,7 +102,9 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'github:clear-token': {},
   'github:clone': {},
   'github:clone-cancel': {},
+  'github:list-owners': { retry: 'once' },
   'github:list-repos': { retry: 'once' },
+  'github:new-project': {},
   'github:set-token': {},
   'github:token-status': { retry: 'once' },
   'hosts:home': { retry: 'once' },
@@ -164,6 +169,7 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'scheduled-agents:run-now': {},
   'scheduled-agents:update': {},
   'scheduled-messages:get': { retry: 'once' },
+  'scheduled-messages:hold': {},
   'scheduled-messages:update': {},
   'studio-local-apps:cancel-offer': {},
   'studio-local-apps:offer': {},

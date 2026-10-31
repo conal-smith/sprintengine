@@ -10,6 +10,7 @@ import {
   detectProjectLogo,
   pageIconPaths,
   rankProjectLogoCandidates,
+  readProjectIconFile,
   sanitizeProjectLogoSvg,
   type ProjectLogoIo,
 } from './project-logo'
@@ -368,4 +369,31 @@ test('a page’s icon link names a path in the project, never a URL or a climb o
   ])
     expect(pageIconPaths(`<link rel="icon" href="${href}">`, '')).toEqual([])
   expect(pageIconPaths('<link rel="stylesheet" href="app.css">', '')).toEqual([])
+})
+
+test('a chosen icon file passes the same guards a detected logo does', async () => {
+  const clean = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16"/></svg>'
+  const scripted = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+  const outside = '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/x.png"/></svg>'
+  const { io } = createIo({
+    '/Users/dev/art/mark.svg': { bytes: Buffer.from(clean) },
+    '/Users/dev/art/scripted.svg': { bytes: Buffer.from(scripted) },
+    '/Users/dev/art/outside.svg': { bytes: Buffer.from(outside) },
+    '/Users/dev/art/huge.png': { bytes: Buffer.from(pngHeader(16, 16)), size: PROJECT_LOGO_MAX_BYTES + 1 },
+    '/Users/dev/art/mark.png': { bytes: Buffer.from(pngHeader(16, 16)) },
+    '/Users/dev/art/notes.txt': { bytes: Buffer.from('hello') },
+  })
+
+  const svg = await readProjectIconFile('/Users/dev/art/mark.svg', io)
+  expect(svg?.dataUrl).toBe(`data:image/svg+xml;base64,${Buffer.from(clean).toString('base64')}`)
+  // The sanitizer refuses a picked SVG exactly as it refuses a detected one.
+  expect(await readProjectIconFile('/Users/dev/art/scripted.svg', io)).toBeNull()
+  expect(await readProjectIconFile('/Users/dev/art/outside.svg', io)).toBeNull()
+  expect(await readProjectIconFile('/Users/dev/art/huge.png', io)).toBeNull()
+  expect(await readProjectIconFile('/Users/dev/art/notes.txt', io)).toBeNull()
+  expect(await readProjectIconFile('/Users/dev/art/missing.png', io)).toBeNull()
+  expect(await readProjectIconFile('', io)).toBeNull()
+  // A raster goes through the downscaler.
+  const png = await readProjectIconFile('/Users/dev/art/mark.png', io)
+  expect(served(png?.dataUrl).subarray(0, 8).toString()).toBe('resized:')
 })

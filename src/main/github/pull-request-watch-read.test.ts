@@ -128,6 +128,33 @@ test('a watched read asks for the required checks, and keys them as the rollup d
   assert.equal(read.requiredChecks?.length, 5)
 })
 
+test('given a required-checks reader, its names key the head’s checks, and gh pr checks is asked only when it cannot say', async () => {
+  const rollup = [
+    run('Build (macos-latest)', 'IN_PROGRESS', '', null),
+    run('lint', 'COMPLETED', 'SUCCESS', '2026-10-11T09:40:00Z', 'Lint'),
+  ]
+  const asked: unknown[] = []
+  const known = ghAnswering({ view: { stdout: openView(rollup) }, checks: { stdout: REQUIRED } })
+  const read = await readPullRequestWatch(
+    URL,
+    { gh: known.gh, now: () => NOW },
+    { requiredChecks: { read: async (target) => (asked.push(target), new Set(['Build (macos-latest)', 'Gone'])) } },
+  )
+  assert.ok(read.settled)
+  assert.deepEqual(asked, [{ host: 'github.com', owner: 'acme', repo: 'app', base: read.baseRefName }])
+  assert.deepEqual(read.requiredChecks, [checkKey({ name: 'Build (macos-latest)', workflow: 'CI' })])
+  assert.equal(known.calls.length, 1, 'no gh pr checks')
+
+  const unknown = ghAnswering({ view: { stdout: openView(rollup) }, checks: { stdout: REQUIRED } })
+  const fallback = await readPullRequestWatch(
+    URL,
+    { gh: unknown.gh, now: () => NOW },
+    { requiredChecks: { read: async () => null } },
+  )
+  assert.equal(unknown.calls[1]?.[1], 'checks')
+  assert.equal(fallback.settled && fallback.requiredChecks?.length, 5)
+})
+
 test('a branch with no required checks is read as none required; any other failure as unknown', async () => {
   const none = ghAnswering({
     view: { stdout: openView([run('lint', 'COMPLETED', 'SUCCESS', '2026-10-11T09:40:00Z')]) },

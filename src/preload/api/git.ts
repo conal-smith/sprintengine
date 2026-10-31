@@ -9,6 +9,9 @@ import type {
   CloneProgress,
   RepositoryCloneInput,
   RepositoryCloneResult,
+  NewProjectInput,
+  NewProjectResult,
+  GitHubOwnerListResult,
   GitHubRepoListResult,
   GitHubTokenStatus,
   GitBranchSnapshot,
@@ -229,6 +232,9 @@ export const gitApi = {
   cloneRepository: (input: RepositoryCloneInput): Promise<RepositoryCloneResult> =>
     ipcRenderer.invoke('github:clone', input),
   cancelRepositoryClone: (cloneId: string): Promise<void> => ipcRenderer.invoke('github:clone-cancel', cloneId),
+  createNewProject: (input: NewProjectInput): Promise<NewProjectResult> =>
+    ipcRenderer.invoke('github:new-project', input),
+  listGitHubOwners: (): Promise<GitHubOwnerListResult> => ipcRenderer.invoke('github:list-owners'),
   // One channel for every clone, filtered on the id by the caller, as
   // `git:changelists-changed` is one channel for every repository.
   onRepositoryCloneProgress: (cb: (progress: CloneProgress) => void): (() => void) => {
@@ -304,5 +310,7 @@ export const gitApi = {
   | 'listGitHubRepos'
   | 'cloneRepository'
   | 'cancelRepositoryClone'
+  | 'createNewProject'
+  | 'listGitHubOwners'
   | 'onRepositoryCloneProgress'
 >

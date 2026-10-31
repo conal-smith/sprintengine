@@ -45,6 +45,7 @@ import { cancelOpenIntent, intendToOpenWorkspace } from './sidebarChatPrefetch'
 import { changelistOwnerId } from '../../../../shared/git/changelists'
 import { folderIdentityKey, useFolderRepositoryIdentities } from './useFolderRepositoryIdentities'
 import { FolderIdentityIcon } from './FolderIdentityIcon'
+import { ProjectIconDialog } from './sidebar/ProjectIconDialog'
 import { getRendererHost, selectModuleEnabled } from '../../modules'
 import type { WorkspaceTypeRowAction } from '../../modules/renderer-host'
 import { FOCUS_RING_CLASS } from '../ui/tokens'
@@ -153,6 +154,8 @@ import { inWorkingSection } from './sidebar/workingSection'
 import { BULK_SELECTED_ROW_CLASS, useSidebarBulkSelection } from './sidebar/sidebarBulkSelection'
 import { BulkChatContextMenu, type BulkChatAction, type BulkChatReach } from './sidebar/BulkChatContextMenu'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
+import { DraftsSection } from './sidebar/DraftsSection'
+import { setChatReferenceDragData } from '../../../../shared/chat-reference'
 import {
   remoteScheduleActionWords,
   useRemoteScheduledAgents,
@@ -331,6 +334,11 @@ type WorkspaceSidebarProps = {
   onOpenScheduledAgent?: (id: string) => void
   // The scheduled agent the door in this window is editing, drawn selected.
   openScheduledAgentId?: string | null
+  // Reopen a kept New chat draft, and throw one away. Absent, no Drafts section.
+  onOpenDraft?: (id: string) => void
+  onDeleteDraft?: (id: string) => void
+  // The draft this window's New chat is showing, drawn selected.
+  openDraftId?: string | null
   // The New chat panel is up in this window. It sits over the active chat
   // without changing it, so the sidebar cannot tell from the id alone that
   // the person has left that chat.
@@ -370,6 +378,8 @@ const ALL_CHATS_SNOOZE_SHELF_ID = 'ws-snoozed-all-chats'
 // The Scheduled section's fold, keyed beside the Snoozed shelves' in the same state.
 const SCHEDULED_SHELF_KEY = '__scheduled__'
 const SCHEDULED_SHELF_ID = 'ws-scheduled-agents'
+// The Drafts section's fold, beside the Scheduled one's.
+const DRAFTS_SHELF_KEY = '__drafts__'
 const NO_SCHEDULED_AGENTS: ScheduledAgentView[] = []
 // The Working section's fold (sidebar/workingSection.ts), keyed beside the shelves' in the same state.
 const WORKING_SHELF_KEY = '__working__'
@@ -446,6 +456,9 @@ function WorkspaceSidebar({
   onNewScheduledAgent,
   onOpenScheduledAgent,
   openScheduledAgentId = null,
+  onOpenDraft,
+  onDeleteDraft,
+  openDraftId = null,
   newChatOpen = false,
   onNewChatInFolder,
   onNewChatOnMachine,
@@ -1031,6 +1044,7 @@ function WorkspaceSidebar({
   } | null>(null)
   const [typeActionBusy, setTypeActionBusy] = useState(false)
   const [confirmForget, setConfirmForget] = useState<string | null>(null)
+  const [iconFolder, setIconFolder] = useState<{ path: string; hue: number | null } | null>(null)
 
   const renameInputRef = useRef<HTMLInputElement>(null)
   const sidebarRef = useRef<HTMLElement>(null)
@@ -2285,18 +2299,22 @@ function WorkspaceSidebar({
   // The same line for a scheduled agent's row in the Scheduled section: the
   // project its runs start in, named and coloured as that project's header
   // is, since the row no longer sits under it.
-  const flatProjectOfScheduled = useCallback(
-    (agent: ScheduledAgentView): FlatProjectLine => {
-      const groupKey = folderKey(agent.folderPath)
+  const flatProjectOfFolder = useCallback(
+    (folderPath: string): FlatProjectLine => {
+      const groupKey = folderKey(folderPath)
       const group = groupByKey.get(groupKey)
       return {
-        name: group?.displayName ?? folderDisplayName(agent.folderPath),
-        folderPath: agent.folderPath,
+        name: group?.displayName ?? folderDisplayName(folderPath),
+        folderPath,
         color: projectColorOf(groupKey),
         unfiled: false,
       }
     },
     [groupByKey, projectColorOf],
+  )
+  const flatProjectOfScheduled = useCallback(
+    (agent: ScheduledAgentView): FlatProjectLine => flatProjectOfFolder(agent.folderPath),
+    [flatProjectOfFolder],
   )
 
   // The row you are in always has a row: a settled chat you selected (or
@@ -2570,7 +2588,14 @@ function WorkspaceSidebar({
 
   const handleRowDragStart = (event: React.DragEvent, workspace: Workspace, fKey: string) => {
     dragRef.current = { type: 'workspace', id: workspace.id, folderKey: fKey }
-    event.dataTransfer.effectAllowed = 'move'
+    // A move within the list; a copy into a composer, which types the chat's
+    // reference where it lands (`chat-reference.ts`), for its agent to read.
+    const referenced = setChatReferenceDragData(event.dataTransfer, {
+      id: workspace.id,
+      name: workspace.name,
+      remote: Boolean(workspace.remoteOrigin),
+    })
+    event.dataTransfer.effectAllowed = referenced ? 'copyMove' : 'move'
     event.dataTransfer.setData(DRAG_MIME_WORKSPACE, workspace.id)
   }
 
@@ -3435,6 +3460,22 @@ function WorkspaceSidebar({
   // Beside the fold, the pause of them all (an hour, until tomorrow morning,
   // until resumed); while it holds, a line under the fold says so with Resume,
   // folded or not, since it is about every schedule and not about a row.
+  // The Drafts section, above Scheduled at the foot of the list
+  // (`sidebar/DraftsSection.tsx`). Its fold lives beside the shelves'.
+  const renderDraftsSection = () => {
+    if (!onOpenDraft) return null
+    const expanded = expandedShelves[DRAFTS_SHELF_KEY] !== false
+    return (
+      <DraftsSection
+        expanded={expanded}
+        onToggle={() => setExpandedShelves((prev) => ({ ...prev, [DRAFTS_SHELF_KEY]: !expanded }))}
+        projectOf={flatProjectOfFolder}
+        openDraftId={openDraftId}
+        onOpen={onOpenDraft}
+        onDelete={(id) => onDeleteDraft?.(id)}
+      />
+    )
+  }
   const renderScheduledSection = () => {
     const remoteCount = remoteScheduled.machines.reduce((count, machine) => count + machine.agents.length, 0)
     if (scheduledAgents.length === 0 && remoteCount === 0) return null
@@ -4101,6 +4142,7 @@ function WorkspaceSidebar({
             green machine glyph each. */}
           {renderWorkingSection()}
           {chatListView === 'all' ? renderChatStream() : activeGroups.map((group) => renderFolderSection(group))}
+          {renderDraftsSection()}
           {renderScheduledSection()}
         </nav>
       </div>
@@ -4497,6 +4539,9 @@ function WorkspaceSidebar({
             }
             if (action === 'reveal' && group.fullPath) onRevealFolder(group.fullPath)
             if (action === 'forget' && group.fullPath) setConfirmForget(group.fullPath)
+            if (action === 'icon' && group.fullPath) {
+              setIconFolder({ path: group.fullPath, hue: projectColorOf(group.key) })
+            }
           }}
         />
       ) : null}
@@ -4542,6 +4587,16 @@ function WorkspaceSidebar({
             })()
           : null}
       </Modal>
+
+      {/* Mounted only while open: the sidebar re-renders on every chat switch,
+          and a closed dialog has no business rendering with it. */}
+      {iconFolder ? (
+        <ProjectIconDialog
+          folderPath={iconFolder.path}
+          projectHue={iconFolder.hue}
+          onClose={() => setIconFolder(null)}
+        />
+      ) : null}
 
       {/* Forget folder confirm */}
       <Modal

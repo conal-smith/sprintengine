@@ -336,12 +336,16 @@ export function memoryImageVault(): PromptStashImageVault {
 const VAULT_DB = 'sprintengine-prompt-stash'
 const VAULT_STORE = 'images'
 
-/** The app's vault: one IndexedDB object store of image bytes by key. */
-function indexedDbImageVault(factory: IDBFactory): PromptStashImageVault {
+/**
+ * The app's vault: one IndexedDB object store of image bytes by key, in a
+ * database of its own per owner (the stash's, the New chat drafts'), so one
+ * owner's sweep of the keys it no longer lists never reaches another's.
+ */
+export function indexedDbImageVault(factory: IDBFactory, name: string = VAULT_DB): PromptStashImageVault {
   let opened: Promise<IDBDatabase> | null = null
   const database = () =>
     (opened ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory.open(VAULT_DB, 1)
+      const request = factory.open(name, 1)
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(VAULT_STORE)) request.result.createObjectStore(VAULT_STORE)
       }

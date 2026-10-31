@@ -2,13 +2,8 @@
 import DOMPurify from 'dompurify'
 import { expect, test } from 'vitest'
 import { INERT_HTML_POLICY } from '../../utils/inertHtml'
-import {
-  buildVisualDocument,
-  MAX_VISUAL_SOURCE,
-  VISUAL_EMPTY,
-  VISUAL_TOO_LARGE,
-  type VisualTheme,
-} from './visualDocument'
+import { MAX_VISUAL_SOURCE, VISUAL_EMPTY, VISUAL_TOO_LARGE, type VisualTheme } from '../../../../shared/visual-document'
+import { buildVisualDocument } from './visualDocument'
 
 const theme: VisualTheme = {
   variables: {

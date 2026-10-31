@@ -42,6 +42,7 @@ vi.mock('../cli-runtime-install', () => ({
 }))
 vi.mock('../cli-version-advisory-service', () => ({
   noteCliDetected: async (...args: unknown[]) => void calls.noted.push(args),
+  outdatedCliTargets: async () => ({ ok: true, targets: [] }),
 }))
 vi.mock('../cli-availability', () => ({
   recordCliDetection: (...args: unknown[]) => void calls.recorded.push(args),

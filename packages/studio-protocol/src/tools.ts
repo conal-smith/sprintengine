@@ -57,6 +57,7 @@ export const STUDIO_RESERVED_TOOLSET_NAMES: readonly string[] = [
   'worktree',
   'artifacts',
   'extension',
+  'visual',
   'studio',
   'sprintengine',
   'app',

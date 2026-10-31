@@ -14,6 +14,7 @@ type FilesystemReadIpcDependencies = {
   statPath(targetPath: string): Promise<FileSystemStat>
   checkWorkspaceFolder(targetPath: string): Promise<WorkspaceFolderCheckResult>
   detectProjectLogo(folderPath: string): Promise<ProjectLogo | null>
+  readProjectIconFile(filePath: string): Promise<ProjectLogo | null>
   showItemInFolder(targetPath: string): Promise<void>
   openHtmlFileInBrowser(targetPath: string): Promise<void>
 }
@@ -45,6 +46,10 @@ export function registerFilesystemReadIpc(ipcMain: IpcMain, deps: FilesystemRead
 
   ipcMain.handle('fs:detect-project-logo', async (_, folderPath: string): Promise<ProjectLogo | null> => {
     return deps.detectProjectLogo(folderPath)
+  })
+
+  ipcMain.handle('fs:read-project-icon', async (_, filePath: string): Promise<ProjectLogo | null> => {
+    return deps.readProjectIconFile(filePath)
   })
 
   ipcMain.handle('fs:show-item-in-folder', async (_, targetPath: string): Promise<void> => {
