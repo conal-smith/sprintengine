@@ -18,6 +18,7 @@ import {
   configureCliVersionService,
   detectCliMachines,
   noteCliDetected,
+  outdatedCliTargets,
   readCliVersionAdvisories,
   resetCliVersionService,
   setCliVersionChecksEnabled,
@@ -389,4 +390,22 @@ test('a probe that started before an update was recorded does not write the old 
     { listEntries: () => ENTRIES },
   )
   assert.equal(known.codex?.version, '0.41.0', 'the recorded update stands')
+})
+
+test("Update everything lists each machine's CLIs behind the registry, with the command it runs there", async () => {
+  await detectCliMachines()
+  const listed = await outdatedCliTargets()
+  assert.ok(listed.ok)
+  assert.deepEqual(
+    listed.targets.map((target) => ({
+      hostId: target.hostId,
+      cli: target.cli,
+      runtime: target.runtime,
+      from: target.currentVersion,
+      to: target.latestVersion,
+    })),
+    [{ hostId: WSL, cli: 'codex', runtime: { command: '', hostId: WSL }, from: '0.39.0', to: '0.41.0' }],
+  )
+  assert.deepEqual(pushed, [], 'the windows are not told: the badges already say it')
+  assert.ok(fetched.includes('@openai/codex'), 'the registry is asked afresh')
 })

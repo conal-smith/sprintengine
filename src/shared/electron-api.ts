@@ -133,6 +133,7 @@ export type {
 } from './skills'
 import type { AutomationServerStatus } from './automation'
 import type { McpHttpCreateResult, McpHttpStatus } from './mcp-http'
+import type { CliUpdateAllItem, CliUpdateAllResult } from './ipc/cli-update-all'
 import type {
   StudioLocalAppOfferInput,
   StudioLocalAppOfferView,
@@ -1911,6 +1912,10 @@ export type ElectronApi = {
   cliInstallMethods: (cli: AgentCli, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallMethodInfo[]>
   cliInstall: (input: CliInstallInput, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallResult>
   cliUpdate: (cli: AgentCli, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallResult>
+  /** Update every CLI with a newer version published, on this machine and each WSL distribution turned on. */
+  cliUpdateAll: () => Promise<CliUpdateAllResult>
+  /** Every item of a running Update everything, each time one moves. */
+  onCliUpdateAllProgress: (cb: (items: CliUpdateAllItem[]) => void) => () => void
   /** An install's or update's output, for the CLI on the machine `hostId` names (absent: this one). */
   onCliInstallOutput: (cli: AgentCli, cb: (chunk: string) => void, hostId?: string) => () => void
   // Model discovery (src/shared/ipc/cli-model-discovery.ts): ask the installed

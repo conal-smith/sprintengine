@@ -6,6 +6,7 @@ import type { RegisteredSettingsSection } from '../../modules/renderer-host'
 import { AgentBrowserSettings } from './AgentBrowserSettings'
 import { AgentNotificationsSetting } from './AgentNotificationsSetting'
 import { AutomationServerSettings } from './AutomationServerSettings'
+import { UpdateEverythingCard } from './UpdateEverythingCard'
 import { BrowsersSettings } from './BrowsersSettings'
 import { LocalAppsSettings } from './LocalAppsSettings'
 import { WslGhSection } from './MachineGhRow'
@@ -1539,6 +1540,8 @@ export default function SettingsPanel({
           <UsageLimitResumeSettings />
           {/* What Enter does while a chat's agent works: queue, or steer. */}
           <FollowUpBehaviorSetting />
+          {/* Every outdated CLI on every machine here, in one press. */}
+          <UpdateEverythingCard />
           <AgentClisSection
             runs={agentCliRuns}
             machine={agentsMachine}
