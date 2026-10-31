@@ -60,6 +60,8 @@
     "src/features/conversations/modelPickerLogic.ts",
     "src/features/conversations/chatMarks.ts",
     "src/features/conversations/chatLifecycleLogic.ts",
+    "src/features/conversations/snoozeLogic.ts",
+    "src/components/swipeRowLogic.ts",
     "src/features/conversations/composerOptions.ts",
     "src/features/conversations/composerStripLogic.ts",
     "src/features/conversations/contextUsage.ts",

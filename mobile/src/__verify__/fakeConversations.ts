@@ -307,7 +307,10 @@ export const verifySettledAt = new Map<string, number>([[verifySettledConversati
 /** The visit clock of each chat the fake desktop has stamped or marked unread, by workspace. */
 const visitedAt = new Map<string, number>();
 
-/** `conversation.settle`, `conversation.visit` and `conversation.mark_unread` on the fake desktop. */
+/** When each chat the fake desktop has snoozed wakes, by workspace. */
+const snoozedUntil = new Map<string, number>();
+
+/** `conversation.settle`, `conversation.visit`, `conversation.mark_unread` and `conversation.snooze` on the fake desktop. */
 export const fakeLifecycleApi: ConversationLifecycleApi = {
   async settle(workspaceId, settled = true) {
     const settledAt = settled ? Date.now() : null;
@@ -334,6 +337,11 @@ export const fakeLifecycleApi: ConversationLifecycleApi = {
     const lastVisitedAt = stored !== undefined && stored < finishedAt - 1 ? stored : finishedAt - 1;
     visitedAt.set(workspaceId, lastVisitedAt);
     return { ok: true, data: { workspaceId, lastVisitedAt } };
+  },
+  async snooze(workspaceId, until) {
+    if (until === null) snoozedUntil.delete(workspaceId);
+    else snoozedUntil.set(workspaceId, until);
+    return { ok: true, data: { workspaceId, snoozedUntil: until } };
   },
 };
 
@@ -995,7 +1003,10 @@ export const fakeConversationsApi: ConversationApi = {
         // visit only moves it forward and a mark unread back, as on the desktop.
         .map((thread) => {
           const visited = visitedAt.get(thread.workspaceId);
-          return visited !== undefined ? { ...thread, lastVisitedAt: visited } : thread;
+          const wakeAt = snoozedUntil.get(thread.workspaceId);
+          const listed = visited !== undefined ? { ...thread, lastVisitedAt: visited } : thread;
+          // Only a snooze still ahead is listed, as the desktop lists one.
+          return wakeAt !== undefined && wakeAt > Date.now() ? { ...listed, snoozedUntil: wakeAt } : listed;
         })
     );
   },
