@@ -152,6 +152,7 @@ import { regenerateStoreWorkspaceTitle } from '../../store/generatedWorkspaceTit
 import { BULK_SELECTED_ROW_CLASS, useSidebarBulkSelection } from './sidebar/sidebarBulkSelection'
 import { BulkChatContextMenu, type BulkChatAction, type BulkChatReach } from './sidebar/BulkChatContextMenu'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
+import { DraftsSection } from './sidebar/DraftsSection'
 import {
   remoteScheduleActionWords,
   useRemoteScheduledAgents,
@@ -330,6 +331,11 @@ type WorkspaceSidebarProps = {
   onOpenScheduledAgent?: (id: string) => void
   // The scheduled agent the door in this window is editing, drawn selected.
   openScheduledAgentId?: string | null
+  // Reopen a kept New chat draft, and throw one away. Absent, no Drafts section.
+  onOpenDraft?: (id: string) => void
+  onDeleteDraft?: (id: string) => void
+  // The draft this window's New chat is showing, drawn selected.
+  openDraftId?: string | null
   // The New chat panel is up in this window. It sits over the active chat
   // without changing it, so the sidebar cannot tell from the id alone that
   // the person has left that chat.
@@ -369,6 +375,8 @@ const ALL_CHATS_SNOOZE_SHELF_ID = 'ws-snoozed-all-chats'
 // The Scheduled section's fold, keyed beside the Snoozed shelves' in the same state.
 const SCHEDULED_SHELF_KEY = '__scheduled__'
 const SCHEDULED_SHELF_ID = 'ws-scheduled-agents'
+// The Drafts section's fold, beside the Scheduled one's.
+const DRAFTS_SHELF_KEY = '__drafts__'
 const NO_SCHEDULED_AGENTS: ScheduledAgentView[] = []
 
 const DRAG_MIME_WORKSPACE = 'application/x-sprintengine-workspace'
@@ -441,6 +449,9 @@ function WorkspaceSidebar({
   onNewScheduledAgent,
   onOpenScheduledAgent,
   openScheduledAgentId = null,
+  onOpenDraft,
+  onDeleteDraft,
+  openDraftId = null,
   newChatOpen = false,
   onNewChatInFolder,
   onNewChatOnMachine,
@@ -2280,18 +2291,22 @@ function WorkspaceSidebar({
   // The same line for a scheduled agent's row in the Scheduled section: the
   // project its runs start in, named and coloured as that project's header
   // is, since the row no longer sits under it.
-  const flatProjectOfScheduled = useCallback(
-    (agent: ScheduledAgentView): FlatProjectLine => {
-      const groupKey = folderKey(agent.folderPath)
+  const flatProjectOfFolder = useCallback(
+    (folderPath: string): FlatProjectLine => {
+      const groupKey = folderKey(folderPath)
       const group = groupByKey.get(groupKey)
       return {
-        name: group?.displayName ?? folderDisplayName(agent.folderPath),
-        folderPath: agent.folderPath,
+        name: group?.displayName ?? folderDisplayName(folderPath),
+        folderPath,
         color: projectColorOf(groupKey),
         unfiled: false,
       }
     },
     [groupByKey, projectColorOf],
+  )
+  const flatProjectOfScheduled = useCallback(
+    (agent: ScheduledAgentView): FlatProjectLine => flatProjectOfFolder(agent.folderPath),
+    [flatProjectOfFolder],
   )
 
   // The row you are in always has a row: a settled chat you selected (or
@@ -3398,6 +3413,22 @@ function WorkspaceSidebar({
   // Beside the fold, the pause of them all (an hour, until tomorrow morning,
   // until resumed); while it holds, a line under the fold says so with Resume,
   // folded or not, since it is about every schedule and not about a row.
+  // The Drafts section, above Scheduled at the foot of the list
+  // (`sidebar/DraftsSection.tsx`). Its fold lives beside the shelves'.
+  const renderDraftsSection = () => {
+    if (!onOpenDraft) return null
+    const expanded = expandedShelves[DRAFTS_SHELF_KEY] !== false
+    return (
+      <DraftsSection
+        expanded={expanded}
+        onToggle={() => setExpandedShelves((prev) => ({ ...prev, [DRAFTS_SHELF_KEY]: !expanded }))}
+        projectOf={flatProjectOfFolder}
+        openDraftId={openDraftId}
+        onOpen={onOpenDraft}
+        onDelete={(id) => onDeleteDraft?.(id)}
+      />
+    )
+  }
   const renderScheduledSection = () => {
     const remoteCount = remoteScheduled.machines.reduce((count, machine) => count + machine.agents.length, 0)
     if (scheduledAgents.length === 0 && remoteCount === 0) return null
@@ -4030,6 +4061,7 @@ function WorkspaceSidebar({
             SESSION. They are rows of their projects now, below, wearing one
             green machine glyph each. */}
           {chatListView === 'all' ? renderChatStream() : activeGroups.map((group) => renderFolderSection(group))}
+          {renderDraftsSection()}
           {renderScheduledSection()}
         </nav>
       </div>
