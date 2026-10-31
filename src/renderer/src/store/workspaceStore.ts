@@ -330,6 +330,7 @@ export interface WorkspaceStore
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
   setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
+  setSidebarWorkingSection: (enabled: boolean) => void
   setAutoSettleAfterDays: (days: number) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   /** What Enter does in a chat whose agent is working: queue the message, or steer the turn with it. */

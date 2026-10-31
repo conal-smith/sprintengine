@@ -143,6 +143,7 @@ import { workspaceRowEmphasis } from '../../utils/workspaceRowEmphasis'
 import { useScheduledAgents, useScheduledAgentsPause } from '../../store/scheduledAgentsStore'
 import { showToast } from '../../store/toastStore'
 import { regenerateStoreWorkspaceTitle } from '../../store/generatedWorkspaceTitle'
+import { inWorkingSection } from './sidebar/workingSection'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
 import {
   remoteScheduleActionWords,
@@ -361,6 +362,10 @@ const ALL_CHATS_SNOOZE_SHELF_ID = 'ws-snoozed-all-chats'
 const SCHEDULED_SHELF_KEY = '__scheduled__'
 const SCHEDULED_SHELF_ID = 'ws-scheduled-agents'
 const NO_SCHEDULED_AGENTS: ScheduledAgentView[] = []
+// The Working section's fold (sidebar/workingSection.ts), keyed beside the shelves' in the same state.
+const WORKING_SHELF_KEY = '__working__'
+const WORKING_SHELF_ID = 'ws-working-chats'
+const NO_WORKING_IDS: ReadonlySet<string> = new Set()
 
 const DRAG_MIME_WORKSPACE = 'application/x-sprintengine-workspace'
 const DRAG_MIME_FOLDER = 'application/x-sprintengine-folder'
@@ -2387,14 +2392,44 @@ function WorkspaceSidebar({
   // A chat that has moved to Starred does not keep its project alive either:
   // the row is already on screen, and a header over an empty body is the
   // quiet-folder case above.
+  // The chats folded into the Working section while their agent works, when
+  // the person has turned it on (sidebar/workingSection.ts).
+  const workingSectionOn = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
+  const workingIds = useMemo<ReadonlySet<WorkspaceId>>(() => {
+    if (!workingSectionOn) return NO_WORKING_IDS
+    const ids = new Set<WorkspaceId>()
+    for (const workspace of localRailWorkspaces) {
+      if (isShelved(workspace) || isAsleep(workspace)) continue
+      const chat = { starred: starredWorkspaceIds.has(workspace.id), front: workspace.id === frontWorkspaceId }
+      const sources = {
+        activity: activityByWorkspaceId[workspace.id] ?? 'idle',
+        conversations: conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS,
+        terminals: sessionsByWorkspaceId.get(workspace.id) ?? NO_SESSIONS,
+      }
+      if (inWorkingSection(chat, sources)) ids.add(workspace.id)
+    }
+    return ids
+  }, [
+    workingSectionOn,
+    localRailWorkspaces,
+    isShelved,
+    isAsleep,
+    starredWorkspaceIds,
+    frontWorkspaceId,
+    activityByWorkspaceId,
+    conversationsByWorkspaceId,
+    sessionsByWorkspaceId,
+  ])
   const activeGroups = useMemo(
     () =>
       groups.filter(
         (group) =>
           group.remoteRows.length > 0 ||
-          !group.workspaces.every((w) => isShelved(w) || isAsleep(w) || starredWorkspaceIds.has(w.id)),
+          !group.workspaces.every(
+            (w) => isShelved(w) || isAsleep(w) || starredWorkspaceIds.has(w.id) || workingIds.has(w.id),
+          ),
       ),
-    [groups, isShelved, isAsleep, starredWorkspaceIds],
+    [groups, isShelved, isAsleep, starredWorkspaceIds, workingIds],
   )
 
   const workspaceById = useMemo(() => {
@@ -3222,7 +3257,9 @@ function WorkspaceSidebar({
     // Rest outranks sleep: a settled row that also carries a stale snooze is
     // off the rail, not in the Snoozed shelf.
     const snoozedRows = sortByWake(visibleWorkspaces.filter((w) => !isShelved(w) && isAsleep(w)))
-    const activeRows = visibleWorkspaces.filter((workspace) => !isShelved(workspace) && !isAsleep(workspace))
+    const activeRows = visibleWorkspaces.filter(
+      (workspace) => !isShelved(workspace) && !isAsleep(workspace) && !workingIds.has(workspace.id),
+    )
 
     // The project's conversations on paired machines among its local ones,
     // by when each was last written to (`interleaveChats`).
@@ -3371,10 +3408,43 @@ function WorkspaceSidebar({
     )
   }
 
+  // The Working section: one fold, open unless the person closed it, over the
+  // chats whose agent is at work, each with the project line that says where
+  // it goes back to. Absent while none is working, or while the switch is off.
+  const renderWorkingSection = () => {
+    if (workingIds.size === 0) return null
+    const rows = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
+    const expanded = expandedShelves[WORKING_SHELF_KEY] !== false
+    return (
+      <section role="group" className="relative pt-1" aria-label="Working">
+        <ShelfFoldRow
+          label="Working"
+          count={rows.length}
+          expanded={expanded}
+          flush
+          controlsId={WORKING_SHELF_ID}
+          onToggle={() => setExpandedShelves((prev) => ({ ...prev, [WORKING_SHELF_KEY]: !expanded }))}
+        />
+        <div id={WORKING_SHELF_ID} role="group" aria-label="Chats working" hidden={!expanded}>
+          {expanded
+            ? rows.map((workspace) =>
+                renderWorkspaceRow(workspace, keyOf(workspace), {
+                  keyPrefix: 'working-',
+                  flatProject: flatProjectOf(workspace),
+                }),
+              )
+            : null}
+        </div>
+      </section>
+    )
+  }
+
   const renderChatStream = () => {
     const snoozedRows = sortByWake(localRailWorkspaces.filter((w) => !isShelved(w) && isAsleep(w)))
     const streamRows = sortWorkspacesByUserMessage(
-      localRailWorkspaces.filter((w) => !isShelved(w) && !isAsleep(w) && !starredWorkspaceIds.has(w.id)),
+      localRailWorkspaces.filter(
+        (w) => !isShelved(w) && !isAsleep(w) && !starredWorkspaceIds.has(w.id) && !workingIds.has(w.id),
+      ),
     )
     const sleeping = sleepingByWake(snoozedRows, sleepingRemote)
     const snoozeExpanded = expandedShelves[ALL_CHATS_SNOOZE_SHELF_KEY] === true
@@ -3923,6 +3993,7 @@ function WorkspaceSidebar({
             and titled each row with its agent's name because a band row was a
             SESSION. They are rows of their projects now, below, wearing one
             green machine glyph each. */}
+          {renderWorkingSection()}
           {chatListView === 'all' ? renderChatStream() : activeGroups.map((group) => renderFolderSection(group))}
           {renderScheduledSection()}
         </nav>

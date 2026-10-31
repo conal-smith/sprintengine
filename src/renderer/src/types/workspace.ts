@@ -477,6 +477,13 @@ export type AppSettings = {
    * long the chat itself has been quiet. Settle on merge is separate.
    */
   keepChatsWithOpenPullRequest: boolean
+  /**
+   * Fold chats whose agent is working into a Working section at the top of
+   * the list, and put each back where it was once it finishes or needs the
+   * person (sidebar/workingSection.ts). Off by default: rows otherwise never
+   * move on their own (owner ruling 2026-09-09), and this is the opt-in.
+   */
+  sidebarWorkingSection: boolean
   /** How many quiet days settle a chat with Auto-settle on (Settings ▸ Settled chats), 1 to 90. */
   autoSettleAfterDays: number
   /**
