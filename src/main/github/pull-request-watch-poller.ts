@@ -47,6 +47,15 @@
  * probes in lockstep — a burst of `gh` subprocesses on one tick. Each delay is
  * spread by ±{@link PR_WATCH_JITTER_RATIO}.
  *
+ * SWEEPS. A consumer that can ask about many keys in one call (`probeMany`:
+ * the record's batched fingerprint, one GraphQL request for up to twenty pull
+ * requests) gets them together. When one key's timer fires, every other key
+ * due inside {@link PR_WATCH_SWEEP_GATHER_MS} is taken along, its timer
+ * cleared, and the lot is probed as one sweep. Each key's pace is its own as
+ * before (a key is only ever probed early, never late), and after one cycle
+ * the keys on one pace fall into step: twenty watched pull requests are one
+ * sweep every two minutes, not twenty probes spread across them.
+ *
  * COALESCING. `noteChanged` is fired by change funnels that run several times a
  * minute; the answer to "is this watchable" changes about once per key. At most
  * one re-evaluation per key per {@link PR_WATCH_CHANGE_COALESCE_MS}, with a
@@ -80,6 +89,9 @@ export const PR_WATCH_FOCUS_FRESH_MS = 60_000
 
 /** Each delay is multiplied by 1 ± this, so simultaneously-armed keys desynchronize. */
 export const PR_WATCH_JITTER_RATIO = 0.2
+
+/** A key due this soon after a sweep starts is probed with it; see the header. */
+export const PR_WATCH_SWEEP_GATHER_MS = 60_000
 
 /** At most one re-evaluation per key per this window; see the header. */
 export const PR_WATCH_CHANGE_COALESCE_MS = 30_000
@@ -116,6 +128,13 @@ export type PullRequestWatchPollerDeps = {
   isWatchable(key: string): boolean | Promise<boolean>
   /** One probe. Failures are swallowed: a transient `gh` error just retries on the next step. */
   probe(key: string): Promise<unknown>
+  /**
+   * Several keys' probes in one go: a sweep (see the header). Absent, each key
+   * is probed on its own. Failures are swallowed, as `probe`'s are.
+   */
+  probeMany?(keys: string[]): Promise<unknown>
+  /** How far ahead a sweep gathers keys; see {@link PR_WATCH_SWEEP_GATHER_MS}. */
+  sweepGatherMs?: number
   /** Whether this key holds the base schedule with no window focused. Absent, none does. */
   keepsPace?(key: string): boolean
   backoff?: ExponentialBackoffOptions
@@ -153,8 +172,8 @@ export type PullRequestWatchPoller = {
   dispose(): void
 }
 
-/** `freshAt`: when this key was armed or last probed, whichever is later. */
-type PollEntry = { attempt: number; handle: unknown | null; freshAt: number }
+/** `freshAt`: when this key was armed or last probed, whichever is later. `dueAt`: when its timer fires. */
+type PollEntry = { attempt: number; handle: unknown | null; freshAt: number; dueAt: number }
 
 export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): PullRequestWatchPoller {
   const backoff = deps.backoff ?? PR_WATCH_BACKOFF
@@ -167,6 +186,7 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
     clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   }
   const unfocusedDelayMs = deps.unfocusedDelayMs ?? PR_WATCH_UNFOCUSED_MS
+  const gatherMs = deps.sweepGatherMs ?? PR_WATCH_SWEEP_GATHER_MS
   const focused = (): boolean => deps.focus?.isFocused() ?? true
 
   const entries = new Map<string, PollEntry>()
@@ -198,12 +218,45 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
     }
     const paced = focused() || deps.keepsPace?.(key) === true
     const delay = soon ?? jittered(paced ? stepped : Math.max(stepped, unfocusedDelayMs))
-    entry.handle = timers.setTimeout(() => {
+    entry.dueAt = now() + delay
+    const handle = timers.setTimeout(() => {
       const armed = entries.get(key)
-      if (!armed || armed !== entry || disposed) return
+      // A sweep that took this key along cleared this timer; one that fires
+      // anyway (a timer source that does not honour the clear) is stale.
+      if (!armed || armed !== entry || armed.handle !== handle || disposed) return
       armed.handle = null
-      void probeThenReschedule(key, armed)
+      if (!deps.probeMany) {
+        void probeThenReschedule(key, armed)
+        return
+      }
+      void sweep(gatherDue(key, armed))
     }, delay)
+    entry.handle = handle
+  }
+
+  // The key whose timer fired, and every other key due inside the gather
+  // window, their timers cleared: one sweep's worth.
+  function gatherDue(key: string, armed: PollEntry): Array<[string, PollEntry]> {
+    const swept: Array<[string, PollEntry]> = [[key, armed]]
+    const horizon = now() + gatherMs
+    for (const [other, entry] of entries) {
+      if (other === key || entry.handle === null || entry.dueAt > horizon) continue
+      timers.clearTimeout(entry.handle)
+      entry.handle = null
+      swept.push([other, entry])
+    }
+    return swept
+  }
+
+  async function sweep(swept: Array<[string, PollEntry]>): Promise<void> {
+    const at = now()
+    for (const [, entry] of swept) entry.freshAt = at
+    try {
+      await deps.probeMany!(swept.map(([key]) => key))
+    } catch {
+      // Best-effort, as a single probe is.
+    }
+    await Promise.all(swept.map(([key, entry]) => rescheduleAfterProbe(key, entry)))
   }
 
   // A window back at the front, and staying there: each key not read inside
@@ -240,6 +293,10 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
       // Best-effort: a transient gh/git failure just retries on the next step.
       // A key whose pull request is genuinely gone stops via the re-read below.
     }
+    await rescheduleAfterProbe(key, armed)
+  }
+
+  async function rescheduleAfterProbe(key: string, armed: PollEntry): Promise<void> {
     if (disposed) return
     // Disarm/re-arm during the in-flight probe wins.
     if (entries.get(key) !== armed) return
@@ -266,7 +323,7 @@ export function createPullRequestWatchPoller(deps: PullRequestWatchPollerDeps): 
 
   function arm(key: string): void {
     if (entries.has(key) || disposed) return
-    const entry: PollEntry = { attempt: 0, handle: null, freshAt: now() }
+    const entry: PollEntry = { attempt: 0, handle: null, freshAt: now(), dueAt: now() }
     entries.set(key, entry)
     schedule(key)
   }

@@ -8,6 +8,7 @@ import {
   PR_WATCH_FOCUS_FRESH_MS,
   PR_WATCH_FOCUS_SETTLE_MS,
   PR_WATCH_FOCUS_SPREAD_MS,
+  PR_WATCH_SWEEP_GATHER_MS,
   PR_WATCH_UNFOCUSED_MS,
   type WatchPollerFocus,
 } from './pull-request-watch-poller'
@@ -179,5 +180,36 @@ test('a window coming back after the fresh window probes the key once, shortly',
   await vi.advanceTimersByTimeAsync(PR_WATCH_FOCUS_SETTLE_MS + PR_WATCH_FOCUS_SPREAD_MS)
   assert.equal(probes.length, 2)
   assert.ok(probes[1]! - back <= PR_WATCH_FOCUS_SETTLE_MS + PR_WATCH_FOCUS_SPREAD_MS)
+  watch.dispose()
+})
+
+test('keys due close together are probed as one sweep, and fall into step', async () => {
+  const sweeps: Array<{ at: number; keys: string[] }> = []
+  const single: string[] = []
+  const watch = createPullRequestWatchPoller({
+    isWatchable: () => true,
+    probe: async (key) => void single.push(key),
+    probeMany: async (keys) => void sweeps.push({ at: Date.now(), keys: [...keys].sort() }),
+    focus: focus(true),
+    jitterRatio: 0,
+    random: () => 0.5,
+  })
+  watch.begin()
+  const start = Date.now()
+  watch.arm('a')
+  await vi.advanceTimersByTimeAsync(20_000)
+  watch.arm('b')
+  await vi.advanceTimersByTimeAsync(PR_WATCH_SWEEP_GATHER_MS)
+  watch.arm('far')
+  // 'a' is due at one minute; 'b' (at 1:20) is inside the gather window, so it
+  // is taken along; 'far' was armed too late to be.
+  await vi.advanceTimersByTimeAsync(5 * MINUTE)
+  assert.deepEqual(single, [], 'a sweep-capable consumer is never probed key by key')
+  assert.deepEqual(sweeps[0], { at: start + MINUTE, keys: ['a', 'b'] })
+  // From then on every key is in the same sweep, on the two-minute pace.
+  const later = sweeps.filter((sweep) => sweep.keys.length === 3)
+  assert.ok(later.length >= 1, JSON.stringify(sweeps))
+  const firstFull = sweeps.indexOf(later[0]!)
+  for (const sweep of sweeps.slice(firstFull)) assert.deepEqual(sweep.keys, ['a', 'b', 'far'])
   watch.dispose()
 })
