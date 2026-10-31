@@ -411,6 +411,9 @@ import type {
   CloneProgress,
   RepositoryCloneInput,
   RepositoryCloneResult,
+  NewProjectInput,
+  NewProjectResult,
+  GitHubOwnerListResult,
   GitHubRepoListResult,
   GitHubTokenStatus,
   GitHunkRef,
@@ -1870,6 +1873,10 @@ export type ElectronApi = {
   listGitHubRepos: () => Promise<GitHubRepoListResult>
   /** Clone any git repository (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, a self-hosted server). */
   cloneRepository: (input: RepositoryCloneInput) => Promise<RepositoryCloneResult>
+  /** Make a new project folder with a first commit, publishing it to GitHub only when `publish` is confirmed. */
+  createNewProject: (input: NewProjectInput) => Promise<NewProjectResult>
+  /** The signed-in GitHub account and its organisations, for a new repository's owner. */
+  listGitHubOwners: () => Promise<GitHubOwnerListResult>
   /** Stop the clone started with this `cloneId`; it answers `{ ok: false, reason: 'cancelled' }`. */
   cancelRepositoryClone: (cloneId: string) => Promise<void>
   /** Every running clone's progress, for the caller to filter on its `cloneId`. */

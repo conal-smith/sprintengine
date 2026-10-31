@@ -20,6 +20,8 @@ import type { ProjectColor } from '../../../utils/projectColor'
 import { GitHubRepoPicker, toRepoListState, type GitHubRepoListState } from '../newWorkspace/GitHubRepoPicker'
 import { cloneParentFor, describeCloneProgress, draftNamesRepo, resolveCloneSource } from '../newWorkspace/githubClone'
 import { suggestedWorkspaceFolderName } from '../newWorkspace/folderCreation'
+import { NewProjectStep, type NewProjectRequest } from '../newWorkspace/NewProjectStep'
+import type { NewProjectResult } from '../../../../../shared/electron-api'
 import { basename } from '../../../utils/paths'
 import { isImeKey } from '../../../utils/imeKey'
 
@@ -72,6 +74,7 @@ export function ProjectSourceMenu({
   onStartWithoutProject,
   onBrowse,
   onClone,
+  onCreateProject,
   onClose,
 }: {
   /**
@@ -113,9 +116,14 @@ export function ProjectSourceMenu({
    * folders that already exist) must not be offered a way in that leads nowhere.
    */
   onClone?: (request: ProjectCloneRequest) => Promise<ProjectCloneResult>
+  /**
+   * Makes a new project and ADOPTS it, held by the host for the same reason
+   * as `onClone`. Absent hides the New project source.
+   */
+  onCreateProject?: (request: NewProjectRequest) => Promise<NewProjectResult>
   onClose: () => void
 }) {
-  const [step, setStep] = React.useState<'projects' | 'git'>('projects')
+  const [step, setStep] = React.useState<'projects' | 'git' | 'new'>('projects')
   const [query, setQuery] = React.useState('')
   const [repoList, setRepoList] = React.useState<GitHubRepoListState>({ status: 'loading' })
   const [repoFilter, setRepoFilter] = React.useState('')
@@ -219,6 +227,17 @@ export function ProjectSourceMenu({
     if (!picked || !mounted.current) return
     setParentOverride(cloneParentFor(picked, folderName.trim()))
     setCloneError(null)
+  }
+
+  if (step === 'new' && onCreateProject) {
+    return (
+      <NewProjectStep
+        defaultParent={defaultParent}
+        onBack={() => setStep('projects')}
+        onCreate={onCreateProject}
+        onDone={onClose}
+      />
+    )
   }
 
   if (step === 'git') {
@@ -517,6 +536,32 @@ export function ProjectSourceMenu({
         >
           <span className="block text-body font-medium">Import from Git</span>
           <span className="block text-meta text-[color:var(--text-subtle)]">Clone a repository and open it here.</span>
+        </MenuItem>
+      ) : null}
+      {onCreateProject ? (
+        <MenuItem
+          aria-haspopup="true"
+          onClick={() => setStep('new')}
+          icon={
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+              className="mt-0.5 icon-xs shrink-0 text-[color:var(--text-muted)]"
+            >
+              <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          }
+          trailing={
+            <span aria-hidden="true" className="mt-0.5 shrink-0 text-micro text-[color:var(--text-disabled)]">
+              ›
+            </span>
+          }
+        >
+          <span className="block text-body font-medium">New project</span>
+          <span className="block text-meta text-[color:var(--text-subtle)]">
+            Start one here, and put it on GitHub if you like.
+          </span>
         </MenuItem>
       ) : null}
       {/* The third way in, after the two that find a project: none at all.
