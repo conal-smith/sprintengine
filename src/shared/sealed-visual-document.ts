@@ -22,8 +22,8 @@
 // to send the height and take the theme, since without a shared origin the
 // app cannot read the frame's document to measure it.
 
-import { SEALED_VISUAL_CHANNEL, SEALED_VISUAL_URL_PREFIX } from '../../../../shared/sealed-visual'
-import { baseStylesheet, MAX_VISUAL_SOURCE, VISUAL_EMPTY, VISUAL_TOO_LARGE, type VisualTheme } from './visualDocument'
+import { SEALED_VISUAL_CHANNEL, SEALED_VISUAL_URL_PREFIX } from './sealed-visual'
+import { baseStylesheet, MAX_VISUAL_SOURCE, VISUAL_EMPTY, VISUAL_TOO_LARGE, type VisualTheme } from './visual-document'
 
 /** Whether a visual's source asks to run: it carries a `<script>` element. */
 export function hasVisualScript(source: string): boolean {
@@ -98,8 +98,69 @@ const SCRIPTED_STYLES = 'a[href] { color: var(--accent, inherit); text-decoratio
 /** A sealed visual's document as the address its frame loads, or why there is none. */
 export type ScriptedVisualResult = { url: string; html: string; title: string } | { error: string }
 
-function textOf(element: Element | null | undefined): string {
-  return (element?.textContent ?? '').replace(/\s+/gu, ' ').trim()
+/** What a visual's source is reduced to before its document is built: markup only, nothing run. */
+export type VisualParts = { head: string; body: string; title: string; empty: boolean }
+
+/**
+ * A visual's source taken apart in a document that runs nothing: the elements
+ * that only load or frame are dropped, the head keeps its styles and scripts,
+ * and the title is the first that names the visual.
+ *
+ * It refers to nothing outside itself, so it also runs as the text of itself
+ * (`visualPartsScript`) in a window main opens, which has a parser where main
+ * has none. Keep it that way: no imports, no constants from this module.
+ */
+export function readVisualParts(source: string, removed: string): VisualParts {
+  function textOf(element: Element | null | undefined): string {
+    return (element?.textContent ?? '').replace(/\s+/gu, ' ').trim()
+  }
+  // A parsed document runs nothing: scripts are inert until the frame loads them.
+  const parsed = new DOMParser().parseFromString(source, 'text/html')
+  for (const element of Array.from(parsed.querySelectorAll(removed))) element.remove()
+  const head = Array.from(parsed.head.querySelectorAll('style, script'))
+    .map((element) => element.outerHTML)
+    .join('')
+  const body = parsed.body
+  const empty = !textOf(body) && !body.querySelector('svg, img, canvas, script, input, button') && !head
+  const title =
+    textOf(parsed.head.querySelector('title')) ||
+    textOf(body.querySelector('h1, h2, h3, h4, h5, h6, figcaption, caption, svg > title')) ||
+    'Interactive visual'
+  return { head, body: body.innerHTML, title, empty }
+}
+
+/** `readVisualParts` for one source, as a script for a window's `executeJavaScript`. */
+export function visualPartsScript(source: string): string {
+  return `(${readVisualParts.toString()})(${JSON.stringify(source)}, ${JSON.stringify(REMOVED_ELEMENTS)})`
+}
+
+/** The parts read back from another window, checked for the shape `readVisualParts` gives; null for anything else. */
+export function asVisualParts(value: unknown): VisualParts | null {
+  if (typeof value !== 'object' || value === null) return null
+  const parts = value as Record<string, unknown>
+  return typeof parts.head === 'string' &&
+    typeof parts.body === 'string' &&
+    typeof parts.title === 'string' &&
+    typeof parts.empty === 'boolean'
+    ? { head: parts.head, body: parts.body, title: parts.title, empty: parts.empty }
+    : null
+}
+
+/** The sealed document for a visual's parts: the reporter and the policy first, then the base stylesheet, then its own. */
+export function assembleScriptedVisualDocument(parts: VisualParts, theme: VisualTheme): ScriptedVisualResult {
+  if (parts.empty) return { error: VISUAL_EMPTY }
+  const html =
+    `<!doctype html><html><head>` +
+    `<meta http-equiv="Content-Security-Policy" content="${SEALED_VISUAL_POLICY}">` +
+    `<script>${REPORTER}</script>` +
+    `<style>${baseStylesheet(theme)}\n${SCRIPTED_STYLES}</style>${parts.head}</head>` +
+    `<body>${parts.body}</body></html>`
+  const title = parts.title
+  return {
+    url: `${SEALED_VISUAL_URL_PREFIX}${encodeURIComponent(html)}`,
+    html,
+    title: title.length > 120 ? `${title.slice(0, 119)}…` : title,
+  }
 }
 
 /**
@@ -111,26 +172,5 @@ function textOf(element: Element | null | undefined): string {
  */
 export function buildScriptedVisualDocument(source: string, theme: VisualTheme): ScriptedVisualResult {
   if (source.length > MAX_VISUAL_SOURCE) return { error: VISUAL_TOO_LARGE }
-  // A parsed document runs nothing: scripts are inert until the frame loads them.
-  const parsed = new DOMParser().parseFromString(source, 'text/html')
-  for (const element of parsed.querySelectorAll(REMOVED_ELEMENTS)) element.remove()
-  const head = [...parsed.head.querySelectorAll('style, script')].map((element) => element.outerHTML).join('')
-  const body = parsed.body
-  if (!textOf(body) && !body.querySelector('svg, img, canvas, script, input, button') && !head)
-    return { error: VISUAL_EMPTY }
-  const title =
-    textOf(parsed.head.querySelector('title')) ||
-    textOf(body.querySelector('h1, h2, h3, h4, h5, h6, figcaption, caption, svg > title')) ||
-    'Interactive visual'
-  const html =
-    `<!doctype html><html><head>` +
-    `<meta http-equiv="Content-Security-Policy" content="${SEALED_VISUAL_POLICY}">` +
-    `<script>${REPORTER}</script>` +
-    `<style>${baseStylesheet(theme)}\n${SCRIPTED_STYLES}</style>${head}</head>` +
-    `<body>${body.innerHTML}</body></html>`
-  return {
-    url: `${SEALED_VISUAL_URL_PREFIX}${encodeURIComponent(html)}`,
-    html,
-    title: title.length > 120 ? `${title.slice(0, 119)}…` : title,
-  }
+  return assembleScriptedVisualDocument(readVisualParts(source, REMOVED_ELEMENTS), theme)
 }

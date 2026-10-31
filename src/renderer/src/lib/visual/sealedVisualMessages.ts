@@ -1,4 +1,4 @@
-// What a sealed visual (`scriptedVisualDocument.ts`) may say to the app, and
+// What a sealed visual (`shared/sealed-visual-document.ts`) may say to the app, and
 // what the app does with it. The frame runs an agent's script, so every
 // message is read as untrusted: one from anywhere but the frame's own window,
 // or of any shape but the two below, is dropped without a word.

@@ -163,6 +163,8 @@ import { createEditorRevealBroker } from './editor-reveal/editor-reveal-broker'
 import { createEditorToolBackends } from './editor-reveal/editor-tool-backends'
 import { EDITOR_REVEAL_PENDING_CHANNEL } from '../shared/editor-reveal'
 import { createTourTools } from './automation/tour-tools'
+import { createVisualTools } from './automation/visual-tools'
+import { createElectronVisualPreview } from './visual/visual-preview-window'
 import { createExtensionTools } from './automation/extension-tools'
 import { createExtensionScaffoldHandlers, resolveScaffoldRoots } from './ipc/extension-scaffold-ipc'
 import { createAppTourService } from './tours/tour-app'
@@ -1793,6 +1795,8 @@ export function createAppServices(
       isAppFocused: () => anyWindowFocused(),
     }),
   )
+  // `visual.preview` draws in a hidden window of this app, so the shell serves it.
+  const visualTools = createVisualTools(createElectronVisualPreview(listWorkspaceWindows))
   const tourTools = createTourTools({
     service: tourService,
     hasWorkspace: (workspaceId) =>
@@ -1875,6 +1879,7 @@ export function createAppServices(
           canvas: clientToolsEnabled ? [] : canvasTools,
           editor: editorTools,
           tour: tourTools,
+          visual: visualTools,
           automation: createAutomationTools(
             createServerGatewayBackends({
               getWorkspaceSyncSnapshot: () => workspaceSyncService.getSnapshot(),
@@ -2015,6 +2020,7 @@ export function createAppServices(
             { name: 'canvas', registrations: canvasTools },
             { name: 'editor', registrations: editorTools },
             { name: 'tour', registrations: tourTools },
+            { name: 'visual', registrations: visualTools },
             { name: 'worktree', registrations: worktreeTools },
             { name: 'artifacts', registrations: artifactsTools },
             { name: 'extension', registrations: extensionTools },
