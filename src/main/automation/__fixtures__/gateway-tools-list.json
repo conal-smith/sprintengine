@@ -182,7 +182,7 @@
     },
     {
       "name": "conversation.read",
-      "sha256": "7f6c2a0fbbc810b0ef082219d208c78b706369a48919291cee8a37f8a7dbd832"
+      "sha256": "00eb4fbfbcadc9d65bc00dd00242cf03fd2dcfad2140b8e115bb54c7a0c7ebf4"
     },
     {
       "name": "conversation.wait",
@@ -600,7 +600,7 @@
     },
     {
       "name": "conversation.read",
-      "sha256": "7f6c2a0fbbc810b0ef082219d208c78b706369a48919291cee8a37f8a7dbd832"
+      "sha256": "00eb4fbfbcadc9d65bc00dd00242cf03fd2dcfad2140b8e115bb54c7a0c7ebf4"
     },
     {
       "name": "conversation.wait",

@@ -153,6 +153,7 @@ import { BULK_SELECTED_ROW_CLASS, useSidebarBulkSelection } from './sidebar/side
 import { BulkChatContextMenu, type BulkChatAction, type BulkChatReach } from './sidebar/BulkChatContextMenu'
 import { ScheduledAgentRow } from './sidebar/ScheduledAgentRow'
 import { DraftsSection } from './sidebar/DraftsSection'
+import { setChatReferenceDragData } from '../../../../shared/chat-reference'
 import {
   remoteScheduleActionWords,
   useRemoteScheduledAgents,
@@ -2550,7 +2551,14 @@ function WorkspaceSidebar({
 
   const handleRowDragStart = (event: React.DragEvent, workspace: Workspace, fKey: string) => {
     dragRef.current = { type: 'workspace', id: workspace.id, folderKey: fKey }
-    event.dataTransfer.effectAllowed = 'move'
+    // A move within the list; a copy into a composer, which types the chat's
+    // reference where it lands (`chat-reference.ts`), for its agent to read.
+    const referenced = setChatReferenceDragData(event.dataTransfer, {
+      id: workspace.id,
+      name: workspace.name,
+      remote: Boolean(workspace.remoteOrigin),
+    })
+    event.dataTransfer.effectAllowed = referenced ? 'copyMove' : 'move'
     event.dataTransfer.setData(DRAG_MIME_WORKSPACE, workspace.id)
   }
 
