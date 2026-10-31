@@ -9,6 +9,7 @@ import {
   type MobileSession,
   type MobileSnapshotCollection,
 } from "./types";
+import { pullRequestReadCommandTypes } from "../shared/mobile-control/protocol";
 
 // The desktop gateway's tailnet surface: plain fetch + JSON-RPC, no account
 // and no server in between. Prior art is the desktop's own
@@ -37,7 +38,7 @@ const MUTATION_TIMEOUT_MS = 30_000;
  * allowlist. Anything else is refused client-side as command_not_supported
  * so the failure names the transport rather than arriving as a mystery.
  */
-export const tailnetSupportedCommands = ["snapshot.request", "backlog.update"] as const;
+export const tailnetSupportedCommands = ["snapshot.request", "backlog.update", "pullRequest.read", "pullRequest.diff"] as const;
 
 export interface SnapshotReadOptions {
   /**
@@ -84,6 +85,8 @@ export const knownCommandTypes = [
   "device.revoke",
   "backlog.update",
   "backlog.create",
+  "pullRequest.read",
+  "pullRequest.diff",
 ] as const satisfies readonly MobileControlCommand["type"][];
 
 // A hand-kept list silently drops a command the union gains, and a capable desktop
@@ -354,7 +357,9 @@ export class TailnetControlClient {
         idempotencyKey: `tnk_${randomToken()}`,
         ...(command.expectedSnapshotVersion ? { expectedSnapshotVersion: command.expectedSnapshotVersion } : {}),
       },
-      { timeoutMs: MUTATION_TIMEOUT_MS, mutation: true }
+      // A read that times out did nothing, and says so in a read's words;
+      // its gh calls on the desktop can take as long as a mutation does.
+      { timeoutMs: MUTATION_TIMEOUT_MS, mutation: !(pullRequestReadCommandTypes as readonly string[]).includes(command.type) }
     );
     if (!result.ok) {
       return { ok: false, errorCode: result.errorCode, message: result.message };

@@ -151,7 +151,8 @@ export function ConversationFileDiffScreen({
 
 type Widths = { content: number; number: number; sign: number };
 
-function UnifiedDiff({ patch, bottomInset }: { patch: string; bottomInset: number }) {
+/** One file's unified diff, laid out as this screen lays it out; the pull request viewer draws its files with it too. */
+export function UnifiedDiff({ patch, bottomInset }: { patch: string; bottomInset: number }) {
   const styles = useThemedStyles(createStyles);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [advance, setAdvance] = useState(ESTIMATED_ADVANCE);

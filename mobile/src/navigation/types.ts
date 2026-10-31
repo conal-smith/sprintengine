@@ -57,6 +57,10 @@ export type HomeStackParamList = {
   ConversationChanges: { deviceId: string; workspaceId: string; agentId: string; turnSeq: number };
   /** One of those files as a diff; Previous and Next swap `path` in place. */
   ConversationFileDiff: { deviceId: string; workspaceId: string; agentId: string; turnSeq: number; path: string };
+  /** A chat's pull request, read through the desktop that lists it. */
+  PullRequest: { deviceId: string; url: string };
+  /** One of its changed files as a diff, read a page at a time. */
+  PullRequestFile: { deviceId: string; url: string; path: string };
   Notices: undefined;
   SettingsHome: undefined;
   /** One paired desktop: its endpoint, this phone's id, and the revoke controls. */
