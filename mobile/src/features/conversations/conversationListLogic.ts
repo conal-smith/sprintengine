@@ -48,6 +48,12 @@ export interface ChatListRow {
    * offered is `markUnreadOffered`'s to say.
    */
   canMarkUnread?: boolean;
+  /**
+   * Whether this phone may snooze the chat and wake it: a desktop that
+   * advertises `chat-row-menu`, and a pairing that operates its chats. Where
+   * Snooze is offered is `snoozeOffered`'s to say.
+   */
+  snoozable?: boolean;
   thread: ConversationThread;
 }
 
@@ -192,6 +198,8 @@ export function buildChatRows(input: {
   canOperate: boolean;
   /** Whether the desktop advertises `chat-mark-unread`. */
   markUnread?: boolean;
+  /** Whether the desktop advertises `chat-row-menu`. */
+  rowMenu?: boolean;
 }): ChatListRow[] {
   const byId = new Map((input.workspaces ?? []).map((workspace) => [workspace.workspaceId, workspace]));
   const listed: ChatListRow[] = [];
@@ -209,6 +217,7 @@ export function buildChatRows(input: {
       lifecycle: input.lifecycle,
       settleable: input.lifecycle && input.canOperate,
       canMarkUnread: !!input.markUnread && input.canOperate,
+      snoozable: !!input.rowMenu && input.lifecycle && input.canOperate,
       thread,
     });
   }

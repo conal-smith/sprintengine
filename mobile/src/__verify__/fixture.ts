@@ -28,7 +28,8 @@ export const verifySession: MobileSession = {
   // the desktop's chats at all, `conversation-models` is what draws a
   // chat's model control, `conversation-images` what shows its pictures, and
   // `conversation-lifecycle` what lists each chat's clocks and offers Settle,
-  // and `chat-mark-unread` what offers Mark unread.
+  // `chat-mark-unread` what offers Mark unread, and `chat-row-menu` what
+  // offers Snooze and Wake now.
   // New's Worktree switch, its effort ramp and the picker's own rows need
   // `new-chat-worktree`, `new-chat-effort` and `cli-runtime-catalog`, and a
   // message queued behind a turn is held by the desktop with
@@ -44,6 +45,7 @@ export const verifySession: MobileSession = {
     "conversation-plans",
     "conversation-lifecycle",
     "chat-mark-unread",
+    "chat-row-menu",
     "new-chat-worktree",
     "new-chat-effort",
     "cli-runtime-catalog",

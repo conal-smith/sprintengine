@@ -17,6 +17,11 @@ export interface ToastInput {
   /** Tapping the toast goes somewhere: the thread that finished. */
   onPress?: () => void;
   /**
+   * One thing to do about what the toast says, as a button beside its text:
+   * Undo, after a settle or a snooze. Pressing it dismisses the toast.
+   */
+  action?: { label: string; onPress: () => void };
+  /**
    * How long it stays, in ms, when the tone's default is wrong for it. `false`
    * keeps it until it is dismissed — for the rare toast that asks a question
    * and cannot be answered anywhere else.
@@ -177,6 +182,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <Text style={styles.title}>{message.title}</Text>
               {message.message ? <Text style={styles.line}>{message.message}</Text> : null}
             </View>
+            {message.action ? (
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={space.sm}
+                onPress={() => {
+                  message.action?.onPress();
+                  dismiss();
+                }}
+                style={({ pressed }) => [styles.action, pressed ? styles.actionPressed : null]}
+              >
+                <Text style={styles.actionText}>{message.action.label}</Text>
+              </Pressable>
+            ) : null}
             <Pressable accessibilityLabel="Dismiss" accessibilityRole="button" onPress={dismiss} style={styles.close}>
               <CloseIcon size={iconSize.sm} tone="textSubtle" />
             </Pressable>
@@ -257,6 +275,24 @@ const createStyles = (theme: Theme) => {
     line: {
       ...typography.meta,
       color: colors.textMuted,
+    },
+    action: {
+      minHeight: 32,
+      paddingHorizontal: space.sm,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: radius.control,
+    },
+    actionPressed: {
+      opacity: 0.6,
+    },
+    // The one thing to do about it, in the title's ink: green is the brand's,
+    // not an action's.
+    actionText: {
+      ...typography.body,
+      fontWeight: fontWeight.emphasis,
+      color: colors.textPrimary,
+      textDecorationLine: "underline",
     },
     close: {
       width: 32,
