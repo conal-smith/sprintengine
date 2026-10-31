@@ -6,7 +6,7 @@ import { VISUAL_FRAME_MAX_HEIGHT } from './VisualFrame'
 
 // A ```visual block that runs its own script, drawn as part of the reply the
 // way a static one is (`VisualFrame`): no border or background, as tall as its
-// content up to a cap. What differs is the seal (`scriptedVisualDocument.ts`):
+// content up to a cap. What differs is the seal (`shared/sealed-visual-document.ts`):
 // scripts on and no origin of its own, so the app can neither read the frame
 // nor be read by it, and the two speak only by message.
 //

@@ -145,6 +145,10 @@
       "sha256": "b21c0cddd514d3a93df1433245d6c1776d645c27b7ca1fd94eab5e82d9300e50"
     },
     {
+      "name": "visual.preview",
+      "sha256": "460822b4f173ad7182db01c7a1e8a206233bde35bdb0a861a2e9f36b305252dc"
+    },
+    {
       "name": "conversation.create",
       "sha256": "13e9e5db1221a93e9efdc7c0853466bad3cb37d10029d8fe01721d2fe7b37e76"
     },
@@ -557,6 +561,10 @@
     {
       "name": "tour.close",
       "sha256": "b21c0cddd514d3a93df1433245d6c1776d645c27b7ca1fd94eab5e82d9300e50"
+    },
+    {
+      "name": "visual.preview",
+      "sha256": "460822b4f173ad7182db01c7a1e8a206233bde35bdb0a861a2e9f36b305252dc"
     },
     {
       "name": "conversation.create",

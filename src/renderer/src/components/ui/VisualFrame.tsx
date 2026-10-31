@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { VISUAL_FRAME_MAX_HEIGHT } from '../../../../shared/visual-document'
 
 // A document drawn in a frame of its own and read as part of what surrounds
 // it: a reply's ```visual block (`lib/visual/visualDocument.ts`). No border or
@@ -12,8 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 // it; and without `allow-top-navigation` or `allow-popups` a link in it,
 // should one survive the sanitizer, cannot take the app anywhere.
 
-/** Past this the frame stops growing and its document scrolls. */
-export const VISUAL_FRAME_MAX_HEIGHT = 900
+export { VISUAL_FRAME_MAX_HEIGHT }
 
 /** What the frame holds before its document has loaded and been measured. */
 const RESERVED_HEIGHT = 160

@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
 import { expect, test } from 'vitest'
-import { SEALED_VISUAL_URL_PREFIX } from '../../../../shared/sealed-visual'
-import { buildScriptedVisualDocument, hasVisualScript, SEALED_VISUAL_POLICY } from './scriptedVisualDocument'
-import { MAX_VISUAL_SOURCE, VISUAL_EMPTY, VISUAL_TOO_LARGE, type VisualTheme } from './visualDocument'
+import { SEALED_VISUAL_URL_PREFIX } from './sealed-visual'
+import {
+  asVisualParts,
+  buildScriptedVisualDocument,
+  hasVisualScript,
+  readVisualParts,
+  SEALED_VISUAL_POLICY,
+  visualPartsScript,
+} from './sealed-visual-document'
+import { MAX_VISUAL_SOURCE, VISUAL_EMPTY, VISUAL_TOO_LARGE, type VisualTheme } from './visual-document'
 
 const theme: VisualTheme = { variables: { '--fg': 'rgb(50, 60, 70)', '--chart-1': 'rgb(7, 126, 240)' } }
 
@@ -79,4 +86,17 @@ test('one size limit, and a block with nothing to draw or run, are refused', () 
   expect('error' in buildScriptedVisualDocument('<div id="r"></div><script>r.textContent = 1</script>', theme)).toBe(
     false,
   )
+})
+
+test('the parts script is the parser itself, and runs on its own in another window', () => {
+  const source = `<head><title>Sorted</title><link rel="stylesheet" href="https://example.com/x.css"><style>p{}</style></head>${sortable}<iframe src="https://example.com"></iframe>`
+  // Evaluated with nothing from this module in scope, as a window's
+  // executeJavaScript evaluates it.
+  const remote = asVisualParts(new Function(`return ${visualPartsScript(source)}`)())
+  expect(remote).toEqual(readVisualParts(source, 'meta, base, link, iframe, frame, frameset, object, embed, portal'))
+  expect(remote?.title).toBe('Sorted')
+  expect(remote?.body).not.toContain('iframe')
+  expect(remote?.head).not.toContain('link')
+  expect(asVisualParts({ head: '', body: 1, title: '', empty: false })).toBeNull()
+  expect(asVisualParts('nope')).toBeNull()
 })

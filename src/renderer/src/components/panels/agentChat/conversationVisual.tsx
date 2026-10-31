@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { appearanceKey, subscribeAppearance } from '../../../lib/diagram/mermaidDiagram'
 import { cachedVisual, drawVisual, readVisualTheme, type VisualResult } from '../../../lib/visual/visualDocument'
-import { buildScriptedVisualDocument, hasVisualScript } from '../../../lib/visual/scriptedVisualDocument'
+import { buildScriptedVisualDocument, hasVisualScript } from '../../../../../shared/sealed-visual-document'
 import type { CodeBlockNoteAction } from '../../ui/CodeBlock'
 import { SealedVisualFrame } from '../../ui/SealedVisualFrame'
 import { VisualFrame } from '../../ui/VisualFrame'
