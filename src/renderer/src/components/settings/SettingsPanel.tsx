@@ -737,6 +737,8 @@ export default function SettingsPanel({
   const setAppearanceUsageLimits = useWorkspaceStore((s) => s.setAppearanceUsageLimits)
   const isMac = window.api.platform === 'darwin'
   const chatListView = useWorkspaceStore((s) => s.chatListView)
+  const sidebarWorkingSection = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
+  const setSidebarWorkingSection = useWorkspaceStore((s) => s.setSidebarWorkingSection)
   const openFilesInExternalWindow = useWorkspaceStore((s) => s.openFilesInExternalWindow)
   const setOpenFilesInExternalWindow = useWorkspaceStore((s) => s.setOpenFilesInExternalWindow)
   const setChatListView = useWorkspaceStore((s) => s.setChatListView)
@@ -1271,6 +1273,14 @@ export default function SettingsPanel({
                   onChange={setChatListView}
                 />
               </SettingsRow>
+              {/* The one way a row moves on its own (owner ruling 2026-09-09
+                  keeps them still), so it is the person's to turn on. */}
+              <SettingToggle
+                label="Working section"
+                description="While an agent works in a chat, fold it into a Working section at the top of the list, and put it back when the agent finishes or needs you. Starred chats and the chat you are in stay where they are."
+                enabled={sidebarWorkingSection}
+                onChange={setSidebarWorkingSection}
+              />
               <ChatAppearanceRows />
               {/* Where a file opens (owner ruling 2026-09-25). The editor
                   window is the default: the file on its own, with a tree

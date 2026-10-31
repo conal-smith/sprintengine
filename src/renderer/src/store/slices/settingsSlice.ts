@@ -727,6 +727,7 @@ export const defaultAppSettings = (): AppSettings => ({
   terminalKeepRecentAlive: DEFAULT_TERMINAL_KEEP_RECENT_ALIVE,
   settleOnPullRequestMerge: true,
   keepChatsWithOpenPullRequest: true,
+  sidebarWorkingSection: false,
   autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   browserAutoFloatAgentPreview: true,
   // A message sent mid-turn waits for the turn, as every one did before the
@@ -827,6 +828,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
     // Only an explicit stored `false` lets the idle rule settle a chat whose
     // pull request is still open: a profile from before the setting keeps them.
     keepChatsWithOpenPullRequest: settings?.keepChatsWithOpenPullRequest !== false,
+    sidebarWorkingSection: settings?.sidebarWorkingSection === true,
     // Absent before the setting existed: the three days it always was.
     autoSettleAfterDays: normalizeAutoSettleAfterDays(settings?.autoSettleAfterDays),
     // Only an explicit stored `false` turns the player off: it is the
@@ -1136,6 +1138,7 @@ export interface SettingsSliceActions {
   setSettleOnPullRequestMerge: (enabled: boolean) => void
   /** Keep a chat with an open pull request out of the idle rule (Settings ▸ Settled chats). */
   setKeepChatsWithOpenPullRequest: (enabled: boolean) => void
+  setSidebarWorkingSection: (enabled: boolean) => void
   setAutoSettleAfterDays: (days: number) => void
   setBrowserAutoFloatAgentPreview: (enabled: boolean) => void
   setFollowUpBehavior: (behavior: FollowUpBehavior) => void
@@ -1823,6 +1826,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
     setKeepChatsWithOpenPullRequest: (enabled) =>
       set((state) => {
         state.appSettings.keepChatsWithOpenPullRequest = enabled === true
+      }),
+
+    setSidebarWorkingSection: (enabled) =>
+      set((state) => {
+        state.appSettings.sidebarWorkingSection = enabled === true
       }),
 
     setAutoSettleAfterDays: (days) =>
