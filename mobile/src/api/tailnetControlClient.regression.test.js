@@ -351,7 +351,9 @@ test("the transport's own surface stays honest about what it does not serve", ()
   // cut (2026-09-16), and is not a command type at all since protocol v3. What
   // this still pins is the shape: a command the gateway does not serve is refused
   // client-side, and the failure names the transport rather than being a mystery.
-  assert.deepEqual([...tailnetSupportedCommands], ["snapshot.request", "backlog.update"]);
+  // The pull request reads joined it on 2026-10-30, behind the same grant.
+  assert.deepEqual([...tailnetSupportedCommands], ["snapshot.request", "backlog.update", "pullRequest.read", "pullRequest.diff"]);
+  assert.equal(tailnetGrantAllows(["workspace:read"], "pullRequest.read"), false);
   // The grant mirrors the desktop's single-tool gate: workspace:operate
   // unlocks everything served; the per-family operates unlock NOTHING here —
   // a control the desktop would refuse must never be drawn.
