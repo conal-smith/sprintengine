@@ -255,6 +255,17 @@ automatically any more, so a change that crosses the wire is made on both sides
 in the same coordinated change, and the version integer is still the only thing
 a peer sees.
 
+Two commands that only read joined the wire on 2026-10-30, without a bump:
+`pullRequest.read` (a pull request's state, checks, reviews, latest comments
+and changed files, each list capped) and `pullRequest.diff` (one changed
+file's diff, a few hundred lines a page, cut between hunks). A desktop that
+serves them lists them in the snapshot's `commands` and in
+`workspace.mobile_command`'s allowlist; one from before them refuses either,
+as `invalid_payload` from its validator or `command_not_supported` from its
+gateway, and the phone then opens the pull request in the browser, as it did
+before. They are answered afresh each time and kept out of the idempotency
+cache and the audit log, since a read changes nothing.
+
 ### Direct conversation lane
 
 `@sprintengine/conversation-protocol` is a separate portable package for the

@@ -23,6 +23,8 @@
     "src/api/conversationLaunch.ts",
     "src/api/conversationImages.ts",
     "src/api/conversationLifecycle.ts",
+    "src/api/pullRequests.ts",
+    "src/features/pullRequests/pullRequestView.ts",
     "src/api/scheduledAgents.ts",
     "src/features/scheduled/scheduleEditor.ts",
     "src/features/scheduled/schedulePick.ts",

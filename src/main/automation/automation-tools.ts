@@ -949,7 +949,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
   // pairs over the tailnet and reaches the desktop through these two tools. The
   // command allowlist is deliberately narrow; widening it is a decision, not a
   // default.
-  const MOBILE_GATEWAY_COMMAND_TYPES = ['backlog.update'] as const
+  // The pull request reads only read (2026-10-30): the phone's viewer.
+  const MOBILE_GATEWAY_COMMAND_TYPES = ['backlog.update', 'pullRequest.read', 'pullRequest.diff'] as const
 
   const workspaceSnapshot: McpToolRegistration = {
     name: 'workspace.snapshot',

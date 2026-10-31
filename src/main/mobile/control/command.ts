@@ -11,6 +11,13 @@ import { getMobileControlCommandErrorMessage, MobileControlCommandError } from '
 import { MobileControlCommandResultRecorder } from './command-results'
 import { validateMobileWorkspacePath } from './workspace'
 import { assertBacklogRelativePath } from './backlog'
+import { mobileControlReadCommandTypes } from './protocol'
+import {
+  ghPullRequestReader,
+  readMobilePullRequest,
+  readMobilePullRequestDiff,
+  type MobileControlPullRequestReader,
+} from './pull-request'
 import { createBacklogItem, updateBacklogStatus, updateBacklogTriage, updateBacklogType } from '../../backlog-service'
 import type {
   BacklogCriticalityPayload,
@@ -43,7 +50,15 @@ const defaultCommandTtlMs = 30_000
  * audited `command_not_supported` rejection every unexecutable command gets —
  * rather than being dropped on the floor or throwing.
  */
-const allowedCommandTypes = new Set<MobileControlCommandType>(['backlog.update', 'backlog.create'])
+const allowedCommandTypes = new Set<MobileControlCommandType>([
+  'backlog.update',
+  'backlog.create',
+  'pullRequest.read',
+  'pullRequest.diff',
+])
+
+/** The commands that only read: answered afresh every time, never replayed from the idempotency cache. */
+const readCommandTypes = new Set<MobileControlCommandType>(mobileControlReadCommandTypes)
 
 type MobileControlCommandServiceOptions = {
   workspaceRoot?: string
@@ -51,6 +66,8 @@ type MobileControlCommandServiceOptions = {
   commandTtlMs?: number
   now?: () => Date
   auditSink?: (entry: MobileControlCommandAuditEntry) => void
+  /** Where the pull request reads come from; `gh` unless a test hands in a fake. */
+  pullRequests?: MobileControlPullRequestReader
 }
 
 export type MobileControlCommandDispatchOptions = {
@@ -101,6 +118,7 @@ export class MobileControlCommandService {
   private readonly commandTtlMs: number
   private readonly now: () => Date
   private readonly resultRecorder: MobileControlCommandResultRecorder
+  private readonly pullRequests: MobileControlPullRequestReader
 
   constructor(options: MobileControlCommandServiceOptions = {}) {
     this.workspaceRoot = resolve(options.workspaceRoot ?? process.cwd())
@@ -111,6 +129,7 @@ export class MobileControlCommandService {
     this.commandTtlMs = Math.max(1, options.commandTtlMs ?? defaultCommandTtlMs)
     this.now = options.now ?? (() => new Date())
     this.resultRecorder = new MobileControlCommandResultRecorder(this.now, options.auditSink)
+    this.pullRequests = options.pullRequests ?? ghPullRequestReader
   }
 
   getAuditLog(): MobileControlCommandAuditEntry[] {
@@ -134,6 +153,20 @@ export class MobileControlCommandService {
         `Mobile command ${command.type} is not available on this desktop.`,
         false,
       )
+    }
+
+    // A read is answered as it is now. Remembering one under its key would
+    // replay a stale pull request, and hold every diff page sent in memory.
+    if (readCommandTypes.has(command.type)) {
+      const ttlError = this.validateCommandTtl(command)
+      if (ttlError) return this.resultRecorder.reject(command, 'command_expired', ttlError, false)
+      try {
+        return await this.executeRead(command)
+      } catch (error) {
+        return error instanceof MobileControlCommandError
+          ? this.resultRecorder.reject(command, error.code, error.message, error.retryable)
+          : this.resultRecorder.reject(command, 'internal_error', getMobileControlCommandErrorMessage(error), false)
+      }
     }
 
     if (!command.idempotencyKey) {
@@ -179,11 +212,45 @@ export class MobileControlCommandService {
     }
   }
 
+  private async executeRead(command: MobileControlCommand): Promise<MobileControlCommandResult> {
+    switch (command.type) {
+      case 'pullRequest.read':
+        return this.resultRecorder.acceptRead(
+          command,
+          await readMobilePullRequest(command.payload.url, this.pullRequests),
+          'Pull request read.',
+        )
+      case 'pullRequest.diff':
+        return this.resultRecorder.acceptRead(
+          command,
+          await readMobilePullRequestDiff(
+            command.payload.url,
+            command.payload.path,
+            command.payload.offset ?? 0,
+            this.pullRequests,
+          ),
+          'Pull request diff page read.',
+        )
+      default:
+        return this.resultRecorder.reject(
+          command,
+          'command_not_supported',
+          `Mobile command ${command.type} is not a read.`,
+          false,
+        )
+    }
+  }
+
   private async executeCommand(
     command: MobileControlCommand,
     scope: MobileControlCommandScope,
   ): Promise<MobileControlCommandResult> {
     switch (command.type) {
+      // Answered by `executeRead` before the idempotency cache; restated so
+      // the switch stays exhaustive over the protocol's union.
+      case 'pullRequest.read':
+      case 'pullRequest.diff':
+        return this.executeRead(command)
       case 'backlog.update':
         return this.executeBacklogUpdateCommand(command, scope)
       case 'backlog.create':
