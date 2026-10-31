@@ -259,6 +259,8 @@ import type {
   ConversationRewindResult,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationSwitchProviderInput,
+  ConversationSwitchProviderResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -1510,6 +1512,8 @@ export type ElectronApi = {
   // Hand the chat off to a fresh session pointed at a file of its messages,
   // instead of compacting it; gated on the provider's `handoff` capability.
   conversationHandoff: (input: ConversationHandoffInput) => Promise<ConversationHandoffResult>
+  /** Move a chat to another agent CLI or model, carrying the conversation over as a handoff. */
+  conversationSwitchProvider: (input: ConversationSwitchProviderInput) => Promise<ConversationSwitchProviderResult>
   // Start a new chat holding this one up to an earlier message ("Fork from
   // here"); gated on the provider's `fork` capability.
   conversationForkAtTurn: (input: ConversationForkInput) => Promise<ConversationForkResult>

@@ -56,6 +56,8 @@ import type {
   ConversationRewindResult,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationSwitchProviderInput,
+  ConversationSwitchProviderResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationImportTranscriptInput,
@@ -881,6 +883,17 @@ export class ConversationRuntime {
     const resume = stateful
       ? await this.readResumeCursor(session.workspaceRoot, session.workspaceId, session.agentId, session.providerId)
       : undefined
+    // A chat moved here from another agent (`switchConversationProvider`)
+    // owes this session the conversation so far. An adapter that takes a
+    // handoff file is pointed at it (`handoffPath`); any other stateful one is
+    // handed the file's words as the history its first message carries, as a
+    // fork that could not branch is seeded. The file was written to a budget.
+    const switchSeed =
+      stateful && resume?.handoffPath && !resume.sessionId && validation.adapter.capabilities?.handoff !== true
+        ? await readConversationStorage(session.workspaceRoot, resume.handoffPath, SWITCH_HANDOFF_MAX_BYTES * 2)
+            .then((bytes) => bytes.toString('utf8').trim() || null)
+            .catch(() => null)
+        : null
     const start = () =>
       this.emitAll(
         session,
@@ -892,6 +905,9 @@ export class ConversationRuntime {
           ...(resume?.handoffPath ? { handoffPath: resume.handoffPath } : {}),
           ...readableAttachments(this.attachmentStore.directoryFor(session)),
           ...(session.history ? { fallbackHistory: session.history } : fallbackHistory ? { fallbackHistory } : {}),
+          ...(switchSeed
+            ? { seedFromHistory: true, fallbackHistory: [{ role: 'user' as const, content: switchSeed }] }
+            : {}),
           ...(session.subagentLanes.size > 0 ? { knownSubagentLanes: Array.from(session.subagentLanes) } : {}),
           // Continuation channel: the adapter opens a mirror turn here when its
           // child resumes after a `result` (background subagents completing).
@@ -4047,27 +4063,14 @@ export class ConversationRuntime {
       if (session) {
         await this.emit(session, this.eventForSession(session, 'context_handed_off', payload))
       } else {
-        const pending = (this.emissionTails.get(path) ?? Promise.resolve())
-          .catch(() => undefined)
-          .then(async () => {
-            const event: ConversationEvent = {
-              id: `conv_evt_${this.eventEpoch}_${++this.eventSequence}`,
-              seq: (this.sequences.get(path) ?? 0) + 1,
-              createdAt: at,
-              workspaceId: key.workspaceId,
-              agentId: key.agentId,
-              sessionId: stored.at(-1)?.sessionId ?? 'handed-off',
-              providerId,
-              modelId,
-              type: 'context_handed_off',
-              payload,
-            }
-            this.sequences.set(path, event.seq!)
-            const outcome = await this.eventLog.append(path, event, key.workspaceRoot)
-            this.publish(key.workspaceRoot, path, event, outcome)
-          })
-        this.emissionTails.set(path, pending)
-        await pending
+        await this.appendWithoutSession(key, {
+          at,
+          sessionId: stored.at(-1)?.sessionId ?? 'handed-off',
+          providerId,
+          modelId,
+          type: 'context_handed_off',
+          payload,
+        })
       }
       return { ok: true, path: file }
     } catch (error) {
@@ -4078,6 +4081,136 @@ export class ConversationRuntime {
     } finally {
       this.rewindingTranscripts.delete(path)
     }
+  }
+
+  /**
+   * Move a chat to another agent CLI, or to a model its session cannot take
+   * live, as a handoff does: the chat's words go to a file, its session ends,
+   * and a mark in its transcript, under the new provider, is the cursor that
+   * provider's next session starts from (readResumeCursor). That session is
+   * fresh and is given the chat so far: pointed at the file where the adapter
+   * takes a handoff, else carrying its words with its first message
+   * (startSession). The file is cut to a budget the new agent's first turn
+   * can hold, oldest messages first. Refused while anything in the chat is
+   * working, as a handoff is. The chat's record (which provider it names) is
+   * the caller's to move once this answers.
+   */
+  async switchConversationProvider(input: ConversationSwitchProviderInput): Promise<ConversationSwitchProviderResult> {
+    const { key } = input
+    if (!key?.workspaceRoot?.trim() || !key.workspaceId?.trim() || !key.agentId?.trim())
+      return { ok: false, message: 'Conversation identity is required.' }
+    const providerId = typeof input.providerId === 'string' ? input.providerId.trim() : ''
+    const modelId = (typeof input.modelId === 'string' && input.modelId.trim()) || 'default'
+    const target = providerId ? this.getAdapterForProviderId(providerId) : undefined
+    if (!target) return { ok: false, message: 'That agent is not available on this computer.' }
+    const path = this.transcriptPath(key.workspaceRoot, key.workspaceId, key.agentId)
+    const scope = await this.checkpoints.fileScope(key.workspaceRoot)
+    if (
+      this.revertingScopes.has(scope) ||
+      this.deletingTranscripts.has(path) ||
+      this.startingTranscripts.has(path) ||
+      this.rewindingTranscripts.has(path)
+    )
+      return { ok: false, message: 'A workspace lifecycle operation is already in progress.' }
+    const live = Array.from(this.sessions.values()).filter(
+      (session) =>
+        session.workspaceRoot === key.workspaceRoot &&
+        session.workspaceId === key.workspaceId &&
+        session.agentId === key.agentId &&
+        session.status !== 'stopped',
+    )
+    const refused = live.map(handoffRefusal).find((reason) => reason !== null)
+    if (refused) return { ok: false, message: refused.replace('handing the chat off', 'switching the agent') }
+    this.rewindingTranscripts.add(path)
+    try {
+      await this.initializeSequence(key)
+      await this.eventLog.flush(path)
+      const stored = await this.transcripts.tail(key.workspaceRoot, path)
+      const fromProviderId = live[0]?.providerId ?? stored.at(-1)?.providerId ?? ''
+      const fromModelId = live[0]?.modelId ?? stored.at(-1)?.modelId ?? ''
+      if (fromProviderId === providerId && fromModelId === modelId)
+        return { ok: false, message: 'The chat is already on that agent and model.' }
+      const from = fromProviderId ? this.getAdapterForProviderId(fromProviderId) : undefined
+      const at = this.now()
+      const { writeHandoffMarkdown } = await import('./chat-export/chat-export-handoff')
+      const fromName = from?.displayName ?? (fromProviderId || 'another agent')
+      const written = writeHandoffMarkdown(
+        stored,
+        {
+          title: latestConversationTitle(stored) ?? 'Chat',
+          project: basename(key.workspaceRoot) || null,
+          engine: from?.displayName ?? null,
+          model: fromModelId || null,
+          workspaceRoot: key.workspaceRoot,
+          exportedAt: at,
+          ...handoffClock(),
+        },
+        {
+          truncated: (stored[0]?.seq ?? 1) > 1,
+          maxBytes: SWITCH_HANDOFF_MAX_BYTES,
+          intro:
+            `This is the text of this conversation so far, from its earlier session with ${fromName}. ` +
+            'The chat has moved to you, and you carry it on from here: the messages only, without the tool ' +
+            'calls or what they returned. The project is in front of you; read whatever you need.',
+        },
+      )
+      // Nothing said yet: there is nothing to carry, and the next message is
+      // simply the new agent's first.
+      const file = written.messages > 0 ? this.handoffFilePath(key, at) : null
+      if (file) await writeConversationStorage(key.workspaceRoot, file, written.markdown)
+      for (const session of live) {
+        const stopped = await this.stopSession({ sessionId: session.sessionId })
+        if (!stopped.ok) return stopped
+      }
+      if (file)
+        await this.appendWithoutSession(key, {
+          at,
+          providerId,
+          modelId,
+          sessionId: 'switched',
+          type: 'context_handed_off',
+          payload: {
+            path: file,
+            seedOwed: true,
+            providerSessionId: null,
+            switchedFrom: { providerId: fromProviderId, modelId: fromModelId },
+          },
+        })
+      return { ok: true, providerId, modelId, path: file }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'The chat could not be moved.' }
+    } finally {
+      this.rewindingTranscripts.delete(path)
+    }
+  }
+
+  /** An event for a chat with no live session, in its transcript's order. */
+  private async appendWithoutSession(
+    key: ConversationTranscriptInput,
+    fields: Pick<ConversationEvent, 'providerId' | 'modelId' | 'sessionId' | 'type' | 'payload'> & { at: number },
+  ): Promise<void> {
+    const path = this.transcriptPath(key.workspaceRoot, key.workspaceId, key.agentId)
+    const pending = (this.emissionTails.get(path) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(async () => {
+        const event: ConversationEvent = {
+          id: `conv_evt_${this.eventEpoch}_${++this.eventSequence}`,
+          seq: (this.sequences.get(path) ?? 0) + 1,
+          createdAt: fields.at,
+          workspaceId: key.workspaceId,
+          agentId: key.agentId,
+          sessionId: fields.sessionId,
+          providerId: fields.providerId,
+          modelId: fields.modelId,
+          type: fields.type,
+          payload: fields.payload,
+        }
+        this.sequences.set(path, event.seq!)
+        const outcome = await this.eventLog.append(path, event, key.workspaceRoot)
+        this.publish(key.workspaceRoot, path, event, outcome)
+      })
+    this.emissionTails.set(path, pending)
+    await pending
   }
 
   // Beside the chat's transcript, in its workspace's store: one file per
@@ -4773,6 +4906,13 @@ const HANDOFFS_FOLDER = 'handoffs'
  * still running lives in the child a handoff ends: a turn, a card waiting on
  * the person, an agent, a shell or a monitor, a side question.
  */
+/**
+ * How much of a chat a switch to another agent carries (`switchConversationProvider`):
+ * an agent that cannot read a handoff file gets it with its first message, so it
+ * is cut to fit one comfortably, newest messages kept.
+ */
+const SWITCH_HANDOFF_MAX_BYTES = 64 * 1024
+
 function handoffRefusal(session: RuntimeSession): string | null {
   if (session.status === 'starting') return 'The chat is still starting. Try again in a moment.'
   if (session.pendingApprovalRequestIds.size > 0)

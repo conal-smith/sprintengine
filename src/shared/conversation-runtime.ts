@@ -672,6 +672,15 @@ export type ConversationRewindResult = { ok: true } | { ok: false; message: stri
 export type ConversationHandoffInput = { key: ConversationKey }
 export type ConversationHandoffResult = { ok: true; path: string } | { ok: false; message: string }
 /**
+ * Move a chat to another agent CLI, or to a model its session cannot switch
+ * to live, carrying the conversation over as a handoff: the session it has
+ * ends, and the next message starts `providerId`'s afresh, given the chat so
+ * far inside a size budget. The chat's record is the caller's to re-bind.
+ */
+export type ConversationSwitchProviderInput = { key: ConversationKey; providerId: string; modelId: string }
+export type ConversationSwitchProviderResult =
+  { ok: true; providerId: string; modelId: string; path: string | null } | { ok: false; message: string }
+/**
  * Start a new chat, `newAgentId`, holding this one up to a point: through the
  * reply of the turn `turnId` names, or up to (not including) the user message
  * at `turnSeq`. The new chat carries on by itself; this one is not touched.
