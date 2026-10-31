@@ -91,6 +91,29 @@ export type ScheduledMessageUpdate =
 export const SCHEDULED_MESSAGES_GET_CHANNEL = 'scheduled-messages:get'
 export const SCHEDULED_MESSAGES_UPDATE_CHANNEL = 'scheduled-messages:update'
 export const SCHEDULED_MESSAGES_CHANGED_CHANNEL = 'scheduled-messages:changed'
+/**
+ * A message a window's own chat queued while its turn ran, held by main and
+ * sent from there when the turn ends, as a paired machine's queued message
+ * is: the window's state is gone with a reload or a crash, main's file is not.
+ */
+export const SCHEDULED_MESSAGES_HOLD_CHANNEL = 'scheduled-messages:hold'
+
+export type ScheduledMessageHoldRequest = ScheduledMessageChat & {
+  text: string
+  /** The window's own id for the message, so a retried ask holds it once. */
+  source: string
+}
+
+export type ScheduledMessageHoldAnswer = { ok: true; id: string } | { ok: false; reason: string }
+
+/** A hold as a window asked for it, or null for anything else. */
+export function parseScheduledMessageHold(input: unknown): ScheduledMessageHoldRequest | null {
+  if (!isRecord(input) || !isId(input.workspaceId) || !isId(input.agentId) || !isId(input.source)) return null
+  if (typeof input.text !== 'string') return null
+  const text = input.text.trim()
+  if (!text || text.length > MAX_SCHEDULED_MESSAGE_LENGTH) return null
+  return { workspaceId: input.workspaceId, agentId: input.agentId, text, source: input.source }
+}
 
 /** Ids are minted by the app and short; this only keeps a strange one out. */
 const MAX_ID_LENGTH = 200

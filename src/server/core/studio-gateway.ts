@@ -2,6 +2,11 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
 import type { ConversationEventType } from '../../shared/conversation-runtime'
 import { createAutomationService } from '../../main/automation/automation-service'
 import { createConversationTools, type ConversationToolsDeps } from '../../main/automation/conversation-tools'
+import {
+  createConversationChatTools,
+  type ConversationChatControl,
+} from '../../main/automation/conversation-chat-tools'
+import { LAUNCH_NOTICE_ORIGIN } from '../../main/agent-launch-notices'
 import { searchChatsHere } from '../../main/automation/conversation-search'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../shared/workspace-lifecycle'
 import {
@@ -158,6 +163,12 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
           return core.pullRequests.unwatchForAgent(key, { url })
         },
       },
+    }),
+    // One chat's agent sending to, reading, waiting on and stopping another
+    // chat here, through the same host a paired device's commands go through.
+    ...createConversationChatTools({
+      resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
+      chats: studioChatControl(core),
     }),
     // A paired desktop's Create PR on one of this machine's chats: the
     // checkout, git, the forge's CLI and the drafting CLI are here, and so is
@@ -385,6 +396,49 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
     whenGatewayReady: async () => {
       await core.whenDataDirFree
       return automationService.whenGatewayReady()
+    },
+  }
+}
+
+/**
+ * This core's chats as one agent drives another (conversation-chat-tools.ts).
+ * Its sends are recorded as Studio's, not the person's, so a chat an agent
+ * messages keeps its place in the lists ordered by when the person last wrote.
+ */
+function studioChatControl(core: StudioCore): ConversationChatControl {
+  let host: ReturnType<StudioCore['createConversationHost']> | null = null
+  const hostOf = () => (host ??= core.createConversationHost({ origin: LAUNCH_NOTICE_ORIGIN }))
+  return {
+    chatAgentsOf: (workspaceId) => {
+      const record = core.workspaceRegistry.getRecord(workspaceId)
+      if (!record || record.remoteOrigin) return null
+      return Object.entries(record.agents)
+        .filter(([, agent]) => agent?.runtimeKind === 'conversation')
+        .map(([agentId]) => agentId)
+    },
+    resolveKey: (workspaceId, agentId) => hostOf().resolveKey(workspaceId, agentId),
+    chatTitle: (workspaceId) => core.workspaceRegistry.getRecord(workspaceId)?.name,
+    session: (workspaceId, agentId) => {
+      const listed = core.conversations.listSessions()
+      if (!listed.ok) return undefined
+      return listed.sessions
+        .filter((session) => session.workspaceId === workspaceId && session.agentId === agentId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    },
+    permissionOf: (key) => hostOf().permissionOf?.(key) ?? 'manual',
+    command: (key, clientId, commandId, command) => hostOf().command(key, clientId, commandId, command),
+    readPage: async (key, page) => {
+      if (page.before !== undefined) {
+        const read = await core.conversations.readConversationPage(key, page.before, page.turns)
+        return read.ok
+          ? { ok: true, events: read.page.events, hasMore: read.page.hasMore, before: read.page.beforeCursor }
+          : read
+      }
+      const read = await core.conversations.readConversationSync(key, { turnLimit: page.turns })
+      if (!read.ok) return read
+      if (read.kind === 'snapshot')
+        return { ok: true, events: read.page.events, hasMore: read.page.hasMore, before: read.page.beforeCursor }
+      return { ok: true, events: read.events, hasMore: false, before: null }
     },
   }
 }

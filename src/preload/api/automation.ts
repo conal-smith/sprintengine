@@ -2,6 +2,13 @@ import type { IpcRendererEvent } from 'electron'
 import { ipc as ipcRenderer } from '../ipc-router'
 import { AUTOMATION_GET_STATUS_CHANNEL, type AutomationServerStatus } from '../../shared/automation'
 import {
+  MCP_HTTP_CREATE_CHANNEL,
+  MCP_HTTP_REVOKE_CHANNEL,
+  MCP_HTTP_STATUS_CHANNEL,
+  type McpHttpCreateResult,
+  type McpHttpStatus,
+} from '../../shared/mcp-http'
+import {
   TAILNET_CANCEL_PAIRING_CHANNEL,
   TAILNET_EVENT_CHANNEL,
   TAILNET_GET_LIVE_STATE_CHANNEL,
@@ -42,6 +49,11 @@ import type { ElectronApi } from '../../shared/electron-api'
 export const automationApi = {
   automationGetStatus: (): Promise<AutomationServerStatus> =>
     ipcRenderer.invoke(AUTOMATION_GET_STATUS_CHANNEL) as Promise<AutomationServerStatus>,
+  mcpHttpStatus: (): Promise<McpHttpStatus> => ipcRenderer.invoke(MCP_HTTP_STATUS_CHANNEL) as Promise<McpHttpStatus>,
+  mcpHttpCreate: (name: string): Promise<McpHttpCreateResult> =>
+    ipcRenderer.invoke(MCP_HTTP_CREATE_CHANNEL, name) as Promise<McpHttpCreateResult>,
+  mcpHttpRevoke: (id: string): Promise<McpHttpStatus> =>
+    ipcRenderer.invoke(MCP_HTTP_REVOKE_CHANNEL, id) as Promise<McpHttpStatus>,
   tailnetGetStatus: (): Promise<TailnetRemoteStatus> =>
     ipcRenderer.invoke(TAILNET_GET_STATUS_CHANNEL) as Promise<TailnetRemoteStatus>,
   tailnetSetEnabled: (enabled: boolean): Promise<TailnetRemoteStatus> =>
@@ -95,6 +107,9 @@ export const automationApi = {
 } satisfies Pick<
   ElectronApi,
   | 'automationGetStatus'
+  | 'mcpHttpStatus'
+  | 'mcpHttpCreate'
+  | 'mcpHttpRevoke'
   | 'tailnetGetStatus'
   | 'tailnetSetEnabled'
   | 'tailnetOfferPairing'

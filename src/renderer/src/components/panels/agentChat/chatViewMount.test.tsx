@@ -1201,6 +1201,71 @@ test('a queued message is a row of the composer tray, not a bubble over the tran
   }
 })
 
+test('a message queued in words on a chat here is held by main, so a reload does not lose it', async () => {
+  const turn = runningTurnSend()
+  const held: Array<Record<string, unknown>> = []
+  const chat = await mountChat({
+    sendTurn: turn.sendTurn,
+    api: {
+      scheduledMessages: async () => ({ messages: [] }),
+      updateScheduledMessage: async () => ({ messages: [] }),
+      onScheduledMessagesChanged: () => () => undefined,
+      holdQueuedMessage: vi.fn(async (request: Record<string, unknown>) => {
+        held.push(request)
+        return { ok: true, id: 'held-1' }
+      }),
+    },
+  })
+  try {
+    await chat.act(async () => chat.type('Investigate the flaky test'))
+    await chat.act(async () => chat.enter())
+    const localTurnId = turn.calls[0]?.localTurnId
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('user_message', { turnId: 't1', text: 'x', localTurnId }) })
+      chat.emit({ type: 'event', event: event('turn_started', { turnId: 't1' }) })
+    })
+    await chat.act(async () => chat.type('Use the staging config'))
+    await chat.act(async () => chat.enter())
+    expect(held).toHaveLength(1)
+    expect(held[0]).toMatchObject({ text: 'Use the staging config' })
+    expect(typeof held[0]?.source).toBe('string')
+    expect(chat.host.querySelector('[aria-label="Queued message"]'), 'not kept in the view').toBeNull()
+    expect(turn.sendTurn).toHaveBeenCalledOnce()
+  } finally {
+    turn.release()
+    await chat.unmount()
+  }
+})
+
+test('a message main could not hold waits in the view, whole, and says why', async () => {
+  const turn = runningTurnSend()
+  const chat = await mountChat({
+    sendTurn: turn.sendTurn,
+    api: {
+      scheduledMessages: async () => ({ messages: [] }),
+      updateScheduledMessage: async () => ({ messages: [] }),
+      onScheduledMessagesChanged: () => () => undefined,
+      holdQueuedMessage: async () => ({ ok: false, reason: 'Too many messages are waiting in this chat.' }),
+    },
+  })
+  try {
+    await chat.act(async () => chat.type('Investigate the flaky test'))
+    await chat.act(async () => chat.enter())
+    const localTurnId = turn.calls[0]?.localTurnId
+    await chat.act(async () => {
+      chat.emit({ type: 'event', event: event('user_message', { turnId: 't1', text: 'x', localTurnId }) })
+      chat.emit({ type: 'event', event: event('turn_started', { turnId: 't1' }) })
+    })
+    await chat.act(async () => chat.type('Use the staging config'))
+    await chat.act(async () => chat.enter())
+    expect(chat.host.querySelector('[aria-label="Queued message"]')?.textContent).toContain('Use the staging config')
+    expect(chat.host.textContent).toContain('Too many messages are waiting in this chat')
+  } finally {
+    turn.release()
+    await chat.unmount()
+  }
+})
+
 test('a message sent while the turn runs waits in the queue until Send now hands it to the turn', async () => {
   const turn = runningTurnSend()
   // Even an agent that takes messages mid-turn gets one only when the person

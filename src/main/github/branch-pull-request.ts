@@ -164,6 +164,15 @@ export async function readPullRequestState(
 
   const json = parseJsonDocument(result.stdout)
   if (!isRecord(json)) return { settled: false, reason: 'bad-output' }
+  return parseStateView(json, (deps.now ?? Date.now)())
+}
+
+/**
+ * A pull request's fields → its state read. The fields are `VIEW_FIELDS`, and
+ * GraphQL names them the same, so the watch's batched fingerprint
+ * (`pull-request-fingerprint.ts`) answers a state read with this too.
+ */
+export function parseStateView(json: Record<string, unknown>, now: number): PullRequestStateRead {
   const state = readState(json)
   if (!state) return { settled: false, reason: 'bad-output' }
   const title = typeof json.title === 'string' && json.title.length > 0 ? json.title : null
@@ -171,7 +180,7 @@ export async function readPullRequestState(
     settled: true,
     state,
     isDraft: json.isDraft === true && state === 'open',
-    stateAt: (deps.now ?? Date.now)(),
+    stateAt: now,
     headRefName: typeof json.headRefName === 'string' && json.headRefName.length > 0 ? json.headRefName : null,
     title,
     openedAt: parseTimestamp(json.createdAt),
@@ -180,7 +189,13 @@ export async function readPullRequestState(
   }
 }
 
-export type GhOutcome = { ok: true; stdout: string } | { ok: false; reason: PullRequestReadFailure; stderr?: string }
+/**
+ * A failed call keeps what it printed: `gh api` exits non-zero on a GraphQL
+ * answer that carries errors beside its data (one aliased pull request that
+ * is gone), and on a 304, whose headers are the whole answer.
+ */
+export type GhOutcome =
+  { ok: true; stdout: string } | { ok: false; reason: PullRequestReadFailure; stderr?: string; stdout?: string }
 
 /**
  * When the API quota that refused a call comes back, ms epoch, or null when
@@ -246,7 +261,12 @@ export async function runGh(
     // `gh pr list` exits 0 with `[]` for a branch with no pull requests, so a
     // non-zero exit is always a failure to ask — never "there are none".
     if (raced.code !== 0)
-      return { ok: false, reason: RATE_LIMITED.test(raced.stderr) ? 'rate-limited' : 'gh-failed', stderr: raced.stderr }
+      return {
+        ok: false,
+        reason: RATE_LIMITED.test(raced.stderr) ? 'rate-limited' : 'gh-failed',
+        stderr: raced.stderr,
+        stdout: raced.stdout,
+      }
     return { ok: true, stdout: raced.stdout }
   } catch {
     // The runner does not throw, but a caller-supplied one might: an exception

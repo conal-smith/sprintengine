@@ -132,6 +132,8 @@ export type {
   CapabilityDiagnostic,
 } from './skills'
 import type { AutomationServerStatus } from './automation'
+import type { McpHttpCreateResult, McpHttpStatus } from './mcp-http'
+import type { CliUpdateAllItem, CliUpdateAllResult } from './ipc/cli-update-all'
 import type {
   StudioLocalAppOfferInput,
   StudioLocalAppOfferView,
@@ -307,7 +309,12 @@ import type { ConversationCommandCatalog } from './conversation/commands'
 import type { UsageLimitsState } from './usage-limits'
 import type { UsageReportRequest, UsageReportResult } from './usage-report'
 import type { UsageLimitResumeState, UsageLimitResumeUpdate } from './usage-limit-resume'
-import type { ScheduledMessagesState, ScheduledMessageUpdate } from './scheduled-messages'
+import type {
+  ScheduledMessageHoldAnswer,
+  ScheduledMessageHoldRequest,
+  ScheduledMessagesState,
+  ScheduledMessageUpdate,
+} from './scheduled-messages'
 import type {
   AgentLaunchPreviewInput,
   AgentLaunchPreviewResult,
@@ -869,6 +876,11 @@ export type ElectronApi = {
    */
   workspaceMarkUnread: (workspaceId: string) => Promise<WorkspaceMarkUnreadResult>
   automationGetStatus: () => Promise<AutomationServerStatus>
+  /** The gateway's loopback HTTP endpoint: where it listens and the clients given a token. */
+  mcpHttpStatus: () => Promise<McpHttpStatus>
+  /** Make a token for a named client; the token comes back this once and is kept only hashed. */
+  mcpHttpCreate: (name: string) => Promise<McpHttpCreateResult>
+  mcpHttpRevoke: (id: string) => Promise<McpHttpStatus>
   /**
    * The applications on this machine paired with Studio's owner socket. Like
    * the tailnet's pairing, reachable from a window only: no socket method can
@@ -1905,6 +1917,10 @@ export type ElectronApi = {
   cliInstallMethods: (cli: AgentCli, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallMethodInfo[]>
   cliInstall: (input: CliInstallInput, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallResult>
   cliUpdate: (cli: AgentCli, runtime?: Partial<CliRuntimeSettings>) => Promise<CliInstallResult>
+  /** Update every CLI with a newer version published, on this machine and each WSL distribution turned on. */
+  cliUpdateAll: () => Promise<CliUpdateAllResult>
+  /** Every item of a running Update everything, each time one moves. */
+  onCliUpdateAllProgress: (cb: (items: CliUpdateAllItem[]) => void) => () => void
   /** An install's or update's output, for the CLI on the machine `hostId` names (absent: this one). */
   onCliInstallOutput: (cli: AgentCli, cb: (chunk: string) => void, hostId?: string) => () => void
   // Model discovery (src/shared/ipc/cli-model-discovery.ts): ask the installed
@@ -1934,6 +1950,8 @@ export type ElectronApi = {
   // when their time comes (src/main/scheduled-messages), and every change after.
   scheduledMessages: () => Promise<ScheduledMessagesState>
   updateScheduledMessage: (update: ScheduledMessageUpdate) => Promise<ScheduledMessagesState>
+  /** Hold a message this window's chat queued, in main, to go when the chat's turn ends. */
+  holdQueuedMessage: (request: ScheduledMessageHoldRequest) => Promise<ScheduledMessageHoldAnswer>
   onScheduledMessagesChanged: (listener: (state: ScheduledMessagesState) => void) => () => void
   // One-shot text generation on the person's own agent CLI (their login, no
   // API key): today the chat title from a first prompt. Never rejects — a

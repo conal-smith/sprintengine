@@ -18,6 +18,7 @@ import { createCanvasTools } from '../automation/canvas-tools'
 import { createEditorTools } from '../automation/editor-tools'
 import { createTailnetTools } from '../automation/tailnet/tailnet-tools'
 import { createTourTools } from '../automation/tour-tools'
+import { createConversationChatTools } from '../automation/conversation-chat-tools'
 import { createPullRequestTools } from '../../server/pull-requests/pull-request-tools'
 import { STUDIO_PLUGIN_ID } from './studio-plugin'
 import { test } from 'vitest'
@@ -84,6 +85,7 @@ test('studio-plugin-skills', async () => {
       ...createTailnetTools({ resolveTailnet: () => null }),
       ...createTourTools({} as never),
       ...createPullRequestTools({} as never),
+      ...createConversationChatTools({} as never),
     ]
     return new Set(registrations.map((registration) => registration.name.replace(/\./g, '_')))
   }
