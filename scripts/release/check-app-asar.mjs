@@ -70,28 +70,14 @@ export const ALLOWED_PACKAGES = new Set([
   // node-pty's
   'node-addon-api',
   // Export chat writes Word documents with docx, which main loads lazily on
-  // the first export. The rest are what it depends on. nanoid is in
+  // the first export. The rest are what it depends on: fflate zips the
+  // document (docx 9.15 swapped jszip and hash.js for it). nanoid is in
   // devDependencies, since only the renderer imports it, and ships because
-  // docx depends on it. pako sits under jszip in the lock but electron-builder
-  // lays it out at the top level. @types/node and undici-types are types only,
-  // and the `*.d.ts` exclude in build.files leaves next to nothing of them.
+  // docx depends on it. @types/node and undici-types are types only, and the
+  // `*.d.ts` exclude in build.files leaves next to nothing of them.
   'docx',
   '@types/node',
-  'hash.js',
-  'inherits',
-  'minimalistic-assert',
-  'jszip',
-  'lie',
-  'immediate',
-  'pako',
-  'readable-stream',
-  'core-util-is',
-  'isarray',
-  'process-nextick-args',
-  'safe-buffer',
-  'string_decoder',
-  'util-deprecate',
-  'setimmediate',
+  'fflate',
   'nanoid',
   'undici-types',
 ])
