@@ -108,7 +108,7 @@ import type {
 } from '../shared/conversation-index'
 import { presentToolItem } from '../shared/conversation/presentation'
 import { plainLineBreaks } from '../shared/conversation/lineBreaks'
-import { expandQuotesForAgent } from '../shared/chat-quotes'
+import { expandQuotesForAgent, quotesToInlineText } from '../shared/chat-quotes'
 import { applyPromptCacheEvent } from '../shared/prompt-cache'
 import { ConversationApprovalRuleStore } from './conversation-approval-rules'
 import { ConversationAttachmentStore } from './conversation-attachment-store'
@@ -2791,8 +2791,11 @@ export class ConversationRuntime {
     if (fromPerson && typeof event.payload?.text === 'string') {
       // An image-only turn carries no text, and an empty excerpt would pin the
       // chat's "first message" to nothing: the first turn with words keeps it.
-      if (!session.firstUserText && event.payload.text.trim()) session.firstUserText = event.payload.text.slice(0, 240)
-      session.lastUserText = event.payload.text.slice(0, 240)
+      // Excerpts are shown as words, so a quote is read as its passage, and
+      // cut after that: a cut token would leave its address half-written.
+      const said = quotesToInlineText(event.payload.text)
+      if (!session.firstUserText && said.trim()) session.firstUserText = said.slice(0, 240)
+      session.lastUserText = said.slice(0, 240)
       session.lastAssistantText = ''
       session.lastAssistantTail = ''
     } else if (event.type === 'content_delta' && typeof event.payload?.text === 'string') {

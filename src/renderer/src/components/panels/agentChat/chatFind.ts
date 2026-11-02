@@ -22,6 +22,7 @@ import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
 import { chatFindSegmentKey } from './chatFindSegment'
 import type { ConversationTimelineRow } from './conversationTimeline'
 import { planBody, planTitle } from './planCard'
+import { quotesToPlainText } from '../../../../../shared/chat-quotes'
 
 /** Past this the count stops and reads "1000+": a find is for locating, not for census. */
 export const CHAT_FIND_MATCH_CAP = 1000
@@ -224,7 +225,8 @@ export function chatFindSegments(row: ConversationTimelineRow): ChatFindSegment[
   }
   if (row.kind === 'user') {
     if (row.entry.origin?.kind !== 'studio' && row.entry.text.trim())
-      add(chatFindSegmentKey.user(row.entry.id), row.entry.text)
+      // A quote is found by its passage and comment, never by its address.
+      add(chatFindSegmentKey.user(row.entry.id), quotesToPlainText(row.entry.text))
   }
   if (row.kind === 'assistant' || row.kind === 'approval') {
     // Decisions draw above the reply's prose, so their plans come first.

@@ -232,6 +232,25 @@ export function quotesToPlainText(text: string): string {
   })
 }
 
+/**
+ * The message on one line's worth of words: each quote as its passage in
+ * quotation marks, cut short, with the comment after it in brackets. What a
+ * title, a preview or an excerpt reads, where a block would not fit.
+ */
+export function quotesToInlineText(text: string): string {
+  const quotes = collectQuotes(text)
+  if (!quotes.length) return text
+  let out = ''
+  let at = 0
+  for (const quote of quotes) {
+    const passage = quoteLabel({ quote: quote.quote, exact: quote.exact, comment: '' })
+    const comment = quote.comment.replace(/\s+/gu, ' ').trim()
+    out += `${text.slice(at, quote.from)}“${passage}”${comment ? ` (${comment})` : ''}`
+    at = quote.to
+  }
+  return `${out}${text.slice(at)}`
+}
+
 /** What a chip says: its comment when it has one, otherwise the start of the passage. */
 export function quoteLabel(quote: Pick<ChatQuote, 'quote' | 'exact' | 'comment'>, max = 64): string {
   const comment = quote.comment.replace(/\s+/gu, ' ').trim()

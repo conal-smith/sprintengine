@@ -18,6 +18,7 @@ import { presentToolItem, summarizeToolGroup } from '../../shared/conversation/p
 import type { ConversationEvent } from '../../shared/conversation-runtime'
 import { STUDIO_PRODUCT_NAME } from '../../shared/product-identity'
 import { parseExportMarkdown } from './chat-export-markdown-parse'
+import { quotesToReadableMarkdown } from '../../shared/chat-quotes'
 
 // A chat as an export reads it: the one model the Markdown, Word and PDF
 // writers all write from, so the three never disagree about what the chat
@@ -203,7 +204,8 @@ function messageOf(
         }
       })
       const files = (entry.files ?? []).map((file) => file.path)
-      const blocks = parseExportMarkdown(entry.text)
+      // A quote is exported as its passage and comment, never as its token.
+      const blocks = parseExportMarkdown(quotesToReadableMarkdown(entry.text))
       if (!blocks.length && !images.length && !files.length) return null
       return {
         kind: 'user',

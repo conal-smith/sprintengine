@@ -9,6 +9,7 @@ import type { ConversationImageAttachment } from '../../../../../shared/conversa
 import { AttachmentThumbnail } from '../ComposerAttachmentStrip'
 import { GhostButton, Tooltip, TruncatedText } from '../../ui'
 import { ComposerTrayRow } from './composerTray'
+import { quotesToInlineText } from '../../../../../shared/chat-quotes'
 
 export type QueuedTurnSendNow = {
   // `steer` delivers into the running turn; `interrupt` stops it, and the queue
@@ -156,7 +157,11 @@ export function QueuedTurnRow({
         ))}
         {carries ? <span className="shrink-0 text-meta text-[color:var(--text-subtle)]">{carries}</span> : null}
         {text ? (
-          <TruncatedText as="span" text={text} className="min-w-0 text-meta italic text-[color:var(--text-muted)]" />
+          <TruncatedText
+            as="span"
+            text={quotesToInlineText(text)}
+            className="min-w-0 text-meta italic text-[color:var(--text-muted)]"
+          />
         ) : null}
       </span>
     </ComposerTrayRow>

@@ -392,6 +392,18 @@ as every reader did before, and a message without one is the person's. Its
 `reason` gained `pull-request-watch` (2026-10-11), a wake about a pull request
 the chat's agent asked the desktop to watch; a reader that does not know a
 reason still reads the message as Studio's, without one.
+A quote of an earlier reply (2026-11-02) rides inside a `user_message`'s
+`text` on the desktop, as a Markdown link with a scheme of its own
+(`src/shared/chat-quotes.ts`), and never on the wire: the conversation stream
+turns each one into its words — the passage as a blockquote, then
+`Comment: …` — before it rewrites host paths (`quotesForWire` in
+`tailnet-conversation-stream.ts`). So `text` still means the person's words
+alone, no version moves and no capability is needed, and a phone or a paired
+Studio of any release shows the quote as words. Nothing a client sends
+changed either: a chat on a paired machine quotes as a blockquote, so no
+desktop is handed a token an older release would pass to its agent raw. If a
+client is ever to draw quotes as chips, that is a capability it advertises
+and the stream keeps the token for it alone.
 A chat's rest and read state are the `conversation-lifecycle` capability: a
 desktop that advertises it leaves the chats it has settled out of the list, sends it in its sidebar's order, names
 each chat's `chatTitle`, `lastUserMessageAt`, `lastTurnEndedAt` and

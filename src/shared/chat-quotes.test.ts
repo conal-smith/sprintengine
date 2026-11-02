@@ -9,6 +9,7 @@ import {
   quoteAsMarkdown,
   quoteLabel,
   quoteToken,
+  quotesToInlineText,
   quotesToPlainText,
   quotesToReadableMarkdown,
   withQuoteComment,
@@ -159,4 +160,10 @@ test('a passage is found again by its text, and a repeat by the context either s
 test('a passage no longer in the reply is not found', () => {
   expect(locateQuote('Something else entirely.', { exact: 'the tests', prefix: '', suffix: '' })).toBeNull()
   expect(locateQuote('anything', { exact: '  ', prefix: '', suffix: '' })).toBeNull()
+})
+
+test('on one line a quote is its passage in quotation marks with the comment in brackets', () => {
+  const text = `Why ${quoteToken(quote({ comment: 'a\nnote' }))} and ${quoteToken(quote({ n: 2 }))}?`
+  expect(quotesToInlineText(text)).toBe('Why “Keep the cache warm.” (a note) and “Keep the cache warm.”?')
+  expect(quotesToInlineText('plain')).toBe('plain')
 })

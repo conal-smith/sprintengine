@@ -33,6 +33,7 @@ import {
 } from '../../../server/conversation-stream-shaping'
 import type { ConversationGatewayHost } from './tailnet-conversation-host'
 import { redactConversationValue } from '../../conversation-tool-details'
+import { mayHoldQuotes, quotesToPlainText } from '../../../shared/chat-quotes'
 import {
   createWebSocketFrameDecoder,
   encodeCloseFrame,
@@ -372,8 +373,10 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   }
   // Paths are rewritten against the conversation the socket follows, so its
   // own files read workspace-relative, as they do on the desktop.
+  // A quote in a message leaves as its words (`quotesForWire`), before the
+  // paths are rewritten, so a path inside a quoted passage is rewritten too.
   const redact = <T>(frame: T, workspaceRoot: string | null = currentKey?.workspaceRoot ?? null): T =>
-    redactHostPaths(redactConversationValue(frame), { home: homedir(), workspaceRoot })
+    redactHostPaths(quotesForWire(redactConversationValue(frame)), { home: homedir(), workspaceRoot })
   /** Extend a waiting delta with a later one of the same message. */
   const extend = (into: LiveEntry & { delta: object }, event: ConversationEvent): void => {
     const text = String(event.payload!.text)
@@ -1075,6 +1078,36 @@ function pathRewriter(home: string, workspaceRoot: string | null): PathRewriter 
   if (rewriters.size > 64) rewriters.clear()
   rewriters.set(cacheKey, rewrite)
   return rewrite
+}
+
+/**
+ * A message's quotes as a device reads them: the passage and its comment as
+ * words (`quotesToPlainText`), never the token the desktop keeps them in
+ * (shared/chat-quotes.ts). The `text` of a `user_message` has always been the
+ * person's words alone, and a phone or a paired Studio reading it may be any
+ * release, so the token stays on this machine (docs/compatibility.md, "Direct
+ * conversation lane"). Only a frame that holds one is copied.
+ */
+export function quotesForWire<T>(value: T): T {
+  const walk = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) {
+      const mapped = entry.map(walk)
+      return mapped.some((child, index) => child !== entry[index]) ? mapped : entry
+    }
+    if (!entry || typeof entry !== 'object') return entry
+    const record = entry as Record<string, unknown>
+    const payload = record.payload as Record<string, unknown> | undefined
+    if (record.type === 'user_message' && typeof payload?.text === 'string' && mayHoldQuotes(payload.text))
+      return { ...record, payload: { ...payload, text: quotesToPlainText(payload.text) } }
+    let changed = false
+    const next: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(record)) {
+      next[key] = walk(child)
+      if (next[key] !== child) changed = true
+    }
+    return changed ? next : entry
+  }
+  return walk(value) as T
 }
 
 /**

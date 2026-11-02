@@ -29,6 +29,7 @@ import type {
   ModuleActivityRegistry,
 } from '../../shared/modules/activity-service'
 import { redactEvent } from '../companion-agent-service'
+import { quotesToPlainText } from '../../shared/chat-quotes'
 
 export type ModuleActivityWorkspace = {
   id: string
@@ -205,7 +206,8 @@ export function promptsOf(
     const turnId = typeof payload.turnId === 'string' ? payload.turnId : null
     if (event.type === 'user_message') {
       if (readConversationMessageOrigin(payload.origin)) continue
-      const text = typeof payload.text === 'string' ? payload.text.trim() : ''
+      // An extension reads the person's words: a quote as its passage and comment.
+      const text = typeof payload.text === 'string' ? quotesToPlainText(payload.text).trim() : ''
       current = null
       if (!text || event.createdAt < from || event.createdAt >= to) continue
       current = {
