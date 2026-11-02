@@ -99,13 +99,6 @@ const PATH_EXEMPTIONS = [
     rules: ['no-inline-hex'],
     max: { 'no-inline-hex': 1 },
   },
-  {
-    // (c) Brand SVG asset: the external editors' marks, in the colours
-    // their vendors publish, for the open-in-editor control.
-    path: 'src/renderer/src/components/brand/EditorMarks.tsx',
-    rules: ['no-inline-hex'],
-    max: { 'no-inline-hex': 33 },
-  },
 ]
 
 // Five entries were retired when the list was measured, 2026-09-08. Three

@@ -49,7 +49,7 @@ letterforms). Anything outside that band is drift, not a variant.
   exceptions: `LifecycleGlyph`, which inks each state in its lifecycle tone
   (below), and the two **identity-colour** families ruled 2026-09-06
   (principles.md → "Identity colour"): vendor marks in their vendors' colours
-  (`CliIcon`, `brand/EditorMarks`), and `FileTypeGlyph` under `tone="kind"`,
+  (`CliIcon`), and `FileTypeGlyph` under `tone="kind"`,
   which inks by language from the `--sem-color-mark-*` ramp — and a third,
   ruled 2026-10-04: `MachineGlyph`, which inks a machine's kind in that
   machine's colour (Machine kinds, below).

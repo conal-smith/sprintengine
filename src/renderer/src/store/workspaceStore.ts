@@ -39,7 +39,6 @@ import type {
 } from '../types/appTheme'
 import { noteLaunchedAgentArrived, type LaunchedAgentProjection } from '../utils/launchedAgentProjection'
 import type { DiscoveredCliModelCatalog } from '../../../shared/cli-model-catalog'
-import type { FolderOpenTargetId } from '../../../shared/folder-open-targets'
 import type { BranchPullRequest } from '../../../shared/git/pull-request'
 import type { TextGenerationWritingStyle } from '../../../shared/text-generation/writing-style'
 import type { CommandId } from '../commands/commandRegistry'
@@ -299,7 +298,6 @@ export interface WorkspaceStore
   setTextGenerationEngine: (selection: AgentCliModelSelection | null) => void
   setTextGenerationWritingStyle: (style: Partial<TextGenerationWritingStyle>) => void
   setLastNewChatAgent: (choice: NewChatAgentChoice) => void
-  setLastFolderOpenTarget: (target: FolderOpenTargetId) => void
   /** The Design door's viewing scope. Null returns it to following the active workspace. */
   setDesignProjectScopePath: (path: string | null) => void
   /**
