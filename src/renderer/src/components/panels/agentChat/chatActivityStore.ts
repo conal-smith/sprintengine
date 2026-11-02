@@ -2,10 +2,9 @@ import { useSyncExternalStore } from 'react'
 
 import type { ChatActivityKind } from './chatActivity'
 
-// What each open chat says it touched, for the surfaces outside it that draw
-// the same rows: the title bar's pill, which stands in for the chat's card
-// when the chat is too narrow to dock it. The chat view publishes; nothing
-// here reads a transcript.
+// What each open chat says it touched, for the title bar's pill, which draws
+// the rows outside the chat. The chat view publishes; nothing here reads a
+// transcript.
 
 /** One row as every surface draws it. */
 export type ChatActivityRow = {
@@ -23,8 +22,6 @@ export type ChatActivityRow = {
 
 export type PublishedChatActivity = {
   rows: ChatActivityRow[]
-  /** The chat docks its card itself, so no other surface draws the rows. */
-  docked: boolean
   open: (kind: ChatActivityKind) => void
 }
 

@@ -233,8 +233,7 @@ export function WorkspaceHeader<MenuItem extends string>({
           whole workspace card, terminals included, every frame (the call
           workspaceAsideColumn.tsx already made for this same column). */}
       <div className="flex shrink-0 items-center">
-        {/* The focused chat's "what the agent touched" card, condensed to its
-            glyphs while the chat is too narrow to dock it. */}
+        {/* What the focused chat's agent touched, as a pill of glyphs. */}
         {globalSurfaceActive ? null : <ChatActivityPill workspaceId={activeWorkspaceId} />}
         {actionsSlot}
         {/* The toolbar's two remaining members are both conditional now that the
