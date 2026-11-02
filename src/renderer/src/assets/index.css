@@ -2514,6 +2514,23 @@ samp,
   background-color: var(--sem-color-find-match-current);
 }
 
+/* Quoted passages (agentChat/quoteHighlights.tsx), painted the same way: the
+   gold tint behind a passage a quote in the draft cites, half as strong for a
+   quote already sent. Tint alone, no underline, so a link or emphasis inside
+   the passage keeps its own line. The flash is the tint once more over the
+   mark, for the moment "Go to source" lands. */
+::highlight(chat-quote) {
+  background-color: var(--sem-color-quote-tint);
+}
+
+::highlight(chat-quote-sent) {
+  background-color: var(--sem-color-quote-tint-sent);
+}
+
+::highlight(chat-quote-flash) {
+  background-color: var(--sem-color-quote-tint);
+}
+
 /* The lines an agent opened a file at (editor.open / open_diff): a "just
    changed" tint that fades over one pulse, the same grammar and the same
    duration as the row pulse above, in the accent's soft tint because it marks

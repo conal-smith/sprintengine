@@ -163,6 +163,8 @@ import {
   insertQuoteIntoDraft,
   quoteSelectionInto,
 } from './agentChat/quoteSelection'
+import { useChatQuotes } from './agentChat/useChatQuotes'
+import { ChatQuoteActionsProvider } from './agentChat/chatQuotes'
 import {
   forwardPasteToComposer,
   isEditableElement,
@@ -2720,6 +2722,37 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     [setDraft],
   )
   quoteIntoComposerRef.current = quoteIntoComposer
+  // A passage of one reply cited from the transcript: a chip in the draft,
+  // its comment, and its mark in the reply (agentChat/useChatQuotes).
+  const chatQuotes = useChatQuotes({
+    draft,
+    setDraft,
+    composerRef,
+    pendingCaretRef,
+    rows: timelineRows,
+    pendingTexts: queuedTurn?.text ? [queuedTurn.text] : [],
+    transcriptRef,
+    listRef,
+    scrollToRow: (index) => {
+      setAnchoredUserId(null)
+      void listRef.current?.scrollToIndex({ index, viewPosition: 0, animated: false })
+    },
+    pauseFollowing: () => {
+      atBottomRef.current = false
+      setAtBottom(false)
+    },
+    hasMore,
+    loadingEarlier,
+    loadEarlier,
+    submit: submitComposer,
+  })
+  // A chat on another machine keeps the blockquote: the token a quote rides in
+  // stays on the machine that made it, and the wire carries messages as words
+  // (docs/compatibility.md), so the far side would neither mark the passage
+  // nor, on an older release, expand it for its agent.
+  const citeIntoComposer = transport.kind === 'local' ? chatQuotes.cite : undefined
+  const goToQuoteSource = chatQuotes.goToSource
+  const quoteActions = useMemo(() => ({ goToSource: goToQuoteSource }), [goToQuoteSource])
   // Replay: the conversation played back from its first message, drawn over
   // this view (agentChat/conversationReplayView). It reads the whole log, so
   // the turns this view has not paged in yet are fetched first; leaving, or
@@ -2760,7 +2793,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   quoteSelectionRef.current = () => {
     const transcript = transcriptRef.current
     if (!transcript || composerInputDisabled) return false
-    return quoteSelectionInto(transcript, document.getSelection(), quoteIntoComposer)
+    return quoteSelectionInto(transcript, document.getSelection(), quoteIntoComposer, citeIntoComposer)
   }
   // Restart agent session (`chat.restartSession`): end the agent's process the
   // way Settle and the idle sweep do — suspended, so the session keeps its
@@ -4158,7 +4191,9 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                       onFlashEnd={clearFlash}
                     >
                       <SubagentStopProvider value={stopSubagent}>
-                        <TimelineRow key={item.id} row={item} chrome={chrome} />
+                        <ChatQuoteActionsProvider value={quoteActions}>
+                          <TimelineRow key={item.id} row={item} chrome={chrome} />
+                        </ChatQuoteActionsProvider>
                       </SubagentStopProvider>
                     </ConversationRowFrame>
                   </>
@@ -4225,7 +4260,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               enabled={!composerInputDisabled && viewActive}
               shortcut={quoteShortcutLabel}
               onQuote={quoteIntoComposer}
+              onCite={citeIntoComposer}
             />
+            {chatQuotes.highlights}
+            {chatQuotes.editor}
           </div>
 
           <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
@@ -4579,6 +4617,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     ...stashPicker.comboboxProps,
                   }}
                   value={draft}
+                  renderQuoteChip={chatQuotes.renderQuoteChip}
                   historyScope={`${workspaceId}\0${agentId}`}
                   onBlur={flushDraft}
                   leavesDrop={dataTransferHasDroppableFiles}

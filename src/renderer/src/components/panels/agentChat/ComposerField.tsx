@@ -1,4 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useLayoutEffect, useReducer, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { history, historyKeymap, insertNewline, isolateHistory, standardKeymap } from '@codemirror/commands'
 import {
   deleteMarkupBackward,
@@ -8,7 +9,9 @@ import {
 } from '@codemirror/lang-markdown'
 import { Annotation, Compartment, EditorSelection, EditorState, Prec, Transaction } from '@codemirror/state'
 import { EditorView, keymap, placeholder as placeholderExtension } from '@codemirror/view'
+import type { ChatQuote } from '../../../../../shared/chat-quotes'
 import { markdownLivePreview } from './markdownLivePreview'
+import { composerQuoteChips, type QuoteChipHosts } from './composerQuoteChips'
 
 /**
  * The composer's field: a CodeMirror editor drawing its markdown in place (see
@@ -79,6 +82,12 @@ type Props = {
    * starts from instead of `value` and reports back through `onChange`.
    */
   adoptInput?: () => AdoptedComposerInput | null
+  /**
+   * Draws a quote's chip (composerQuoteChips.ts) — the element is where it
+   * goes, for a control that opens something under it. Without it a chip
+   * shows the link's words.
+   */
+  renderQuoteChip?: (quote: ChatQuote) => React.ReactNode
 }
 
 /** What a stand-in field held when this one took its place. */
@@ -151,6 +160,24 @@ export const ComposerField = forwardRef<ComposerFieldHandle, Props>(function Com
     attributes: new Compartment(),
     history: new Compartment(),
   })
+
+  // The elements the editor made for quote chips, and the quote each draws;
+  // the field fills them through portals, so a chip is React's like the rest.
+  const chipsRef = useRef(new Map<HTMLElement, { quote: ChatQuote; key: number }>())
+  const chipKeyRef = useRef(0)
+  const [, chipsChanged] = useReducer((count: number) => count + 1, 0)
+  const chipHostsRef = useRef<QuoteChipHosts | null>(null)
+  if (!chipHostsRef.current)
+    chipHostsRef.current = {
+      mount(element, quote) {
+        const held = chipsRef.current.get(element)
+        chipsRef.current.set(element, { quote, key: held?.key ?? ++chipKeyRef.current })
+        chipsChanged()
+      },
+      unmount(element) {
+        if (chipsRef.current.delete(element)) chipsChanged()
+      },
+    }
 
   const handleRef = useRef<ComposerFieldHandle | null>(null)
   if (!handleRef.current) {
@@ -269,6 +296,7 @@ export const ComposerField = forwardRef<ComposerFieldHandle, Props>(function Com
           markdown({ base: markdownLanguage, addKeymap: false, completeHTMLTags: false }),
           EditorView.lineWrapping,
           markdownLivePreview,
+          composerQuoteChips(() => (propsRef.current.renderQuoteChip ? chipHostsRef.current : null)),
           composerTheme,
           EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on' }),
           placeholder.of(placeholderExtension(initial.placeholder ?? '')),
@@ -398,12 +426,19 @@ export const ComposerField = forwardRef<ComposerFieldHandle, Props>(function Com
     })
   }, [attributeKey])
 
+  const renderQuoteChip = props.renderQuoteChip
   return (
     <div
       ref={hostRef}
       data-composer-field=""
       aria-disabled={disabled || undefined}
       className={`composer-markdown ${disabled ? 'cursor-not-allowed opacity-45' : ''} ${props.className ?? ''}`}
-    />
+    >
+      {renderQuoteChip
+        ? Array.from(chipsRef.current, ([element, { quote, key }]) =>
+            createPortal(renderQuoteChip(quote), element, String(key)),
+          )
+        : null}
+    </div>
   )
 })

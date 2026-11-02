@@ -540,12 +540,13 @@ test('typing into a long chat redraws the composer, not the transcript', async (
     expect(chat.host.querySelector('.cm-content')?.textContent).toBe(text)
     if (chat.counter) {
       // What a keystroke has nothing to say to: the dock, the checklist, the
-      // connection notice and the quote toolbar.
+      // connection notice, the quote toolbar and the quoted passages' marks.
       for (const name of [
         'ConversationPendingDock',
         'ConversationTodoStrip',
         'StudioConnectionNotice',
         'QuoteSelectionToolbar',
+        'QuoteHighlights',
       ])
         expect(chat.counter.renders(name), name).toBe(0)
       // The body still redraws once a keystroke while it holds the draft; the

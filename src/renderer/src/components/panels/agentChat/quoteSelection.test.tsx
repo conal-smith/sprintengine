@@ -140,6 +140,76 @@ test('a selection across several rows quotes all of them, skipping the rows that
   })
 })
 
+test('a passage of one reply is cited: its turn, its markdown, and the words that find it again', () => {
+  const view = transcript(
+    `<div data-conversation-row-kind="assistant"><div data-quote-source="t9">${rendered(
+      'Keep the **cache** warm, then restart.',
+    )}</div></div>`,
+  )
+  const quote = quoteForSelection(view.log, view.selectBetween('Keep', 'warm'))
+  expect(quote).toEqual({
+    kind: 'cite',
+    citation: {
+      turnId: 't9',
+      quote: 'Keep the **cache** warm',
+      exact: 'Keep the cache warm',
+      prefix: '',
+      suffix: ', then restart.',
+    },
+    anchor: { left: 10, right: 120, top: 40, bottom: 56 },
+  })
+  const cited: unknown[] = []
+  const quoted: string[] = []
+  expect(
+    quoteSelectionInto(
+      view.log,
+      view.selectBetween('Keep', 'warm'),
+      (markdown) => quoted.push(markdown),
+      (citation) => cited.push(citation),
+    ),
+  ).toBe(true)
+  expect(quoted).toEqual([])
+  expect(cited).toHaveLength(1)
+  expect(view.selection.rangeCount).toBe(0)
+})
+
+test('a selection that is not inside one reply is quoted as a blockquote even where citing is offered', () => {
+  const view = transcript(
+    `<div data-conversation-row-kind="user">${rendered('My question', true)}</div>` +
+      `<div data-conversation-row-kind="assistant"><div data-quote-source="t1">${rendered('First answer.')}</div></div>` +
+      `<div data-conversation-row-kind="assistant"><div data-quote-source="t2">${rendered('Second answer.')}</div></div>`,
+  )
+  const cited: unknown[] = []
+  const quoted: string[] = []
+  const quote = (from: string, to: string) =>
+    quoteSelectionInto(
+      view.log,
+      view.selectBetween(from, to),
+      (markdown) => quoted.push(markdown),
+      (citation) => cited.push(citation),
+    )
+  quote('My', 'question')
+  quote('First', 'Second')
+  expect(cited).toEqual([])
+  expect(quoted).toEqual(['> My question', '> First answer.\n>\n> Second'])
+})
+
+test('a passage of a reply past the cap is refused with the same toast', () => {
+  useToastStore.setState({ toasts: [] })
+  const view = transcript(`<div data-quote-source="t1"><p>${'word '.repeat(QUOTE_MAX_CHARS / 4)}</p></div>`)
+  const cited: unknown[] = []
+  expect(
+    quoteSelectionInto(
+      view.log,
+      view.selectAll(),
+      () => undefined,
+      (citation) => cited.push(citation),
+    ),
+  ).toBe(true)
+  expect(cited).toEqual([])
+  expect(useToastStore.getState().toasts.at(-1)?.title).toBe('Selection too long to quote')
+})
+
 test('only a selection inside the transcript, and not only its chrome, is quotable', () => {
   const view = transcript(
     `<p id="prose">The loader reads the file once.</p><div data-copy-exclude=""><span>12:04 · Copy</span></div>`,
