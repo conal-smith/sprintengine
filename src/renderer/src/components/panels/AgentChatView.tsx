@@ -14,7 +14,7 @@
 import { parseMachinePath } from '../../../../shared/machine-paths'
 import { workspaceHostIdOf } from '../../../../shared/execution-host'
 import { withoutStudioNoticePrefix } from '../../../../shared/studio-notice'
-import { limitResetSendAt } from '../../../../shared/scheduled-messages'
+import { limitResetSendAt, selectChatScheduledMessages } from '../../../../shared/scheduled-messages'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -146,7 +146,11 @@ import {
   ScheduledMessageRows,
   type ScheduledMessageView,
 } from './agentChat/scheduledMessages'
-import { canScheduleMessages, updateScheduledMessage } from '../../store/scheduledMessagesStore'
+import {
+  canScheduleMessages,
+  updateScheduledMessage,
+  useScheduledMessagesStore,
+} from '../../store/scheduledMessagesStore'
 import { SendTimeTag, type SendAtLimitReset } from '../workspace/agentComposer/schedule/SendTimeEditor'
 import { defaultSendAt } from '../workspace/agentComposer/schedule/sendTime'
 import { selectUsageLimitSnapshot, usageLimitProviderOf } from '../../store/usageLimitsStore'
@@ -2730,7 +2734,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     composerRef,
     pendingCaretRef,
     rows: timelineRows,
-    pendingTexts: queuedTurn?.text ? [queuedTurn.text] : [],
+    // Every message still to go holds numbers too: the queue, wherever it is
+    // held, and the messages scheduled into this chat. Turns not paged in yet
+    // are not read; a number one of them used can come round again, which the
+    // marks and the agent's block tell apart by the passage (chat-quotes.ts).
+    pendingTexts: () => [
+      ...(queuedTurn?.text ? [queuedTurn.text] : []),
+      ...handingOff.map((turn) => turn.text),
+      ...(hostQueue?.messages.map((message) => message.text) ?? []),
+      ...selectChatScheduledMessages(useScheduledMessagesStore.getState().state, { workspaceId, agentId }).map(
+        (message) => message.text,
+      ),
+    ],
     transcriptRef,
     listRef,
     scrollToRow: (index) => {

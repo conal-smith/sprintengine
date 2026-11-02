@@ -87,7 +87,7 @@ async function mountChat(dom: JSDOM, initial: string, rows: ConversationTimeline
       composerRef,
       pendingCaretRef,
       rows,
-      pendingTexts: [],
+      pendingTexts: () => [],
       transcriptRef,
       listRef,
       scrollToRow: () => undefined,
@@ -211,14 +211,16 @@ test('Enter saves the comment into the token; ⌘Enter saves and sends', async (
   })
 })
 
-test('Escape on a new quote takes the chip back out; on an existing one it keeps it', async () => {
+test('Escape on a new quote takes the chip back out with the spaces it brought; on an existing one it keeps it', async () => {
   await inDom(async (dom) => {
-    const chat = await mountChat(dom, 'Hi ')
+    const chat = await mountChat(dom, 'Hi')
     try {
+      chat.view().dispatch({ selection: { anchor: 2 } })
       await chat.cite()
+      expect(chat.state.draft.startsWith('Hi [Quote 1]')).toBe(true)
       await chat.press('Escape')
       expect(chat.editor()).toBeNull()
-      expect(chat.state.draft).toBe('Hi ')
+      expect(chat.state.draft).toBe('Hi')
       await chat.cite()
       await chat.press('Enter')
       await chat.act(async () =>
@@ -334,7 +336,7 @@ test("a marked passage's card offers edit and remove for a draft quote and nothi
             quotes,
             controlRef: createRef<QuoteHighlightControl>(),
             onEdit: () => undefined,
-            onRemove: (n: number) => removed.push(n),
+            onRemove: (shown: ShownQuote) => removed.push(shown.n),
             onLanding: () => undefined,
           }),
         )
@@ -360,6 +362,133 @@ test("a marked passage's card offers edit and remove for a draft quote and nothi
       await move(20, 15)
       await act(async () => document.querySelector<HTMLElement>('[aria-label="Remove quote"]')!.click())
       expect(removed).toEqual([1])
+    } finally {
+      await act(async () => root.unmount())
+    }
+  })
+})
+
+test('a passage too long to carry as a token is refused out loud and the draft is left alone', async () => {
+  await inDom(async (dom) => {
+    const { useToastStore } = await import('../../../store/toastStore')
+    useToastStore.setState({ toasts: [] })
+    const chat = await mountChat(dom, 'Keep this')
+    try {
+      // Within the 8,000-character cap, but every character encodes to twelve.
+      const passage = '漢字'.repeat(3_500)
+      await chat.cite({ quote: passage, exact: passage })
+      expect(chat.state.draft).toBe('Keep this')
+      expect(chat.editor()).toBeNull()
+      expect(useToastStore.getState().toasts.at(-1)?.title).toBe('Selection too long to quote')
+    } finally {
+      await chat.unmount()
+    }
+  })
+})
+
+test('two quotes put in before the draft renders are numbered and placed from the draft they land in', async () => {
+  await inDom(async (dom) => {
+    const chat = await mountChat(dom, '')
+    try {
+      await chat.act(async () => {
+        const anchor = { left: 0, right: 0, top: 0, bottom: 0 }
+        const citation = { turnId: 't1', quote: 'One.', exact: 'One.', prefix: '', suffix: '' }
+        chat.state.quotes!.cite(citation, anchor)
+        chat.state.quotes!.cite({ ...citation, quote: 'Two.', exact: 'Two.' }, anchor)
+      })
+      // Both at the caret, which had not moved: the second goes in where the
+      // first did, numbered from the draft that already held the first.
+      expect(collectQuotes(chat.state.draft).map((each) => [each.n, each.quote])).toEqual([
+        [2, 'Two.'],
+        [1, 'One.'],
+      ])
+    } finally {
+      await chat.unmount()
+    }
+  })
+})
+
+test('chips keep their place as the text around them changes, on their own line and on others', async () => {
+  await inDom(async (dom) => {
+    const { deleteCharBackward } = await import('@codemirror/commands')
+    const token = quoteToken(quote())
+    const chat = await mountChat(dom, `first line\nHi ${token}`)
+    try {
+      const view = chat.view()
+      // An edit on another line moves the chip without reading the draft again.
+      await chat.act(async () => view.dispatch({ changes: { from: 0, insert: 'A ' }, userEvent: 'input.type' }))
+      // One on its own line, before it.
+      const lineStart = view.state.doc.line(2).from
+      await chat.act(async () =>
+        view.dispatch({ changes: { from: lineStart, insert: 'Oh, ' }, userEvent: 'input.type' }),
+      )
+      expect(chat.host.querySelectorAll('[data-quote-chip="1"]')).toHaveLength(1)
+      view.dispatch({ selection: { anchor: view.state.doc.length } })
+      await chat.act(async () => {
+        deleteCharBackward(view)
+      })
+      expect(chat.state.draft).toBe('A first line\nOh, Hi ')
+      expect(chat.host.querySelector('[data-quote-chip]')).toBeNull()
+    } finally {
+      await chat.unmount()
+    }
+  })
+})
+
+test('a number used twice marks each passage where it is, and a range found for one is never drawn for another', async () => {
+  await inDom(async (dom) => {
+    const { act, createElement, createRef } = await import('react')
+    const { createRoot } = await import('react-dom/client')
+    const { QuoteHighlights } = await import('./quoteHighlights')
+    const document = dom.window.document
+    document.body.innerHTML =
+      '<div id="transcript"><div data-quote-source="t1"><p>Alpha beta gamma epsilon.</p></div></div><div id="host"></div>'
+    const transcript = document.getElementById('transcript')!
+    transcript.getBoundingClientRect = () => new dom.window.DOMRect(0, 0, 800, 600)
+    const rectFor: Record<string, DOMRect> = {
+      beta: new dom.window.DOMRect(40, 10, 30, 16),
+      epsilon: new dom.window.DOMRect(200, 10, 50, 16),
+    }
+    dom.window.Range.prototype.getClientRects = function (this: Range) {
+      const rect = rectFor[this.toString()]
+      return Object.assign(rect ? [rect] : [], { item: () => rect ?? null }) as unknown as DOMRectList
+    }
+    dom.window.Range.prototype.getBoundingClientRect = function (this: Range) {
+      return rectFor[this.toString()] ?? new dom.window.DOMRect()
+    }
+    const root = createRoot(document.getElementById('host')!)
+    const render = (quotes: ShownQuote[]) =>
+      act(async () =>
+        root.render(
+          createElement(QuoteHighlights, {
+            transcriptRef: { current: transcript },
+            quotes,
+            controlRef: createRef<QuoteHighlightControl>(),
+            onEdit: () => undefined,
+            onRemove: () => undefined,
+            onLanding: () => undefined,
+          }),
+        ),
+      )
+    const badges = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-quote-badge="3"]')).map((badge) => badge.style.left)
+    try {
+      // Quote 3 cites "beta", is taken back out, and the next cite of the same
+      // reply takes 3 again for "epsilon": no DOM changed in between.
+      await render([{ ...quote({ n: 3, exact: 'beta' }), sent: false }])
+      await act(async () => sleep(50))
+      const first = badges()
+      await render([{ ...quote({ n: 3, exact: 'epsilon' }), sent: false }])
+      await act(async () => sleep(50))
+      expect(badges()).toHaveLength(1)
+      expect(badges()).not.toEqual(first)
+      // Both at once, sharing the number: both are marked.
+      await render([
+        { ...quote({ n: 3, exact: 'beta' }), sent: true },
+        { ...quote({ n: 3, exact: 'epsilon' }), sent: false },
+      ])
+      await act(async () => sleep(50))
+      expect(badges()).toHaveLength(2)
     } finally {
       await act(async () => root.unmount())
     }

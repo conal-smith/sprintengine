@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import type { ChatQuote } from '../../../../../shared/chat-quotes'
+import { quoteAnchorKey, type ChatQuote } from '../../../../../shared/chat-quotes'
 import { CloseIconButton, IconButton, Tooltip } from '../../ui'
 import { useClampedMenuPosition } from '../../ui/ContextMenu'
 import { EditChangelistGlyph } from '../../ui/GitActionGlyphs'
@@ -100,7 +100,11 @@ type Placed = { quote: ShownQuote; range: Range; rects: DOMRect[] }
 /** A badge as the layer draws it, in the transcript's own coordinates. */
 type Badge = { key: string; n: number; sent: boolean; left: number; top: number }
 
-const quoteKey = (quote: Pick<ChatQuote, 'turnId' | 'n'>) => `${quote.turnId}#${quote.n}`
+// A quote is known by the passage it marks, never by its number: a number can
+// come round again (a quote taken back out, a token pasted from another chat),
+// and a range found for one passage must not be drawn for another.
+type Anchor = Pick<ChatQuote, 'turnId' | 'exact' | 'prefix' | 'suffix'>
+const quoteKey = (quote: Anchor) => quoteAnchorKey(quote)
 
 function sameBadges(a: readonly Badge[], b: readonly Badge[]): boolean {
   return (
@@ -121,10 +125,10 @@ function hits(rects: readonly DOMRect[], x: number, y: number): DOMRect | null {
 
 /** What the chat can ask of the layer. */
 export type QuoteHighlightControl = {
-  /** Where a draft quote's passage is on screen, when it is drawn and in view. */
-  rectOf(n: number): DOMRect | null
+  /** Where a quote's passage is on screen, when it is drawn and in view. */
+  rectOf(quote: Anchor): DOMRect | null
   /** Light a quote's passage for a moment once it is drawn, and hand its range to `onLanding`. */
-  flash(quote: Pick<ChatQuote, 'turnId' | 'n'>): void
+  flash(quote: Anchor): void
 }
 
 type HoverCard = { quote: ShownQuote; anchor: { left: number; bottom: number } }
@@ -146,8 +150,8 @@ export const QuoteHighlights = memo(function QuoteHighlights({
   transcriptRef: RefObject<HTMLElement | null>
   quotes: readonly ShownQuote[]
   controlRef: RefObject<QuoteHighlightControl | null>
-  onEdit: (n: number, anchor: DOMRect) => void
-  onRemove: (n: number) => void
+  onEdit: (quote: ShownQuote, anchor: DOMRect) => void
+  onRemove: (quote: ShownQuote) => void
   /** A passage "Go to source" asked for has been drawn: bring it into view. */
   onLanding: (range: Range) => void
 }): JSX.Element | null {
@@ -369,9 +373,10 @@ export const QuoteHighlights = memo(function QuoteHighlights({
 
   useLayoutEffect(() => {
     const control: QuoteHighlightControl = {
-      rectOf(n) {
+      rectOf(quote) {
         const root = transcriptRef.current
-        const entry = placedRef.current.find((placed) => placed.quote.n === n && !placed.quote.sent)
+        const key = quoteKey(quote)
+        const entry = placedRef.current.find((placed) => quoteKey(placed.quote) === key)
         if (!root || !entry?.range.startContainer.isConnected) return null
         const rect = entry.range.getBoundingClientRect()
         const box = root.getBoundingClientRect()
@@ -420,13 +425,13 @@ export const QuoteHighlights = memo(function QuoteHighlights({
             const rect = placedRef.current.find((placed) => quoteKey(placed.quote) === cardKey)
             setCard(null)
             onEdit(
-              cardQuote.n,
+              cardQuote,
               rect?.range.getBoundingClientRect() ?? new DOMRect(card.anchor.left, card.anchor.bottom, 0, 0),
             )
           }}
           onRemove={() => {
             setCard(null)
-            onRemove(cardQuote.n)
+            onRemove(cardQuote)
           }}
         />
       ) : null}

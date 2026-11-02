@@ -10,6 +10,8 @@ import {
   quoteLabel,
   quoteToken,
   quotesToInlineText,
+  quotesToLabels,
+  clipKeepingQuotes,
   quotesToPlainText,
   quotesToReadableMarkdown,
   withQuoteComment,
@@ -71,22 +73,59 @@ test('a new quote is numbered one past the highest in the sent messages and the 
   expect(nextQuoteNumber([sent, draft])).toBe(5)
 })
 
-test('a comment is set, changed and cleared on the quote it names and no other', () => {
-  const text = `${quoteToken(quote({ n: 1 }))} and ${quoteToken(quote({ n: 2 }))} ok`
-  const commented = withQuoteComment(text, 2, '  Is this (still) true?  ')
+test('a comment is set, changed and cleared on the quote its token names and no other', () => {
+  const two = quoteToken(quote({ n: 2 }))
+  const text = `${quoteToken(quote({ n: 1 }))} and ${two} ok`
+  const commented = withQuoteComment(text, two, '  Is this (still) true?  ')
   const [first, second] = collectQuotes(commented)
   expect(first?.comment).toBe('')
   expect(second?.comment).toBe('Is this (still) true?')
   expect(commented.endsWith(' ok')).toBe(true)
-  expect(collectQuotes(withQuoteComment(commented, 2, ''))[1]?.comment).toBe('')
-  expect(withQuoteComment(text, 9, 'nothing')).toBe(text)
+  expect(collectQuotes(withQuoteComment(commented, second!.token, ''))[1]?.comment).toBe('')
+  expect(withQuoteComment(text, quoteToken(quote({ n: 9 })), 'nothing')).toBe(text)
 })
 
-test('removing a quote takes its token and the space typed after it', () => {
-  const text = `Look ${quoteToken(quote({ n: 1 }))} here ${quoteToken(quote({ n: 2 }))}`
-  expect(withoutQuote(text, 1)).toBe(`Look here ${quoteToken(quote({ n: 2 }))}`)
-  expect(withoutQuote(text, 2)).toBe(`Look ${quoteToken(quote({ n: 1 }))} here `)
-  expect(withoutQuote(text, 3)).toBe(text)
+test('of two quotes sharing a number, only the one the token names is changed', () => {
+  const mine = quoteToken(quote({ n: 3, exact: 'Keep the cache', quote: 'Keep the cache' }))
+  const pasted = quoteToken(quote({ n: 3, turnId: 'other', exact: 'Elsewhere', quote: 'Elsewhere' }))
+  const text = `${pasted} ${mine} `
+  const [kept, changed] = collectQuotes(withQuoteComment(text, mine, 'note'))
+  expect(kept?.comment).toBe('')
+  expect(changed?.comment).toBe('note')
+  expect(withoutQuote(text, mine)).toBe(`${pasted} `)
+})
+
+test('removing a quote takes its token and the spaces it went in with', () => {
+  const one = quoteToken(quote({ n: 1 }))
+  const two = quoteToken(quote({ n: 2 }))
+  const text = `Look ${one} here ${two}`
+  expect(withoutQuote(text, one)).toBe(`Look here ${two}`)
+  expect(withoutQuote(text, two)).toBe(`Look ${one} here `)
+  expect(withoutQuote(text, two, { before: true, after: true })).toBe(`Look ${one} here`)
+  expect(withoutQuote(`Look ${one} here`, one, {})).toBe('Look  here')
+  expect(withoutQuote(text, quoteToken(quote({ n: 3 })))).toBe(text)
+})
+
+test('a quote of plain words carries the passage once; one drawn differently carries both', () => {
+  const plain = quoteToken(quote({ quote: 'Keep  the cache\nwarm.', exact: 'Keep the cache warm.' }))
+  expect(plain).not.toContain('exact=')
+  expect(collectQuotes(plain)[0]?.exact).toBe('Keep the cache warm.')
+  const formatted = quoteToken(quote({ quote: 'Keep the **cache** warm.' }))
+  expect(formatted).toContain('exact=')
+})
+
+test('a cut never splits a token: one the cut would split goes whole', () => {
+  const token = quoteToken(quote())
+  const text = `Hi ${token} after`
+  expect(clipKeepingQuotes(text, 1_000)).toBe(text)
+  expect(clipKeepingQuotes(text, 10)).toBe('Hi ')
+  expect(clipKeepingQuotes(text, 3 + token.length + 2)).toBe(`Hi ${token} a`)
+})
+
+test('as the page draws it a quote is its label, escaped so markdown reads it back as itself', () => {
+  expect(quotesToLabels(`See ${quoteToken(quote({ comment: 'why *this* (one)?' }))}.`)).toBe(
+    'See why \\*this\\* \\(one\\)?.',
+  )
 })
 
 test('as plain text a quote is its passage in a blockquote with the comment under it', () => {
@@ -125,6 +164,15 @@ test('the agent reads [quote N] in place and the passages once each in a block a
     ].join('\n'),
   )
   expect(expandQuotesForAgent('plain message')).toBe('plain message')
+})
+
+test('two different passages sharing a number both reach the agent, told apart', () => {
+  const a = quoteToken(quote({ n: 2, quote: 'First passage.' }))
+  const b = quoteToken(quote({ n: 2, turnId: 'elsewhere', quote: 'Second passage.' }))
+  const expanded = expandQuotesForAgent(`${a} and ${b} and ${a}`)
+  expect(expanded.startsWith('[quote 2a] and [quote 2b] and [quote 2a]')).toBe(true)
+  expect(expanded).toContain('[quote 2a]\n> First passage.')
+  expect(expanded).toContain('[quote 2b]\n> Second passage.')
 })
 
 test("a passage holding the block's closing tag cannot end the block early", () => {

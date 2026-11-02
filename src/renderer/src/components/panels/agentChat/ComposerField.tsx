@@ -9,7 +9,7 @@ import {
 } from '@codemirror/lang-markdown'
 import { Annotation, Compartment, EditorSelection, EditorState, Prec, Transaction } from '@codemirror/state'
 import { EditorView, keymap, placeholder as placeholderExtension } from '@codemirror/view'
-import type { ChatQuote } from '../../../../../shared/chat-quotes'
+import type { ChatQuoteToken } from '../../../../../shared/chat-quotes'
 import { markdownLivePreview } from './markdownLivePreview'
 import { composerQuoteChips, type QuoteChipHosts } from './composerQuoteChips'
 
@@ -87,7 +87,7 @@ type Props = {
    * goes, for a control that opens something under it. Without it a chip
    * shows the link's words.
    */
-  renderQuoteChip?: (quote: ChatQuote) => React.ReactNode
+  renderQuoteChip?: (quote: ChatQuoteToken) => React.ReactNode
 }
 
 /** What a stand-in field held when this one took its place. */
@@ -163,7 +163,7 @@ export const ComposerField = forwardRef<ComposerFieldHandle, Props>(function Com
 
   // The elements the editor made for quote chips, and the quote each draws;
   // the field fills them through portals, so a chip is React's like the rest.
-  const chipsRef = useRef(new Map<HTMLElement, { quote: ChatQuote; key: number }>())
+  const chipsRef = useRef(new Map<HTMLElement, { quote: ChatQuoteToken; key: number }>())
   const chipKeyRef = useRef(0)
   const [, chipsChanged] = useReducer((count: number) => count + 1, 0)
   const chipHostsRef = useRef<QuoteChipHosts | null>(null)

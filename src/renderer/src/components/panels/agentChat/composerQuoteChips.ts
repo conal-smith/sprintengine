@@ -1,6 +1,6 @@
-import { RangeSetBuilder, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { RangeSetBuilder, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { collectQuotes, mayHoldQuotes, type ChatQuote } from '../../../../../shared/chat-quotes'
+import { collectQuotes, mayHoldQuotes, QUOTE_SCHEME, type ChatQuoteToken } from '../../../../../shared/chat-quotes'
 
 /**
  * A quote's token in the composer's draft drawn as its chip: the token
@@ -17,23 +17,22 @@ import { collectQuotes, mayHoldQuotes, type ChatQuote } from '../../../../../sha
  * the link's words.
  */
 export type QuoteChipHosts = {
-  /** An element to draw quote `quote` into has been made (or is now another quote's). */
-  mount(element: HTMLElement, quote: ChatQuote): void
+  /** An element to draw `quote` into has been made (or is now another quote's). */
+  mount(element: HTMLElement, quote: ChatQuoteToken): void
   /** The element has left the editor. */
   unmount(element: HTMLElement): void
 }
 
 class QuoteChipWidget extends WidgetType {
   constructor(
-    readonly quote: ChatQuote,
-    readonly token: string,
+    readonly quote: ChatQuoteToken,
     readonly hosts: () => QuoteChipHosts | null,
   ) {
     super()
   }
 
   eq(other: QuoteChipWidget): boolean {
-    return other.token === this.token
+    return other.quote.token === this.quote.token
   }
 
   toDOM(): HTMLElement {
@@ -66,25 +65,47 @@ class QuoteChipWidget extends WidgetType {
   }
 }
 
-function chips(state: EditorState, hosts: () => QuoteChipHosts | null): DecorationSet {
+type Chips = { decorations: DecorationSet; holdsScheme: boolean }
+
+function chips(state: EditorState, hosts: () => QuoteChipHosts | null): Chips {
   const text = state.doc.toString()
-  if (!mayHoldQuotes(text)) return Decoration.none
+  if (!mayHoldQuotes(text)) return { decorations: Decoration.none, holdsScheme: false }
   const builder = new RangeSetBuilder<Decoration>()
-  for (const quote of collectQuotes(text)) {
-    const widget = new QuoteChipWidget(quote, text.slice(quote.from, quote.to), hosts)
-    builder.add(quote.from, quote.to, Decoration.replace({ widget }))
-  }
-  return builder.finish()
+  for (const quote of collectQuotes(text))
+    builder.add(quote.from, quote.to, Decoration.replace({ widget: new QuoteChipWidget(quote, hosts) }))
+  return { decorations: builder.finish(), holdsScheme: true }
+}
+
+// A token never spans a line, so whether an edit can have made, changed or
+// broken one is a question about the lines it touched alone.
+function linesHoldScheme(doc: Text, from: number, to: number): boolean {
+  const last = doc.lineAt(to).number
+  for (let line = doc.lineAt(from).number; line <= last; line++)
+    if (doc.line(line).text.includes(QUOTE_SCHEME)) return true
+  return false
 }
 
 /** The extension, reading the host that fills each chip through `hosts` when a chip is drawn. */
 export function composerQuoteChips(hosts: () => QuoteChipHosts | null): Extension {
-  const field = StateField.define<DecorationSet>({
+  // Built once and then carried through each keystroke: the chips move with
+  // the text around them, and the document is read again only when an edit
+  // lands on a line that holds (or held) a quote's address.
+  const field = StateField.define<Chips>({
     create: (state) => chips(state, hosts),
-    update: (value, transaction) => (transaction.docChanged ? chips(transaction.state, hosts) : value),
+    update(value, transaction) {
+      if (!transaction.docChanged) return value
+      let rebuild = false
+      transaction.changes.iterChanges((fromA, toA, fromB, toB) => {
+        if (rebuild) return
+        if (linesHoldScheme(transaction.state.doc, fromB, toB)) rebuild = true
+        else if (value.holdsScheme && linesHoldScheme(transaction.startState.doc, fromA, toA)) rebuild = true
+      })
+      if (rebuild) return chips(transaction.state, hosts)
+      return { ...value, decorations: value.decorations.map(transaction.changes) }
+    },
     provide: (self) => [
-      EditorView.decorations.from(self),
-      EditorView.atomicRanges.of((view) => view.state.field(self)),
+      EditorView.decorations.from(self, (value) => value.decorations),
+      EditorView.atomicRanges.of((view) => view.state.field(self).decorations),
     ],
   })
   return field

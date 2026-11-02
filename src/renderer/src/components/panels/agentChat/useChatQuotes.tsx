@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type RefObject } from 'react'
 import type { LegendListRef } from '@legendapp/list/react'
 import {
+  QUOTE_TOKEN_MAX_CHARS,
   collectQuotes,
   mayHoldQuotes,
   nextQuoteNumber,
+  quoteAnchorKey,
   quoteToken,
-  withQuoteComment,
   withoutQuote,
   type ChatQuote,
+  type ChatQuoteToken,
 } from '../../../../../shared/chat-quotes'
 import { showToast } from '../../../store/toastStore'
+import { MAX_DRAFT_CHARS } from './draftStore'
 import { QuoteChip, QuoteCommentEditor } from './chatQuotes'
 import type { ComposerFieldHandle } from './ComposerField'
 import type { ConversationTimelineRow } from './conversationTimeline'
@@ -23,7 +26,20 @@ import type { SelectionAnchor, SelectionCitation } from './quoteSelection'
 // reader back to the reply; and every quote of the conversation, sent or in
 // the draft, is marked in the reply it came from.
 
-type Editing = { n: number; initial: string; anchor: { left: number; bottom: number }; fresh: boolean }
+// The editor names its quote by the token as the draft holds it: a number can
+// be shared (a token pasted from another chat), a token's text cannot. A quote
+// just made also keeps which spaces it went in with, so Escape takes back
+// exactly what the cite put in.
+type Editing = {
+  token: string
+  n: number
+  initial: string
+  anchor: { left: number; bottom: number }
+  fresh: boolean
+  spaces: { before: boolean; after: boolean }
+}
+
+type Placed = Omit<Editing, 'initial'>
 
 export type ChatQuotesInput = {
   draft: string
@@ -32,8 +48,11 @@ export type ChatQuotesInput = {
   /** Where the caret goes once the rewritten draft has rendered (the chat's own). */
   pendingCaretRef: RefObject<number | null>
   rows: readonly ConversationTimelineRow[]
-  /** Texts that hold numbered quotes besides the sent messages: a queued message. */
-  pendingTexts: readonly string[]
+  /**
+   * Texts that hold numbered quotes besides the loaded messages and the
+   * draft: queued and scheduled messages. Read when a quote is made.
+   */
+  pendingTexts: () => readonly string[]
   transcriptRef: RefObject<HTMLElement | null>
   listRef: RefObject<LegendListRef | null>
   /** Scroll the list to a row it holds, drawn or not. */
@@ -49,7 +68,7 @@ export type ChatQuotesInput = {
 export type ChatQuotes = {
   /** Put a cited passage into the draft at the caret and open its comment editor. */
   cite: (citation: SelectionCitation, anchor: SelectionAnchor) => void
-  renderQuoteChip: (quote: ChatQuote) => JSX.Element
+  renderQuoteChip: (quote: ChatQuoteToken) => JSX.Element
   goToSource: (quote: ChatQuote) => void
   /** The marks over the transcript; mounted inside it. */
   highlights: JSX.Element
@@ -58,7 +77,7 @@ export type ChatQuotes = {
 }
 
 const shownKey = (quotes: readonly ShownQuote[]) =>
-  quotes.map((quote) => `${quote.sent ? 's' : 'd'}${quote.turnId}#${quote.n}#${quote.comment}`).join('\n')
+  quotes.map((quote) => `${quote.sent ? 's' : 'd'}${quote.n}#${quote.comment}#${quoteAnchorKey(quote)}`).join('\n')
 
 // The quotes as one array for as long as they are the same quotes, so a
 // keystroke that leaves them alone reaches the highlight layer as nothing new.
@@ -78,22 +97,29 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
   // Every quote of the conversation, the draft's first: a quote a recalled or
   // edited message brought back into the draft is the draft's.
   const { draft, rows } = input
-  const sentTexts = useMemo(
-    () => rows.flatMap((row) => (row.kind === 'user' && mayHoldQuotes(row.entry.text) ? [row.entry.text] : [])),
+  // The sent messages' quotes, parsed when the rows change rather than on
+  // every keystroke in the composer.
+  const sentQuotes = useMemo(
+    () =>
+      rows.flatMap((row) =>
+        row.kind === 'user' && mayHoldQuotes(row.entry.text) ? collectQuotes(row.entry.text) : [],
+      ),
     [rows],
   )
+  // One mark per passage, the draft's first: a quote a recalled or edited
+  // message brought back into the draft is the draft's. Two quotes of other
+  // passages are both marked, whatever their numbers.
   const shown: ShownQuote[] = []
-  const seen = new Set<number>()
-  for (const quote of collectQuotes(draft)) {
-    if (seen.has(quote.n)) continue
-    seen.add(quote.n)
-    shown.push({ ...stripPosition(quote), sent: false })
-  }
-  for (const text of sentTexts)
-    for (const quote of collectQuotes(text)) {
-      if (seen.has(quote.n)) continue
-      seen.add(quote.n)
-      shown.push({ ...stripPosition(quote), sent: true })
+  const seen = new Set<string>()
+  for (const [list, sent] of [
+    [collectQuotes(draft), false],
+    [sentQuotes, true],
+  ] as const)
+    for (const quote of list) {
+      const key = quoteAnchorKey(quote)
+      if (seen.has(key)) continue
+      seen.add(key)
+      shown.push({ ...stripPosition(quote), sent })
     }
   const quotes = useStableQuotes(shown)
 
@@ -106,41 +132,110 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
     if (caret !== null) field.setSelectionRange(caret, caret)
   }
 
+  const numberFor = (current: string) => {
+    const { rows, pendingTexts } = latest.current
+    const sent = rows.flatMap((row) => (row.kind === 'user' ? [row.entry.text] : []))
+    return nextQuoteNumber([...sent, ...pendingTexts(), current])
+  }
+
+  // The quote a cite put in, until the draft holding it has rendered and its
+  // editor can open.
+  const placedRef = useRef<Placed | null>(null)
   const cite = useCallback((citation: SelectionCitation, anchor: SelectionAnchor) => {
-    const { draft, rows: allRows, pendingTexts, composerRef, setDraft } = latest.current
-    const sent = allRows.flatMap((row) => (row.kind === 'user' ? [row.entry.text] : []))
-    const n = nextQuoteNumber([...sent, ...pendingTexts, draft])
-    const token = quoteToken({ ...citation, n, comment: '' })
-    const field = composerRef.current
-    const at = Math.max(0, Math.min(field?.selectionEnd ?? draft.length, draft.length))
-    const before = draft.slice(0, at)
-    // A chip set against a word reads as part of it; it takes a space either side.
-    const lead = before && !/\s$/u.test(before) ? ' ' : ''
-    const inserted = `${lead}${token} `
-    setDraft((current) => `${current.slice(0, at)}${inserted}${current.slice(at)}`)
-    // The caret is put after the chip when the editor closes: moved now, the
-    // composer would take focus from the editor opening under the words.
-    setEditing({ n, initial: '', anchor: { left: anchor.left, bottom: anchor.bottom }, fresh: true })
+    const { draft, setDraft, composerRef } = latest.current
+    // A token is the passage percent-encoded, which can run to several times
+    // its length; one that will not fit, or would crowd the draft past its
+    // cap, is refused out loud rather than cut.
+    const token = quoteToken({ ...citation, n: numberFor(draft), comment: '' })
+    if (token.length > QUOTE_TOKEN_MAX_CHARS || draft.length + token.length + 2 > MAX_DRAFT_CHARS) {
+      showToast({
+        tone: 'neutral',
+        title: 'Selection too long to quote',
+        description:
+          token.length > QUOTE_TOKEN_MAX_CHARS
+            ? 'This passage is too long to carry as a quote. Select a shorter passage.'
+            : 'The message has no room left for this quote. Shorten the message or select a shorter passage.',
+      })
+      return
+    }
+    const caret = composerRef.current?.selectionEnd
+    // Worked out from the draft the edit is applied to, which may be newer
+    // than the one this render saw.
+    setDraft((current) => {
+      const n = numberFor(current)
+      const token = quoteToken({ ...citation, n, comment: '' })
+      if (current.length + token.length + 2 > MAX_DRAFT_CHARS) return current
+      const at = Math.max(0, Math.min(caret ?? current.length, current.length))
+      // A chip set against a word reads as part of it; it takes a space either side.
+      const before = current.slice(0, at)
+      const lead = Boolean(before) && !/\s$/u.test(before)
+      placedRef.current = {
+        token,
+        n,
+        anchor: { left: anchor.left, bottom: anchor.bottom },
+        fresh: true,
+        spaces: { before: lead, after: true },
+      }
+      return `${before}${lead ? ' ' : ''}${token} ${current.slice(at)}`
+    })
   }, [])
 
-  const edit = useCallback((n: number, from: HTMLElement | DOMRect | null) => {
-    const quote = collectQuotes(latest.current.draft).find((each) => each.n === n)
+  // The cite's editor opens once its quote is in the draft. The caret is put
+  // after the chip when the editor closes: moved now, the composer would take
+  // focus from the editor opening under the words.
+  useEffect(() => {
+    const placed = placedRef.current
+    if (!placed) return
+    placedRef.current = null
+    if (draft.includes(placed.token)) setEditing({ ...placed, initial: '' })
+  }, [draft])
+
+  const edit = useCallback((token: string, from: HTMLElement | DOMRect | null) => {
+    const quote = collectQuotes(latest.current.draft).find((each) => each.token === token)
     if (!quote) return
     // Under the cited words when the reply is drawn and in view, else under
     // whatever it was opened from.
     const rect =
-      controlRef.current?.rectOf(n) ?? (from instanceof DOMRect ? from : (from?.getBoundingClientRect() ?? chipRect(n)))
+      controlRef.current?.rectOf(quote) ?? (from instanceof DOMRect ? from : (from?.getBoundingClientRect() ?? null))
     if (!rect) return
-    setEditing({ n, initial: quote.comment, anchor: { left: rect.left, bottom: rect.bottom }, fresh: false })
+    setEditing({
+      token,
+      n: quote.n,
+      initial: quote.comment,
+      anchor: { left: rect.left, bottom: rect.bottom },
+      fresh: false,
+      spaces: { before: false, after: true },
+    })
   }, [])
 
-  const remove = useCallback((n: number) => {
+  const remove = useCallback((token: string, spaces: Editing['spaces'] = { before: false, after: true }) => {
     const { draft, setDraft } = latest.current
-    const quote = collectQuotes(draft).find((each) => each.n === n)
+    const quote = collectQuotes(draft).find((each) => each.token === token)
     if (!quote) return
-    setDraft((current) => withoutQuote(current, n))
-    ;(latest.current.pendingCaretRef as { current: number | null }).current = quote.from
+    setDraft((current) => withoutQuote(current, token, spaces))
+    ;(latest.current.pendingCaretRef as { current: number | null }).current =
+      spaces.before && draft[quote.from - 1] === ' ' ? quote.from - 1 : quote.from
   }, [])
+
+  // The draft's own token for a passage the transcript marks.
+  const draftTokenFor = (quote: ShownQuote) => {
+    const key = quoteAnchorKey(quote)
+    return collectQuotes(latest.current.draft).find((each) => quoteAnchorKey(each) === key)?.token ?? null
+  }
+  const onEditFromCard = useCallback(
+    (quote: ShownQuote, anchor: DOMRect) => {
+      const token = draftTokenFor(quote)
+      if (token) edit(token, anchor)
+    },
+    [edit],
+  )
+  const onRemoveFromCard = useCallback(
+    (quote: ShownQuote) => {
+      const token = draftTokenFor(quote)
+      if (token) remove(token)
+    },
+    [remove],
+  )
 
   // ⌘/Ctrl+Enter in the editor saves and sends; the send reads the draft the
   // save wrote, so it waits for that draft to render.
@@ -151,12 +246,15 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
     latest.current.submit()
   }, [draft])
 
-  const save = useCallback((n: number, comment: string, send: boolean) => {
+  const save = useCallback((editingNow: Editing, comment: string, send: boolean) => {
     setEditing(null)
     const { draft, setDraft } = latest.current
-    const next = withQuoteComment(draft, n, comment)
-    const token = collectQuotes(next).find((each) => each.n === n)
-    const caret = token ? Math.min(next.length, token.to + (next[token.to] === ' ' ? 1 : 0)) : null
+    const found = collectQuotes(draft).find((each) => each.token === editingNow.token)
+    if (!found) return
+    const saved = quoteToken({ ...found, comment: comment.trim() })
+    const next = `${draft.slice(0, found.from)}${saved}${draft.slice(found.to)}`
+    const end = found.from + saved.length
+    const caret = Math.min(next.length, end + (next[end] === ' ' ? 1 : 0))
     if (next === draft) {
       if (send) latest.current.submit()
       else focusComposer(caret)
@@ -170,8 +268,9 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
   const cancel = useCallback(
     (editingNow: Editing) => {
       setEditing(null)
-      // Escape on the editor a quote opened with takes the quote back out.
-      if (editingNow.fresh) remove(editingNow.n)
+      // Escape on the editor a quote opened with takes the quote back out,
+      // with exactly the spaces it went in with.
+      if (editingNow.fresh) remove(editingNow.token, editingNow.spaces)
       else focusComposer(null)
     },
     [remove],
@@ -179,7 +278,7 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
 
   // An editor for a quote no longer in the draft (sent, or deleted) closes.
   useEffect(() => {
-    if (editing && !collectQuotes(draft).some((quote) => quote.n === editing.n)) setEditing(null)
+    if (editing && !draft.includes(editing.token)) setEditing(null)
   }, [draft, editing])
 
   // ── Back to the reply ────────────────────────────────────────────────────
@@ -234,33 +333,31 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
     void list.scrollToOffset({ offset: Math.max(0, offset), animated: false })
   }, [])
 
-  const onEditFromCard = useCallback((n: number, anchor: DOMRect) => edit(n, anchor), [edit])
-
   const highlights = (
     <QuoteHighlights
       transcriptRef={input.transcriptRef}
       quotes={quotes}
       controlRef={controlRef}
       onEdit={onEditFromCard}
-      onRemove={remove}
+      onRemove={onRemoveFromCard}
       onLanding={onLanding}
     />
   )
 
   const renderQuoteChip = useCallback(
-    (quote: ChatQuote) => (
-      <QuoteChip quote={quote} onEdit={(element) => edit(quote.n, element)} onGoToSource={goToSource} />
+    (quote: ChatQuoteToken) => (
+      <QuoteChip quote={quote} onEdit={(element) => edit(quote.token, element)} onGoToSource={goToSource} />
     ),
     [edit, goToSource],
   )
 
   const editor = editing ? (
     <QuoteCommentEditor
-      key={`${editing.n}:${editing.fresh}`}
+      key={`${editing.token}:${editing.fresh}`}
       n={editing.n}
       initial={editing.initial}
       anchor={editing.anchor}
-      onSave={(comment, send) => save(editing.n, comment, send)}
+      onSave={(comment, send) => save(editing, comment, send)}
       onCancel={() => cancel(editing)}
     />
   ) : null
@@ -268,12 +365,8 @@ export function useChatQuotes(input: ChatQuotesInput): ChatQuotes {
   return { cite, renderQuoteChip, goToSource, highlights, editor }
 }
 
-function stripPosition({ from: _from, to: _to, ...quote }: ChatQuote & { from: number; to: number }): ChatQuote {
+function stripPosition({ from: _from, to: _to, token: _token, ...quote }: ChatQuoteToken): ChatQuote {
   return quote
-}
-
-function chipRect(n: number): DOMRect | null {
-  return document.querySelector(`[data-composer-field] [data-quote-number="${n}"]`)?.getBoundingClientRect() ?? null
 }
 
 function sourceGone(): void {

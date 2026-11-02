@@ -51,8 +51,16 @@ export type ChatQuote = {
   comment: string
 }
 
-/** A quote found in a text, with where its token stands. */
-export type ChatQuoteToken = ChatQuote & { from: number; to: number }
+/** A quote found in a text, with where its token stands and the token as written. */
+export type ChatQuoteToken = ChatQuote & { from: number; to: number; token: string }
+
+/**
+ * The longest a quote's token may be. The passage is percent-encoded, so a
+ * passage within the quote cap can still make a token several times its
+ * length (a character outside ASCII is up to twelve); a token past this is
+ * refused rather than let crowd the draft, whose cap would cut it in two.
+ */
+export const QUOTE_TOKEN_MAX_CHARS = 40_000
 
 /** How much drawn text either side of a passage a quote keeps for finding it again. */
 export const QUOTE_CONTEXT_CHARS = 32
@@ -61,14 +69,19 @@ export const QUOTE_CONTEXT_CHARS = 32
 // brackets; the address holds no `)` and no whitespace once encoded.
 const TOKEN = /\[[^[\]\n]*\]\(sprintengine-quote:\?([^)\s]*)\)/gu
 
-/** The token for `quote`: a Markdown link labelled with its number. */
+/**
+ * The token for `quote`: a Markdown link labelled with its number. `exact` is
+ * left out when it is the passage's own markdown with its whitespace folded —
+ * plain prose, the common case — and read back from it, so a quote of plain
+ * words is not carried twice.
+ */
 export function quoteToken(quote: ChatQuote): string {
   const params = new URLSearchParams()
   params.set('v', String(QUOTE_TOKEN_VERSION))
   params.set('turn', quote.turnId)
   params.set('n', String(quote.n))
   params.set('quote', quote.quote)
-  params.set('exact', quote.exact)
+  if (foldWhitespace(quote.exact) !== foldWhitespace(quote.quote)) params.set('exact', quote.exact)
   if (quote.prefix) params.set('prefix', quote.prefix)
   if (quote.suffix) params.set('suffix', quote.suffix)
   if (quote.comment) params.set('comment', quote.comment)
@@ -85,7 +98,7 @@ function readQuery(query: string): ChatQuote | null {
     turnId,
     n,
     quote,
-    exact: params.get('exact') ?? '',
+    exact: params.get('exact') ?? foldWhitespace(quote),
     prefix: params.get('prefix') ?? '',
     suffix: params.get('suffix') ?? '',
     comment: params.get('comment') ?? '',
@@ -109,7 +122,7 @@ export function collectQuotes(text: string): ChatQuoteToken[] {
   const found: ChatQuoteToken[] = []
   for (const match of text.matchAll(TOKEN)) {
     const quote = readQuery(match[1] ?? '')
-    if (quote) found.push({ ...quote, from: match.index, to: match.index + match[0].length })
+    if (quote) found.push({ ...quote, from: match.index, to: match.index + match[0].length, token: match[0] })
   }
   return found
 }
@@ -125,20 +138,59 @@ export function nextQuoteNumber(texts: Iterable<string>): number {
   return highest + 1
 }
 
-/** `text` with quote `n`'s comment set to `comment` (trimmed; empty removes it). */
-export function withQuoteComment(text: string, n: number, comment: string): string {
-  const token = collectQuotes(text).find((quote) => quote.n === n)
-  if (!token) return text
-  const next = quoteToken({ ...token, comment: comment.trim() })
-  return `${text.slice(0, token.from)}${next}${text.slice(token.to)}`
+/**
+ * Which passage a quote marks: its reply and the words that find it there.
+ * Two quotes with one anchor mark the same words; a number says nothing about
+ * that, since a number can come round again (a quote taken back out, a token
+ * pasted from another chat).
+ */
+export function quoteAnchorKey(quote: Pick<ChatQuote, 'turnId' | 'exact' | 'prefix' | 'suffix'>): string {
+  return JSON.stringify([quote.turnId, foldWhitespace(quote.exact), quote.prefix, quote.suffix])
 }
 
-/** `text` without quote `n`'s token, and without the one space typed after it. */
-export function withoutQuote(text: string, n: number): string {
-  const token = collectQuotes(text).find((quote) => quote.n === n)
-  if (!token) return text
-  const after = text[token.to] === ' ' ? token.to + 1 : token.to
-  return `${text.slice(0, token.from)}${text.slice(after)}`
+/** Everything a quote says: two tokens with one content key are the same quote. */
+export function quoteContentKey(quote: ChatQuote): string {
+  return JSON.stringify([quoteAnchorKey(quote), quote.n, quote.quote, quote.comment])
+}
+
+/**
+ * `text` with the quote written as `token` given `comment` (trimmed; empty
+ * removes it). The token names the quote rather than its number, which two
+ * quotes in one text can share.
+ */
+export function withQuoteComment(text: string, token: string, comment: string): string {
+  const found = collectQuotes(text).find((quote) => quote.token === token)
+  if (!found) return text
+  const next = quoteToken({ ...found, comment: comment.trim() })
+  return `${text.slice(0, found.from)}${next}${text.slice(found.to)}`
+}
+
+/**
+ * `text` without the quote written as `token`, and without the spaces set
+ * either side of it when it went in: by default the one after it, which is
+ * what a chip is typed with.
+ */
+export function withoutQuote(
+  text: string,
+  token: string,
+  spaces: { before?: boolean; after?: boolean } = { after: true },
+): string {
+  const found = collectQuotes(text).find((quote) => quote.token === token)
+  if (!found) return text
+  const from = spaces.before && text[found.from - 1] === ' ' ? found.from - 1 : found.from
+  const to = spaces.after && text[found.to] === ' ' ? found.to + 1 : found.to
+  return `${text.slice(0, from)}${text.slice(to)}`
+}
+
+/**
+ * `text` cut to at most `max` characters without cutting a token in two: a
+ * token the cut would split goes whole, with what followed it. A half token is
+ * an address that no longer reads, left in the message as noise.
+ */
+export function clipKeepingQuotes(text: string, max: number): string {
+  if (text.length <= max) return text
+  const split = collectQuotes(text).find((quote) => quote.from < max && quote.to > max)
+  return text.slice(0, split ? split.from : max)
 }
 
 // ── Reading it as words ──────────────────────────────────────────────────
@@ -251,6 +303,24 @@ export function quotesToInlineText(text: string): string {
   return `${out}${text.slice(at)}`
 }
 
+/**
+ * The message as the page draws it: each quote as its chip's label, the words
+ * a reader sees, escaped so the label reads back as itself when the message is
+ * read as markdown. What Find in chat counts, so every match it counts is one
+ * it can paint.
+ */
+export function quotesToLabels(text: string): string {
+  const quotes = collectQuotes(text)
+  if (!quotes.length) return text
+  let out = ''
+  let at = 0
+  for (const quote of quotes) {
+    out += `${text.slice(at, quote.from)}${quoteLabel(quote).replace(/[\\`*_{}[\]()#+\-.!|<>~]/gu, '\\$&')}`
+    at = quote.to
+  }
+  return `${out}${text.slice(at)}`
+}
+
 /** What a chip says: its comment when it has one, otherwise the start of the passage. */
 export function quoteLabel(quote: Pick<ChatQuote, 'quote' | 'exact' | 'comment'>, max = 64): string {
   const comment = quote.comment.replace(/\s+/gu, ' ').trim()
@@ -275,25 +345,43 @@ const neutralise = (text: string) => text.replace(/<\/quotes>/giu, '<\\/quotes>'
 export function expandQuotesForAgent(text: string): string {
   const quotes = collectQuotes(text)
   if (!quotes.length) return text
+  // One label per distinct quote: the same token twice is one passage, and two
+  // different passages that came to share a number (a token pasted from
+  // another chat) are told apart rather than one of them lost.
+  const labels = new Map<string, string>()
+  const byNumber = new Map<number, string[]>()
+  for (const quote of quotes) {
+    const key = quoteContentKey(quote)
+    const keys = byNumber.get(quote.n) ?? []
+    if (!keys.includes(key)) keys.push(key)
+    byNumber.set(quote.n, keys)
+  }
+  for (const quote of quotes) {
+    const keys = byNumber.get(quote.n)!
+    const key = quoteContentKey(quote)
+    const index = keys.indexOf(key)
+    labels.set(key, keys.length > 1 ? `${quote.n}${String.fromCharCode(97 + (index % 26))}` : String(quote.n))
+  }
   let body = ''
   let at = 0
   for (const quote of quotes) {
-    body += `${text.slice(at, quote.from)}[quote ${quote.n}]`
+    body += `${text.slice(at, quote.from)}[quote ${labels.get(quoteContentKey(quote))}]`
     at = quote.to
   }
   body += text.slice(at)
-  const seen = new Set<number>()
+  const seen = new Set<string>()
   const entries: string[] = []
   for (const quote of quotes) {
-    if (seen.has(quote.n)) continue
-    seen.add(quote.n)
+    const key = quoteContentKey(quote)
+    if (seen.has(key)) continue
+    seen.add(key)
     const passage = quote.quote
       .replace(/\r\n?/gu, '\n')
       .split('\n')
       .map((line) => `> ${neutralise(line)}`.trimEnd())
       .join('\n')
     const comment = quote.comment.trim()
-    entries.push(`[quote ${quote.n}]\n${passage}${comment ? `\nComment: ${neutralise(comment)}` : ''}`)
+    entries.push(`[quote ${labels.get(key)}]\n${passage}${comment ? `\nComment: ${neutralise(comment)}` : ''}`)
   }
   return `${body.trimEnd()}\n\n<quotes>\n${QUOTES_PREAMBLE}\n\n${entries.join('\n\n')}\n</quotes>`
 }
