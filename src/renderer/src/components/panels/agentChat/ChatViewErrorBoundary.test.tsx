@@ -126,3 +126,49 @@ test('a chat whose code failed to load loads it again on Reload chat, and offers
     }
   }
 })
+
+test('a chat whose code was fetched ahead draws without its fallback', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost' })
+  const previous = Object.getOwnPropertyDescriptors(globalThis)
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  })
+  try {
+    const { act, createElement, Suspense } = await import('react')
+    const { createRoot } = await import('react-dom/client')
+    const { reloadableLazy } = await import('./ChatViewErrorBoundary')
+    let loads = 0
+    const Chat = reloadableLazy<{ name: string }>(async () => {
+      loads++
+      return { default: ({ name }: { name: string }) => createElement('p', null, `chat ${name}`) }
+    })
+    // New chat fetches it while the person types; it lands before Enter.
+    Chat.preload()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    let fallbacks = 0
+    function Fallback(): null {
+      fallbacks++
+      return null
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    await act(async () =>
+      root.render(createElement(Suspense, { fallback: createElement(Fallback) }, createElement(Chat, { name: 'one' }))),
+    )
+    expect(host.textContent).toBe('chat one')
+    expect(fallbacks, 'a fallback commits a frame React then holds for 300 ms').toBe(0)
+    expect(loads, 'the chunk is fetched once').toBe(1)
+    await act(async () => root.unmount())
+  } finally {
+    dom.window.close()
+    for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'IS_REACT_ACT_ENVIRONMENT']) {
+      if (previous[key]) Object.defineProperty(globalThis, key, previous[key])
+      else Reflect.deleteProperty(globalThis, key)
+    }
+  }
+})

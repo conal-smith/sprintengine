@@ -105,6 +105,7 @@ import {
 } from '../../../../shared/tailnet-mesh'
 import { remoteConversationFactsKey, useRemoteConversationFacts } from './remoteBand/remoteConversationFacts'
 import { isImeKey } from '../../utils/imeKey'
+import { agentPanelChunk } from '../panels/agentPanelChunks'
 
 const EMPTY_LAYOUT_MODEL: IJsonModel = { global: {}, borders: [], layout: { type: 'row', children: [] } }
 
@@ -147,7 +148,8 @@ function countOpenTabs(model: Model | null): number {
 // terminal inside it is already fetched on demand, so a tab that opens goes
 // through one Suspense step it was going through anyway. It also kept the kit's
 // skill picker (and the skills catalogue behind it) eager for everyone.
-const AgentPanel = React.lazy(() => import('../panels/AgentPanel'))
+// Preloadable: New chat fetches it while the person types (panels/agentPanelChunks.ts).
+const AgentPanel = agentPanelChunk.Component
 const EditorPanel = React.lazy(() => import('../panels/EditorPanel'))
 const GitConflictResolverPanel = React.lazy(() => import('../panels/GitConflictResolverPanel'))
 const PlainTerminalPanel = React.lazy(() => import('../panels/PlainTerminalPanel'))

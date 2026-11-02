@@ -20,11 +20,10 @@ import { IconButton, RowButton, StarGlyph, Tooltip } from '../ui'
 import { revealBacklogItemInPane } from '../workspace/pane/backlogPaneReveal'
 import { requestPaletteOpen } from '../palette/paletteOpenRequest'
 import { CliInstallCta } from '../workspace/cliInstallRoute'
-import { ChatViewErrorBoundary, reloadableLazy } from './agentChat/ChatViewErrorBoundary'
+import { ChatViewErrorBoundary } from './agentChat/ChatViewErrorBoundary'
+import { AgentChatView } from './agentPanelChunks'
 
 const TerminalView = React.lazy(() => import('./TerminalView'))
-// Reloadable, so the chat boundary's Reload chat can fetch a chunk that failed.
-const AgentChatView = reloadableLazy(() => import('./AgentChatView'))
 
 interface Props {
   workspaceId: string
