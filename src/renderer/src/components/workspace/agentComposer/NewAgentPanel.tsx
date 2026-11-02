@@ -147,6 +147,7 @@ import { keydownMatchesKeybindings } from '../../../commands/commandDispatcher'
 import { getEffectiveKeybindings, platformKeybindingsFromApiPlatform } from '../../../commands/effectiveKeybindings'
 import { renderKeybinding } from '../../../commands/keybindings'
 import { isImeKey } from '../../../utils/imeKey'
+import { preloadAgentPanelChunks } from '../../panels/agentPanelChunks'
 
 export type NewAgentLaunch = AgentComposerConfirm & {
   /** The agent's startup prompt. Empty means "start with nothing typed". */
@@ -409,6 +410,9 @@ function scheduledSkill(skill: { id: string; name: string }): WorkspaceSkill {
 }
 
 const NO_SCHEDULED_RUNS: readonly ScheduledRunEntry[] = []
+
+/** How long after the door mounts the chat's code is fetched: past its first paint, well before an Enter. */
+const PRELOAD_CHAT_AFTER_MS = 200
 
 /** ⌘⏎ in the prompt: start the chat and stay on New chat (see the registry). */
 const LAUNCH_IN_BACKGROUND_COMMAND = 'chat.new.launchInBackground'
@@ -1320,6 +1324,14 @@ export default function NewAgentPanel({
     folderPath: workspaceRoot,
     hostId: hostChoosable ? hostId : null,
   })
+  // The chat Enter opens is drawn with code New chat does not use, so it is
+  // fetched while the person types: a window's first chat then draws at once
+  // instead of through the fallbacks React holds for 300 ms. After the door's
+  // own first paint, which it must not slow.
+  React.useEffect(() => {
+    const timer = window.setTimeout(preloadAgentPanelChunks, PRELOAD_CHAT_AFTER_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
   // The chip starts on at the door, so a launch it is not offered for drops
   // the worktree rather than carrying one nobody could see: a folder that is
   // not a git repository would fail to make it and keep the chat from
