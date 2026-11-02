@@ -14,6 +14,7 @@ import {
   MESH_SCHEDULED_AGENTS_CHANNEL,
   MESH_SCHEDULED_AGENT_ACTION_CHANNEL,
   MESH_CREATE_SCHEDULED_AGENT_CHANNEL,
+  MESH_UPDATE_SCHEDULED_AGENT_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -36,6 +37,8 @@ import {
   type MeshRevokeApprovalRuleResult,
   type MeshCreateScheduledAgentInput,
   type MeshCreateScheduledAgentResult,
+  type MeshUpdateScheduledAgentInput,
+  type MeshUpdateScheduledAgentResult,
   type MeshScheduledAgentAction,
   type MeshScheduledAgentActionResult,
   type MeshScheduledAgentsResult,
@@ -185,6 +188,8 @@ export const meshApi = {
     ipcRenderer.invoke(MESH_SCHEDULED_AGENT_ACTION_CHANNEL, input) as Promise<MeshScheduledAgentActionResult>,
   meshCreateScheduledAgent: (input: MeshCreateScheduledAgentInput): Promise<MeshCreateScheduledAgentResult> =>
     ipcRenderer.invoke(MESH_CREATE_SCHEDULED_AGENT_CHANNEL, input) as Promise<MeshCreateScheduledAgentResult>,
+  meshUpdateScheduledAgent: (input: MeshUpdateScheduledAgentInput): Promise<MeshUpdateScheduledAgentResult> =>
+    ipcRenderer.invoke(MESH_UPDATE_SCHEDULED_AGENT_CHANNEL, input) as Promise<MeshUpdateScheduledAgentResult>,
   meshWorkspaceCheckout: (connectionId: string, workspaceId: string): Promise<MeshWorkspaceCheckoutResult> =>
     ipcRenderer.invoke(MESH_WORKSPACE_CHECKOUT_CHANNEL, {
       connectionId,
@@ -436,6 +441,7 @@ export const meshApi = {
   | 'meshScheduledAgents'
   | 'meshScheduledAgentAction'
   | 'meshCreateScheduledAgent'
+  | 'meshUpdateScheduledAgent'
   | 'meshWorkspaceCheckout'
   | 'meshWorkspaceExtensions'
   | 'meshGetLiveState'

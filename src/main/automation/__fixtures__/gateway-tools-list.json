@@ -325,6 +325,10 @@
       "sha256": "4954e763ba14ca5d9b0143144ac2b68499e5040a48ddfc1c084babb0fd1aaafd"
     },
     {
+      "name": "schedule.update",
+      "sha256": "8c815f619adc6265b785da7bd59cb5fb37a4922c21b9d751273934e3c7edd2ae"
+    },
+    {
       "name": "schedule.delete",
       "sha256": "2eeb67b036d102a71754d9a29f095e13bbf1a88e5fdb25c6ba206578f092a821"
     },
@@ -741,6 +745,10 @@
     {
       "name": "schedule.create",
       "sha256": "4954e763ba14ca5d9b0143144ac2b68499e5040a48ddfc1c084babb0fd1aaafd"
+    },
+    {
+      "name": "schedule.update",
+      "sha256": "8c815f619adc6265b785da7bd59cb5fb37a4922c21b9d751273934e3c7edd2ae"
     },
     {
       "name": "schedule.delete",

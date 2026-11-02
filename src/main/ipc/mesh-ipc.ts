@@ -13,6 +13,7 @@ import {
   MESH_SCHEDULED_AGENTS_CHANNEL,
   MESH_SCHEDULED_AGENT_ACTION_CHANNEL,
   MESH_CREATE_SCHEDULED_AGENT_CHANNEL,
+  MESH_UPDATE_SCHEDULED_AGENT_CHANNEL,
   MESH_WORKSPACE_CHECKOUT_CHANNEL,
   MESH_WORKSPACE_EXTENSIONS_CHANNEL,
   MESH_FORGET_CHANNEL,
@@ -184,6 +185,9 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
   })
   ipcMain.handle(MESH_CREATE_SCHEDULED_AGENT_CHANNEL, (_event, input: unknown) =>
     service.mesh().createScheduledAgent(asRecord(input) ?? {}),
+  )
+  ipcMain.handle(MESH_UPDATE_SCHEDULED_AGENT_CHANNEL, (_event, input: unknown) =>
+    service.mesh().updateScheduledAgent(asRecord(input) ?? {}),
   )
   ipcMain.handle(MESH_WORKSPACE_CHECKOUT_CHANNEL, (_event, input: unknown) => {
     const record = asRecord(input)

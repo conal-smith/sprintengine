@@ -334,6 +334,10 @@ type WorkspaceSidebarProps = {
   onOpenScheduledAgent?: (id: string) => void
   // The scheduled agent the door in this window is editing, drawn selected.
   openScheduledAgentId?: string | null
+  // Open a paired machine's scheduled agent: the same editor, saving there.
+  onOpenRemoteScheduledAgent?: (connectionId: string, id: string) => void
+  // The paired machine's scheduled agent the door is editing, drawn selected.
+  openRemoteScheduledAgent?: { connectionId: string; id: string } | null
   // Reopen a kept New chat draft, and throw one away. Absent, no Drafts section.
   onOpenDraft?: (id: string) => void
   onDeleteDraft?: (id: string) => void
@@ -456,6 +460,8 @@ function WorkspaceSidebar({
   onNewScheduledAgent,
   onOpenScheduledAgent,
   openScheduledAgentId = null,
+  onOpenRemoteScheduledAgent,
+  openRemoteScheduledAgent = null,
   onOpenDraft,
   onDeleteDraft,
   openDraftId = null,
@@ -3511,8 +3517,9 @@ function WorkspaceSidebar({
               ))
             : null}
           {/* A paired machine's, after this computer's: the same row with that
-              machine's mark, driven over there. The pause of them all is that
-              machine's, said on each of its rows. */}
+              machine's mark, driven over there. It opens in the same editor
+              this computer's open in, and saves there. The pause of them all
+              is that machine's, said on each of its rows. */}
           {expanded
             ? remoteScheduled.machines.flatMap((machine) =>
                 machine.agents.map((agent) => (
@@ -3528,10 +3535,16 @@ function WorkspaceSidebar({
                     }}
                     machine={{ ref: { kind: 'paired', name: machine.machineName }, name: machine.machineName }}
                     runInProgress={null}
-                    selected={false}
+                    selected={
+                      openRemoteScheduledAgent?.connectionId === machine.connectionId &&
+                      openRemoteScheduledAgent.id === agent.id
+                    }
                     pausedAll={machine.pausedAll !== null}
                     {...(machine.operable
                       ? {
+                          ...(onOpenRemoteScheduledAgent
+                            ? { onOpen: () => onOpenRemoteScheduledAgent(machine.connectionId, agent.id) }
+                            : {}),
                           onClose: () => actOnRemoteScheduled(machine, agent, 'delete'),
                           onTogglePause: () =>
                             actOnRemoteScheduled(machine, agent, agent.pausedAt === undefined ? 'pause' : 'resume'),

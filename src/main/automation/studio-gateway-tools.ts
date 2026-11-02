@@ -31,6 +31,8 @@ const APP_MUTATION_TOOLS = new Set([
   ...EDITOR_MUTATION_TOOL_NAMES,
   'agent.launch',
   'schedule.create',
+  // Changing one changes what this machine starts on its own later.
+  'schedule.update',
   'schedule.delete',
   'schedule.run',
   // Pausing and resuming change when this machine starts agents on its own.

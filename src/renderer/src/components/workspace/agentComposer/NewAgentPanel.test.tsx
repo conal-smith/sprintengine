@@ -1577,6 +1577,135 @@ test('NewAgentPanel', async () => {
     )
 
     await check(
+      "a paired machine's scheduled agent opens on that machine and its project, and saves, pauses and runs there",
+      async () => {
+        seedStore()
+        resetRememberedMachineForTests()
+        meshConnections = [machine('m1', 'Air'), machine('m2', 'Mini')]
+        meshBrowseAnswer = (id) => ({
+          connectionId: id,
+          reachable: true,
+          unreachableReason: null,
+          unauthorized: false,
+          scopes: [],
+          capabilities: ['conversations', 'scheduled-agents', 'scheduled-agents-edit'],
+          workspaces: [workspace('w1', 'alpha'), workspace('w2', 'beta')],
+          gaps: [],
+        })
+        const api = (dom.window as unknown as { api: Record<string, unknown> }).api
+        const localUpdates: unknown[] = []
+        api.updateScheduledAgent = async (...args: unknown[]) => {
+          localUpdates.push(args)
+          return { ok: false, message: 'not here' }
+        }
+        const remoteUpdates: Array<Record<string, unknown>> = []
+        api.meshUpdateScheduledAgent = async (input: Record<string, unknown>) => {
+          remoteUpdates.push(input)
+          return { ok: true, agent: { ...agent, prompt: input.prompt } }
+        }
+        const actions: Array<Record<string, unknown>> = []
+        api.meshScheduledAgentAction = async (input: Record<string, unknown>) => {
+          actions.push(input)
+          return { ok: true, id: input.id, action: input.action }
+        }
+        const agent = {
+          id: 'sa-7',
+          prompt: 'Look over the open pull requests.',
+          schedule: { cron: '0 9 * * 1-5', timezone: 'UTC' },
+          folderPath: '/home/beta',
+          hostId: null,
+          cli: 'claude-code',
+          cliModel: null,
+          permissionPreset: null,
+          skills: [],
+          mcpServers: [],
+          worktree: null,
+          ownerModuleId: null,
+          createdAt: 0,
+          updatedAt: 0,
+          lastRun: null,
+          lastFailureSeenAt: null,
+          nextRunAt: null,
+        }
+        const saved: unknown[] = []
+        const view = await remoteRender({
+          folderPath: null,
+          editingScheduledAgent: agent,
+          editingScheduledAgentRemote: { connectionId: 'm2', machineName: 'Mini', pausedAll: null },
+          onScheduled: (saved_: unknown) => saved.push(saved_),
+        })
+        await settle()
+        await settle()
+        assert.equal(machineTrigger(view), undefined, 'a schedule stays on its machine: no machine to pick')
+        assert.equal(view.container.querySelector('[data-machine-line]')?.textContent, 'Mini', 'it names its machine')
+        assert.ok(buttonWithText(view.container, 'beta'), 'and opens on its project there')
+        const field = composerField(view.container)
+        assert.equal(composerText(field), 'Look over the open pull requests.', 'and on its prompt')
+
+        await act(async () => {
+          typeIntoComposer(field, 'Look over the open pull requests, and label them.')
+        })
+        await act(async () => {
+          field.dispatchEvent(
+            new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+          )
+        })
+        await settle()
+        assert.equal(localUpdates.length, 0, 'never saved on this computer')
+        assert.equal(remoteUpdates.length, 1)
+        assert.deepEqual(
+          { ...remoteUpdates[0], skills: undefined, mcpServers: undefined, permissionPreset: undefined },
+          {
+            connectionId: 'm2',
+            id: 'sa-7',
+            prompt: 'Look over the open pull requests, and label them.',
+            cron: '0 9 * * 1-5',
+            timezone: 'UTC',
+            cli: 'claude-code',
+            model: null,
+            worktreeName: null,
+            skills: undefined,
+            mcpServers: undefined,
+            permissionPreset: undefined,
+          },
+          'saved there, in the project it runs in',
+        )
+        assert.equal(saved.length, 1, 'the host is told it saved')
+
+        await click(view.container.querySelector('[data-schedule-editor-pause]'))
+        await click(buttonWithText(view.container, 'Run now'))
+        await settle()
+        assert.deepEqual(
+          actions.map((action) => [action.connectionId, action.id, action.action]),
+          [
+            ['m2', 'sa-7', 'pause'],
+            ['m2', 'sa-7', 'run'],
+          ],
+          'pause and Run now are asked of that machine',
+        )
+
+        // Another project there moves it, by one of that project's chats.
+        await click(buttonWithText(view.container, 'beta'))
+        const projects = dom.window.document.querySelector('[role="menu"][aria-label="Project on Mini"]')
+        await click(buttonWithText(projects!, 'alpha'))
+        await act(async () => {
+          composerField(view.container).dispatchEvent(
+            new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+          )
+        })
+        await settle()
+        assert.equal(remoteUpdates[1]?.workspaceId, 'w1')
+        view.unmount()
+
+        // Opening a schedule on its machine did not choose the next chat's.
+        const fresh = await remoteRender()
+        await settle()
+        assert.equal(machineTrigger(fresh)?.textContent?.trim(), 'This device')
+        fresh.unmount()
+      },
+    )
+
+    await check(
       "a remote machine's project list holds its projects, never the worktrees its chats run in",
       async () => {
         seedStore()

@@ -49,6 +49,8 @@ import {
   type MeshRevokeApprovalRuleResult,
   type MeshCreateScheduledAgentInput,
   type MeshCreateScheduledAgentResult,
+  type MeshUpdateScheduledAgentInput,
+  type MeshUpdateScheduledAgentResult,
   type MeshScheduledAgentAction,
   type MeshScheduledAgentActionResult,
   type MeshScheduledAgentsResult,
@@ -365,6 +367,8 @@ export type TailnetMeshService = {
   }): Promise<MeshScheduledAgentActionResult>
   /** Schedule an agent there, in one of its projects (`scheduled-agents`). */
   createScheduledAgent(input: Partial<MeshCreateScheduledAgentInput>): Promise<MeshCreateScheduledAgentResult>
+  /** Save an edit to one of them there (`scheduled-agents-edit`). */
+  updateScheduledAgent(input: Partial<MeshUpdateScheduledAgentInput>): Promise<MeshUpdateScheduledAgentResult>
   /**
    * One remote workspace's checkout facts — branch, trunk, branches,
    * worktrees — over `workspace.checkout` (workspace:read). A pairing that
@@ -2400,7 +2404,11 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     })
     if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
     const capabilities = peerCapabilities.get(connection.id)
-    return { ...scheduledAgentsOf(answer.value), canCreate: tailnetPeerSupports(capabilities, 'scheduled-agents') }
+    return {
+      ...scheduledAgentsOf(answer.value),
+      canCreate: tailnetPeerSupports(capabilities, 'scheduled-agents'),
+      canEdit: tailnetPeerSupports(capabilities, 'scheduled-agents-edit'),
+    }
   }
 
   async function scheduledAgentAction(input: {
@@ -2454,31 +2462,11 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
         message: 'A schedule needs a project, a prompt, a time and a CLI.',
       }
     }
-    const ids = (value: unknown) =>
-      Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : []
-    const preset = input.permissionPreset ? parseCliPermissionPreset(input.permissionPreset) : null
-    const once = typeof input.once === 'number' && Number.isFinite(input.once) ? input.once : null
     const answer = await callRemoteTool({
       endpoint: endpointOf(connection),
       token: connection.deviceToken,
       tool: 'schedule.create',
-      args: {
-        workspaceId,
-        prompt,
-        cron,
-        ...(text(input.timezone) ? { timezone: text(input.timezone) } : {}),
-        ...(once !== null ? { once: new Date(once).toISOString() } : {}),
-        cli,
-        ...(text(input.model) ? { model: text(input.model) } : {}),
-        ...(preset ? { permissionPreset: preset } : {}),
-        ...(typeof input.worktreeName === 'string'
-          ? input.worktreeName.trim()
-            ? { worktreeName: input.worktreeName.trim() }
-            : { worktree: true }
-          : {}),
-        ...(ids(input.skills).length > 0 ? { skills: ids(input.skills) } : {}),
-        ...(ids(input.mcpServers).length > 0 ? { mcpServers: ids(input.mcpServers) } : {}),
-      },
+      args: { workspaceId, ...scheduleToolArgs(input, { prompt, cron, cli }) },
     })
     if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
     const agent = scheduledAgentViewOf(answer.value.scheduledAgent)
@@ -2489,6 +2477,51 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           code: 'unreadable_result',
           message: 'That machine scheduled it, in a shape this build cannot read.',
         }
+  }
+
+  async function updateScheduledAgent(
+    input: Partial<MeshUpdateScheduledAgentInput>,
+  ): Promise<MeshUpdateScheduledAgentResult> {
+    const connection = connectionFor(input.connectionId)
+    if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
+    const capabilities = peerCapabilities.get(connection.id)
+    if (capabilities && !tailnetPeerSupports(capabilities, 'scheduled-agents-edit')) {
+      return {
+        ok: false,
+        code: 'scheduled_agents_edit_unsupported',
+        message: `${connection.machineName} cannot take a change to a schedule from here yet. Update SprintEngine Studio there to edit its schedules.`,
+      }
+    }
+    const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null)
+    const id = text(input.id)
+    const prompt = text(input.prompt)
+    const cron = text(input.cron)
+    const cli = text(input.cli)
+    if (!id || !prompt || !cron || !cli) {
+      return { ok: false, code: 'invalid_arguments', message: 'A schedule needs a prompt, a time and a CLI.' }
+    }
+    const workspaceId = text(input.workspaceId)
+    const answer = await callRemoteTool({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      tool: 'schedule.update',
+      args: {
+        id,
+        ...(workspaceId ? { workspaceId } : {}),
+        ...scheduleToolArgs(input, { prompt, cron, cli }),
+        // What the editor shows is the whole of it: a model, a worktree, a
+        // skill or a server taken off there is taken off, not kept.
+        model: text(input.model) ?? '',
+        ...(input.worktreeName === null || input.worktreeName === undefined ? { worktree: false } : {}),
+        skills: scheduleIds(input.skills),
+        mcpServers: scheduleIds(input.mcpServers),
+      },
+    })
+    if (!answer.ok) return { ok: false, code: answer.code, message: answer.message }
+    const agent = scheduledAgentViewOf(answer.value.scheduledAgent)
+    return agent
+      ? { ok: true, agent }
+      : { ok: false, code: 'unreadable_result', message: 'That machine saved it, in a shape this build cannot read.' }
   }
 
   function getLiveState(): MeshLiveState {
@@ -3082,6 +3115,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     scheduledAgents,
     scheduledAgentAction,
     createScheduledAgent,
+    updateScheduledAgent,
     workspaceCheckout,
     workspaceExtensions,
     readUsage,
@@ -3794,6 +3828,40 @@ function attachmentsOf(value: unknown): Array<{ id: string; name: string }> {
     if (typeof attachment.id !== 'string' || !attachment.id) return []
     return [{ id: attachment.id, name: typeof attachment.name === 'string' ? attachment.name : attachment.id }]
   })
+}
+
+function scheduleIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : []
+}
+
+/**
+ * What `schedule.create` and `schedule.update` both take of a schedule saved
+ * from here, besides its project: the prompt, the time, the engine and what
+ * each run is started with.
+ */
+function scheduleToolArgs(
+  input: Partial<MeshCreateScheduledAgentInput | MeshUpdateScheduledAgentInput>,
+  required: { prompt: string; cron: string; cli: string },
+): Record<string, unknown> {
+  const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null)
+  const preset = input.permissionPreset ? parseCliPermissionPreset(input.permissionPreset) : null
+  const once = typeof input.once === 'number' && Number.isFinite(input.once) ? input.once : null
+  return {
+    prompt: required.prompt,
+    cron: required.cron,
+    ...(text(input.timezone) ? { timezone: text(input.timezone) } : {}),
+    ...(once !== null ? { once: new Date(once).toISOString() } : {}),
+    cli: required.cli,
+    ...(text(input.model) ? { model: text(input.model) } : {}),
+    ...(preset ? { permissionPreset: preset } : {}),
+    ...(typeof input.worktreeName === 'string'
+      ? input.worktreeName.trim()
+        ? { worktreeName: input.worktreeName.trim() }
+        : { worktree: true }
+      : {}),
+    ...(scheduleIds(input.skills).length > 0 ? { skills: scheduleIds(input.skills) } : {}),
+    ...(scheduleIds(input.mcpServers).length > 0 ? { mcpServers: scheduleIds(input.mcpServers) } : {}),
+  }
 }
 
 /**
