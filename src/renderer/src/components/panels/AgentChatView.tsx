@@ -3361,16 +3361,16 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   const pendingApprovalEntries = shape.pendingApprovals
   const pendingApprovalEntry = pendingApprovalEntries[0]
   // A question takes the composer's place, so no placeholder speaks for it;
-  // the tray's requests leave the field showing beneath them.
+  // the tray's requests leave the field showing beneath them. A ready field
+  // stays empty: it is plainly where a message goes, with or without a turn
+  // running, so the placeholder only speaks when something stands in the way.
   const composerPlaceholder = pendingApprovalEntry
     ? pendingApprovalEntry.requestKind === 'plan'
       ? 'Respond to the plan above to continue'
       : 'Respond to the request above to continue'
     : !ready && !startupHolding
       ? readinessLabel(readiness)
-      : projection.activeTurn || startupHolding
-        ? 'Reply — sends when the turn finishes'
-        : 'Send a message…'
+      : undefined
 
   // Retry lives on the failed turn's error block in the transcript; only the
   // latest failed turn is retryable (retry re-sends the last user message).
