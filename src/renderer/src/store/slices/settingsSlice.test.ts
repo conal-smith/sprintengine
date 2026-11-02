@@ -519,15 +519,16 @@ test('settingsSlice', async () => {
   assert.equal('roadmapSurface' in carrier, false, 'the legacy overlay store flag is gone')
 
   // The workspace pane column (browser-pane epic) took over the aside column
-  // the retired aside left vacant: the app-level width clamps to the column bounds and the
-  // maximised flag is a plain transient toggle.
+  // the retired aside left vacant: the app-level width is floored at the column minimum (its
+  // ceiling is the row it sits in, which only the column can measure) and the maximised flag is
+  // a plain transient toggle.
   assert.equal('workspaceAsideOpen' in carrier, false, 'open/closed is per workspace now, not app state')
   slice.setWorkspacePaneMaximised(true)
   assert.equal(carrier.workspacePaneMaximised, true)
   slice.setWorkspacePaneMaximised(false)
   assert.equal(carrier.workspacePaneMaximised, false)
   slice.setWorkspacePaneWidth(10_000)
-  assert.equal(carrier.workspacePaneWidth, 720, 'width clamps to the column max')
+  assert.equal(carrier.workspacePaneWidth, 10_000, 'a wide width is kept; the column caps it to its row')
   slice.setWorkspacePaneWidth(10)
   assert.equal(carrier.workspacePaneWidth, 240, 'width clamps to the column min')
   slice.setWorkspacePaneWidth(Number.NaN)
