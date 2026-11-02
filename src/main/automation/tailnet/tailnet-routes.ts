@@ -405,6 +405,11 @@ export const TAILNET_CAPABILITIES = [
   // schedules and controls them, but makes none here: an older handler
   // refuses the new arguments.
   'scheduled-agents',
+  // A paired device's schedule editor (2026-11-02): `schedule.update` changes
+  // one of this machine's schedules in place, so a paired desktop opens one
+  // in the same editor it opens its own in and saves it here. A client that
+  // does not see it still runs, pauses and closes them.
+  'scheduled-agents-edit',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

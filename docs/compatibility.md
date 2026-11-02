@@ -757,6 +757,14 @@ wherever `schedule.list` answers, and schedules a new one there only where
 the capability is advertised: the gateway refuses arguments a tool does not
 declare, so an older machine refuses the create rather than making a
 different schedule. It is additive, and the Studio RPC does not advertise it.
+A paired device's schedule editor (2026-11-02) is `scheduled-agents-edit`:
+`schedule.update` (`workspace:operate`) changes one of the machine's schedules
+in place, taking its `id` and any of `schedule.create`'s fields, plus
+`workspaceId` to move it to another project there; anything left out stays as
+it was, and `cron` without `once` makes a one-time schedule repeat. A client
+opens a machine's schedule in its own editor and saves it there only where the
+capability is advertised; an older machine answers "Unknown tool". It is
+additive, and the Studio RPC does not advertise it.
 Breaking frame changes require a new
 negotiated capability or the tailnet version-window process above, not merely
 a package version change. Presentation-only fixes use a package patch.

@@ -31,6 +31,23 @@ function TriggerMachineMark({ machine }: { machine: MachineRef }) {
 }
 
 /**
+ * The machine a scheduled agent being edited runs on, as a line and not a
+ * choice: a schedule stays on the machine it was saved on. Drawn as the
+ * trigger is, its mark and its name, so the strip reads the same.
+ */
+export function FixedMachineLine({ machineName }: { machineName: string }) {
+  return (
+    <span
+      data-machine-line="true"
+      className="inline-flex h-control-xs min-w-0 items-center gap-1.5 px-2 text-meta text-[color:var(--text-subtle)]"
+    >
+      <TriggerMachineMark machine={{ kind: 'paired', name: machineName }} />
+      <span className="min-w-0 truncate">{machineName}</span>
+    </span>
+  )
+}
+
+/**
  * The machine dropdown (remote-sessions-ux / new-chat-on-a-remote-machine):
  * This device is the first entry and the default; every other machine follows
  * wearing its own mark — its kind's drawing in its colour (owner ruling

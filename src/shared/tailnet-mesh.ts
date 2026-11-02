@@ -329,7 +329,14 @@ export const MESH_REVOKE_APPROVAL_RULE_CHANNEL = 'mesh:revoke-approval-rule'
  * and controlled.
  */
 export type MeshScheduledAgentsResult =
-  | { ok: true; agents: ScheduledAgentView[]; pausedAll: ScheduledAgentsPause | null; canCreate: boolean }
+  | {
+      ok: true
+      agents: ScheduledAgentView[]
+      pausedAll: ScheduledAgentsPause | null
+      canCreate: boolean
+      /** Whether that machine takes an edit to one of them from here (`scheduled-agents-edit`). */
+      canEdit: boolean
+    }
   | { ok: false; code: string; message: string }
 
 /** Run now, pause, resume or close one of them there (`workspace:operate`). */
@@ -363,9 +370,34 @@ export type MeshCreateScheduledAgentInput = {
 export type MeshCreateScheduledAgentResult =
   { ok: true; agent: ScheduledAgentView } | { ok: false; code: string; message: string }
 
+/**
+ * One of a paired machine's scheduled agents saved from this machine's editor
+ * (`schedule.update`, `scheduled-agents-edit`): what the editor shows, in the
+ * shape `schedule.create` takes it. `workspaceId` moves it to another project
+ * there; absent, it keeps its own. `once` absent repeats on `cron`.
+ */
+export type MeshUpdateScheduledAgentInput = {
+  connectionId: string
+  id: string
+  workspaceId?: string
+  prompt: string
+  cron: string
+  timezone: string
+  once?: number
+  cli: string
+  model?: string | null
+  permissionPreset?: CliPermissionPreset | null
+  worktreeName?: string | null
+  skills?: string[]
+  mcpServers?: string[]
+}
+
+export type MeshUpdateScheduledAgentResult = MeshCreateScheduledAgentResult
+
 export const MESH_SCHEDULED_AGENTS_CHANNEL = 'mesh:scheduled-agents'
 export const MESH_SCHEDULED_AGENT_ACTION_CHANNEL = 'mesh:scheduled-agent-action'
 export const MESH_CREATE_SCHEDULED_AGENT_CHANNEL = 'mesh:create-scheduled-agent'
+export const MESH_UPDATE_SCHEDULED_AGENT_CHANNEL = 'mesh:update-scheduled-agent'
 
 /**
  * What deleting a settled chat on a paired machine would do, as that machine

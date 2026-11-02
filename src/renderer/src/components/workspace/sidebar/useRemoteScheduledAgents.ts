@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import type { ScheduledAgentView, ScheduledAgentsPause } from '../../../../../shared/scheduled-agents'
 import type { MeshConnection, MeshScheduledAgentAction } from '../../../../../shared/tailnet-mesh'
@@ -59,6 +59,55 @@ const changeListeners = new Set<(connectionId: string) => void>()
 
 export function announceRemoteScheduledChange(connectionId: string): void {
   for (const listener of changeListeners) listener(connectionId)
+}
+
+// What the Scheduled section last read of each machine, for the editor a
+// paired machine's schedule opens in: it follows the row, so a pause or a
+// save shows there as it does on the row.
+let publishedMachines: readonly RemoteScheduledMachine[] = []
+const publishedListeners = new Set<() => void>()
+
+function publishRemoteScheduledMachines(machines: readonly RemoteScheduledMachine[]): void {
+  publishedMachines = machines
+  for (const listener of publishedListeners) listener()
+}
+
+function subscribePublishedMachines(listener: () => void): () => void {
+  publishedListeners.add(listener)
+  return () => {
+    publishedListeners.delete(listener)
+  }
+}
+
+/** One of a paired machine's schedules as the Scheduled section holds it now, with its machine. */
+export function remoteScheduledAgentNow(
+  connectionId: string,
+  id: string,
+): { agent: ScheduledAgentView; machine: RemoteScheduledMachine } | null {
+  const machine = publishedMachines.find((candidate) => candidate.connectionId === connectionId)
+  const agent = machine?.agents.find((candidate) => candidate.id === id)
+  return machine && agent ? { agent, machine } : null
+}
+
+/**
+ * One of a paired machine's schedules as the Scheduled section last read it.
+ * `machine` null is a machine not read just now (asleep, off the tailnet),
+ * which says nothing of the schedule; `agent` null under a machine that was
+ * read is a schedule gone from it.
+ */
+export function useRemoteScheduledAgent(ref: { connectionId: string; id: string } | null): {
+  machine: RemoteScheduledMachine | null
+  agent: ScheduledAgentView | null
+} {
+  const machines = useSyncExternalStore(subscribePublishedMachines, () => publishedMachines)
+  const connectionId = ref?.connectionId ?? null
+  const id = ref?.id ?? null
+  return useMemo(() => {
+    const machine = connectionId
+      ? (machines.find((candidate) => candidate.connectionId === connectionId) ?? null)
+      : null
+    return { machine, agent: machine?.agents.find((candidate) => candidate.id === id) ?? null }
+  }, [machines, connectionId, id])
 }
 
 export function useRemoteScheduledAgents({
@@ -143,5 +192,6 @@ export function useRemoteScheduledAgents({
       }),
     [lists, readable],
   )
+  useEffect(() => publishRemoteScheduledMachines(machines), [machines])
   return { machines, refresh: read }
 }

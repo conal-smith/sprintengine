@@ -75,7 +75,7 @@ import { CliInstallCta } from '../cliInstallRoute'
 import { SpawnPermissionFooter } from './spawnFooter'
 import { EnginePickerChip } from './enginePicker'
 import { ProjectScopePicker } from './ProjectScopePicker'
-import { remoteProjectOfWorkspace, remoteProjectsOf } from './remoteProjects'
+import { remoteProjectMoved, remoteProjectOfFolder, remoteProjectOfWorkspace, remoteProjectsOf } from './remoteProjects'
 import { type ProjectCloneRequest, type ProjectCloneResult } from './ProjectSourceMenu'
 import { mergeDraftConnectors, readNewChatDraft, writeNewChatDraft, type NewChatDraftImage } from './newChatDraft'
 import {
@@ -97,7 +97,7 @@ import { ComposerTray } from '../../panels/agentChat/composerTray'
 import { PROMPT_STASH_COMMAND, usePromptStash } from '../../panels/agentChat/promptStashPicker'
 import { StartAsGlyph, startAsLabel, type StartAs } from './ComposerOptionsMenu'
 import { ComposerPlusMenu } from './ComposerPlusMenu'
-import { MachineScopePicker } from './MachineScopePicker'
+import { FixedMachineLine, MachineScopePicker } from './MachineScopePicker'
 import { ExtensionIdeaCard, SuggestionCard } from './NewChatCards'
 import {
   browseOf,
@@ -112,7 +112,7 @@ import {
   type MachineBrowseEntry,
 } from './newChatMachines'
 import { RemoteProjectPicker, type RemoteTargetState } from './RemoteProjectPicker'
-import { announceRemoteScheduledChange } from '../sidebar/useRemoteScheduledAgents'
+import { announceRemoteScheduledChange, remoteScheduleActionWords } from '../sidebar/useRemoteScheduledAgents'
 import { ComposerStrip } from './ComposerStrip'
 import { FrontTruncatedText } from '../../ui/FrontTruncatedText'
 import { ScheduledRuns } from './schedule/ScheduledRuns'
@@ -133,6 +133,7 @@ import {
   DEFAULT_SCHEDULED_AGENT_CRON,
   type ScheduledAgentDraft,
   type ScheduledAgentView,
+  type ScheduledAgentsPause,
 } from '../../../../../shared/scheduled-agents'
 import { CONVERSATION_DEFAULT_MODEL_ID, conversationProviderForCli } from '../../../../../shared/conversation-harness'
 import {
@@ -329,6 +330,17 @@ export type NewAgentPanelProps = {
    * creates. Absent, the panel creates.
    */
   editingScheduledAgent?: ScheduledAgentView | null
+  /**
+   * The paired machine the scheduled agent being edited runs on, and whether
+   * every schedule there is paused. The panel opens on that machine and its
+   * project there, and saves, pauses and runs it there. Absent, it is this
+   * computer's.
+   */
+  editingScheduledAgentRemote?: {
+    connectionId: string
+    machineName: string
+    pausedAll: ScheduledAgentsPause | null
+  } | null
   /** Told once a scheduled agent was created or saved, with the record main returned. */
   onScheduled?: (agent: ScheduledAgentView) => void
   /** The edited scheduled agent's recent runs, newest first: the chats its runs started. */
@@ -457,6 +469,7 @@ export default function NewAgentPanel({
   draftKey,
   initialMode = 'chat',
   editingScheduledAgent = null,
+  editingScheduledAgentRemote = null,
   onScheduled,
   scheduledRuns = NO_SCHEDULED_RUNS,
   onOpenScheduledRun,
@@ -469,6 +482,7 @@ export default function NewAgentPanel({
   // A scheduled agent being edited opens on everything it was made with, and
   // stays a scheduled agent: there is no switching it to a chat.
   const editing = editingScheduledAgent
+  const editingRemote = editing ? editingScheduledAgentRemote : null
   const [mode, setMode] = React.useState<NewAgentPanelMode>(editing ? 'scheduled' : initialMode)
   const extensionMode = mode === 'extension'
   const [cron, setCron] = React.useState(() => editing?.schedule.cron ?? DEFAULT_SCHEDULED_AGENT_CRON)
@@ -708,6 +722,10 @@ export default function NewAgentPanel({
   // The remembered machine is applied once, when the list first arrives.
   const rememberedApplied = React.useRef(false)
   const seededProjectRef = React.useRef(remoteProject)
+  // A paired machine's schedule opens on that machine and its own project.
+  const editedOnRef = React.useRef(
+    editingRemote && editing ? { connectionId: editingRemote.connectionId, folderPath: editing.folderPath } : null,
+  )
   React.useEffect(() => {
     if (!remoteCapable) return
     let cancelled = false
@@ -720,7 +738,15 @@ export default function NewAgentPanel({
           setRemoteMachines(sorted)
           if (!rememberedApplied.current) {
             rememberedApplied.current = true
-            // A paired machine's project asked for leads the remembered machine.
+            // The machine a schedule being edited runs on is the only one it
+            // may open on; a paired machine's project asked for leads the
+            // remembered machine.
+            const editedOn = editedOnRef.current
+            if (editedOn) {
+              const machine = sorted.find((candidate) => candidate.id === editedOn.connectionId)
+              if (machine) pickRemoteMachineRef.current(machine, null, false)
+              return
+            }
             const seeded = seededProjectRef.current
               ? sorted.find((machine) => machine.id === seededProjectRef.current?.connectionId)
               : null
@@ -762,8 +788,9 @@ export default function NewAgentPanel({
   }, [composer, chatOnly])
   // An extension is made on this computer: the scaffold writes to its disk. A
   // new scheduled agent may be made on a paired machine, run there by its
-  // scheduler; one being edited stays on the machine it was saved on.
-  const remoteSchedulable = scheduled && editing === null
+  // scheduler; one being edited stays on the machine it was saved on — a
+  // paired machine's on that machine.
+  const remoteSchedulable = scheduled && (editing === null || editingRemote !== null)
   const remoteChosenAway = !remoteSelectable || selection.kind !== 'conversation' || (chatOnly && !remoteSchedulable)
   React.useEffect(() => {
     if (remoteChosenAway) setRemoteTarget(null)
@@ -838,8 +865,10 @@ export default function NewAgentPanel({
   const pickRemoteMachine = (
     connection: MeshConnection | null,
     keep: RepositoryIdentity | null = activeIdentity,
+    // Opening a schedule on its machine is not choosing where the next chat goes.
+    remember = true,
   ): void => {
-    rememberedMachine.machineId = connection?.id ?? null
+    if (remember) rememberedMachine.machineId = connection?.id ?? null
     if (!connection) {
       // Back to This device with a project in hand: keep it when a local clone
       // of the same repository is open here (changing the machine keeps the
@@ -918,13 +947,17 @@ export default function NewAgentPanel({
           seed?.connectionId === connection.id
             ? remoteProjectOfWorkspace(projects, browse.workspaces, seed.workspaceId)
             : null
+        // The project a schedule being edited there runs in.
+        const editedOn = editedOnRef.current
+        const edited =
+          editedOn?.connectionId === connection.id ? remoteProjectOfFolder(projects, editedOn.folderPath) : null
         return {
           ...current,
           capabilities: browse.capabilities ?? null,
           workspaces: browse.workspaces,
           projects,
           // A choice already made meanwhile is never overwritten by a late answer.
-          picked: current.picked ?? seeded ?? kept ?? (projects.length === 1 ? projects[0]! : null),
+          picked: current.picked ?? edited ?? seeded ?? kept ?? (projects.length === 1 ? projects[0]! : null),
         }
       })
     })
@@ -1517,7 +1550,10 @@ export default function NewAgentPanel({
   )
   const editingId = editing?.id ?? null
   React.useEffect(() => {
-    if (editingId && lastRunFailure) void window.api.markScheduledAgentFailureSeen(editingId).catch(() => {})
+    // A paired machine keeps its own record of what was seen there.
+    if (editingId && lastRunFailure && !editingRemote) {
+      void window.api.markScheduledAgentFailureSeen(editingId).catch(() => {})
+    }
     // Once, on open: seeing it here is what the card's "Failed" was waiting for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId])
@@ -1602,8 +1638,84 @@ export default function NewAgentPanel({
     }
   }
 
+  // A paired machine's scheduled agent, saved there: what is on screen, on
+  // the machine it runs on. Its project there stays unless another is picked.
+  const saveRemoteEdit = async (text: string, agent: ScheduledAgentView, on: NonNullable<typeof editingRemote>) => {
+    const machineName = on.machineName
+    if (remoteTarget?.capabilities && !remoteTarget.capabilities.includes('scheduled-agents-edit')) {
+      showToast({
+        tone: 'warn',
+        title: 'Not saved',
+        description: `${machineName} cannot take a change to a schedule from here yet. Update SprintEngine Studio there to edit its schedules.`,
+      })
+      return
+    }
+    if (images.length > 0 || files.length > 0) {
+      showToast({
+        tone: 'warn',
+        title: 'Not saved',
+        description: `A schedule on ${machineName} starts from its prompt alone; remove the attachments.`,
+      })
+      return
+    }
+    const body = text.trim()
+    if (!body) {
+      showToast({
+        tone: 'warn',
+        title: 'Say what it should do',
+        description: 'Each run starts with this prompt, so a scheduled agent needs one.',
+      })
+      promptRef.current?.focus()
+      return
+    }
+    if (once !== null && once <= Date.now()) {
+      showToast({ tone: 'warn', title: 'Pick a time ahead', description: 'That time has already passed.' })
+      return
+    }
+    const confirm = buildLaunchConfirm(selection)
+    if (confirm.kind !== 'conversation' || !confirm.cli) return
+    const picked = remoteTarget?.picked ?? null
+    setScheduleBusy(true)
+    try {
+      const result = await window.api.meshUpdateScheduledAgent({
+        connectionId: on.connectionId,
+        id: agent.id,
+        ...(remoteProjectMoved(picked, agent.folderPath) ? { workspaceId: picked.workspaceId } : {}),
+        prompt: body,
+        cron,
+        timezone: scheduleTimezone,
+        ...(once !== null ? { once } : {}),
+        cli: confirm.cli,
+        model: confirm.model ?? null,
+        permissionPreset: effectivePreset,
+        worktreeName: confirm.worktree ? confirm.worktree.name : null,
+        skills: (confirm.skills ?? []).map((skill) => skill.id),
+        mcpServers: composer.mcpServers.map((server) => server.id),
+      })
+      if (!result.ok) {
+        showToast({ tone: 'error', title: 'Not saved', description: result.message })
+        return
+      }
+      if (once === null) rememberSchedule(cron)
+      announceRemoteScheduledChange(on.connectionId)
+      onScheduled?.(result.agent)
+    } catch (error) {
+      showToast({
+        tone: 'error',
+        title: 'Not saved',
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setScheduleBusy(false)
+    }
+  }
+
   const schedule = async (text: string) => {
     if (!canLaunch || scheduleBusy) return
+    if (editing && editingRemote) {
+      await saveRemoteEdit(text, editing, editingRemote)
+      return
+    }
     if (remoteTarget && !editing) {
       await scheduleRemote(text, remoteTarget)
       return
@@ -1675,6 +1787,21 @@ export default function NewAgentPanel({
   // still a question, and a run is an answer.
   const runSavedNow = async () => {
     if (!editing) return
+    if (editingRemote) {
+      const ran = await window.api
+        .meshScheduledAgentAction({ connectionId: editingRemote.connectionId, id: editing.id, action: 'run' })
+        .catch((error: unknown) => ({
+          ok: false as const,
+          message: error instanceof Error ? error.message : String(error),
+        }))
+      showToast(
+        ran.ok
+          ? { tone: 'good', title: 'Started', description: remoteScheduleActionWords('run', editingRemote.machineName) }
+          : { tone: 'error', title: 'Did not run', description: ran.message },
+      )
+      announceRemoteScheduledChange(editingRemote.connectionId)
+      return
+    }
     const result = await window.api.runScheduledAgentNow(editing.id).catch((error: unknown) => ({
       ok: false as const,
       message: error instanceof Error ? error.message : String(error),
@@ -1690,6 +1817,31 @@ export default function NewAgentPanel({
       // runs below as soon as this window hears of it — the place to open it.
       showToast({ tone: 'good', title: 'Started', description: 'Its chat is first under Recent runs, below.' })
     }
+  }
+
+  // Pause or resume the schedule being edited, where it runs.
+  const setEditingPaused = async (agent: ScheduledAgentView, paused: boolean) => {
+    if (!editingRemote) {
+      await setScheduledAgentPaused(agent, paused)
+      return
+    }
+    const action = paused ? 'pause' : 'resume'
+    const result = await window.api
+      .meshScheduledAgentAction({ connectionId: editingRemote.connectionId, id: agent.id, action })
+      .catch((error: unknown) => ({
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+      }))
+    showToast(
+      result.ok
+        ? {
+            tone: 'neutral',
+            title: paused ? 'Schedule paused' : 'Schedule resumed',
+            description: remoteScheduleActionWords(action, editingRemote.machineName),
+          }
+        : { tone: 'error', title: paused ? 'Not paused' : 'Not resumed', description: result.message },
+    )
+    announceRemoteScheduledChange(editingRemote.connectionId)
   }
 
   // A ⌘⏎ launch went out: the box empties for the next task, keeping every
@@ -2217,7 +2369,8 @@ export default function NewAgentPanel({
   // branch. It replaces the machine · project line that sat above the box and
   // the Worktree chip that sat on its row (owner ruling 2026-10-04).
   const machinePickerShown =
-    (remoteSelectable && remoteMachines.length > 0) || localHosts.length > 1 || sshMachines.length > 0
+    !editingRemote &&
+    ((remoteSelectable && remoteMachines.length > 0) || localHosts.length > 1 || sshMachines.length > 0)
   // The branch the launch runs on: the remote project's as its machine read
   // it, else this checkout's. An SSH machine's folder is typed, not read.
   // An extension's folder is new, or the person's own: the project's branch
@@ -2252,6 +2405,16 @@ export default function NewAgentPanel({
       fullWidth={false}
       className="w-72 max-w-full font-mono"
     />
+  ) : editingRemote && editing && !remoteTarget ? (
+    // A paired machine's schedule, before that machine has been reached: its
+    // project by name, as the line will read once it is.
+    <span
+      data-project-line="true"
+      className="inline-flex h-control-xs min-w-0 items-center gap-1.5 px-2 text-meta text-[color:var(--text-subtle)]"
+    >
+      <FolderIdentityIcon folderPath={null} className="icon-xs shrink-0" color={null} />
+      <span className="min-w-0 truncate">{remoteProjectOfFolder([], editing.folderPath)?.name ?? 'Project'}</span>
+    </span>
   ) : remoteTarget ? (
     <RemoteProjectPicker
       target={remoteTarget}
@@ -2312,7 +2475,8 @@ export default function NewAgentPanel({
       <span className="min-w-0 truncate">{projectLabel}</span>
     </span>
   ) : null
-  const stripShown = machinePickerShown || projectControl !== null || worktreeOffered || Boolean(stripBranch)
+  const stripShown =
+    machinePickerShown || editingRemote !== null || projectControl !== null || worktreeOffered || Boolean(stripBranch)
 
   // The second line of the send's tooltip, where the door can stay: the chord
   // as this platform spells it, for the person who starts several in a row.
@@ -2389,9 +2553,9 @@ export default function NewAgentPanel({
         {scheduled && editing && !terminalUnavailable ? (
           <SchedulePausedTray
             pausedAt={editing.pausedAt}
-            pausedAll={scheduledPausedAll}
+            pausedAll={editingRemote ? editingRemote.pausedAll : scheduledPausedAll}
             now={Date.now()}
-            onResume={() => void setScheduledAgentPaused(editing, false)}
+            onResume={() => void setEditingPaused(editing, false)}
           />
         ) : null}
         {/* The stash ⌘S opened on an empty box, behind the box it restores into. */}
@@ -2633,7 +2797,7 @@ export default function NewAgentPanel({
                   <GhostButton
                     size="xs"
                     data-schedule-editor-pause={editing.pausedAt !== undefined ? 'resume' : 'pause'}
-                    onClick={() => void setScheduledAgentPaused(editing, editing.pausedAt === undefined)}
+                    onClick={() => void setEditingPaused(editing, editing.pausedAt === undefined)}
                   >
                     {editing.pausedAt !== undefined ? 'Resume' : 'Pause'}
                   </GhostButton>
@@ -2706,6 +2870,7 @@ export default function NewAgentPanel({
             {/* One machine dropdown, this computer first (owner ruling
                 2026-09-03 — no separate Local/Remote switch). Shown whenever
                 there is another machine to pick. */}
+            {editingRemote ? <FixedMachineLine machineName={editingRemote.machineName} /> : null}
             {machinePickerShown ? (
               <MachineScopePicker
                 // A new scheduled agent may run on a paired machine, by that
