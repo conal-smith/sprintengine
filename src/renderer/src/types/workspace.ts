@@ -314,10 +314,10 @@ export type AppSettings = {
    */
   lastNewChatAgent: NewChatAgentChoice
   /**
-   * Target the workspace bar's open-in-editor split button last used, so its
-   * primary half repeats that choice. Per APP, not per workspace: which editor
-   * you use is a property of the machine you are sitting at, not of the project
-   * (item 1990). `null` until the user picks one, which resolves to the first
+   * The editor a chat's file links open in. It was set by the title bar's
+   * open-in-editor control, which is gone; a choice made there is still
+   * honoured. Per APP, not per workspace: which editor you use is a property
+   * of the machine you are sitting at, not of the project. `null` resolves to the first
    * available target at render time; a remembered target that no longer probes
    * as installed falls back the same way rather than offering a dead editor.
    */

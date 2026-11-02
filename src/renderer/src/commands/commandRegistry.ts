@@ -540,18 +540,16 @@ export const COMMAND_REGISTRY = [
       action: 'reopenLastClosedTab(windowActiveWorkspaceId)',
     },
   }),
-  // Reveal-in-file-manager for the active checkout, and the keyboard half of
-  // the workspace bar's open-in-editor split button (item 1990). The reveal
-  // target is the workspace's mounted worktree when it has one, so this and the
-  // control resolve the same folder; the control owns that resolution and this
-  // command routes to it as a panel event.
+  // Reveal-in-file-manager for the active checkout. The reveal target is the
+  // checkout the title bar's branch chip describes (the followed agent's
+  // worktree, else the workspace's mounted one), so this and the chip name the
+  // same folder; the identity cluster owns that resolution and this command
+  // routes to it as a panel event.
   //
-  // Consequence of routing to the control: it acts only while the workspace bar
+  // Consequence of routing to the cluster: it acts only while the workspace bar
   // is on screen. A door surface replaces the identity cluster with its own bar
   // (WorkspaceHeader), so this is inert there — the same shape as the git.*
-  // panel commands, which gate on `gitPanelActive` for the same reason. It has
-  // no equivalent flag because the control's presence also depends on the
-  // main-process target probe, which the renderer cannot report as availability.
+  // panel commands, which gate on `gitPanelActive` for the same reason.
   command({
     id: 'workspace.folder.reveal',
     title: 'Reveal workspace folder',

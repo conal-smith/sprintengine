@@ -27,11 +27,10 @@ test('premiumFeelSeam', async () => {
   //  2. **T4's probe → T5's rows.** The main-process probe answers a five-state
   //     union; the settings rows must render each state as its own row and must
   //     never render a provider the probe did not answer for.
-  //  3. **T9's probe → T10's menu.** Probe-hide, not probe-disable: a target the
-  //     launcher does not resolve has to be ABSENT, not disabled. `folder-open-ipc.test`
-  //     drives the handler with its own deps, and `openInEditorTargets.test` calls
-  //     the pure functions with hand-written availability lists — so nothing today
-  //     would notice the handler and the control disagreeing about the shape.
+  //  3. **T9's probe → the launch.** Nothing may be offered that a click cannot
+  //     start: the probe and the launch channel have to resolve the same targets.
+  //     `folder-open-ipc.test` drives the handler with its own deps, so only the
+  //     real preload round-trip shows the two halves agreeing.
   //  4. **Drill-in replaces the rail.** `globalDoorsIntegration` proves every door
   //     DECLARES a rail; nothing proves the host then takes the projects rail down
   //     and puts it back, which is the half the operator sees.
@@ -635,40 +634,24 @@ test('premiumFeelSeam', async () => {
       }
     })
 
-    // ═══ 3. T9's probe → T10's split-button menu ═════════════════════════════
+    // ═══ 3. T9's probe → the launch ══════════════════════════════════════════
     //
-    // Real launcher resolution → real main handler → real preload → the real
-    // workspace-bar control. The fixture is the machine (which editors exist),
-    // never the contract between the halves.
+    // Real launcher resolution → real main handler → real preload. The fixture
+    // is the machine (which editors exist), never the contract between the
+    // halves. (The title bar's "Open" control that once rendered this probe
+    // went on 2026-11-02; a chat's file links still read it.)
 
     const { registerFolderOpenIpc, resolveFolderOpenLauncher } = await import('../main/ipc/folder-open-ipc')
     const { FOLDER_OPEN_TARGET_IDS } = await import('../shared/folder-open-targets')
-    // 2026-09-04 (bc02a70db) split this control in two: `useFolderOpenTargets`
-    // owns the probe, the launch and the remembered primary, and the button is a
-    // renderer over one hook instance — so the folded overflow menu and the
-    // inline SplitButton cannot each register `Primary+O`. This seam mounted the
-    // pre-split `<OpenWorkspaceFolderButton workspaceId openPath />`, which after
-    // the split resolved to `undefined` and threw "Element type is invalid" on
-    // every render, taking both checks below down with it. Rewired 2026-09-06 to
-    // the shipped pair, called exactly the way `WorkspaceIdentity` calls it —
-    // one hook instance, handed to the button — so the seam still runs the real
-    // probe into the real menu rather than a copy of either.
-    const { OpenWorkspaceFolderButton, useFolderOpenTargets } =
-      await import('../renderer/src/components/workspace/WorkspaceIdentity')
-    const { useWorkspaceStore } = await import('../renderer/src/store/workspaceStore')
-
     /** Which launchers this fixture machine resolves. */
     let installedPaths = new Set<string>()
     const launched: Array<{ command: string; args: string[] }> = []
-    const revealed: string[] = []
-    let launchOutcome: { ok: true } | { ok: false; message: string } = { ok: true }
+    const launchOutcome: { ok: true } | { ok: false; message: string } = { ok: true }
     let pathReachable = true
 
     registerFolderOpenIpc(ipcMain, {
-      showItemInFolder: async (targetPath) => {
-        revealed.push(targetPath)
-      },
-      // The REAL resolver, over a fixture filesystem: what the menu offers and
+      showItemInFolder: async () => {},
+      // The REAL resolver, over a fixture filesystem: what the probe offers and
       // what a click can launch stay one answer, which is the rule under test.
       resolveLauncher: (target) =>
         resolveFolderOpenLauncher(target, {
@@ -687,243 +670,7 @@ test('premiumFeelSeam', async () => {
 
     const OPEN_PATH = '/Users/fixture/projects/app'
 
-    /**
-     * `WorkspaceIdentity`'s own wiring: one hook instance, handed to the button,
-     * with `failureNode` rendered beside it. Both halves are needed — since
-     * bc02a70db the failure popover belongs to the HOOK, not the button (the
-     * folded overflow menu has to raise the same one), so a host that renders
-     * only the button swallows every launch failure and the "a launch that
-     * failed is surfaced" check below fails against working product code.
-     */
-    const OpenButtonHost = () => {
-      const targets = useFolderOpenTargets('w1', OPEN_PATH)
-      return (
-        <>
-          <OpenWorkspaceFolderButton targets={targets} />
-          {targets.failureNode}
-        </>
-      )
-    }
-
-    async function mountOpenButton(): Promise<{
-      container: HTMLElement
-      unmount: () => Promise<void>
-    }> {
-      const container = dom.window.document.createElement('div')
-      dom.window.document.body.appendChild(container)
-      const root = createRoot(container)
-      await act(async () => {
-        root.render(<OpenButtonHost />)
-      })
-      // The control renders nothing until its probe answers.
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (container.querySelector('button')) break
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 5))
-        })
-      }
-      return {
-        container: container as unknown as HTMLElement,
-        unmount: async () => {
-          await act(async () => {
-            root.unmount()
-          })
-          container.remove()
-        },
-      }
-    }
-
-    const openMenu = async (container: HTMLElement): Promise<HTMLElement[]> => {
-      const chevron = container.querySelector<HTMLButtonElement>('button[aria-label="Open workspace folder in…"]')
-      assert.ok(chevron, 'the split button renders a menu half')
-      await act(async () => {
-        chevron.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-      })
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5))
-      })
-      return [...dom.window.document.querySelectorAll('[data-menu-item="true"]')] as HTMLElement[]
-    }
-
-    await check('an editor the probe cannot resolve is absent from the menu, not disabled', async () => {
-      // One editor on PATH, the other nowhere: one editor installed, one not.
-      installedPaths = new Set(['/usr/local/bin/code'])
-      useWorkspaceStore.setState(
-        (state) =>
-          ({
-            appSettings: { ...state.appSettings, lastFolderOpenTarget: null },
-          }) as never,
-      )
-
-      const mounted = await mountOpenButton()
-      try {
-        const rows = await openMenu(mounted.container)
-        const labels = rows.map((row) => row.textContent ?? '')
-        assert.ok(
-          labels.some((label) => label.includes('VS Code')),
-          'the resolved editor is offered',
-        )
-        assert.ok(
-          labels.some((label) => label.includes('Finder')),
-          'the file manager always resolves',
-        )
-        assert.equal(
-          labels.filter((label) => label.includes('IntelliJ')).length,
-          0,
-          'the unresolved editor is ABSENT — a disabled row for a missing editor is a fake affordance',
-        )
-        assert.equal(
-          rows.filter((row) => row.hasAttribute('disabled')).length,
-          0,
-          'and nothing in the menu is disabled at all',
-        )
-        // The primary half runs the first target that resolves, and says which.
-        assert.ok(
-          mounted.container.querySelector('button[aria-label="Open workspace folder in VS Code"]'),
-          'the primary half names its resolved target',
-        )
-      } finally {
-        await mounted.unmount()
-      }
-    })
-
-    await check('with only the file manager resolving there is no menu at all', async () => {
-      installedPaths = new Set()
-      const mounted = await mountOpenButton()
-      try {
-        assert.equal(
-          mounted.container.querySelector('button[aria-label="Open workspace folder in…"]'),
-          null,
-          'a chevron whose menu holds one row — already the primary — opens to say nothing',
-        )
-        const primary = mounted.container.querySelector<HTMLButtonElement>(
-          'button[aria-label="Open workspace folder in Finder"]',
-        )
-        assert.ok(primary, 'the plain button remains, naming the one target that resolves')
-
-        // And it reaches the real reveal path through the real channel.
-        revealed.length = 0
-        await act(async () => {
-          primary.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-        })
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 5))
-        })
-        assert.deepEqual(revealed, [OPEN_PATH], 'the click revealed the checkout it was given')
-      } finally {
-        await mounted.unmount()
-      }
-    })
-
-    await check('a remembered target that no longer resolves falls back rather than arming a failure', async () => {
-      // The remembered editor has since been uninstalled.
-      installedPaths = new Set(['/usr/local/bin/code'])
-      useWorkspaceStore.setState(
-        (state) =>
-          ({
-            appSettings: { ...state.appSettings, lastFolderOpenTarget: 'intellij' },
-          }) as never,
-      )
-      const mounted = await mountOpenButton()
-      try {
-        assert.ok(
-          mounted.container.querySelector('button[aria-label="Open workspace folder in VS Code"]'),
-          'the primary falls back to the first target that resolves',
-        )
-        assert.equal(
-          mounted.container.querySelector('button[aria-label="Open workspace folder in IntelliJ IDEA"]'),
-          null,
-        )
-      } finally {
-        await mounted.unmount()
-        useWorkspaceStore.setState(
-          (state) =>
-            ({
-              appSettings: { ...state.appSettings, lastFolderOpenTarget: null },
-            }) as never,
-        )
-      }
-    })
-
-    await check('choosing a menu row launches that target through the real channel', async () => {
-      installedPaths = new Set(['/usr/local/bin/code'])
-      launched.length = 0
-      launchOutcome = { ok: true }
-      const mounted = await mountOpenButton()
-      try {
-        const rows = await openMenu(mounted.container)
-        const vscode = rows.find((row) => (row.textContent ?? '').includes('VS Code'))
-        assert.ok(vscode)
-        await act(async () => {
-          vscode.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-        })
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 5))
-        })
-        assert.deepEqual(
-          launched,
-          [{ command: '/usr/local/bin/code', args: [OPEN_PATH] }],
-          'the folder is the final argv element, never shell text',
-        )
-        assert.equal(
-          useWorkspaceStore.getState().appSettings.lastFolderOpenTarget,
-          'vscode',
-          'a launch that happened re-points the primary',
-        )
-      } finally {
-        await mounted.unmount()
-      }
-    })
-
-    await check('a launch that failed is surfaced and does not re-point the primary', async () => {
-      installedPaths = new Set(['/usr/local/bin/code'])
-      useWorkspaceStore.setState(
-        (state) =>
-          ({
-            appSettings: { ...state.appSettings, lastFolderOpenTarget: 'finder' },
-          }) as never,
-      )
-      launchOutcome = { ok: false, message: 'code exited with code 1.' }
-      const mounted = await mountOpenButton()
-      try {
-        const rows = await openMenu(mounted.container)
-        const vscode = rows.find((row) => (row.textContent ?? '').includes('VS Code'))
-        assert.ok(vscode)
-        await act(async () => {
-          vscode.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-        })
-        // Polled rather than a fixed wait: the failure crosses the launch
-        // promise and a store update before it renders, and a slow CI runner
-        // takes longer than a laptop to get there.
-        const failure = /Could not open VS Code: code exited with code 1\./
-        for (let waited = 0; waited < 2000 && !failure.test(dom.window.document.body.textContent ?? ''); waited += 5) {
-          await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 5))
-          })
-        }
-        assert.match(
-          dom.window.document.body.textContent ?? '',
-          failure,
-          'the typed failure reaches the operator rather than being swallowed',
-        )
-        assert.equal(
-          useWorkspaceStore.getState().appSettings.lastFolderOpenTarget,
-          'finder',
-          'and re-pointing the primary at an editor that just failed would repeat it',
-        )
-      } finally {
-        await mounted.unmount()
-        launchOutcome = { ok: true }
-        useWorkspaceStore.setState(
-          (state) =>
-            ({
-              appSettings: { ...state.appSettings, lastFolderOpenTarget: null },
-            }) as never,
-        )
-      }
-    })
-
-    await check('the menu and the launch resolve the same targets, id for id', async () => {
+    await check('the probe and the launch resolve the same targets, id for id', async () => {
       // The two channels share `resolveLauncher`, so this is the invariant that
       // makes probe-hide safe: nothing can be offered that a click cannot start.
       installedPaths = new Set(['/usr/local/bin/code'])
@@ -953,55 +700,6 @@ test('premiumFeelSeam', async () => {
     })
 
     // ═══ 4. Keyboard and reduced motion on the new overlays ══════════════════
-
-    await check('the split-button menu opens on ArrowDown and lands on a row', async () => {
-      installedPaths = new Set(['/usr/local/bin/code'])
-      const mounted = await mountOpenButton()
-      try {
-        const chevron = mounted.container.querySelector<HTMLButtonElement>(
-          'button[aria-label="Open workspace folder in…"]',
-        )
-        assert.ok(chevron)
-        assert.equal(chevron.getAttribute('aria-haspopup'), 'menu')
-        assert.equal(chevron.getAttribute('aria-expanded'), 'false')
-
-        chevron.focus()
-        await act(async () => {
-          chevron.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-        })
-        // Popover measures itself before it can take focus, so the first row is
-        // focused on the next frame rather than in this one.
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        })
-        assert.equal(chevron.getAttribute('aria-expanded'), 'true', 'ArrowDown opens the menu')
-        const rows = [...dom.window.document.querySelectorAll('[data-menu-item="true"]')] as HTMLElement[]
-        assert.ok(rows.length > 1)
-        assert.equal(
-          dom.window.document.activeElement,
-          rows[0],
-          'and the keyboard lands on the first row rather than being left on the trigger',
-        )
-        // Exactly one row is checked: the target the primary half runs.
-        const checked = rows.filter((row) => row.getAttribute('aria-checked') === 'true')
-        assert.equal(checked.length, 1, 'a one-of set, not a row of toggles')
-
-        await act(async () => {
-          rows[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-        })
-        assert.equal(dom.window.document.activeElement, rows[1], 'ArrowDown roves to the next row')
-
-        await act(async () => {
-          rows[1].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-        })
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 5))
-        })
-        assert.equal(chevron.getAttribute('aria-expanded'), 'false', 'Escape closes the menu')
-      } finally {
-        await mounted.unmount()
-      }
-    })
 
     await check('both new popovers open on the keyboard and ride the ONE shared enter', async () => {
       // The two controls T6 added. Their own suite

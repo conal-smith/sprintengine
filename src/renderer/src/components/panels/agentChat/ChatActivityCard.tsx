@@ -4,7 +4,6 @@ import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { selectModuleEnabled } from '../../../modules'
 import { dispatchFileReveal } from '../../../utils/fileReveal'
 import { DiffStatPill, OutlineButton, Popover, RowButton, Tooltip } from '../../ui'
-import { OVERLAY_SURFACE_CLASS } from '../../ui/tokens'
 import {
   AgentsGlyph,
   BrowserGlyph,
@@ -25,19 +24,14 @@ import {
   type PublishedChatActivity,
 } from './chatActivityStore'
 
-// The card on the right of a chat that lists what the agent touched — the
-// files it changed and where they sit, the page it drove, the board it drew
-// on, the agents it sent off and the pictures in the chat — each row opening
-// the workspace pane on that tab, so none of it is a hunt through the pane's
-// strip after a run. Docked at the top right of the transcript while the chat
-// has room for it; where it has not (a narrow window, or the pane open beside
-// it), it condenses to a pill of the rows' glyphs in the title bar, which
-// drops the same rows down.
-
-/** The transcript width from which the card docks rather than condensing to the pill. */
-export const ACTIVITY_CARD_DOCK_MIN_WIDTH = 860
-/** The card's width, and the room the transcript keeps clear for it while it is docked. */
-export const ACTIVITY_CARD_WIDTH = 264
+// What the agent touched in a chat — the files it changed and where they sit,
+// the page it drove, the board it drew on, the agents it sent off and the
+// pictures in the chat — each row opening the workspace pane on that tab, so
+// none of it is a hunt through the pane's strip after a run. It lives in the
+// title bar as a pill of the rows' glyphs, which drops the rows down. It is
+// never docked over the transcript at any width (owner ruling 2026-11-02): a
+// card there took its width out of the chat's text column and pushed the
+// conversation left.
 
 const GLYPHS: Record<ChatActivityKind, (props: { className?: string }) => JSX.Element> = {
   changes: DiffGlyph,
@@ -137,8 +131,8 @@ export function chatActivityRows(
 }
 
 /**
- * Derives the chat's rows, publishes them for the title bar's pill, and
- * answers what the chat itself draws. Called once per chat view.
+ * Derives the chat's rows and publishes them for the title bar's pill.
+ * Called once per chat view.
  */
 export function useChatActivityCard({
   workspaceId,
@@ -146,7 +140,6 @@ export function useChatActivityCard({
   entries,
   diff,
   workspaceRoot,
-  docked,
 }: {
   workspaceId: string
   agentId: string
@@ -154,9 +147,7 @@ export function useChatActivityCard({
   /** The checkout's changed lines, as the composer strip counts them; null where it cannot. */
   diff: { added: number; removed: number } | null
   workspaceRoot: string | null
-  /** The chat has room to dock the card. */
-  docked: boolean
-}): PublishedChatActivity {
+}): void {
   const activity = useMemo(() => deriveChatActivity(entries), [entries])
   const openPaneTab = useWorkspaceStore((state) => state.openPaneTab)
   const setActivePaneTab = useWorkspaceStore((state) => state.setActivePaneTab)
@@ -244,27 +235,11 @@ export function useChatActivityCard({
     [activity, agentId, gitEnabled, openPaneTab, rows, setActivePaneTab, workspaceId],
   )
 
-  const published = useMemo<PublishedChatActivity>(() => ({ rows, docked, open }), [rows, docked, open])
+  const published = useMemo<PublishedChatActivity>(() => ({ rows, open }), [rows, open])
   useEffect(() => {
     publishChatActivity(workspaceId, agentId, published.rows.length ? published : null)
   }, [workspaceId, agentId, published])
   useEffect(() => () => publishChatActivity(workspaceId, agentId, null), [workspaceId, agentId])
-  return published
-}
-
-/** Whether the element is at least `min` pixels wide, kept as it resizes. */
-export function useWidthAtLeast(ref: React.RefObject<HTMLElement | null>, min: number): boolean {
-  const [wide, setWide] = React.useState(false)
-  useEffect(() => {
-    const element = ref.current
-    if (!element || typeof ResizeObserver === 'undefined') return
-    const measure = () => setWide(element.getBoundingClientRect().width >= min)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [ref, min])
-  return wide
 }
 
 /** The pane tab showing now, when the pane is open: the row it belongs to is the selected one. */
@@ -276,7 +251,7 @@ function useActivePaneKind(workspaceId: string | null): string | null {
   })
 }
 
-/** The rows themselves, as the docked card and the pill's drop-down both list them. */
+/** The rows themselves, as the pill's drop-down lists them. */
 export function ChatActivityRows({
   rows,
   onOpen,
@@ -332,37 +307,8 @@ export function ChatActivityRows({
 }
 
 /**
- * The card docked at the top right of the transcript. Memoised: the chat body
- * redraws on every keystroke into the composer, and the card has nothing to
- * say to one (chatRenderBudget.test.tsx).
- */
-export const DockedChatActivityCard = React.memo(function DockedChatActivityCard({
-  workspaceId,
-  activity,
-  topInset = 0,
-}: {
-  workspaceId: string
-  activity: PublishedChatActivity
-  /** Room left above it, for a bar that shares the corner. */
-  topInset?: number
-}) {
-  const activePaneKind = useActivePaneKind(workspaceId)
-  if (!activity.docked || !activity.rows.length) return null
-  return (
-    <aside
-      aria-label="What the agent touched"
-      data-chat-activity-card=""
-      className={`${OVERLAY_SURFACE_CLASS} absolute right-3 z-[var(--z-float)] p-1`}
-      style={{ width: ACTIVITY_CARD_WIDTH, top: 12 + topInset }}
-    >
-      <ChatActivityRows rows={activity.rows} onOpen={activity.open} activePaneKind={activePaneKind} />
-    </aside>
-  )
-})
-
-/**
- * The title bar's stand-in for the card, for the focused chat while it is too
- * narrow to dock it: the rows' glyphs and an arrow, which drops the rows down.
+ * The focused chat's activity in the title bar: the rows' glyphs and an
+ * arrow, which drops the rows down.
  */
 export function ChatActivityPill({ workspaceId }: { workspaceId: string | null }) {
   const agentId = useWorkspaceStore((state) =>
@@ -371,7 +317,7 @@ export function ChatActivityPill({ workspaceId }: { workspaceId: string | null }
   const activity = useChatActivity(workspaceId, agentId)
   const activePaneKind = useActivePaneKind(workspaceId)
   const [open, setOpen] = React.useState(false)
-  if (!activity || activity.docked || !activity.rows.length) return null
+  if (!activity || !activity.rows.length) return null
   return (
     <Popover
       open={open}

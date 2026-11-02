@@ -13,8 +13,7 @@
 //
 //   0  everything inline
 //   1  the chips keep their glyph and their ±lines, lose their WORDS
-//   2  "Open" folds into the overflow menu
-//   3  the chips fold into the overflow menu entirely
+//   2  the chips fold into the overflow menu entirely
 //
 // The right-hand glyph cluster (Sessions, Remote, Notifications, search) never
 // folds. It is app-level chrome that is the same at every width, and it is what
@@ -22,7 +21,7 @@
 
 import React, { useCallback, useLayoutEffect, useState } from 'react'
 
-export type TitleBarFold = 0 | 1 | 2 | 3
+export type TitleBarFold = 0 | 1 | 2
 
 // Measured against the strip's LEFT+CENTRE block, not the window: that block is
 // `flex-1 min-w-0`, so its width is exactly the space left for the window-nav
@@ -32,21 +31,21 @@ export type TitleBarFold = 0 | 1 | 2 | 3
 // space, two different answers.
 //
 // The steps are the cluster's own content budget: ~110px of window nav (plus
-// 78px of traffic-light gutter on macOS), then star + name + branch + Open. The
-// steps were set when a project chip sat beside the branch too; without it the
-// ladder folds a little sooner than it has to, never later. Each threshold is the width below which the NEXT segment down the
-// ladder no longer fits beside a legible workspace name.
+// 78px of traffic-light gutter on macOS), then star + name + branch. The steps
+// were set when a project chip and an "Open" control sat beside the branch
+// too, so the ladder folds a little sooner than it has to, never later. Each
+// threshold is the width below which the NEXT segment down the ladder no
+// longer fits beside a legible workspace name.
 const FOLD_STEPS: readonly { minWidth: number; fold: TitleBarFold }[] = [
   { minWidth: 700, fold: 0 },
-  { minWidth: 560, fold: 1 },
-  { minWidth: 460, fold: 2 },
+  { minWidth: 460, fold: 1 },
 ]
 
 function foldForWidth(width: number): TitleBarFold {
   for (const step of FOLD_STEPS) {
     if (width >= step.minWidth) return step.fold
   }
-  return 3
+  return 2
 }
 
 const TitleBarFoldContext = React.createContext<TitleBarFold>(0)

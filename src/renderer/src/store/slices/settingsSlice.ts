@@ -20,7 +20,6 @@ import {
   type TextGenerationWritingStyle,
 } from '../../../../shared/text-generation/writing-style'
 import { normalizeMcpSourceRef } from '../../../../shared/mcp/normalize-server'
-import type { FolderOpenTargetId } from '../../../../shared/folder-open-targets'
 import { normalizeProjectKnowledgeRoots } from './memorySlice'
 import { launchSettingsClient } from '../launchSettingsClient'
 import { isProjectColorSetting, type ProjectColorSetting } from '../../utils/projectColor'
@@ -1045,8 +1044,6 @@ export interface SettingsSliceActions {
    */
   setTextGenerationWritingStyle: (style: Partial<TextGenerationWritingStyle>) => void
   setLastNewChatAgent: (choice: NewChatAgentChoice) => void
-  /** Remember the open-in-editor target the user just used (app-wide). */
-  setLastFolderOpenTarget: (target: FolderOpenTargetId) => void
   /** The Design door's viewing scope. Null returns it to following the active workspace. */
   setDesignProjectScopePath: (path: string | null) => void
   /**
@@ -1544,11 +1541,6 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
     setLastNewChatAgent: (choice) =>
       set((state) => {
         state.appSettings.lastNewChatAgent = normalizeNewChatAgentChoice(choice)
-      }),
-
-    setLastFolderOpenTarget: (target) =>
-      set((state) => {
-        state.appSettings.lastFolderOpenTarget = isFolderOpenTargetId(target) ? target : null
       }),
 
     setDesignProjectScopePath: (path) =>
