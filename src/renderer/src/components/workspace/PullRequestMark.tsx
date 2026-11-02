@@ -11,6 +11,7 @@ import {
   pullRequestStateLabel,
   pullRequestTone,
   PULL_REQUEST_TONE_VAR,
+  watchedPullRequest,
   type BranchPullRequest,
 } from '../../../../shared/git/pull-request'
 import {
@@ -84,14 +85,8 @@ function spokenNumber(pr: BranchPullRequest, spans: boolean): string {
   return spans ? `Pull request ${pr.number} in ${pr.repoName}` : `Pull request ${pr.number}`
 }
 
-/**
- * The pull request Studio is watching for this list's conversation, if any:
- * an open one on GitHub its agent asked to have watched. What makes a chat
- * read as working between its turns, and what its words are about.
- */
-export function watchedPullRequest(list: readonly BranchPullRequest[]): BranchPullRequest | null {
-  return list.find((pr) => pr.watch && pr.state === 'open' && !pr.forge) ?? null
-}
+// Shared with main, whose rest sweep leaves a chat with a watched pull request alone.
+export { watchedPullRequest }
 
 /** A watched pull request's tooltip line: the short words, then what they mean. */
 function watchLines(pr: BranchPullRequest): string[] {

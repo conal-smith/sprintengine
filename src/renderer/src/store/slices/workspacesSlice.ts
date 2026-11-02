@@ -3,17 +3,15 @@ import { current, isDraft } from 'immer'
 import { nanoid } from 'nanoid'
 import { moveEditorBuffer } from '../../utils/editorBuffers'
 import { isPlaceholderAgentName } from '../../utils/agentNames'
-import {
-  decideWorkspaceSettlement,
-  isSettledWorkspace,
-  settleWorkspacePatch,
-  wakeWorkspacePatch,
-} from '../../utils/workspaceSettle'
+import { isSettledWorkspace, settleWorkspacePatch, wakeWorkspacePatch } from '../../utils/workspaceSettle'
 import { hasSnooze, snoozeWorkspacePatch, wakeSnoozedWorkspacePatch } from '../../utils/workspaceSnooze'
-import { deriveWorkspaceRunGlyph } from '../../utils/workspaceRunGlyph'
 import type { WorkspaceFieldsPatch } from '../../../../shared/workspace-sync'
+import {
+  workspaceLifecycleSnapshot,
+  type WorkspaceLifecycleRequest,
+  type WorkspaceLifecycleResult,
+} from '../../../../shared/workspace-lifecycle'
 import { noteChatOpened } from '../../components/panels/agentChat/unreadDivider'
-import type { BranchPullRequest } from '../../../../shared/git/pull-request'
 import { isRetiredWorkspaceMode } from '../../../../shared/workspace-mode'
 import { hostIdToRecord } from '../../../../shared/execution-host'
 import { instantiateTemplateAgentIds } from '../../../../shared/agent-ids'
@@ -272,7 +270,12 @@ interface WorkspacesSliceActions {
   applyWorkspaceCreatedEvent: (apply: WorkspaceCreatedApply) => void
   setWorkspaceHighlight: (id: WorkspaceId, highlight: Partial<WorkspaceHighlight>) => void
   clearWorkspaceHighlight: (id: WorkspaceId) => void
-  setWorkspaceSettled: (id: WorkspaceId, settled: boolean) => void
+  /**
+   * Settle or Un-settle a chat by hand: applied here at once, and decided in
+   * main on this window's reading of the chat, which may refuse it (a chat
+   * that changed meanwhile, an agent at work). Resolves to main's answer.
+   */
+  setWorkspaceSettled: (id: WorkspaceId, settled: boolean) => Promise<WorkspaceLifecycleResult | null>
   /**
    * Mark a chat's worktree as given back by the agent worktree cleanup (a
    * stamp), or as on disk again (`null`). See `WorkspaceWorktree.reclaimedAt`.
@@ -286,15 +289,7 @@ interface WorkspacesSliceActions {
    * only: suspending the chat's terminals is the sidebar's half of the gesture
    * (`snoozeWorkspaceById`). See `utils/workspaceSnooze.ts`.
    */
-  setWorkspaceSnoozed: (id: WorkspaceId, wakeAt: number | null) => void
-  /** Returns the ids that CAME TO REST on this tick, for the caller to quiet. */
-  reconcileWorkspaceSettlement: (input: {
-    now: number
-    busyIds: ReadonlySet<WorkspaceId>
-    heldIds: ReadonlySet<WorkspaceId>
-    /** Each chat's pull requests, for Settle on merge; absent while not yet read. */
-    pullRequestsByWorkspaceId?: Readonly<Record<string, readonly BranchPullRequest[]>>
-  }) => WorkspaceId[]
+  setWorkspaceSnoozed: (id: WorkspaceId, wakeAt: number | null) => Promise<WorkspaceLifecycleResult | null>
   recordWorkspaceTerminalActivity: (id: WorkspaceId, lastInputAt: number) => void
   recordWorkspaceUserMessage: (id: WorkspaceId, at: number) => void
   recordWorkspaceTurnEnd: (id: WorkspaceId, at: number) => void
@@ -638,10 +633,25 @@ export function createWorkspacesSlice(
   deps: WorkspacesSliceDependencies,
   // The current state, for the actions that have to DECIDE before they
   // write: a `set` whose draft goes untouched still notifies every
-  // subscriber through this store's middleware, the rest sweep runs on a
-  // 30 s tick in every window, and a refused agent move tells its caller so.
+  // subscriber through this store's middleware, and a refused agent move
+  // tells its caller so.
   getState: () => WorkspacesSliceCarrier,
 ): WorkspacesSlice {
+  // A hand gesture on a chat's rest, already applied here, goes to main to be
+  // decided. A refusal names the chat's rest as main has it, and the row goes
+  // back there rather than staying where this window alone put it. (A refusal
+  // with nothing to go back to — no main to ask — leaves the row as applied.)
+  const sendLifecycleIntent = async (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> => {
+    const result = await workspaceSyncClient.dispatchLifecycleIntent(request)
+    if (!result.ok && result.current) {
+      const { settledAt, settledOverride, snoozedUntil } = result.current
+      set((state) => {
+        const ws = state.workspaces.find((w) => w.id === request.workspaceId)
+        if (ws) Object.assign(ws, { settledAt, settledOverride, snoozedUntil })
+      })
+    }
+    return result
+  }
   return {
     workspaces: [],
     activeWorkspaceId: null,
@@ -1006,18 +1016,30 @@ export function createWorkspacesSlice(
     // row in its folder's Settled shelf and records the decision so the sweep
     // leaves it alone; Un-settle brings it back and HOLDS it back — without
     // the override the sweep would re-settle a three-day-idle row on its next
-    // tick. Applied locally, then sent to main as the field patch every
-    // user-edited registry field travels by.
+    // tick. Applied locally at once, then sent to main as the gesture it is,
+    // with the reading of the row it was made on: main decides it, with its
+    // own clock, and refuses one made on a chat that moved on meanwhile
+    // (`fromWindow`), which puts the row back where main has it.
     setWorkspaceSettled: (id, settled) => {
-      let patch: WorkspaceFieldsPatch | null = null
+      let request: WorkspaceLifecycleRequest | null = null
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws) return
-        patch = settled ? settleWorkspacePatch(ws, Date.now(), 'settled') : wakeWorkspacePatch('active', ws, Date.now())
-        Object.assign(ws, patch)
+        const snapshot = workspaceLifecycleSnapshot(ws)
+        const now = Date.now()
+        Object.assign(ws, settled ? settleWorkspacePatch(ws, now, 'settled') : wakeWorkspacePatch('active', ws, now))
+        request = {
+          workspaceId: id,
+          snapshot,
+          intent: settled
+            ? typeof ws.lastTerminalActivityAt === 'number'
+              ? { kind: 'settle', lastInputAt: ws.lastTerminalActivityAt }
+              : { kind: 'settle' }
+            : { kind: 'unsettle' },
+        }
       })
       // A hand gesture is this window's to report, whichever window routes the row.
-      if (patch) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, patch)
+      return request ? sendLifecycleIntent(request) : Promise.resolve(null)
     },
 
     // Not a hand gesture: the primary window's cleanup sweep stamps it when it
@@ -1091,9 +1113,9 @@ export function createWorkspacesSlice(
     //
     // Nothing schedules the wake: the row simply stops reading as asleep once
     // the stamp is in the past. A hand gesture, so it reports from whichever
-    // window made it, exactly as Settle does.
+    // window made it, and main decides it, exactly as Settle does.
     setWorkspaceSnoozed: (id, wakeAt) => {
-      let patch: WorkspaceFieldsPatch | null = null
+      let request: WorkspaceLifecycleRequest | null = null
       set((state) => {
         const ws = state.workspaces.find((w) => w.id === id)
         if (!ws) return
@@ -1102,72 +1124,15 @@ export function createWorkspacesSlice(
         // a field patch — and wake every other window's copy of the row — to
         // say nothing.
         if (wakeAt === null && !hasSnooze(ws)) return
-        patch = wakeAt === null ? wakeSnoozedWorkspacePatch() : snoozeWorkspacePatch(wakeAt)
-        Object.assign(ws, patch)
-      })
-      if (patch) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, patch)
-    },
-
-    // The rest sweep (settled-chats, 2026-09-07), run by the sidebar on mount
-    // and on its 30 s tick: a quiet row with Auto-settle on settles after three idle days, a
-    // resting row that is working again wakes. The sidebar passes what only
-    // it knows — `busyIds`, the rows whose agent is working, and `heldIds`,
-    // the rows that want the person (blocked on a prompt, or wearing the
-    // unseen finished mark) — because those verdicts are derived from live
-    // sessions the store does not hold; every window's active workspace is
-    // exempt here so the sweep can never settle what someone is looking at.
-    // Every window runs it, but a window decides only for the rows it is
-    // routed — `heldIds` carries this window's own unseen marks, so two
-    // windows can disagree about a row, and a decision applied locally but
-    // never reported would leave that window at odds with main until the
-    // next snapshot reset it. The routed window decides, applies and
-    // reports; the others learn from main's broadcast. The rule itself is
-    // `decideWorkspaceSettlement`.
-    reconcileWorkspaceSettlement: ({ now, busyIds, heldIds, pullRequestsByWorkspaceId }) => {
-      // Decide against the current state and write only when a row moves,
-      // so a tick on which nothing changes touches no subscriber.
-      const current = getState()
-      const activeIds = new Set<WorkspaceId | null>([
-        current.activeWorkspaceId,
-        ...current.workspaceWindows.map((windowState) => windowState.activeWorkspaceId),
-      ])
-      const patches: [WorkspaceId, WorkspaceFieldsPatch][] = []
-      // Reported back so the caller can quiet what came to rest: a settled
-      // chat holds no terminals (2026-09-07), and the sidebar is the layer
-      // that kills ptys. Only rows that actually SETTLED — a wake is not a
-      // reason to touch anything.
-      const settledIds: WorkspaceId[] = []
-      for (const ws of current.workspaces) {
-        if (!thisWindowSpeaksFor(current, ws.id)) continue
-        const decision = decideWorkspaceSettlement({
-          workspace: ws,
-          now,
-          active: activeIds.has(ws.id),
-          busy: busyIds.has(ws.id),
-          held: heldIds.has(ws.id),
-          context: {
-            runState: deriveWorkspaceRunGlyph(ws)?.state ?? null,
-            pullRequests: pullRequestsByWorkspaceId?.[ws.id],
-            pullRequestsUnread: pullRequestsByWorkspaceId === undefined,
-            settleOnMerge: current.appSettings.settleOnPullRequestMerge,
-            keepWithOpenPullRequest: current.appSettings.keepChatsWithOpenPullRequest,
-            afterDays: current.appSettings.autoSettleAfterDays,
-          },
-        })
-        if (decision === 'none') continue
-        const patch = decision === 'settle' ? settleWorkspacePatch(ws, now, null) : wakeWorkspacePatch(null, ws, now)
-        patches.push([ws.id, patch])
-        if (decision === 'settle') settledIds.push(ws.id)
-      }
-      if (patches.length === 0) return settledIds
-      set((state) => {
-        for (const [id, patch] of patches) {
-          const ws = state.workspaces.find((w) => w.id === id)
-          if (ws) Object.assign(ws, patch)
+        const snapshot = workspaceLifecycleSnapshot(ws)
+        Object.assign(ws, wakeAt === null ? wakeSnoozedWorkspacePatch() : snoozeWorkspacePatch(wakeAt))
+        request = {
+          workspaceId: id,
+          snapshot,
+          intent: wakeAt === null ? { kind: 'wake' } : { kind: 'snooze', until: wakeAt },
         }
       })
-      for (const [id, patch] of patches) void workspaceSyncClient.dispatchUpdateWorkspaceFields(id, patch)
-      return settledIds
+      return request ? sendLifecycleIntent(request) : Promise.resolve(null)
     },
 
     // Monotonic: `lastTerminalActivityAt` only moves forward, and is fed from the

@@ -178,3 +178,13 @@ export function earlierPullRequests(list: readonly BranchPullRequest[]): BranchP
   const primary = primaryPullRequest(list)
   return [...list].sort(newestFirst).filter((pr) => pr !== primary)
 }
+
+/**
+ * The pull request Studio is watching for this list's conversation, if any:
+ * an open one on GitHub its agent asked to have watched. What makes a chat
+ * read as working between its turns, and what its words are about. The rest
+ * sweep leaves such a chat alone: it is waiting to be woken, not done.
+ */
+export function watchedPullRequest(list: readonly BranchPullRequest[]): BranchPullRequest | null {
+  return list.find((pr) => pr.watch && pr.state === 'open' && !pr.forge) ?? null
+}

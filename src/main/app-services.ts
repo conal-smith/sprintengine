@@ -823,6 +823,7 @@ export function createAppServices(
             agentId: session.agentId,
             processAlive: isTerminalProcessAlive(session),
             activity: session.activity,
+            agentState: session.agentState,
             agentRecord: session.agentRecord,
           })),
         // A distribution turned on or off adds or drops its CLI updates.
@@ -2458,6 +2459,8 @@ export function createAppServices(
       : {
           dispose: () => {
             core.stopAutoCompact()
+            // So does the rest sweep, which writes the chats' records.
+            core.stopSettlementSweep()
             return core.stopUsageLimitResumes()
           },
         },

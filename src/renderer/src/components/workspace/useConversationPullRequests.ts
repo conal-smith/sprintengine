@@ -40,9 +40,9 @@ const NONE: ConversationPullRequests = {}
 const UNSERVED: ConversationPullRequests = {}
 
 /**
- * Whether the hook's answer is in, for a decision that must not be taken on
- * "no pull requests" before the list has been read: the rest sweep, which
- * keeps a chat with an open pull request, on its first tick after a launch.
+ * Whether the hook's answer is in, for a reader that must not take "no pull
+ * requests" for an answer before the list has been read. (The rest sweep,
+ * which once read it here, is main's now and reads main's record.)
  */
 export function pullRequestsRead(value: ConversationPullRequests): boolean {
   return value !== NONE

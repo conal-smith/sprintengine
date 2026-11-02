@@ -77,6 +77,154 @@ export function wakeWorkspacePatch(
   }
 }
 
+/**
+ * What a rest decision was taken on: the chat's rest and sleep as they stood,
+ * and its activity clock (`workspaceLastActiveAt`). Every Settle, Snooze and
+ * automatic settle or wake carries one to main, which refuses the decision if
+ * the chat has moved on since (`lifecycleSnapshotIsStale`): someone else
+ * settled, woke or snoozed it, or there was activity the decision did not see.
+ * A decision taken on a reading of a chat is about that reading, and a chat
+ * that changed underneath it is a different question.
+ */
+export type WorkspaceLifecycleSnapshot = {
+  settledAt: number | null
+  settledOverride: 'settled' | 'active' | null
+  snoozedUntil: number | null
+  activityAt: number
+}
+
+type LifecycleRecord = Pick<
+  Workspace,
+  | 'settledAt'
+  | 'settledOverride'
+  | 'snoozedUntil'
+  | 'createdAt'
+  | 'lastTerminalActivityAt'
+  | 'lastUserMessageAt'
+  | 'lastTurnEndedAt'
+>
+
+const stamp = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+const override = (value: unknown): WorkspaceLifecycleSnapshot['settledOverride'] =>
+  value === 'settled' || value === 'active' ? value : null
+
+export function workspaceLifecycleSnapshot(workspace: LifecycleRecord): WorkspaceLifecycleSnapshot {
+  return {
+    settledAt: stamp(workspace.settledAt),
+    settledOverride: override(workspace.settledOverride),
+    snoozedUntil: stamp(workspace.snoozedUntil),
+    activityAt: workspaceLastActiveAt(workspace),
+  }
+}
+
+/**
+ * Whether the chat has changed since `snapshot` was taken of it. Its rest and
+ * sleep must read exactly as they did; its activity may not have moved past
+ * the snapshot's. A snapshot AHEAD of the record is not stale: a window learns
+ * the person's keystrokes before main does (it reports that clock on a coarse
+ * cadence), and a decision taken on more than main knows is still current.
+ */
+export function lifecycleSnapshotIsStale(workspace: LifecycleRecord, snapshot: WorkspaceLifecycleSnapshot): boolean {
+  const current = workspaceLifecycleSnapshot(workspace)
+  return (
+    current.settledAt !== snapshot.settledAt ||
+    current.settledOverride !== snapshot.settledOverride ||
+    current.snoozedUntil !== snapshot.snoozedUntil ||
+    current.activityAt > snapshot.activityAt
+  )
+}
+
+/** A snapshot from across a process boundary, or null when it is not one. */
+export function parseWorkspaceLifecycleSnapshot(value: unknown): WorkspaceLifecycleSnapshot | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  const nullableStamp = (field: unknown) => field === null || stamp(field) !== null
+  if (!nullableStamp(raw.settledAt) || !nullableStamp(raw.snoozedUntil) || stamp(raw.activityAt) === null) return null
+  if (raw.settledOverride !== null && override(raw.settledOverride) === null) return null
+  return {
+    settledAt: stamp(raw.settledAt),
+    settledOverride: override(raw.settledOverride),
+    snoozedUntil: stamp(raw.snoozedUntil),
+    activityAt: raw.activityAt as number,
+  }
+}
+
+/**
+ * A window's row-menu gesture on a chat's rest, sent to main with the
+ * reading of the chat it was made on (`snapshot`). Settle carries the
+ * person's keystroke clock as the window knows it, which main's copy lags.
+ */
+export type WorkspaceLifecycleIntent =
+  { kind: 'settle'; lastInputAt?: number } | { kind: 'unsettle' } | { kind: 'snooze'; until: number } | { kind: 'wake' }
+
+export type WorkspaceLifecycleRequest = {
+  workspaceId: string
+  intent: WorkspaceLifecycleIntent
+  snapshot: WorkspaceLifecycleSnapshot
+}
+
+/** Main's answer. A refusal carries the chat's rest as main has it, for the window to put its row back to. */
+export type WorkspaceLifecycleResult =
+  { ok: true; workspaceId: string } | { ok: false; code: string; message: string; current?: WorkspaceLifecycleSnapshot }
+
+/** A request from across the process boundary, or null when it is not one. */
+export function parseWorkspaceLifecycleRequest(value: unknown): WorkspaceLifecycleRequest | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  const workspaceId = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : ''
+  const snapshot = parseWorkspaceLifecycleSnapshot(raw.snapshot)
+  const intent = parseIntent(raw.intent)
+  return workspaceId && snapshot && intent ? { workspaceId, intent, snapshot } : null
+}
+
+function parseIntent(value: unknown): WorkspaceLifecycleIntent | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  switch (raw.kind) {
+    case 'settle':
+      return stamp(raw.lastInputAt) === null
+        ? { kind: 'settle' }
+        : { kind: 'settle', lastInputAt: raw.lastInputAt as number }
+    case 'unsettle':
+    case 'wake':
+      return { kind: raw.kind }
+    case 'snooze':
+      return stamp(raw.until) === null ? null : { kind: 'snooze', until: raw.until as number }
+    default:
+      return null
+  }
+}
+
+/**
+ * What a Settle put away beside the chat, taken as the rest lands so that
+ * Un-settle can hand it back: a snooze still ahead (one already run out is the
+ * Woke mark, which resting leaves behind). A Settle touches no star, so there
+ * is no star to keep. Belongs to the one rest it was taken for (`settledAt`).
+ */
+export type SettleUndo = { settledAt: number; snoozedUntil: number | null }
+
+export function planSettleUndo(workspace: Pick<Workspace, 'snoozedUntil'>, settledAt: number): SettleUndo {
+  return { settledAt, snoozedUntil: snoozeStillAhead(workspace, settledAt) ? workspace.snoozedUntil! : null }
+}
+
+/**
+ * Un-settle with the undo of the Settle that put the chat to rest: the
+ * person's Un-settle (`wakeWorkspacePatch('active')`), with the snooze the
+ * Settle displaced put back while it is still ahead, whether or not the
+ * record still carries it underneath the rest. An undo taken for another rest
+ * than the one on the record is no undo for this one.
+ */
+export function undoSettlePatch(
+  undo: SettleUndo,
+  workspace: Pick<Workspace, 'settledAt' | 'snoozedUntil'>,
+  now: number,
+): WorkspaceFieldsPatch {
+  const patch = wakeWorkspacePatch('active', workspace, now)
+  if (workspace.settledAt !== undo.settledAt) return patch
+  return snoozeStillAhead(undo, now) ? { ...patch, snoozedUntil: undo.snoozedUntil } : patch
+}
+
 function snoozeStillAhead(workspace: Pick<Workspace, 'snoozedUntil'>, now: number): boolean {
   return (
     typeof workspace.snoozedUntil === 'number' &&

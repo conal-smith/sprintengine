@@ -1,3 +1,5 @@
+import type { WorkspaceLifecycleRequest, WorkspaceLifecycleResult } from './workspace-lifecycle'
+import type { SettledChatsSettings } from './workspace-settlement'
 import type { ClientCapability } from './client-capabilities'
 import type { AttachedFilePreview } from './attached-files'
 import type { ChatLink } from './deep-link'
@@ -878,6 +880,15 @@ export type ElectronApi = {
    * every device shows it unseen again. The change arrives as a sync event.
    */
   workspaceMarkUnread: (workspaceId: string) => Promise<WorkspaceMarkUnreadResult>
+  /**
+   * The row menu's Settle, Un-settle, Snooze and Wake now, decided in main on
+   * the reading of the chat it was made on: main refuses one made on a chat
+   * that has moved on since, and answers with the chat as it stands. The
+   * change arrives as a sync event.
+   */
+  workspaceLifecycle: (request: WorkspaceLifecycleRequest) => Promise<WorkspaceLifecycleResult>
+  /** Push Settings ▸ Settled chats to main, whose rest sweep reads them with or without a window. */
+  setSettledChatsSettings: (settings: SettledChatsSettings) => Promise<void>
   automationGetStatus: () => Promise<AutomationServerStatus>
   /** The gateway's loopback HTTP endpoint: where it listens and the clients given a token. */
   mcpHttpStatus: () => Promise<McpHttpStatus>

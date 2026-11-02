@@ -16,7 +16,6 @@ import {
   workspaceIsWorking,
 } from './sidebar/conversationLines'
 import { isLiveTerminal, useTerminalSessions } from '../../hooks/useTerminalSessions'
-import { hasTerminalSessionsSnapshot } from '../../hooks/terminalSessionsStore'
 import { groupConversationSessionsByWorkspace } from '../../hooks/conversationSessionsStore'
 import { summariesEqual, useSidebarGitSummaries } from './useSidebarGitSummaries'
 import { checkoutPathsOf, lineOfRemoteRow, terminalLinesOf } from './terminalLines'
@@ -34,7 +33,6 @@ import { LocalServersRowMark } from './LocalServerMarks'
 import { useWorkspaceLocalServers, type WorkspaceLocalServers } from './useLocalServers'
 import {
   pullRequestsForRow,
-  pullRequestsRead,
   unwatchPullRequest,
   useConversationPullRequests,
   usePullRequestsByConversation,
@@ -136,6 +134,7 @@ import { workspaceProjectRoot } from '../../utils/workspaceWorktree'
 import { sortWorkspacesByUserMessage } from '../../utils/workspaceRecency'
 import { isHiddenFromRail } from '../../utils/workspaceVisibility'
 import { isSettledWorkspace } from '../../utils/workspaceSettle'
+import type { WorkspaceLifecycleResult } from '../../../../shared/workspace-lifecycle'
 import { PANEL_COMMAND_EVENT } from '../../utils/panelCommands'
 import { chatSettleStep } from './chatSettleCommand'
 import { waitingChatCount, waitingLabel } from './sidebar/projectWaiting'
@@ -298,10 +297,6 @@ type WorkspaceSidebarProps = {
   residentWorkspaceIds: ReadonlySet<WorkspaceId>
   terminalRecencyByWorkspaceId: Record<WorkspaceId, TerminalRecency>
   conversationSessions?: readonly ConversationSessionSummary[]
-  // Whether main has listed the chats once. Until it has, every chat reads
-  // idle, so the rest sweep waits for it as it waits for the terminals.
-  // Absent means listed (a host with no chat runtime has nothing to wait for).
-  conversationSessionsReady?: boolean
   // The unseen-completion marks, as they change — the app rail's Home badge
   // counts them (useRailBadges). The sidebar stays their owner: it is the layer
   // that knows what was looked at, and nothing outside it writes a mark.
@@ -430,6 +425,24 @@ function storeFollowedRests(serialized: string): void {
   }
 }
 
+/**
+ * Whether main took a gesture on a chat's rest, so its processes may be put
+ * away: a yes, no main to ask (the gesture then stands as applied here), or
+ * no record left to ask about (a chat gone from the store has nobody left to
+ * keep its agents for, as the kill's own check says).
+ */
+function mainAgreed(answer: WorkspaceLifecycleResult | null): boolean {
+  return answer === null || answer.ok || answer.code === 'unavailable'
+}
+
+function toastStillWorking(name: string): void {
+  showToast({
+    tone: 'neutral',
+    title: `${name} is still working`,
+    description: 'It can be snoozed once its agents finish.',
+  })
+}
+
 function WorkspaceSidebar({
   workspaces,
   activeWorkspaceId,
@@ -444,7 +457,6 @@ function WorkspaceSidebar({
   residentWorkspaceIds,
   terminalRecencyByWorkspaceId,
   conversationSessions = NO_CONVERSATIONS,
-  conversationSessionsReady = true,
   onUnseenDoneChange,
   onSnoozedWorkspacesChange,
   onSelectWorkspace,
@@ -872,23 +884,24 @@ function WorkspaceSidebar({
   // sweep's three-idle-day decision — so the three cannot disagree about what
   // resting means.
   //
-  // Gated on the row actually having something open, because the first sweep
-  // after a restart settles hundreds of rows at once: without the gate each
+  // Gated on the row actually having something open, because main's first
+  // sweep after a restart can settle hundreds of rows at once: without the gate each
   // one would fan out a kill per recorded agent session, and every one of
   // those is a no-op IPC round trip for a chat whose ptys died with the last
   // app run. Only a row with live sessions (or a mounted mesh pane) is worth
   // asking main about.
   //
-  // Nothing here can kill a working agent: the sweep never settles a row that
-  // is busy, held, or selected, and a hand Settle is the person saying so
-  // about a chat they are looking at.
+  // Nothing here can kill a working agent: main's sweep never settles a row
+  // that is busy, held, or on screen, a hand Settle is the person saying so
+  // about a chat they are looking at, and main's list is asked again before
+  // the kill (`terminateSettledWorkspaceTerminals`).
   //
   // A chat agent counts as open too: it has no pty, but main holds a child
   // process for it until the session is stopped.
   //
   // Read through refs, so these keep their identity while sessions move: the
-  // sweep below is keyed on `quietSettledWorkspace`, and a new one on every
-  // chat refresh re-ran the sweep over every workspace for nothing.
+  // callbacks below are keyed on `quietSettledWorkspace`, and a new one on
+  // every chat refresh re-ran their effects for nothing.
   const openAgentSourcesRef = useRef({
     sessionsByWorkspaceId,
     conversationsByWorkspaceId,
@@ -936,9 +949,8 @@ function WorkspaceSidebar({
   //
   // A live agent's marks arrive on its terminal session and are drawn on its
   // own line; those are the more precise answer and this never overrides them
-  // (`pullRequestsForRow`). This is for the rows that have no line left. The
-  // rest sweep below reads it too: a chat whose pull requests have landed
-  // settles (Settle on merge).
+  // (`pullRequestsForRow`). This is for the rows that have no line left.
+  // (Settle on merge reads main's record of them, in main's rest sweep.)
   const allWorkspaceIds = useMemo(() => workspaces.map((workspace) => workspace.id), [workspaces])
   const conversationPullRequests = useConversationPullRequests(allWorkspaceIds)
   // …and each chat line's own: the pull requests that chat's agent opened,
@@ -948,14 +960,6 @@ function WorkspaceSidebar({
     [conversationSessions],
   )
   const conversationLinePullRequests = usePullRequestsByConversation(conversationLineKeys)
-  // The chats whose agent has Studio watching a pull request. Such a chat is
-  // waiting to be woken, not done: the rest sweep leaves it out (settling it
-  // would stop the watch), as it leaves out a chat that is working.
-  const watchedWorkspaceIds = useMemo(() => {
-    const ids = new Set<WorkspaceId>()
-    for (const [id, list] of Object.entries(conversationPullRequests)) if (watchedPullRequest(list)) ids.add(id)
-    return ids
-  }, [conversationPullRequests])
   // The pull request a row's chat has watched, and the agents whose watch it
   // may be: what the row menu's Stop watching stops. A chat line's own list
   // names its agent; a row with no live chat line knows only its workspace,
@@ -974,54 +978,12 @@ function WorkspaceSidebar({
   // pushed by the Studio when one starts or stops.
   const workspaceLocalServers = useWorkspaceLocalServers(allWorkspaceIds)
 
-  // The rest sweep (settled-chats, 2026-09-07): on the 30 s tick the idle
-  // labels ride, and whenever an agent's activity flips — so a resting row
-  // whose agent starts working wakes at once, not a tick later. This is the
-  // one place that knows every blocker: what is working (activity, so it
-  // wakes a resting row and holds an active one), and what wants the person
-  // (a prompt, or the unseen finished mark — a thing to look at, which holds
-  // a row out of the shelf and wakes one the sweep settled, never one the
-  // person did). Not before main has listed the sessions once: until then
-  // every row reads idle, and a chat parked at a prompt for days would settle
-  // on the mount and wake a beat later. The store owns the rule and the
-  // record; see `reconcileWorkspaceSettlement`.
-  //
-  // Keyed on whether both lists have landed rather than on the terminal list
-  // itself: a terminal's semantic change moves no row's activity that
-  // `activityByWorkspaceId` does not already carry.
-  //
-  // Busy is `workspaceIsWorking`, the rule Settle by hand follows: a row whose
-  // prompt or failed turn outranks a background agent still working is busy
-  // all the same, or a merge would settle it and end that agent.
-  const sessionsListed = hasTerminalSessionsSnapshot() && conversationSessionsReady
-  useEffect(() => {
-    if (!sessionsListed) return
-    const busyIds = new Set<WorkspaceId>()
-    const heldIds = new Set<WorkspaceId>([...unseenDoneIds, ...watchedWorkspaceIds])
-    for (const [id, activity] of Object.entries(activityByWorkspaceId)) {
-      if (rowIsWorking(id)) busyIds.add(id)
-      else if (activity === 'needs-input') heldIds.add(id)
-    }
-    const settledNow = useWorkspaceStore.getState().reconcileWorkspaceSettlement({
-      now,
-      busyIds,
-      heldIds,
-      // Absent until the list has been read once, so a launch's first tick
-      // does not take "not read yet" for "no open pull request".
-      pullRequestsByWorkspaceId: pullRequestsRead(conversationPullRequests) ? conversationPullRequests : undefined,
-    })
-    for (const id of settledNow) quietSettledWorkspace(id)
-  }, [
-    now,
-    activityByWorkspaceId,
-    conversationSessions,
-    unseenDoneIds,
-    watchedWorkspaceIds,
-    sessionsListed,
-    rowIsWorking,
-    quietSettledWorkspace,
-    conversationPullRequests,
-  ])
+  // The rest sweep (settled-chats, 2026-09-07) is main's
+  // (`main/automation/workspace-settlement-sweep.ts`): it settles a quiet chat
+  // and wakes a resting one that works again with or without a window open,
+  // on main's own reading of the chats and its own clock. Its settles reach
+  // this window as records that are suddenly resting, and are carried out
+  // here like a Settle from a phone (`settledElsewhere`).
 
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({})
   // Which Snoozed shelves are open. Session-only and closed by default: the
@@ -1122,13 +1084,19 @@ function WorkspaceSidebar({
   // Never while an agent in it is working: settling ends the chat's agent
   // processes, and whatever they were doing with them. The row's button and
   // menu item say so; this is the guard for every path.
+  //
+  // Main decides the Settle (`fromWindow`), and the ptys wait for its yes: a
+  // Settle it refused — the chat changed meanwhile, or an agent there began
+  // working — has put the row back, and its agents keep running.
   const settleWorkspaceById = useCallback(
     (id: WorkspaceId) => {
       if (rowIsWorking(id)) return
       const handOff = handOffFrom(id)
-      setWorkspaceSettled(id, true)
-      quietSettledWorkspace(id)
+      const answer = setWorkspaceSettled(id, true)
       handOff()
+      void answer.then((settled) => {
+        if (mainAgreed(settled)) quietSettledWorkspace(id)
+      })
     },
     [rowIsWorking, handOffFrom, setWorkspaceSettled, quietSettledWorkspace],
   )
@@ -1158,12 +1126,8 @@ function WorkspaceSidebar({
         if (outcome !== 'working') return
         const now = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
         if (now?.snoozedUntil !== wakeAt) return
-        useWorkspaceStore.getState().setWorkspaceSnoozed(id, null)
-        showToast({
-          tone: 'neutral',
-          title: `${workspace.name} is still working`,
-          description: 'It can be snoozed once its agents finish.',
-        })
+        void useWorkspaceStore.getState().setWorkspaceSnoozed(id, null)
+        toastStillWorking(workspace.name)
       })
     },
     [rowHasOpenAgents],
@@ -1184,19 +1148,30 @@ function WorkspaceSidebar({
   // Never while an agent in it is working, for Settle's reason: pausing ends
   // the agent processes, and an agent working in the background ends with
   // them and does not come back on the wake.
+  //
+  // Main decides the Snooze as it does a Settle, and the ptys wait for its
+  // yes. One it refused for an agent at work is told as the suspend's own
+  // re-check tells it.
   const snoozeWorkspaceById = useCallback(
     (id: WorkspaceId, wakeAt: number) => {
       if (rowIsWorking(id)) return
       const handOff = handOffFrom(id)
-      setWorkspaceSnoozed(id, wakeAt)
-      quietSnoozedWorkspace(id, wakeAt)
+      const answer = setWorkspaceSnoozed(id, wakeAt)
       handOff()
+      void answer.then((snoozed) => {
+        if (mainAgreed(snoozed)) quietSnoozedWorkspace(id, wakeAt)
+        else if (snoozed?.ok === false && snoozed.code === 'working') {
+          const workspace = openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)
+          if (workspace) toastStillWorking(workspace.name)
+        }
+      })
     },
     [rowIsWorking, handOffFrom, setWorkspaceSnoozed, quietSnoozedWorkspace],
   )
 
   // A Settle made somewhere else — a paired phone or desktop
-  // (`conversation.settle`), or another window here — reaches this window as
+  // (`conversation.settle`), main's rest sweep, or another window here —
+  // reaches this window as
   // a record that is suddenly resting (`settledElsewhere.ts`). The rest of a
   // Settle is carried out here as if it had been made here: the chat's
   // processes end, and a window that has it in front moves on.
@@ -1204,8 +1179,8 @@ function WorkspaceSidebar({
   // The processes are ended by the window that routes the row, so two
   // windows do not both ask; the hand-off is every window's that has it in
   // front. A row whose agent is working is left running, as Settle by hand
-  // leaves it: the rest sweep reads a working row as busy and wakes it on its
-  // next tick, so the chat comes back rather than losing its work.
+  // leaves it: main's rest sweep reads a working row as busy and wakes it as
+  // soon as it hears the work, so the chat comes back rather than losing it.
   const settledElsewhere = useStableCallback((id: WorkspaceId) => {
     if (rowIsWorking(id)) return
     const handOff = handOffFrom(id)

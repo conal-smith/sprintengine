@@ -1,4 +1,5 @@
 import type { ElectronApi } from '../../../shared/electron-api'
+import type { WorkspaceLifecycleRequest, WorkspaceLifecycleResult } from '../../../shared/workspace-lifecycle'
 import type {
   WindowPlacement,
   WorkspaceFieldsPatch,
@@ -31,7 +32,8 @@ const PRIMARY_WORKSPACE_WINDOW_ID: WorkspaceWindowId = 'primary'
 export type WorkspaceSyncClientApi = Pick<
   ElectronApi,
   'workspaceSyncDispatch' | 'workspaceSyncGetSnapshot' | 'workspaceSyncGetEventsAfter' | 'onWorkspaceSyncEvent'
->
+> &
+  Partial<Pick<ElectronApi, 'workspaceLifecycle'>>
 
 // Local application of an active_changed event. `isCurrentWindow` is true only
 // for the renderer that owns `windowId`; remote windows update the targeted
@@ -218,6 +220,12 @@ export type WorkspaceSyncClient = {
   ) => Promise<void>
   /** Ask main to remove a workspace and tombstone its id. */
   dispatchRemoveWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  /**
+   * Ask main to settle, un-settle, snooze or wake a chat on this window's
+   * reading of it. Never throws: a window with no main to ask is answered
+   * `unavailable`.
+   */
+  dispatchLifecycleIntent: (request: WorkspaceLifecycleRequest) => Promise<WorkspaceLifecycleResult>
   /** Stop listeners and reset sequence/diagnostic state (used by tests). */
   reset: () => void
 }
@@ -615,6 +623,45 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
   const dispatchRemoveWorkspace = (workspaceId: WorkspaceId): Promise<void> =>
     dispatchCommand({ type: 'workspace.remove', payload: { workspaceId } })
 
+  // A row-menu gesture on a chat's rest. The store has applied it already, as
+  // it does every hand edit; main decides it on the reading it was made on,
+  // and a refusal comes back with the chat as main has it, for the store to
+  // put the row back. The accepted change reaches every window, this one
+  // included, as a sync event.
+  const dispatchLifecycleIntent = async (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> => {
+    const unavailable: WorkspaceLifecycleResult = {
+      ok: false,
+      code: 'unavailable',
+      message: 'This window has no main process to ask.',
+    }
+    const api = deps.getApi()
+    if (!api?.workspaceLifecycle) {
+      log({
+        phase: 'dispatch',
+        reason: 'api_unavailable',
+        message: `Workspace sync API is unavailable; a ${request.intent.kind} stays local-only.`,
+      })
+      return unavailable
+    }
+    try {
+      const result = await api.workspaceLifecycle(request)
+      if (!result.ok)
+        log({
+          phase: 'dispatch',
+          reason: result.code,
+          message: `Main refused a ${request.intent.kind} (${result.code}): ${result.message}`,
+        })
+      return result
+    } catch (error) {
+      log({
+        phase: 'dispatch',
+        reason: 'dispatch_threw',
+        message: `A ${request.intent.kind} threw: ${error instanceof Error ? error.message : 'unknown error'}.`,
+      })
+      return unavailable
+    }
+  }
+
   const reset = (): void => {
     stop()
     lastAppliedSequence = 0
@@ -636,6 +683,7 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
     dispatchUpdateWorkspaceFields,
     dispatchUpdateWorkspaceAgent,
     dispatchRemoveWorkspace,
+    dispatchLifecycleIntent,
     reset,
   }
 }

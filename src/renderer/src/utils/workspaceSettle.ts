@@ -9,6 +9,5 @@ export {
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   MAX_AUTO_SETTLE_AFTER_DAYS,
   MIN_AUTO_SETTLE_AFTER_DAYS,
-  decideWorkspaceSettlement,
   normalizeAutoSettleAfterDays,
 } from '../../../shared/workspace-settlement'

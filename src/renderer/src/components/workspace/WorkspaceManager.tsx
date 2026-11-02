@@ -51,7 +51,6 @@ import { useAgentEditorReveal } from '../../hooks/useAgentEditorReveal'
 import { useAppTheme } from '../../hooks/useAppTheme'
 import { useAgentWorktreeCleanup } from '../../hooks/useAgentWorktreeCleanup'
 import {
-  conversationSessionsStore,
   groupConversationSessionsByWorkspace,
   useConversationSessions,
   type ConversationSessionEntry,
@@ -97,6 +96,7 @@ import { logPerfEvent } from '../../utils/perfDiagnostics'
 import { initBackgroundModeSync } from '../../utils/backgroundModeSync'
 import { initTelemetryConsentSync } from '../../utils/telemetryConsentSync'
 import { initTextGenerationSettingsSync } from '../../utils/textGenerationSettingsSync'
+import { initSettledChatsSettingsSync } from '../../utils/settledChatsSettingsSync'
 import { initModuleAppStateSync } from '../../utils/moduleAppStateSync'
 import {
   addNewAgentTab,
@@ -523,6 +523,8 @@ export default function WorkspaceManager() {
   // to ask when one starts (a phone's New chat), so the titles setting is
   // mirrored the same way.
   useEffect(() => initTextGenerationSettingsSync(), [])
+  // Settings ▸ Settled chats, which main's rest sweep reads with no window open.
+  useEffect(() => initSettledChatsSettingsSync(), [])
   // A module's entry.main reads its Settings section's values with no window
   // open (a scheduler's time, a poller's interval), so module app state is
   // mirrored the same way.
@@ -5087,7 +5089,6 @@ export default function WorkspaceManager() {
             residentWorkspaceIds={residentWorkspaceIds}
             terminalRecencyByWorkspaceId={terminalRecencyByWorkspaceId}
             conversationSessions={conversationSessions}
-            conversationSessionsReady={conversationSessionsStore().hasSnapshot()}
             onUnseenDoneChange={setUnseenDoneIds}
             onSnoozedWorkspacesChange={setSnoozedWorkspaceIds}
             onOpenRemoteSession={sidebarOpenRemoteSession}

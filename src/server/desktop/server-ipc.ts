@@ -72,6 +72,7 @@ export type ServerDomainIpcDeps = {
     | 'conversations'
     | 'conversationImport'
     | 'conversationLifecycle'
+    | 'settledChatsSettings'
     | 'platform'
     | 'usageLimitResumes'
     | 'scheduledMessages'
@@ -100,6 +101,8 @@ export function registerServerDomainIpc(registry: IpcRegistryLike, deps: ServerD
   registerWorkspaceSyncIpc(ipc, core.workspaceSyncService, {
     registry: core.workspaceRegistry,
     markUnread: (workspaceId) => core.conversationLifecycle.markUnread(workspaceId, 'ui'),
+    lifecycle: (request) => core.conversationLifecycle.fromWindow(request),
+    setSettledChatsSettings: (settings) => core.settledChatsSettings.set(settings),
   })
   registerAutomationIpc(ipc, deps.gateway)
   registerStudioLocalAppsIpc(ipc, deps.studioRpc, deps.assertAppSender)

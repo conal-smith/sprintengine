@@ -2,6 +2,11 @@ import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 
 import { studioPlatform } from '../../server/platform/platform'
 import type { WorkspaceMarkUnreadResult, WorkspaceSyncEvent } from '../../shared/workspace-sync'
+import {
+  parseWorkspaceLifecycleRequest,
+  type WorkspaceLifecycleRequest,
+  type WorkspaceLifecycleResult,
+} from '../../shared/workspace-lifecycle'
 import type { WorkspaceSyncService } from '../workspace-sync-service'
 import type { WorkspaceRegistryHydratePayload, WorkspaceRegistryService } from '../workspace-registry-service'
 
@@ -26,6 +31,15 @@ type RegisterWorkspaceSyncIpcOptions = {
    * below. Omitted, the channel answers that it cannot.
    */
   markUnread?: (workspaceId: string) => Promise<WorkspaceMarkUnreadResult>
+  /**
+   * A window's Settle, Un-settle, Snooze or Wake now, decided in main on the
+   * reading of the chat the window made it on (conversation-lifecycle.ts's
+   * `fromWindow`). Its event reaches every window through the subscription
+   * below. Omitted, the channel answers that it cannot.
+   */
+  lifecycle?: (request: WorkspaceLifecycleRequest) => WorkspaceLifecycleResult
+  /** The Settled chats settings a window pushes, which main's rest sweep reads. */
+  setSettledChatsSettings?: (settings: unknown) => void
 }
 
 export function registerWorkspaceSyncIpc(
@@ -68,6 +82,15 @@ export function registerWorkspaceSyncIpc(
       return options.markUnread(workspaceId.trim())
     },
   )
+  ipcMain.handle('workspace-sync:lifecycle', (_event, request: unknown): WorkspaceLifecycleResult => {
+    const parsed = parseWorkspaceLifecycleRequest(request)
+    if (!parsed) return { ok: false, code: 'invalid_arguments', message: 'That is not a change to a chat’s rest.' }
+    if (!options.lifecycle) return { ok: false, code: 'unavailable', message: 'Settle is not available here.' }
+    return options.lifecycle(parsed)
+  })
+  ipcMain.handle('workspace-sync:set-settled-chats-settings', (_event, settings: unknown): void => {
+    options.setSettledChatsSettings?.(settings)
+  })
   ipcMain.handle('workspace-sync:get-snapshot', () => service.getSnapshot())
   ipcMain.handle('workspace-sync:get-events-after', (_event, sequence: unknown) => service.getEventsAfter(sequence))
 

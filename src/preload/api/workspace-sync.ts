@@ -8,6 +8,8 @@ import type {
   WorkspaceSyncSnapshot,
 } from '../../shared/workspace-sync'
 import type { ElectronApi, WorkspaceRegistryHydrateResult } from '../../shared/electron-api'
+import type { WorkspaceLifecycleRequest, WorkspaceLifecycleResult } from '../../shared/workspace-lifecycle'
+import type { SettledChatsSettings } from '../../shared/workspace-settlement'
 
 type WorkspaceSyncIpcRenderer = {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -21,6 +23,8 @@ export function createWorkspaceSyncApi(
   ElectronApi,
   | 'workspaceSyncDispatch'
   | 'workspaceMarkUnread'
+  | 'workspaceLifecycle'
+  | 'setSettledChatsSettings'
   | 'workspaceSyncGetSnapshot'
   | 'workspaceSyncGetEventsAfter'
   | 'onWorkspaceSyncEvent'
@@ -39,6 +43,10 @@ export function createWorkspaceSyncApi(
       renderer.invoke('workspace-sync:dispatch', command) as Promise<WorkspaceSyncCommandResult>,
     workspaceMarkUnread: (workspaceId: string): Promise<WorkspaceMarkUnreadResult> =>
       renderer.invoke('workspace-sync:mark-unread', workspaceId) as Promise<WorkspaceMarkUnreadResult>,
+    workspaceLifecycle: (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> =>
+      renderer.invoke('workspace-sync:lifecycle', request) as Promise<WorkspaceLifecycleResult>,
+    setSettledChatsSettings: (settings: SettledChatsSettings): Promise<void> =>
+      renderer.invoke('workspace-sync:set-settled-chats-settings', settings) as Promise<void>,
     workspaceSyncGetSnapshot: (): Promise<WorkspaceSyncSnapshot> =>
       renderer.invoke('workspace-sync:get-snapshot') as Promise<WorkspaceSyncSnapshot>,
     workspaceSyncGetEventsAfter: (sequence: number): Promise<WorkspaceSyncEvent[]> =>
@@ -56,6 +64,8 @@ export const workspaceSyncApi = createWorkspaceSyncApi(ipcRenderer) satisfies Pi
   ElectronApi,
   | 'workspaceSyncDispatch'
   | 'workspaceMarkUnread'
+  | 'workspaceLifecycle'
+  | 'setSettledChatsSettings'
   | 'workspaceSyncGetSnapshot'
   | 'workspaceSyncGetEventsAfter'
   | 'onWorkspaceSyncEvent'

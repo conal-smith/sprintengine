@@ -98,9 +98,10 @@ export async function terminateWorkspaceTerminals(workspace: Workspace): Promise
  * heard about, and the kill lands a round trip later: a turn started in that
  * gap — a message from the phone, a scheduled prompt — would be interrupted by
  * a gesture made before it existed. So main's own list is read once more first,
- * and a chat working by then is left running. Its record still says settled;
- * the rest sweep wakes a settled chat whose agent is working on its next pass,
- * which here is the moment that activity reaches the window.
+ * and a chat working by then is left running. Main decides the Settle on its
+ * own reading first (`fromWindow`), so this is the narrower gap between its
+ * yes and the kill; a record that still says settled is woken by main's rest
+ * sweep as soon as it hears the chat working.
  *
  * Only an agent's work spares the chat (`workspaceIsWorking`): a plain shell
  * printing is not work Settle would be cutting short, and it ends with the
