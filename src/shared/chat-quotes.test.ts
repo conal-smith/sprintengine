@@ -185,7 +185,16 @@ test('a chip says its comment, or else the start of the passage, cut with an ell
   expect(quoteLabel(quote({ comment: '  a\nnote ' }))).toBe('a note')
   expect(quoteLabel(quote())).toBe('Keep the cache warm.')
   const long = quoteLabel(quote({ exact: 'word '.repeat(40) }))
-  expect(long.length).toBe(64)
+  expect(long.length).toBeLessThanOrEqual(40)
+  expect(long).toBe(`${'word '.repeat(7)}word…`)
+  // At the last whole word, with no space and no stray comma before the "…".
+  expect(quoteLabel(quote({ comment: 'Does this need eviction when a workspace closes?' }))).toBe(
+    'Does this need eviction when a…',
+  )
+  expect(quoteLabel(quote({ exact: 'keep a small LRU of recently closed workspaces, then evict' }))).toBe(
+    'keep a small LRU of recently closed…',
+  )
+  expect(quoteLabel(quote({ exact: 'x'.repeat(60) }))).toBe(`${'x'.repeat(39)}…`)
   expect(long.endsWith('…')).toBe(true)
 })
 

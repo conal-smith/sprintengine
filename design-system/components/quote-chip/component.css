@@ -40,30 +40,39 @@
 .ds-quote-chip__number,
 .ds-quote-badge {
   display: inline-block;
-  padding: 0 var(--sem-space-3xs);
-  border-radius: var(--sem-radius-chip);
-  background: var(--sem-color-quote-tint);
-  color: var(--sem-color-quote-ink);
+  padding: 0 var(--sem-space-2xs);
+  border-radius: var(--sem-radius-pill);
+  background: var(--sem-color-quote-badge);
+  color: var(--sem-color-quote-on-badge);
   font-size: var(--sem-font-size-micro);
-  font-weight: var(--sem-font-weight-medium);
+  font-weight: var(--sem-font-weight-emphasis);
   line-height: var(--sem-font-line-tight);
   font-variant-numeric: tabular-nums;
+  vertical-align: middle;
 }
 
 .ds-quote-chip__number {
   margin-right: var(--sem-space-2xs);
 }
 
+/* In the reply the pill cannot push the words after the passage along, so it
+ * is raised into the leading over the end of the passage's last line, like a
+ * superscript, rather than set over the next glyphs. */
+.ds-quote-badge {
+  vertical-align: super;
+}
+
 /* The label: the comment, or the start of the passage, cut at a measure. */
 .ds-quote-chip__label {
   display: inline-block;
-  max-width: 16em;
+  max-width: 22em;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: bottom;
 }
 
-/* The composer's chips only: the bare pencil, muted, edits the comment. */
+/* The composer's chips only: the bare pencil, muted, edits the comment. Both
+ * glyphs sit on the middle of the line, as the words do. */
 .ds-quote-chip__edit {
   margin-left: var(--sem-space-3xs);
   padding: 0;
@@ -91,8 +100,7 @@
 }
 
 .ds-quote-badge--sent {
-  background: var(--sem-color-quote-tint-sent);
-  color: var(--sem-color-quote-ink-sent);
+  background: var(--sem-color-quote-badge-sent);
 }
 
 /* The editor and the card share the overlay surface. */

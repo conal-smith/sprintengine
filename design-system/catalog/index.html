@@ -127,7 +127,9 @@
   --sem-color-find-match: #ffe9a8;
   --sem-color-find-match-current: #ffc93c;
   --sem-color-quote-ink: var(--ref-color-amber-800);
-  --sem-color-quote-ink-sent: rgba(154, 96, 0, 0.72);
+  --sem-color-quote-badge: var(--ref-color-amber-400);
+  --sem-color-quote-badge-sent: rgba(252, 192, 48, 0.55);
+  --sem-color-quote-on-badge: #2e1f00;
   --sem-color-quote-tint: rgba(252, 192, 48, 0.3);
   --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.14);
   --sem-color-agent-trail-ink: var(--ref-color-violet-600);
@@ -265,7 +267,6 @@
   --sem-color-find-match: #4a3f18;
   --sem-color-find-match-current: #8a6d10;
   --sem-color-quote-ink: var(--ref-color-amber-400);
-  --sem-color-quote-ink-sent: rgba(252, 192, 48, 0.68);
   --sem-color-quote-tint: rgba(252, 192, 48, 0.16);
   --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.08);
   --sem-color-agent-trail-ink: var(--ref-color-violet-300);
@@ -339,7 +340,6 @@
   --sem-color-find-match: #4a3f18;
   --sem-color-find-match-current: #8a6d10;
   --sem-color-quote-ink: var(--ref-color-amber-400);
-  --sem-color-quote-ink-sent: rgba(252, 192, 48, 0.68);
   --sem-color-quote-tint: rgba(252, 192, 48, 0.16);
   --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.08);
   --sem-color-agent-trail-ink: var(--ref-color-violet-300);
@@ -410,7 +410,6 @@
   --sem-color-find-match: #ffe9a8;
   --sem-color-find-match-current: #ffc93c;
   --sem-color-quote-ink: var(--ref-color-amber-800);
-  --sem-color-quote-ink-sent: rgba(154, 96, 0, 0.72);
   --sem-color-quote-tint: rgba(252, 192, 48, 0.3);
   --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.14);
   --sem-color-agent-trail-ink: var(--ref-color-violet-600);
@@ -7395,30 +7394,39 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 .ds-quote-chip__number,
 .ds-quote-badge {
   display: inline-block;
-  padding: 0 var(--sem-space-3xs);
-  border-radius: var(--sem-radius-chip);
-  background: var(--sem-color-quote-tint);
-  color: var(--sem-color-quote-ink);
+  padding: 0 var(--sem-space-2xs);
+  border-radius: var(--sem-radius-pill);
+  background: var(--sem-color-quote-badge);
+  color: var(--sem-color-quote-on-badge);
   font-size: var(--sem-font-size-micro);
-  font-weight: var(--sem-font-weight-medium);
+  font-weight: var(--sem-font-weight-emphasis);
   line-height: var(--sem-font-line-tight);
   font-variant-numeric: tabular-nums;
+  vertical-align: middle;
 }
 
 .ds-quote-chip__number {
   margin-right: var(--sem-space-2xs);
 }
 
+/* In the reply the pill cannot push the words after the passage along, so it
+ * is raised into the leading over the end of the passage's last line, like a
+ * superscript, rather than set over the next glyphs. */
+.ds-quote-badge {
+  vertical-align: super;
+}
+
 /* The label: the comment, or the start of the passage, cut at a measure. */
 .ds-quote-chip__label {
   display: inline-block;
-  max-width: 16em;
+  max-width: 22em;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: bottom;
 }
 
-/* The composer's chips only: the bare pencil, muted, edits the comment. */
+/* The composer's chips only: the bare pencil, muted, edits the comment. Both
+ * glyphs sit on the middle of the line, as the words do. */
 .ds-quote-chip__edit {
   margin-left: var(--sem-space-3xs);
   padding: 0;
@@ -7446,8 +7454,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 }
 
 .ds-quote-badge--sent {
-  background: var(--sem-color-quote-tint-sent);
-  color: var(--sem-color-quote-ink-sent);
+  background: var(--sem-color-quote-badge-sent);
 }
 
 /* The editor and the card share the overlay surface. */
@@ -13913,10 +13920,12 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-scaffold-soft)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.scaffold.soft</code><code class="catalog-token-value">rgba(137, 87, 229, 0.16)</code><span class="catalog-badge">scaffold</span></p><p class="catalog-token-meta">Soft fill of a named scaffold chip: scaffold.ink at 16%. Fill of a name chip for something being made, once it holds a name. <strong>Do not:</strong> Row selection, banners, or any fill that is not a scaffold chip.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-find-match)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-find-match)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.find.match</code><code class="catalog-token-value">#ffe9a8</code><span class="catalog-badge">find</span></p><p class="catalog-token-meta">The wash behind every match of a find in text the app draws itself, such as Find in chat. Highlighter amber, the same pair the terminal's find decorations paint, so a match looks like a match in a chat and a pane alike; amber because no syntax ink, status mark or selection in the app is a background of that hue. Background of a find match painted over rendered text (a ::highlight pseudo-element). <strong>Do not:</strong> Warning or needs-input (that is status.warn), selection, row backgrounds, or any fill that is not a find match.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-find-match-current)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-find-match-current)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.find.match-current</code><code class="catalog-token-value">#ffc93c</code><span class="catalog-badge">find</span></p><p class="catalog-token-meta">The wash behind the match a find is on: find.match one step stronger, so the current match stands out from the rest without a second hue. Background of the one current match of a find, painted over rendered text. <strong>Do not:</strong> Anything but the current find match; never a selection or focus indicator.</p></div></div>
-<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-ink)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-ink)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.ink</code><code class="catalog-token-value">{ref.color.amber-800}</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">Ink of a quote: the chip's glyph, label and number, and the number badge after a quoted passage. The warning amber's two ends taken as gold, deep on light and luminous on dark, so it clears AA as small text on the app's grounds and on its own tint. Text and glyph ink of a quote chip and of a quoted passage's number badge. <strong>Do not:</strong> Warnings (status.warn), find matches (find.*), links, or any text that is not a quote's.</p></div></div>
-<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-ink-sent)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-ink-sent)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.ink-sent</code><code class="catalog-token-value">rgba(154, 96, 0, 0.72)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">quote.ink one step quieter, for the number badge of a quote that has already been sent: it is history, and the draft's quotes are what is being worked on. Number badge ink of a passage quoted by a message already sent. <strong>Do not:</strong> A draft quote's badge or chip (quote.ink), or any text a reader has to read at full contrast.</p></div></div>
-<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-tint)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-tint)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.tint</code><code class="catalog-token-value">rgba(252, 192, 48, 0.3)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The wash behind a passage quoted in the draft, and the ground of its number badge: the luminous amber thinned to a gold tint that reads apart from a find match's opaque highlighter. The tint alone marks the passage — no underline — so the reply's own links and emphasis keep their lines. Background of a quoted passage in a reply (a ::highlight pseudo-element) and of its number badge, while the quote is in the draft. <strong>Do not:</strong> Find matches (find.match), selection, row backgrounds, or a fill that is not a quote's.</p></div></div>
-<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-tint-sent)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-tint-sent)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.tint-sent</code><code class="catalog-token-value">rgba(252, 192, 48, 0.14)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">quote.tint at half the strength, for a passage quoted by a message already sent. Background of a passage, and its number badge, quoted by a message already sent. <strong>Do not:</strong> A draft quote's passage (quote.tint), or any fill that is not a quote's.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-ink)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-ink)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.ink</code><code class="catalog-token-value">{ref.color.amber-800}</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">Ink of a quote chip: its glyph and label. The warning amber's two ends taken as gold, deep on light and luminous on dark, so it clears AA as small text on the app's grounds. Text and glyph ink of a quote chip, in the composer and in a sent message. <strong>Do not:</strong> Warnings (status.warn), find matches (find.*), links, or any text that is not a quote's.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-quote-badge)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.badge</code><code class="catalog-token-value">{ref.color.amber-400}</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The fill of a quote's number pill — on its chip and after its passage in the reply: the luminous amber, in both modes, so the number reads as one gold mark wherever it appears. Background of a quote's number pill while the quote is in the draft, and on every chip. <strong>Do not:</strong> Warnings (status.warn), counts of anything that is not a quote, or any fill that is not a quote's number.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-quote-badge-sent)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.badge-sent</code><code class="catalog-token-value">rgba(252, 192, 48, 0.55)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">quote.badge thinned, for the number after a passage a sent message quoted: history rather than work in hand. Background of the number pill after a passage quoted by a message already sent. <strong>Do not:</strong> A draft quote's pill or a chip's (quote.badge).</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-quote-on-badge)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.on-badge</code><code class="catalog-token-value">#2e1f00</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The number on a quote's pill: a near-black brown that clears AA on quote.badge in both modes. Text of a quote's number pill. <strong>Do not:</strong> Text on any other ground.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-tint)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-tint)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.tint</code><code class="catalog-token-value">rgba(252, 192, 48, 0.3)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The wash behind a passage quoted in the draft: the luminous amber thinned to a gold tint that reads apart from a find match's opaque highlighter. The tint alone marks the passage — no underline — so the reply's own links and emphasis keep their lines. Background of a quoted passage in a reply (a ::highlight pseudo-element) while the quote is in the draft. <strong>Do not:</strong> Find matches (find.match), selection, row backgrounds, or a fill that is not a quote's.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-tint-sent)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-tint-sent)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.tint-sent</code><code class="catalog-token-value">rgba(252, 192, 48, 0.14)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">quote.tint at half the strength, for a passage quoted by a message already sent. Background of a passage quoted by a message already sent. <strong>Do not:</strong> A draft quote's passage (quote.tint), or any fill that is not a quote's.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-agent-trail-ink)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-agent-trail-ink)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.agent-trail.ink</code><code class="catalog-token-value">{ref.color.violet-600}</code><span class="catalog-badge">agent-trail</span></p><p class="catalog-token-meta">Ink of the agent trail in the Files tree: the verb, the count and the agent's mark on a row an agent is at work on (file-tree component.md, Agent trail). Deep violet on light, light violet on dark, so it clears AA as 11px text on its own wash. The trailing group of a file-tree row an agent is reading or editing; the outline and pill of a tab whose page, board or file an agent is using, and the edge round that surface (AgentPresence.tsx). <strong>Do not:</strong> Status, selection, the accent, a file's name (that is its git tint), or a file-type glyph (mark.violet).</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-agent-trail-soft)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.agent-trail.soft</code><code class="catalog-token-value">rgba(137, 87, 229, 0.12)</code><span class="catalog-badge">agent-trail</span></p><p class="catalog-token-meta">Wash of a file-tree row an agent is reading, and of a closed folder leading to one: violet at 12%. The row wash of the agent trail's reading state, and the wash of a tab an agent is using. <strong>Do not:</strong> Selection, banners, or any fill that is not the agent trail.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-agent-trail-soft-strong)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.agent-trail.soft-strong</code><code class="catalog-token-value">rgba(137, 87, 229, 0.22)</code><span class="catalog-badge">agent-trail</span></p><p class="catalog-token-meta">Wash of a file-tree row an agent is editing, and the fill of the trail's verb: violet at 22%. The row wash of the agent trail's editing state, and the pill behind its verb or a tab's Agent pill. <strong>Do not:</strong> Selection, banners, or any fill that is not the agent trail.</p></div></div>
@@ -39046,19 +39055,19 @@ window.addEventListener('resize', repositionAll)
 <div class="catalog-doc">
 <p>A passage of an agent's reply, quoted into the person's next message. Select words in one reply, press <strong>Quote</strong> (the selection toolbar, or the quote shortcut), and the passage goes into the composer as a chip with an optional comment. The chip, the comment editor that opens with it, and the card a marked passage shows in the reply are one family, documented together here. The message carries the quote as a token inside its text (<code>src/shared/chat-quotes.ts</code>); these pieces are how that token is drawn.</p>
 <h4>Anatomy</h4>
-<p>| Part | Class | Required | |---|---|---| | Chip | <code>.ds-quote-chip</code> | yes — inline, <code>quote.ink</code>, no box and no ground | | Link | <code>.ds-quote-chip__link</code> | yes — the [link button](../link-button/component.md) in its <code>--quote</code> ink (<code>QuoteLinkButton</code>); opens the quote's popover | | Number | <code>.ds-quote-chip__number</code> | yes — the quote's number in the conversation, on <code>quote.tint</code> | | Glyph | <code>QuoteGlyph</code> | yes — the quote mark, <code>icon-xs</code> | | Label | <code>.ds-quote-chip__label</code> | yes — the comment, or with none the start of the passage; at most 64 characters, cut at 16em with an ellipsis | | Pencil | <code>.ds-quote-chip__edit</code> | composer only — <code>EditChangelistGlyph</code>, the bare pencil, muted; edits the comment | | Mark | <code>.ds-quote-mark</code> | in the reply — <code>quote.tint</code> behind the passage, painted through the CSS Custom Highlight API | | Badge | <code>.ds-quote-badge</code> | in the reply — the number, just after the passage's last character | | Editor | <code>.ds-quote-overlay.ds-quote-editor</code> | the overlay surface, one borderless auto-growing field, one muted check (Save) at the bottom right | | Card | <code>.ds-quote-overlay.ds-quote-card</code> | the overlay surface, the comment (or the quoted words in muted italics) and, for a draft quote, the pencil and × at the top right |</p>
+<p>| Part | Class | Required | |---|---|---| | Chip | <code>.ds-quote-chip</code> | yes — inline, <code>quote.ink</code>, no box and no ground | | Link | <code>.ds-quote-chip__link</code> | yes — the [link button](../link-button/component.md) in its <code>--quote</code> ink (<code>QuoteLinkButton</code>); opens the quote's popover | | Number | <code>.ds-quote-chip__number</code> | yes — the quote's number in the conversation: a small filled pill, <code>quote.on-badge</code> on <code>quote.badge</code> | | Glyph | <code>QuoteGlyph</code> | yes — the quote mark, <code>icon-xs</code>, centred on the line as the words are | | Label | <code>.ds-quote-chip__label</code> | yes — the comment, or with none the start of the passage; at most 40 characters, cut at the last whole word with a single &quot;…&quot; straight after it (no space, no stray punctuation) | | Pencil | <code>.ds-quote-chip__edit</code> | composer only — <code>EditChangelistGlyph</code>, the bare pencil, muted, centred on the line; edits the comment | | Mark | <code>.ds-quote-mark</code> | in the reply — <code>quote.tint</code> behind the passage, painted through the CSS Custom Highlight API | | Badge | <code>.ds-quote-badge</code> | in the reply — the same pill as the chip's number, raised into the leading over the end of the passage's last line like a superscript, so it covers neither the words after the passage nor the line above; kept inside the prose column | | Editor | <code>.ds-quote-overlay.ds-quote-editor</code> | the overlay surface, one borderless auto-growing field, one muted check (Save) at the bottom right | | Card | <code>.ds-quote-overlay.ds-quote-card</code> | the overlay surface, a little below the passage, the comment (or the quoted words in muted italics) and, for a draft quote, the pencil and × at the top right — one icon-button size and one muted ink for both, glyphs at one icon step |</p>
 <p>The editor has no title, no hint line, no Cancel button and no coloured edge: the placeholder (&quot;Add an optional comment…&quot;) says what it is for, and the keys say the rest.</p>
 <h4>Variants</h4>
-<ul><li><strong>In the composer.</strong> Number, glyph, label and the pencil. The token is an atomic range in the editor: the caret steps over the chip, and Backspace or Delete takes it whole. The live preview, which shows the markdown of the caret's line raw, leaves it a chip.</li><li><strong>In a sent message.</strong> The same chip without the pencil: what was sent is not edited.</li><li><strong>Draft and sent marks.</strong> A passage a quote in the draft cites is marked in <code>quote.tint</code> with its badge in <code>quote.ink</code>; one a sent message cites is marked in <code>quote.tint-sent</code> with its badge in <code>quote.ink-sent</code>, history rather than work in hand. The mark is the tint alone, with no underline, so a link or emphasis inside the passage keeps its own line.</li></ul>
+<ul><li><strong>In the composer.</strong> Number, glyph, label and the pencil. The token is an atomic range in the editor: the caret steps over the chip, and Backspace or Delete takes it whole. The live preview, which shows the markdown of the caret's line raw, leaves it a chip.</li><li><strong>In a sent message.</strong> The same chip without the pencil: what was sent is not edited.</li><li><strong>Draft and sent marks.</strong> A passage a quote in the draft cites is marked in <code>quote.tint</code> with its number on <code>quote.badge</code>; one a sent message cites is marked in <code>quote.tint-sent</code> with its number on <code>quote.badge-sent</code>, history rather than work in hand. The mark is the tint alone, with no underline, so a link or emphasis inside the passage keeps its own line.</li></ul>
 <h4>States</h4>
-<p>| State | Treatment | |---|---| | Rest | Gold ink; the number on its tint | | Hover (chip) | The link underlines, as every link button does | | Focus | The product's focus ring, on the link and on the pencil separately | | Popover open | <code>aria-expanded</code> on the link; the popover shows the passage (blockquote, muted), the comment and <strong>Go to source</strong> | | Hover (mark) | After a short rest, the card opens under the passage. It stays while the pointer crosses into it and closes a moment after the pointer has left both | | Go to source | The transcript scrolls to the reply (paging in older turns if needed) and the passage is lit with a second layer of tint for about a second |</p>
+<p>| State | Treatment | |---|---| | Rest | Gold ink; the number on its tint | | Hover (chip) | The link underlines, as every link button does | | Focus | The product's focus ring, on the link and on the pencil separately | | Popover open | <code>aria-expanded</code> on the link; the popover shows the passage (blockquote, muted), the comment and <strong>Go to source</strong>. It opens above the message bubble or composer the chip sits in, clear of its words and controls, and below it only when there is no room above | | Hover (mark) | After a short rest, the card opens under the passage. It stays while the pointer crosses into it and closes a moment after the pointer has left both | | Go to source | The transcript scrolls to the reply (paging in older turns if needed) and the passage is lit with a second layer of tint for about a second |</p>
 <h4>Usage</h4>
 <p><strong>Only a passage of one reply is a chip.</strong> A selection of the person's own message, a run across several messages or a step's output has no single reply to point back at, and is quoted as a markdown blockquote instead. The same 8,000-character cap applies to both, refused with a toast rather than cut.</p>
 <p><strong>The number is the conversation's.</strong> A new quote takes one more than the highest number among the conversation's sent messages and the draft, and the number is stored with the quote, so the chip, the badge in the reply and the <code>[quote N]</code> the agent reads agree.</p>
 <p><strong>The card is a popover, not a tooltip.</strong> It holds controls for a draft quote, and a tooltip is never interactive ([tooltip](../tooltip/component.md)). A sent quote's card holds no controls.</p>
 <p><strong>Gold is the quote's alone.</strong> <code>quote.*</code> marks quotes and nothing else: not a warning (that is <code>status.warn</code>), not a find match (<code>find.*</code>), not a link.</p>
 <h4>Accessibility</h4>
-<ul><li>The chip's link is named &quot;Quote N: label&quot; and states <code>aria-haspopup</code> and <code>aria-expanded</code> for its popover. The number inside it is <code>aria-hidden</code>, since the name already says it.</li><li>The pencil is named &quot;Edit comment on quote N&quot; and carries a tooltip; the check is named &quot;Save&quot;.</li><li>The editor is a dialog named &quot;Comment on quote N&quot;; its field takes focus as it opens. Enter saves, ⌘/Ctrl+Enter saves and sends, Shift+Enter is a new line, Escape closes it — and on a quote just made, takes the quote back out. A press outside keeps what was typed.</li><li>The badges in the reply are drawn in an <code>aria-hidden</code> layer over the transcript; the marks change no text, so a screen reader reads the reply as written.</li><li><code>quote.ink</code> clears AA as small text on the app's grounds and on its own tint, in both modes.</li></ul>
+<ul><li>The chip's link is named &quot;Quote N: label&quot; and states <code>aria-haspopup</code> and <code>aria-expanded</code> for its popover. The number inside it is <code>aria-hidden</code>, since the name already says it.</li><li>The pencil is named &quot;Edit comment on quote N&quot; and carries a tooltip; the check is named &quot;Save&quot;.</li><li>The editor is a dialog named &quot;Comment on quote N&quot;; its field takes focus as it opens. Enter saves, ⌘/Ctrl+Enter saves and sends, Shift+Enter is a new line, Escape closes it — and on a quote just made, takes the quote back out. A press outside keeps what was typed.</li><li>The badges in the reply are drawn in an <code>aria-hidden</code> layer over the transcript; the marks change no text, so a screen reader reads the reply as written.</li><li><code>quote.ink</code> clears AA as small text on the app's grounds, and <code>quote.on-badge</code> on <code>quote.badge</code>, in both modes.</li></ul>
 <h4>Shipped implementation</h4>
 <p><code>src/renderer/src/components/panels/agentChat/chatQuotes.tsx</code> (<code>QuoteChip</code>, <code>SentQuoteChip</code>, <code>QuotePopover</code>, <code>QuoteCommentEditor</code>), <code>composerQuoteChips.ts</code> (the editor extension), <code>quoteHighlights.tsx</code> (marks, badges and the card), <code>quoteAnchors.ts</code> (finding a passage again) and <code>useChatQuotes.tsx</code> (the chat's wiring).</p>
 </div>
@@ -39105,30 +39114,39 @@ window.addEventListener('resize', repositionAll)
 .ds-quote-chip__number,
 .ds-quote-badge {
   display: inline-block;
-  padding: 0 var(--sem-space-3xs);
-  border-radius: var(--sem-radius-chip);
-  background: var(--sem-color-quote-tint);
-  color: var(--sem-color-quote-ink);
+  padding: 0 var(--sem-space-2xs);
+  border-radius: var(--sem-radius-pill);
+  background: var(--sem-color-quote-badge);
+  color: var(--sem-color-quote-on-badge);
   font-size: var(--sem-font-size-micro);
-  font-weight: var(--sem-font-weight-medium);
+  font-weight: var(--sem-font-weight-emphasis);
   line-height: var(--sem-font-line-tight);
   font-variant-numeric: tabular-nums;
+  vertical-align: middle;
 }
 
 .ds-quote-chip__number {
   margin-right: var(--sem-space-2xs);
 }
 
+/* In the reply the pill cannot push the words after the passage along, so it
+ * is raised into the leading over the end of the passage's last line, like a
+ * superscript, rather than set over the next glyphs. */
+.ds-quote-badge {
+  vertical-align: super;
+}
+
 /* The label: the comment, or the start of the passage, cut at a measure. */
 .ds-quote-chip__label {
   display: inline-block;
-  max-width: 16em;
+  max-width: 22em;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: bottom;
 }
 
-/* The composer's chips only: the bare pencil, muted, edits the comment. */
+/* The composer's chips only: the bare pencil, muted, edits the comment. Both
+ * glyphs sit on the middle of the line, as the words do. */
 .ds-quote-chip__edit {
   margin-left: var(--sem-space-3xs);
   padding: 0;
@@ -39156,8 +39174,7 @@ window.addEventListener('resize', repositionAll)
 }
 
 .ds-quote-badge--sent {
-  background: var(--sem-color-quote-tint-sent);
-  color: var(--sem-color-quote-ink-sent);
+  background: var(--sem-color-quote-badge-sent);
 }
 
 /* The editor and the card share the overlay surface. */

@@ -321,11 +321,24 @@ export function quotesToLabels(text: string): string {
   return `${out}${text.slice(at)}`
 }
 
-/** What a chip says: its comment when it has one, otherwise the start of the passage. */
-export function quoteLabel(quote: Pick<ChatQuote, 'quote' | 'exact' | 'comment'>, max = 64): string {
+/** The longest a chip's label runs, in characters, ellipsis included. */
+export const QUOTE_LABEL_MAX_CHARS = 40
+
+/**
+ * What a chip says: its comment when it has one, otherwise the start of the
+ * passage. A long one is cut at the last whole word that fits and ends in a
+ * single "…" set straight after it — no space before it, no stray punctuation,
+ * never half a word unless the first word alone is too long.
+ */
+export function quoteLabel(quote: Pick<ChatQuote, 'quote' | 'exact' | 'comment'>, max = QUOTE_LABEL_MAX_CHARS): string {
   const comment = quote.comment.replace(/\s+/gu, ' ').trim()
   const words = comment || (quote.exact || quote.quote).replace(/\s+/gu, ' ').trim()
-  return words.length > max ? `${words.slice(0, max - 1).trimEnd()}…` : words
+  if (words.length <= max) return words
+  const room = words.slice(0, max - 1)
+  // Cut at a word's end when the next character starts a new word.
+  const boundary = /\s/u.test(words[max - 1] ?? '') ? room.length : room.lastIndexOf(' ')
+  const cut = boundary > 0 ? room.slice(0, boundary) : room
+  return `${cut.replace(/[\s.,;:!?…\-–—]+$/u, '')}…`
 }
 
 // ── What the agent reads ─────────────────────────────────────────────────

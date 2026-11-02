@@ -272,6 +272,8 @@ export function UserTimelineRow({
     <div className="flex flex-col items-end pb-6">
       <MessageAuthorHeading>You said</MessageAuthorHeading>
       <div
+        // A quote chip's popover opens clear of the bubble (chatQuotes.tsx).
+        data-quote-chip-holder=""
         className="max-w-[76%] rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--agent-inset)] px-3 py-1.5"
         onContextMenu={copy.onContextMenu}
       >

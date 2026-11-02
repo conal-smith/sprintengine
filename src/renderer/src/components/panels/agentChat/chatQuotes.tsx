@@ -23,6 +23,32 @@ import { QuoteGlyph } from '../../ui/QuoteGlyph'
 /** Gap between what an overlay is opened from and the overlay. */
 const OVERLAY_GAP = 6
 
+/**
+ * A quote's number as a small filled gold pill, on its chip and after its
+ * passage in the reply alike, so the two read as one mark. The number after a
+ * passage a sent message quoted takes the thinner fill.
+ */
+export const QUOTE_NUMBER_CLASS =
+  'inline-block rounded-full px-1 text-micro font-semibold leading-none tabular-nums text-[color:var(--sem-color-quote-on-badge)]'
+export const QUOTE_NUMBER_FILL = {
+  draft: 'bg-[color:var(--sem-color-quote-badge)]',
+  sent: 'bg-[color:var(--sem-color-quote-badge-sent)]',
+}
+
+// What a chip's popover keeps clear of: the bubble or the composer the chip
+// sits in, whose words and controls it would otherwise cover.
+const CHIP_HOLDER = '[data-chat-composer], [data-quote-chip-holder]'
+
+/**
+ * Where a chip's popover opens: above what holds the chip, starting where the
+ * chip starts, and below it only when there is no room above.
+ */
+export function chipPopoverPlace(chip: HTMLElement): { x: number; y: number; above: number } {
+  const own = chip.getBoundingClientRect()
+  const holder = chip.closest(CHIP_HOLDER)?.getBoundingClientRect() ?? own
+  return { x: own.left, y: holder.bottom + OVERLAY_GAP, above: holder.top - OVERLAY_GAP }
+}
+
 /** What a sent message's chips may ask of the chat they are drawn in. */
 type ChatQuoteActions = {
   /** Take the transcript to the reply a quote came from, and light the passage. */
@@ -45,7 +71,7 @@ export function QuoteChip({
   onEdit?: (anchor: HTMLElement) => void
   onGoToSource?: (quote: ChatQuote) => void
 }): JSX.Element {
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null)
+  const [open, setOpen] = useState<{ x: number; y: number; above: number } | null>(null)
   const label = quoteLabel(quote)
   return (
     <span
@@ -59,26 +85,21 @@ export function QuoteChip({
         aria-label={`Quote ${quote.n}: ${label}`}
         aria-haspopup="dialog"
         aria-expanded={open !== null}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect()
-          setOpen({ x: rect.left, y: rect.bottom + OVERLAY_GAP })
-        }}
+        onClick={(event) => setOpen(chipPopoverPlace(event.currentTarget))}
       >
-        <span
-          aria-hidden="true"
-          className="mr-1 inline-block rounded-xs bg-[color:var(--sem-color-quote-tint)] px-0.5 align-[0.1em] text-micro font-medium leading-none tabular-nums"
-        >
+        <span aria-hidden="true" className={`mr-1 align-middle ${QUOTE_NUMBER_CLASS} ${QUOTE_NUMBER_FILL.draft}`}>
           {quote.n}
         </span>
-        <QuoteGlyph className="icon-xs mr-0.5 inline-block align-[-0.1em]" />
-        <span className="inline-block max-w-[16em] truncate align-bottom">{label}</span>
+        {/* Centred on the line as the words are, not sat on their baseline. */}
+        <QuoteGlyph className="icon-xs mr-0.5 inline-block align-middle" />
+        <span className="inline-block max-w-[22em] truncate align-bottom">{label}</span>
       </QuoteLinkButton>
       {onEdit ? (
         <Tooltip content="Edit comment">
           <IconButton
             size="inline"
             aria-label={`Edit comment on quote ${quote.n}`}
-            className="ml-0.5 align-[-0.15em]"
+            className="ml-0.5 align-middle"
             onClick={(event) => onEdit(event.currentTarget)}
           >
             <EditChangelistGlyph className="icon-xs" />
@@ -90,6 +111,7 @@ export function QuoteChip({
           quote={quote}
           x={open.x}
           y={open.y}
+          above={open.above}
           onClose={() => setOpen(null)}
           {...(onGoToSource
             ? {
@@ -122,18 +144,28 @@ export function QuotePopover({
   quote,
   x,
   y,
+  above,
   onClose,
   onGoToSource,
 }: {
   quote: ChatQuote
   x: number
   y: number
+  /** Where the popover's bottom edge goes when there is room above; else it opens at `y`. */
+  above?: number
   onClose: () => void
   onGoToSource?: () => void
 }): JSX.Element {
   const comment = quote.comment.trim()
   return (
-    <PointerPopover x={x} y={y} ariaLabel={`Quote ${quote.n}`} popupRole="dialog" onClose={onClose}>
+    <PointerPopover
+      x={x}
+      y={y}
+      {...(above !== undefined ? { above } : {})}
+      ariaLabel={`Quote ${quote.n}`}
+      popupRole="dialog"
+      onClose={onClose}
+    >
       <div data-quote-popover={quote.n} className="flex w-[24rem] max-w-[calc(100vw-2rem)] flex-col gap-2 p-3">
         <blockquote className="max-h-48 overflow-y-auto border-l-2 border-[color:var(--border-default)] pl-2.5">
           {renderMarkdown(quote.quote, { density: 'chat-compact', tone: 'muted', userText: true })}

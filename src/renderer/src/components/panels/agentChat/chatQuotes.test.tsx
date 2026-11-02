@@ -348,8 +348,11 @@ test("a marked passage's card offers edit and remove for a draft quote and nothi
       await move(20, 15)
       const draftCard = document.querySelector('[data-quote-card="1"]')!
       expect(draftCard.textContent).toContain('Why beta?')
-      expect(draftCard.querySelector('[aria-label="Edit comment"]')).not.toBeNull()
-      expect(draftCard.querySelector('[aria-label="Remove quote"]')).not.toBeNull()
+      const edit = draftCard.querySelector('[aria-label="Edit comment"]')!
+      const remove = draftCard.querySelector('[aria-label="Remove quote"]')!
+      // One size and one ink for both, glyphs at one icon step.
+      expect(edit.className).toBe(remove.className)
+      expect(edit.querySelector('svg')!.getAttribute('class')).toBe(remove.querySelector('svg')!.getAttribute('class'))
       await move(20, 55)
       const sentCard = document.querySelector('[data-quote-card="2"]')!
       // No comment: the quoted words, and no buttons.
@@ -445,6 +448,8 @@ test('a number used twice marks each passage where it is, and a range found for 
       '<div id="transcript"><div data-quote-source="t1"><p>Alpha beta gamma epsilon.</p></div></div><div id="host"></div>'
     const transcript = document.getElementById('transcript')!
     transcript.getBoundingClientRect = () => new dom.window.DOMRect(0, 0, 800, 600)
+    document.querySelector<HTMLElement>('[data-quote-source]')!.getBoundingClientRect = () =>
+      new dom.window.DOMRect(0, 0, 800, 600)
     const rectFor: Record<string, DOMRect> = {
       beta: new dom.window.DOMRect(40, 10, 30, 16),
       epsilon: new dom.window.DOMRect(200, 10, 50, 16),
@@ -492,5 +497,72 @@ test('a number used twice marks each passage where it is, and a range found for 
     } finally {
       await act(async () => root.unmount())
     }
+  })
+})
+
+test("a passage's number sits raised over the end of its last line, inside its column", async () => {
+  await inDom(async (dom) => {
+    const { placeQuoteBadge } = await import('./quoteHighlights')
+    const line = new dom.window.DOMRect(100, 200, 180, 20)
+    const column = new dom.window.DOMRect(40, 0, 600, 1000)
+    // Its right edge on the passage's end, so nothing after the passage is
+    // covered; its bottom where the line's glyphs start, in the leading above.
+    expect(placeQuoteBadge(line, column)).toEqual({ right: 280, bottom: 204 })
+    // A passage ending at the column's left edge keeps the pill inside it.
+    expect(placeQuoteBadge(new dom.window.DOMRect(40, 200, 2, 20), column).right).toBe(58)
+    expect(placeQuoteBadge(new dom.window.DOMRect(600, 200, 80, 20), column).right).toBe(640)
+  })
+})
+
+test("a chip's popover opens above what holds the chip, below only when there is no room", async () => {
+  await inDom(async (dom) => {
+    const { act, createElement } = await import('react')
+    const { createRoot } = await import('react-dom/client')
+    const { chipPopoverPlace, QuotePopover } = await import('./chatQuotes')
+    const document = dom.window.document
+    document.body.innerHTML = '<div data-quote-chip-holder=""><span id="chip">chip</span></div><div id="host"></div>'
+    const holder = document.querySelector<HTMLElement>('[data-quote-chip-holder]')!
+    const chip = document.getElementById('chip')!
+    holder.getBoundingClientRect = () => new dom.window.DOMRect(20, 300, 400, 80)
+    chip.getBoundingClientRect = () => new dom.window.DOMRect(60, 330, 90, 20)
+    expect(chipPopoverPlace(chip)).toEqual({ x: 60, y: 386, above: 294 })
+    Object.defineProperty(dom.window, 'innerHeight', { value: 800, configurable: true })
+    Object.defineProperty(dom.window, 'innerWidth', { value: 1200, configurable: true })
+    // The popover's own size, for the placement to read.
+    const surface = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, 'getBoundingClientRect')
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.getAttribute('role') === 'dialog'
+        ? new dom.window.DOMRect(0, 0, 300, 120)
+        : new dom.window.DOMRect(0, 0, 0, 0)
+    }
+    const root = createRoot(document.getElementById('host')!)
+    const topOf = () => document.querySelector<HTMLElement>('[role="dialog"]')!.style.top
+    try {
+      await act(async () =>
+        root.render(createElement(QuotePopover, { quote: quote(), x: 60, y: 386, above: 294, onClose: () => {} })),
+      )
+      expect(topOf()).toBe('174px')
+      // Too near the top of the window to open above: under the holder instead.
+      await act(async () =>
+        root.render(createElement(QuotePopover, { quote: quote(), x: 60, y: 386, above: 60, onClose: () => {} })),
+      )
+      expect(topOf()).toBe('386px')
+    } finally {
+      await act(async () => root.unmount())
+      if (surface) Object.defineProperty(dom.window.HTMLElement.prototype, 'getBoundingClientRect', surface)
+    }
+  })
+})
+
+test("a sent message's bubble is what its chips' popovers keep clear of", async () => {
+  await inDom(async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server')
+    const { createElement } = await import('react')
+    const { UserTimelineRow } = await import('./timelineRows')
+    const html = renderToStaticMarkup(
+      createElement(UserTimelineRow, { entry: { kind: 'user', id: 'u1', seq: 1, text: quoteToken(quote()) } }),
+    )
+    const holder = new JSDOM(html).window.document.querySelector('[data-quote-chip-holder]')
+    expect(holder?.querySelector('[data-quote-chip]')).not.toBeNull()
   })
 })

@@ -5,6 +5,7 @@ import { CloseIconButton, IconButton, Tooltip } from '../../ui'
 import { useClampedMenuPosition } from '../../ui/ContextMenu'
 import { EditChangelistGlyph } from '../../ui/GitActionGlyphs'
 import { OVERLAY_SURFACE_CLASS } from '../../ui/tokens'
+import { QUOTE_NUMBER_CLASS, QUOTE_NUMBER_FILL } from './chatQuotes'
 import { quoteSourceOf, quoteSources, rangeForQuote, QUOTE_SOURCE_ATTRIBUTE } from './quoteAnchors'
 
 // Every quote in the conversation keeps its passage marked in the reply it
@@ -37,6 +38,8 @@ export const QUOTE_FLASH_HIGHLIGHT = 'chat-quote-flash'
 // enough to cross the gap between them, short enough not to linger.
 const CARD_CLOSE_DELAY_MS = 200
 const CARD_OPEN_DELAY_MS = 250
+// The card's distance from the passage it opens under.
+const CARD_GAP = 8
 // How long a passage "Go to source" landed on stays lit.
 const FLASH_MS = 1_200
 // How long a landing waits for its passage to be drawn before giving up.
@@ -98,7 +101,26 @@ function paintQuotes(owner: object, next: Painted): void {
 type Placed = { quote: ShownQuote; range: Range; rects: DOMRect[] }
 
 /** A badge as the layer draws it, in the transcript's own coordinates. */
-type Badge = { key: string; n: number; sent: boolean; left: number; top: number }
+type Badge = { key: string; n: number; sent: boolean; right: number; bottom: number }
+
+// How far into the passage's last line the number's pill comes down, as a
+// share of the line's height: to about where its glyphs start, so the pill
+// sits in the leading above the line like a superscript and covers neither the
+// words after the passage nor the line above. And the room a pill takes
+// across, kept clear of the column's left edge.
+const BADGE_DROP = 0.2
+const BADGE_ROOM = 18
+
+/**
+ * Where the number's pill goes, in viewport coordinates: its bottom-right
+ * corner, at the end of the passage's last line and raised into the leading
+ * above it, inside the prose column it belongs to.
+ */
+export function placeQuoteBadge(last: DOMRect, column: DOMRect | null): { right: number; bottom: number } {
+  const left = column ? column.left + BADGE_ROOM : Number.NEGATIVE_INFINITY
+  const right = column ? column.right : Number.POSITIVE_INFINITY
+  return { right: Math.min(right, Math.max(left, last.right)), bottom: last.top + last.height * BADGE_DROP }
+}
 
 // A quote is known by the passage it marks, never by its number: a number can
 // come round again (a quote taken back out, a token pasted from another chat),
@@ -113,8 +135,8 @@ function sameBadges(a: readonly Badge[], b: readonly Badge[]): boolean {
       (badge, index) =>
         badge.key === b[index]!.key &&
         badge.sent === b[index]!.sent &&
-        Math.abs(badge.left - b[index]!.left) < 0.5 &&
-        Math.abs(badge.top - b[index]!.top) < 0.5,
+        Math.abs(badge.right - b[index]!.right) < 0.5 &&
+        Math.abs(badge.bottom - b[index]!.bottom) < 0.5,
     )
   )
 }
@@ -230,7 +252,14 @@ export const QuoteHighlights = memo(function QuoteHighlights({
       placed.push({ quote, range, rects })
       const last = rects.at(-1)
       if (!last || last.bottom < box.top || last.top > box.bottom) continue
-      nextBadges.push({ key, n: quote.n, sent: quote.sent, left: last.right - box.left, top: last.top - box.top })
+      const place = placeQuoteBadge(last, quoteSourceOf(range.endContainer)?.getBoundingClientRect() ?? null)
+      nextBadges.push({
+        key,
+        n: quote.n,
+        sent: quote.sent,
+        right: place.right - box.left,
+        bottom: place.bottom - box.top,
+      })
     }
     placedRef.current = placed
     paintQuotes(owner, { draft, sent, flash })
@@ -403,11 +432,9 @@ export const QuoteHighlights = memo(function QuoteHighlights({
             <span
               key={badge.key}
               data-quote-badge={badge.n}
-              style={{ left: badge.left, top: badge.top }}
-              className={`absolute -translate-y-1/3 rounded-xs px-0.5 text-micro font-medium leading-none tabular-nums ${
-                badge.sent
-                  ? 'bg-[color:var(--sem-color-quote-tint-sent)] text-[color:var(--sem-color-quote-ink-sent)]'
-                  : 'bg-[color:var(--sem-color-quote-tint)] text-[color:var(--sem-color-quote-ink)]'
+              style={{ left: badge.right, top: badge.bottom }}
+              className={`absolute -translate-x-full -translate-y-full ${QUOTE_NUMBER_CLASS} ${
+                QUOTE_NUMBER_FILL[badge.sent ? 'sent' : 'draft']
               }`}
             >
               {badge.n}
@@ -439,12 +466,14 @@ export const QuoteHighlights = memo(function QuoteHighlights({
   )
 })
 
-// The badge sits just past the passage's last character; a pointer on it is
+// The pill sits over the end of the passage's last line; a pointer on it is
 // on the passage too.
 function hitsBadge(entry: Placed, point: { x: number; y: number }): DOMRect | null {
   const last = entry.rects.at(-1)
   if (!last) return null
-  const badge = new DOMRect(last.right, last.top - last.height / 3, last.height, last.height)
+  const place = placeQuoteBadge(last, quoteSourceOf(entry.range.endContainer)?.getBoundingClientRect() ?? null)
+  const size = last.height * 0.75
+  const badge = new DOMRect(place.right - size, place.bottom - size, size, size)
   return hits([badge], point.x, point.y) ? last : null
 }
 
@@ -472,7 +501,7 @@ function QuoteHoverCard({
   onRemove: () => void
 }): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
-  const position = useClampedMenuPosition(anchor.left, anchor.bottom + 4, ref)
+  const position = useClampedMenuPosition(anchor.left, anchor.bottom + CARD_GAP, ref)
   const comment = quote.comment.trim()
   return createPortal(
     <div
@@ -483,7 +512,7 @@ function QuoteHoverCard({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       style={{ left: position.left, top: position.top }}
-      className={`fixed z-[var(--z-popover)] flex max-w-[22rem] items-start gap-2 px-2.5 py-2 ${OVERLAY_SURFACE_CLASS}`}
+      className={`fixed z-[var(--z-popover)] flex max-w-[22rem] items-start gap-2 py-2.5 pl-3 pr-2 ${OVERLAY_SURFACE_CLASS}`}
     >
       <p
         className={`line-clamp-6 min-w-0 flex-1 whitespace-pre-wrap break-words text-body ${
@@ -493,14 +522,16 @@ function QuoteHoverCard({
         {comment || quote.exact || quote.quote}
       </p>
       {quote.sent ? null : (
-        <div className="-mr-1 -mt-0.5 flex shrink-0 items-center">
+        // One size and one ink for both: the pencil is drawn on a 16 grid and
+        // the × on a 14, so at the same icon step they read as one weight.
+        <div className="-my-0.5 flex shrink-0 items-center gap-0.5">
           <Tooltip content="Edit comment">
-            <IconButton size="inline" aria-label="Edit comment" onClick={onEdit}>
-              <EditChangelistGlyph className="icon-xs" />
+            <IconButton size="2xs" aria-label="Edit comment" onClick={onEdit}>
+              <EditChangelistGlyph className="icon-sm" />
             </IconButton>
           </Tooltip>
           <Tooltip content="Remove quote">
-            <CloseIconButton size="inline" aria-label="Remove quote" onClick={onRemove} />
+            <CloseIconButton size="2xs" aria-label="Remove quote" onClick={onRemove} />
           </Tooltip>
         </div>
       )}

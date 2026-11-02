@@ -115,7 +115,9 @@
   --sem-color-find-match: #ffe9a8;
   --sem-color-find-match-current: #ffc93c;
   --sem-color-quote-ink: var(--ref-color-amber-800);
-  --sem-color-quote-ink-sent: rgba(154, 96, 0, 0.72);
+  --sem-color-quote-badge: var(--ref-color-amber-400);
+  --sem-color-quote-badge-sent: rgba(252, 192, 48, 0.55);
+  --sem-color-quote-on-badge: #2e1f00;
   --sem-color-quote-tint: rgba(252, 192, 48, 0.3);
   --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.14);
   --sem-color-agent-trail-ink: var(--ref-color-violet-600);
@@ -253,7 +255,6 @@
   --sem-color-find-match: #4a3f18;
   --sem-color-find-match-current: #8a6d10;
   --sem-color-quote-ink: var(--ref-color-amber-400);
-  --sem-color-quote-ink-sent: rgba(252, 192, 48, 0.68);
   --sem-color-quote-tint: rgba(252, 192, 48, 0.16);
   --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.08);
   --sem-color-agent-trail-ink: var(--ref-color-violet-300);

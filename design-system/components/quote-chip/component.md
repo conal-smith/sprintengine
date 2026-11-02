@@ -14,14 +14,14 @@ The message carries the quote as a token inside its text
 |---|---|---|
 | Chip | `.ds-quote-chip` | yes — inline, `quote.ink`, no box and no ground |
 | Link | `.ds-quote-chip__link` | yes — the [link button](../link-button/component.md) in its `--quote` ink (`QuoteLinkButton`); opens the quote's popover |
-| Number | `.ds-quote-chip__number` | yes — the quote's number in the conversation, on `quote.tint` |
-| Glyph | `QuoteGlyph` | yes — the quote mark, `icon-xs` |
-| Label | `.ds-quote-chip__label` | yes — the comment, or with none the start of the passage; at most 64 characters, cut at 16em with an ellipsis |
-| Pencil | `.ds-quote-chip__edit` | composer only — `EditChangelistGlyph`, the bare pencil, muted; edits the comment |
+| Number | `.ds-quote-chip__number` | yes — the quote's number in the conversation: a small filled pill, `quote.on-badge` on `quote.badge` |
+| Glyph | `QuoteGlyph` | yes — the quote mark, `icon-xs`, centred on the line as the words are |
+| Label | `.ds-quote-chip__label` | yes — the comment, or with none the start of the passage; at most 40 characters, cut at the last whole word with a single "…" straight after it (no space, no stray punctuation) |
+| Pencil | `.ds-quote-chip__edit` | composer only — `EditChangelistGlyph`, the bare pencil, muted, centred on the line; edits the comment |
 | Mark | `.ds-quote-mark` | in the reply — `quote.tint` behind the passage, painted through the CSS Custom Highlight API |
-| Badge | `.ds-quote-badge` | in the reply — the number, just after the passage's last character |
+| Badge | `.ds-quote-badge` | in the reply — the same pill as the chip's number, raised into the leading over the end of the passage's last line like a superscript, so it covers neither the words after the passage nor the line above; kept inside the prose column |
 | Editor | `.ds-quote-overlay.ds-quote-editor` | the overlay surface, one borderless auto-growing field, one muted check (Save) at the bottom right |
-| Card | `.ds-quote-overlay.ds-quote-card` | the overlay surface, the comment (or the quoted words in muted italics) and, for a draft quote, the pencil and × at the top right |
+| Card | `.ds-quote-overlay.ds-quote-card` | the overlay surface, a little below the passage, the comment (or the quoted words in muted italics) and, for a draft quote, the pencil and × at the top right — one icon-button size and one muted ink for both, glyphs at one icon step |
 
 The editor has no title, no hint line, no Cancel button and no coloured edge:
 the placeholder ("Add an optional comment…") says what it is for, and the
@@ -36,8 +36,8 @@ keys say the rest.
 - **In a sent message.** The same chip without the pencil: what was sent is
   not edited.
 - **Draft and sent marks.** A passage a quote in the draft cites is marked in
-  `quote.tint` with its badge in `quote.ink`; one a sent message cites is
-  marked in `quote.tint-sent` with its badge in `quote.ink-sent`, history
+  `quote.tint` with its number on `quote.badge`; one a sent message cites is
+  marked in `quote.tint-sent` with its number on `quote.badge-sent`, history
   rather than work in hand. The mark is the tint alone, with no underline, so
   a link or emphasis inside the passage keeps its own line.
 
@@ -48,7 +48,7 @@ keys say the rest.
 | Rest | Gold ink; the number on its tint |
 | Hover (chip) | The link underlines, as every link button does |
 | Focus | The product's focus ring, on the link and on the pencil separately |
-| Popover open | `aria-expanded` on the link; the popover shows the passage (blockquote, muted), the comment and **Go to source** |
+| Popover open | `aria-expanded` on the link; the popover shows the passage (blockquote, muted), the comment and **Go to source**. It opens above the message bubble or composer the chip sits in, clear of its words and controls, and below it only when there is no room above |
 | Hover (mark) | After a short rest, the card opens under the passage. It stays while the pointer crosses into it and closes a moment after the pointer has left both |
 | Go to source | The transcript scrolls to the reply (paging in older turns if needed) and the passage is lit with a second layer of tint for about a second |
 
@@ -85,8 +85,8 @@ warning (that is `status.warn`), not a find match (`find.*`), not a link.
 - The badges in the reply are drawn in an `aria-hidden` layer over the
   transcript; the marks change no text, so a screen reader reads the reply
   as written.
-- `quote.ink` clears AA as small text on the app's grounds and on its own
-  tint, in both modes.
+- `quote.ink` clears AA as small text on the app's grounds, and
+  `quote.on-badge` on `quote.badge`, in both modes.
 
 ## Shipped implementation
 
