@@ -122,10 +122,12 @@ function baseName(path: string): string {
 /** Bytes for a person: `840 MB`, `1.9 GB`. */
 export function formatBytes(bytes: number | null | undefined): string {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes)) return '—'
+  // Each unit is chosen by the rounded value below it, so just under a GB
+  // reads 1.0 GB, not 1024 MB.
   const gb = bytes / 1024 ** 3
-  if (gb >= 1) return `${gb >= 100 ? Math.round(gb) : gb.toFixed(1)} GB`
   const mb = bytes / 1024 ** 2
-  if (mb >= 1) return `${Math.round(mb)} MB`
+  if (Math.round(mb) >= 1024) return `${gb >= 100 ? Math.round(gb) : gb.toFixed(1)} GB`
+  if (Math.round(bytes / 1024) >= 1024) return `${Math.round(mb)} MB`
   // Nothing is nothing; only a few bytes round up, so they never read as none.
   if (bytes <= 0) return '0 KB'
   return `${Math.max(1, Math.round(bytes / 1024))} KB`

@@ -15,7 +15,8 @@ export function formatBytes(bytes: number): string {
   const units = ['B', 'KiB', 'MiB', 'GiB']
   let value = bytes
   let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
+  // Rounded first, so just under a unit reads 1.0 MiB, not 1024 KiB.
+  while (Math.round(value) >= 1024 && unit < units.length - 1) {
     value /= 1024
     unit += 1
   }

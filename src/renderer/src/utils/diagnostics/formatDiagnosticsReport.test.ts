@@ -53,6 +53,7 @@ test('formatDiagnosticsReport', async () => {
     assert.equal(formatBytes(512), '512 B')
     assert.equal(formatBytes(1024), '1.0 KiB')
     assert.equal(formatBytes(2 * MIB), '2.0 MiB')
+    assert.equal(formatBytes(MIB - 100), '1.0 MiB')
   })
 
   run('report carries every section and key totals', () => {
