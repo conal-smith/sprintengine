@@ -206,6 +206,8 @@ test('sizes read the way a person says them', () => {
   expect(formatBytes(840 * 1024 ** 2)).toBe('840 MB')
   expect(formatBytes(120 * GB)).toBe('120 GB')
   expect(formatBytes(2048)).toBe('2 KB')
+  expect(formatBytes(GB - 100 * 1024)).toBe('1.0 GB')
+  expect(formatBytes(1024 ** 2 - 100)).toBe('1 MB')
 })
 
 test('an empty category reads 0 KB, while a few bytes still read as something', () => {

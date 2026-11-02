@@ -180,13 +180,14 @@ export function bindTerminalClipboardHandlers({
     const mod = event.ctrlKey || event.metaKey
     if (!mod) return
 
-    const key = event.key.toLowerCase()
-    if (key === 'c' && event.shiftKey) {
+    // By the key's place too: on a Cyrillic or Greek layout the V key types
+    // `м` or `ω`, and Ctrl+Shift+V pasted nothing.
+    if (isLetterKey(event, 'c') && event.shiftKey) {
       event.preventDefault()
       void copySelection().catch(() => {})
     }
 
-    if (key === 'v' && event.shiftKey) {
+    if (isLetterKey(event, 'v') && event.shiftKey) {
       event.preventDefault()
       void readClipboardText().then((text) => pasteText(text || lastTerminalCopiedText))
     }

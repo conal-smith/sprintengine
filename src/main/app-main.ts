@@ -1,5 +1,6 @@
 import { app, ipcMain, protocol, session, shell } from 'electron'
 import { buildStamp as mainBuildStamp } from 'virtual:sprintengine-build-stamp'
+import { withoutDeepLinks } from '../shared/deep-link-scheme'
 import { MODULE_EVENTS_CHANNEL } from '../shared/modules/events'
 import { MODULE_NOTIFICATIONS_CHANNEL } from '../shared/modules/notifications'
 import { parseAuthCallbackFromArgv } from './auth-service'
@@ -386,7 +387,9 @@ markStartup('main.module-evaluated')
 // The server's phase in words for every window, the Advanced toggle and the
 // actions on it: registered in process too, where the toggle is all there is.
 const relaunchApp = (args: string[] = []): void => {
-  app.relaunch({ args: [...process.argv.slice(1).filter((arg) => arg !== SERVER_FALLBACK_ARGUMENT), ...args] })
+  app.relaunch({
+    args: [...withoutDeepLinks(process.argv.slice(1)).filter((arg) => arg !== SERVER_FALLBACK_ARGUMENT), ...args],
+  })
   // A restart the person asked for in Settings, or the server's fallback: the
   // app comes straight back, so it is not a quit to ask about.
   services.quitConfirmation.quitWithoutAsking()

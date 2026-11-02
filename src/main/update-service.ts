@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell } from 'electron'
+import { withoutDeepLinks } from '../shared/deep-link-scheme'
 import type { AppUpdater, CancellationToken } from 'electron-updater'
 import type {
   AppUpdateChannelSetting,
@@ -224,7 +225,7 @@ function defaultInstallPlatform(): UpdateInstallPlatform {
     },
     quitApp: () => app.quit(),
     relaunchApp: () => {
-      app.relaunch()
+      app.relaunch({ args: withoutDeepLinks(process.argv.slice(1)) })
       app.exit(0)
     },
     onAppQuit: (handler) => {

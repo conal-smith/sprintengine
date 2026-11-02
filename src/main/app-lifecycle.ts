@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, net, powerMonitor } from 'electron'
 import { createAppMenu, setChatWindowsForCloseChord } from './app-menu'
 import { sweepRetiredCheckpoints } from './checkpoint-sweep'
 import { createBootReveal } from './boot-reveal'
-import { DEEP_LINK_SCHEMES } from '../shared/deep-link-scheme'
+import { DEEP_LINK_SCHEMES, withoutDeepLinks } from '../shared/deep-link-scheme'
 import { CHAT_LINK_OPEN_CHANNEL, chatLinkFromArgv, type ChatLink } from '../shared/deep-link'
 import { createChatLinkRouter } from './chat-link-router'
 import { registerChatLinkIpc, routeSecondLaunch } from './chat-link-ipc'
@@ -962,7 +962,7 @@ export function registerAppLifecycle({
     installFallback = setTimeout(() => {
       installFallback = null
       if (exitScheduled) return
-      app.relaunch()
+      app.relaunch({ args: withoutDeepLinks(process.argv.slice(1)) })
       app.exit(0)
     }, UPDATE_INSTALL_QUIT_FALLBACK_MS)
     installFallback.unref()
