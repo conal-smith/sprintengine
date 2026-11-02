@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from 'react'
 import { composerDraftStore, MAX_DRAFT_CHARS, type ComposerDraft } from './draftStore'
+import { clipKeepingQuotes } from '../../../../../shared/chat-quotes'
 
 type DraftValue = Omit<ComposerDraft, 'updatedAt'>
 export type ComposerDraftMetadata = Pick<DraftValue, 'skillIds' | 'mentions' | 'files'>
@@ -14,7 +15,7 @@ export function useComposerDraft(workspaceId: string, agentId: string, prefill =
   const initial = useMemo(() => {
     const saved = store.getState().read(workspaceId, agentId)
     return {
-      text: saved.updatedAt ? saved.text : prefill.slice(0, MAX_DRAFT_CHARS),
+      text: saved.updatedAt ? saved.text : clipKeepingQuotes(prefill, MAX_DRAFT_CHARS),
       skillIds: saved.skillIds,
       mentions: saved.mentions,
       files: saved.files,
@@ -53,7 +54,8 @@ export function useComposerDraft(workspaceId: string, agentId: string, prefill =
       const previous = values.current.get(key) ?? initial
       update({
         ...previous,
-        text: (typeof value === 'function' ? value(previous.text) : value).slice(0, MAX_DRAFT_CHARS),
+        // At the cap, never through a quote's token: a half token is noise.
+        text: clipKeepingQuotes(typeof value === 'function' ? value(previous.text) : value, MAX_DRAFT_CHARS),
       })
     },
     [key, initial, update],
