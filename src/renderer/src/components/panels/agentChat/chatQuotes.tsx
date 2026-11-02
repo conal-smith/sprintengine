@@ -4,7 +4,7 @@ import { renderMarkdown } from '../../../utils/markdown'
 import { CheckIcon } from '../../AppIcons'
 import { IconButton, Textarea, Tooltip } from '../../ui'
 import { EditChangelistGlyph } from '../../ui/GitActionGlyphs'
-import { LinkButton } from '../../ui/LinkButton'
+import { LinkButton, QuoteLinkButton } from '../../ui/LinkButton'
 import { PointerPopover } from '../../ui/PointerPopover'
 import { QuoteGlyph } from '../../ui/QuoteGlyph'
 
@@ -54,8 +54,7 @@ export function QuoteChip({
       data-copy-markdown={quoteAsReadableMarkdown(quote)}
       className="whitespace-nowrap text-[color:var(--sem-color-quote-ink)]"
     >
-      <LinkButton
-        ink="quote"
+      <QuoteLinkButton
         size="inherit"
         aria-label={`Quote ${quote.n}: ${label}`}
         aria-haspopup="dialog"
@@ -73,7 +72,7 @@ export function QuoteChip({
         </span>
         <QuoteGlyph className="icon-xs mr-0.5 inline-block align-[-0.1em]" />
         <span className="inline-block max-w-[16em] truncate align-bottom">{label}</span>
-      </LinkButton>
+      </QuoteLinkButton>
       {onEdit ? (
         <Tooltip content="Edit comment">
           <IconButton

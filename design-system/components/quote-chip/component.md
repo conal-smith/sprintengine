@@ -13,7 +13,7 @@ The message carries the quote as a token inside its text
 | Part | Class | Required |
 |---|---|---|
 | Chip | `.ds-quote-chip` | yes — inline, `quote.ink`, no box and no ground |
-| Link | `.ds-quote-chip__link` | yes — the [link button](../link-button/component.md)'s `--quote` ink; opens the quote's popover |
+| Link | `.ds-quote-chip__link` | yes — the [link button](../link-button/component.md) in its `--quote` ink (`QuoteLinkButton`); opens the quote's popover |
 | Number | `.ds-quote-chip__number` | yes — the quote's number in the conversation, on `quote.tint` |
 | Glyph | `QuoteGlyph` | yes — the quote mark, `icon-xs` |
 | Label | `.ds-quote-chip__label` | yes — the comment, or with none the start of the passage; at most 64 characters, cut at 16em with an ellipsis |
