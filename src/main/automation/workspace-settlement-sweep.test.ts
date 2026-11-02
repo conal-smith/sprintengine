@@ -38,7 +38,7 @@ function harness(records: Array<Partial<WorkspaceRegistryRecord>>) {
     store.set(record.id, record)
   }
   const writes: Array<{ workspaceId: string; patch: WorkspaceFieldsPatch }> = []
-  const signals = new Map<string, SettlementSignals>()
+  const signals = new Map<string, Partial<SettlementSignals>>()
   const pullRequests = new Map<string, readonly BranchPullRequest[]>()
   let pullRequestsLoaded = true
   let settings: SettledChatsSettings = normalizeSettledChatsSettings(undefined)
@@ -46,6 +46,7 @@ function harness(records: Array<Partial<WorkspaceRegistryRecord>>) {
   const settledIds: string[] = []
   const commits: SweepDecision[] = []
   let ready = true
+  let passes = 0
   // Runs while a pass commits, as a registry listener would.
   let duringCommit: (() => void) | null = null
 
@@ -66,7 +67,10 @@ function harness(records: Array<Partial<WorkspaceRegistryRecord>>) {
     records: () => [...store.values()],
     record: (workspaceId) => store.get(workspaceId) ?? null,
     onScreen: () => onScreen,
-    signals: (record) => signals.get(record.id) ?? { busy: false, held: false },
+    live: () => {
+      passes += 1
+      return (record) => ({ busy: false, held: false, lastTurnEndedAt: null, ...signals.get(record.id) })
+    },
     pullRequests: (workspaceId) => (pullRequestsLoaded ? (pullRequests.get(workspaceId) ?? []) : undefined),
     settings: () => settings,
     ready: () => ready,
@@ -132,6 +136,7 @@ function harness(records: Array<Partial<WorkspaceRegistryRecord>>) {
       duringCommit = run
     },
     timersPending: () => timers.filter((timer) => !timer.cancelled).length,
+    passes: () => passes,
   }
 }
 
@@ -177,8 +182,8 @@ test('a second pass over the same chats writes nothing', () => {
 test('a chat on screen in some window, at work, or wanting the person is never settled', () => {
   const h = harness([{ id: 'shown' }, { id: 'busy' }, { id: 'held' }, { id: 'free' }])
   h.setOnScreen(['shown'])
-  h.signals.set('busy', { busy: true, held: false })
-  h.signals.set('held', { busy: false, held: true })
+  h.signals.set('busy', { busy: true, held: false, lastTurnEndedAt: null })
+  h.signals.set('held', { busy: false, held: true, lastTurnEndedAt: null })
   h.setClock(BORN + 4 * DAY)
   h.sweep.start()
   h.settle()
@@ -201,14 +206,14 @@ test('a resting chat at work wakes at once; one wanting the person wakes only fr
   h.settle()
   assert.equal(typeof h.row('swept').settledAt, 'number')
 
-  h.signals.set('swept', { busy: false, held: true })
-  h.signals.set('hand', { busy: false, held: true })
+  h.signals.set('swept', { busy: false, held: true, lastTurnEndedAt: null })
+  h.signals.set('hand', { busy: false, held: true, lastTurnEndedAt: null })
   h.sweep.request(['swept', 'hand'])
   h.settle()
   assert.equal(h.row('swept').settledAt ?? null, null, 'a sweep-settled chat that wants the person comes back')
   assert.equal(typeof h.row('hand').settledAt, 'number', 'a hand Settle survives a chat that wants the person')
 
-  h.signals.set('hand', { busy: true, held: false })
+  h.signals.set('hand', { busy: true, held: false, lastTurnEndedAt: null })
   h.sweep.request(['hand'])
   h.settle()
   assert.equal(h.row('hand').settledAt ?? null, null, 'work wakes even a hand Settle')
@@ -265,21 +270,6 @@ test('a snooze is a hand decision the sweep never overrules, and its wake restar
   assert.equal(typeof h.row('slept').settledAt, 'number', 'three days after the wake')
 })
 
-test('a decision on a chat that changed before it landed is refused', () => {
-  const h = harness([{ id: 'quiet' }])
-  h.setClock(BORN + 4 * DAY)
-  // The person types into the chat while the pass is deciding.
-  h.onCommit(() => {
-    h.row('quiet').lastTerminalActivityAt = h.now()
-    h.onCommit(null)
-  })
-  h.sweep.start()
-  h.settle()
-  assert.equal(h.commits.length, 1, 'a settle was decided')
-  assert.equal(h.row('quiet').settledAt ?? null, null, 'and refused: the chat moved on')
-  assert.equal(h.writes.length, 0)
-})
-
 test('a trigger during a pass runs as a pass of its own, after it', () => {
   const h = harness([{ id: 'a' }, { id: 'b' }])
   h.setClock(BORN + 4 * DAY)
@@ -295,6 +285,45 @@ test('a trigger during a pass runs as a pass of its own, after it', () => {
   assert.equal(typeof h.row('a').settledAt, 'number')
   assert.equal(typeof h.row('b').settledAt, 'number')
   assert.equal(h.writes.length, 2, 'the second pass found nothing left to do')
+})
+
+test('an agent terminal’s turn end, which no window reported, is activity for the quiet days', () => {
+  const h = harness([{ id: 'ran' }])
+  // Quiet four days by the record, but its agent terminal finished a turn an hour ago.
+  h.signals.set('ran', { lastTurnEndedAt: BORN + 4 * DAY - 60 * 60 * 1000 })
+  h.setClock(BORN + 4 * DAY)
+  h.sweep.start()
+  h.settle()
+  assert.equal(h.row('ran').settledAt ?? null, null, 'the run counts, though the record never heard of it')
+  h.advance(3 * DAY)
+  assert.equal(typeof h.row('ran').settledAt, 'number', 'and settles three days after it')
+})
+
+test('a terminal that reads differently asks about its chat, and one that reads the same does not', () => {
+  const h = harness([{ id: 'a' }, { id: 'b' }])
+  h.setClock(BORN + DAY)
+  h.sweep.start()
+  h.settle()
+  const terminal = (workspaceId: string, kind: string) => ({
+    sessionId: `pty-${workspaceId}`,
+    kind: 'agent',
+    workspaceId,
+    processAlive: true,
+    activity: { kind },
+  })
+  // Busy now: the chat that started working is asked about at once.
+  h.signals.set('a', { busy: true })
+  h.lifecycle.settle('a', true, 'ui')
+  h.sweep.noteTerminalsChanged([terminal('a', 'working'), terminal('b', 'idle')])
+  h.settle()
+  assert.equal(h.row('a').settledAt ?? null, null, 'a resting chat whose agent started working wakes at once')
+  const before = h.passes()
+  h.sweep.noteTerminalsChanged([terminal('a', 'working'), terminal('b', 'idle')])
+  h.settle()
+  assert.equal(h.passes(), before, 'the same reading asks nothing')
+  h.sweep.noteTerminalsChanged([terminal('a', 'working')])
+  h.settle()
+  assert.equal(h.passes(), before + 1, 'a terminal gone is a change')
 })
 
 test('the sweep waits for the live state to have been read once, and stops when disposed', () => {
@@ -325,40 +354,57 @@ test('the live reading: at work, waiting on the person, an unseen finish, a watc
   const read = (input: Partial<Parameters<typeof settlementSignals>[0]>) =>
     settlementSignals({ record, conversations: [], terminals: [], pullRequests: [], ...input })
 
-  assert.deepEqual(read({}), { busy: false, held: false })
-  assert.deepEqual(read({ conversations: [chat({ phase: 'running' })] }), { busy: true, held: false })
+  assert.deepEqual(read({}), { busy: false, held: false, lastTurnEndedAt: null })
+  assert.deepEqual(read({ conversations: [chat({ phase: 'running' })] }), {
+    busy: true,
+    held: false,
+    lastTurnEndedAt: null,
+  })
   assert.deepEqual(read({ conversations: [chat({ phase: 'idle', backgroundAgents: 1 })] }), {
     busy: true,
     held: false,
+    lastTurnEndedAt: null,
   })
-  assert.deepEqual(read({ conversations: [chat({ phase: 'waiting_for_input' })] }), { busy: false, held: true })
+  assert.deepEqual(read({ conversations: [chat({ phase: 'waiting_for_input' })] }), {
+    busy: false,
+    held: true,
+    lastTurnEndedAt: null,
+  })
   assert.deepEqual(read({ conversations: [chat({ phase: 'running', status: 'stopped' })] }), {
     busy: false,
     held: false,
+    lastTurnEndedAt: null,
   })
   assert.deepEqual(
     read({ terminals: [{ kind: 'agent', workspaceId: 'ws', processAlive: true, activity: { kind: 'working' } }] }),
-    { busy: true, held: false },
+    { busy: true, held: false, lastTurnEndedAt: null },
   )
   assert.deepEqual(
     read({ terminals: [{ kind: 'terminal', workspaceId: 'ws', processAlive: true, activity: { kind: 'working' } }] }),
-    { busy: false, held: false },
+    { busy: false, held: false, lastTurnEndedAt: null },
     'a plain shell printing is not work',
   )
   assert.deepEqual(
     read({
       terminals: [{ kind: 'agent', workspaceId: 'ws', processAlive: true, agentState: { phase: 'awaiting_input' } }],
     }),
-    { busy: false, held: true },
+    { busy: false, held: true, lastTurnEndedAt: null },
+  )
+  assert.deepEqual(
+    read({
+      terminals: [{ kind: 'agent', workspaceId: 'ws', processAlive: true, lastTurnEndedAt: BORN + 5 }],
+    }),
+    { busy: false, held: true, lastTurnEndedAt: BORN + 5 },
+    'an agent terminal’s turn end, after the last visit, is an unseen finish main reads itself',
   )
   assert.deepEqual(
     read({ conversations: [chat({ phase: 'completed', lastTurnEndedAt: BORN + 1 })] }),
-    { busy: false, held: true },
+    { busy: false, held: true, lastTurnEndedAt: null },
     'a turn finished after the last visit is unseen',
   )
   assert.deepEqual(
     read({ pullRequests: [{ ...merged(BORN), state: 'open', watch: { kind: 'checks' } as never }] }),
-    { busy: false, held: true },
+    { busy: false, held: true, lastTurnEndedAt: null },
     'a watched pull request holds the chat',
   )
 })

@@ -780,6 +780,23 @@ export function createAppServices(
     // Read when a chat starts, long after `liveConversationPaths` below is set.
     liveSessionPaths: () => liveConversationPaths(),
   })
+  // The rest sweep hears the terminals change, and ends a chat's terminals
+  // when it settles the chat (studio-settlement.ts). The runtime is made
+  // further down, so its changes are fanned out from here once it is.
+  const terminalSessionsListeners = new Set<() => void>()
+  /**
+   * End the terminals of a chat main's rest sweep settled: every pty the
+   * runtime attributes to the workspace, but an agent mid-turn, which keeps
+   * running (the sweep settles no chat at work, and one that began since is
+   * news the sweep will hear and wake the chat for).
+   */
+  const endWorkspaceTerminals = (workspaceId: string): void => {
+    for (const session of terminalRuntime.ipcHandlers.listTerminals()) {
+      if (session.workspaceId !== workspaceId) continue
+      if (session.kind === 'agent' && terminalAgentWorking(session)) continue
+      terminalRuntime.ipcHandlers.killTerminal(session.sessionId)
+    }
+  }
   const core = server
     ? createRemoteCore(server)
     : createStudioCore(platform, {
@@ -822,10 +839,17 @@ export function createAppServices(
             workspaceId: session.workspaceId,
             agentId: session.agentId,
             processAlive: isTerminalProcessAlive(session),
+            sessionId: session.sessionId,
             activity: session.activity,
             agentState: session.agentState,
+            lastTurnEndedAt: session.lastTurnEndedAt ?? null,
             agentRecord: session.agentRecord,
           })),
+        onTerminalSessionsChanged: (listener: () => void) => {
+          terminalSessionsListeners.add(listener)
+          return () => terminalSessionsListeners.delete(listener)
+        },
+        endWorkspaceTerminals,
         // A distribution turned on or off adds or drops its CLI updates.
         onHostSettingsChanged: () => scheduleCliVersionRead(),
         ...(ssh
@@ -2107,6 +2131,11 @@ export function createAppServices(
     onGatewayLaunchTokenChange((change) => server.rpc.emit(SERVER_EVENTS.launchTokens, { changes: [change] }))
     // Asked by a server as it starts, before its gateway listens.
     server.rpc.handle(SHELL_METHODS.liveLaunchTokens, () => liveGatewayLaunchTokens())
+    // The server's rest sweep settled a chat: its terminals are the shell's.
+    server.rpc.handle(SHELL_METHODS.endWorkspaceTerminals, (payload) => {
+      const workspaceId = (payload as { workspaceId?: unknown } | null)?.workspaceId
+      if (typeof workspaceId === 'string' && workspaceId) endWorkspaceTerminals(workspaceId)
+    })
     server.onServing(() => {
       server.rpc.emit(SERVER_EVENTS.launchTokens, { reset: true, changes: liveGatewayLaunchTokens() })
       sendTerminalSessions()
@@ -2163,6 +2192,11 @@ export function createAppServices(
   // A live launched session whose agent is missing from its workspace is
   // adopted, so a launch-time write that did not land is not the end of it.
   terminalRuntime.subscribeSessionsChanged(() => launchedAgentRegistration.reconcile())
+  // In process, the core's rest sweep hears each change; out of process the
+  // server hears the sessions pushed below.
+  terminalRuntime.subscribeSessionsChanged(() => {
+    for (const listener of [...terminalSessionsListeners]) listener()
+  })
   // The app's own plugin goes into every workspace it opens, at the two moments
   // a workspace becomes real to main: the roots the registry already holds when
   // this process starts, and every accepted registry event after that. Not at

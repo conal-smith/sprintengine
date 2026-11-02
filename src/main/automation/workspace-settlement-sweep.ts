@@ -29,24 +29,46 @@ import { latestTurnEnd, type SweepDecision, type SweepDecisionResult } from './c
 //
 // One pass runs at a time, over the chats asked about since the last one (or
 // all of them). A trigger during a pass is not lost: it queues another pass
-// after this one. Every decision goes to main's lifecycle as a command with the
-// reading it was taken on (`applySweepDecision`), which refuses it if the chat
-// has moved on, so a pass that decides on old news writes nothing. A pass that
-// decides nothing writes nothing, so passes may run as often as triggers come.
+// after this one. A pass that decides nothing writes nothing, so passes may run
+// as often as triggers come.
+//
+// Every decision goes to main's lifecycle as a command with the reading it was
+// taken on (`applySweepDecision`), the same guard a window's Settle passes.
+// Today a pass reads and commits in one synchronous step, so for the sweep the
+// guard only re-checks what the record says; it is carried so the command
+// stays correct for any caller that decides across an await, and so the
+// lifecycle has one shape of decision to check, not two.
 
 /** How often every chat is looked at, beside the triggers: the quiet-days rule needs no finer clock. */
 export const SETTLEMENT_SWEEP_INTERVAL_MS = 60_000
 
-/** What only live state says about a chat: an agent at work in it, or something in it for the person. */
-export type SettlementSignals = { busy: boolean; held: boolean }
+/**
+ * What only live state says about a chat: an agent at work in it, something
+ * in it for the person, and when one of its agent terminals last finished a
+ * turn (which the record hears only from a window, so main reads it here).
+ */
+export type SettlementSignals = { busy: boolean; held: boolean; lastTurnEndedAt: number | null }
 
-/** The few fields of an agent terminal the sweep reads. */
+/** The few fields of a terminal the sweep reads. */
 export type SettlementTerminal = {
+  sessionId?: string
   kind?: string
   workspaceId?: string
   processAlive: boolean
   activity?: { kind: string }
   agentState?: { phase?: string }
+  lastTurnEndedAt?: number | null
+}
+
+/** A terminal as the sweep compares it between two readings: what would change a decision. */
+function terminalReading(session: SettlementTerminal): string {
+  return [
+    session.kind ?? '',
+    session.processAlive ? 1 : 0,
+    session.activity?.kind ?? '',
+    session.agentState?.phase ?? '',
+    session.lastTurnEndedAt ?? '',
+  ].join('|')
 }
 
 /**
@@ -82,13 +104,19 @@ export function settlementSignals(input: {
       const phase = conversationSummaryPhase(session)
       return phase === 'waiting_for_approval' || phase === 'waiting_for_input'
     })
+  let terminalTurnEnd: number | null = null
+  for (const session of agents) {
+    const at = session.lastTurnEndedAt
+    if (typeof at === 'number' && Number.isFinite(at) && at > (terminalTurnEnd ?? -1)) terminalTurnEnd = at
+  }
+  const chatTurnEnd = latestTurnEnd(conversations, { workspaceId: record.id }, record.lastTurnEndedAt)
   const unseen = finishedUnseen({
     idle: !busy && !needsInput,
-    finishedAt: latestTurnEnd(conversations, { workspaceId: record.id }, record.lastTurnEndedAt),
+    finishedAt: Math.max(chatTurnEnd ?? -1, terminalTurnEnd ?? -1),
     visitedAt: record.lastVisitedAt,
   })
   const watched = watchedPullRequest(input.pullRequests ?? []) !== null
-  return { busy, held: needsInput || unseen || watched }
+  return { busy, held: needsInput || unseen || watched, lastTurnEndedAt: terminalTurnEnd }
 }
 
 export type WorkspaceSettlementSweepDeps = {
@@ -96,16 +124,18 @@ export type WorkspaceSettlementSweepDeps = {
   record(workspaceId: string): WorkspaceRegistryRecord | null
   /** The chats some window has in front, which the sweep never settles out from under anyone. */
   onScreen(): ReadonlySet<string>
-  signals(record: WorkspaceRegistryRecord): SettlementSignals
+  /** A reading of the live state for one pass: asked once per pass, then for each chat. */
+  live(): (record: WorkspaceRegistryRecord) => SettlementSignals
   /** The chat's pull requests, or undefined while the record of them has not been read. */
   pullRequests(workspaceId: string): readonly BranchPullRequest[] | undefined
   settings(): SettledChatsSettings
   /** The run state the chat's module reports, which pins a run in flight (`AutoSettleContext.runState`). */
   runState?(record: WorkspaceRegistryRecord): LifecycleState | null
   /**
-   * Whether the live state `signals` reads has been read once. Until then
-   * every chat reads idle, and one parked at a prompt for days would settle
-   * and wake a beat later. Absent, it always has.
+   * Whether what a decision reads is known: the live state has been read
+   * once (until then every chat reads idle, and one parked at a prompt for
+   * days would settle and wake a beat later), and the settings are the
+   * person's. Absent, it always is.
    */
   ready?(): boolean
   commit(decision: SweepDecision): SweepDecisionResult
@@ -161,7 +191,8 @@ export function createWorkspaceSettlementSweep(deps: WorkspaceSettlementSweepDep
     try {
       const onScreen = deps.onScreen()
       const settings = deps.settings()
-      for (const id of ids) decide(id, onScreen, settings)
+      const live = deps.live()
+      for (const id of ids) decide(id, onScreen, settings, live)
     } finally {
       running = false
     }
@@ -170,12 +201,23 @@ export function createWorkspaceSettlementSweep(deps: WorkspaceSettlementSweepDep
     if (everything || queued.size > 0) cancelPass = schedule(pass, 0)
   }
 
-  function decide(workspaceId: string, onScreen: ReadonlySet<string>, settings: SettledChatsSettings): void {
-    const record = deps.record(workspaceId)
-    if (!record) return
+  function decide(
+    workspaceId: string,
+    onScreen: ReadonlySet<string>,
+    settings: SettledChatsSettings,
+    live: (record: WorkspaceRegistryRecord) => SettlementSignals,
+  ): void {
+    const stored = deps.record(workspaceId)
+    if (!stored) return
     // Read now, for this chat: never a clock carried from an earlier render.
     const now = deps.now()
-    const signals = deps.signals(record)
+    const signals = live(stored)
+    // An agent terminal's turn end is activity for the quiet days even when
+    // no window has told the record of it.
+    const record =
+      signals.lastTurnEndedAt !== null && signals.lastTurnEndedAt > (stored.lastTurnEndedAt ?? -1)
+        ? { ...stored, lastTurnEndedAt: signals.lastTurnEndedAt }
+        : stored
     const pullRequests = deps.pullRequests(workspaceId)
     const decision = decideWorkspaceSettlement({
       workspace: record,
@@ -224,6 +266,30 @@ export function createWorkspaceSettlementSweep(deps: WorkspaceSettlementSweepDep
     if (moved.length > 0) request(moved)
   }
 
+  /**
+   * The terminals changed: look again at the chats whose terminals now read
+   * differently (a turn started or ended, a prompt came up, a process ended).
+   */
+  const seenTerminals = new Map<string, { workspaceId: string; reading: string }>()
+  function noteTerminalsChanged(terminals: readonly SettlementTerminal[]): void {
+    const moved = new Set<string>()
+    const present = new Set<string>()
+    for (const session of terminals) {
+      if (!session.sessionId || !session.workspaceId) continue
+      present.add(session.sessionId)
+      const reading = terminalReading(session)
+      if (seenTerminals.get(session.sessionId)?.reading === reading) continue
+      seenTerminals.set(session.sessionId, { workspaceId: session.workspaceId, reading })
+      moved.add(session.workspaceId)
+    }
+    for (const [sessionId, seen] of seenTerminals) {
+      if (present.has(sessionId)) continue
+      seenTerminals.delete(sessionId)
+      moved.add(seen.workspaceId)
+    }
+    if (moved.size > 0) request(moved)
+  }
+
   function tick(): void {
     cancelTick = null
     if (stopped) return
@@ -242,6 +308,7 @@ export function createWorkspaceSettlementSweep(deps: WorkspaceSettlementSweepDep
     },
     request,
     noteRegistryChanged,
+    noteTerminalsChanged,
     dispose(): void {
       stopped = true
       cancelPass?.()

@@ -5,13 +5,10 @@ import {
   isSettledWorkspace,
   isStarred,
   lifecycleSnapshotIsStale,
-  planSettleUndo,
   settleWorkspacePatch,
-  undoSettlePatch,
   wakeSnoozedWorkspacePatch,
   wakeWorkspacePatch,
   workspaceLifecycleSnapshot,
-  type SettleUndo,
   type WorkspaceLifecycleRequest,
   type WorkspaceLifecycleResult,
   type WorkspaceLifecycleSnapshot,
@@ -227,11 +224,6 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     decided?.snapshot !== undefined && lifecycleSnapshotIsStale(record, decided.snapshot)
   const atWork = (workspaceId: string, decided: LifecycleDecision | undefined): boolean =>
     decided?.refuseWhile === 'busy' ? (deps.isBusy ?? deps.isWorking)(workspaceId) : deps.isWorking(workspaceId)
-  // What each resting chat's Settle displaced, against the rest it was taken
-  // for (`planSettleUndo`), so Un-settle hands it back. In memory: the record
-  // keeps a snooze still ahead underneath the rest as well, which is what a
-  // restart's Un-settle reads instead.
-  const undos = new Map<string, SettleUndo>()
 
   /**
    * Settle a chat, or bring it back: the row menu's Settle and Un-settle,
@@ -278,15 +270,14 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
         message: 'An agent in this chat is still working, or waiting on an answer. Settle it once it has finished.',
       }
     const at = now()
+    // The record is the Settle's undo: a snooze still ahead is kept under the
+    // rest, and Un-settle hands it back (`wakeWorkspacePatch('active')`).
     const patch = settled
       ? settleWorkspacePatch(withInputClock(record, decided), at, 'settled')
-      : unsettlePatch(record, at)
+      : wakeWorkspacePatch('active', record, at)
     const failed = write(workspaceId, patch, actor)
     if (failed) return failed
-    if (settled) {
-      dropPending(workspaceId)
-      undos.set(workspaceId, planSettleUndo(record, at))
-    } else undos.delete(workspaceId)
+    if (settled) dropPending(workspaceId)
     return { ok: true, workspaceId, settledAt: typeof patch.settledAt === 'number' ? patch.settledAt : null }
   }
 
@@ -301,12 +292,6 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     const told = decided?.lastInputAt
     if (typeof told !== 'number' || !Number.isFinite(told) || (known !== null && known >= told)) return record
     return { ...record, lastTerminalActivityAt: told }
-  }
-
-  /** Un-settle: with the undo of the Settle that put the chat to rest, when this run took one. */
-  function unsettlePatch(record: WorkspaceRegistryRecord, at: number): WorkspaceFieldsPatch {
-    const undo = undos.get(record.id)
-    return undo ? undoSettlePatch(undo, record, at) : wakeWorkspacePatch('active', record, at)
   }
 
   /**
@@ -327,7 +312,6 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
       if (!isSettledWorkspace(record)) return { ok: true, workspaceId, settledAt: null }
       const failed = write(workspaceId, wakeWorkspacePatch(null, record, at), 'system')
       if (failed) return failed
-      undos.delete(workspaceId)
       return { ok: true, workspaceId, settledAt: null }
     }
     if (
@@ -341,7 +325,6 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     const patch = settleWorkspacePatch(record, at, null)
     const failed = write(workspaceId, patch, 'system')
     if (failed) return failed
-    undos.set(workspaceId, planSettleUndo(record, at))
     return { ok: true, workspaceId, settledAt: at }
   }
 
@@ -422,8 +405,6 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     if (until === null) {
       if (record.snoozedUntil == null) return { ok: true, workspaceId, snoozedUntil: null }
       const failed = write(workspaceId, wakeSnoozedWorkspacePatch(), actor)
-      // A snooze woken by hand is not one an Un-settle should bring back.
-      if (!failed) undos.delete(workspaceId)
       return failed ?? { ok: true, workspaceId, snoozedUntil: null }
     }
     if (!Number.isFinite(until) || until <= now())
@@ -527,14 +508,15 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     if (typeof record.lastUserMessageAt === 'number' && record.lastUserMessageAt >= at) return
     const waking = isSettledWorkspace(record) || record.settledOverride != null
     write(workspaceId, { ...(waking ? wakeWorkspacePatch(null, record, now()) : {}), lastUserMessageAt: at }, actor)
-    if (waking) undos.delete(workspaceId)
   }
 
   /**
    * A window's Settle, Un-settle, Snooze or Wake now: the row menu's
    * gestures, decided on the window's reading of the chat and held to the row
-   * menu's own rule for an agent at work. Refused, the answer carries the
-   * chat as it stands, so the window puts its row back where main has it.
+   * menu's own rule for an agent at work. Accepted, the answer carries the
+   * chat as main wrote it, stamped with main's clock, so the window's next
+   * gesture is made on main's reading; refused, the chat as it stands, so the
+   * window puts its row back where main has it.
    */
   function fromWindow(request: WorkspaceLifecycleRequest): WorkspaceLifecycleResult {
     const { workspaceId, intent } = request
@@ -545,9 +527,11 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
         : intent.kind === 'unsettle'
           ? settle(workspaceId, false, 'ui', null, decided)
           : snooze(workspaceId, intent.kind === 'snooze' ? intent.until : null, 'ui', decided)
-    if (result.ok) return { ok: true, workspaceId }
     const record = deps.getRecord(workspaceId)
-    return { ...result, ...(record ? { current: workspaceLifecycleSnapshot(record) } : {}) }
+    const reading = record ? workspaceLifecycleSnapshot(record) : null
+    if (result.ok && reading) return { ok: true, workspaceId, committed: reading }
+    if (result.ok) return unknown(workspaceId)
+    return { ...result, ...(reading ? { current: reading } : {}) }
   }
 
   function dropPending(workspaceId: string): void {

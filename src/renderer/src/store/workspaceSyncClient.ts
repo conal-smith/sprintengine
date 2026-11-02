@@ -223,7 +223,7 @@ export type WorkspaceSyncClient = {
   /**
    * Ask main to settle, un-settle, snooze or wake a chat on this window's
    * reading of it. Never throws: a window with no main to ask is answered
-   * `unavailable`.
+   * `unavailable`, and one whose main could not be reached `unreachable`.
    */
   dispatchLifecycleIntent: (request: WorkspaceLifecycleRequest) => Promise<WorkspaceLifecycleResult>
   /** Stop listeners and reset sequence/diagnostic state (used by tests). */
@@ -628,12 +628,12 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
   // and a refusal comes back with the chat as main has it, for the store to
   // put the row back. The accepted change reaches every window, this one
   // included, as a sync event.
+  //
+  // A call that throws reached nobody (out of process, the server may be
+  // restarting under the window): it is asked once more, and then answered
+  // `unreachable`, which is a no, never `unavailable`, which is a window with
+  // no main to ask at all.
   const dispatchLifecycleIntent = async (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> => {
-    const unavailable: WorkspaceLifecycleResult = {
-      ok: false,
-      code: 'unavailable',
-      message: 'This window has no main process to ask.',
-    }
     const api = deps.getApi()
     if (!api?.workspaceLifecycle) {
       log({
@@ -641,25 +641,29 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
         reason: 'api_unavailable',
         message: `Workspace sync API is unavailable; a ${request.intent.kind} stays local-only.`,
       })
-      return unavailable
+      return { ok: false, code: 'unavailable', message: 'This window has no main process to ask.' }
     }
-    try {
-      const result = await api.workspaceLifecycle(request)
-      if (!result.ok)
-        log({
-          phase: 'dispatch',
-          reason: result.code,
-          message: `Main refused a ${request.intent.kind} (${result.code}): ${result.message}`,
-        })
-      return result
-    } catch (error) {
-      log({
-        phase: 'dispatch',
-        reason: 'dispatch_threw',
-        message: `A ${request.intent.kind} threw: ${error instanceof Error ? error.message : 'unknown error'}.`,
-      })
-      return unavailable
+    let lastError: unknown = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const result = await api.workspaceLifecycle(request)
+        if (!result.ok)
+          log({
+            phase: 'dispatch',
+            reason: result.code,
+            message: `Main refused a ${request.intent.kind} (${result.code}): ${result.message}`,
+          })
+        return result
+      } catch (error) {
+        lastError = error
+      }
     }
+    log({
+      phase: 'dispatch',
+      reason: 'dispatch_threw',
+      message: `A ${request.intent.kind} threw: ${lastError instanceof Error ? lastError.message : 'unknown error'}.`,
+    })
+    return { ok: false, code: 'unreachable', message: 'Studio could not be reached. Try again in a moment.' }
   }
 
   const reset = (): void => {

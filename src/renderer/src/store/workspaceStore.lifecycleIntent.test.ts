@@ -14,9 +14,16 @@ import type {
 // the chat as main has it, and the row goes back there.
 
 const asked: WorkspaceLifecycleRequest[] = []
+const resting: WorkspaceLifecycleSnapshot = {
+  settledAt: 6_000,
+  settledOverride: 'settled',
+  snoozedUntil: null,
+  activityAt: 500,
+}
 let answer: (request: WorkspaceLifecycleRequest) => WorkspaceLifecycleResult = (request) => ({
   ok: true,
   workspaceId: request.workspaceId,
+  committed: resting,
 })
 const dispatched: string[] = []
 let store: typeof import('./workspaceStore')
@@ -95,7 +102,8 @@ test('a Settle applies at once and asks main with the reading it was made on, ne
   dispatched.length = 0
   const settling = store.useWorkspaceStore.getState().setWorkspaceSettled('ws-1', true)
   assert.equal(typeof row('ws-1').settledAt, 'number', 'the row moves before main answers')
-  assert.deepEqual(await settling, { ok: true, workspaceId: 'ws-1' })
+  assert.deepEqual(await settling, { ok: true, workspaceId: 'ws-1', committed: resting })
+  assert.equal(row('ws-1').settledAt, 6_000, 'the row takes main’s stamp, so the next gesture is made on it')
   const expected: WorkspaceLifecycleSnapshot = {
     settledAt: null,
     settledOverride: null,
@@ -136,4 +144,65 @@ test('a Snooze goes to main as a snooze, and a refusal for an agent at work wake
   await snoozing
   assert.deepEqual(asked[0]?.intent, { kind: 'snooze', until: wakeAt })
   assert.equal(row('ws-2').snoozedUntil, null, 'the snooze main refused is taken back')
+})
+
+test('a quick Un-settle after a Settle is sent on the reading main answered the Settle with', async () => {
+  asked.length = 0
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const mainStamp: WorkspaceLifecycleSnapshot = {
+    settledAt: 9_999,
+    settledOverride: 'settled',
+    snoozedUntil: null,
+    activityAt: 500,
+  }
+  // Main's clock stamps the Settle differently from the window's.
+  answer = (request) =>
+    request.intent.kind === 'settle'
+      ? { ok: true, workspaceId: request.workspaceId, committed: mainStamp }
+      : {
+          ok: true,
+          workspaceId: request.workspaceId,
+          committed: { settledAt: null, settledOverride: 'active', snoozedUntil: null, activityAt: 500 },
+        }
+  const api = (globalThis as unknown as { window: { api: Record<string, unknown> } }).window.api
+  const realLifecycle = api.workspaceLifecycle as (request: WorkspaceLifecycleRequest) => Promise<unknown>
+  api.workspaceLifecycle = async (request: WorkspaceLifecycleRequest) => {
+    if (request.intent.kind === 'settle') await gate
+    return realLifecycle(request)
+  }
+  try {
+    const settling = store.useWorkspaceStore.getState().setWorkspaceSettled('ws-2', true)
+    const unsettling = store.useWorkspaceStore.getState().setWorkspaceSettled('ws-2', false)
+    assert.equal(row('ws-2').settledAt, null, 'the row reads the last gesture at once')
+    release()
+    await settling
+    assert.equal(row('ws-2').settledAt, null, 'the first answer does not drag the row back meanwhile')
+    await unsettling
+    assert.deepEqual(asked[1]?.snapshot, mainStamp, 'the Un-settle is made on main’s stamp, not the window’s')
+    assert.equal(row('ws-2').settledOverride, 'active')
+  } finally {
+    api.workspaceLifecycle = realLifecycle
+  }
+})
+
+test('a gesture that could not reach main puts the row back where it was', async () => {
+  const api = (globalThis as unknown as { window: { api: Record<string, unknown> } }).window.api
+  const realLifecycle = api.workspaceLifecycle
+  let calls = 0
+  api.workspaceLifecycle = async () => {
+    calls += 1
+    throw new Error('the server is restarting')
+  }
+  try {
+    const before = row('ws-1').settledAt
+    const result = await store.useWorkspaceStore.getState().setWorkspaceSettled('ws-1', before === null)
+    assert.equal(result?.ok === false && result.code, 'unreachable')
+    assert.equal(calls, 2, 'asked once more before giving up')
+    assert.equal(row('ws-1').settledAt, before, 'the row is where it was before the gesture')
+  } finally {
+    api.workspaceLifecycle = realLifecycle
+  }
 })

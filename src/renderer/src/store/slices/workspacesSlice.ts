@@ -10,6 +10,7 @@ import {
   workspaceLifecycleSnapshot,
   type WorkspaceLifecycleRequest,
   type WorkspaceLifecycleResult,
+  type WorkspaceLifecycleSnapshot,
 } from '../../../../shared/workspace-lifecycle'
 import { noteChatOpened } from '../../components/panels/agentChat/unreadDivider'
 import { isRetiredWorkspaceMode } from '../../../../shared/workspace-mode'
@@ -638,19 +639,50 @@ export function createWorkspacesSlice(
   getState: () => WorkspacesSliceCarrier,
 ): WorkspacesSlice {
   // A hand gesture on a chat's rest, already applied here, goes to main to be
-  // decided. A refusal names the chat's rest as main has it, and the row goes
-  // back there rather than staying where this window alone put it. (A refusal
-  // with nothing to go back to — no main to ask — leaves the row as applied.)
-  const sendLifecycleIntent = async (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> => {
-    const result = await workspaceSyncClient.dispatchLifecycleIntent(request)
-    if (!result.ok && result.current) {
-      const { settledAt, settledOverride, snoozedUntil } = result.current
-      set((state) => {
-        const ws = state.workspaces.find((w) => w.id === request.workspaceId)
-        if (ws) Object.assign(ws, { settledAt, settledOverride, snoozedUntil })
-      })
+  // decided, one at a time per chat. Each answer names the chat's rest as main
+  // has it — as it wrote it, or as it stands after a no — and the row takes
+  // it, so the next gesture is made on main's reading and its stamps, not on
+  // this window's (a Settle and a quick Un-settle would otherwise read as two
+  // different rests). A gesture made while another is on its way is sent on
+  // the reading the first comes back with, and only the last answer moves the
+  // row, so a row the person has moved on is not dragged back meanwhile.
+  //
+  // A no with nothing to go back to: `unreachable` puts the row back where it
+  // was before the gesture; `unavailable` (no main to ask, as in a test
+  // harness) leaves it as applied.
+  const inFlight = new Map<WorkspaceId, Promise<WorkspaceLifecycleResult>>()
+  const adoptRest = (workspaceId: WorkspaceId, rest: WorkspaceLifecycleSnapshot): void => {
+    const { settledAt, settledOverride, snoozedUntil } = rest
+    set((state) => {
+      const ws = state.workspaces.find((w) => w.id === workspaceId)
+      if (ws) Object.assign(ws, { settledAt, settledOverride, snoozedUntil })
+    })
+  }
+  const sendLifecycleIntent = (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> => {
+    const { workspaceId } = request
+    const before = inFlight.get(workspaceId)
+    // Read once an answer is in, by when `sent` is this gesture's promise.
+    const ask = async (): Promise<WorkspaceLifecycleResult> => {
+      let asked = request
+      if (before) {
+        const previous = await before
+        const known = previous.ok ? previous.committed : previous.current
+        if (known) asked = { ...request, snapshot: known }
+      }
+      const result = await workspaceSyncClient.dispatchLifecycleIntent(asked)
+      if (inFlight.get(workspaceId) === sent) {
+        if (result.ok) adoptRest(workspaceId, result.committed)
+        else if (result.current) adoptRest(workspaceId, result.current)
+        else if (result.code === 'unreachable') adoptRest(workspaceId, asked.snapshot)
+      }
+      return result
     }
-    return result
+    const sent = ask()
+    inFlight.set(workspaceId, sent)
+    void sent.finally(() => {
+      if (inFlight.get(workspaceId) === sent) inFlight.delete(workspaceId)
+    })
+    return sent
   }
   return {
     workspaces: [],

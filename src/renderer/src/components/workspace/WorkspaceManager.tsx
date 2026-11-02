@@ -97,6 +97,7 @@ import { initBackgroundModeSync } from '../../utils/backgroundModeSync'
 import { initTelemetryConsentSync } from '../../utils/telemetryConsentSync'
 import { initTextGenerationSettingsSync } from '../../utils/textGenerationSettingsSync'
 import { initSettledChatsSettingsSync } from '../../utils/settledChatsSettingsSync'
+import { initModuleRunStateSync } from '../../utils/moduleRunStateSync'
 import { initModuleAppStateSync } from '../../utils/moduleAppStateSync'
 import {
   addNewAgentTab,
@@ -525,6 +526,8 @@ export default function WorkspaceManager() {
   useEffect(() => initTextGenerationSettingsSync(), [])
   // Settings ▸ Settled chats, which main's rest sweep reads with no window open.
   useEffect(() => initSettledChatsSettingsSync(), [])
+  // A module chat's run state, which main's rest sweep cannot ask the module for.
+  useEffect(() => initModuleRunStateSync(), [])
   // A module's entry.main reads its Settings section's values with no window
   // open (a scheduler's time, a poller's interval), so module app state is
   // mirrored the same way.

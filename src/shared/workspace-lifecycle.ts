@@ -41,7 +41,9 @@ export function settleWorkspacePatch(
     // (`isSnoozedWorkspace`). A snooze still ahead is KEPT underneath it,
     // though, so a Settle made by mistake on a sleeping chat gives the snooze
     // back when it is undone (`wakeWorkspacePatch`); clearing it here lost it
-    // for good. One already run out is the Woke mark, which the chat has
+    // for good. The record is the Settle's undo snapshot: a Settle touches no
+    // star, and the one other thing it puts away, the snooze, stays on the
+    // record until a wake spends it. One already run out is the Woke mark, which the chat has
     // left behind by resting, and goes here, so no un-settle can bring it back.
     ...(snoozeStillAhead(workspace, now) ? {} : wakeSnoozedWorkspacePatch()),
     settledAt: now,
@@ -164,9 +166,16 @@ export type WorkspaceLifecycleRequest = {
   snapshot: WorkspaceLifecycleSnapshot
 }
 
-/** Main's answer. A refusal carries the chat's rest as main has it, for the window to put its row back to. */
+/**
+ * Main's answer. A yes carries the chat's rest as main wrote it (`committed`,
+ * stamped with main's clock), which the window adopts so that its next
+ * gesture on the chat is made on main's reading rather than its own stamps;
+ * a refusal carries the chat's rest as main has it, for the window to put its
+ * row back to. `unreachable` is a window that could not reach main at all.
+ */
 export type WorkspaceLifecycleResult =
-  { ok: true; workspaceId: string } | { ok: false; code: string; message: string; current?: WorkspaceLifecycleSnapshot }
+  | { ok: true; workspaceId: string; committed: WorkspaceLifecycleSnapshot }
+  | { ok: false; code: string; message: string; current?: WorkspaceLifecycleSnapshot }
 
 /** A request from across the process boundary, or null when it is not one. */
 export function parseWorkspaceLifecycleRequest(value: unknown): WorkspaceLifecycleRequest | null {
@@ -194,35 +203,6 @@ function parseIntent(value: unknown): WorkspaceLifecycleIntent | null {
     default:
       return null
   }
-}
-
-/**
- * What a Settle put away beside the chat, taken as the rest lands so that
- * Un-settle can hand it back: a snooze still ahead (one already run out is the
- * Woke mark, which resting leaves behind). A Settle touches no star, so there
- * is no star to keep. Belongs to the one rest it was taken for (`settledAt`).
- */
-export type SettleUndo = { settledAt: number; snoozedUntil: number | null }
-
-export function planSettleUndo(workspace: Pick<Workspace, 'snoozedUntil'>, settledAt: number): SettleUndo {
-  return { settledAt, snoozedUntil: snoozeStillAhead(workspace, settledAt) ? workspace.snoozedUntil! : null }
-}
-
-/**
- * Un-settle with the undo of the Settle that put the chat to rest: the
- * person's Un-settle (`wakeWorkspacePatch('active')`), with the snooze the
- * Settle displaced put back while it is still ahead, whether or not the
- * record still carries it underneath the rest. An undo taken for another rest
- * than the one on the record is no undo for this one.
- */
-export function undoSettlePatch(
-  undo: SettleUndo,
-  workspace: Pick<Workspace, 'settledAt' | 'snoozedUntil'>,
-  now: number,
-): WorkspaceFieldsPatch {
-  const patch = wakeWorkspacePatch('active', workspace, now)
-  if (workspace.settledAt !== undo.settledAt) return patch
-  return snoozeStillAhead(undo, now) ? { ...patch, snoozedUntil: undo.snoozedUntil } : patch
 }
 
 function snoozeStillAhead(workspace: Pick<Workspace, 'snoozedUntil'>, now: number): boolean {

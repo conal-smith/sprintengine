@@ -119,7 +119,11 @@ test('a window’s reading ahead of main on the keystroke clock is not stale, an
     intent: { kind: 'settle', lastInputAt: BORN + 2 * DAY },
     snapshot: seen,
   })
-  assert.deepEqual(answer, { ok: true, workspaceId: 'ws-1' })
+  assert.deepEqual(
+    answer,
+    { ok: true, workspaceId: 'ws-1', committed: f.snapshot() },
+    'a yes carries the chat as main wrote it',
+  )
   assert.equal(f.stored.settledOverride, 'settled')
   assert.equal(f.stored.lastTerminalActivityAt, BORN + 2 * DAY, 'main is never behind the decision')
 })
@@ -132,7 +136,7 @@ test('a window’s Settle and Snooze wait only for an agent at work, not one wai
     intent: { kind: 'settle' },
     snapshot: waiting.snapshot(),
   })
-  assert.deepEqual(settled, { ok: true, workspaceId: 'ws-1' })
+  assert.deepEqual(settled, { ok: true, workspaceId: 'ws-1', committed: waiting.snapshot() })
   assert.equal(waiting.lifecycle.settle('ws-1', false, 'ui').ok, true)
   assert.equal(waiting.lifecycle.settle('ws-1', true, 'mobile').ok, false, 'a phone’s Settle is still refused')
 
@@ -146,25 +150,22 @@ test('a window’s Settle and Snooze wait only for an agent at work, not one wai
   assert.equal(atWork.stored.snoozedUntil ?? null, null)
 })
 
-test('Un-settle hands back the snooze the Settle displaced, from the undo taken as it landed', () => {
+test('the record is the Settle’s undo: Un-settle hands back the snooze kept under the rest', () => {
   const f = fixture({ snoozedUntil: BORN + 12 * DAY })
   f.lifecycle.fromWindow({ workspaceId: 'ws-1', intent: { kind: 'settle' }, snapshot: f.snapshot() })
   assert.equal(typeof f.stored.settledAt, 'number')
-  // Something with no say in the rest lost the snooze underneath it (a
-  // window on an older build writing the record whole).
-  f.stored.snoozedUntil = null
+  assert.equal(f.stored.snoozedUntil, BORN + 12 * DAY, 'the snooze stays on the record under the rest')
   const answer = f.lifecycle.fromWindow({ workspaceId: 'ws-1', intent: { kind: 'unsettle' }, snapshot: f.snapshot() })
-  assert.deepEqual(answer, { ok: true, workspaceId: 'ws-1' })
+  assert.equal(answer.ok, true)
   assert.equal(f.stored.settledAt, null)
   assert.equal(f.stored.settledOverride, 'active')
   assert.equal(f.stored.snoozedUntil, BORN + 12 * DAY, 'the chat goes back to sleep where it was')
 })
 
-test('the undo is spent by a wake: activity, or a snooze woken by hand, does not bring it back', () => {
+test('a wake while resting spends the kept snooze: activity, or a snooze woken by hand', () => {
   const f = fixture({ snoozedUntil: BORN + 12 * DAY })
   f.lifecycle.settle('ws-1', true, 'ui')
   f.lifecycle.snooze('ws-1', null, 'mobile')
-  assert.equal(f.stored.snoozedUntil, null)
   f.lifecycle.settle('ws-1', false, 'ui')
   assert.equal(f.stored.snoozedUntil ?? null, null, 'a snooze woken by hand stays woken')
 
@@ -173,13 +174,4 @@ test('the undo is spent by a wake: activity, or a snooze woken by hand, does not
   g.lifecycle.noteUserMessage('ws-1', g.now(), 'gateway')
   assert.equal(g.stored.settledAt, null, 'a message wakes the chat')
   assert.equal(g.stored.snoozedUntil ?? null, null, 'and the chat is back now, not asleep')
-})
-
-test('an undo whose snooze has run out restores nothing', () => {
-  const f = fixture({ snoozedUntil: BORN + 10 * DAY + 1_000 })
-  f.lifecycle.settle('ws-1', true, 'ui')
-  f.stored.snoozedUntil = null
-  f.advance(2_000)
-  f.lifecycle.settle('ws-1', false, 'ui')
-  assert.equal(f.stored.snoozedUntil ?? null, null)
 })

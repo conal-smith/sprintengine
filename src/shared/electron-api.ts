@@ -1,5 +1,6 @@
 import type { WorkspaceLifecycleRequest, WorkspaceLifecycleResult } from './workspace-lifecycle'
 import type { SettledChatsSettings } from './workspace-settlement'
+import type { LifecycleState } from './lifecycle-state'
 import type { ClientCapability } from './client-capabilities'
 import type { AttachedFilePreview } from './attached-files'
 import type { ChatLink } from './deep-link'
@@ -889,6 +890,12 @@ export type ElectronApi = {
   workspaceLifecycle: (request: WorkspaceLifecycleRequest) => Promise<WorkspaceLifecycleResult>
   /** Push Settings ▸ Settled chats to main, whose rest sweep reads them with or without a window. */
   setSettledChatsSettings: (settings: SettledChatsSettings) => Promise<void>
+  /**
+   * Push the run state each module chat's provider reports (`deriveRunGlyph`),
+   * by workspace, `null` where its type reports none: main's rest sweep never
+   * settles a run in flight, and cannot ask a module's provider itself.
+   */
+  setModuleRunStates: (states: Record<string, LifecycleState | null>) => Promise<void>
   automationGetStatus: () => Promise<AutomationServerStatus>
   /** The gateway's loopback HTTP endpoint: where it listens and the clients given a token. */
   mcpHttpStatus: () => Promise<McpHttpStatus>

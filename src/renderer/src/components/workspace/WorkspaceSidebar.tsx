@@ -134,7 +134,7 @@ import { workspaceProjectRoot } from '../../utils/workspaceWorktree'
 import { sortWorkspacesByUserMessage } from '../../utils/workspaceRecency'
 import { isHiddenFromRail } from '../../utils/workspaceVisibility'
 import { isSettledWorkspace } from '../../utils/workspaceSettle'
-import type { WorkspaceLifecycleResult } from '../../../../shared/workspace-lifecycle'
+import { followRestAnswer, restRefusalToast, stillWorkingToast } from './sidebar/restGesture'
 import { PANEL_COMMAND_EVENT } from '../../utils/panelCommands'
 import { chatSettleStep } from './chatSettleCommand'
 import { waitingChatCount, waitingLabel } from './sidebar/projectWaiting'
@@ -423,24 +423,6 @@ function storeFollowedRests(serialized: string): void {
   } catch {
     // Kept for this run only.
   }
-}
-
-/**
- * Whether main took a gesture on a chat's rest, so its processes may be put
- * away: a yes, no main to ask (the gesture then stands as applied here), or
- * no record left to ask about (a chat gone from the store has nobody left to
- * keep its agents for, as the kill's own check says).
- */
-function mainAgreed(answer: WorkspaceLifecycleResult | null): boolean {
-  return answer === null || answer.ok || answer.code === 'unavailable'
-}
-
-function toastStillWorking(name: string): void {
-  showToast({
-    tone: 'neutral',
-    title: `${name} is still working`,
-    description: 'It can be snoozed once its agents finish.',
-  })
 }
 
 function WorkspaceSidebar({
@@ -926,6 +908,12 @@ function WorkspaceSidebar({
       sources.sessionsByWorkspaceId.get(id) ?? NO_SESSIONS,
     )
   }, [])
+  // The name a row's toasts call it by.
+  const rowName = useCallback(
+    (id: WorkspaceId) =>
+      openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)?.name ?? 'This chat',
+    [],
+  )
   const quietSettledWorkspace = useCallback(
     (id: WorkspaceId) => {
       const workspace = openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)
@@ -1085,20 +1073,24 @@ function WorkspaceSidebar({
   // processes, and whatever they were doing with them. The row's button and
   // menu item say so; this is the guard for every path.
   //
-  // Main decides the Settle (`fromWindow`), and the ptys wait for its yes: a
-  // Settle it refused — the chat changed meanwhile, or an agent there began
-  // working — has put the row back, and its agents keep running.
+  // Main decides the Settle (`fromWindow`), and the ptys and the hand-off wait
+  // for its yes (`followRestAnswer`), which comes back in a moment: a Settle it
+  // refused — the chat changed meanwhile, or an agent there began working —
+  // has put the row back, leaves the person where they are with its agents
+  // running, and says why. The successor is still chosen before the row moves.
   const settleWorkspaceById = useCallback(
     (id: WorkspaceId) => {
       if (rowIsWorking(id)) return
       const handOff = handOffFrom(id)
-      const answer = setWorkspaceSettled(id, true)
-      handOff()
-      void answer.then((settled) => {
-        if (mainAgreed(settled)) quietSettledWorkspace(id)
+      void followRestAnswer(setWorkspaceSettled(id, true), {
+        agreed: () => {
+          quietSettledWorkspace(id)
+          handOff()
+        },
+        refused: (answer) => showToast(restRefusalToast(rowName(id), 'settle', answer)),
       })
     },
-    [rowIsWorking, handOffFrom, setWorkspaceSettled, quietSettledWorkspace],
+    [rowIsWorking, handOffFrom, setWorkspaceSettled, quietSettledWorkspace, rowName],
   )
 
   // The second half of a Snooze: PAUSE the chat's ptys once the record has
@@ -1127,7 +1119,7 @@ function WorkspaceSidebar({
         const now = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
         if (now?.snoozedUntil !== wakeAt) return
         void useWorkspaceStore.getState().setWorkspaceSnoozed(id, null)
-        toastStillWorking(workspace.name)
+        showToast(stillWorkingToast(workspace.name))
       })
     },
     [rowHasOpenAgents],
@@ -1149,24 +1141,21 @@ function WorkspaceSidebar({
   // the agent processes, and an agent working in the background ends with
   // them and does not come back on the wake.
   //
-  // Main decides the Snooze as it does a Settle, and the ptys wait for its
-  // yes. One it refused for an agent at work is told as the suspend's own
-  // re-check tells it.
+  // Main decides the Snooze as it does a Settle, and the ptys and the
+  // hand-off wait for its yes in the same way; a no says why.
   const snoozeWorkspaceById = useCallback(
     (id: WorkspaceId, wakeAt: number) => {
       if (rowIsWorking(id)) return
       const handOff = handOffFrom(id)
-      const answer = setWorkspaceSnoozed(id, wakeAt)
-      handOff()
-      void answer.then((snoozed) => {
-        if (mainAgreed(snoozed)) quietSnoozedWorkspace(id, wakeAt)
-        else if (snoozed?.ok === false && snoozed.code === 'working') {
-          const workspace = openAgentSourcesRef.current.workspaces.find((candidate) => candidate.id === id)
-          if (workspace) toastStillWorking(workspace.name)
-        }
+      void followRestAnswer(setWorkspaceSnoozed(id, wakeAt), {
+        agreed: () => {
+          quietSnoozedWorkspace(id, wakeAt)
+          handOff()
+        },
+        refused: (answer) => showToast(restRefusalToast(rowName(id), 'snooze', answer)),
       })
     },
-    [rowIsWorking, handOffFrom, setWorkspaceSnoozed, quietSnoozedWorkspace],
+    [rowIsWorking, handOffFrom, setWorkspaceSnoozed, quietSnoozedWorkspace, rowName],
   )
 
   // A Settle made somewhere else — a paired phone or desktop

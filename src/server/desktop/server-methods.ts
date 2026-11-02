@@ -65,6 +65,11 @@ export const SHELL_METHODS = {
    * channel as an `ssh-stream` attach with that client id.
    */
   sshOpen: 'shell.ssh.open',
+  /**
+   * `{ workspaceId }` → nothing: the server's rest sweep settled the chat, and
+   * its terminals, which the shell holds, end with it (studio-settlement.ts).
+   */
+  endWorkspaceTerminals: 'shell.terminals.end-workspace',
 } as const
 
 /** One-way, either direction. */

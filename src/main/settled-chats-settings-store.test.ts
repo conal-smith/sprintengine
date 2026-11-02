@@ -51,3 +51,30 @@ test('a push persists, normalized, survives a fresh process, and tells its liste
     assert.deepEqual(createSettledChatsSettingsStore({ resolveUserDataDir: () => dir }).get(), expected)
   })
 })
+
+test('defaults read from no file are not the person’s choice until a window pushes, even the defaults', async () => {
+  await withUserData(async (dir) => {
+    const store = createSettledChatsSettingsStore({ resolveUserDataDir: () => dir })
+    let heard = 0
+    store.subscribe(() => {
+      heard += 1
+    })
+    assert.equal(store.known(), false, 'no file: the sweep has nothing to act on yet')
+    store.set(DEFAULT)
+    assert.equal(store.known(), true, 'a push at the defaults is still the person’s choice')
+    assert.equal(heard, 1, 'and is news to the sweep')
+    assert.equal(
+      createSettledChatsSettingsStore({ resolveUserDataDir: () => dir }).known(),
+      true,
+      'a file read is known',
+    )
+  })
+})
+
+test('a push that could not be written is still known for the rest of the run', async () => {
+  const store = createSettledChatsSettingsStore({ resolveUserDataDir: () => '/nonexistent/settled-chats-dir' })
+  assert.equal(store.known(), false)
+  store.set({ autoSettleAfterDays: 5 })
+  assert.equal(store.known(), true)
+  assert.equal(store.get().autoSettleAfterDays, 5)
+})

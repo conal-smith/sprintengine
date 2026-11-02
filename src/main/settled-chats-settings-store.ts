@@ -11,7 +11,10 @@
  *
  * Absent or unreadable reads as the renderer's own defaults
  * (`normalizeSettledChatsSettings`, shared so the two cannot drift): merges
- * settle, an open pull request keeps a chat, three quiet days.
+ * settle, an open pull request keeps a chat, three quiet days. But a default
+ * read is not the person's choice, and the sweep acts on the choice: until a
+ * file was read or a window pushed this run (`known`), the sweep waits rather
+ * than settle chats on settings the person may have changed.
  *
  * Deliberately carries no revision counter: main never writes this value and
  * never broadcasts it back, so there is no echo to order.
@@ -33,6 +36,8 @@ export type SettledChatsSettingsStore = ReturnType<typeof createSettledChatsSett
 
 export function createSettledChatsSettingsStore(deps: SettledChatsSettingsStoreDeps) {
   let cached: SettledChatsSettings | null = null
+  // A file that was read, or a window's push this run.
+  let known = false
   const listeners = new Set<() => void>()
 
   function filePath(): string {
@@ -47,6 +52,7 @@ export function createSettledChatsSettingsStore(deps: SettledChatsSettingsStoreD
     if (cached !== null) return cached
     try {
       cached = read(JSON.parse(readFileSync(filePath(), 'utf8')))
+      known = true
     } catch {
       cached = read(undefined)
     }
@@ -57,10 +63,23 @@ export function createSettledChatsSettingsStore(deps: SettledChatsSettingsStoreD
     /** The settings the sweep reads on each pass. Never throws. */
     get,
 
-    /** Adopt a renderer push. Idempotent: an unchanged value never rewrites the file or tells anyone. */
+    /** Whether the settings are the person's: read from the file, or pushed by a window this run. */
+    known(): boolean {
+      get()
+      return known
+    },
+
+    /**
+     * Adopt a renderer push. Idempotent once known: an unchanged value never
+     * rewrites the file or tells anyone. The first push of a run that had no
+     * file is news even at the defaults: it is the first the sweep hears of
+     * the person's choice.
+     */
     set(value: unknown): void {
       const next = read(value)
-      if (JSON.stringify(get()) === JSON.stringify(next)) return
+      const current = get()
+      if (known && JSON.stringify(current) === JSON.stringify(next)) return
+      known = true
       cached = next
       const target = filePath()
       const tmp = `${target}.tmp-${process.pid}`

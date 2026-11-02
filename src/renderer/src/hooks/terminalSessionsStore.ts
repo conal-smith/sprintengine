@@ -438,7 +438,6 @@ const terminalSessionsStore = createTerminalSessionsStore()
 
 export const getLiveTerminalSessionsSnapshot = terminalSessionsStore.getLiveSnapshot
 export const getTerminalSessionsSnapshot = terminalSessionsStore.getSemanticSnapshot
-export const hasTerminalSessionsSnapshot = terminalSessionsStore.hasSnapshot
 export const refreshTerminalSessions = terminalSessionsStore.refresh
 export const reconcileTerminalSessions = terminalSessionsStore.reconcile
 export const subscribeLiveTerminalSessions = terminalSessionsStore.subscribeLive

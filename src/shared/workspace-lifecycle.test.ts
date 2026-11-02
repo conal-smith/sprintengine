@@ -6,9 +6,6 @@ import {
   lifecycleSnapshotIsStale,
   parseWorkspaceLifecycleRequest,
   parseWorkspaceLifecycleSnapshot,
-  planSettleUndo,
-  settleWorkspacePatch,
-  undoSettlePatch,
   workspaceLifecycleSnapshot,
 } from './workspace-lifecycle'
 
@@ -47,25 +44,4 @@ test('a snapshot and a request from across a process boundary are parsed, and ju
   assert.equal(parseWorkspaceLifecycleRequest({ workspaceId: 'w', intent: { kind: 'snooze' }, snapshot }), null)
   assert.equal(parseWorkspaceLifecycleRequest({ workspaceId: 'w', intent: { kind: 'delete' }, snapshot }), null)
   assert.equal(parseWorkspaceLifecycleRequest({ workspaceId: '', intent: { kind: 'wake' }, snapshot }), null)
-})
-
-test('the undo of a Settle keeps the snooze it displaced, and hands it back only to its own rest', () => {
-  const sleeping = chat({ snoozedUntil: NOW + 2 * HOUR })
-  const undo = planSettleUndo(sleeping, NOW)
-  assert.deepEqual(undo, { settledAt: NOW, snoozedUntil: NOW + 2 * HOUR })
-  assert.deepEqual(
-    planSettleUndo(chat({ snoozedUntil: NOW - HOUR }), NOW).snoozedUntil,
-    null,
-    'a Woke mark is not kept',
-  )
-
-  const resting = chat({ ...sleeping, ...settleWorkspacePatch(sleeping, NOW, 'settled'), snoozedUntil: null } as never)
-  assert.deepEqual(undoSettlePatch(undo, resting, NOW + HOUR), {
-    settledAt: null,
-    settledOverride: 'active',
-    snoozedUntil: NOW + 2 * HOUR,
-  })
-  assert.equal('snoozedUntil' in undoSettlePatch(undo, resting, NOW + 3 * HOUR), false, 'not once it has run out')
-  const anotherRest = chat({ ...resting, settledAt: NOW + 5 } as never)
-  assert.equal('snoozedUntil' in undoSettlePatch(undo, anotherRest, NOW + HOUR), false, 'nor to another rest')
 })

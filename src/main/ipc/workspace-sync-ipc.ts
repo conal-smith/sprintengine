@@ -40,6 +40,8 @@ type RegisterWorkspaceSyncIpcOptions = {
   lifecycle?: (request: WorkspaceLifecycleRequest) => WorkspaceLifecycleResult
   /** The Settled chats settings a window pushes, which main's rest sweep reads. */
   setSettledChatsSettings?: (settings: unknown) => void
+  /** The run state each module chat's provider reports in a window, which main's rest sweep reads. */
+  setModuleRunStates?: (states: unknown) => void
 }
 
 export function registerWorkspaceSyncIpc(
@@ -90,6 +92,9 @@ export function registerWorkspaceSyncIpc(
   })
   ipcMain.handle('workspace-sync:set-settled-chats-settings', (_event, settings: unknown): void => {
     options.setSettledChatsSettings?.(settings)
+  })
+  ipcMain.handle('workspace-sync:set-module-run-states', (_event, states: unknown): void => {
+    options.setModuleRunStates?.(states)
   })
   ipcMain.handle('workspace-sync:get-snapshot', () => service.getSnapshot())
   ipcMain.handle('workspace-sync:get-events-after', (_event, sequence: unknown) => service.getEventsAfter(sequence))
