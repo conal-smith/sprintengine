@@ -511,3 +511,40 @@ test('Ctrl+C copies a selection outside macOS, and interrupts once it is gone', 
     dispose()
   }
 })
+
+// On a Cyrillic layout the V key types `М`; the shortcut follows the key's
+// place, as the other letter shortcuts do, so Ctrl+Shift+V still pastes.
+test('Ctrl+Shift+V pastes on a non-Latin layout', async () => {
+  const container = new EventTarget() as HTMLElement
+  const pasted: string[] = []
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { api: { clipboardWriteText: async () => {}, clipboardReadText: async () => 'from the clipboard' } },
+  })
+  const dispose = bindTerminalClipboardHandlers({
+    container,
+    focusTerminal: () => {},
+    paste: (text) => pasted.push(text),
+    term: { getSelection: () => '', clearSelection: () => {} } as never,
+  })
+  const keydown = (key: string, code: string) =>
+    Object.assign(new Event('keydown', { cancelable: true }), {
+      key,
+      code,
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      metaKey: false,
+    }) as KeyboardEvent
+  const cyrillic = keydown('М', 'KeyV')
+  container.dispatchEvent(cyrillic)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(cyrillic.defaultPrevented, true)
+  assert.deepEqual(pasted, ['from the clipboard'])
+
+  // A Latin layout follows the letter, not the place: the key typing `k` is K.
+  const latin = keydown('k', 'KeyV')
+  container.dispatchEvent(latin)
+  assert.equal(latin.defaultPrevented, false)
+  dispose()
+})
