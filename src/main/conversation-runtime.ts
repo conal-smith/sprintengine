@@ -108,6 +108,7 @@ import type {
 } from '../shared/conversation-index'
 import { presentToolItem } from '../shared/conversation/presentation'
 import { plainLineBreaks } from '../shared/conversation/lineBreaks'
+import { expandQuotesForAgent } from '../shared/chat-quotes'
 import { applyPromptCacheEvent } from '../shared/prompt-cache'
 import { ConversationApprovalRuleStore } from './conversation-approval-rules'
 import { ConversationAttachmentStore } from './conversation-attachment-store'
@@ -1102,11 +1103,17 @@ export class ConversationRuntime {
       session.invokedSkills = new Set([...(session.invokedSkills ?? []), ...skills.ids])
     // A skill run by name opens the message: the CLI reads a leading `/name`
     // as the command, and the person's words after it as what it is for.
+    //
+    // A passage quoted from an earlier reply rides in the message as a token
+    // (shared/chat-quotes.ts); the agent reads it expanded — `[quote N]` where
+    // it stood and the passages set out after the words — while the transcript
+    // keeps the token, so the message is drawn with its chips again.
+    const agentMessage = expandQuotesForAgent(message)
     const providerMessage = [
       session.stateful && !opensWithCommand ? skills.invocation : undefined,
       session.stateful && !opensWithCommand ? skills.context : undefined,
       opensWithCommand ? undefined : session.revertedNote,
-      message,
+      agentMessage,
       mentions.context,
       filesContext,
     ]
@@ -1187,7 +1194,7 @@ export class ConversationRuntime {
               ...(session.history ?? []),
               {
                 role: 'user',
-                content: [message, mentions.context, filesContext, imagesContext].filter(Boolean).join('\n\n'),
+                content: [agentMessage, mentions.context, filesContext, imagesContext].filter(Boolean).join('\n\n'),
               },
             ]
         // From here a steer can join this turn: the provider is being handed it.
@@ -1254,7 +1261,7 @@ export class ConversationRuntime {
           if (!currentSession.stateful && emitted.completed && !emitted.failed) {
             // Dropped while the send ran (the chat was settled): the next send
             // reads it back from the transcript, this turn included.
-            currentSession.history?.push({ role: 'user', content: message })
+            currentSession.history?.push({ role: 'user', content: agentMessage })
             if (emitted.text) currentSession.history?.push({ role: 'assistant', content: emitted.text })
           }
         }
@@ -4625,10 +4632,14 @@ function completedHistory(events: ConversationEvent[]): ConversationMessage[] {
   for (const event of events) {
     if (event.type === 'user_message') {
       // The files a message attached ride beside its words in the transcript;
-      // the history hands them back to the model as it first read them.
+      // the history hands them back to the model as it first read them, and
+      // its quotes expanded as they were when it was sent.
       user =
         typeof event.payload?.text === 'string'
-          ? [event.payload.text, attachedFilesContext(parseConversationAttachedFiles(event.payload.files) ?? [])]
+          ? [
+              expandQuotesForAgent(event.payload.text),
+              attachedFilesContext(parseConversationAttachedFiles(event.payload.files) ?? []),
+            ]
               .filter(Boolean)
               .join('\n\n')
           : undefined
