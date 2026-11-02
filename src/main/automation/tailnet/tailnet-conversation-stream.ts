@@ -1089,23 +1089,35 @@ function pathRewriter(home: string, workspaceRoot: string | null): PathRewriter 
  * conversation lane"). Only a frame that holds one is copied.
  */
 export function quotesForWire<T>(value: T): T {
+  // Copy-on-write: a frame is walked without allocating, and only the arrays
+  // and objects on the way to a `user_message` whose text holds a token are
+  // copied. Every other frame — a streamed delta, a snapshot of megabytes —
+  // comes back as the same object.
   const walk = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) {
-      const mapped = entry.map(walk)
-      return mapped.some((child, index) => child !== entry[index]) ? mapped : entry
-    }
     if (!entry || typeof entry !== 'object') return entry
-    const record = entry as Record<string, unknown>
-    const payload = record.payload as Record<string, unknown> | undefined
-    if (record.type === 'user_message' && typeof payload?.text === 'string' && mayHoldQuotes(payload.text))
-      return { ...record, payload: { ...payload, text: quotesToPlainText(payload.text) } }
-    let changed = false
-    const next: Record<string, unknown> = {}
-    for (const [key, child] of Object.entries(record)) {
-      next[key] = walk(child)
-      if (next[key] !== child) changed = true
+    if (Array.isArray(entry)) {
+      let copy: unknown[] | null = null
+      for (let index = 0; index < entry.length; index++) {
+        const child = entry[index]
+        const next = walk(child)
+        if (next !== child) (copy ??= entry.slice())[index] = next
+      }
+      return copy ?? entry
     }
-    return changed ? next : entry
+    const record = entry as Record<string, unknown>
+    if (record.type === 'user_message') {
+      const payload = record.payload as Record<string, unknown> | undefined
+      if (typeof payload?.text !== 'string' || !mayHoldQuotes(payload.text)) return entry
+      return { ...record, payload: { ...payload, text: quotesToPlainText(payload.text) } }
+    }
+    let copy: Record<string, unknown> | null = null
+    for (const key in record) {
+      const child = record[key]
+      if (!child || typeof child !== 'object') continue
+      const next = walk(child)
+      if (next !== child) (copy ??= { ...record })[key] = next
+    }
+    return copy ?? entry
   }
   return walk(value) as T
 }
