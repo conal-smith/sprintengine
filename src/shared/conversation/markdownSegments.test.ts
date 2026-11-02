@@ -44,6 +44,11 @@ test('freezes after a closed top-level fence and its blank line', () => {
     // closes it, and the next ``` opens a block that is still unclosed.
     ['  ```\n```\nx\n```\n\n', 0],
     [' ~~~\n~~~\n\n', 0],
+    // A line left of a list item's fence ends the item and the fence with it,
+    // and what follows may open another: nothing after it is split.
+    ['- a\n\n  ```\n  x\n\n```\n\nb', 0],
+    ['- a\n\n  ```\n  x\n\ny\n\n  ```\n\nb', 0],
+    ['- a\n\n  ```\n  x\n  ```\n\nb', 1],
     // HTML inside inline code or a code block is text, not an open element.
     ['Use `<div>` here\n```\na\n```\n\n', 1],
     ['Use ``<div>`` here\n```\na\n```\n\n', 1],

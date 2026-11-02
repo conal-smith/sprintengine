@@ -88,7 +88,7 @@ function boundaryBefore(line: string, complete: boolean): 'split' | 'no' | 'unde
   return 'split'
 }
 
-type Fence = { char: string; width: number; indented: boolean }
+type Fence = { char: string; width: number; indent: number }
 
 /** Whether a `\[` block's line, or what follows its opener, ends it — closed, or broken and so never math. */
 const bracketMathEnds = (text: string) => BRACKET_MATH_CLOSER.test(text) || BRACKET_MATH_BROKEN.test(text)
@@ -201,9 +201,15 @@ export function createMarkdownSplitter(): (source: string) => MarkdownSegments {
         if (math === 'dollar' ? DOLLAR_MATH_CLOSER.test(line) : bracketMathEnds(line)) math = null
         blankBefore = false
       } else if (fence) {
+        // A line left of an indented fence may end the list item holding it,
+        // and the fence with it, which is not tracked: stop splitting.
+        if (/\S/u.test(line.slice(0, fence.indent))) {
+          blocked = true
+          return
+        }
         const closer = FENCE_CLOSER.exec(line)
         if (closer && closer[1][0] === fence.char && closer[1].length >= fence.width) {
-          awaitingBlank = !fence.indented
+          awaitingBlank = fence.indent === 0
           fence = null
         }
         blankBefore = false
@@ -211,7 +217,7 @@ export function createMarkdownSplitter(): (source: string) => MarkdownSegments {
         const opener = FENCE_OPENER.exec(line)
         const bracketMath = BRACKET_MATH_OPENER.exec(line)
         if (opener && (opener[2][0] === '~' || !opener[3].includes('`'))) {
-          fence = { char: opener[2][0], width: opener[2].length, indented: opener[1].length > 0 }
+          fence = { char: opener[2][0], width: opener[2].length, indent: opener[1].length }
         } else if (DOLLAR_MATH.test(line)) math = 'dollar'
         else if (bracketMath && !bracketMathEnds(line.slice(bracketMath[0].length))) math = 'bracket'
         else readHtml(withoutCodeSpans(line))
