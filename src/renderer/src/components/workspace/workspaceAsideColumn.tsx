@@ -64,6 +64,11 @@ export function WorkspaceAsideColumn({
   // and end), never one per frame.
   const [isResizing, setIsResizing] = useState(false)
 
+  // The widest the column can be: the whole row it shares with the workspace
+  // card. Read at the moment of a drag or a key step, because the row changes
+  // with the window and the left sidebar.
+  const rowWidth = useCallback(() => asideRef.current?.parentElement?.clientWidth || Number.POSITIVE_INFINITY, [])
+
   // Drag the column's left edge to resize. The column is right-docked, so
   // moving the pointer LEFT widens it. rAF-coalesced: at most one pure DOM
   // width write per frame.
@@ -76,12 +81,15 @@ export function WorkspaceAsideColumn({
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return
       const startX = event.clientX
-      const startWidth = dragWidthRef.current ?? width
+      // The drawn width, not the stored one: a width stored on a wider window
+      // is drawn capped to the row, and a drag starts from what is on screen.
+      const startWidth = dragWidthRef.current ?? asideRef.current?.getBoundingClientRect().width ?? width
+      const maxWidth = rowWidth()
       dragWidthRef.current = startWidth
       setIsResizing(true)
       startColumnResizeDrag(event, {
         onDrag: (clientX) => {
-          const next = clampWorkspaceAsideWidth(startWidth + (startX - clientX))
+          const next = Math.min(clampWorkspaceAsideWidth(startWidth + (startX - clientX)), maxWidth)
           dragWidthRef.current = next
           if (asideRef.current) asideRef.current.style.width = `${next}px`
         },
@@ -93,7 +101,7 @@ export function WorkspaceAsideColumn({
         },
       })
     },
-    [width, onWidthChange],
+    [width, onWidthChange, rowWidth],
   )
 
   const handleResizeKeyDown = useCallback(
@@ -102,7 +110,7 @@ export function WorkspaceAsideColumn({
       // Left edge of a right-docked column: ArrowLeft widens.
       if (event.key === 'ArrowLeft') {
         event.preventDefault()
-        onWidthChange(width + STEP)
+        onWidthChange(Math.min(width + STEP, rowWidth()))
       } else if (event.key === 'ArrowRight') {
         event.preventDefault()
         onWidthChange(Math.max(WORKSPACE_ASIDE_MIN_WIDTH, width - STEP))
@@ -111,7 +119,7 @@ export function WorkspaceAsideColumn({
         onWidthChange(WORKSPACE_ASIDE_DEFAULT_WIDTH)
       }
     },
-    [width, onWidthChange],
+    [width, onWidthChange, rowWidth],
   )
 
   const resizable = !collapsed && !fill
@@ -119,7 +127,9 @@ export function WorkspaceAsideColumn({
     ? { width: 0 }
     : fill
       ? {}
-      : { width: clampWorkspaceAsideWidth(dragWidthRef.current ?? width) }
+      : // Never wider than its row, so a width chosen on a wider window does
+        // not push the column off the edge of a narrower one.
+        { width: clampWorkspaceAsideWidth(dragWidthRef.current ?? width), maxWidth: '100%' }
 
   return (
     <aside

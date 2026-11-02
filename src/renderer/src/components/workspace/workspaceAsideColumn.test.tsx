@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { WorkspaceAsideColumn } from './workspaceAsideColumn'
 import {
   WORKSPACE_ASIDE_DEFAULT_WIDTH,
-  WORKSPACE_ASIDE_MAX_WIDTH,
   WORKSPACE_ASIDE_MIN_WIDTH,
   clampWorkspaceAsideWidth,
 } from './workspaceAsideWidth'
@@ -51,9 +50,9 @@ test('workspaceAsideColumn', async () => {
     assert.match(html, /tabindex="0"/, 'the separator is reachable by keyboard, not pointer-only')
   })
 
-  run('clamps an out-of-range width instead of rendering a broken column', () => {
+  run('floors a narrow width and leaves a wide one to the row', () => {
     assert.equal(clampWorkspaceAsideWidth(10), WORKSPACE_ASIDE_MIN_WIDTH)
-    assert.equal(clampWorkspaceAsideWidth(10_000), WORKSPACE_ASIDE_MAX_WIDTH)
+    assert.equal(clampWorkspaceAsideWidth(10_000), 10_000, 'there is no fixed ceiling')
     assert.equal(clampWorkspaceAsideWidth(Number.NaN), WORKSPACE_ASIDE_DEFAULT_WIDTH)
     assert.equal(clampWorkspaceAsideWidth(321.4), 321, 'a fractional width rounds to whole pixels')
     const html = renderToStaticMarkup(
@@ -61,7 +60,8 @@ test('workspaceAsideColumn', async () => {
         <div />
       </WorkspaceAsideColumn>,
     )
-    assert.match(html, new RegExp(`width:${WORKSPACE_ASIDE_MAX_WIDTH}px`), 'the rendered width is clamped')
+    assert.match(html, /width:10000px/, 'the chosen width is drawn as chosen')
+    assert.match(html, /max-width:100%/, 'and capped by the row it sits in')
   })
 
   console.log('workspace aside mount tests passed')
