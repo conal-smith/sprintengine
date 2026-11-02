@@ -1,4 +1,4 @@
-import type { HighlightColor, Workspace } from '../renderer/src/types/workspace'
+import type { HighlightColor, Workspace, WorkspaceHighlight } from '../renderer/src/types/workspace'
 import type { WorkspaceFieldsPatch } from './workspace-sync'
 
 // A chat's rest and its ordering key, as pure functions of the registry
@@ -85,6 +85,11 @@ function snoozeStillAhead(workspace: Pick<Workspace, 'snoozedUntil'>, now: numbe
   )
 }
 
+/** Whether the person starred the chat: "keep this in front of me". */
+export function isStarred(highlight: WorkspaceHighlight | undefined | null): boolean {
+  return highlight?.starred === true
+}
+
 /**
  * The row menu's star and colour as a patch: `change` says what moved (a
  * member left out keeps what the record has), and a chat left with neither
@@ -102,6 +107,28 @@ export function highlightWorkspacePatch(
 /** The latest of when the chat was created and the person's last keystroke into it. */
 export function workspaceLastWorkedAt(workspace: Pick<Workspace, 'createdAt' | 'lastTerminalActivityAt'>): number {
   return Math.max(workspace.createdAt, workspace.lastTerminalActivityAt ?? 0)
+}
+
+/**
+ * When the chat was last active, by anyone: the latest of the person's last
+ * real work (creation or a keystroke, `workspaceLastWorkedAt`), the person's
+ * last message, and the agent's last turn end. This is the rest rule's clock
+ * (`workspace-settlement.ts`) — "has this chat gone quiet", where an agent that
+ * spoke an hour ago plainly means it has not. Deliberately not an ordering
+ * key: what keeps a chat out of the Settled shelf is a different question from
+ * where it sits in the list.
+ *
+ * The message clock has to be in here even though a message into a terminal
+ * always moves the keystroke clock with it: a conversation-runtime chat has no
+ * pty and no turn-end hook, so its message clock is the ONLY thing that ever
+ * moves. Without it, a chat the person writes in every day is three days idle
+ * by this reading from the moment it is created, and the sweep shelves it out
+ * from under them.
+ */
+export function workspaceLastActiveAt(
+  workspace: Pick<Workspace, 'createdAt' | 'lastTerminalActivityAt' | 'lastUserMessageAt' | 'lastTurnEndedAt'>,
+): number {
+  return Math.max(workspaceLastWorkedAt(workspace), workspace.lastUserMessageAt ?? 0, workspace.lastTurnEndedAt ?? 0)
 }
 
 /**

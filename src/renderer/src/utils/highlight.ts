@@ -118,9 +118,8 @@ export function getHighlightSwatch(color: HighlightColor): HighlightSwatch {
   return swatches[color]
 }
 
-export function isStarred(highlight: WorkspaceHighlight | undefined | null): boolean {
-  return highlight?.starred === true
-}
+// Shared with main, whose rest sweep never settles a starred chat.
+export { isStarred } from '../../../shared/workspace-lifecycle'
 
 function getHighlightColor(highlight: WorkspaceHighlight | undefined | null): HighlightColor | null {
   return highlight?.color ?? null

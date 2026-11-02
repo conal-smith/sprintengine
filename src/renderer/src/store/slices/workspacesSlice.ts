@@ -10,6 +10,7 @@ import {
   wakeWorkspacePatch,
 } from '../../utils/workspaceSettle'
 import { hasSnooze, snoozeWorkspacePatch, wakeSnoozedWorkspacePatch } from '../../utils/workspaceSnooze'
+import { deriveWorkspaceRunGlyph } from '../../utils/workspaceRunGlyph'
 import type { WorkspaceFieldsPatch } from '../../../../shared/workspace-sync'
 import { noteChatOpened } from '../../components/panels/agentChat/unreadDivider'
 import type { BranchPullRequest } from '../../../../shared/git/pull-request'
@@ -1145,6 +1146,7 @@ export function createWorkspacesSlice(
           busy: busyIds.has(ws.id),
           held: heldIds.has(ws.id),
           context: {
+            runState: deriveWorkspaceRunGlyph(ws)?.state ?? null,
             pullRequests: pullRequestsByWorkspaceId?.[ws.id],
             pullRequestsUnread: pullRequestsByWorkspaceId === undefined,
             settleOnMerge: current.appSettings.settleOnPullRequestMerge,
