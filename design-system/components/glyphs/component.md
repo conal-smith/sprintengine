@@ -514,13 +514,12 @@ All at `iconStroke` so the rail reads as one set.
 
 ### Conversation actions (16-grid — `ui/QuoteGlyph.tsx`)
 
-What a person can do with a stretch of a conversation they have selected.
-Stroke 1.4, `currentColor`, drawn at `icon-xs` beside the action's word in the
-selection toolbar.
+What a person can do with a stretch of a conversation they have selected, and
+the mark of what it became. Stroke 1.4, `currentColor`, drawn at `icon-xs`.
 
 | Export | Asset | Drawing |
 |---|---|---|
-| `QuoteGlyph` | `glyphs/quote.svg` | Two opening quotation marks, each a small block with a tail that curls up and forward: "carry these words into what I write next". Deliberately not a speech bubble — a bubble reads as reply or comment, and pressing it sends nothing; the selection lands in the composer as a markdown blockquote for the person to write under |
+| `QuoteGlyph` | `glyphs/quote.svg` | Two opening quotation marks, each a small block with a tail that curls up and forward: "carry these words into what I write next". Beside the word in the selection toolbar's **Quote** button, and inside every [quote chip](../quote-chip/component.md), in the composer and in a sent message, where it says the chip stands for a passage of a reply. Deliberately not a speech bubble — a bubble reads as reply or comment, and pressing it sends nothing: a passage of one reply lands in the composer as a chip with an optional comment, anything else as a markdown blockquote |
 
 ## States
 

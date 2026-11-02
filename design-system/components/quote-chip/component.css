@@ -1,0 +1,147 @@
+/* Quote chip — a passage of an agent's reply, quoted into the person's next
+ * message, and the two surfaces that go with it: the comment editor and the
+ * card a marked passage shows on hover. The shipped primitives are
+ * src/renderer/src/components/panels/agentChat/chatQuotes.tsx (chip, popover,
+ * editor) and quoteHighlights.tsx (marks, badges, card).
+ *
+ * The chip is words in a sentence, not a control set into it: no box, no
+ * ground, the quote's gold as ink. Its number badge is the one filled part,
+ * the same tint and ink as the badge after the passage in the reply, so the
+ * two are read as one thing. */
+
+.ds-quote-chip {
+  display: inline;
+  white-space: nowrap;
+  color: var(--sem-color-quote-ink);
+  font: inherit;
+}
+
+.ds-quote-chip__link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: var(--sem-radius-chip);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ds-quote-chip__link:hover {
+  text-decoration: underline;
+}
+
+.ds-quote-chip__link:focus-visible,
+.ds-quote-chip__edit:focus-visible {
+  outline: var(--sem-focus-ring);
+  outline-offset: var(--sem-focus-ring-offset);
+}
+
+.ds-quote-chip__number,
+.ds-quote-badge {
+  display: inline-block;
+  padding: 0 var(--sem-space-3xs);
+  border-radius: var(--sem-radius-chip);
+  background: var(--sem-color-quote-tint);
+  color: var(--sem-color-quote-ink);
+  font-size: var(--sem-font-size-micro);
+  font-weight: var(--sem-font-weight-medium);
+  line-height: var(--sem-font-line-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-quote-chip__number {
+  margin-right: var(--sem-space-2xs);
+}
+
+/* The label: the comment, or the start of the passage, cut at a measure. */
+.ds-quote-chip__label {
+  display: inline-block;
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* The composer's chips only: the bare pencil, muted, edits the comment. */
+.ds-quote-chip__edit {
+  margin-left: var(--sem-space-3xs);
+  padding: 0;
+  border: 0;
+  border-radius: var(--sem-radius-chip);
+  background: transparent;
+  color: var(--sem-color-text-muted);
+  cursor: pointer;
+}
+
+.ds-quote-chip__edit:hover {
+  background: var(--sem-color-bg-hover);
+  color: var(--sem-color-text-primary);
+}
+
+/* A passage the conversation quotes, marked in the reply. The app paints it
+ * through the CSS Custom Highlight API; this class is the same look for the
+ * catalog. Tint alone, no underline. */
+.ds-quote-mark {
+  background: var(--sem-color-quote-tint);
+}
+
+.ds-quote-mark--sent {
+  background: var(--sem-color-quote-tint-sent);
+}
+
+.ds-quote-badge--sent {
+  background: var(--sem-color-quote-tint-sent);
+  color: var(--sem-color-quote-ink-sent);
+}
+
+/* The editor and the card share the overlay surface. */
+.ds-quote-overlay {
+  border: 1px solid var(--sem-color-border-strong);
+  border-radius: var(--sem-radius-overlay);
+  background: var(--sem-color-bg-surface-raised);
+  box-shadow: var(--sem-shadow-popover);
+}
+
+.ds-quote-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sem-space-2xs);
+  width: 20rem;
+  padding: var(--sem-space-sm);
+}
+
+.ds-quote-editor__field {
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--sem-color-text-primary);
+  font: inherit;
+  font-size: var(--sem-font-size-body);
+  field-sizing: content;
+}
+
+.ds-quote-editor__field::placeholder {
+  color: var(--sem-color-text-disabled);
+}
+
+.ds-quote-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ds-quote-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sem-space-sm);
+  max-width: 22rem;
+  padding: var(--sem-space-sm) var(--sem-space-md);
+  font-size: var(--sem-font-size-body);
+  color: var(--sem-color-text-default);
+}
+
+.ds-quote-card__text--quoted {
+  font-style: italic;
+  color: var(--sem-color-text-muted);
+}

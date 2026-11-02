@@ -1291,6 +1291,84 @@
           }
         }
       },
+      "quote": {
+        "ink": {
+          "$type": "color",
+          "$value": "{ref.color.amber-800}",
+          "$description": "Ink of a quote: the chip's glyph, label and number, and the number badge after a quoted passage. The warning amber's two ends taken as gold, deep on light and luminous on dark, so it clears AA as small text on the app's grounds and on its own tint.",
+          "$extensions": {
+            "com.sprintengine": {
+              "role": "quote",
+              "use": "Text and glyph ink of a quote chip and of a quoted passage's number badge.",
+              "doNotUse": "Warnings (status.warn), find matches (find.*), links, or any text that is not a quote's.",
+              "components": [
+                "quote-chip"
+              ],
+              "modes": {
+                "light": "{ref.color.amber-800}",
+                "dark": "{ref.color.amber-400}"
+              }
+            }
+          }
+        },
+        "ink-sent": {
+          "$type": "color",
+          "$value": "rgba(154, 96, 0, 0.72)",
+          "$description": "quote.ink one step quieter, for the number badge of a quote that has already been sent: it is history, and the draft's quotes are what is being worked on.",
+          "$extensions": {
+            "com.sprintengine": {
+              "role": "quote",
+              "use": "Number badge ink of a passage quoted by a message already sent.",
+              "doNotUse": "A draft quote's badge or chip (quote.ink), or any text a reader has to read at full contrast.",
+              "components": [
+                "quote-chip"
+              ],
+              "modes": {
+                "light": "rgba(154, 96, 0, 0.72)",
+                "dark": "rgba(252, 192, 48, 0.68)"
+              }
+            }
+          }
+        },
+        "tint": {
+          "$type": "color",
+          "$value": "rgba(252, 192, 48, 0.3)",
+          "$description": "The wash behind a passage quoted in the draft, and the ground of its number badge: the luminous amber thinned to a gold tint that reads apart from a find match's opaque highlighter. The tint alone marks the passage — no underline — so the reply's own links and emphasis keep their lines.",
+          "$extensions": {
+            "com.sprintengine": {
+              "role": "quote",
+              "use": "Background of a quoted passage in a reply (a ::highlight pseudo-element) and of its number badge, while the quote is in the draft.",
+              "doNotUse": "Find matches (find.match), selection, row backgrounds, or a fill that is not a quote's.",
+              "components": [
+                "quote-chip"
+              ],
+              "modes": {
+                "light": "rgba(252, 192, 48, 0.3)",
+                "dark": "rgba(252, 192, 48, 0.16)"
+              }
+            }
+          }
+        },
+        "tint-sent": {
+          "$type": "color",
+          "$value": "rgba(252, 192, 48, 0.14)",
+          "$description": "quote.tint at half the strength, for a passage quoted by a message already sent.",
+          "$extensions": {
+            "com.sprintengine": {
+              "role": "quote",
+              "use": "Background of a passage, and its number badge, quoted by a message already sent.",
+              "doNotUse": "A draft quote's passage (quote.tint), or any fill that is not a quote's.",
+              "components": [
+                "quote-chip"
+              ],
+              "modes": {
+                "light": "rgba(252, 192, 48, 0.14)",
+                "dark": "rgba(252, 192, 48, 0.08)"
+              }
+            }
+          }
+        }
+      },
       "agent-trail": {
         "ink": {
           "$type": "color",

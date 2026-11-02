@@ -57,6 +57,15 @@
   color: var(--sem-color-text-primary);
 }
 
+/* quote — a quote's chip: the gold its passage is marked with in the reply. */
+.ds-link-button--quote {
+  color: var(--sem-color-quote-ink);
+}
+
+.ds-link-button--quote:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
 /* name — the name of the thing a list row is about, when the name opens its
  * details. Title ink at rest so it reads as the row's title; the hover
  * underline is what says it can be pressed. */

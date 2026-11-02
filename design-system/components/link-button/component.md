@@ -25,7 +25,7 @@ cancelling the browser, rather than a shape the system had named.
 | Part | Class | Required |
 |---|---|---|
 | Link | `.ds-link-button` | yes — a `<button>` |
-| Ink | `--quiet`, `--name` | no — the default is accent ink |
+| Ink | `--quiet`, `--name`, `--quote` | no — the default is accent ink |
 | Type | `--inherit` | no — the default is `font.size.meta` |
 
 `display: inline`, so the link wraps with the sentence rather than sitting in it
@@ -49,6 +49,11 @@ nothing is painted inside it.
   would turn every title in the list into a second accent. The hover underline
   is what says it can be pressed; the row around it may also open the same
   details on a click, but the name is the keyboard's way in.
+- **`--quote`** — `quote.ink`, underlined on hover. A quote's chip in the
+  composer and in a sent message ([quote chip](../quote-chip/component.md)): it
+  reads as words in the sentence, in the gold its passage is marked with in the
+  reply, so the chip and the marked passage are seen to be one thing. Gold, not
+  the accent, because the chip names a passage rather than an action.
 - **`--row`** — a full-width flex row with its parts baseline-aligned, for a
   LIST of links rather than one set inside a sentence: a column of changed files
   where the name, the folder and the counts have to line up down the list. It is

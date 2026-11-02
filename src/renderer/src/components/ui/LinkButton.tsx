@@ -37,8 +37,12 @@ import { FOCUS_RING_CLASS } from './tokens'
  *   is about, when the name is what opens that thing's details (Settings ›
  *   Extensions): it must read as the row's title at rest, and the accent
  *   would make every title in the list a second accent.
+ * - `quote` — `quote.ink`, the gold a quoted passage is marked in, underlined on
+ *   hover. A quote's chip, in the composer and in a sent message: it reads as
+ *   words in the sentence, in the colour its passage is marked with in the
+ *   reply, so the two are seen to be one thing.
  */
-export type LinkInk = 'accent' | 'quiet' | 'name'
+export type LinkInk = 'accent' | 'quiet' | 'name' | 'quote'
 
 const INK: Record<LinkInk, string> = {
   accent:
@@ -48,6 +52,7 @@ const INK: Record<LinkInk, string> = {
     'text-[color:var(--text-muted)] hover:text-[color:var(--text-strong)] ' +
     'disabled:hover:text-[color:var(--text-muted)]',
   name: 'text-[color:var(--text-strong)]',
+  quote: 'text-[color:var(--sem-color-quote-ink)]',
 }
 
 /**

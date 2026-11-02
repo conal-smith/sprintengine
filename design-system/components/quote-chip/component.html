@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quote chip</title>
+<link rel="stylesheet" href="../../foundations/tokens.css" />
+<link rel="stylesheet" href="component.css" />
+<style>
+  body {
+    margin: 0;
+    font-family: var(--sem-font-family-ui);
+  }
+  .demo-stage {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sem-space-lg);
+    padding: var(--sem-space-3xl);
+    background: var(--sem-color-bg-app);
+    color: var(--sem-color-text-default);
+    font-size: var(--sem-font-size-heading);
+  }
+  .demo-label {
+    margin: 0;
+    font-size: var(--sem-font-size-meta);
+    color: var(--sem-color-text-subtle);
+  }
+  .demo-reply {
+    position: relative;
+    margin: 0;
+    max-width: 36rem;
+    line-height: var(--sem-font-line-relaxed);
+  }
+  .demo-icon {
+    width: 12px;
+    height: 12px;
+    vertical-align: -0.1em;
+  }
+</style>
+</head>
+<body>
+<div class="demo-stage" data-mode="light">
+  <p class="demo-label">Light — a reply with a sent quote (dim) and a draft quote (full), then the draft's chip.</p>
+  <p class="demo-reply">
+    Run the tests first. Then <span class="ds-quote-mark ds-quote-mark--sent">check the lockfile</span><sup class="ds-quote-badge ds-quote-badge--sent">1</sup>
+    before you ship, and <span class="ds-quote-mark">keep the cache warm</span><sup class="ds-quote-badge">2</sup> while it builds.
+  </p>
+  <p class="demo-reply">
+    Why does this matter?
+    <span class="ds-quote-chip"><button type="button" class="ds-quote-chip__link"><span class="ds-quote-chip__number" aria-hidden="true">2</span><svg class="demo-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.5h3V13H3V9.5Zm0 0c0-2.5.8-4.2 3-5.5M9.5 9.5h3V13h-3V9.5Zm0 0c0-2.5.8-4.2 3-5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <span class="ds-quote-chip__label">Is a warm cache still needed?</span></button><button type="button" class="ds-quote-chip__edit" aria-label="Edit comment on quote 2"><svg class="demo-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.25 12.75 3.9 10.1 10.4 3.6a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7l-6.5 6.5-2.65.65Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span>
+  </p>
+  <div class="ds-quote-overlay ds-quote-editor" role="dialog" aria-label="Comment on quote 2">
+    <textarea class="ds-quote-editor__field" rows="1" placeholder="Add an optional comment…"></textarea>
+    <div class="ds-quote-editor__actions"><button type="button" class="ds-quote-chip__edit" aria-label="Save">✓</button></div>
+  </div>
+  <div class="ds-quote-overlay ds-quote-card" role="group" aria-label="Quote 1">
+    <span class="ds-quote-card__text--quoted">check the lockfile</span>
+  </div>
+</div>
+<div class="demo-stage" data-mode="dark">
+  <p class="demo-label">Dark — the same.</p>
+  <p class="demo-reply">
+    Run the tests first. Then <span class="ds-quote-mark ds-quote-mark--sent">check the lockfile</span><sup class="ds-quote-badge ds-quote-badge--sent">1</sup>
+    before you ship, and <span class="ds-quote-mark">keep the cache warm</span><sup class="ds-quote-badge">2</sup> while it builds.
+  </p>
+  <p class="demo-reply">
+    Why does this matter?
+    <span class="ds-quote-chip"><button type="button" class="ds-quote-chip__link"><span class="ds-quote-chip__number" aria-hidden="true">2</span><span class="ds-quote-chip__label">Is a warm cache still needed?</span></button></span>
+  </p>
+  <div class="ds-quote-overlay ds-quote-card" role="group" aria-label="Quote 2">
+    <span>Is a warm cache still needed?</span>
+    <button type="button" class="ds-quote-chip__edit" aria-label="Edit comment">✎</button>
+    <button type="button" class="ds-quote-chip__edit" aria-label="Remove quote">×</button>
+  </div>
+</div>
+</body>
+</html>
