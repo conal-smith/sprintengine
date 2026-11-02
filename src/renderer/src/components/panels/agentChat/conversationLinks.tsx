@@ -17,6 +17,8 @@ import { FOCUS_RING_CLASS } from '../../ui/tokens'
 import { useConversationTransport } from './conversationTransport'
 import { clientSupports, hostPlatform } from '../../../clientCapabilities'
 import { revealLabel } from '../../../utils/revealLabel'
+import { parseQuoteHref } from '../../../../../shared/chat-quotes'
+import { SentQuoteChip } from './chatQuotes'
 
 export type ConversationLinkContext = { workspaceId: string; cwd: string; workspaceRoot: string; agentId?: string }
 const LinkContext = createContext<ConversationLinkContext | null>(null)
@@ -375,6 +377,10 @@ export function conversationText(text: string, source: 'text' | 'inlineCode' = '
 const renderLink = (href: string, label: React.ReactNode) => (
   <ConversationFileLink token={href} source="href" label={label} />
 )
+// A person's message draws each quote it carries as its chip (chatQuotes.tsx);
+// any other link is a link, as in a reply.
+const renderUserLink = (href: string, label: React.ReactNode) =>
+  parseQuoteHref(href) ? <SentQuoteChip href={href} /> : renderLink(href, label)
 
 // An image in a reply. A file on this disk opens where a file link would — the
 // app's own file surface, which shows pictures — so the image and a link to the
@@ -429,7 +435,7 @@ export function ConversationMarkdown({
       density: size === 'compact' ? ('chat-compact' as const) : ('chat' as const),
       tone,
       renderText: conversationText,
-      renderLink,
+      renderLink: userText ? renderUserLink : renderLink,
       renderImage,
       ...(userText ? { userText } : { repairFileLinks: true }),
     }),

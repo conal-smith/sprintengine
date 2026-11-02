@@ -66,6 +66,11 @@ type ClampOptions = {
    * submenus to open leftward of their parent item rather than covering it.
    */
   flipXTo?: number
+  /**
+   * Put the menu's bottom edge on this y when it fits above it, and fall back
+   * to `y` (and the usual flip) only when it does not.
+   */
+  preferAbove?: number
 }
 
 // Keeps a coordinate-positioned menu fully inside the viewport. If the menu
@@ -78,6 +83,7 @@ export function useClampedMenuPosition(
   options?: ClampOptions,
 ) {
   const flipXTo = options?.flipXTo
+  const preferAbove = options?.preferAbove
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: x, top: y })
   useLayoutEffect(() => {
     const el = ref.current
@@ -94,12 +100,13 @@ export function useClampedMenuPosition(
           ? Math.max(margin, flipXTo - rect.width)
           : Math.max(margin, vw - rect.width - margin)
     }
-    if (y + rect.height + margin > vh) {
+    if (typeof preferAbove === 'number' && preferAbove - rect.height >= margin) top = preferAbove - rect.height
+    else if (y + rect.height + margin > vh) {
       const flipped = y - rect.height
       top = flipped >= margin ? flipped : Math.max(margin, vh - rect.height - margin)
     }
     setPos({ left, top })
-  }, [x, y, ref, flipXTo])
+  }, [x, y, ref, flipXTo, preferAbove])
   return pos
 }
 

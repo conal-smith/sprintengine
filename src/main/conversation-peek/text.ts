@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 
 import { INJECTED_FRAGMENT_PATTERNS } from '../../shared/workspace-title'
+import { quotesToInlineText } from '../../shared/chat-quotes'
 
 /**
  * Turn what a person actually typed into the sentence a hover card can quote.
@@ -68,8 +69,11 @@ export const MAX_COLLAPSE_INPUT_CHARS = 128 * 1024
  * placeholders removed and path-shaped tokens shortened to their basenames.
  */
 export function collapsePeekText(input: string): CollapsedPeekText {
-  const overflowChars = Math.max(0, input.length - MAX_COLLAPSE_INPUT_CHARS)
-  const raw = overflowChars > 0 ? input.slice(0, MAX_COLLAPSE_INPUT_CHARS) : input
+  // A quote reads as its passage and comment, as the title route reads it
+  // (`deriveWorkspaceTitle`), and before the cap so a token is never cut.
+  const said = quotesToInlineText(input)
+  const overflowChars = Math.max(0, said.length - MAX_COLLAPSE_INPUT_CHARS)
+  const raw = overflowChars > 0 ? said.slice(0, MAX_COLLAPSE_INPUT_CHARS) : said
   /**
    * Shorten `token` to its basename, or leave `fallback` in place when it is
    * not actually a path. The decision is made on the CLEANED token, so

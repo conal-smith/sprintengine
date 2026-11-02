@@ -40,7 +40,13 @@ import { FOCUS_RING_CLASS } from './tokens'
  */
 export type LinkInk = 'accent' | 'quiet' | 'name'
 
-const INK: Record<LinkInk, string> = {
+// The app's own inks beside the public three. `LinkInk` is mirrored by the
+// module SDK (`sdk-drift-guard.ts` holds the two to the same props), so an ink
+// only the app draws is reached through its own component below rather than
+// as a fourth value a module would see and could not use.
+type AnyInk = LinkInk | 'quote'
+
+const INK: Record<AnyInk, string> = {
   accent:
     'text-[color:var(--accent-primary)] hover:text-[color:var(--accent-primary-hover)] ' +
     'disabled:hover:text-[color:var(--accent-primary)]',
@@ -48,6 +54,7 @@ const INK: Record<LinkInk, string> = {
     'text-[color:var(--text-muted)] hover:text-[color:var(--text-strong)] ' +
     'disabled:hover:text-[color:var(--text-muted)]',
   name: 'text-[color:var(--text-strong)]',
+  quote: 'text-[color:var(--sem-color-quote-ink)]',
 }
 
 /**
@@ -101,36 +108,54 @@ export type LinkButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: 'meta' | 'inherit'
 }
 
-export const LinkButton = React.forwardRef<HTMLButtonElement, LinkButtonProps>(function LinkButton(
-  { className, ink = 'accent', underline, layout = 'inline', size = 'meta', type, ...rest },
-  ref,
-) {
-  return (
-    <button
-      ref={ref}
-      type={type ?? 'button'}
-      {...rest}
-      className={[
-        // No `inline-flex`, no height, no inset, no ground, no press scale. An
-        // inline-flex box does not sit on the surrounding text's baseline, and
-        // a control that shrank 3% mid-sentence would move the words after it.
-        // `radius.chip` exists only so the focus ring has corners to draw round;
-        // nothing is painted inside it.
-        layout === 'row'
-          ? 'flex w-full min-w-0 items-baseline rounded-xs bg-transparent text-left transition-colors'
-          : 'inline rounded-xs bg-transparent text-left transition-colors',
-        size === 'meta' ? 'text-meta' : 'text-[length:inherit] font-[inherit] leading-[inherit]',
-        INK[ink],
-        UNDERLINE[underline ?? (ink === 'quiet' ? 'always' : 'hover')],
-        // The disabled link keeps its ink and drops the underline: a sentence
-        // whose one action has gone `text.disabled` reads as broken copy rather
-        // than as an unavailable action, and disabled ink is certified for
-        // non-text contrast only.
-        'disabled:cursor-not-allowed disabled:no-underline disabled:opacity-45',
-        'disabled:hover:no-underline',
-        FOCUS_RING_CLASS,
-        className ?? '',
-      ].join(' ')}
-    />
-  )
+export const LinkButton = React.forwardRef<HTMLButtonElement, LinkButtonProps>(function LinkButton(props, ref) {
+  return <LinkButtonOf {...props} ref={ref} />
 })
+
+/**
+ * The link button in `quote.ink`, the gold a quoted passage is marked in,
+ * underlined on hover: a quote's chip, in the composer and in a sent message.
+ * It reads as words in the sentence, in the colour its passage is marked with
+ * in the reply, so the two are seen to be one thing.
+ */
+export const QuoteLinkButton = React.forwardRef<HTMLButtonElement, Omit<LinkButtonProps, 'ink'>>(
+  function QuoteLinkButton(props, ref) {
+    return <LinkButtonOf {...props} ink="quote" ref={ref} />
+  },
+)
+
+const LinkButtonOf = React.forwardRef<HTMLButtonElement, Omit<LinkButtonProps, 'ink'> & { ink?: AnyInk }>(
+  function LinkButtonOf(
+    { className, ink = 'accent', underline, layout = 'inline', size = 'meta', type, ...rest },
+    ref,
+  ) {
+    return (
+      <button
+        ref={ref}
+        type={type ?? 'button'}
+        {...rest}
+        className={[
+          // No `inline-flex`, no height, no inset, no ground, no press scale. An
+          // inline-flex box does not sit on the surrounding text's baseline, and
+          // a control that shrank 3% mid-sentence would move the words after it.
+          // `radius.chip` exists only so the focus ring has corners to draw round;
+          // nothing is painted inside it.
+          layout === 'row'
+            ? 'flex w-full min-w-0 items-baseline rounded-xs bg-transparent text-left transition-colors'
+            : 'inline rounded-xs bg-transparent text-left transition-colors',
+          size === 'meta' ? 'text-meta' : 'text-[length:inherit] font-[inherit] leading-[inherit]',
+          INK[ink],
+          UNDERLINE[underline ?? (ink === 'quiet' ? 'always' : 'hover')],
+          // The disabled link keeps its ink and drops the underline: a sentence
+          // whose one action has gone `text.disabled` reads as broken copy rather
+          // than as an unavailable action, and disabled ink is certified for
+          // non-text contrast only.
+          'disabled:cursor-not-allowed disabled:no-underline disabled:opacity-45',
+          'disabled:hover:no-underline',
+          FOCUS_RING_CLASS,
+          className ?? '',
+        ].join(' ')}
+      />
+    )
+  },
+)

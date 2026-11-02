@@ -12,6 +12,7 @@ import {
   type PromptStashInput,
   type StashedPrompt,
 } from './promptStash'
+import { quotesToInlineText } from '../../../../../shared/chat-quotes'
 
 // ⌘S in a composer (`chat.stash`, rebindable): with something typed, the
 // draft is set aside and the box cleared, and a toast offers Undo; on an empty
@@ -36,7 +37,7 @@ function usePromptStashList(stash: PromptStash): readonly StashedPrompt[] {
 
 /** A row's two lines: the first words, then what else the entry carries and when it was stashed. */
 function describeStashedPrompt(entry: StashedPrompt, now: number): { title: string; detail: string } {
-  const firstLine = entry.text
+  const firstLine = quotesToInlineText(entry.text)
     .split('\n')
     .map((line) => line.trim())
     .find(Boolean)

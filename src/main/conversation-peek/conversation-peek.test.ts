@@ -12,6 +12,7 @@ import {
 } from './service'
 import { capPeekText, collapsePeekText, MAX_COLLAPSE_INPUT_CHARS } from './text'
 import { test } from 'vitest'
+import { quoteToken } from '../../shared/chat-quotes'
 
 function serviceFor(states: Record<string, ConversationPeekSessionState>) {
   const reads: string[] = []
@@ -256,4 +257,19 @@ test('the IPC reads by session id, answers a malformed payload as unknown, and o
   assert.equal(((await read({}, 'a'.repeat(600))) as ConversationPeek).source, 'unknown')
   assert.equal(((await read({}, 'a\u0000b')) as ConversationPeek).source, 'unknown')
   assert.deepEqual(calls, ['read:session-1'], 'no malformed payload reached the service')
+})
+
+test('a quote in a message reads as its passage and comment, never as its address', () => {
+  const token = quoteToken({
+    turnId: 't1',
+    n: 1,
+    quote: 'Keep the cache warm.',
+    exact: 'Keep the cache warm.',
+    prefix: '',
+    suffix: '',
+    comment: 'Still true?',
+  })
+  const text = collapsePeekText(`Is this right? ${token} Thanks.`).text
+  assert.equal(text.includes('sprintengine-quote'), false)
+  assert.match(text, /Is this right\? “Keep the cache warm\.” \(Still true\?\) Thanks\./)
 })

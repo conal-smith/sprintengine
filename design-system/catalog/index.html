@@ -126,6 +126,12 @@
   --sem-color-scaffold-soft: rgba(137, 87, 229, 0.16);
   --sem-color-find-match: #ffe9a8;
   --sem-color-find-match-current: #ffc93c;
+  --sem-color-quote-ink: var(--ref-color-amber-800);
+  --sem-color-quote-badge: var(--ref-color-amber-400);
+  --sem-color-quote-badge-sent: rgba(252, 192, 48, 0.55);
+  --sem-color-quote-on-badge: #2e1f00;
+  --sem-color-quote-tint: rgba(252, 192, 48, 0.3);
+  --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.14);
   --sem-color-agent-trail-ink: var(--ref-color-violet-600);
   --sem-color-agent-trail-soft: rgba(137, 87, 229, 0.12);
   --sem-color-agent-trail-soft-strong: rgba(137, 87, 229, 0.22);
@@ -260,6 +266,9 @@
   --sem-color-chart-other: var(--ref-color-paper-400);
   --sem-color-find-match: #4a3f18;
   --sem-color-find-match-current: #8a6d10;
+  --sem-color-quote-ink: var(--ref-color-amber-400);
+  --sem-color-quote-tint: rgba(252, 192, 48, 0.16);
+  --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.08);
   --sem-color-agent-trail-ink: var(--ref-color-violet-300);
   --sem-shadow-drawer: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
   --sem-shadow-popover: 0 4px 12px -6px rgba(0, 0, 0, 0.55);
@@ -330,6 +339,9 @@
   --sem-color-chart-other: var(--ref-color-paper-400);
   --sem-color-find-match: #4a3f18;
   --sem-color-find-match-current: #8a6d10;
+  --sem-color-quote-ink: var(--ref-color-amber-400);
+  --sem-color-quote-tint: rgba(252, 192, 48, 0.16);
+  --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.08);
   --sem-color-agent-trail-ink: var(--ref-color-violet-300);
   --sem-shadow-drawer: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
   --sem-shadow-popover: 0 4px 12px -6px rgba(0, 0, 0, 0.55);
@@ -397,6 +409,9 @@
   --sem-color-chart-other: var(--ref-color-paper-500);
   --sem-color-find-match: #ffe9a8;
   --sem-color-find-match-current: #ffc93c;
+  --sem-color-quote-ink: var(--ref-color-amber-800);
+  --sem-color-quote-tint: rgba(252, 192, 48, 0.3);
+  --sem-color-quote-tint-sent: rgba(252, 192, 48, 0.14);
   --sem-color-agent-trail-ink: var(--ref-color-violet-600);
   --sem-shadow-drawer: 0 1px 3px rgba(16, 20, 24, 0.06), 0 8px 24px -6px rgba(16, 20, 24, 0.10);
   --sem-shadow-popover: 0 1px 2px rgba(16, 20, 24, 0.08), 0 4px 12px -4px rgba(16, 20, 24, 0.12);
@@ -728,6 +743,8 @@ code {
 #ds-view-component-popover:checked ~ .ds-catalog #component-popover { display: block; }
 #ds-view-component-provider-row:checked ~ .ds-catalog #components { display: block; }
 #ds-view-component-provider-row:checked ~ .ds-catalog #component-provider-row { display: block; }
+#ds-view-component-quote-chip:checked ~ .ds-catalog #components { display: block; }
+#ds-view-component-quote-chip:checked ~ .ds-catalog #component-quote-chip { display: block; }
 #ds-view-component-row-button:checked ~ .ds-catalog #components { display: block; }
 #ds-view-component-row-button:checked ~ .ds-catalog #component-row-button { display: block; }
 #ds-view-component-scope-pill:checked ~ .ds-catalog #components { display: block; }
@@ -860,6 +877,8 @@ code {
 #ds-view-component-popover:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-popover"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
 #ds-view-component-provider-row:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-provider-row"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
 #ds-view-component-provider-row:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-provider-row"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
+#ds-view-component-quote-chip:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-quote-chip"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
+#ds-view-component-quote-chip:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-quote-chip"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
 #ds-view-component-row-button:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-row-button"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
 #ds-view-component-row-button:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-row-button"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
 #ds-view-component-scope-pill:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-scope-pill"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
@@ -5363,6 +5382,15 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
   color: var(--sem-color-text-primary);
 }
 
+/* quote — a quote's chip: the gold its passage is marked with in the reply. */
+.ds-link-button--quote {
+  color: var(--sem-color-quote-ink);
+}
+
+.ds-link-button--quote:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
 /* name — the name of the thing a list row is about, when the name opens its
  * details. Title ink at rest so it reads as the row's title; the hover
  * underline is what says it can be pressed. */
@@ -7321,6 +7349,163 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 .ds-provider-row--in-card > .ds-provider-row__detail {
   padding-right: var(--sem-space-xl);
   padding-left: calc(var(--sem-space-xl) + var(--sem-icon-size-lg) + var(--sem-space-lg));
+}
+
+/* components/quote-chip/component.css */
+/* Quote chip — a passage of an agent's reply, quoted into the person's next
+ * message, and the two surfaces that go with it: the comment editor and the
+ * card a marked passage shows on hover. The shipped primitives are
+ * src/renderer/src/components/panels/agentChat/chatQuotes.tsx (chip, popover,
+ * editor) and quoteHighlights.tsx (marks, badges, card).
+ *
+ * The chip is words in a sentence, not a control set into it: no box, no
+ * ground, the quote's gold as ink. Its number badge is the one filled part,
+ * the same tint and ink as the badge after the passage in the reply, so the
+ * two are read as one thing. */
+
+.ds-quote-chip {
+  display: inline;
+  white-space: nowrap;
+  color: var(--sem-color-quote-ink);
+  font: inherit;
+}
+
+.ds-quote-chip__link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: var(--sem-radius-chip);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ds-quote-chip__link:hover {
+  text-decoration: underline;
+}
+
+.ds-quote-chip__link:focus-visible,
+.ds-quote-chip__edit:focus-visible {
+  outline: var(--sem-focus-ring);
+  outline-offset: var(--sem-focus-ring-offset);
+}
+
+.ds-quote-chip__number,
+.ds-quote-badge {
+  display: inline-block;
+  padding: 0 var(--sem-space-2xs);
+  border-radius: var(--sem-radius-pill);
+  background: var(--sem-color-quote-badge);
+  color: var(--sem-color-quote-on-badge);
+  font-size: var(--sem-font-size-micro);
+  font-weight: var(--sem-font-weight-emphasis);
+  line-height: var(--sem-font-line-tight);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+.ds-quote-chip__number {
+  margin-right: var(--sem-space-2xs);
+}
+
+/* In the reply the pill cannot push the words after the passage along, so it
+ * is raised into the leading over the end of the passage's last line, like a
+ * superscript, rather than set over the next glyphs. */
+.ds-quote-badge {
+  vertical-align: super;
+}
+
+/* The label: the comment, or the start of the passage, cut at a measure. */
+.ds-quote-chip__label {
+  display: inline-block;
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* The composer's chips only: the bare pencil, muted, edits the comment. Both
+ * glyphs sit on the middle of the line, as the words do. */
+.ds-quote-chip__edit {
+  margin-left: var(--sem-space-3xs);
+  padding: 0;
+  border: 0;
+  border-radius: var(--sem-radius-chip);
+  background: transparent;
+  color: var(--sem-color-text-muted);
+  cursor: pointer;
+}
+
+.ds-quote-chip__edit:hover {
+  background: var(--sem-color-bg-hover);
+  color: var(--sem-color-text-primary);
+}
+
+/* A passage the conversation quotes, marked in the reply. The app paints it
+ * through the CSS Custom Highlight API; this class is the same look for the
+ * catalog. Tint alone, no underline. */
+.ds-quote-mark {
+  background: var(--sem-color-quote-tint);
+}
+
+.ds-quote-mark--sent {
+  background: var(--sem-color-quote-tint-sent);
+}
+
+.ds-quote-badge--sent {
+  background: var(--sem-color-quote-badge-sent);
+}
+
+/* The editor and the card share the overlay surface. */
+.ds-quote-overlay {
+  border: 1px solid var(--sem-color-border-strong);
+  border-radius: var(--sem-radius-overlay);
+  background: var(--sem-color-bg-surface-raised);
+  box-shadow: var(--sem-shadow-popover);
+}
+
+.ds-quote-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sem-space-2xs);
+  width: 20rem;
+  padding: var(--sem-space-sm);
+}
+
+.ds-quote-editor__field {
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--sem-color-text-primary);
+  font: inherit;
+  font-size: var(--sem-font-size-body);
+  field-sizing: content;
+}
+
+.ds-quote-editor__field::placeholder {
+  color: var(--sem-color-text-disabled);
+}
+
+.ds-quote-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ds-quote-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sem-space-sm);
+  max-width: 22rem;
+  padding: var(--sem-space-sm) var(--sem-space-md);
+  font-size: var(--sem-font-size-body);
+  color: var(--sem-color-text-default);
+}
+
+.ds-quote-card__text--quoted {
+  font-style: italic;
+  color: var(--sem-color-text-muted);
 }
 
 /* components/row-button/component.css */
@@ -11786,6 +11971,35 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
     color: var(--sem-color-text-muted);
     cursor: pointer;
   }
+.ds-embed-component-quote-chip {
+    margin: 0;
+    font-family: var(--sem-font-family-ui);
+  }
+.ds-embed-component-quote-chip .demo-stage {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sem-space-lg);
+    padding: var(--sem-space-3xl);
+    background: var(--sem-color-bg-app);
+    color: var(--sem-color-text-default);
+    font-size: var(--sem-font-size-heading);
+  }
+.ds-embed-component-quote-chip .demo-label {
+    margin: 0;
+    font-size: var(--sem-font-size-meta);
+    color: var(--sem-color-text-subtle);
+  }
+.ds-embed-component-quote-chip .demo-reply {
+    position: relative;
+    margin: 0;
+    max-width: 36rem;
+    line-height: var(--sem-font-line-relaxed);
+  }
+.ds-embed-component-quote-chip .demo-icon {
+    width: 12px;
+    height: 12px;
+    vertical-align: -0.1em;
+  }
 .ds-embed-component-row-button {
     margin: 0;
     font-family: var(--sem-font-family-ui);
@@ -13476,6 +13690,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-panel-header" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-popover" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-provider-row" />
+<input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-quote-chip" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-row-button" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-scope-pill" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-section" />
@@ -13562,6 +13777,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <label class="catalog-nav-item" for="ds-view-component-panel-header">Panel header</label>
 <label class="catalog-nav-item" for="ds-view-component-popover">Popover</label>
 <label class="catalog-nav-item" for="ds-view-component-provider-row">Provider row</label>
+<label class="catalog-nav-item" for="ds-view-component-quote-chip">Quote chip</label>
 <label class="catalog-nav-item" for="ds-view-component-row-button">Row button</label>
 <label class="catalog-nav-item" for="ds-view-component-scope-pill">Scope pill</label>
 <label class="catalog-nav-item" for="ds-view-component-section">Section</label>
@@ -13704,6 +13920,12 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-scaffold-soft)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.scaffold.soft</code><code class="catalog-token-value">rgba(137, 87, 229, 0.16)</code><span class="catalog-badge">scaffold</span></p><p class="catalog-token-meta">Soft fill of a named scaffold chip: scaffold.ink at 16%. Fill of a name chip for something being made, once it holds a name. <strong>Do not:</strong> Row selection, banners, or any fill that is not a scaffold chip.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-find-match)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-find-match)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.find.match</code><code class="catalog-token-value">#ffe9a8</code><span class="catalog-badge">find</span></p><p class="catalog-token-meta">The wash behind every match of a find in text the app draws itself, such as Find in chat. Highlighter amber, the same pair the terminal's find decorations paint, so a match looks like a match in a chat and a pane alike; amber because no syntax ink, status mark or selection in the app is a background of that hue. Background of a find match painted over rendered text (a ::highlight pseudo-element). <strong>Do not:</strong> Warning or needs-input (that is status.warn), selection, row backgrounds, or any fill that is not a find match.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-find-match-current)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-find-match-current)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.find.match-current</code><code class="catalog-token-value">#ffc93c</code><span class="catalog-badge">find</span></p><p class="catalog-token-meta">The wash behind the match a find is on: find.match one step stronger, so the current match stands out from the rest without a second hue. Background of the one current match of a find, painted over rendered text. <strong>Do not:</strong> Anything but the current find match; never a selection or focus indicator.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-ink)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-ink)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.ink</code><code class="catalog-token-value">{ref.color.amber-800}</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">Ink of a quote chip: its glyph and label. The warning amber's two ends taken as gold, deep on light and luminous on dark, so it clears AA as small text on the app's grounds. Text and glyph ink of a quote chip, in the composer and in a sent message. <strong>Do not:</strong> Warnings (status.warn), find matches (find.*), links, or any text that is not a quote's.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-quote-badge)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.badge</code><code class="catalog-token-value">{ref.color.amber-400}</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The fill of a quote's number pill — on its chip and after its passage in the reply: the luminous amber, in both modes, so the number reads as one gold mark wherever it appears. Background of a quote's number pill while the quote is in the draft, and on every chip. <strong>Do not:</strong> Warnings (status.warn), counts of anything that is not a quote, or any fill that is not a quote's number.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-quote-badge-sent)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.badge-sent</code><code class="catalog-token-value">rgba(252, 192, 48, 0.55)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">quote.badge thinned, for the number after a passage a sent message quoted: history rather than work in hand. Background of the number pill after a passage quoted by a message already sent. <strong>Do not:</strong> A draft quote's pill or a chip's (quote.badge).</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-quote-on-badge)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.on-badge</code><code class="catalog-token-value">#2e1f00</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The number on a quote's pill: a near-black brown that clears AA on quote.badge in both modes. Text of a quote's number pill. <strong>Do not:</strong> Text on any other ground.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-tint)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-tint)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.tint</code><code class="catalog-token-value">rgba(252, 192, 48, 0.3)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">The wash behind a passage quoted in the draft: the luminous amber thinned to a gold tint that reads apart from a find match's opaque highlighter. The tint alone marks the passage — no underline — so the reply's own links and emphasis keep their lines. Background of a quoted passage in a reply (a ::highlight pseudo-element) while the quote is in the draft. <strong>Do not:</strong> Find matches (find.match), selection, row backgrounds, or a fill that is not a quote's.</p></div></div>
+<div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-quote-tint-sent)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-quote-tint-sent)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.quote.tint-sent</code><code class="catalog-token-value">rgba(252, 192, 48, 0.14)</code><span class="catalog-badge">quote</span></p><p class="catalog-token-meta">quote.tint at half the strength, for a passage quoted by a message already sent. Background of a passage quoted by a message already sent. <strong>Do not:</strong> A draft quote's passage (quote.tint), or any fill that is not a quote's.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" data-mode="light" style="background: var(--sem-color-agent-trail-ink)" title="light"></span><span class="catalog-chip" data-mode="dark" style="background: var(--sem-color-agent-trail-ink)" title="dark"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.agent-trail.ink</code><code class="catalog-token-value">{ref.color.violet-600}</code><span class="catalog-badge">agent-trail</span></p><p class="catalog-token-meta">Ink of the agent trail in the Files tree: the verb, the count and the agent's mark on a row an agent is at work on (file-tree component.md, Agent trail). Deep violet on light, light violet on dark, so it clears AA as 11px text on its own wash. The trailing group of a file-tree row an agent is reading or editing; the outline and pill of a tab whose page, board or file an agent is using, and the edge round that surface (AgentPresence.tsx). <strong>Do not:</strong> Status, selection, the accent, a file's name (that is its git tint), or a file-type glyph (mark.violet).</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-agent-trail-soft)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.agent-trail.soft</code><code class="catalog-token-value">rgba(137, 87, 229, 0.12)</code><span class="catalog-badge">agent-trail</span></p><p class="catalog-token-meta">Wash of a file-tree row an agent is reading, and of a closed folder leading to one: violet at 12%. The row wash of the agent trail's reading state, and the wash of a tab an agent is using. <strong>Do not:</strong> Selection, banners, or any fill that is not the agent trail.</p></div></div>
 <div class="catalog-token-row"><span class="catalog-chip-pair"><span class="catalog-chip" style="background: var(--sem-color-agent-trail-soft-strong)"></span></span><div class="catalog-token-text"><p class="catalog-token-name"><code>sem.color.agent-trail.soft-strong</code><code class="catalog-token-value">rgba(137, 87, 229, 0.22)</code><span class="catalog-badge">agent-trail</span></p><p class="catalog-token-meta">Wash of a file-tree row an agent is editing, and the fill of the trail's verb: violet at 22%. The row wash of the agent trail's editing state, and the pill behind its verb or a tab's Agent pill. <strong>Do not:</strong> Selection, banners, or any fill that is not the agent trail.</p></div></div>
@@ -28981,8 +29203,8 @@ for (const sentinel of root.querySelectorAll('[data-sentinel]')) {
 <h5>Settings rail (24-grid, one per category)</h5>
 <p><code>GeneralSettingsIcon</code> (sliders), <code>ProfileSettingsIcon</code> (person), <code>AppearanceSettingsIcon</code> (half-filled disc), <code>ShortcutsSettingsIcon</code> (keyboard), <code>AgentsSettingsIcon</code> (robot), <code>ProvidersSettingsIcon</code> (plug), <code>GithubSettingsIcon</code> (branch), <code>TrackersSettingsIcon</code> (tagged file), <code>KnowledgeGraphSettingsIcon</code> (node triangle), <code>DesignSystemSettingsIcon</code> (disc, square and triangle), <code>ModulesSettingsIcon</code> (2 × 2 grid), <code>MachinesSettingsIcon</code> (a screen with a prompt; Windows only), <code>MobileSettingsIcon</code> (phone), <code>RemoteSettingsIcon</code> (two linked machines). All at <code>iconStroke</code> so the rail reads as one set.</p>
 <h5>Conversation actions (16-grid — <code>ui/QuoteGlyph.tsx</code>)</h5>
-<p>What a person can do with a stretch of a conversation they have selected. Stroke 1.4, <code>currentColor</code>, drawn at <code>icon-xs</code> beside the action's word in the selection toolbar.</p>
-<p>| Export | Asset | Drawing | |---|---|---| | <code>QuoteGlyph</code> | <code>glyphs/quote.svg</code> | Two opening quotation marks, each a small block with a tail that curls up and forward: &quot;carry these words into what I write next&quot;. Deliberately not a speech bubble — a bubble reads as reply or comment, and pressing it sends nothing; the selection lands in the composer as a markdown blockquote for the person to write under |</p>
+<p>What a person can do with a stretch of a conversation they have selected, and the mark of what it became. Stroke 1.4, <code>currentColor</code>, drawn at <code>icon-xs</code>.</p>
+<p>| Export | Asset | Drawing | |---|---|---| | <code>QuoteGlyph</code> | <code>glyphs/quote.svg</code> | Two opening quotation marks, each a small block with a tail that curls up and forward: &quot;carry these words into what I write next&quot;. Beside the word in the selection toolbar's <strong>Quote</strong> button, and inside every [quote chip](../quote-chip/component.md), in the composer and in a sent message, where it says the chip stands for a passage of a reply. Deliberately not a speech bubble — a bubble reads as reply or comment, and pressing it sends nothing: a passage of one reply lands in the composer as a chip with an optional comment, anything else as a markdown blockquote |</p>
 <h4>States</h4>
 <p>| State | Treatment | |---|---| | Rest | Inherits the surrounding ink — typically <code>--sem-color-text-muted</code> in a row or toolbar | | Hover / active | The *owning control* shifts its ink and background; the glyph itself defines no hover | | Live | <code>LifecycleGlyph</code> <code>in_progress</code> with <code>live</code> rotates (<code>.ds-glyph--spin</code>). The only animated glyph state, honoring <code>prefers-reduced-motion</code> | | Disabled | Ink drops to <code>--sem-color-text-disabled</code> via the owning control | | Meaning-bearing | <code>role=&quot;img&quot;</code> + <code>aria-label</code> (see Accessibility) | | Decorative | <code>aria-hidden=&quot;true&quot;</code> |</p>
 <h4>Usage</h4>
@@ -32062,13 +32284,13 @@ document.querySelectorAll('[data-demo-search]').forEach((input) =&gt; {
 <p><strong>Why it is not an <code>&lt;a&gt;</code>.</strong> None of these navigates. They call something. A link that is not a link is a lie to the keyboard and to assistive technology, and the address bar it implies never appears.</p>
 <p><strong>Why it is not a ghost [button](../button/component.md).</strong> The ghost is the quietest sized member and still brings a <code>size.control.xs</code> height, an <code>space.sm</code> inset, <code>font.weight.medium</code> and a hover fill. Put that inside a 20px metadata line and the line grows, the words either side stop sitting level with it, and the &quot;link&quot; reads as a control someone forgot to finish. In the consuming product every one of these had stayed a raw <code>&lt;button&gt;</code> with <code>border: 0; background: transparent; padding: 0</code> written out by hand — four declarations cancelling the browser, rather than a shape the system had named.</p>
 <h4>Anatomy</h4>
-<p>| Part | Class | Required | |---|---|---| | Link | <code>.ds-link-button</code> | yes — a <code>&lt;button&gt;</code> | | Ink | <code>--quiet</code>, <code>--name</code> | no — the default is accent ink | | Type | <code>--inherit</code> | no — the default is <code>font.size.meta</code> |</p>
+<p>| Part | Class                          | Required                             | | ---- | ------------------------------ | ------------------------------------ | | Link | <code>.ds-link-button</code>              | yes — a <code>&lt;button&gt;</code>                   | | Ink  | <code>--quiet</code>, <code>--name</code>, <code>--quote</code> | no — the default is accent ink       | | Type | <code>--inherit</code>                    | no — the default is <code>font.size.meta</code> |</p>
 <p><code>display: inline</code>, so the link wraps with the sentence rather than sitting in it as a box. The radius exists only so the focus ring has corners to draw round; nothing is painted inside it.</p>
 <h4>Variants</h4>
-<ul><li><strong>Default (accent)</strong> — accent ink, deepening to <code>accent.hover</code>, underlined on hover. Accent as <strong>ink</strong> is inside the budget; what the budget forbids is the accent as a fill, which this never takes.</li><li><strong><code>--quiet</code></strong> — <code>text.muted</code> lifting to <code>text.primary</code>, with a <strong>permanent</strong> underline in <code>border.strong</code> at a 2px offset. The disclosure case: &quot;More&quot;, &quot;Show details&quot;. The underline is standing rather than a hover reveal because a quiet link with no colour and no box is indistinguishable from the sentence around it until the pointer happens to cross it.</li><li><strong><code>--name</code></strong> — <code>text.primary</code>, underlined on hover. The name of the thing a list row is about, when the name is what opens that thing's details: the extensions list in Settings, where a row's name opens its details popover. At rest it has to read as the row's title, not as an action — and the accent would turn every title in the list into a second accent. The hover underline is what says it can be pressed; the row around it may also open the same details on a click, but the name is the keyboard's way in.</li><li><strong><code>--row</code></strong> — a full-width flex row with its parts baseline-aligned, for a LIST of links rather than one set inside a sentence: a column of changed files where the name, the folder and the counts have to line up down the list. It is a variant rather than a caller's own <code>display</code>, because <code>display</code> is the one property the base rule spends on being inline — a competing declaration at equal specificity is resolved by stylesheet order, and a row that quietly fell back to <code>inline</code> would lose its columns entirely. Everything else about the link is unchanged: still no box, no height and no ground.</li></ul>
+<ul><li><strong>Default (accent)</strong> — accent ink, deepening to <code>accent.hover</code>, underlined on hover. Accent as <strong>ink</strong> is inside the budget; what the budget forbids is the accent as a fill, which this never takes.</li><li><strong><code>--quiet</code></strong> — <code>text.muted</code> lifting to <code>text.primary</code>, with a <strong>permanent</strong> underline in <code>border.strong</code> at a 2px offset. The disclosure case: &quot;More&quot;, &quot;Show details&quot;. The underline is standing rather than a hover reveal because a quiet link with no colour and no box is indistinguishable from the sentence around it until the pointer happens to cross it.</li><li><strong><code>--name</code></strong> — <code>text.primary</code>, underlined on hover. The name of the thing a list row is about, when the name is what opens that thing's details: the extensions list in Settings, where a row's name opens its details popover. At rest it has to read as the row's title, not as an action — and the accent would turn every title in the list into a second accent. The hover underline is what says it can be pressed; the row around it may also open the same details on a click, but the name is the keyboard's way in.</li><li><strong><code>--quote</code></strong> — <code>quote.ink</code>, underlined on hover, shipped as its own <code>QuoteLinkButton</code> rather than as an <code>ink</code> value, since <code>ink</code> is mirrored by the module SDK and this one is the app's alone. A quote's chip in the composer and in a sent message ([quote chip](../quote-chip/component.md)): it reads as words in the sentence, in the gold its passage is marked with in the reply, so the chip and the marked passage are seen to be one thing. Gold, not the accent, because the chip names a passage rather than an action.</li><li><strong><code>--row</code></strong> — a full-width flex row with its parts baseline-aligned, for a LIST of links rather than one set inside a sentence: a column of changed files where the name, the folder and the counts have to line up down the list. It is a variant rather than a caller's own <code>display</code>, because <code>display</code> is the one property the base rule spends on being inline — a competing declaration at equal specificity is resolved by stylesheet order, and a row that quietly fell back to <code>inline</code> would lose its columns entirely. Everything else about the link is unchanged: still no box, no height and no ground.</li></ul>
 <ul><li><strong><code>--inherit</code></strong> — takes the surrounding text's size and weight instead of <code>font.size.meta</code>. For the link set inside prose the caller has already sized: a path inside rendered markdown, a name inside a heading. A size of our own there would make one word of a sentence a different size from the rest of it, which is worse than any consistency it buys.</li></ul>
 <h4>States</h4>
-<p>| State | Treatment | |---|---| | Rest | Per ink above | | Hover | Ink one step; accent and name add an underline, quiet already has one | | Focus-visible | The shared ring, at the standard offset | | Disabled | 45% opacity, <code>not-allowed</code>, <strong>underline dropped</strong>, ink kept | | Pressed | <strong>Nothing.</strong> A control that shrank mid-sentence would move the words after it |</p>
+<p>| State         | Treatment                                                                     | | ------------- | ----------------------------------------------------------------------------- | | Rest          | Per ink above                                                                 | | Hover         | Ink one step; accent and name add an underline, quiet already has one         | | Focus-visible | The shared ring, at the standard offset                                       | | Disabled      | 45% opacity, <code>not-allowed</code>, <strong>underline dropped</strong>, ink kept                   | | Pressed       | <strong>Nothing.</strong> A control that shrank mid-sentence would move the words after it |</p>
 <p><strong>Disabled keeps its ink.</strong> A sentence whose one action has fallen to <code>text.disabled</code> reads as broken copy rather than as an unavailable action, and the disabled step is certified for 3:1 non-text contrast only — it may not carry words.</p>
 <h4>Usage</h4>
 <ul><li><strong>One per sentence.</strong> Two link buttons in one line of copy is a line that wanted a control row.</li><li><strong>The label is a verb or a noun the sentence needs</strong>, never &quot;click here&quot; or &quot;learn more&quot; as a stand-alone. <code>principles.md</code> rejects empty-state copy that explains an obvious interaction; a link is copy.</li><li><strong>Not for a primary action.</strong> If the action is what the view is for, it is a button with a box. A link is for an action the sentence mentions in passing.</li><li><strong>Not for navigation.</strong> A destination the shell can route to is a door and gets a real navigation affordance.</li></ul>
@@ -32135,6 +32357,15 @@ document.querySelectorAll('[data-demo-search]').forEach((input) =&gt; {
 
 .ds-link-button--quiet:hover:not(:disabled) {
   color: var(--sem-color-text-primary);
+}
+
+/* quote — a quote's chip: the gold its passage is marked with in the reply. */
+.ds-link-button--quote {
+  color: var(--sem-color-quote-ink);
+}
+
+.ds-link-button--quote:hover:not(:disabled) {
+  text-decoration: underline;
 }
 
 /* name — the name of the thing a list row is about, when the name opens its
@@ -38776,6 +39007,300 @@ window.addEventListener('resize', repositionAll)
         &lt;button type=&quot;button&quot; class=&quot;demo-ghost&quot;&gt;Get&lt;/button&gt;
       &lt;/span&gt;
     &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre></details>
+</div>
+<div id="component-quote-chip" class="catalog-view catalog-component">
+<h3>Quote chip</h3>
+<div class="catalog-component-grid">
+<div class="catalog-stage ds-embed-component-quote-chip">
+<div class="demo-stage" data-mode="light">
+  <p class="demo-label">Light — a reply with a sent quote (dim) and a draft quote (full), then the draft's chip.</p>
+  <p class="demo-reply">
+    Run the tests first. Then <span class="ds-quote-mark ds-quote-mark--sent">check the lockfile</span><sup class="ds-quote-badge ds-quote-badge--sent">1</sup>
+    before you ship, and <span class="ds-quote-mark">keep the cache warm</span><sup class="ds-quote-badge">2</sup> while it builds.
+  </p>
+  <p class="demo-reply">
+    Why does this matter?
+    <span class="ds-quote-chip"><button type="button" class="ds-quote-chip__link"><span class="ds-quote-chip__number" aria-hidden="true">2</span><svg class="demo-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.5h3V13H3V9.5Zm0 0c0-2.5.8-4.2 3-5.5M9.5 9.5h3V13h-3V9.5Zm0 0c0-2.5.8-4.2 3-5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <span class="ds-quote-chip__label">Is a warm cache still needed?</span></button><button type="button" class="ds-quote-chip__edit" aria-label="Edit comment on quote 2"><svg class="demo-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.25 12.75 3.9 10.1 10.4 3.6a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7l-6.5 6.5-2.65.65Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span>
+  </p>
+  <div class="ds-quote-overlay ds-quote-editor" role="dialog" aria-label="Comment on quote 2">
+    <textarea class="ds-quote-editor__field" rows="1" placeholder="Add an optional comment…"></textarea>
+    <div class="ds-quote-editor__actions"><button type="button" class="ds-quote-chip__edit" aria-label="Save">✓</button></div>
+  </div>
+  <div class="ds-quote-overlay ds-quote-card" role="group" aria-label="Quote 1">
+    <span class="ds-quote-card__text--quoted">check the lockfile</span>
+  </div>
+</div>
+<div class="demo-stage" data-mode="dark">
+  <p class="demo-label">Dark — the same.</p>
+  <p class="demo-reply">
+    Run the tests first. Then <span class="ds-quote-mark ds-quote-mark--sent">check the lockfile</span><sup class="ds-quote-badge ds-quote-badge--sent">1</sup>
+    before you ship, and <span class="ds-quote-mark">keep the cache warm</span><sup class="ds-quote-badge">2</sup> while it builds.
+  </p>
+  <p class="demo-reply">
+    Why does this matter?
+    <span class="ds-quote-chip"><button type="button" class="ds-quote-chip__link"><span class="ds-quote-chip__number" aria-hidden="true">2</span><span class="ds-quote-chip__label">Is a warm cache still needed?</span></button></span>
+  </p>
+  <div class="ds-quote-overlay ds-quote-card" role="group" aria-label="Quote 2">
+    <span>Is a warm cache still needed?</span>
+    <button type="button" class="ds-quote-chip__edit" aria-label="Edit comment">✎</button>
+    <button type="button" class="ds-quote-chip__edit" aria-label="Remove quote">×</button>
+  </div>
+</div>
+</div>
+<div class="catalog-doc">
+<p>A passage of an agent's reply, quoted into the person's next message. Select words in one reply, press <strong>Quote</strong> (the selection toolbar, or the quote shortcut), and the passage goes into the composer as a chip with an optional comment. The chip, the comment editor that opens with it, and the card a marked passage shows in the reply are one family, documented together here. The message carries the quote as a token inside its text (<code>src/shared/chat-quotes.ts</code>); these pieces are how that token is drawn.</p>
+<h4>Anatomy</h4>
+<p>| Part | Class | Required | |---|---|---| | Chip | <code>.ds-quote-chip</code> | yes — inline, <code>quote.ink</code>, no box and no ground | | Link | <code>.ds-quote-chip__link</code> | yes — the [link button](../link-button/component.md) in its <code>--quote</code> ink (<code>QuoteLinkButton</code>); opens the quote's popover | | Number | <code>.ds-quote-chip__number</code> | yes — the quote's number in the conversation: a small filled pill, <code>quote.on-badge</code> on <code>quote.badge</code> | | Glyph | <code>QuoteGlyph</code> | yes — the quote mark, <code>icon-xs</code>, centred on the line as the words are | | Label | <code>.ds-quote-chip__label</code> | yes — the comment, or with none the start of the passage; at most 40 characters, cut at the last whole word with a single &quot;…&quot; straight after it (no space, no stray punctuation) | | Pencil | <code>.ds-quote-chip__edit</code> | composer only — <code>EditChangelistGlyph</code>, the bare pencil, muted, centred on the line; edits the comment | | Mark | <code>.ds-quote-mark</code> | in the reply — <code>quote.tint</code> behind the passage, painted through the CSS Custom Highlight API | | Badge | <code>.ds-quote-badge</code> | in the reply — the same pill as the chip's number, raised into the leading over the end of the passage's last line like a superscript, so it covers neither the words after the passage nor the line above; kept inside the prose column | | Editor | <code>.ds-quote-overlay.ds-quote-editor</code> | the overlay surface, one borderless auto-growing field, one muted check (Save) at the bottom right | | Card | <code>.ds-quote-overlay.ds-quote-card</code> | the overlay surface, a little below the passage, the comment (or the quoted words in muted italics) and, for a draft quote, the pencil and × at the top right — one icon-button size and one muted ink for both, glyphs at one icon step |</p>
+<p>The editor has no title, no hint line, no Cancel button and no coloured edge: the placeholder (&quot;Add an optional comment…&quot;) says what it is for, and the keys say the rest.</p>
+<h4>Variants</h4>
+<ul><li><strong>In the composer.</strong> Number, glyph, label and the pencil. The token is an atomic range in the editor: the caret steps over the chip, and Backspace or Delete takes it whole. The live preview, which shows the markdown of the caret's line raw, leaves it a chip.</li><li><strong>In a sent message.</strong> The same chip without the pencil: what was sent is not edited.</li><li><strong>Draft and sent marks.</strong> A passage a quote in the draft cites is marked in <code>quote.tint</code> with its number on <code>quote.badge</code>; one a sent message cites is marked in <code>quote.tint-sent</code> with its number on <code>quote.badge-sent</code>, history rather than work in hand. The mark is the tint alone, with no underline, so a link or emphasis inside the passage keeps its own line.</li></ul>
+<h4>States</h4>
+<p>| State | Treatment | |---|---| | Rest | Gold ink; the number on its tint | | Hover (chip) | The link underlines, as every link button does | | Focus | The product's focus ring, on the link and on the pencil separately | | Popover open | <code>aria-expanded</code> on the link; the popover shows the passage (blockquote, muted), the comment and <strong>Go to source</strong>. It opens above the message bubble or composer the chip sits in, clear of its words and controls, and below it only when there is no room above | | Hover (mark) | After a short rest, the card opens under the passage. It stays while the pointer crosses into it and closes a moment after the pointer has left both | | Go to source | The transcript scrolls to the reply (paging in older turns if needed) and the passage is lit with a second layer of tint for about a second |</p>
+<h4>Usage</h4>
+<p><strong>Only a passage of one reply is a chip.</strong> A selection of the person's own message, a run across several messages or a step's output has no single reply to point back at, and is quoted as a markdown blockquote instead. The same 8,000-character cap applies to both, refused with a toast rather than cut.</p>
+<p><strong>The number is the conversation's.</strong> A new quote takes one more than the highest number among the conversation's sent messages and the draft, and the number is stored with the quote, so the chip, the badge in the reply and the <code>[quote N]</code> the agent reads agree.</p>
+<p><strong>The card is a popover, not a tooltip.</strong> It holds controls for a draft quote, and a tooltip is never interactive ([tooltip](../tooltip/component.md)). A sent quote's card holds no controls.</p>
+<p><strong>Gold is the quote's alone.</strong> <code>quote.*</code> marks quotes and nothing else: not a warning (that is <code>status.warn</code>), not a find match (<code>find.*</code>), not a link.</p>
+<h4>Accessibility</h4>
+<ul><li>The chip's link is named &quot;Quote N: label&quot; and states <code>aria-haspopup</code> and <code>aria-expanded</code> for its popover. The number inside it is <code>aria-hidden</code>, since the name already says it.</li><li>The pencil is named &quot;Edit comment on quote N&quot; and carries a tooltip; the check is named &quot;Save&quot;.</li><li>The editor is a dialog named &quot;Comment on quote N&quot;; its field takes focus as it opens. Enter saves, ⌘/Ctrl+Enter saves and sends, Shift+Enter is a new line, Escape closes it — and on a quote just made, takes the quote back out. A press outside keeps what was typed.</li><li>The badges in the reply are drawn in an <code>aria-hidden</code> layer over the transcript; the marks change no text, so a screen reader reads the reply as written.</li><li><code>quote.ink</code> clears AA as small text on the app's grounds, and <code>quote.on-badge</code> on <code>quote.badge</code>, in both modes.</li></ul>
+<h4>Shipped implementation</h4>
+<p><code>src/renderer/src/components/panels/agentChat/chatQuotes.tsx</code> (<code>QuoteChip</code>, <code>SentQuoteChip</code>, <code>QuotePopover</code>, <code>QuoteCommentEditor</code>), <code>composerQuoteChips.ts</code> (the editor extension), <code>quoteHighlights.tsx</code> (marks, badges and the card), <code>quoteAnchors.ts</code> (finding a passage again) and <code>useChatQuotes.tsx</code> (the chat's wiring).</p>
+</div>
+</div>
+<details class="catalog-source"><summary>components/quote-chip/component.css</summary><pre><code>/* Quote chip — a passage of an agent's reply, quoted into the person's next
+ * message, and the two surfaces that go with it: the comment editor and the
+ * card a marked passage shows on hover. The shipped primitives are
+ * src/renderer/src/components/panels/agentChat/chatQuotes.tsx (chip, popover,
+ * editor) and quoteHighlights.tsx (marks, badges, card).
+ *
+ * The chip is words in a sentence, not a control set into it: no box, no
+ * ground, the quote's gold as ink. Its number badge is the one filled part,
+ * the same tint and ink as the badge after the passage in the reply, so the
+ * two are read as one thing. */
+
+.ds-quote-chip {
+  display: inline;
+  white-space: nowrap;
+  color: var(--sem-color-quote-ink);
+  font: inherit;
+}
+
+.ds-quote-chip__link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: var(--sem-radius-chip);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ds-quote-chip__link:hover {
+  text-decoration: underline;
+}
+
+.ds-quote-chip__link:focus-visible,
+.ds-quote-chip__edit:focus-visible {
+  outline: var(--sem-focus-ring);
+  outline-offset: var(--sem-focus-ring-offset);
+}
+
+.ds-quote-chip__number,
+.ds-quote-badge {
+  display: inline-block;
+  padding: 0 var(--sem-space-2xs);
+  border-radius: var(--sem-radius-pill);
+  background: var(--sem-color-quote-badge);
+  color: var(--sem-color-quote-on-badge);
+  font-size: var(--sem-font-size-micro);
+  font-weight: var(--sem-font-weight-emphasis);
+  line-height: var(--sem-font-line-tight);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+.ds-quote-chip__number {
+  margin-right: var(--sem-space-2xs);
+}
+
+/* In the reply the pill cannot push the words after the passage along, so it
+ * is raised into the leading over the end of the passage's last line, like a
+ * superscript, rather than set over the next glyphs. */
+.ds-quote-badge {
+  vertical-align: super;
+}
+
+/* The label: the comment, or the start of the passage, cut at a measure. */
+.ds-quote-chip__label {
+  display: inline-block;
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* The composer's chips only: the bare pencil, muted, edits the comment. Both
+ * glyphs sit on the middle of the line, as the words do. */
+.ds-quote-chip__edit {
+  margin-left: var(--sem-space-3xs);
+  padding: 0;
+  border: 0;
+  border-radius: var(--sem-radius-chip);
+  background: transparent;
+  color: var(--sem-color-text-muted);
+  cursor: pointer;
+}
+
+.ds-quote-chip__edit:hover {
+  background: var(--sem-color-bg-hover);
+  color: var(--sem-color-text-primary);
+}
+
+/* A passage the conversation quotes, marked in the reply. The app paints it
+ * through the CSS Custom Highlight API; this class is the same look for the
+ * catalog. Tint alone, no underline. */
+.ds-quote-mark {
+  background: var(--sem-color-quote-tint);
+}
+
+.ds-quote-mark--sent {
+  background: var(--sem-color-quote-tint-sent);
+}
+
+.ds-quote-badge--sent {
+  background: var(--sem-color-quote-badge-sent);
+}
+
+/* The editor and the card share the overlay surface. */
+.ds-quote-overlay {
+  border: 1px solid var(--sem-color-border-strong);
+  border-radius: var(--sem-radius-overlay);
+  background: var(--sem-color-bg-surface-raised);
+  box-shadow: var(--sem-shadow-popover);
+}
+
+.ds-quote-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sem-space-2xs);
+  width: 20rem;
+  padding: var(--sem-space-sm);
+}
+
+.ds-quote-editor__field {
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--sem-color-text-primary);
+  font: inherit;
+  font-size: var(--sem-font-size-body);
+  field-sizing: content;
+}
+
+.ds-quote-editor__field::placeholder {
+  color: var(--sem-color-text-disabled);
+}
+
+.ds-quote-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ds-quote-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sem-space-sm);
+  max-width: 22rem;
+  padding: var(--sem-space-sm) var(--sem-space-md);
+  font-size: var(--sem-font-size-body);
+  color: var(--sem-color-text-default);
+}
+
+.ds-quote-card__text--quoted {
+  font-style: italic;
+  color: var(--sem-color-text-muted);
+}
+</code></pre></details>
+<details class="catalog-source"><summary>components/quote-chip/component.html (demo)</summary><pre><code>&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot; /&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot; /&gt;
+&lt;title&gt;Quote chip&lt;/title&gt;
+&lt;link rel=&quot;stylesheet&quot; href=&quot;../../foundations/tokens.css&quot; /&gt;
+&lt;link rel=&quot;stylesheet&quot; href=&quot;component.css&quot; /&gt;
+&lt;style&gt;
+  body {
+    margin: 0;
+    font-family: var(--sem-font-family-ui);
+  }
+  .demo-stage {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sem-space-lg);
+    padding: var(--sem-space-3xl);
+    background: var(--sem-color-bg-app);
+    color: var(--sem-color-text-default);
+    font-size: var(--sem-font-size-heading);
+  }
+  .demo-label {
+    margin: 0;
+    font-size: var(--sem-font-size-meta);
+    color: var(--sem-color-text-subtle);
+  }
+  .demo-reply {
+    position: relative;
+    margin: 0;
+    max-width: 36rem;
+    line-height: var(--sem-font-line-relaxed);
+  }
+  .demo-icon {
+    width: 12px;
+    height: 12px;
+    vertical-align: -0.1em;
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;demo-stage&quot; data-mode=&quot;light&quot;&gt;
+  &lt;p class=&quot;demo-label&quot;&gt;Light — a reply with a sent quote (dim) and a draft quote (full), then the draft's chip.&lt;/p&gt;
+  &lt;p class=&quot;demo-reply&quot;&gt;
+    Run the tests first. Then &lt;span class=&quot;ds-quote-mark ds-quote-mark--sent&quot;&gt;check the lockfile&lt;/span&gt;&lt;sup class=&quot;ds-quote-badge ds-quote-badge--sent&quot;&gt;1&lt;/sup&gt;
+    before you ship, and &lt;span class=&quot;ds-quote-mark&quot;&gt;keep the cache warm&lt;/span&gt;&lt;sup class=&quot;ds-quote-badge&quot;&gt;2&lt;/sup&gt; while it builds.
+  &lt;/p&gt;
+  &lt;p class=&quot;demo-reply&quot;&gt;
+    Why does this matter?
+    &lt;span class=&quot;ds-quote-chip&quot;&gt;&lt;button type=&quot;button&quot; class=&quot;ds-quote-chip__link&quot;&gt;&lt;span class=&quot;ds-quote-chip__number&quot; aria-hidden=&quot;true&quot;&gt;2&lt;/span&gt;&lt;svg class=&quot;demo-icon&quot; viewBox=&quot;0 0 16 16&quot; fill=&quot;none&quot; aria-hidden=&quot;true&quot;&gt;&lt;path d=&quot;M3 9.5h3V13H3V9.5Zm0 0c0-2.5.8-4.2 3-5.5M9.5 9.5h3V13h-3V9.5Zm0 0c0-2.5.8-4.2 3-5.5&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.4&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&lt;/svg&gt; &lt;span class=&quot;ds-quote-chip__label&quot;&gt;Is a warm cache still needed?&lt;/span&gt;&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;ds-quote-chip__edit&quot; aria-label=&quot;Edit comment on quote 2&quot;&gt;&lt;svg class=&quot;demo-icon&quot; viewBox=&quot;0 0 16 16&quot; fill=&quot;none&quot; aria-hidden=&quot;true&quot;&gt;&lt;path d=&quot;M3.25 12.75 3.9 10.1 10.4 3.6a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7l-6.5 6.5-2.65.65Z&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.3&quot; stroke-linejoin=&quot;round&quot;/&gt;&lt;/svg&gt;&lt;/button&gt;&lt;/span&gt;
+  &lt;/p&gt;
+  &lt;div class=&quot;ds-quote-overlay ds-quote-editor&quot; role=&quot;dialog&quot; aria-label=&quot;Comment on quote 2&quot;&gt;
+    &lt;textarea class=&quot;ds-quote-editor__field&quot; rows=&quot;1&quot; placeholder=&quot;Add an optional comment…&quot;&gt;&lt;/textarea&gt;
+    &lt;div class=&quot;ds-quote-editor__actions&quot;&gt;&lt;button type=&quot;button&quot; class=&quot;ds-quote-chip__edit&quot; aria-label=&quot;Save&quot;&gt;✓&lt;/button&gt;&lt;/div&gt;
+  &lt;/div&gt;
+  &lt;div class=&quot;ds-quote-overlay ds-quote-card&quot; role=&quot;group&quot; aria-label=&quot;Quote 1&quot;&gt;
+    &lt;span class=&quot;ds-quote-card__text--quoted&quot;&gt;check the lockfile&lt;/span&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;demo-stage&quot; data-mode=&quot;dark&quot;&gt;
+  &lt;p class=&quot;demo-label&quot;&gt;Dark — the same.&lt;/p&gt;
+  &lt;p class=&quot;demo-reply&quot;&gt;
+    Run the tests first. Then &lt;span class=&quot;ds-quote-mark ds-quote-mark--sent&quot;&gt;check the lockfile&lt;/span&gt;&lt;sup class=&quot;ds-quote-badge ds-quote-badge--sent&quot;&gt;1&lt;/sup&gt;
+    before you ship, and &lt;span class=&quot;ds-quote-mark&quot;&gt;keep the cache warm&lt;/span&gt;&lt;sup class=&quot;ds-quote-badge&quot;&gt;2&lt;/sup&gt; while it builds.
+  &lt;/p&gt;
+  &lt;p class=&quot;demo-reply&quot;&gt;
+    Why does this matter?
+    &lt;span class=&quot;ds-quote-chip&quot;&gt;&lt;button type=&quot;button&quot; class=&quot;ds-quote-chip__link&quot;&gt;&lt;span class=&quot;ds-quote-chip__number&quot; aria-hidden=&quot;true&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;ds-quote-chip__label&quot;&gt;Is a warm cache still needed?&lt;/span&gt;&lt;/button&gt;&lt;/span&gt;
+  &lt;/p&gt;
+  &lt;div class=&quot;ds-quote-overlay ds-quote-card&quot; role=&quot;group&quot; aria-label=&quot;Quote 2&quot;&gt;
+    &lt;span&gt;Is a warm cache still needed?&lt;/span&gt;
+    &lt;button type=&quot;button&quot; class=&quot;ds-quote-chip__edit&quot; aria-label=&quot;Edit comment&quot;&gt;✎&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;ds-quote-chip__edit&quot; aria-label=&quot;Remove quote&quot;&gt;×&lt;/button&gt;
   &lt;/div&gt;
 &lt;/div&gt;
 &lt;/body&gt;

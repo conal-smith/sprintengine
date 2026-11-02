@@ -16,6 +16,8 @@
  * Pure: no I/O, no Electron, no DOM. Imported by both main and renderer.
  */
 
+import { quotesToInlineText } from './chat-quotes'
+
 /**
  * Name stems the APP mints for a fresh chat, never a person. The sidebar's New
  * chat button names a workspace "Chat" / "Chat 63" (a per-folder ordinal); a
@@ -231,7 +233,8 @@ export function stripInjectedFragments(prompt: string): string {
 export function deriveWorkspaceTitle(prompt: string): string | null {
   if (typeof prompt !== 'string') return null
 
-  const stripped = stripInjectedFragments(prompt)
+  // A quote is read as its passage and comment, never its token.
+  const stripped = stripInjectedFragments(quotesToInlineText(prompt))
   if (!stripped) return null
 
   // First sentence only. A prompt's opening sentence is the request; what

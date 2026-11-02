@@ -11,6 +11,10 @@ import {
   segmentRanges,
 } from './chatFindHighlight'
 import type { ConversationTimelineRow } from './conversationTimeline'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { quoteToken } from '../../../../../shared/chat-quotes'
+import { UserTimelineRow } from './timelineRows'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -74,6 +78,33 @@ test('the page and the index count the same matches in ordinary markdown', () =>
   expect(segmentRanges(renderedSegments(root).get('user:u1')!, folded)).toHaveLength(
     findInChat([row], folded).matches.length,
   )
+})
+
+test('a quote is counted as its chip draws it, so the page can paint every match the index counts', () => {
+  const token = quoteToken({
+    turnId: 't1',
+    n: 1,
+    quote: 'Keep the cache warm before the deploy.',
+    exact: 'Keep the cache warm before the deploy.',
+    prefix: '',
+    suffix: '',
+    comment: 'Why (warm) cache?',
+  })
+  const text = `About the cache: ${token}`
+  const row: ConversationTimelineRow = {
+    kind: 'user',
+    id: 'user:u1',
+    entry: { kind: 'user', id: 'u1', text } as Extract<ConversationTimelineRow, { kind: 'user' }>['entry'],
+  }
+  const root = mount(
+    renderToStaticMarkup(createElement(UserTimelineRow, { entry: { kind: 'user', id: 'u1', seq: 1, text } })),
+  )
+  const elements = renderedSegments(root).get('user:u1')!
+  for (const query of ['cache', 'why (warm)', 'deploy', 'sprintengine']) {
+    const folded = chatFindQuery(query)
+    expect(segmentRanges(elements, folded), query).toHaveLength(findInChat([row], folded).matches.length)
+  }
+  expect(findInChat([row], chatFindQuery('cache')).matches).toHaveLength(2)
 })
 
 test('highlights are painted where the API exists, and nothing breaks where it does not', () => {

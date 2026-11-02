@@ -77,6 +77,8 @@ import { StopGlyph } from './stopGlyph'
 import React, { memo, useId, useMemo, useRef, useState } from 'react'
 import { STUDIO_PRODUCT_NAME } from '../../../../../shared/product-identity'
 import { withoutStudioNoticePrefix } from '../../../../../shared/studio-notice'
+import { QUOTE_SOURCE_ATTRIBUTE } from './quoteAnchors'
+import { quotesToReadableMarkdown } from '../../../../../shared/chat-quotes'
 
 // Auth-shaped turn failures get a sign-in action in the error block. Whole
 // words and stems, so a path or message that merely contains "author" or a
@@ -258,13 +260,20 @@ export function UserTimelineRow({
   const text = entry.text
   const copy = useMessageCopyMenu(
     text.trim()
-      ? { name: 'Message', label: 'Copy message', markdown: () => text, html: () => messageHtml(text) }
+      ? {
+          name: 'Message',
+          label: 'Copy message',
+          markdown: () => quotesToReadableMarkdown(text),
+          html: () => messageHtml(text),
+        }
       : null,
   )
   return (
     <div className="flex flex-col items-end pb-6">
       <MessageAuthorHeading>You said</MessageAuthorHeading>
       <div
+        // A quote chip's popover opens clear of the bubble (chatQuotes.tsx).
+        data-quote-chip-holder=""
         className="max-w-[76%] rounded-sm border border-[color:var(--border-subtle)] bg-[color:var(--agent-inset)] px-3 py-1.5"
         onContextMenu={copy.onContextMenu}
       >
@@ -319,7 +328,7 @@ export function UserTimelineRow({
           <CopyGlyphButton
             size="xs"
             label="Copy message"
-            text={entry.text}
+            text={() => quotesToReadableMarkdown(entry.text)}
             html={() => messageHtml(entry.text)}
             className={MESSAGE_ACTION_REVEAL}
           />
@@ -360,9 +369,10 @@ export function UserTimelineRow({
 }
 
 // A message as a rich editor should receive it, drawn as its bubble draws it:
-// every newline a line break, and HTML the text it was typed as.
+// every newline a line break, and HTML the text it was typed as. A quote it
+// carries is its passage and comment, as copying the markdown gives it.
 function messageHtml(text: string): string {
-  return markdownClipboardHtml(text, { userText: true })
+  return markdownClipboardHtml(quotesToReadableMarkdown(text), { userText: true })
 }
 
 // A message Studio sent the chat itself — news from an agent the chat started,
@@ -530,7 +540,7 @@ export function AssistantTurnBlock({
         item.kind === 'step' ? (
           <WorkTimelineStep key={item.id} tool={item.tool} />
         ) : (
-          <div key={item.id} className="mb-2 min-w-0">
+          <div key={item.id} className="mb-2 min-w-0" {...{ [QUOTE_SOURCE_ATTRIBUTE]: entry.turnId }}>
             <ConversationMarkdown text={item.text} />
           </div>
         ),
@@ -544,7 +554,10 @@ export function AssistantTurnBlock({
         <div
           className="min-w-0"
           onContextMenu={copy.onContextMenu}
-          {...{ [CHAT_FIND_SEGMENT_ATTRIBUTE]: chatFindSegmentKey.reply(entry.turnId) }}
+          {...{
+            [CHAT_FIND_SEGMENT_ATTRIBUTE]: chatFindSegmentKey.reply(entry.turnId),
+            [QUOTE_SOURCE_ATTRIBUTE]: entry.turnId,
+          }}
         >
           <ConversationMarkdown text={entry.text} streaming={entry.status === 'streaming'} />
         </div>

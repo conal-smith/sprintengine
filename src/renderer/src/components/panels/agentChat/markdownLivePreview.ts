@@ -9,6 +9,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view'
 import type { SyntaxNodeRef } from '@lezer/common'
+import { QUOTE_SCHEME } from '../../../../../shared/chat-quotes'
 
 /**
  * Markdown drawn in place while it is typed. Every line shows its formatting —
@@ -218,6 +219,10 @@ export function livePreviewDecorations(
         const marks = node.node.getChildren('LinkMark')
         const text = (mark: { from: number; to: number }) => doc.sliceString(mark.from, mark.to)
         if (marks.length < 4 || text(marks[1]) !== ']' || text(marks[2]) !== '(') return
+        // A quote's token is drawn as its chip (composerQuoteChips.ts), on the
+        // caret's line too; marking it here as well would fight the chip.
+        const url = node.node.getChild('URL')
+        if (url && doc.sliceString(url.from, url.from + QUOTE_SCHEME.length) === QUOTE_SCHEME) return false
         decorations.push(LINK.range(marks[0].to, marks[1].from))
         markup(marks[0].from, marks[0].to)
         markup(marks[1].from, node.to)

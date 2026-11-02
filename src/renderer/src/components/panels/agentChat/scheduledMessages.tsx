@@ -25,6 +25,7 @@ import { GhostButton, Tooltip, TruncatedText } from '../../ui'
 import { sendTimeFromNow, sendTimeWords } from '../../workspace/agentComposer/schedule/sendTime'
 import { ComposerTrayRow } from './composerTray'
 import { heldMessageCarries } from './queuedTurnBubble'
+import { quotesToInlineText } from '../../../../../shared/chat-quotes'
 
 /** What a row draws of a scheduled message, wherever it is kept. */
 export type ScheduledMessageView = Pick<
@@ -145,7 +146,7 @@ export function ScheduledMessageRowList<Message extends ScheduledMessageView>({
               ) : null}
               <TruncatedText
                 as="span"
-                text={message.text}
+                text={quotesToInlineText(message.text)}
                 className="min-w-0 text-meta italic text-[color:var(--text-muted)]"
               />
             </span>

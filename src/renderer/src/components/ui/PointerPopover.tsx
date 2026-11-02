@@ -8,6 +8,13 @@ type PointerPopoverProps = {
   x: number
   /** Viewport y of the open point. */
   y: number
+  /**
+   * Open ABOVE this viewport y instead — the surface's bottom edge on it — when
+   * there is room there, and at `y` only when there is not. For a surface that
+   * belongs over something it must not cover: a quote chip's popover keeps
+   * clear of the message or composer the chip sits in.
+   */
+  above?: number
   /** Required accessible name for the surface. */
   ariaLabel: string
   onClose: () => void
@@ -44,6 +51,7 @@ type PointerPopoverProps = {
 export function PointerPopover({
   x,
   y,
+  above,
   ariaLabel,
   onClose,
   children,
@@ -53,7 +61,7 @@ export function PointerPopover({
 }: PointerPopoverProps) {
   const ref = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
-  const pos = useClampedMenuPosition(x, y, ref)
+  const pos = useClampedMenuPosition(x, y, ref, above !== undefined ? { preferAbove: above } : undefined)
 
   const restoreFocus = useCallback(() => {
     previousFocusRef.current?.focus()
