@@ -336,6 +336,7 @@ test('settingsSlice', async () => {
     activeModalSurfaceWorkspaceId: null as string | null,
     sidebarSection: 'home' as SidebarSection,
     chatListView: 'projects' as ChatListView,
+    chatListViewOverride: null as ChatListView | null,
     sidebarCollapsed: false,
     sidebarWidth: 280,
     workspacePaneWidth: 420,

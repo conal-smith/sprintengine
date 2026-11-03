@@ -46,6 +46,7 @@ import type { ExtensionsDrawerView } from '../components/workspace/globalSurface
 import { createAuthSlice } from './slices/authSlice'
 import {
   createSettingsSlice,
+  isChatListView,
   normalizeAppSettings,
   type ChatListView,
   type DiffViewMode,
@@ -161,11 +162,15 @@ export interface WorkspaceStore
   authState: SprintEngineAuthState
   sidebarCollapsed: boolean
   setSidebarCollapsed: (collapsed: boolean) => void
-  // Which shape the chat rail lists conversations in (all-chats-view):
-  // the project tree, or one stream of every chat newest-first. Persisted
-  // in the settings envelope beside sidebarWidth.
+  // Which shape the chat rail lists conversations in by default
+  // (all-chats-view): the project tree, every chat by status, or one stream of
+  // every chat newest-first. Persisted in the settings envelope beside
+  // sidebarWidth. This window's own pick from the rail's grouping menu rides
+  // over it, unpersisted (`selectChatListView`).
   chatListView: ChatListView
   setChatListView: (view: ChatListView) => void
+  chatListViewOverride: ChatListView | null
+  setChatListViewOverride: (view: ChatListView | null) => void
   sidebarWidth: number
   setSidebarWidth: (width: number) => void
   // Bumped after a skill/plugin install or uninstall so pickers re-read the
@@ -1455,10 +1460,7 @@ export const useWorkspaceStore: WorkspaceStoreHook = create<WorkspaceStore>()(
           // A value this build does not know (an older or newer name for a
           // rail shape) falls back to the default rather than leaving the rail
           // in a shape nothing renders.
-          chatListView:
-            state?.chatListView === 'all' || state?.chatListView === 'projects'
-              ? state.chatListView
-              : current.chatListView,
+          chatListView: isChatListView(state?.chatListView) ? state.chatListView : current.chatListView,
           sidebarWidth:
             typeof state?.sidebarWidth === 'number' ? clampSidebarWidth(state.sidebarWidth) : current.sidebarWidth,
           workspacePaneWidth:
