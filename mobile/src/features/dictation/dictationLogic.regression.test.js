@@ -13,6 +13,7 @@ const {
   isDictationSilence,
   joinDictation,
   messageWithDictation,
+  readDictationError,
   runWithSettled,
   settledTranscript,
   shouldKeepDictating,
@@ -55,6 +56,29 @@ test("a stop says nothing, a silence says so gently, the rest say why", () => {
   assert.match(dictationErrorMessage("service-not-allowed", "android"), /Google app/);
   assert.match(dictationErrorMessage("network", "android"), /connection/);
   assert.match(dictationErrorMessage("something-new", "android"), /Try again/);
+});
+
+test("the recogniser answering the person's stop is the stop, not a failure", () => {
+  // Android ends a continuous session it is asked to stop with ERROR_CLIENT,
+  // reported as "client", after the words were heard.
+  assert.equal(readDictationError("client", true), "stopped");
+  assert.equal(readDictationError("no-speech", true), "stopped");
+  assert.equal(readDictationError("speech-timeout", true), "stopped");
+  assert.equal(readDictationError("aborted", true), "stopped");
+  assert.equal(readDictationError("aborted", false), "stopped");
+});
+
+test("a failure during a stop, or a client error without one, is still told", () => {
+  for (const code of ["network", "audio-capture", "interrupted", "not-allowed", "busy", "unknown"])
+    assert.equal(readDictationError(code, true), "failure", code);
+  assert.equal(readDictationError("client", false), "failure");
+  assert.match(dictationErrorMessage("client", "android"), /Try again/);
+});
+
+test("a silence while still dictating is a pause", () => {
+  assert.equal(readDictationError("no-speech", false), "pause");
+  assert.equal(readDictationError("speech-timeout", false), "pause");
+  assert.equal(readDictationError("nomatch", false), "pause");
 });
 
 test("a silence is told in the resting ink, a failure in the error's", () => {
