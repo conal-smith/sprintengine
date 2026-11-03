@@ -70,8 +70,9 @@ import { TAILNET_PEER_REFUSED_AUDIT_TOOL } from '../gateway-audit'
 import { normalizeAddress } from './tailnet-peer-identity'
 import { parseTailnetEndpoint } from './tailnet-remote-client'
 import { normalizeTailnetScopes, type TailnetReverseGrant } from '../../../shared/tailnet'
-import { tailnetScopeGrantsAccess, type TailnetDevice, type TailnetScope } from '../../../shared/tailnet'
-import { localOnlyGatewayToolReason, requiredScopeForTool } from './tailnet-scopes'
+import { tailnetDevicePrincipal, type TailnetDevice } from '../../../shared/tailnet'
+import { authorizeStudioAccess, type StudioAuthorization } from '../../../../packages/studio-protocol/src/permissions'
+import { TAILNET_ROUTE_ACCESS, tailnetToolAccess, type TailnetDeviceRoute } from './tailnet-scopes'
 import {
   computeWebSocketAcceptKey,
   createWebSocketFrameDecoder,
@@ -487,15 +488,6 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     device: TailnetDevice,
     url: URL,
   ): Promise<void> {
-    if (!tailnetScopeGrantsAccess(new Set(device.scopes), 'conversation:operate')) {
-      writeJson(response, 403, {
-        error: {
-          code: 'tailnet_scope_required',
-          message: 'This device may read conversations but not attach files to them.',
-        },
-      })
-      return
-    }
     const conversations = options.conversations
     if (!conversations) {
       writeJson(response, 501, {
@@ -691,13 +683,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * a message instead (`conversation-message-images`), by the ref its
    * `user_message` recorded, and is served the same way.
    */
-  async function handleConversationImage(response: ServerResponse, device: TailnetDevice, url: URL): Promise<void> {
-    if (!tailnetScopeGrantsAccess(new Set(device.scopes), 'conversation:read')) {
-      writeJson(response, 403, {
-        error: { code: 'tailnet_scope_required', message: 'This device may not read conversations on this machine.' },
-      })
-      return
-    }
+  async function handleConversationImage(response: ServerResponse, url: URL): Promise<void> {
     const conversations = options.conversations
     const workspaceId = url.searchParams.get('workspaceId')?.trim() ?? ''
     const agentId = url.searchParams.get('agentId')?.trim() ?? ''
@@ -778,13 +764,6 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     url: URL,
     read: 'files' | 'commands',
   ): Promise<void> {
-    const scopes = new Set(device.scopes)
-    if (!tailnetScopeGrantsAccess(scopes, 'conversation:read')) {
-      writeJson(response, 403, {
-        error: { code: 'tailnet_scope_required', message: 'This device may not read conversations on this machine.' },
-      })
-      return
-    }
     const conversations = options.conversations
     const answer = read === 'files' ? conversations?.searchFiles : conversations?.listCommands
     if (!conversations || !answer) {
@@ -808,16 +787,8 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       })
       return
     }
+    // The route check above held a refresh to the grant to operate.
     const refresh = read === 'commands' && url.searchParams.get('refresh') === '1'
-    if (refresh && !tailnetScopeGrantsAccess(scopes, 'conversation:operate')) {
-      writeJson(response, 403, {
-        error: {
-          code: 'tailnet_scope_required',
-          message: 'This device may read the command list but not have the CLI asked again.',
-        },
-      })
-      return
-    }
     const key = conversations.resolveKey(workspaceId, agentId)
     if (!key) {
       writeJson(response, 404, {
@@ -957,6 +928,16 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     const { peerNode, peerAddress } = admitted
     options.devices.recordSeen(device.id, peerNode)
     options.onActivity?.({ kind: 'request', device, peerNode, peerAddress })
+    // What the route needs, judged once for every route a token opens, by
+    // the grant the device holds now. A path that is no route is not found below.
+    const route = tailnetDeviceRouteOf(method, path, request.url)
+    if (route) {
+      const decision = authorizeStudioAccess(tailnetDevicePrincipal(device.scopes), TAILNET_ROUTE_ACCESS[route])
+      if (!decision.ok) {
+        writeJson(response, 403, { error: { code: 'tailnet_scope_required', message: routeRefusal(route, decision) } })
+        return
+      }
+    }
 
     if (method === 'GET' && path === TAILNET_IDENTITY_PATH) {
       // How the device should draw this desktop: the kind and colour the
@@ -988,7 +969,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
 
     if (method === 'GET' && path === TAILNET_CONVERSATION_IMAGE_PATH) {
-      await handleConversationImage(response, device, parseUrl(request.url))
+      await handleConversationImage(response, parseUrl(request.url))
       return
     }
 
@@ -1202,25 +1183,26 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
   }
 
-  /** The device's scopes, applied to what it may see and what it may run. */
+  /** The device's grant, applied to what it may see and what it may run: one decision for both. */
   function gateFor(device: TailnetDevice): McpDispatchGate {
-    const granted = new Set<TailnetScope>(device.scopes)
-    const scopeAllows = (toolName: string): boolean =>
-      tailnetScopeGrantsAccess(granted, requiredScopeForTool(toolName, options.isMutation(toolName)))
+    const principal = tailnetDevicePrincipal(device.scopes)
+    const decide = (toolName: string) =>
+      authorizeStudioAccess(principal, tailnetToolAccess(toolName, options.isMutation(toolName)))
     return {
-      // Local-only first, and independent of scopes: a local-only tool is not
-      // something a wider grant unlocks, it is off this transport entirely.
-      filterTools: (tools) =>
-        tools.filter((tool) => localOnlyGatewayToolReason(tool.name) === null && scopeAllows(tool.name)),
+      // A local-only tool is refused whatever the grant: it is not something a
+      // wider grant unlocks, it is off this transport entirely.
+      filterTools: (tools) => tools.filter((tool) => decide(tool.name).ok),
       authorizeToolCall: (toolName) => {
-        const localOnly = localOnlyGatewayToolReason(toolName)
-        if (localOnly) return toolError('tailnet_local_only', localOnly)
-        return scopeAllows(toolName)
-          ? null
-          : toolError(
-              'tailnet_scope_required',
-              `This device is not granted "${requiredScopeForTool(toolName, options.isMutation(toolName))}", which "${toolName}" requires. Re-pair the device with that scope in Settings.`,
-            )
+        const decision = decide(toolName)
+        if (decision.ok) return null
+        if (decision.reason === 'local_only') return toolError('tailnet_local_only', decision.message)
+        // A tool's access names no owner and is always found, so the rest is a missing permission.
+        if (decision.reason !== 'permission_required')
+          return toolError('tailnet_scope_required', `"${toolName}" is not served to this device.`)
+        return toolError(
+          'tailnet_scope_required',
+          `This device is not granted "${decision.permission}", which "${toolName}" requires. Re-pair the device with that scope in Settings.`,
+        )
       },
     }
   }
@@ -1320,7 +1302,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       // for it has already fired.
       const currentDevice = options.devices.listDevices().find((entry) => entry.id === device.id)
       if (!currentDevice) return rejectUpgrade(socket, 401, 'unauthorized')
-      if (!tailnetScopeGrantsAccess(new Set(currentDevice.scopes), 'conversation:read'))
+      if (!authorizeStudioAccess(tailnetDevicePrincipal(currentDevice.scopes), TAILNET_ROUTE_ACCESS.conversation).ok)
         return rejectUpgrade(socket, 403, 'conversation_scope_required')
       options.devices.recordSeen(currentDevice.id, peerNode)
       acceptUpgrade(socket, key)
@@ -1735,6 +1717,33 @@ function pathOf(url: string | undefined): string {
 
 function queryOf(url: string | undefined): URLSearchParams {
   return parseUrl(url).searchParams
+}
+
+/**
+ * The route an authenticated HTTP request asks for, as `TAILNET_ROUTE_ACCESS`
+ * declares it, or null for one this listener does not serve (answered not
+ * found). A refresh of the command list is its own route: it starts the CLI.
+ */
+export function tailnetDeviceRouteOf(method: string, path: string, url?: string): TailnetDeviceRoute | null {
+  if (method === 'GET' && path === TAILNET_IDENTITY_PATH) return 'identity'
+  if (method === 'POST' && path === TAILNET_UPLOAD_PATH) return 'upload'
+  if (method === 'GET' && path === TAILNET_CONVERSATION_IMAGE_PATH) return 'conversation-image'
+  if (method === 'GET' && path === TAILNET_CONVERSATION_FILES_PATH) return 'conversation-files'
+  if (method === 'GET' && path === TAILNET_CONVERSATION_COMMANDS_PATH)
+    return queryOf(url).get('refresh') === '1' ? 'conversation-commands:refresh' : 'conversation-commands'
+  if (method === 'POST' && path === TAILNET_WS_TICKET_PATH) return 'ws-ticket'
+  if (method === 'POST' && path === TAILNET_MCP_PATH) return 'mcp'
+  return null
+}
+
+/** The words a route refusal carries: the ones each route has always answered with. */
+function routeRefusal(route: TailnetDeviceRoute, decision: Exclude<StudioAuthorization, { ok: true }>): string {
+  if (route === 'upload') return 'This device may read conversations but not attach files to them.'
+  if (route === 'conversation-commands:refresh' && decision.reason === 'permission_required') {
+    if (decision.permission === 'conversation:operate')
+      return 'This device may read the command list but not have the CLI asked again.'
+  }
+  return 'This device may not read conversations on this machine.'
 }
 
 // How much of an already-refused body is read and thrown away before the

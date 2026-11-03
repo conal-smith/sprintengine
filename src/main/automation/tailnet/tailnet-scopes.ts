@@ -1,5 +1,82 @@
+import type { ConversationClientMessage } from '../../../../packages/conversation-protocol/src/public'
+import type { StudioAccess } from '../../../../packages/studio-protocol/src/permissions'
 import type { McpConnectionContext, McpToolRegistration } from '../../../shared/modules/mcp-tools'
 import type { TailnetScope } from '../../../shared/tailnet'
+
+// What everything a paired device can ask of this machine requires, in the
+// permissions every remote method declares
+// (packages/studio-protocol/src/permissions.ts): the gateway's tools, its
+// authenticated routes, and the frames of the conversation lane. A device's
+// scopes are translated to permissions where it asks
+// (`tailnetDevicePrincipal`, src/shared/tailnet.ts), and the gateway judges
+// every one of these with the same `authorizeStudioAccess`.
+//
+// Tools are a rule rather than a table, because they are registered at run
+// time (modules and client tools add their own): the family comes from the
+// name and read-or-operate from the gateway's own mutation classification. A
+// tool name nobody registered is refused by the dispatcher before this is
+// asked.
+
+/**
+ * Every route a paired device's token opens, and what it needs. Pairing and
+ * health come before a token and are not here; a path not listed is not
+ * found. `mcp` and `stream` carry tools, each judged by `tailnetToolAccess`;
+ * `events` says only that something changed, and what a device may then read
+ * is decided by what it reads with.
+ */
+export const TAILNET_ROUTE_ACCESS = {
+  identity: { permissions: [] },
+  'ws-ticket': { permissions: [] },
+  mcp: { permissions: [] },
+  stream: { permissions: [] },
+  events: { permissions: [] },
+  // Following a chat: the lane's frames are judged one by one below.
+  conversation: { permissions: ['conversation:read'] },
+  'conversation-image': { permissions: ['conversation:read'] },
+  // The composer's reads, in the chat's own folder.
+  'conversation-files': { permissions: ['conversation:read'] },
+  'conversation-commands': { permissions: ['conversation:read'] },
+  // Asking again starts the chat's CLI, which is driving it.
+  'conversation-commands:refresh': { permissions: ['conversation:read', 'conversation:operate'] },
+  // A picture or file staged for a message the device will send.
+  upload: { permissions: ['conversation:read', 'conversation:operate'] },
+} as const satisfies Readonly<Record<string, StudioAccess>>
+
+export type TailnetDeviceRoute = keyof typeof TAILNET_ROUTE_ACCESS
+
+const FOLLOW: StudioAccess = { permissions: ['conversation:read'] }
+const DRIVE: StudioAccess = { permissions: ['conversation:read', 'conversation:operate'] }
+
+/**
+ * Every frame a device sends on the conversation lane, and what it needs:
+ * reading what a chat shows is following it; a command, and a side question
+ * (which runs the chat's agent as a send does), drive it. Typed over the
+ * lane's frames, so a frame added to the contract does not compile here
+ * until it says what it needs.
+ */
+export const CONVERSATION_LANE_ACCESS: { readonly [T in ConversationClientMessage['type']]: StudioAccess } = {
+  hello: FOLLOW,
+  list: FOLLOW,
+  subscribe: FOLLOW,
+  loadEarlier: FOLLOW,
+  getToolDetail: FOLLOW,
+  getTurnDiff: FOLLOW,
+  getContextBreakdown: FOLLOW,
+  watchQueued: FOLLOW,
+  watchScheduled: FOLLOW,
+  watchUsageLimits: FOLLOW,
+  // A device cancels only a question it asked itself.
+  cancelSideQuestion: FOLLOW,
+  askSideQuestion: DRIVE,
+  command: DRIVE,
+}
+
+/** What a tool call over the tailnet needs: nothing a grant can give for a local-only tool, else its family's permission. */
+export function tailnetToolAccess(toolName: string, isMutation: boolean): StudioAccess {
+  const localOnly = localOnlyGatewayToolReason(toolName)
+  if (localOnly) return { localOnly }
+  return { permissions: [requiredScopeForTool(toolName, isMutation)] }
+}
 
 // Mapping the gateway's tool surface onto the shared scope vocabulary
 // (src/shared/tailnet.ts). The vocabulary is shared because Settings shows it;
