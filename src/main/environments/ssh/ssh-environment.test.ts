@@ -416,6 +416,83 @@ test('a wake tries again: time asleep is not counted, a machine shown Disconnect
   assert.equal(batch.env.summary().state, 'needs-sign-in')
 }, 120_000)
 
+/** An ssh that never answers (a host that drops packets): the bootstrap waits on it until it is killed. */
+const hangingSsh = (): SessionProcess =>
+  spawn('sh', ['-c', 'exec sleep 60'], { stdio: ['pipe', 'pipe', 'pipe'] }) as unknown as SessionProcess
+
+const killed = (child: SessionProcess): boolean => {
+  const process = child as unknown as { exitCode: number | null; signalCode: string | null }
+  return process.exitCode !== null || process.signalCode !== null
+}
+
+test('Disconnect during a bootstrap, then Connect: the dropped bootstrap kills only its own ssh', async () => {
+  const home = join(scratch, 'redo')
+  mkdirSync(home)
+  const machine = harness(home, { spawnWith: (interactive) => (interactive ? undefined : hangingSsh()) })
+  const background = machine.env.connect({ interactive: false })
+  assert.ok(await until(() => machine.spawned.length === 1, 5_000))
+  machine.env.disconnect()
+  // At once, before the dropped bootstrap has heard its ssh die.
+  const connected = machine.env.connect({ interactive: true })
+  await assert.rejects(background, /Disconnected/u)
+  const connection = await connected
+  pids.add(
+    (
+      JSON.parse(
+        readFileSync(join(home, '.local', 'share', 'sprintengine-studio', 'data', 'run', 'server.json'), 'utf8'),
+      ) as { pid: number }
+    ).pid,
+  )
+  assert.equal(machine.env.summary().state, 'connected', machine.changes.join('\n'))
+  assert.equal(machine.env.current(), connection)
+  assert.ok(killed(machine.spawned[0]!.child), 'the dropped bootstrap killed its own ssh')
+  assert.ok(
+    machine.spawned.slice(1).every((entry) => entry.interactive),
+    'the bootstrap that connected was the one the person started',
+  )
+  assert.doesNotMatch(machine.env.summary().diagnostics.stderr, /./u, 'nothing of the dropped one in the diagnostics')
+}, 120_000)
+
+test('Connect on a machine shown Disconnected replaces the quiet background try with one that can ask', async () => {
+  const home = join(scratch, 'quiet')
+  mkdirSync(home)
+  let mode: 'ok' | 'refuse' | 'hang' = 'ok'
+  const refusing = failingSsh('ssh: connect to host 127.0.0.1 port 2222: Connection refused')
+  const machine = harness(home, {
+    spawnWith: (interactive) =>
+      interactive || mode === 'ok' ? undefined : mode === 'refuse' ? refusing(interactive) : hangingSsh(),
+    timing: { backoff: { baseMs: 50, maxMs: 200 }, giveUpMs: 1_000, disconnectedRetryMs: 300, livenessMs: 500 },
+  })
+  await machine.env.connect({ interactive: true })
+  pids.add(
+    (
+      JSON.parse(
+        readFileSync(join(home, '.local', 'share', 'sprintengine-studio', 'data', 'run', 'server.json'), 'utf8'),
+      ) as { pid: number }
+    ).pid,
+  )
+  mode = 'refuse'
+  machine.spawned.at(-1)!.child.kill()
+  assert.ok(await until(() => machine.env.summary().state === 'disconnected', 10_000), machine.changes.join('\n'))
+  // The next quiet try hangs, and the row still says Disconnected.
+  mode = 'hang'
+  const before = machine.spawned.length
+  assert.ok(await until(() => machine.spawned.length > before, 5_000))
+  const quiet = machine.spawned.at(-1)!
+  assert.equal(quiet.interactive, false)
+  assert.equal(machine.env.summary().state, 'disconnected')
+  // The person clicks Connect: an interactive bootstrap, with its steps shown.
+  const shown = machine.changes.length
+  await machine.env.connect({ interactive: true })
+  assert.equal(machine.env.summary().state, 'connected')
+  assert.ok(killed(quiet.child), 'the quiet try was dropped, its ssh with it')
+  assert.ok(machine.spawned.at(-1)!.interactive, 'the try that connected could ask')
+  assert.ok(
+    machine.changes.slice(shown).some((line) => line.startsWith('reconnecting') || line.startsWith('connecting')),
+    machine.changes.slice(shown).join('\n'),
+  )
+}, 120_000)
+
 test('install failures read as sentences', () => {
   assert.match(installFailureWords('unpack tar: Disk quota exceeded', 'build-box'), /your disk quota is full/u)
   assert.match(installFailureWords('node-run sh: Permission denied', 'build-box'), /mounted noexec/u)

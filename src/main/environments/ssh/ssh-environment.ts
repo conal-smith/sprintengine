@@ -26,9 +26,11 @@ import {
   type ConnectionState,
 } from '../../../../packages/connection-supervisor/src/connectionSupervisor'
 
-// One SSH machine's connection, in main (phase 8 spec, 5.6). Serialised: two
-// triggers never run two bootstraps at once; a second `connect` while one
-// runs waits for it.
+// One SSH machine's connection, in main (phase 8 spec, 5.6). Serialised: a
+// second `connect` while a bootstrap runs waits for it. The one exception is
+// the person's Connect over a quiet background try (a machine shown
+// Disconnected), which runs in BatchMode and cannot prompt: that try is
+// dropped, and its ssh killed, for an interactive one.
 //
 //   idle ─connect─► connecting ─► probing ─┬─► installing ─► (a new session) probing
 //                     │ asking (a dialog)   ├─► unsupported (musl, old glibc, Windows, noexec)
@@ -109,6 +111,8 @@ export const DEFAULT_TIMING = {
   disconnectedRetryMs: 5 * 60_000,
   /** How long a wake waits for a connected session to answer before calling it dead. */
   livenessMs: 10_000,
+  /** The backstop on one whole bootstrap; every step inside it has a shorter deadline of its own. */
+  bootstrapMs: 45 * 60_000,
 }
 
 const IDLE_MS = 5 * 60_000
@@ -190,8 +194,8 @@ export class SshEnvironment {
   }
   /** Owns the session's life: when to try, how long to wait, what a wake does, when to stop. */
   private readonly supervisor: ConnectionSupervisor<LiveSession, BootstrapHint>
-  /** The session a bootstrap is building, until it is connected or fails. */
-  private pending: RemoteSession | null = null
+  /** The bootstrap under way when it is a quiet background try, which the person's Connect replaces. */
+  private quietAttempt: ConnectionAttempt<LiveSession, BootstrapHint> | null = null
   /** The session the supervisor last said was up, so its arrival is announced once. */
   private announced: LiveSession | null = null
   private lastReachedAt: number | null = null
@@ -240,8 +244,13 @@ export class SshEnvironment {
         // Trying this long, the machine is shown Disconnected and tried less often.
         maxMs: (state) => (state.retryingForMs >= giveUpMs ? disconnectedRetryMs : backoff.maxMs),
       },
-      // Each bootstrap step has its own deadline; an install may take minutes.
-      connectTimeoutMs: null,
+      // Each step that waits on the machine or the network has a deadline of
+      // its own, and the longest bootstrap (two installs with a person in the
+      // dialogs, then an upgrade) is well inside this. It is a backstop for the
+      // waits between them that have none (an ssh's exit after it was killed,
+      // packing the install archive), so a try stuck there cannot hold the
+      // machine for good; the supervisor then kills its ssh.
+      connectTimeoutMs: this.timing.bootstrapMs,
       pingTimeoutMs: this.timing.livenessMs,
       clock: {
         now: this.now,
@@ -297,8 +306,16 @@ export class SshEnvironment {
     const live = this.supervisor.current()
     if (live) return Promise.resolve(live.connection)
     const { phase } = this.supervisor.state()
-    // Serialised: a second connect while one runs waits for it.
-    if (phase === 'connecting') return this.joinNext()
+    // Serialised: a second connect while one runs waits for it, except the
+    // person's over a quiet BatchMode try, which could neither show its steps
+    // nor ask them anything: it is replaced by one that can.
+    if (phase === 'connecting') {
+      if (options.interactive && this.quietAttempt?.current()) {
+        this.supervisor.retryNow({ interactive: true })
+        return this.joinNext()
+      }
+      return this.joinNext()
+    }
     // A background caller (a chat, the explorer, the pane) never jumps the
     // reconnect's backoff, and never retries what needs the person: polled
     // against a host that fails at once, it would run ssh at its poll rate.
@@ -375,8 +392,16 @@ export class SshEnvironment {
     // the try succeeds. An attempt the supervisor dropped says nothing at all.
     // A wake starts the count over, so the try it makes says Reconnecting again.
     const quiet = attempt.reconnecting && this.supervisor.state().retryingForMs >= this.timing.giveUpMs
+    this.quietAttempt = quiet ? attempt : null
     const shows = (): boolean => attempt.current() && !quiet
-    const steps: Array<{ step: string; ms: number }> = []
+    // This attempt's own ssh, and only its own: one the supervisor gives up on
+    // (Disconnect, a replacing Connect, the backstop) is killed here, and never
+    // a newer attempt's.
+    let session: RemoteSession | null = null
+    attempt.onAbandoned(() => session?.kill())
+    // Its own diagnostics too, so a dropped attempt's stderr never lands in a newer one's.
+    const diagnostics: SshEnvironmentView['diagnostics'] = { noise: '', stderr: '', steps: [], probe: null }
+    const steps = diagnostics.steps
     const timed = async <T>(step: string, run: () => Promise<T>): Promise<T> => {
       const started = this.now()
       try {
@@ -385,7 +410,7 @@ export class SshEnvironment {
         steps.push({ step, ms: this.now() - started })
       }
     }
-    this.view.diagnostics = { noise: '', stderr: '', steps, probe: null }
+    this.view.diagnostics = diagnostics
     try {
       for (let installs = 0; ; installs++) {
         if (shows())
@@ -394,7 +419,9 @@ export class SshEnvironment {
             stateText: attempt.reconnecting ? this.reconnectingText(label) : `Connecting to ${label}…`,
             working: true,
           })
-        const session = RemoteSession.start(
+        // Given up on between steps: no new ssh.
+        if (!attempt.current()) throw new StepError('failed', 'This attempt was given up on.')
+        const current = RemoteSession.start(
           () => this.deps.spawn({ interactive }),
           buildConnectScript({
             appVersion: this.deps.app.version,
@@ -405,12 +432,12 @@ export class SshEnvironment {
             channel: this.deps.app.channel,
           }),
         )
-        this.pending = session
-        const probe = await timed('probe', () => this.probe(session, interactive, label, shows))
-        this.view.diagnostics.probe = probe
+        session = current
+        const probe = await timed('probe', () => this.probe(current, interactive, label, shows, diagnostics))
+        diagnostics.probe = probe
         const tree = this.deps.serverTree()
         if (!tree) {
-          session.kill()
+          current.kill()
           throw new StepError(
             'failed',
             'This build of Studio has no server to install (run npm run build:server:wsl in a checkout).',
@@ -425,16 +452,16 @@ export class SshEnvironment {
         this.view.notes = assessed.notes
         this.view.gh = { ...probe.gh, os: probe.os || null }
         if (!assessed.supported) {
-          session.kill()
+          current.kill()
           throw new StepError('unsupported', assessed.reason)
         }
         if (assessed.needs.node || assessed.needs.server) {
           if (installs >= 2) {
-            session.kill()
+            current.kill()
             throw new StepError('failed', `${label} still needs an install after two; see its diagnostics.`)
           }
           await timed('install', () =>
-            this.install(session, probe, assessed.target, assessed.needs, tree, label, shows),
+            this.install(current, probe, assessed.target, assessed.needs, tree, label, shows, diagnostics),
           )
           continue
         }
@@ -449,7 +476,7 @@ export class SshEnvironment {
         const by = Buffer.from(this.deps.startedBy, 'utf8').toString('base64url')
         if (located.action === 'blocked') {
           if (!(located.offerUpgrade && this.upgradeAsked)) {
-            session.kill()
+            current.kill()
             throw new StepError('version-blocked', located.reason, undefined, located.offerUpgrade)
           }
           this.upgradeAsked = false
@@ -473,23 +500,23 @@ export class SshEnvironment {
           deadline = this.timing.startMs
         } else decision = 'attach'
         // The probe's end and SEND can come in two reads: wait for SEND itself.
-        await session.waitForSend(10_000)
-        session.send(decision)
+        await current.waitForSend(10_000)
+        current.send(decision)
         const relay = await timed('relay', () =>
-          session.relay(deadline).catch((error: unknown) => {
-            throw this.relayFailure(session, error, label)
+          current.relay(deadline).catch((error: unknown) => {
+            throw this.relayFailure(current, error, label, diagnostics)
           }),
         )
-        return await timed('handshake', () => this.handshake(session, relay.ready, relay.endpoint, label, attempt))
+        return await timed('handshake', () => this.handshake(current, relay.ready, relay.endpoint, label, attempt))
       }
     } catch (error) {
-      this.pending?.kill()
-      this.view.diagnostics.stderr = this.view.diagnostics.stderr || (error as { stderr?: string }).stderr || ''
+      session?.kill()
+      diagnostics.stderr = diagnostics.stderr || (error as { stderr?: string }).stderr || ''
       // The supervisor decides what the failure means (classify) and the row
       // says so (render); here it only becomes a step's words.
       throw asStep(error)
     } finally {
-      this.pending = null
+      if (this.quietAttempt === attempt) this.quietAttempt = null
     }
   }
 
@@ -505,6 +532,7 @@ export class SshEnvironment {
     interactive: boolean,
     label: string,
     shows: () => boolean = () => true,
+    diagnostics: SshEnvironmentView['diagnostics'] = this.view.diagnostics,
   ): Promise<Probe> {
     try {
       await session.waitFor(
@@ -515,8 +543,8 @@ export class SshEnvironment {
     } catch (error) {
       session.kill()
       await session.closed()
-      this.view.diagnostics.noise = session.noise
-      this.view.diagnostics.stderr = session.stderr
+      diagnostics.noise = session.noise
+      diagnostics.stderr = session.stderr
       if (error instanceof SessionClosedError && (session.exit?.code ?? 0) !== 0) {
         const failure = classifySshFailure(session.stderr, label, { batch: !interactive })
         throw new StepError(failure.code === 'needs-sign-in' ? 'needs-sign-in' : 'failed', failure.message, failure)
@@ -526,7 +554,7 @@ export class SshEnvironment {
         `Studio couldn't read ${label}'s setup${session.noise.trim() ? ` (its login printed: ${session.noise.trim().slice(0, 200)})` : ''}.`,
       )
     }
-    this.view.diagnostics.noise = session.noise
+    diagnostics.noise = session.noise
     const probe = parseProbe(session.lines)
     if (!probe) throw new StepError('failed', `Studio couldn't read ${label}'s setup.`)
     if (shows()) this.set({ state: 'probing', stateText: `Checking ${label}…`, working: true })
@@ -541,6 +569,7 @@ export class SshEnvironment {
     tree: { dir: string; digest: string },
     label: string,
     shows: () => boolean,
+    diagnostics: SshEnvironmentView['diagnostics'],
   ): Promise<void> {
     const fetchHere = needs.node && this.deps.settings().remoteDownload
     const node = needs.node && !fetchHere ? (await this.deps.nodeBinary(target)).binary : null
@@ -573,12 +602,17 @@ export class SshEnvironment {
     await session.closed()
     if (session.lines.includes('@@SPRINTENGINE_COMMITTED')) return
     const reason = commitFailure(session.lines.join('\n'), session.stderr)
-    this.view.diagnostics.stderr = session.stderr
+    diagnostics.stderr = session.stderr
     throw new StepError('failed', installFailureWords(reason, label))
   }
 
-  private relayFailure(session: RemoteSession, error: unknown, label: string): StepError {
-    this.view.diagnostics.stderr = session.stderr
+  private relayFailure(
+    session: RemoteSession,
+    error: unknown,
+    label: string,
+    diagnostics: SshEnvironmentView['diagnostics'],
+  ): StepError {
+    diagnostics.stderr = session.stderr
     const fail = session.lines.find((line) => line.startsWith('@@SPRINTENGINE_FAIL '))
     if (fail) {
       const [, code = '', ...words] = fail.split(' ')
@@ -641,6 +675,9 @@ export class SshEnvironment {
       attempt.lost(new StepError('failed', reason))
     })
     void session.closed().then(() => endpoint.close('The SSH session ended.'))
+    // Up from here, not a turn of the event loop later: given up on meanwhile,
+    // the supervisor closes it now.
+    attempt.connected(live)
     return live
   }
 
@@ -694,8 +731,8 @@ export class SshEnvironment {
   /** Let the session go. The managed server keeps running (its idle rule ends it). */
   disconnect(): void {
     this.heldByPerson = true
-    // A bootstrap in flight ends with its ssh; what it would have brought is closed.
-    this.pending?.kill()
+    // A bootstrap in flight is given up on, and kills its own ssh; what it
+    // would have brought is closed.
     this.supervisor.stop('Disconnected.')
   }
 
