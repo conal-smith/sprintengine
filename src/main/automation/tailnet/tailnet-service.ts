@@ -281,7 +281,13 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
   // gets one expiry timer that announces the resolution nobody typed.
   const announcedRequests = new Map<
     string,
-    { timer: ReturnType<typeof setTimeout>; deviceName: string; peerNode: string | null; expiresAt: string }
+    {
+      timer: ReturnType<typeof setTimeout>
+      deviceName: string
+      peerNode: string | null
+      expiresAt: string
+      oauth: boolean
+    }
   >()
   // Every emit — and every snapshot read — is stamped with this. It only goes
   // up, so a subscriber can order what it hears against what it read.
@@ -389,6 +395,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         deviceName: request.deviceName,
         peerNode: request.peerNode,
         expiresAt: request.expiresAt,
+        oauth: Boolean(request.oauth),
       })
       emit({
         kind: 'pair-request',
@@ -406,7 +413,14 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       const lapsed = Date.parse(entry.expiresAt) <= Date.now()
       const phase: TailnetPairRequestPhase =
         answered && answeredIds.has(id) ? answered.phase : lapsed ? 'expired' : 'cancelled'
-      emit({ kind: 'pair-request', phase, requestId: id, deviceName: entry.deviceName, peerNode: entry.peerNode })
+      emit({
+        kind: 'pair-request',
+        phase,
+        requestId: id,
+        deviceName: entry.deviceName,
+        peerNode: entry.peerNode,
+        ...(entry.oauth ? { oauth: true as const } : {}),
+      })
     }
   }
 

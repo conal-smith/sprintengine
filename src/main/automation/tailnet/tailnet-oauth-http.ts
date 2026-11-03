@@ -141,12 +141,15 @@ export function createTailnetOAuthHttp(options: {
     }
     const origin = originFor(request, context.via)
     if (!origin) {
-      const named = originsFor(context.via)
+      // The names it does answer to are not listed: a page that rebound its
+      // own name onto this address can read this answer, and should learn
+      // nothing from it.
       const answer = {
         error: 'invalid_request',
-        error_description: `This Studio does not answer to that host name. Address it as ${named.join(' or ') || 'its tailnet address'}.`,
+        error_description: MISDIRECTED,
       }
-      if (route.kind === 'page') writePage(response, 421, misdirectedPage(named))
+      if (route.kind === 'page')
+        writePage(response, 421, errorPage('This Studio does not answer to that name.', MISDIRECTED))
       else writeJson(response, 421, answer)
       return true
     }
@@ -401,6 +404,7 @@ export function createTailnetOAuthHttp(options: {
         options.devices.revokeDevice(outcome.deviceId)
         return tokenError(response, 'invalid_grant', bound.message)
       }
+      options.devices.recordSeen(outcome.deviceId, peer?.name ?? null)
       return tokenSuccess(response, outcome.tokens)
     }
     if (grantType === 'refresh_token') {
@@ -416,6 +420,7 @@ export function createTailnetOAuthHttp(options: {
         },
       })
       if (!outcome.ok) return tokenError(response, outcome.error, outcome.description)
+      options.devices.recordSeen(outcome.deviceId, peer?.name ?? null)
       return tokenSuccess(response, outcome.tokens)
     }
     return tokenError(response, 'unsupported_grant_type', 'Only authorization_code and refresh_token are offered.')
@@ -719,12 +724,8 @@ function errorPage(heading: string, detail: string): Page {
   return { title: heading, body: `<h1>${escapeHtml(heading)}</h1><p>${escapeHtml(detail)}</p>` }
 }
 
-function misdirectedPage(origins: string[]): Page {
-  return errorPage(
-    'This Studio does not answer to that name.',
-    `Address it as ${origins.join(' or ') || 'its tailnet address'}, and start the sign-in again from your MCP client.`,
-  )
-}
+const MISDIRECTED =
+  'This Studio does not answer to that host name. Use the MCP URL from Settings → Remote, and start the sign-in again from your MCP client.'
 
 export function escapeHtml(value: string): string {
   return value

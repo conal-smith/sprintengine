@@ -734,7 +734,7 @@ export function createTailnetDeviceStore(options: {
           message: 'That pairing request is no longer waiting to be answered.',
         }
       }
-      if (entry.request.oauth && input.via === 'tool') {
+      if (entry.request.oauth && input.via !== 'ipc') {
         return {
           ok: false,
           code: 'approve_in_window',

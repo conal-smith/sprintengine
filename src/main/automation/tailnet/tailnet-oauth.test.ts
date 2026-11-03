@@ -22,6 +22,8 @@ import {
 } from './tailnet-oauth'
 import { canonicalResource } from './tailnet-oauth-http'
 import type { TailnetPeerIdentity } from './tailnet-peer-identity'
+import { createTailnetRemoteService } from './tailnet-service'
+import { writeTailnetSettings } from './tailnet-settings'
 import {
   TAILNET_IDENTITY_PATH,
   TAILNET_MCP_PATH,
@@ -949,3 +951,150 @@ test('the store keeps its signing key across restarts and no registration at all
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ── Behind Tailscale Serve ────────────────────────────────────────────────
+
+test('behind Tailscale Serve, X-Forwarded-For is the peer there and only there, and Host must be the HTTPS name', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-serve-'))
+  const asked: string[] = []
+  const devices = createTailnetDeviceStore({ resolveUserDataDir: () => dir })
+  const oauth = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices })
+  let tailnetOrigin = ''
+  const server = createTailnetGatewayServer({
+    bindAddress: '127.0.0.1',
+    port: 0,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    devices,
+    peers: {
+      identify: async (address) => {
+        asked.push(address)
+        return MAC_MINI
+      },
+      resolve: async () => MAC_MINI.name,
+    },
+    oauth: { store: oauth },
+    publicOrigins: () => ({ tailnet: [tailnetOrigin], serve: 'https://mac-mini.example.ts.net' }),
+  })
+  await server.start()
+  try {
+    const port = server.address()!.port
+    tailnetOrigin = `http://127.0.0.1:${port}`
+    const servePort = await server.openServeListener()
+    assert.equal(server.serveAddress()?.port, servePort)
+    const metadata = await http(servePort, 'GET', '/.well-known/oauth-authorization-server', {
+      host: 'mac-mini.example.ts.net',
+    })
+    assert.equal(metadata.status, 200)
+    assert.equal(metadata.json.issuer, 'https://mac-mini.example.ts.net')
+    assert.equal(metadata.json.token_endpoint, `https://mac-mini.example.ts.net${TAILNET_OAUTH_TOKEN_PATH}`)
+    const wrongHost = await http(servePort, 'GET', '/.well-known/oauth-authorization-server')
+    assert.equal(wrongHost.status, 421, 'the loopback listener answers to the HTTPS name only')
+    const unauthorized = await http(servePort, 'POST', TAILNET_MCP_PATH, {
+      host: 'mac-mini.example.ts.net',
+      body: JSON.stringify(initialize),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    assert.match(
+      String(unauthorized.headers['www-authenticate']),
+      /resource_metadata="https:\/\/mac-mini\.example\.ts\.net\/\.well-known\/oauth-protected-resource\/tailnet\/v1\/mcp"/u,
+    )
+
+    const offer = devices.offerPairing({ scopes: [...TAILNET_SCOPES] })
+    const paired = await postJson(port, TAILNET_PAIR_PATH, { pairingToken: offer.token, deviceName: 'phone' })
+    const token = paired.json.deviceToken as string
+    asked.length = 0
+    await http(servePort, 'POST', TAILNET_MCP_PATH, {
+      host: 'mac-mini.example.ts.net',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'X-Forwarded-For': '100.64.0.9',
+      },
+    })
+    assert.deepEqual(asked, ['100.64.0.9'], 'behind Serve, the forwarded tailnet address is the peer')
+    asked.length = 0
+    await http(servePort, 'POST', TAILNET_MCP_PATH, {
+      host: 'mac-mini.example.ts.net',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Forwarded-For': '8.8.8.8' },
+    })
+    assert.deepEqual(asked, [''], 'an address off the tailnet is no peer at all')
+    asked.length = 0
+    await mcp(port, token, { jsonrpc: '2.0', id: 1, method: 'ping' }, { 'X-Forwarded-For': '100.64.0.9' })
+    assert.deepEqual(asked, ['127.0.0.1'], 'on the tailnet listener the header is ignored')
+    await server.closeServeListener()
+    assert.equal(server.serveAddress(), null)
+  } finally {
+    oauth.dispose()
+    await server.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the service publishes HTTPS when asked, names it in the MCP URL, and takes it down', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-https-'))
+  const published: number[] = []
+  const withdrawn: number[] = []
+  let refuse = false
+  writeTailnetSettings(dir, { enabled: true, port: await freePort(), notifications: false })
+  const service = createTailnetRemoteService({
+    resolveUserDataDir: () => dir,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    resolveBindAddress: () => '127.0.0.1',
+    resolveSelfDnsName: async () => 'mac-mini.example.ts.net',
+    createPeerResolver: () => ({ identify: async () => MAC_MINI, resolve: async () => MAC_MINI.name }),
+    publishHttps: async (localPort) => {
+      published.push(localPort)
+      return refuse
+        ? { ok: false, message: 'Tailscale already serves something else on HTTPS port 443.' }
+        : { ok: true, origin: 'https://mac-mini.example.ts.net' }
+    },
+    withdrawHttps: async (localPort) => {
+      withdrawn.push(localPort)
+    },
+  })
+  try {
+    const started = await service.initialize()
+    assert.equal(started.mcp?.https.state, 'off')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(
+      service.getStatus().mcp?.url,
+      `http://mac-mini.example.ts.net:${started.port}${TAILNET_MCP_PATH}`,
+      'the MagicDNS name, once known',
+    )
+    const on = await service.setHttps(true)
+    assert.equal(on.mcp?.https.state, 'on')
+    assert.equal(on.mcp?.url, `https://mac-mini.example.ts.net${TAILNET_MCP_PATH}`)
+    assert.equal(published.length, 1)
+    assert.ok(published[0]! > 0 && published[0] !== started.port, 'Serve is pointed at the loopback listener')
+    const off = await service.setHttps(false)
+    assert.equal(off.mcp?.https.state, 'off')
+    assert.deepEqual(withdrawn, published)
+    assert.equal(off.mcp?.url, `http://mac-mini.example.ts.net:${started.port}${TAILNET_MCP_PATH}`)
+    refuse = true
+    const refused = await service.setHttps(true)
+    assert.equal(refused.mcp?.https.state, 'error')
+    assert.match(refused.mcp?.https.message ?? '', /something else/u)
+    assert.equal(refused.mcp?.url?.startsWith('http://'), true)
+  } finally {
+    await service.shutdown()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+async function freePort(): Promise<number> {
+  const { createServer } = await import('node:net')
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const address = probe.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  await new Promise<void>((resolve) => probe.close(() => resolve()))
+  return port
+}
