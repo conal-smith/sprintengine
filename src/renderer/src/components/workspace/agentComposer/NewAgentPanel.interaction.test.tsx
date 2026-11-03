@@ -828,7 +828,7 @@ test('NewAgentPanel interaction', async () => {
         '[aria-label="Start as a conversation instead of terminal"]',
       )
       assert.ok(remove, 'the kind is a tag with a ×')
-      assert.equal(composerDisabled(composerField(view.container)), true, 'a plain shell takes no prompt')
+      assert.equal(view.container.querySelector('.cm-content'), null, 'a plain shell takes no prompt')
       await act(async () => {
         remove!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
       })

@@ -2187,21 +2187,27 @@ export default function NewAgentPanel({
   }
 
   // A plain shell runs nothing on its behalf: there is no prompt to give it and
-  // no suggested task to start it with. Saying so beats a field that silently
-  // drops what was typed.
+  // no suggested task to start it with, so the box draws the shell's prompt
+  // instead of a field (see the box below).
   const isTerminalLaunch = selection.kind === 'terminal'
+  const terminalPromptRef = React.useRef<HTMLButtonElement>(null)
+  // Picking Terminal hands focus to the prompt line, so the next Enter opens
+  // the shell. The field it replaces held focus before; without this the key
+  // landed on nothing and only the pointer could open one.
+  React.useEffect(() => {
+    if (!isTerminalLaunch) return
+    const frame = window.requestAnimationFrame(() => terminalPromptRef.current?.focus({ preventScroll: true }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [isTerminalLaunch])
   // The skills picker is where skills are offered; the inline `$`/`/`
-  // type-ahead still works, it just no longer needs advertising. A plain shell
-  // takes no prompt: nothing types a command into it for you.
-  const placeholder = isTerminalLaunch
-    ? 'A shell opens with nothing typed'
-    : scheduled
-      ? 'What each run should do…'
-      : extensionMode
-        ? 'Describe the extension…'
-        : selection.kind === 'general'
-          ? 'Describe the task. It runs in a terminal you can take over.'
-          : 'Describe the task…'
+  // type-ahead still works, it just no longer needs advertising.
+  const placeholder = scheduled
+    ? 'What each run should do…'
+    : extensionMode
+      ? 'Describe the extension…'
+      : selection.kind === 'general'
+        ? 'Describe the task. It runs in a terminal you can take over.'
+        : 'Describe the task…'
   // No agent CLI at all, or (for a chat agent) none with a chat runtime: the
   // same install route either way, because installing a CLI is the answer to
   // both.
@@ -2607,6 +2613,33 @@ export default function NewAgentPanel({
             className="px-5 pt-4"
           />
 
+          {isTerminalLaunch ? (
+            // A plain shell takes no prompt, so the box is not a text field
+            // turned off (owner ruling 2026-11-03): it is the prompt the shell
+            // will open on — the folder, the mark, a caret — and the whole line
+            // is the way in. It takes focus when Terminal is picked, so Enter
+            // opens the shell from the keyboard as the send does from the
+            // pointer.
+            <div className="px-5 pb-1 pt-4">
+              <button
+                ref={terminalPromptRef}
+                type="button"
+                onClick={() => launch(prompt)}
+                disabled={!canLaunch}
+                aria-label={projectLabel ? `Open a terminal in ${projectLabel}` : 'Open a terminal'}
+                aria-keyshortcuts="Enter"
+                className="flex w-full min-w-0 items-center gap-2 rounded-sm py-1 text-left font-mono text-body focus-visible:focus-ring disabled:cursor-not-allowed"
+              >
+                {projectLabel ? (
+                  <span className="min-w-0 truncate text-[color:var(--text-muted)]">{projectLabel}</span>
+                ) : null}
+                <span aria-hidden="true" className="shrink-0 text-[color:var(--accent-primary)]">
+                  ❯
+                </span>
+                <span aria-hidden="true" className="terminal-launch-caret shrink-0" />
+              </button>
+            </div>
+          ) : (
           <div className="px-5 pb-1 pt-4">
             {/* Grows with its content from the three-row floor to a ceiling,
                 then scrolls — a box that showed two lines of a six-line prompt
@@ -2651,12 +2684,12 @@ export default function NewAgentPanel({
               onSelectionChange={(caret) => setPromptCaretAt({ value: promptRef.current?.value ?? prompt, caret })}
               onKeyDown={onPromptKeyDown}
               placeholder={placeholder}
-              disabled={isTerminalLaunch}
               adoptInput={bootComposer ? adoptBootInput : undefined}
               contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
               className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
             />
           </div>
+          )}
 
           {/* The controls, on the box's own ground with no rule above them:
               the "+", a tag for every choice that is not the default, the
@@ -2846,12 +2879,26 @@ export default function NewAgentPanel({
                   {editing ? 'Save' : 'Schedule'}
                   <SendGlyph className="icon-sm" />
                 </SendButton>
+              ) : isTerminalLaunch ? (
+                // Said in words: an arrow reads as "send this message", and a
+                // shell has no message to send.
+                <SendButton
+                  size="sm"
+                  onClick={() => launch(prompt)}
+                  disabled={!canLaunch}
+                  aria-label="Open terminal"
+                  aria-keyshortcuts="Enter"
+                  className="shrink-0 gap-1.5 pl-3 pr-2.5"
+                >
+                  Open terminal
+                  <SendGlyph className="icon-sm" />
+                </SendButton>
               ) : (
                 <SendButton
                   size="sm"
                   onClick={() => launch(prompt)}
                   disabled={!canLaunch || !extensionReady || !chatHasMessage(prompt)}
-                  aria-label={isTerminalLaunch ? 'Open terminal' : 'Start agent'}
+                  aria-label="Start agent"
                   aria-keyshortcuts="Enter"
                   className="w-control-sm shrink-0 px-0"
                 >
